@@ -1,0 +1,13 @@
+products:
+  - name: build_system
+    type: executable
+    input:
+      - linker [.output]
+      - compiler
+        - "/Nodes/BuildGraph.swift"
+      - compiler
+        - "/Nodes/CommandInterpreter.swift"
+      - compiler
+        - "/Nodes/RootNode.swift"
+    dependencies:
+      - "DatabaseModels/Package.swift"
