@@ -28,7 +28,7 @@ extension DatabaseLayer {
 
     public func selectDataObjectID(hash: String) throws -> ObjectID? {
         try dbQueue.read { db in
-            try DataObject.filter(Column("hash") == hash).select(Column("id"))
+            try Int64.fetchOne(db, sql: "SELECT id FROM DataObject WHERE hash = ? LIMIT 1", arguments: [hash])
         }
     }
 
@@ -44,9 +44,10 @@ extension DatabaseLayer {
         }
     }
 
-    public func insertDataObject(_ dataObject: DataObject) throws {
+    public func insertDataObject(_ dataObject: DataObject) throws -> ObjectID {
         try dbQueue.write { db in
             try dataObject.insert(db)
+            return db.lastInsertedRowID as ObjectID
         }
     }
 

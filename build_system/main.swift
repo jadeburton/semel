@@ -57,24 +57,31 @@ struct NodeKindDescriptor {
 
     struct Port: Codable, Hashable {
         let index: UInt8
+        let name: String
         let kind: PortKind
     }
 
     let kind: UInt
-    let inputs: [String: Port]
-    let outputs: [String: Port]
+    let inputs: [Port]
+    let outputs: [Port]
 }
 
 typealias DataToken = ObjectID
 
-final class InterningSingleton {
-    let database: DatabaseLayer
-    static let instance = InterningSingleton()
-}
-
 extension [UInt8] {
     func intern() -> DataToken {
-        let existingDataObject = InterningSingleton.instance.database.selectDataObject(hash: Sha256.hash(self))
+        let hash = Sha256.hash(self)
+        if let existingDataObjectID = try! DatabaseLayer.shared.selectDataObjectID(hash: hash) {
+            return existingDataObjectID
+        } else {
+            return try! DatabaseLayer.shared.insertDataObject(DataObject(hash: hash, content: self))
+        }
+    }
+}
+
+extension DataToken {
+    func resolve() -> [UInt8]? {
+        (try? DatabaseLayer.shared.selectDataObjectByID(self))?.content
     }
 }
 
@@ -87,12 +94,12 @@ extension NodeType {
         descriptor.outputs[name]
     }
 
-    func assignValue(outputPort: NodeKindDescriptor.Port, value: [UInt8]?) throws {
-        try nodeContext.assignValue(outputPort: port.index, value: value)
+    func assignValue(outputPort: NodeKindDescriptor.Port, value: DataToken?) throws {
+        try nodeContext.assignValue(outputPort: outputPort.index, dataObjectID: value)
     }
 
-    func postEvent(outputPort: NodeKindDescriptor.Port, eventData: [UInt8]?) throws {
-        try nodeContext.postEvent(outputPort: outputPort.index, eventData: eventData)
+    func postEvent(outputPort: NodeKindDescriptor.Port, eventData: DataToken?) throws {
+        try nodeContext.postEvent(outputPort: outputPort.index, dataObjectID: eventData)
     }
 }
 
@@ -103,7 +110,7 @@ protocol NodeType: AnyObject, Codable {
     var descriptor: NodeKindDescriptor { get }
     var nodeContext: NodeContext! { get set }
 
-    func execute(inputs: [[NodeInputMessage]?]) throws -> [NodeOutputMessage?]
+    func processInputs(_ inputs: [NodeKindDescriptor.Port: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.Port: NodeOutputMessage?]
 }
 
 protocol World {
@@ -207,8 +214,8 @@ final class EgressNode: NodeType {
         .init(kind: Self.kind, inputs: dynamicInputs, outputs: [:])
     }
 
-    func execute(inputs: [[NodeInputMessage]?]) throws -> [NodeOutputMessage?] {
-        []
+    func processInputs(_ inputs: [NodeKindDescriptor.Port: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.Port: NodeOutputMessage?] {
+        [:]
     }
 }
 
@@ -217,7 +224,8 @@ final class StaticFileNode: NodeType {
     static let kind: UInt = 2
     var nodeContext: NodeContext!
 
-    enum CodingKeys: CodingKey {}
+    enum CodingKeys: CodingKey {
+    }
 
     required init() {
     }
@@ -232,12 +240,10 @@ final class StaticFileNode: NodeType {
         // StaticFileNode has no stored properties to encode (nodeContext is not encoded)
     }
 
-    static let descriptor = NodeKindDescriptor(
-        kind: kind,
-        kindName: "StaticFileNode",
-        inputs: [.init(name: "input", isOneShot: false, dataType: nil)],
-        outputs: [.init(name: "output", isOneShot: false, dataType: nil)]
-    )
+    static let inputPort = NodeKindDescriptor.Port(index: 0, name: "input", kind: .persistentValue(dataType: .utf8Text))
+    static let outputPort = NodeKindDescriptor.Port(index: 0, name: "output", kind: .persistentValue(dataType: .utf8Text))
+
+    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [inputPort], outputs: [outputPort])
 
     var descriptor: NodeKindDescriptor {
         Self.descriptor
@@ -245,43 +251,46 @@ final class StaticFileNode: NodeType {
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
     // The input should not have any one-shot events, only persistent value changes
-    func execute(inputs: [[NodeInputMessage]?]) throws -> [NodeOutputMessage?] {
-        if inputs.count != descriptor.inputs.count {
-            // TODO: throw: invalid number of input messages
-            return []
-        }
+    func processInputs(_ inputs: [NodeKindDescriptor.Port: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.Port: NodeOutputMessage?] {
+        assert(inputs.count == descriptor.inputs.count)
 
-        guard let messagesOnInputPort = inputs.first! else {
+        guard let messagesOnInputPort = inputs[Self.inputPort]! else {
             // No messages means no value on this input
-            return []
+            return [:]
         }
 
-        for message in messagesOnInputPort {
-            switch message.kind {
+        guard let oneMessageOnInputPort = messagesOnInputPort.first, messagesOnInputPort.count == 1 else {
+            // More than one message queued - should be impossible
+            return [:]
+        }
+
+        func outputValue() -> NodeOutputMessage? {
+            switch oneMessageOnInputPort.kind {
 
             case .valueMutated(let newValue, _):
                 print("StaticFileNode received new value: \(newValue?.description() ?? "nil")")
-                return [.persistentValue(newValue)]
+                return .valueMutation(newValue)
 
             case .wireConnected(let currentValue):
                 print("StaticFileNode received new wire")
-                return [.persistentValue(currentValue)]
+                return .valueMutation(currentValue)
 
             case .error(let description):
                 print("StaticFileNode received error")
-                return [.error(description: description)]
+                return .error(description: description)
 
             case .wireDisconnected:
                 print("StaticFileNode lost input wire")
-                return [nil]
+                return nil
 
             case .event(_):
+                // This should not be possible, since the input port is not an event port, but if it happens, we just ignore it
                 print("StaticFileNode got an event")
-                return [nil]
+                return nil
             }
         }
 
-        return [nil]
+        return [Self.outputPort: outputValue()]
     }
 }
 
@@ -592,7 +601,7 @@ final class GraphWorld: World {
             }
         }
 
-        let outputs = try node.execute(inputs: inputMessages)
+        let outputs = try node.processInputs(inputMessages)
 
         // Send all outputs down the output wires
         try writeToAllOutputs(outputs, node: node)

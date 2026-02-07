@@ -8,6 +8,8 @@
 import GRDB
 
 public final class DatabaseLayer {
+    public static var shared: DatabaseLayer!
+
     let dbQueue: DatabaseQueue
 
     public enum DatabaseError: Error {
@@ -25,5 +27,8 @@ public final class DatabaseLayer {
         try Message.createTable(dbQueue: dbQueue)
         try DataObject.createTable(dbQueue: dbQueue)
         try NodeOutputValue.createTable(dbQueue: dbQueue)
+
+        assert(Self.shared == nil)
+        Self.shared = self
     }
 }
