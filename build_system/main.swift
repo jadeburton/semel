@@ -37,23 +37,63 @@ struct NodeInputMessage {
 }
 
 enum NodeOutputMessage {
-    case persistentValue(_ value: DataObject?)
+    case valueMutation(_ value: DataObject?)
     case event(_ event: DataObject)
     case error(description: String)
 }
 
+enum PortValueDataType: Codable, Hashable {
+    case utf8Text
+    case binary
+    case json
+    case custom(dataTypeName: String)
+}
+
 struct NodeKindDescriptor {
-    struct PortMetadata: Codable {
-        let name: String
-        let isOneShot: Bool
-        let dataType: String?
+    enum PortKind: Codable, Hashable {
+        case persistentValue(dataType: PortValueDataType)
+        case oneShotEvent
+    }
+
+    struct Port: Codable, Hashable {
+        let index: UInt8
+        let kind: PortKind
     }
 
     let kind: UInt
-    let kindName: String
+    let inputs: [String: Port]
+    let outputs: [String: Port]
+}
 
-    let inputs: [PortMetadata]
-    let outputs: [PortMetadata]
+typealias DataToken = ObjectID
+
+final class InterningSingleton {
+    let database: DatabaseLayer
+    static let instance = InterningSingleton()
+}
+
+extension [UInt8] {
+    func intern() -> DataToken {
+        let existingDataObject = InterningSingleton.instance.database.selectDataObject(hash: Sha256.hash(self))
+    }
+}
+
+extension NodeType {
+    func inputPort(named name: String) -> NodeKindDescriptor.Port? {
+        descriptor.inputs[name]
+    }
+
+    func outputPort(named name: String) -> NodeKindDescriptor.Port? {
+        descriptor.outputs[name]
+    }
+
+    func assignValue(outputPort: NodeKindDescriptor.Port, value: [UInt8]?) throws {
+        try nodeContext.assignValue(outputPort: port.index, value: value)
+    }
+
+    func postEvent(outputPort: NodeKindDescriptor.Port, eventData: [UInt8]?) throws {
+        try nodeContext.postEvent(outputPort: outputPort.index, eventData: eventData)
+    }
 }
 
 protocol NodeType: AnyObject, Codable {
@@ -101,19 +141,21 @@ final class IngressNode: NodeType {
     static let kind: UInt = 0
 
     var nodeContext: NodeContext!
-    var dynamicOutputs: [NodeKindDescriptor.PortMetadata]
+    var dynamicOutputs: [String: NodeKindDescriptor.Port]
 
     enum CodingKeys: String, CodingKey {
         case dynamicOutputs
     }
 
     required init() {
-        dynamicOutputs = [.init(name: "output", isOneShot: false, dataType: nil)]
+        dynamicOutputs = [
+            "output" : .init(index: 0, kind: .persistentValue(dataType: .binary))
+        ]
     }
 
     required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        dynamicOutputs = try container.decode([NodeKindDescriptor.PortMetadata].self, forKey: .dynamicOutputs)
+        dynamicOutputs = try container.decode([String: NodeKindDescriptor.Port].self, forKey: .dynamicOutputs)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -122,22 +164,11 @@ final class IngressNode: NodeType {
     }
 
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              kindName: "IngressNode",
-              inputs: [],
-              outputs: dynamicOutputs)
+        .init(kind: Self.kind, inputs: [:], outputs: dynamicOutputs)
     }
 
-    func assignValue(outputPort: UInt8, dataObjectID: ObjectID?) throws {
-        try nodeContext.assignValue(outputPort: outputPort, dataObjectID: dataObjectID)
-    }
-
-    func postEvent(outputPort: UInt8, dataObjectID: ObjectID?) throws {
-        try nodeContext.postEvent(outputPort: outputPort, dataObjectID: dataObjectID)
-    }
-
-    func execute(inputs: [[NodeInputMessage]?]) throws -> [NodeOutputMessage?] {
-        []
+    func processInputs(_ inputs: [NodeKindDescriptor.Port: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.Port: NodeOutputMessage?] {
+        [:]
     }
 }
 
@@ -145,19 +176,26 @@ final class EgressNode: NodeType {
     static let kind: UInt = 1
 
     var nodeContext: NodeContext!
-    var dynamicInputs: [NodeKindDescriptor.PortMetadata]
+    var dynamicInputs: [String: NodeKindDescriptor.Port]
 
     enum CodingKeys: String, CodingKey {
         case dynamicInputs
     }
 
     required init() {
-        dynamicInputs = [.init(name: "input", isOneShot: false, dataType: nil)]
+        dynamicInputs = [
+            "input" : .init(index: 0, kind: .persistentValue(dataType: .binary))
+        ]
+    }
+
+    // Adds a new input port effectively to the entire Graph
+    func addInputPort(named: String, kind: NodeKindDescriptor.PortKind) {
+        dynamicInputs[named] = .init(index: UInt8(dynamicInputs.count), kind: kind)
     }
 
     required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        dynamicInputs = try container.decode([NodeKindDescriptor.PortMetadata].self, forKey: .dynamicInputs)
+        dynamicInputs = try container.decode([String: NodeKindDescriptor.Port].self, forKey: .dynamicInputs)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -166,22 +204,13 @@ final class EgressNode: NodeType {
     }
 
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              kindName: "EgressNode",
-              inputs: dynamicInputs,
-              outputs: [])
-    }
-
-    // This is used by objects outside the Graph to read inputs from connected Nodes inside the Graph.
-    func readValues(inputPort: UInt8) throws -> [DataObject?] {
-        try nodeContext.readValues(inputPort: inputPort)
+        .init(kind: Self.kind, inputs: dynamicInputs, outputs: [:])
     }
 
     func execute(inputs: [[NodeInputMessage]?]) throws -> [NodeOutputMessage?] {
         []
     }
 }
-
 
 final class StaticFileNode: NodeType {
 
@@ -194,10 +223,12 @@ final class StaticFileNode: NodeType {
     }
 
     required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
         // StaticFileNode has no stored properties to decode (nodeContext is set separately)
     }
 
     func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
         // StaticFileNode has no stored properties to encode (nodeContext is not encoded)
     }
 
@@ -229,18 +260,23 @@ final class StaticFileNode: NodeType {
             switch message.kind {
 
             case .valueMutated(let newValue, _):
+                print("StaticFileNode received new value: \(newValue?.description() ?? "nil")")
                 return [.persistentValue(newValue)]
 
             case .wireConnected(let currentValue):
+                print("StaticFileNode received new wire")
                 return [.persistentValue(currentValue)]
 
             case .error(let description):
+                print("StaticFileNode received error")
                 return [.error(description: description)]
 
             case .wireDisconnected:
+                print("StaticFileNode lost input wire")
                 return [nil]
 
             case .event(_):
+                print("StaticFileNode got an event")
                 return [nil]
             }
         }
@@ -255,6 +291,7 @@ final class NodeFactory {
 
         case IngressNode.kind: return try IngressNode.fromJSONString(encodedJSON)
         case EgressNode.kind: return try EgressNode.fromJSONString(encodedJSON)
+        case StaticFileNode.kind: return try StaticFileNode.fromJSONString(encodedJSON)
 
         default:
             fatalError("Unknown Node kind: \(kind)")
@@ -276,16 +313,28 @@ final class GraphWorld: World {
 
         ingressNode = try loadOrCreateSingletonNode(kind: IngressNode.kind, name: "Ingress")
         egressNode = try loadOrCreateSingletonNode(kind: EgressNode.kind, name: "Egress")
-
-        try connectWire(fromNodeID: self.ingressNode!.nodeContext.nodeID!,
+/*
+        try connectWire(fromNode: self.ingressNode!,
                         fromPort: 0,
-                        toNodeID: self.egressNode!.nodeContext.nodeID!,
+                        toNode: self.egressNode!,
                         toPort: 0)
+*/
+//        let staticFileNode = try makeNode(kind: StaticFileNode.kind, name: "StaticFile") as! StaticFileNode
+//        staticFileNode.nodeContext.nodeID = try insertNode(staticFileNode)
+/*
+        _ = try deleteWire(fromNode: self.ingressNode!,
+                           fromPort: 0,
+                           toNode: self.egressNode!,
+                           toPort: 0)
+*/
+//        try connectWire(fromNode: ingressNode!, fromPort: 0, toNode: staticFileNode, toPort: 0)
+//        try connectWire(fromNode: staticFileNode, fromPort: 0, toNode: egressNode!, toPort: 0)
 
         try ingressNode!.assignValue(outputPort: 0, dataObjectID: nil)
         try! printAll()
 
         try processAllMessages()
+        try! printAll()
     }
 
     func loadOrCreateSingletonNode<N: NodeType>(kind: UInt, name: String) throws -> N {
@@ -379,6 +428,14 @@ final class GraphWorld: World {
 
     func deleteNode(_ node: NodeType) throws -> Bool {
         try database.deleteNode(nodeID: node.nodeContext.nodeID!)
+        // TODO: cascade deletion: and notify of wire-disconnects
+    }
+
+    func connectWire(fromNode: NodeType, fromPort: UInt8, toNode: NodeType, toPort: UInt8) throws {
+        try connectWire(fromNodeID: fromNode.nodeContext.nodeID!,
+                        fromPort: fromPort,
+                        toNodeID: toNode.nodeContext.nodeID!,
+                        toPort: toPort)
     }
 
     func connectWire(fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) throws {
@@ -389,21 +446,58 @@ final class GraphWorld: World {
             return
         }
 
+        // TODO: transactional
+        // TODO: if there is a circular reference, block the creation of the Wire
         let wireID = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
         try database.insertMessage(.init(kind: .wireConnected, targetNodeID: toNodeID, wireID: wireID, dataObjectID: nil, priority: 0))
     }
 
+    func deleteWire(fromNode: NodeType, fromPort: UInt8, toNode: NodeType, toPort: UInt8) throws -> Bool {
+        try deleteWire(fromNodeID: fromNode.nodeContext.nodeID!, fromPort: fromPort, toNodeID: toNode.nodeContext.nodeID!, toPort: toPort)
+    }
+
+    func deleteWire(fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) throws -> Bool {
+        let wires = try database.selectWires(comingFromNodeID: fromNodeID,
+                                             fromPort: fromPort,
+                                             goingToNodeID: toNodeID,
+                                             toPort: toPort)
+
+        // There should only be 0 or 1 wires..
+
+        guard let wire = wires.first else {
+            return false
+        }
+
+        let result = try database.deleteWire(wireID: wire.id!)
+        try database.insertMessage(.init(kind: .wireDisconnected, targetNodeID: toNodeID, wireID: wire.id!, dataObjectID: nil, priority: 0))
+
+        // TODO: cascade deletion:
+        // 1. if a Node has no inputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
+        // 2. if a Node has no outputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
+        // 3. If a Node is deleted, all outbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
+        // 4. If a Node is deleted, all inbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
+
+        return result
+    }
+
     func printAll() throws {
         for node in try database.selectAllNodes() {
-            print("Node ID: \(node.description())")
-            
+            let highLevelNode = try! wrapRawNode(nodeRaw: node)
+
+            print("Node: \(highLevelNode.description())")
+
             for wire in try database.selectWires(goingToNodeID: node.id!) {
-                let fromDesc = try? wire.fromNodeID.loadNode(from: database).description()
-                print("    Wire (\(wire.id ?? -1)) from port \(wire.fromPort): \(fromDesc ?? "<unknown>")")
+                let fromNode = try? wire.fromNodeID.loadNode(from: database)
+                let toNode = try? wire.toNodeID.loadNode(from: database)
+
+                print("    Wire (\(wire.id ?? -1)) Node \(fromNode!.description() ?? "<unknown>") port \(wire.fromPort) ----> Node \(toNode!.description() ?? "<unknown>") port \(wire.toPort)")
             }
+
             for wire in try database.selectWires(comingFromNodeID: node.id!) {
-                let toDesc = try? wire.toNodeID.loadNode(from: database).description()
-                print("    Wire (\(wire.id ?? -1)) to port \(wire.toPort): \(toDesc ?? "<unknown>")")
+                let fromNode = try? wire.fromNodeID.loadNode(from: database)
+                let toNode = try? wire.toNodeID.loadNode(from: database)
+
+                print("    Wire (\(wire.id ?? -1)) Node \(fromNode!.description() ?? "<unknown>") port \(wire.fromPort) ----> Node \(toNode!.description() ?? "<unknown>") port \(wire.toPort)")
             }
         }
 
@@ -562,6 +656,12 @@ final class GraphWorld: World {
         for message in inputMessages {
             _ = try database.deleteMessage(messageID: message.id!) // TODO: error handling
         }
+    }
+}
+
+extension NodeType {
+    func description() -> String {
+        "NodeType \(descriptor.kindName) (kind \(descriptor.kind)) with NodeID \(nodeContext.nodeID ?? -1) and name \(nodeContext.name ?? "nil")"
     }
 }
 

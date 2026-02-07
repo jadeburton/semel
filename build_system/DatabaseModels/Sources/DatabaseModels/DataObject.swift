@@ -25,12 +25,19 @@ extension DatabaseLayer {
                 .fetchAll(db)
         }
     }
+
+    public func selectDataObjectID(hash: String) throws -> ObjectID? {
+        try dbQueue.read { db in
+            try DataObject.filter(Column("hash") == hash).select(Column("id"))
+        }
+    }
+
     public func selectDataObject(hash: String) throws -> DataObject? {
         try dbQueue.read { db in
             try DataObject.filter(Column("hash") == hash).fetchOne(db)
         }
     }
-    
+
     public func selectDataObjectByID(_ id: ObjectID) throws -> DataObject? {
         try dbQueue.read { db in
             try DataObject.fetchOne(db, id: id)
@@ -52,7 +59,7 @@ extension DatabaseLayer {
 
 public extension DataObject {
     func description() -> String {
-        "DataObject \(id ?? -1): hash=\(hash), content=\(content)"
+        "DataObject \(id ?? -1): hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.map { String(format: "%02x", $0) }.joined())"
     }
 }
 
