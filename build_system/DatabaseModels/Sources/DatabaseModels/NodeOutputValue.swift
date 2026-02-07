@@ -33,6 +33,12 @@ public struct NodeOutputValue: Codable, Identifiable, FetchableRecord, Persistab
 }
 
 extension DatabaseLayer {
+    public func selectAllNodeOutputValues() throws -> [NodeOutputValue] {
+        try dbQueue.read { db in
+            try NodeOutputValue.fetchAll(db)
+        }
+    }
+
     // Select all NodeOutputValues associated with the given Node
     public func selectAllNodeOutputValues(nodeID: ObjectID) throws -> [NodeOutputValue] {
         try dbQueue.read { db in
@@ -57,5 +63,11 @@ extension DatabaseLayer {
         try dbQueue.write { db in
             try NodeOutputValue.deleteOne(db, id: nodeOutputValueID)
         }
+    }
+}
+
+public extension NodeOutputValue {
+    func description() -> String {
+        "NodeOutputValue \(id ?? -1): nodeID=\(nodeID), port=\(port), dataObjectID=\(String(describing: dataObjectID))"
     }
 }

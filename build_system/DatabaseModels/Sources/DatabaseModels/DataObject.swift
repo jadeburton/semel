@@ -7,6 +7,12 @@ public struct DataObject: Codable, Identifiable, FetchableRecord, PersistableRec
     public var hash: String
     public var content: [UInt8]
 
+    public init(id: ObjectID? = nil, hash: String, content: [UInt8]) {
+        self.id = id
+        self.hash = hash
+        self.content = content
+    }
+
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "DataObject", options: .ifNotExists) { t in
@@ -60,14 +66,18 @@ extension DatabaseLayer {
 
 public extension DataObject {
     func description() -> String {
-        "DataObject \(id ?? -1): hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.map { String(format: "%02x", $0) }.joined())"
+        "DataObject \(id ?? -1): hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.asHex())"
+    }
+}
+
+extension Sequence<UInt8> {
+    public func asHex() -> String {
+        map { String(format: "%02x", $0) }.joined()
     }
 }
 
 public struct Sha256 {
     public static func hash(_ data: [UInt8]) -> String {
-        let digest = SHA256.hash(data: Data(data))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        SHA256.hash(data: Data(data)).asHex()
     }
 }
-
