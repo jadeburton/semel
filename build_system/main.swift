@@ -14,7 +14,7 @@ extension Database {
     }
 }
 
-let database = try! DatabaseLayer(filePath: "database28.sqlite")
+let database = try! DatabaseLayer(filePath: "database29.sqlite")
 
 let graph = try! GraphWorld(database: database)
 

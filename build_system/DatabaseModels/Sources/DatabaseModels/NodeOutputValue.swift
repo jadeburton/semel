@@ -1,32 +1,31 @@
 import Foundation
 import GRDB
 
-public struct NodeOutputValue: Codable, Identifiable, FetchableRecord, PersistableRecord {
+public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let nodeID = Column(CodingKeys.nodeID)
         public static let port = Column(CodingKeys.port)
         public static let dataObjectID = Column(CodingKeys.dataObjectID)
     }
 
-    public var id: ObjectID?
     public var nodeID: ObjectID
     public var port: UInt8
     public var dataObjectID: ObjectID?
 
-    public init(id: ObjectID? = nil, nodeID: ObjectID, port: UInt8, dataObjectID: ObjectID?) {
-        self.id = id
+    public init(nodeID: ObjectID, port: UInt8, dataObjectID: ObjectID?) {
         self.nodeID = nodeID
         self.port = port
         self.dataObjectID = dataObjectID
     }
 
+    // NodeOutputValue uses a natural key instead of the usual "id" surrogate key.
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "NodeOutputValue", options: .ifNotExists) { t in
-                t.autoIncrementedPrimaryKey("id")
                 t.column("nodeID", .integer).notNull()
                 t.column("port", .integer).notNull()
                 t.column("dataObjectID", .integer) // nullable
+                t.primaryKey(["nodeID", "port"])
             }
         }
     }
@@ -59,15 +58,17 @@ extension DatabaseLayer {
         }
     }
 
-    public func deleteNodeOutputValue(nodeOutputValueID: ObjectID) throws -> Bool {
+    public func deleteNodeOutputValue(nodeID: ObjectID, port: UInt8) throws -> Bool {
         try dbQueue.write { db in
-            try NodeOutputValue.deleteOne(db, id: nodeOutputValueID)
+            try NodeOutputValue
+                .filter(NodeOutputValue.Columns.nodeID == nodeID && NodeOutputValue.Columns.port == port)
+                .deleteAll(db) > 0
         }
     }
 }
 
 public extension NodeOutputValue {
     func description() -> String {
-        "NodeOutputValue \(id ?? -1): nodeID=\(nodeID), port=\(port), dataObjectID=\(String(describing: dataObjectID))"
+        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectID=\(String(describing: dataObjectID))"
     }
 }
