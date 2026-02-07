@@ -165,7 +165,7 @@ func printFolderHierarchy(database: Database, folderNodeID: ObjectID, indent: St
     }
 }
 */
-let database = try! Database(filePath: "database22.sqlite")
+let database = try! DatabaseLayer(filePath: "database22.sqlite")
 
 func main() throws {
 

@@ -28,29 +28,50 @@ public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
     }
 }
 
-extension Database {
+extension DatabaseLayer {
     public static func selectWires(goingToNodeID: ObjectID, dbQueue: DatabaseQueue) throws -> [Wire] {
-        []
+        try dbQueue.read { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
+        }
     }
 
     public static func selectWires(goingToNodeID: ObjectID, toPort: UInt8, dbQueue: DatabaseQueue) throws -> [Wire] {
-        []
+        try dbQueue.read { db in
+            try Wire
+                .filter(Wire.Columns.toNodeID == goingToNodeID && Wire.Columns.toPort == toPort)
+                .fetchAll(db)
+        }
     }
 
     public static func selectWires(comingFromNodeID: ObjectID, dbQueue: DatabaseQueue) throws -> [Wire] {
-        []
+        try dbQueue.read { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
+        }
     }
 
     public static func selectWires(comingFromNodeID: ObjectID, fromPort: UInt8, dbQueue: DatabaseQueue) throws -> [Wire] {
-        []
+        try dbQueue.read { db in
+            try Wire
+                .filter(Wire.Columns.fromNodeID == comingFromNodeID && Wire.Columns.fromPort == fromPort)
+                .fetchAll(db)
+        }
     }
 
     public static func insertWire(_ wire: Wire, dbQueue: DatabaseQueue) throws {
+        try dbQueue.write { db in
+            try wire.insert(db)
+        }
     }
 
     public static func updateWire(_ wire: Wire, dbQueue: DatabaseQueue) throws {
+        try dbQueue.write { db in
+            try wire.update(db)
+        }
     }
 
-    public static func deleteWire(wireID: ObjectID, dbQueue: DatabaseQueue) throws {
+    public static func deleteWire(wireID: ObjectID, dbQueue: DatabaseQueue) throws -> Bool {
+        try dbQueue.write { db in
+            try Wire.deleteOne(db, id: wireID)
+        }
     }
 }

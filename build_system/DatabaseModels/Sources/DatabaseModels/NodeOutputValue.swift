@@ -25,15 +25,24 @@ public struct NodeOutputValue: Codable, Identifiable, FetchableRecord, Persistab
     }
 }
 
-extension NodeOutputValue {
+extension DatabaseLayer {
     // Select all NodeOutputValues associated with the given Node
     public static func selectAllNodeOutputValues(nodeID: ObjectID, dbQueue: DatabaseQueue) throws -> [NodeOutputValue] {
-        []
+        try dbQueue.read { db in
+            try NodeOutputValue.filter(NodeOutputValue.Columns.nodeID == nodeID).fetchAll(db)
+        }
     }
 
-    public static func insertOrReplaceNodeOutputValue(_ node: NodeOutputValue, dbQueue: DatabaseQueue) throws {
+    public static func insertOrReplaceNodeOutputValue(_ nodeOutputValue: NodeOutputValue, dbQueue: DatabaseQueue) throws {
+        try dbQueue.write { db in
+            var mutableNodeOutputValue = nodeOutputValue
+            try mutableNodeOutputValue.save(db)
+        }
     }
 
-    public static func deleteNodeOutputValue(nodeOutputValueID: ObjectID, dbQueue: DatabaseQueue) throws {
+    public static func deleteNodeOutputValue(nodeOutputValueID: ObjectID, dbQueue: DatabaseQueue) throws -> Bool {
+        try dbQueue.write { db in
+            try NodeOutputValue.deleteOne(db, id: nodeOutputValueID)
+        }
     }
 }

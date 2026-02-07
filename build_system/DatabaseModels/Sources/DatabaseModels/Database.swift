@@ -6,9 +6,8 @@
 //
 
 import GRDB
-import DatabaseModels
 
-final class DatabaseLayer {
+public final class DatabaseLayer {
     let dbQueue: DatabaseQueue
 
     enum DatabaseError: Error {
@@ -18,7 +17,7 @@ final class DatabaseLayer {
         case dataObjectNotFound
     }
 
-    init(filePath: String) throws {
+    public init(filePath: String) throws {
         dbQueue = try DatabaseQueue(path: filePath)
 
         try Node.createTable(dbQueue: dbQueue)

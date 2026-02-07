@@ -26,25 +26,40 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
     }
 }
 
-extension Database {
-    public static func selectAllNodes(dbQueue: DatabaseQueue) throws -> [Node] {
-        []
+extension DatabaseLayer {
+    public func selectAllNodes() throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.fetchAll(db)
+        }
     }
 
-    public static func selectNodes(named name: String, dbQueue: DatabaseQueue) throws -> [Node] {
-        []
+    public func selectNodes(named name: String) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.filter(Node.Columns.name == name).fetchAll(db)
+        }
     }
 
-    public static func selectNodes(kind: UInt, dbQueue: DatabaseQueue) throws -> [Node] {
-        []
+    public func selectNodes(kind: UInt) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.filter(Node.Columns.kind == kind).fetchAll(db)
+        }
     }
 
-    public static func insertNode(_ node: Node, dbQueue: DatabaseQueue) throws {
+    public func insertNode(_ node: Node) throws {
+        try dbQueue.write { db in
+            try node.insert(db)
+        }
     }
 
-    public static func updateNode(_ node: Node, dbQueue: DatabaseQueue) throws {
+    public func updateNode(_ node: Node) throws {
+        try dbQueue.write { db in
+            try node.update(db)
+        }
     }
 
-    public static func deleteNode(nodeID: ObjectID, dbQueue: DatabaseQueue) throws {
+    public func deleteNode(nodeID: ObjectID) throws -> Bool {
+        try dbQueue.write { db in
+            try Node.deleteOne(db, id: nodeID)
+        }
     }
 }

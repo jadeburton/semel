@@ -18,6 +18,20 @@ public struct DataObject: Codable, Identifiable, FetchableRecord, PersistableRec
     }
 }
 
+extension DatabaseLayer {
+    public func selectDataObject(hash: String) throws -> [DataObject] {
+        []
+    }
+
+    public func insertDataObject(_ dataObject: DataObject) throws {
+    }
+
+    public func deleteDataObject(dataObjectID: ObjectID) throws -> Bool {
+        false
+    }
+}
+
+
 public struct Sha256 {
     public static func hash(_ data: [UInt8]) -> String {
         let digest = SHA256.hash(data: Data(data))

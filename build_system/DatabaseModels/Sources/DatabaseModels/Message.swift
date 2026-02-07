@@ -21,23 +21,41 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
     }
 }
 
-extension Database {
+extension DatabaseLayer {
     // Select all Messages, ordered by priority (highest first) and then by ID (oldest first)
-    public static func selectAllMessages(dbQueue: DatabaseQueue) throws -> [Node] {
-        []
+    public func selectAllMessages() throws -> [Message] {
+        try dbQueue.read { db in
+            try Message
+                .order(Column("priority").desc, Column("id").asc)
+                .fetchAll(db)
+        }
     }
 
     // Select all Messages associated with the given Node, ordered by priority (highest first) and then by ID (oldest first)
-    public static func selectMessages(for nodeID: ObjectID, dbQueue: DatabaseQueue) throws -> [Message] {
-        []
+    public func selectMessages(for nodeID: ObjectID) throws -> [Message] {
+        try dbQueue.read { db in
+            try Message
+                .filter(Column("targetNodeID") == nodeID)
+                .order(Column("priority").desc, Column("id").asc)
+                .fetchAll(db)
+        }
     }
 
-    public static func insertMessage(_ message: Message, dbQueue: DatabaseQueue) throws {
+    public func insertMessage(_ message: Message) throws {
+        try dbQueue.write { db in
+            try message.insert(db)
+        }
     }
 
-    public static func updateMessage(_ message: Message, dbQueue: DatabaseQueue) throws {
+    public func updateMessage(_ message: Message) throws {
+        try dbQueue.write { db in
+            try message.update(db)
+        }
     }
 
-    public static func deleteMessage(messageID: ObjectID, dbQueue: DatabaseQueue) throws {
+    public func deleteMessage(messageID: ObjectID) throws -> Bool {
+        try dbQueue.write { db in
+            try Message.deleteOne(db, id: messageID)
+        }
     }
 }
