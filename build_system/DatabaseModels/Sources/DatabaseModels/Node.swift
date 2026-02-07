@@ -34,6 +34,11 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
 }
 
 extension DatabaseLayer {
+
+    // Returns all Nodes that have at least one Message targeting them, ordered by ID (oldest first)
+    public func selectAllNodesWithInputMessages() throws -> [Node] {
+    }
+
     public func selectAllNodes() throws -> [Node] {
         try dbQueue.read { db in
             try Node.fetchAll(db)
@@ -58,9 +63,10 @@ extension DatabaseLayer {
         }
     }
 
-    public func insertNode(_ node: Node) throws {
+    public func insertNode(_ node: Node) throws -> ObjectID {
         try dbQueue.write { db in
             try node.insert(db)
+            return db.lastInsertedRowID
         }
     }
 

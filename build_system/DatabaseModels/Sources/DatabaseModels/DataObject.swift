@@ -19,6 +19,12 @@ public struct DataObject: Codable, Identifiable, FetchableRecord, PersistableRec
 }
 
 extension DatabaseLayer {
+    public func selectAllDataObjects() throws -> [DataObject] {
+        try dbQueue.read { db in
+            try DataObject
+                .fetchAll(db)
+        }
+    }
     public func selectDataObject(hash: String) throws -> DataObject? {
         try dbQueue.read { db in
             try DataObject.filter(Column("hash") == hash).fetchOne(db)
@@ -44,6 +50,11 @@ extension DatabaseLayer {
     }
 }
 
+public extension DataObject {
+    func description() -> String {
+        "DataObject \(id ?? -1): hash=\(hash), content=\(content)"
+    }
+}
 
 public struct Sha256 {
     public static func hash(_ data: [UInt8]) -> String {

@@ -8,6 +8,14 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
     public var oneShotDataObjectID: ObjectID?
     public var priority: Int
 
+    public init(id: ObjectID? = nil, targetNodeID: ObjectID, targetPort: UInt8, oneShotDataObjectID: ObjectID?, priority: Int) {
+        self.id = id
+        self.targetNodeID = targetNodeID
+        self.targetPort = targetPort
+        self.oneShotDataObjectID = oneShotDataObjectID
+        self.priority = priority
+    }
+
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "Message", options: .ifNotExists) { t in
@@ -23,11 +31,11 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
 
 extension DatabaseLayer {
     // Select all Messages, ordered by priority (highest first) and then by ID (oldest first)
-    public func selectAllMessages() throws -> [Message] {
+    public func selectAllMessages(limit: Int) throws -> [Message] {
         try dbQueue.read { db in
             try Message
                 .order(Column("priority").desc, Column("id").asc)
-                .fetchAll(db)
+                .fetchAll(db) // TODO limit
         }
     }
 
@@ -57,5 +65,11 @@ extension DatabaseLayer {
         try dbQueue.write { db in
             try Message.deleteOne(db, id: messageID)
         }
+    }
+}
+
+public extension Message {
+    func description() -> String {
+        "Message \(id ?? -1): targetNodeID=\(targetNodeID), targetPort=\(targetPort), oneShotDataObjectID=\(oneShotDataObjectID?.description ?? "nil"), priority=\(priority)"
     }
 }

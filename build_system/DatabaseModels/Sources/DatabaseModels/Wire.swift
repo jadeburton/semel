@@ -15,6 +15,14 @@ public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var toNodeID: ObjectID
     public var toPort: UInt8
 
+    public init(id: ObjectID? = nil, fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) {
+        self.id = id
+        self.fromNodeID = fromNodeID
+        self.fromPort = fromPort
+        self.toNodeID = toNodeID
+        self.toPort = toPort
+    }
+
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "Wire", options: .ifNotExists) { t in
@@ -61,6 +69,15 @@ extension DatabaseLayer {
         try dbQueue.read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
+        }
+    }
+
+    public func selectWires(comingFromNodeID: ObjectID, fromPort: UInt8, goingToNodeID: ObjectID, toPort: UInt8) throws -> [Wire] {
+        try dbQueue.read { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                            Wire.Columns.fromPort == fromPort &&
+                            Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toPort == toPort).fetchAll(db)
         }
     }
 

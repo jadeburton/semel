@@ -11,7 +11,14 @@ public struct NodeOutputValue: Codable, Identifiable, FetchableRecord, Persistab
     public var id: ObjectID?
     public var nodeID: ObjectID
     public var port: UInt8
-    public var dataObjectID: ObjectID
+    public var dataObjectID: ObjectID?
+
+    public init(id: ObjectID? = nil, nodeID: ObjectID, port: UInt8, dataObjectID: ObjectID?) {
+        self.id = id
+        self.nodeID = nodeID
+        self.port = port
+        self.dataObjectID = dataObjectID
+    }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
@@ -19,7 +26,7 @@ public struct NodeOutputValue: Codable, Identifiable, FetchableRecord, Persistab
                 t.autoIncrementedPrimaryKey("id")
                 t.column("nodeID", .integer).notNull()
                 t.column("port", .integer).notNull()
-                t.column("dataObjectID", .integer).notNull()
+                t.column("dataObjectID", .integer) // nullable
             }
         }
     }
