@@ -36,7 +36,16 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
 extension DatabaseLayer {
 
     // Returns all Nodes that have at least one Message targeting them, ordered by ID (oldest first)
-    public func selectAllNodesWithInputMessages() throws -> [Node] {
+    public func selectAllNodesWithInputMessages(limit: Int) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node
+                .joining(required: Node.hasMany(Message.self,
+                                                using: ForeignKey(["targetNodeID"], to: ["id"])))
+                .group(Column("id"))
+                .order(Column("id").asc)
+                .limit(limit)
+                .fetchAll(db)
+        }
     }
 
     public func selectAllNodes() throws -> [Node] {

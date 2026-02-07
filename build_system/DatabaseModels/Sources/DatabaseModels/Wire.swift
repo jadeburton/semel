@@ -81,9 +81,10 @@ extension DatabaseLayer {
         }
     }
 
-    public func insertWire(_ wire: Wire) throws {
+    public func insertWire(_ wire: Wire) throws -> ObjectID {
         try dbQueue.write { db in
             try wire.insert(db)
+            return db.lastInsertedRowID
         }
     }
 

@@ -1,18 +1,28 @@
 import Foundation
 import GRDB
 
+public enum MessageKind: Int, Codable {
+    case wireConnected = 1
+    case wireDisconnected = 2
+    case valueMutated = 3
+    case event = 4
+    case error = 5
+}
+
 public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var id: ObjectID?
+    public var kind: MessageKind
     public var targetNodeID: ObjectID
-    public var targetPort: UInt8
-    public var oneShotDataObjectID: ObjectID?
+    public var wireID: ObjectID
+    public var dataObjectID: ObjectID?
     public var priority: Int
 
-    public init(id: ObjectID? = nil, targetNodeID: ObjectID, targetPort: UInt8, oneShotDataObjectID: ObjectID?, priority: Int) {
+    public init(id: ObjectID? = nil, kind: MessageKind, targetNodeID: ObjectID, wireID: ObjectID, dataObjectID: ObjectID?, priority: Int) {
         self.id = id
+        self.kind = kind
         self.targetNodeID = targetNodeID
-        self.targetPort = targetPort
-        self.oneShotDataObjectID = oneShotDataObjectID
+        self.wireID = wireID
+        self.dataObjectID = dataObjectID
         self.priority = priority
     }
 
@@ -20,10 +30,11 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
         try dbQueue.write { db in
             try db.create(table: "Message", options: .ifNotExists) { t in
                 t.autoIncrementedPrimaryKey("id")
+                t.column("kind", .integer).notNull()
                 t.column("priority", .integer).indexed().notNull()
                 t.column("targetNodeID", .integer).notNull().indexed()
-                t.column("targetPort", .integer).notNull()
-                t.column("oneShotDataObjectID", .integer)
+                t.column("wireID", .integer).notNull()
+                t.column("dataObjectID", .integer)
             }
         }
     }
@@ -44,6 +55,16 @@ extension DatabaseLayer {
         try dbQueue.read { db in
             try Message
                 .filter(Column("targetNodeID") == nodeID)
+                .order(Column("priority").desc, Column("id").asc)
+                .fetchAll(db)
+        }
+    }
+
+    // Select all Messages associated with the given Node, ordered by priority (highest first) and then by ID (oldest first)
+    public func selectMessages(for nodeID: ObjectID, wireID: ObjectID) throws -> [Message] {
+        try dbQueue.read { db in
+            try Message
+                .filter(Column("targetNodeID") == nodeID && Column("wireID") == wireID)
                 .order(Column("priority").desc, Column("id").asc)
                 .fetchAll(db)
         }
@@ -70,6 +91,6 @@ extension DatabaseLayer {
 
 public extension Message {
     func description() -> String {
-        "Message \(id ?? -1): targetNodeID=\(targetNodeID), targetPort=\(targetPort), oneShotDataObjectID=\(oneShotDataObjectID?.description ?? "nil"), priority=\(priority)"
+        "Message \(id ?? -1): targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectID=\(dataObjectID?.description ?? "nil"), priority=\(priority)"
     }
 }
