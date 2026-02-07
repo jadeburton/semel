@@ -6,25 +6,7 @@
 //
 
 import GRDB
-import DatabaseModels
+@_exported import DatabaseModels
 
-final class DatabaseLayer {
-    let dbQueue: DatabaseQueue
-
-    enum DatabaseError: Error {
-        case nodeNotFound
-        case nodePortNotFound
-        case wireNotFound
-        case dataObjectNotFound
-    }
-
-    init(filePath: String) throws {
-        dbQueue = try DatabaseQueue(path: filePath)
-
-        try Node.createTable(dbQueue: dbQueue)
-        try Wire.createTable(dbQueue: dbQueue)
-        try Message.createTable(dbQueue: dbQueue)
-        try DataObject.createTable(dbQueue: dbQueue)
-        try NodeOutputValue.createTable(dbQueue: dbQueue)
-    }
-}
+// DatabaseLayer is now defined in DatabaseModels package
+// This file can contain additional extensions for business logic

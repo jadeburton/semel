@@ -10,7 +10,7 @@ import GRDB
 public final class DatabaseLayer {
     let dbQueue: DatabaseQueue
 
-    enum DatabaseError: Error {
+    public enum DatabaseError: Error {
         case nodeNotFound
         case nodePortNotFound
         case wireNotFound

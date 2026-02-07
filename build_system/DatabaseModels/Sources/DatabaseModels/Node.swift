@@ -14,6 +14,13 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var name: String?
     public var configuration: String? // JSON
 
+    public init(id: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.name = name
+        self.configuration = configuration
+    }
+
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "Node", options: .ifNotExists) { t in
@@ -30,6 +37,12 @@ extension DatabaseLayer {
     public func selectAllNodes() throws -> [Node] {
         try dbQueue.read { db in
             try Node.fetchAll(db)
+        }
+    }
+
+    public func selectNodeByID(_ nodeID: ObjectID) throws -> Node? {
+        try dbQueue.read { db in
+            try Node.fetchOne(db, id: nodeID)
         }
     }
 
@@ -51,6 +64,12 @@ extension DatabaseLayer {
         }
     }
 
+    public func insertOrReplaceNode(_ node: Node) throws {
+        try dbQueue.write { db in
+            try node.save(db)
+        }
+    }
+
     public func updateNode(_ node: Node) throws {
         try dbQueue.write { db in
             try node.update(db)
@@ -61,5 +80,11 @@ extension DatabaseLayer {
         try dbQueue.write { db in
             try Node.deleteOne(db, id: nodeID)
         }
+    }
+}
+
+public extension Node {
+    func description() -> String {
+        "Node \(id ?? -1): kind \(kind), configuration: \(String(describing: configuration))"
     }
 }

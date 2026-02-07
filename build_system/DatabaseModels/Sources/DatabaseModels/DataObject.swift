@@ -19,15 +19,28 @@ public struct DataObject: Codable, Identifiable, FetchableRecord, PersistableRec
 }
 
 extension DatabaseLayer {
-    public func selectDataObject(hash: String) throws -> [DataObject] {
-        []
+    public func selectDataObject(hash: String) throws -> DataObject? {
+        try dbQueue.read { db in
+            try DataObject.filter(Column("hash") == hash).fetchOne(db)
+        }
+    }
+    
+    public func selectDataObjectByID(_ id: ObjectID) throws -> DataObject? {
+        try dbQueue.read { db in
+            try DataObject.fetchOne(db, id: id)
+        }
     }
 
     public func insertDataObject(_ dataObject: DataObject) throws {
+        try dbQueue.write { db in
+            try dataObject.insert(db)
+        }
     }
 
     public func deleteDataObject(dataObjectID: ObjectID) throws -> Bool {
-        false
+        try dbQueue.write { db in
+            try DataObject.deleteOne(db, id: dataObjectID)
+        }
     }
 }
 

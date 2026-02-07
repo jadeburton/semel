@@ -27,20 +27,26 @@ public struct NodeOutputValue: Codable, Identifiable, FetchableRecord, Persistab
 
 extension DatabaseLayer {
     // Select all NodeOutputValues associated with the given Node
-    public static func selectAllNodeOutputValues(nodeID: ObjectID, dbQueue: DatabaseQueue) throws -> [NodeOutputValue] {
+    public func selectAllNodeOutputValues(nodeID: ObjectID) throws -> [NodeOutputValue] {
         try dbQueue.read { db in
             try NodeOutputValue.filter(NodeOutputValue.Columns.nodeID == nodeID).fetchAll(db)
         }
     }
 
-    public static func insertOrReplaceNodeOutputValue(_ nodeOutputValue: NodeOutputValue, dbQueue: DatabaseQueue) throws {
-        try dbQueue.write { db in
-            var mutableNodeOutputValue = nodeOutputValue
-            try mutableNodeOutputValue.save(db)
+    public func selectNodeOutputValue(nodeID: ObjectID, port: UInt8) throws -> NodeOutputValue? {
+        try dbQueue.read { db in
+            try NodeOutputValue.filter(NodeOutputValue.Columns.nodeID == nodeID &&
+                                       NodeOutputValue.Columns.port == port).fetchOne(db)
         }
     }
 
-    public static func deleteNodeOutputValue(nodeOutputValueID: ObjectID, dbQueue: DatabaseQueue) throws -> Bool {
+    public func insertOrReplaceNodeOutputValue(_ nodeOutputValue: NodeOutputValue) throws {
+        try dbQueue.write { db in
+            try nodeOutputValue.save(db)
+        }
+    }
+
+    public func deleteNodeOutputValue(nodeOutputValueID: ObjectID) throws -> Bool {
         try dbQueue.write { db in
             try NodeOutputValue.deleteOne(db, id: nodeOutputValueID)
         }
