@@ -91,6 +91,6 @@ extension DatabaseLayer {
 
 public extension Message {
     func description() -> String {
-        "Message \(id ?? -1): targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectID=\(dataObjectID?.description ?? "nil"), priority=\(priority)"
+        "Message \(id ?? -1): kind=\(kind) targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectID=\(dataObjectID?.description ?? "nil"), priority=\(priority)"
     }
 }

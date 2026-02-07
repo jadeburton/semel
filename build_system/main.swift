@@ -14,12 +14,12 @@ extension Database {
     }
 }
 
-let database = try! DatabaseLayer(filePath: "database26.sqlite")
+let database = try! DatabaseLayer(filePath: "database27.sqlite")
 
 let graph = try! GraphWorld(database: database)
 
 func main() throws {
-    try! graph.printAll()
+    _ = graph
 }
 
 enum NodeInputMessageKind {
@@ -43,7 +43,7 @@ enum NodeOutputMessage {
 }
 
 struct NodeKindDescriptor {
-    struct PortMetadata {
+    struct PortMetadata: Codable {
         let name: String
         let isOneShot: Bool
         let dataType: String?
@@ -52,14 +52,12 @@ struct NodeKindDescriptor {
     let kind: UInt
     let kindName: String
 
-    // When nil, these are dynamically determined.
     let inputs: [PortMetadata]
     let outputs: [PortMetadata]
 }
 
 protocol NodeType: AnyObject, Codable {
 
-    init(fromJSONString string: String) throws
     init() throws
 
     var descriptor: NodeKindDescriptor { get }
@@ -71,7 +69,7 @@ protocol NodeType: AnyObject, Codable {
 protocol World {
     var database: DatabaseLayer { get }
 
-    func readValues(nodeID: ObjectID, inputPort: UInt8) throws -> [DataObject?] 
+    func readValues(nodeID: ObjectID, inputPort: UInt8) throws -> [DataObject?]
     func assignValue(nodeID: ObjectID, outputPort: UInt8, dataObjectID: ObjectID?) throws
     func postEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectID: ObjectID?) throws
 
@@ -79,23 +77,23 @@ protocol World {
 
 struct NodeContext {
     let world: World
-    let nodeID: ObjectID
-    let name: String?
+    var nodeID: ObjectID? // nil when created in memory but not yet inserted
+    var name: String?
 
-    func saveNode() {
-        //try world.saveNode(nodeID: nodeID, node: world.loadNode(nodeID: nodeID) as NodeType)
+    func updateNode() {
+//        try world.saveNode(nodeID: nodeID, node: self, name: name)
     }
 
     func readValues(inputPort: UInt8) throws -> [DataObject?] {
-        try world.readValues(nodeID: nodeID, inputPort: inputPort)
+        try world.readValues(nodeID: nodeID!, inputPort: inputPort)
     }
 
     func assignValue(outputPort: UInt8, dataObjectID: ObjectID?) throws {
-        try world.assignValue(nodeID: nodeID, outputPort: outputPort, dataObjectID: dataObjectID)
+        try world.assignValue(nodeID: nodeID!, outputPort: outputPort, dataObjectID: dataObjectID)
     }
 
     func postEvent(outputPort: UInt8, dataObjectID: ObjectID?) throws {
-        try world.postEvent(nodeID: nodeID, outputPort: outputPort, dataObjectID: dataObjectID)
+        try world.postEvent(nodeID: nodeID!, outputPort: outputPort, dataObjectID: dataObjectID)
     }
 }
 
@@ -103,9 +101,25 @@ final class IngressNode: NodeType {
     static let kind: UInt = 0
 
     var nodeContext: NodeContext!
+    var dynamicOutputs: [NodeKindDescriptor.PortMetadata]
 
-    // TODO: save/load to configuration
-    var dynamicOutputs: [NodeKindDescriptor.PortMetadata] = [.init(name: "output", isOneShot: false, dataType: nil)]
+    enum CodingKeys: String, CodingKey {
+        case dynamicOutputs
+    }
+
+    required init() {
+        dynamicOutputs = [.init(name: "output", isOneShot: false, dataType: nil)]
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dynamicOutputs = try container.decode([NodeKindDescriptor.PortMetadata].self, forKey: .dynamicOutputs)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(dynamicOutputs, forKey: .dynamicOutputs)
+    }
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -131,8 +145,25 @@ final class EgressNode: NodeType {
     static let kind: UInt = 1
 
     var nodeContext: NodeContext!
+    var dynamicInputs: [NodeKindDescriptor.PortMetadata]
 
-    var dynamicInputs: [NodeKindDescriptor.PortMetadata] = [.init(name: "input", isOneShot: false, dataType: nil)]
+    enum CodingKeys: String, CodingKey {
+        case dynamicInputs
+    }
+
+    required init() {
+        dynamicInputs = [.init(name: "input", isOneShot: false, dataType: nil)]
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dynamicInputs = try container.decode([NodeKindDescriptor.PortMetadata].self, forKey: .dynamicInputs)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(dynamicInputs, forKey: .dynamicInputs)
+    }
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -153,29 +184,33 @@ final class EgressNode: NodeType {
 
 
 final class StaticFileNode: NodeType {
-/*    struct PortInputValues {
-        let input: [DataObject?]
 
-        init(inputs: [[NodeInputMessage]?]) {
-            self.input = inputs[0]!
-        }
-    }
-
-    struct PortOutputValues {
-        let output: DataObject?
-        init() {
-            
-        }
-    }
-*/
+    static let kind: UInt = 2
     var nodeContext: NodeContext!
 
-    let descriptor = NodeKindDescriptor(
-        kind: 2,
+    enum CodingKeys: CodingKey {}
+
+    required init() {
+    }
+
+    required init(from decoder: Decoder) throws {
+        // StaticFileNode has no stored properties to decode (nodeContext is set separately)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        // StaticFileNode has no stored properties to encode (nodeContext is not encoded)
+    }
+
+    static let descriptor = NodeKindDescriptor(
+        kind: kind,
         kindName: "StaticFileNode",
         inputs: [.init(name: "input", isOneShot: false, dataType: nil)],
         outputs: [.init(name: "output", isOneShot: false, dataType: nil)]
     )
+
+    var descriptor: NodeKindDescriptor {
+        Self.descriptor
+    }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
     // The input should not have any one-shot events, only persistent value changes
@@ -215,11 +250,11 @@ final class StaticFileNode: NodeType {
 }
 
 final class NodeFactory {
-    func makeNode<N: NodeType>(kind: UInt, encodedJSON: String?) -> N {
+    func makeNode(kind: UInt, encodedJSON: String?) throws -> NodeType {
         switch kind {
 
-        case IngressNode.kind: return IngressNode() as! N
-        case EgressNode.kind: return EgressNode() as! N
+        case IngressNode.kind: return try IngressNode.fromJSONString(encodedJSON)
+        case EgressNode.kind: return try EgressNode.fromJSONString(encodedJSON)
 
         default:
             fatalError("Unknown Node kind: \(kind)")
@@ -236,33 +271,30 @@ final class GraphWorld: World {
 
     init(database: DatabaseLayer, nodeFactory: NodeFactory = NodeFactory()) throws {
         self.database = database
+        self.nodeFactory = nodeFactory
         self.egressNode = nil
 
-        // NodeTypes' lifetimes usually transient; created and destroyed during Message processing. However, the Ingress and Egress Nodes are singletons that persist for the entire lifetime of the GraphWorld, since they represent the "edges" of the graph where it interfaces with the outside world.
-        //
-        // A NodeType's main function is to process Messages. They are deserialized from JSON when loading from the database and reserialized back when done. This preserves internal state of the node such as compiler settings.
-        // Creating a NodeType involves instantiating with the initializer that defaults all properties to their "starting" values. Then the object is serialized to the database for the first time.
+        ingressNode = try loadOrCreateSingletonNode(kind: IngressNode.kind, name: "Ingress")
+        egressNode = try loadOrCreateSingletonNode(kind: EgressNode.kind, name: "Egress")
 
-        ingressNode = try loadOrCreateSingletonNode(kind: 0)
-        egressNode = try loadOrCreateSingletonNode(kind: 1)
-
-        try connectWire(fromNodeID: self.ingressNode!.nodeContext.nodeID,
+        try connectWire(fromNodeID: self.ingressNode!.nodeContext.nodeID!,
                         fromPort: 0,
-                        toNodeID: self.egressNode!.nodeContext.nodeID,
+                        toNodeID: self.egressNode!.nodeContext.nodeID!,
                         toPort: 0)
 
         try ingressNode!.assignValue(outputPort: 0, dataObjectID: nil)
+        try! printAll()
 
         try processAllMessages()
     }
 
-    func loadOrCreateSingletonNode<N: NodeType>(kind: UInt) throws -> N {
-        if let existingNodeRaw = try database.selectNodes(kind: 1).first {
-            return try loadNode(nodeRaw: existingNodeRaw)
+    func loadOrCreateSingletonNode<N: NodeType>(kind: UInt, name: String) throws -> N {
+        if let existingNodeRaw = try database.selectNodes(kind: kind).first {
+            return try wrapRawNode(nodeRaw: existingNodeRaw) as! N
         } else {
-            let newObject = nodeFactory.makeNode(kind: kind, encodedJSON: nil) as N
-            _ = try insertNode(newObject)
-            return newObject
+            let node = try makeNode(kind: kind, name: name)
+            node.nodeContext.nodeID = try insertNode(node)
+            return node as! N
         }
     }
 
@@ -310,8 +342,8 @@ final class GraphWorld: World {
         }
     }
 
-    func wrapRawNode<N: NodeType>(nodeRaw: Node) throws -> N {
-        var node: N = nodeFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
+    func wrapRawNode(nodeRaw: Node) throws -> NodeType {
+        let node = try nodeFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
 
         node.nodeContext = NodeContext(world: self,
                                        nodeID: nodeRaw.id!,
@@ -320,18 +352,34 @@ final class GraphWorld: World {
         return node
     }
 
-    func loadNode<N: NodeType>(nodeID: ObjectID) throws -> N {
+    func makeNode(kind: UInt, name: String?) throws -> NodeType {
+        let newObject = try nodeFactory.makeNode(kind: kind, encodedJSON: nil)
+        newObject.nodeContext = NodeContext(world: self,
+                                            nodeID: nil,
+                                            name: name)
+        return newObject
+    }
+
+    func loadNode(nodeID: ObjectID) throws -> NodeType {
         try wrapRawNode(nodeRaw: nodeID.loadNode(from: database))
     }
 
-    func insertNode<N: NodeType>(_ node: N) throws -> N {
-        let nodeID = try database.insertNode(.init(kind: node.descriptor.kind, name: "TODO", configuration: node.asJSONString()))
-        return try loadNode(nodeID: nodeID)
+    func insertNode(_ node: NodeType) throws -> ObjectID {
+        try database.insertNode(.init(kind: node.descriptor.kind,
+                                      name: node.nodeContext.name,
+                                      configuration: node.asJSONString()))
     }
 
-//    func saveNode(nodeID: ObjectID, node: NodeType) throws {
-//        _ = try database.insertNode(.init(id: nodeID, kind: node.descriptor.kind, name: "TODO", configuration: node.asJSONString()))
-//    }
+    func updateNode(_ node: NodeType) throws {
+        try database.updateNode(.init(id: node.nodeContext.nodeID,
+                                      kind: node.descriptor.kind,
+                                      name: node.nodeContext.name,
+                                      configuration: node.asJSONString()))
+    }
+
+    func deleteNode(_ node: NodeType) throws -> Bool {
+        try database.deleteNode(nodeID: node.nodeContext.nodeID!)
+    }
 
     func connectWire(fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) throws {
         guard try database.selectWires(comingFromNodeID: fromNodeID,
@@ -388,14 +436,12 @@ final class GraphWorld: World {
     }
 
     func processOneNode(_ rawNode: Node) throws {
-        let node: NodeType = try wrapRawNode(nodeRaw: rawNode)
+        let node = try wrapRawNode(nodeRaw: rawNode)
         let allRawInputMessages = try database.selectMessages(for: rawNode.id!)
         let rawMessagesGroupedByWireID: Dictionary<ObjectID, [Message]> = Dictionary(grouping: allRawInputMessages, by: { $0.wireID })
 
         // TODO: group these for execute()
         var inputMessages = [[NodeInputMessage]?]()
-
-//        var wiresOnAllInputs = [Wire]()
 
         let wiresOnAllInputs = try database.selectWires(goingToNodeID: rawNode.id!)
         let wiresGroupedByInputPort: Dictionary<UInt8, [Wire]> = Dictionary(grouping: wiresOnAllInputs, by: { $0.toPort })
@@ -411,10 +457,19 @@ final class GraphWorld: World {
 
                     let inputMessage: NodeInputMessage
 
+                    var dataObject: DataObject? = nil
+
+                    let sourceNodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)
+
+                    if let sourceNodeOutputValue {
+                        if let dataObjectID = sourceNodeOutputValue.dataObjectID {
+                            dataObject = try database.selectDataObjectByID(dataObjectID)
+                        }
+                    }
+
                     switch message.kind {
 
                     case .wireConnected:
-                        let dataObject = try database.selectDataObjectByID(try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)!.dataObjectID!)
                         inputMessage = .init(originNodeID: message.targetNodeID,
                                              originOutputPort: wire.toPort,
                                              kind: .wireConnected(currentValue: dataObject))
@@ -423,10 +478,9 @@ final class GraphWorld: World {
                                              originOutputPort: wire.toPort,
                                              kind: .wireDisconnected)
                     case .valueMutated:
-                   //     let dataObject = try database.selectDataObjectByID(try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)!.dataObjectID!)
                         inputMessage = .init(originNodeID: message.targetNodeID,
                                              originOutputPort: wire.toPort,
-                                             kind: .valueMutated(newValue: /*dataObject*/nil, oldValue: nil))
+                                             kind: .valueMutated(newValue: dataObject, oldValue: nil))
                     case .event:
                         inputMessage = .init(originNodeID: message.targetNodeID,
                                              originOutputPort: wire.toPort,
@@ -457,7 +511,7 @@ final class GraphWorld: World {
         var outputIndex = 0
         for message in messages {
 
-            let wiresOnThisOutput: [Wire] = try database.selectWires(comingFromNodeID: node.nodeContext.nodeID,
+            let wiresOnThisOutput: [Wire] = try database.selectWires(comingFromNodeID: node.nodeContext.nodeID!,
                                                                      fromPort: UInt8(outputIndex))
 
            // let outputDescriptor = node.descriptor.outputs[outputIndex]
@@ -467,7 +521,7 @@ final class GraphWorld: World {
 
                 case .persistentValue(let value):
                     for wire in wiresOnThisOutput {
-                        try database.insertOrReplaceNodeOutputValue(.init(nodeID: node.nodeContext.nodeID, port: UInt8(outputIndex), dataObjectID: value?.id))
+                        try database.insertOrReplaceNodeOutputValue(.init(nodeID: node.nodeContext.nodeID!, port: UInt8(outputIndex), dataObjectID: value?.id))
                         
                         let rawMessage = Message(kind: .valueMutated,
                                                  targetNodeID: wire.toNodeID,
@@ -512,11 +566,11 @@ final class GraphWorld: World {
 }
 
 extension NodeType {
-    init(fromJSONString string: String) throws {
-        self = try Self.fromJSONString(string)
-    }
+    static func fromJSONString(_ string: String?) throws -> Self {
+        guard let string else {
+            return try .init() // default initializer gives "starting" values to all properties
+        }
 
-    static func fromJSONString(_ string: String) throws -> Self {
         let decoder = JSONDecoder()
         let data = string.data(using: .utf8)!
         return try decoder.decode(Self.self, from: data)
