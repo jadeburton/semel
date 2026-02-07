@@ -5,17 +5,17 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let nodeID = Column(CodingKeys.nodeID)
         public static let port = Column(CodingKeys.port)
-        public static let dataObjectID = Column(CodingKeys.dataObjectID)
+        public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
     }
 
     public var nodeID: ObjectID
     public var port: UInt8
-    public var dataObjectID: ObjectID?
+    public var dataObjectHash: DataObjectHash?
 
-    public init(nodeID: ObjectID, port: UInt8, dataObjectID: ObjectID?) {
+    public init(nodeID: ObjectID, port: UInt8, dataObjectHash: DataObjectHash?) {
         self.nodeID = nodeID
         self.port = port
-        self.dataObjectID = dataObjectID
+        self.dataObjectHash = dataObjectHash
     }
 
     // NodeOutputValue uses a natural key instead of the usual "id" surrogate key.
@@ -24,7 +24,7 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
             try db.create(table: "NodeOutputValue", options: .ifNotExists) { t in
                 t.column("nodeID", .integer).notNull()
                 t.column("port", .integer).notNull()
-                t.column("dataObjectID", .integer) // nullable
+                t.column("dataObjectHash", .text) // nullable
                 t.primaryKey(["nodeID", "port"])
             }
         }
@@ -69,6 +69,6 @@ extension DatabaseLayer {
 
 public extension NodeOutputValue {
     func description() -> String {
-        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectID=\(String(describing: dataObjectID))"
+        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectHash=\(String(describing: dataObjectHash))"
     }
 }

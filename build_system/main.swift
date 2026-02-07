@@ -14,7 +14,7 @@ extension Database {
     }
 }
 
-let database = try! DatabaseLayer(filePath: "database29.sqlite")
+let database = try! DatabaseLayer(filePath: "database31.sqlite")
 
 let graph = try! GraphWorld(database: database)
 
@@ -66,32 +66,33 @@ struct NodeKindDescriptor {
     let outputs: [Port]
 }
 
-typealias DataToken = ObjectID
+typealias DataToken = DataObjectHash
 
 extension [UInt8] {
     func intern() -> DataToken {
         let hash = Sha256.hash(self)
-        if let existingDataObjectID = try! DatabaseLayer.shared.selectDataObjectID(hash: hash) {
-            return existingDataObjectID
+        if let _ = try! DatabaseLayer.shared.selectDataObject(hash: hash) {
+            return hash
         } else {
-            return try! DatabaseLayer.shared.insertDataObject(DataObject(hash: hash, content: self))
+            try! DatabaseLayer.shared.insertDataObject(DataObject(hash: hash, content: self))
+            return hash
         }
     }
 }
 
 extension DataToken {
     func resolve() -> [UInt8]? {
-        (try? DatabaseLayer.shared.selectDataObjectByID(self))?.content
+        (try? DatabaseLayer.shared.selectDataObject(hash: self))?.content
     }
 }
 
 extension NodeType {
     func assignValue(outputPort: NodeKindDescriptor.Port, value: DataToken?) throws {
-        try nodeContext.assignValue(outputPort: outputPort.index, dataObjectID: value)
+        try nodeContext.assignValue(outputPort: outputPort.index, dataObjectHash: value)
     }
 
     func postEvent(outputPort: NodeKindDescriptor.Port, eventData: DataToken?) throws {
-        try nodeContext.postEvent(outputPort: outputPort.index, dataObjectID: eventData)
+        try nodeContext.postEvent(outputPort: outputPort.index, dataObjectHash: eventData)
     }
 }
 
@@ -109,8 +110,8 @@ protocol World {
     var database: DatabaseLayer { get }
 
     func readValues(nodeID: ObjectID, inputPort: UInt8) throws -> [DataObject?]
-    func assignValue(nodeID: ObjectID, outputPort: UInt8, dataObjectID: ObjectID?) throws
-    func postEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectID: ObjectID?) throws
+    func assignValue(nodeID: ObjectID, outputPort: UInt8, dataObjectHash: DataObjectHash?) throws
+    func postEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectHash: DataObjectHash?) throws
 
 }
 
@@ -127,12 +128,12 @@ struct NodeContext {
         try world.readValues(nodeID: nodeID!, inputPort: inputPort)
     }
 
-    func assignValue(outputPort: UInt8, dataObjectID: ObjectID?) throws {
-        try world.assignValue(nodeID: nodeID!, outputPort: outputPort, dataObjectID: dataObjectID)
+    func assignValue(outputPort: UInt8, dataObjectHash: DataObjectHash?) throws {
+        try world.assignValue(nodeID: nodeID!, outputPort: outputPort, dataObjectHash: dataObjectHash)
     }
 
-    func postEvent(outputPort: UInt8, dataObjectID: ObjectID?) throws {
-        try world.postEvent(nodeID: nodeID!, outputPort: outputPort, dataObjectID: dataObjectID)
+    func postEvent(outputPort: UInt8, dataObjectHash: DataObjectHash?) throws {
+        try world.postEvent(nodeID: nodeID!, outputPort: outputPort, dataObjectHash: dataObjectHash)
     }
 }
 
@@ -313,7 +314,7 @@ extension DatabaseLayer {
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
         let wireID = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
-        try database.insertMessage(.init(kind: .wireConnected, targetNodeID: toNodeID, wireID: wireID, dataObjectID: nil, priority: 0))
+        try database.insertMessage(.init(kind: .wireConnected, targetNodeID: toNodeID, wireID: wireID, dataObjectHash: nil, priority: 0))
     }
 }
 
@@ -380,37 +381,37 @@ final class GraphWorld: World {
 
             let nodeOutputValue = try database.selectNodeOutputValue(nodeID: fromNodeID, port: fromPort)
 
-            if let dataObjectID = nodeOutputValue?.dataObjectID {
-                return try database.selectDataObjectByID(dataObjectID)
+            if let dataObjectHash = nodeOutputValue?.dataObjectHash {
+                return try database.selectDataObject(hash: dataObjectHash)
             }
 
             return nil
         }
     }
 
-    func assignValue(nodeID: ObjectID, outputPort: UInt8, dataObjectID: ObjectID?) throws {
+    func assignValue(nodeID: ObjectID, outputPort: UInt8, dataObjectHash: DataObjectHash?) throws {
         let wires = try database.selectWires(comingFromNodeID: nodeID, fromPort: outputPort)
 
-        try database.insertOrReplaceNodeOutputValue(.init(nodeID: nodeID, port: outputPort, dataObjectID: dataObjectID))
+        try database.insertOrReplaceNodeOutputValue(.init(nodeID: nodeID, port: outputPort, dataObjectHash: dataObjectHash))
 
         for wire in wires {
             // TODO: prevent more than one queued if the type is valueMutated
             try database.insertMessage(.init(kind: .valueMutated,
                                              targetNodeID: wire.toNodeID,
                                              wireID: wire.id!,
-                                             dataObjectID: nil,
+                                             dataObjectHash: nil,
                                              priority: 0))
         }
     }
 
-    func postEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectID: ObjectID?) throws {
+    func postEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectHash: DataObjectHash?) throws {
         let wires = try database.selectWires(comingFromNodeID: nodeID, fromPort: outputPort)
 
         for wire in wires {
             try database.insertMessage(.init(kind: .event,
                                              targetNodeID: wire.toNodeID,
                                              wireID: wire.id!,
-                                             dataObjectID: dataObjectID,
+                                             dataObjectHash: dataObjectHash,
                                              priority: 0))
         }
     }
@@ -483,7 +484,7 @@ final class GraphWorld: World {
         }
 
         let result = try database.deleteWire(wireID: wire.id!)
-        try database.insertMessage(.init(kind: .wireDisconnected, targetNodeID: toNodeID, wireID: wire.id!, dataObjectID: nil, priority: 0))
+        try database.insertMessage(.init(kind: .wireDisconnected, targetNodeID: toNodeID, wireID: wire.id!, dataObjectHash: nil, priority: 0))
 
         // TODO: cascade deletion:
         // 1. if a Node has no inputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
@@ -576,8 +577,8 @@ final class GraphWorld: World {
                     let sourceNodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)
 
                     if let sourceNodeOutputValue {
-                        if let dataObjectID = sourceNodeOutputValue.dataObjectID {
-                            dataObject = try database.selectDataObjectByID(dataObjectID)
+                        if let dataObjectHash = sourceNodeOutputValue.dataObjectHash {
+                            dataObject = try database.selectDataObject(hash: dataObjectHash)
                         }
                     }
 
@@ -598,7 +599,7 @@ final class GraphWorld: World {
                     case .event:
                         inputMessage = .init(originNodeID: message.targetNodeID,
                                              originOutputPort: wire.toPort,
-                                             kind: .event(dataObject: try database.selectDataObjectByID(message.dataObjectID!)!))
+                                             kind: .event(dataObject: try database.selectDataObject(hash: message.dataObjectHash!)!))
                     case .error:
                         inputMessage = .init(originNodeID: message.targetNodeID,
                                              originOutputPort: wire.toPort,
@@ -634,12 +635,12 @@ final class GraphWorld: World {
 
                 case .valueMutation(let value):
                     for wire in wiresOnThisOutput {
-                        try database.insertOrReplaceNodeOutputValue(.init(nodeID: node.nodeContext.nodeID!, port: port.index, dataObjectID: value?.id))
+                        try database.insertOrReplaceNodeOutputValue(.init(nodeID: node.nodeContext.nodeID!, port: port.index, dataObjectHash: value?.hash))
 
                         let rawMessage = Message(kind: .valueMutated,
                                                  targetNodeID: wire.toNodeID,
                                                  wireID: wire.id!,
-                                                 dataObjectID: nil,
+                                                 dataObjectHash: nil,
                                                  priority: 0)
                         try database.insertMessage(rawMessage)
                     }
@@ -649,7 +650,7 @@ final class GraphWorld: World {
                         let rawMessage = Message(kind: .event,
                                                  targetNodeID: wire.toNodeID,
                                                  wireID: wire.id!,
-                                                 dataObjectID: dataObject.id,
+                                                 dataObjectHash: dataObject.hash,
                                                  priority: 0)
                         try database.insertMessage(rawMessage)
                     }
@@ -659,7 +660,7 @@ final class GraphWorld: World {
                         let rawMessage = Message(kind: .error,
                                                  targetNodeID: wire.toNodeID,
                                                  wireID: wire.id!,
-                                                 dataObjectID: nil,
+                                                 dataObjectHash: nil,
                                                  priority: 0)
                         try database.insertMessage(rawMessage)
                     }

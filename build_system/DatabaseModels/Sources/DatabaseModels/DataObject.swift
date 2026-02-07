@@ -2,13 +2,11 @@ import Foundation
 import CryptoKit
 import GRDB
 
-public struct DataObject: Codable, Identifiable, FetchableRecord, PersistableRecord {
-    public var id: ObjectID?
+public struct DataObject: Codable, FetchableRecord, PersistableRecord {
     public var hash: String
     public var content: [UInt8]
 
-    public init(id: ObjectID? = nil, hash: String, content: [UInt8]) {
-        self.id = id
+    public init(hash: String, content: [UInt8]) {
         self.hash = hash
         self.content = content
     }
@@ -16,8 +14,7 @@ public struct DataObject: Codable, Identifiable, FetchableRecord, PersistableRec
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "DataObject", options: .ifNotExists) { t in
-                t.autoIncrementedPrimaryKey("id")
-                t.column("hash", .text).notNull().indexed().unique()
+                t.column("hash", .text).notNull().primaryKey()
                 t.column("content", .blob).notNull()
             }
         }
@@ -32,41 +29,28 @@ extension DatabaseLayer {
         }
     }
 
-    public func selectDataObjectID(hash: String) throws -> ObjectID? {
-        try dbQueue.read { db in
-            try Int64.fetchOne(db, sql: "SELECT id FROM DataObject WHERE hash = ? LIMIT 1", arguments: [hash])
-        }
-    }
-
     public func selectDataObject(hash: String) throws -> DataObject? {
         try dbQueue.read { db in
             try DataObject.filter(Column("hash") == hash).fetchOne(db)
         }
     }
 
-    public func selectDataObjectByID(_ id: ObjectID) throws -> DataObject? {
-        try dbQueue.read { db in
-            try DataObject.fetchOne(db, id: id)
-        }
-    }
-
-    public func insertDataObject(_ dataObject: DataObject) throws -> ObjectID {
+    public func insertDataObject(_ dataObject: DataObject) throws {
         try dbQueue.write { db in
             try dataObject.insert(db)
-            return db.lastInsertedRowID as ObjectID
         }
     }
 
-    public func deleteDataObject(dataObjectID: ObjectID) throws -> Bool {
+    public func deleteDataObject(hash: String) throws -> Bool {
         try dbQueue.write { db in
-            try DataObject.deleteOne(db, id: dataObjectID)
+            try DataObject.filter(Column("hash") == hash).deleteAll(db) > 0
         }
     }
 }
 
 public extension DataObject {
     func description() -> String {
-        "DataObject \(id ?? -1): hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.asHex())"
+        "DataObject hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.prefix(16).asHex())\(content.count > 16 ? "..." : "")"
     }
 }
 
@@ -78,6 +62,8 @@ extension Sequence<UInt8> {
 
 public struct Sha256 {
     public static func hash(_ data: [UInt8]) -> String {
-        SHA256.hash(data: Data(data)).asHex()
+        let hash = [UInt8](SHA256.hash(data: Data(data)))
+        let final = (hash.count < data.count) ? hash : data
+        return final.asHex()
     }
 }

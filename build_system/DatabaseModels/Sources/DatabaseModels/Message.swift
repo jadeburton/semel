@@ -14,15 +14,15 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
     public var kind: MessageKind
     public var targetNodeID: ObjectID
     public var wireID: ObjectID
-    public var dataObjectID: ObjectID?
+    public var dataObjectHash: DataObjectHash?
     public var priority: Int
 
-    public init(id: ObjectID? = nil, kind: MessageKind, targetNodeID: ObjectID, wireID: ObjectID, dataObjectID: ObjectID?, priority: Int) {
+    public init(id: ObjectID? = nil, kind: MessageKind, targetNodeID: ObjectID, wireID: ObjectID, dataObjectHash: DataObjectHash?, priority: Int) {
         self.id = id
         self.kind = kind
         self.targetNodeID = targetNodeID
         self.wireID = wireID
-        self.dataObjectID = dataObjectID
+        self.dataObjectHash = dataObjectHash
         self.priority = priority
     }
 
@@ -34,7 +34,7 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
                 t.column("priority", .integer).indexed().notNull()
                 t.column("targetNodeID", .integer).notNull().indexed()
                 t.column("wireID", .integer).notNull()
-                t.column("dataObjectID", .integer)
+                t.column("dataObjectHash", .text)
             }
         }
     }
@@ -91,6 +91,6 @@ extension DatabaseLayer {
 
 public extension Message {
     func description() -> String {
-        "Message \(id ?? -1): kind=\(kind) targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectID=\(dataObjectID?.description ?? "nil"), priority=\(priority)"
+        "Message \(id ?? -1): kind=\(kind) targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectHash=\(dataObjectHash ?? "nil"), priority=\(priority)"
     }
 }
