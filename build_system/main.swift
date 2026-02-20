@@ -14,7 +14,7 @@ extension Database {
     }
 }
 
-let database = try! DatabaseLayer(filePath: "database31.sqlite")
+let database = try! DatabaseLayer(filePath: "database33.sqlite")
 
 let graph = try! GraphWorld(database: database)
 
@@ -337,15 +337,15 @@ final class GraphWorld: World {
                         toNode: self.egressNode!,
                         toPort: 0)
 */
-      //  let staticFileNode = try makeNode(kind: StaticFileNode.kind, name: "StaticFile") as! StaticFileNode
-      //  staticFileNode.nodeContext.nodeID = try insertNode(staticFileNode)
+//        let staticFileNode = try makeNode(kind: StaticFileNode.kind, name: "StaticFile") as! StaticFileNode
+//        staticFileNode.nodeContext.nodeID = try insertNode(staticFileNode)
 /*
         _ = try deleteWire(fromNode: self.ingressNode!,
                            fromPort: 0,
                            toNode: self.egressNode!,
                            toPort: 0)
 */
-        /*try connectWire(fromNode: ingressNode,
+ /*       try connectWire(fromNode: ingressNode,
                         fromPort: ingressNode.dynamicOutputs.first!,
                         toNode: staticFileNode,
                         toPort: StaticFileNode.inputPort)
@@ -367,7 +367,7 @@ final class GraphWorld: World {
             return try wrapRawNode(nodeRaw: existingNodeRaw) as! N
         } else {
             let node = try makeNode(kind: kind, name: name)
-            node.nodeContext.nodeID = try insertNode(node)
+            node.nodeContext.nodeID = try saveNode(node)
             return node as! N
         }
     }
@@ -418,37 +418,28 @@ final class GraphWorld: World {
 
     func wrapRawNode(nodeRaw: Node) throws -> NodeType {
         let node = try nodeFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
-
-        node.nodeContext = NodeContext(world: self,
-                                       nodeID: nodeRaw.id!,
-                                       name: nodeRaw.name)
-
+        node.nodeContext = .init(world: self, nodeID: nodeRaw.id!, name: nodeRaw.name)
         return node
     }
 
     func makeNode(kind: UInt, name: String?) throws -> NodeType {
         let newObject = try nodeFactory.makeNode(kind: kind, encodedJSON: nil)
-        newObject.nodeContext = NodeContext(world: self,
-                                            nodeID: nil,
-                                            name: name)
+        newObject.nodeContext = .init(world: self, nodeID: nil, name: name)
         return newObject
     }
 
-    func loadNode(nodeID: ObjectID) throws -> NodeType {
-        try wrapRawNode(nodeRaw: nodeID.loadNode(from: database))
-    }
-
-    func insertNode(_ node: NodeType) throws -> ObjectID {
-        try database.insertNode(.init(kind: node.descriptor.kind,
-                                      name: node.nodeContext.name,
-                                      configuration: node.asJSONString()))
-    }
-
-    func updateNode(_ node: NodeType) throws {
-        try database.updateNode(.init(id: node.nodeContext.nodeID,
-                                      kind: node.descriptor.kind,
-                                      name: node.nodeContext.name,
-                                      configuration: node.asJSONString()))
+    func saveNode(_ node: NodeType) throws -> ObjectID {
+        if let nodeID = node.nodeContext.nodeID {
+            try database.updateNode(.init(id: nodeID,
+                                          kind: node.descriptor.kind,
+                                          name: node.nodeContext.name,
+                                          configuration: node.asJSONString()))
+            return nodeID
+        } else {
+            return try database.insertNode(.init(kind: node.descriptor.kind,
+                                                 name: node.nodeContext.name,
+                                                 configuration: node.asJSONString()))
+        }
     }
 
     func deleteNode(_ node: NodeType) throws -> Bool {
@@ -467,8 +458,18 @@ final class GraphWorld: World {
                                  toPort: toPort.index)
     }
 
-    func deleteWire(fromNode: NodeType, fromPort: UInt8, toNode: NodeType, toPort: UInt8) throws -> Bool {
-        try deleteWire(fromNodeID: fromNode.nodeContext.nodeID!, fromPort: fromPort, toNodeID: toNode.nodeContext.nodeID!, toPort: toPort)
+    func deleteWire(fromNode: NodeType,
+                    fromPort: NodeKindDescriptor.Port,
+                    toNode: NodeType,
+                    toPort: NodeKindDescriptor.Port) throws -> Bool {
+
+        try deleteWire(fromNodeID: fromNode.nodeContext.nodeID!,
+                       fromPort: fromPort.index,
+                       toNodeID: toNode.nodeContext.nodeID!,
+                       toPort: toPort.index)
+    }
+
+    func deleteNodeAndConnectingWires(nodeID: ObjectID) {
     }
 
     func deleteWire(fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) throws -> Bool {
@@ -487,6 +488,27 @@ final class GraphWorld: World {
         try database.insertMessage(.init(kind: .wireDisconnected, targetNodeID: toNodeID, wireID: wire.id!, dataObjectHash: nil, priority: 0))
 
         // TODO: cascade deletion:
+        // - After deleting the Wire, check the origin Node. If it has no output wires at all, delete it and follow all wires going TO the origin Node. These wires should be deleted using this deleteWire method, e.g. recursive.
+
+        let numberOfInboundWiresToOrigin = try database.selectWires(goingToNodeID: fromNodeID).count
+        let numberOfOutboundWiresFromOrigin = try database.selectWires(comingFromNodeID: fromNodeID).count
+
+        if numberOfInboundWiresToOrigin == 0 || numberOfOutboundWiresFromOrigin == 0 {
+            // Delete origin node if it is not Egress/Ingress
+            deleteNodeAndConnectingWires(nodeID: fromNodeID)
+        }
+
+        let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: toNodeID).count
+        let numberOfOutboundWiresFromTarget = try database.selectWires(comingFromNodeID: toNodeID).count
+
+        if numberOfInboundWiresToTarget == 0 || numberOfOutboundWiresFromTarget == 0 {
+            // Delete target node if it is not Egress/Ingress
+            deleteNodeAndConnectingWires(nodeID: toNodeID)
+        }
+
+
+        // - Do the same for the target Node. Also follow the wires going TO the target Node.
+        // -
         // 1. if a Node has no inputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
         // 2. if a Node has no outputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
         // 3. If a Node is deleted, all outbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
@@ -561,7 +583,6 @@ final class GraphWorld: World {
         for inputPort in node.descriptor.inputs {
             inputMessages[inputPort] = nil // default to nil, meaning no messages on this port
 
-//        for inputIndex in 0 ..< node.descriptor.inputs.count {
             let wiresOnInputPort = wiresGroupedByInputPort[inputPort.index]!
 
             var inputMessagesForThisPort = [NodeInputMessage]()
@@ -570,43 +591,33 @@ final class GraphWorld: World {
 
                 for message in rawMessagesGroupedByWireID[wire.id!] ?? [] {
 
-                    let inputMessage: NodeInputMessage
-
-                    var dataObject: DataObject? = nil
-
                     let sourceNodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)
 
+                    var dataObject: DataObject? = nil
                     if let sourceNodeOutputValue {
                         if let dataObjectHash = sourceNodeOutputValue.dataObjectHash {
                             dataObject = try database.selectDataObject(hash: dataObjectHash)
                         }
                     }
 
-                    switch message.kind {
-
-                    case .wireConnected:
-                        inputMessage = .init(originNodeID: message.targetNodeID,
-                                             originOutputPort: wire.toPort,
-                                             kind: .wireConnected(currentValue: dataObject))
-                    case .wireDisconnected:
-                        inputMessage = .init(originNodeID: message.targetNodeID,
-                                             originOutputPort: wire.toPort,
-                                             kind: .wireDisconnected)
-                    case .valueMutated:
-                        inputMessage = .init(originNodeID: message.targetNodeID,
-                                             originOutputPort: wire.toPort,
-                                             kind: .valueMutated(newValue: dataObject, oldValue: nil))
-                    case .event:
-                        inputMessage = .init(originNodeID: message.targetNodeID,
-                                             originOutputPort: wire.toPort,
-                                             kind: .event(dataObject: try database.selectDataObject(hash: message.dataObjectHash!)!))
-                    case .error:
-                        inputMessage = .init(originNodeID: message.targetNodeID,
-                                             originOutputPort: wire.toPort,
-                                             kind: .error(description: "TODO"))
-
+                    func kind() throws -> NodeInputMessageKind {
+                        switch message.kind {
+                        case .wireConnected:
+                            return .wireConnected(currentValue: dataObject)
+                        case .wireDisconnected:
+                            return .wireDisconnected
+                        case .valueMutated:
+                            return .valueMutated(newValue: dataObject, oldValue: nil)
+                        case .event:
+                            return .event(dataObject: try database.selectDataObject(hash: message.dataObjectHash!)!)
+                        case .error:
+                            return .error(description: "TODO")
+                        }
                     }
-                    inputMessagesForThisPort.append(inputMessage)
+
+                    inputMessagesForThisPort.append(.init(originNodeID: message.targetNodeID,
+                                                          originOutputPort: wire.toPort,
+                                                          kind: try kind()))
                 }
 
                 inputMessages[inputPort] = inputMessagesForThisPort
@@ -628,8 +639,6 @@ final class GraphWorld: World {
             let wiresOnThisOutput = try database.selectWires(comingFromNodeID: node.nodeContext.nodeID!,
                                                                      fromPort: port.index)
 
-           // let outputDescriptor = node.descriptor.outputs[outputIndex]
-
             if let message {
                 switch message {
 
@@ -637,32 +646,29 @@ final class GraphWorld: World {
                     for wire in wiresOnThisOutput {
                         try database.insertOrReplaceNodeOutputValue(.init(nodeID: node.nodeContext.nodeID!, port: port.index, dataObjectHash: value?.hash))
 
-                        let rawMessage = Message(kind: .valueMutated,
-                                                 targetNodeID: wire.toNodeID,
-                                                 wireID: wire.id!,
-                                                 dataObjectHash: nil,
-                                                 priority: 0)
-                        try database.insertMessage(rawMessage)
+                        try database.insertMessage(.init(kind: .valueMutated,
+                                                         targetNodeID: wire.toNodeID,
+                                                         wireID: wire.id!,
+                                                         dataObjectHash: nil,
+                                                         priority: 0))
                     }
 
                 case .event(let dataObject):
                     for wire in wiresOnThisOutput {
-                        let rawMessage = Message(kind: .event,
-                                                 targetNodeID: wire.toNodeID,
-                                                 wireID: wire.id!,
-                                                 dataObjectHash: dataObject.hash,
-                                                 priority: 0)
-                        try database.insertMessage(rawMessage)
+                        try database.insertMessage(.init(kind: .event,
+                                                         targetNodeID: wire.toNodeID,
+                                                         wireID: wire.id!,
+                                                         dataObjectHash: dataObject.hash,
+                                                         priority: 0))
                     }
 
                 case .error(let description):
                     for wire in wiresOnThisOutput {
-                        let rawMessage = Message(kind: .error,
-                                                 targetNodeID: wire.toNodeID,
-                                                 wireID: wire.id!,
-                                                 dataObjectHash: nil,
-                                                 priority: 0)
-                        try database.insertMessage(rawMessage)
+                        try database.insertMessage(.init(kind: .error,
+                                                         targetNodeID: wire.toNodeID,
+                                                         wireID: wire.id!,
+                                                         dataObjectHash: nil,
+                                                         priority: 0))
                     }
                 }
             }
