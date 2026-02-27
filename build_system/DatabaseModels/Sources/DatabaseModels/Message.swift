@@ -5,8 +5,7 @@ public enum MessageKind: Int, Codable {
     case wireConnected = 1
     case wireDisconnected = 2
     case valueMutated = 3
-    case event = 4
-    case error = 5
+    case error = 4
 }
 
 public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord {

@@ -31,4 +31,31 @@ public final class DatabaseLayer {
         assert(Self.shared == nil)
         Self.shared = self
     }
+
+    public struct DatabaseTransaction {
+        private weak var dbQueue: DatabaseQueue? = nil
+
+        fileprivate init(dbQueue: DatabaseQueue) {
+            self.dbQueue = dbQueue
+        }
+
+        public func commit() throws {
+            try dbQueue!.inDatabase { db in
+                try db.commit()
+            }
+        }
+
+        public func rollback() throws {
+            try dbQueue!.inDatabase { db in
+                try db.rollback()
+            }
+        }
+    }
+
+    public func beginTransaction() throws -> DatabaseTransaction {
+        try dbQueue.inDatabase { db in
+            try db.beginTransaction()
+        }
+        return .init(dbQueue: dbQueue)
+    }
 }

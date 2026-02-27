@@ -5,12 +5,12 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
-
+/*
 final class Product: NodeType {
     static let kind: UInt = 2
 
     var nodeContext: NodeContext!
-    var dynamicInputs: [NodeKindDescriptor.Port]
+    var dynamicInputs: [NodeKindDescriptor.InputPort]
 
     enum CodingKeys: String, CodingKey {
         case dynamicInputs
@@ -18,7 +18,7 @@ final class Product: NodeType {
 
     required init() {
         dynamicInputs = [
-            .init(index: 0, name: "input", kind: .persistentValue(dataType: .binary))
+            .init(index: 0, name: "input", kind: .value(dataType: .binary), maximumConnections: 1, minimumConnections: 1)
         ]
     }
 
@@ -41,7 +41,7 @@ final class Product: NodeType {
         .init(kind: Self.kind, inputs: dynamicInputs, outputs: [])
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.Port: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.Port: NodeOutputMessage?] {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort: NodeProcessPortOutput?] {
         [:]
     }
-}
+}*/

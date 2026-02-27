@@ -8,10 +8,11 @@
 import Foundation
 
 final class FileSystem: NodeType {
+
     static let kind: UInt = 1
 
     var nodeContext: NodeContext!
-    var dynamicOutputs: [NodeKindDescriptor.Port]
+    var dynamicOutputs: [NodeKindDescriptor.OutputPort]
 
     enum CodingKeys: String, CodingKey {
         case dynamicOutputs
@@ -19,13 +20,13 @@ final class FileSystem: NodeType {
 
     required init() {
         dynamicOutputs = [
-            .init(index: 0, name: "output", kind: .persistentValue(dataType: .binary))
+            .init(index: 0, name: "output", kind: .value(dataType: .binary))
         ]
     }
 
     required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        dynamicOutputs = try container.decode([NodeKindDescriptor.Port].self, forKey: .dynamicOutputs)
+        dynamicOutputs = try container.decode([NodeKindDescriptor.OutputPort].self, forKey: .dynamicOutputs)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -45,7 +46,7 @@ final class FileSystem: NodeType {
     private func push(externalFilePath: String) {
         // locate the file in the external file system
         // read the file
-        let fileContent = try! Data(contentsOf: URL(fileURLWithPath: externalFilePath)).bytes
+        //let fileContent = try! Data(contentsOf: URL(fileURLWithPath: externalFilePath)).bytes
         // if it does not already exist, synchronously create a new Node representing this file in the internal file system
 
         // if it does already exist, write to its input port with the file content, which should cause it to emit mutation events if the content has changed
@@ -63,7 +64,7 @@ final class FileSystem: NodeType {
         // mutation events will be queued on other Nodes that are subscribed
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.Port: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.Port: NodeOutputMessage?] {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort : NodeProcessPortOutput?] {
         [:]
     }
 }

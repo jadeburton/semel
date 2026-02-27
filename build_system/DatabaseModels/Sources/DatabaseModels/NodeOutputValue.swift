@@ -5,16 +5,27 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let nodeID = Column(CodingKeys.nodeID)
         public static let port = Column(CodingKeys.port)
+        public static let kind = Column(CodingKeys.kind)
         public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
+    }
+
+    public enum ValueKind: UInt8, Codable {
+        case value = 1
+        case noValueComputingValue = 2
+        case noValueAwaitingDependency = 3
+        case noValueLazy = 4
+        case noValueError = 5
     }
 
     public var nodeID: ObjectID
     public var port: UInt8
+    public var kind: ValueKind
     public var dataObjectHash: DataObjectHash?
 
-    public init(nodeID: ObjectID, port: UInt8, dataObjectHash: DataObjectHash?) {
+    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHash: DataObjectHash?) {
         self.nodeID = nodeID
         self.port = port
+        self.kind = kind
         self.dataObjectHash = dataObjectHash
     }
 
@@ -24,6 +35,7 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
             try db.create(table: "NodeOutputValue", options: .ifNotExists) { t in
                 t.column("nodeID", .integer).notNull()
                 t.column("port", .integer).notNull()
+                t.column("kind", .integer).notNull()
                 t.column("dataObjectHash", .text) // nullable
                 t.primaryKey(["nodeID", "port"])
             }
