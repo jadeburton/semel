@@ -30,6 +30,7 @@ final class FileWildcardMatcher {
         self.input = input
     }
 
+    // Supports ? for single character, * for partial match, and ** for recursive match.
     func findAllMatching(pathOrWildcard: String) -> [FileWildcardEntry] {
         []
     }
@@ -76,10 +77,149 @@ enum UserCommand {
     case list(fileSystem: FileSystemForCommand, pathOrWildcard: String) // strato ls [-i] /Example/**/*.c
 }
 
+enum CommandParserError: Error, LocalizedError {
+    case emptyCommand
+    case unknownCommand(String)
+    case missingArgument(command: String, expected: String)
+    case tooManyArguments(command: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyCommand:
+            return "Empty command"
+        case .unknownCommand(let cmd):
+            return "Unknown command: \(cmd)"
+        case .missingArgument(let cmd, let expected):
+            return "\(cmd): missing argument (\(expected))"
+        case .tooManyArguments(let cmd):
+            return "\(cmd): too many arguments"
+        }
+    }
+}
+
 final class CommandParser {
-    func parse(command: String) -> UserCommand {
-        // TODO
-        .begin
+
+    /// Parse a command string into a UserCommand.
+    ///
+    /// Supported syntax (the leading "strato" prefix is optional):
+    /// ```
+    /// base <externalPath>
+    /// begin
+    /// commit
+    /// discard
+    /// push <pathOrWildcard>
+    /// rm <pathOrWildcard>
+    /// cp [-i|-o] <pathOrWildcard> <destinationPath>
+    /// ls [-i|-o] <pathOrWildcard>
+    /// ```
+    func parse(command: String) throws -> UserCommand {
+        var tokens = tokenize(command)
+
+        guard !tokens.isEmpty else {
+            throw CommandParserError.emptyCommand
+        }
+
+        // Strip optional "strato" prefix
+        if tokens.first == "strato" {
+            tokens.removeFirst()
+        }
+
+        guard let verb = tokens.first else {
+            throw CommandParserError.emptyCommand
+        }
+        tokens.removeFirst()
+
+        switch verb {
+
+        case "base":
+            guard let path = tokens.first else {
+                throw CommandParserError.missingArgument(command: "base", expected: "externalPath")
+            }
+            return .base(externalPath: path)
+
+        case "begin":
+            return .begin
+
+        case "commit":
+            return .commit
+
+        case "discard":
+            return .discard
+
+        case "push":
+            guard let path = tokens.first else {
+                throw CommandParserError.missingArgument(command: "push", expected: "pathOrWildcard")
+            }
+            return .push(externalPathOrWildcard: path)
+
+        case "rm", "remove":
+            guard let path = tokens.first else {
+                throw CommandParserError.missingArgument(command: "rm", expected: "pathOrWildcard")
+            }
+            return .remove(pathOrWildcard: path)
+
+        case "cp", "copy":
+            let (fileSystem, remaining) = parseFileSystemFlag(tokens: tokens)
+            guard remaining.count >= 2 else {
+                throw CommandParserError.missingArgument(command: "cp", expected: "pathOrWildcard destinationPath")
+            }
+            return .copy(fileSystem: fileSystem, pathOrWildcard: remaining[0], destinationPath: remaining[1])
+
+        case "ls", "list":
+            let (fileSystem, remaining) = parseFileSystemFlag(tokens: tokens)
+            guard let path = remaining.first else {
+                throw CommandParserError.missingArgument(command: "ls", expected: "pathOrWildcard")
+            }
+            return .list(fileSystem: fileSystem, pathOrWildcard: path)
+
+        default:
+            throw CommandParserError.unknownCommand(verb)
+        }
+    }
+
+    // MARK: - Private helpers
+
+    /// Split a command string into tokens, respecting double-quoted strings.
+    private func tokenize(_ command: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var inQuotes = false
+
+        for char in command {
+            if char == "\"" {
+                inQuotes.toggle()
+            } else if char.isWhitespace && !inQuotes {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(char)
+            }
+        }
+
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+
+        return tokens
+    }
+
+    /// Parse an optional `-i` (input) or `-o` (output) flag from the front of the token list.
+    /// Defaults to `.input` when no flag is present.
+    private func parseFileSystemFlag(tokens: [String]) -> (FileSystemForCommand, [String]) {
+        guard let first = tokens.first else {
+            return (.input, tokens)
+        }
+
+        switch first {
+        case "-i", "--input":
+            return (.input, Array(tokens.dropFirst()))
+        case "-o", "--output":
+            return (.output, Array(tokens.dropFirst()))
+        default:
+            return (.input, tokens)
+        }
     }
 }
 

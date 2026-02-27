@@ -7,15 +7,18 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
         public static let kind = Column(CodingKeys.kind)
         public static let name = Column(CodingKeys.name)
         public static let configuration = Column(CodingKeys.configuration)
+        public static let parentNodeID = Column(CodingKeys.parentNodeID)
     }
 
     public var id: ObjectID?
+    public var parentNodeID: ObjectID?
     public var kind: UInt
     public var name: String?
     public var configuration: String? // JSON
 
-    public init(id: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil) {
+    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil) {
         self.id = id
+        self.parentNodeID = parentNodeID
         self.kind = kind
         self.name = name
         self.configuration = configuration
@@ -25,6 +28,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
         try dbQueue.write { db in
             try db.create(table: "Node", options: .ifNotExists) { t in
                 t.autoIncrementedPrimaryKey("id")
+                t.column("parentNodeID", .integer)
                 t.column("kind", .integer).notNull()
                 t.column("name", .text)
                 t.column("configuration", .text)
@@ -60,15 +64,30 @@ extension DatabaseLayer {
         }
     }
 
-    public func selectNodes(named name: String) throws -> [Node] {
+    public func selectNodesInRoot(named name: String) throws -> [Node] {
         try dbQueue.read { db in
             try Node.filter(Node.Columns.name == name).fetchAll(db)
         }
     }
 
-    public func selectNodes(kind: UInt) throws -> [Node] {
+    public func selectNodesInRoot(kind: UInt, named name: String) throws -> [Node] {
         try dbQueue.read { db in
-            try Node.filter(Node.Columns.kind == kind).fetchAll(db)
+            try Node.filter(Node.Columns.kind == kind &&
+                            Node.Columns.name == name).fetchAll(db)
+        }
+    }
+
+    public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.filter(Node.Columns.name == name && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+        }
+    }
+
+    public func selectNodes(kind: UInt, named name: String, parentNodeID: ObjectID) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.filter(Node.Columns.kind == kind &&
+                            Node.Columns.name == name &&
+                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 

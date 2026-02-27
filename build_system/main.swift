@@ -29,6 +29,10 @@ let buildEngine = try! BuildEngine()
 
 func main() throws {
     _ = buildEngine
+
+    while let line = readLine() {
+        try buildEngine.commandInterpreter.handleCommand(line)
+    }
 }
 
 try main()
@@ -234,19 +238,23 @@ final class BuildEngine: BuildEngineType {
 
     let database: DatabaseLayer
     let nodeFactory: NodeFactory
+    var commandInterpreter: CommandInterpreter!
 
-    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database34.sqlite"),
+    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database35.sqlite"),
          nodeFactory: NodeFactory = NodeFactory()) throws {
 
         self.database = database
         self.nodeFactory = nodeFactory
 
+        // This is the first object that is created. It resides inside a plugin library that can be configured by the user.
+        // The CommandInterpreter is responsible for interpreting the commands that are sent to the system, e.g. from a CLI or a UI, and translating them into node creations, wire connections, value assignments, etc. It is also responsible for creating and managing the "main" Node that represents the main build pipeline.
+        commandInterpreter = try loadOrCreateSingletonNode(kind: CommandInterpreter.kind, name: "commandInterpretter")
+
         try processAllMessages()
     }
 
     func loadOrCreateSingletonNode<N: NodeType>(kind: UInt, name: String) throws -> N {
-        if let existingNodeRaw = try database.selectNodes(kind: kind).first {
-            // TODO! search by Name
+        if let existingNodeRaw = try database.selectNodesInRoot(kind: kind, named: name).first {
             return try wrapRawNode(nodeRaw: existingNodeRaw) as! N
         } else {
             let node = try makeNode(kind: kind, name: name)
