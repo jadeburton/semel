@@ -13,21 +13,18 @@ final class Folder: NodeType {
 
     var nodeContext: NodeContext!
 
-//    enum CodingKeys: String, CodingKey {
-//        case dynamicOutputs
-//    }
+    enum CodingKeys: CodingKey {
+    }
 
     required init() {
     }
 
     required init(from decoder: Decoder) throws {
-//        let container = try decoder.container(keyedBy: CodingKeys.self)
-//        dynamicOutputs = try container.decode([NodeKindDescriptor.OutputPort].self, forKey: .dynamicOutputs)
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
     func encode(to encoder: Encoder) throws {
-//        var container = encoder.container(keyedBy: CodingKeys.self)
-//        try container.encode(dynamicOutputs, forKey: .dynamicOutputs)
+        var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
     var descriptor: NodeKindDescriptor {
@@ -40,19 +37,16 @@ final class Folder: NodeType {
               ])
     }
 
-    // Returns a named child (without path support)
-    func child(named name: String) throws -> NodeType? {
-        try nodeContext.childNode(named: name)
-    }
-
-    // Returns a child at a path (e.g. "src/main.swift"), this IS recursive.
-    func child(path: String) -> NodeType? {
-        nil
-    }
-
-    func addChild(_ node: NodeType) throws {
-        node.nodeContext.parentNodeID = nodeContext.nodeID
-        try nodeContext.buildEngine.saveNode(node)
+    func addOrReplaceChild(content: DataObjectHash, name: String) throws {
+        if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
+            try existingChild.assignValue(outputPort: StaticFileNode.outputPort, value: .value(content))
+        } else {
+            // TODO: what if the type is not StaticFileNode
+            let staticFile = StaticFileNode()
+            staticFile.nodeContext = .init(processingCycle: nodeContext.processingCycle, parentNodeID: nodeContext.nodeID, name: name)
+            staticFile.nodeContext.nodeID = try nodeContext.processingCycle.saveNode(staticFile)
+            try staticFile.assignValue(outputPort: StaticFileNode.outputPort, value: .value(content))
+        }
     }
 
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort : NodeProcessPortOutput?] {

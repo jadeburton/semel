@@ -77,6 +77,12 @@ extension DatabaseLayer {
         }
     }
 
+    public func selectNodes(parentNodeID: ObjectID) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.filter(Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+        }
+    }
+
     public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
         try dbQueue.read { db in
             try Node.filter(Node.Columns.name == name && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)

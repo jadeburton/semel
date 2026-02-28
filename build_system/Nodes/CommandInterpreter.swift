@@ -235,7 +235,10 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
     }
 
     func allFiles(inDirectoryPath: String) -> [FileWildcardEntry] {
-        []
+        let start = folder.child(path: inDirectoryPath)! // TODO
+        return try! start.allChildren().map { node in
+            FileWildcardEntry(path: node.nodeContext.name!, kind: node is StaticFileNode ? .file : .folder)
+        }
     }
 }
 
@@ -490,13 +493,13 @@ final class CommandInterpreter: NodeType {
             handlePush(externalPathOrWildcard: externalPathOrWildcard)
 
         case .remove(let pathOrWildcard):
-            handleRemove(pathOrWildcard: pathOrWildcard)
+            try handleRemove(pathOrWildcard: pathOrWildcard)
 
         case .copy(let folder, let pathOrWildcard, let destinationPath):
-            handleCopy(folder: folder, pathOrWildcard: pathOrWildcard, destinationPath: destinationPath)
+            try handleCopy(folder: folder, pathOrWildcard: pathOrWildcard, destinationPath: destinationPath)
 
         case .list(let folder, let pathOrWildcard):
-            handleList(folder: folder, pathOrWildcard: pathOrWildcard)
+            try handleList(folder: folder, pathOrWildcard: pathOrWildcard)
 
         }
     }
@@ -516,7 +519,6 @@ final class CommandInterpreter: NodeType {
 
         baseDirectory = expandedPath
         outputMessage("Base directory set to \(expandedPath)")
-       //TODO nodeContext.save(self)
     }
 
     private func handleBegin() {
@@ -531,13 +533,17 @@ final class CommandInterpreter: NodeType {
         // Coming soon
     }
 
-    lazy var inputFileSystem: Folder = {
-        try! nodeContext.buildEngine.loadOrCreateSingletonNode(kind: Folder.kind, name: "inputFileSystem") as Folder
-    }()
+    var inputFileSystem: Folder {
+        get throws {
+            try nodeContext.processingCycle.rootNode.inputFileSystem
+        }
+    }
 
-    lazy var outputFileSystem: Folder = {
-        try! nodeContext.buildEngine.loadOrCreateSingletonNode(kind: Folder.kind, name: "outputFileSystem") as Folder
-    }()
+    var outputFileSystem: Folder { // TODO: this is inside the buildgraph node because it is a product of the graph
+        get throws {
+            try child(named: "outputFileSystem")
+        }
+    }
 
     func pushOne(_ entry: FileWildcardEntry, baseDirectory: String) {
         let relativePath = entry.path.relativeTo(baseDirectory)
@@ -549,14 +555,15 @@ final class CommandInterpreter: NodeType {
 
             // locate the file in the external file system
             // read the file
-            let fileContent = try! Data(contentsOf: URL(fileURLWithPath: entry.path)).bytes
+            let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: entry.path)))
 
             // if it does not already exist, synchronously create a new Node representing this file in the internal file system
 
             // if it does already exist, write to its input port with the file content, which should cause it to emit mutation events if the content has changed
             // creating a new Node will cause its parent folder to emit mutation events, and its parent, all the way to the root folder
             // mutation events will be queued on other Nodes that are subscribed
-//            inputFileSystem.addOrReplaceFile(path: relativePath, content: fileContent)
+            let filename = relativePath // TODO: the last bit
+            try! inputFileSystem.addOrReplaceChild(content: fileContent.intern(), name: filename)
 
             break
 
@@ -579,8 +586,8 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    private func handleRemove(pathOrWildcard: String) {
-        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: inputFileSystem))
+    private func handleRemove(pathOrWildcard: String) throws {
+        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try inputFileSystem))
 
         matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
             removeOne(entry)
@@ -599,7 +606,7 @@ final class CommandInterpreter: NodeType {
         // mutation events will be queued on other Nodes that are subscribed
     }
 
-    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String) {
+    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String) throws {
         func handle(folder: Folder) {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
@@ -610,9 +617,9 @@ final class CommandInterpreter: NodeType {
 
         switch folder {
         case .input:
-            handle(folder: inputFileSystem)
+            handle(folder: try inputFileSystem)
         case .output:
-            handle(folder: outputFileSystem)
+            handle(folder: try outputFileSystem)
         }
     }
 
@@ -630,8 +637,8 @@ final class CommandInterpreter: NodeType {
         }*/
     }
 
-    private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) {
-        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: inputFileSystem))
+    private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
+        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try inputFileSystem))
 
         matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
             outputMessage(entry.path)
