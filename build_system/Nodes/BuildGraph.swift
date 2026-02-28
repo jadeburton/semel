@@ -65,12 +65,8 @@ final class FormulaFinder: NodeType {
                                                                 maximumConnections: 1,
                                                                 minimumConnections: 1)
 
-    static let formulaeOutputPort = NodeKindDescriptor.OutputPort(index: 0,
-                                                                  name: "formulae",
-                                                                  kind: .value(dataType: .utf8Text))
-
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.fileListInputPort], outputs: [Self.formulaeOutputPort])
+        .init(kind: Self.kind, inputs: [Self.fileListInputPort], outputs: [])
     }
 
     func didAddFile(_ path: String) {

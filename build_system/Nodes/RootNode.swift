@@ -28,11 +28,6 @@ final class RootNode: NodeType {
                                                     fromPort: FolderNode.childrenOutputPort,
                                                     toNode: try formulaFinder,
                                                     toPort: FormulaFinder.fileListInputPort)
-
-        try nodeContext.processingCycle.connectWire(fromNode: try formulaFinder,
-                                                    fromPort: FormulaFinder.formulaeOutputPort,
-                                                    toNode: try formulaFinder,
-                                                    toPort: FormulaFinder.fileListInputPort)
     }
 
     func encode(to encoder: Encoder) throws {

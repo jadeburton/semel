@@ -130,11 +130,7 @@ extension DataToken {
 
 // MARK: Nodes
 
-protocol NodeType: AnyObject, Codable {
-
-    static var kind: UInt { get }
-
-    init() throws
+protocol NodeType: AnyObject, Codable, PolySerializable {
 
     var descriptor: NodeKindDescriptor { get }
     var nodeContext: NodeContext! { get set }
@@ -142,6 +138,9 @@ protocol NodeType: AnyObject, Codable {
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws
     func willSave() throws
     func didSave() throws
+}
+
+protocol MessageType: AnyObject, Codable, PolySerializable {
 }
 
 extension NodeType {
@@ -157,23 +156,6 @@ extension NodeType {
     }
 }
 
-extension NodeType {
-    static func fromJSONString(_ string: String?) throws -> Self {
-        guard let string else {
-            return try .init() // default initializer gives "starting" values to all properties
-        }
-
-        let decoder = JSONDecoder()
-        let data = string.data(using: .utf8)!
-        return try decoder.decode(Self.self, from: data)
-    }
-
-    func asJSONString() throws -> String {
-        let encoder = JSONEncoder()
-        let data = try encoder.encode(self)
-        return String(data: data, encoding: .utf8)!
-    }
-}
 
 extension ObjectID {
     func loadNode(from database: DatabaseLayer) throws -> Node {
@@ -302,13 +284,13 @@ extension DatabaseLayer {
 
 final class BuildEngine {
     let database: DatabaseLayer
-    let nodeFactory: NodeFactory
+    let polyFactory: PolyFactory
 
     init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database40.sqlite"),
-         nodeFactory: NodeFactory = NodeFactory()) throws {
+         polyFactory: PolyFactory = PolyFactory()) throws {
 
         self.database = database
-        self.nodeFactory = nodeFactory
+        self.polyFactory = polyFactory
 
         try processAllMessages()
     }
@@ -418,14 +400,14 @@ final class ProcessingCycle {
     }
 
     func wrapRawNodePoly(nodeRaw: Node) throws -> NodeType {
-        let node = try buildEngine.nodeFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
+        let node = try PolyFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
         node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name)
         loadedNodes[nodeRaw.id!] = node
         return node
     }
 
     func makeNode(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeType {
-        let newObject = try buildEngine.nodeFactory.makeNode(kind: kind, encodedJSON: nil)
+        let newObject = try PolyFactory.makeNode(kind: kind, encodedJSON: nil)
         newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
         return newObject
     }
@@ -490,6 +472,8 @@ final class ProcessingCycle {
                 inputMessages[inputPort] = inputMessagesForThisPort
             }
         }
+
+        print("processInputs: node \(node) -- \(inputMessages)")
 
         try node.processInputs(inputMessages)
 

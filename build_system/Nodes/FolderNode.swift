@@ -92,3 +92,39 @@ final class FolderNode: NodeType {
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
     }
 }
+
+
+
+
+final class FolderEvent: MessageType {
+
+    enum FolderEventKind: Codable {
+        case childAdded(nodeID: ObjectID, name: String)
+        case childDeleted(nodeID: ObjectID, name: String)
+        case childRenamed(nodeID: ObjectID, oldName: String, newName: String)
+        case childMoved(nodeID: ObjectID, oldPath: String, newPath: String)
+        case childContentChanged(nodeID: ObjectID, name: String)
+    }
+
+    static let kind: UInt = 100
+
+    var folderEventKind: FolderEventKind?
+
+    enum CodingKeys: CodingKey {
+        case folderEventKind
+    }
+
+    required init() {
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        folderEventKind = try container.decodeIfPresent(FolderEventKind.self, forKey: .folderEventKind)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(folderEventKind, forKey: .folderEventKind)
+    }
+}
+
