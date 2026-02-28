@@ -5,7 +5,6 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
-
 final class StaticFileNode: NodeType {
 
     static let kind: UInt = 3

@@ -12,7 +12,7 @@ final class NodeFactory {
         case CommandInterpreter.kind: return try CommandInterpreter.fromJSONString(encodedJSON)
         //case Product.kind: return try Product.fromJSONString(encodedJSON)
         case StaticFileNode.kind: return try StaticFileNode.fromJSONString(encodedJSON)
-        case FileSystem.kind: return try FileSystem.fromJSONString(encodedJSON)
+        case Folder.kind: return try Folder.fromJSONString(encodedJSON)
 
         default:
             fatalError("Unknown Node kind: \(kind)")

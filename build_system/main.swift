@@ -185,7 +185,7 @@ extension ObjectID {
     }
 }
 
-
+/*
 protocol BuildEngineType {
     var database: DatabaseLayer { get }
 
@@ -194,12 +194,20 @@ protocol BuildEngineType {
     func postMutationEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectHash: DataObjectHash) throws
     func loadOrCreateSingletonNode<N: NodeType>(kind: UInt, name: String) throws -> N
 
-}
+}*/
 
 struct NodeContext {
-    let buildEngine: BuildEngineType
+    let buildEngine: BuildEngine
     var nodeID: ObjectID? // nil when created in memory but not yet inserted
+    var parentNodeID: ObjectID?
     var name: String?
+
+    func childNode(named name: String) throws -> NodeType? {
+        if let nodeRaw = try buildEngine.database.selectNodes(named: name, parentNodeID: nodeID!).first { // TODO
+            return try buildEngine.wrapRawNode(nodeRaw: nodeRaw)
+        }
+        return nil
+    }
 
     func updateNode() {
 //        try buildEngine.saveNode(nodeID: nodeID, node: self, name: name)
@@ -234,7 +242,7 @@ extension DatabaseLayer {
     }
 }
 
-final class BuildEngine: BuildEngineType {
+final class BuildEngine {
 
     let database: DatabaseLayer
     let nodeFactory: NodeFactory
@@ -257,7 +265,7 @@ final class BuildEngine: BuildEngineType {
         if let existingNodeRaw = try database.selectNodesInRoot(kind: kind, named: name).first {
             return try wrapRawNode(nodeRaw: existingNodeRaw) as! N
         } else {
-            let node = try makeNode(kind: kind, name: name)
+            let node = try makeNode(kind: kind, name: name, parentNodeID: nil)
             node.nodeContext.nodeID = try saveNode(node)
             return node as! N
         }
@@ -346,25 +354,27 @@ final class BuildEngine: BuildEngineType {
 
     func wrapRawNode(nodeRaw: Node) throws -> NodeType {
         let node = try nodeFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
-        node.nodeContext = .init(buildEngine: self, nodeID: nodeRaw.id!, name: nodeRaw.name)
+        node.nodeContext = .init(buildEngine: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name)
         return node
     }
 
-    func makeNode(kind: UInt, name: String?) throws -> NodeType {
+    func makeNode(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeType {
         let newObject = try nodeFactory.makeNode(kind: kind, encodedJSON: nil)
-        newObject.nodeContext = .init(buildEngine: self, nodeID: nil, name: name)
+        newObject.nodeContext = .init(buildEngine: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
         return newObject
     }
 
     func saveNode(_ node: NodeType) throws -> ObjectID {
         if let nodeID = node.nodeContext.nodeID {
             try database.updateNode(.init(id: nodeID,
+                                          parentNodeID: node.nodeContext.parentNodeID,
                                           kind: node.descriptor.kind,
                                           name: node.nodeContext.name,
                                           configuration: node.asJSONString()))
             return nodeID
         } else {
-            return try database.insertNode(.init(kind: node.descriptor.kind,
+            return try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
+                                                 kind: node.descriptor.kind,
                                                  name: node.nodeContext.name,
                                                  configuration: node.asJSONString()))
         }

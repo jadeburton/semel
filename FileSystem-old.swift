@@ -17,29 +17,29 @@ final class FileSystem {
 
     func importAll(basePath: String) throws {
         // There is only one file system, but it may have many root directories that map to different locations outside
-//        let fileSystemID = try! database.insertOrGetExistingGraph(name: "fs", kind: .fileSystem, pluginCreator: nil)
+//        let folderID = try! database.insertOrGetExistingGraph(name: "fs", kind: .folder, pluginCreator: nil)
 
-        var fileSystemNodeID = try database.selectRootFolder(name: "input")?.id
+        var folderNodeID = try database.selectRootFolder(name: "input")?.id
 
-        if fileSystemNodeID == nil {
-            fileSystemNodeID = try database.insertNode(.init(content: .folder(name: "input", parentFolderID: nil/*, kind: .folder*/)))
+        if folderNodeID == nil {
+            folderNodeID = try database.insertNode(.init(content: .folder(name: "input", parentFolderID: nil/*, kind: .folder*/)))
         }
 
-        importAll(basePath: basePath, fileSystemNodeID: fileSystemNodeID!)
+        importAll(basePath: basePath, folderNodeID: folderNodeID!)
     }
 
-    private func importAll(basePath: String, fileSystemNodeID: ObjectID) {
+    private func importAll(basePath: String, folderNodeID: ObjectID) {
         // TODO: transactional
         recurseAllFilesBeneathDirectory(rootDirectoryPath: basePath,
                                         createRootFolder: { name in
 
-            let existing = try? database.selectFileInFolder(folderNodeID: fileSystemNodeID, name: name)
+            let existing = try? database.selectFileInFolder(folderNodeID: folderNodeID, name: name)
 
             if let existing {
                 return existing.id!
             }
 
-            return try! database.insertNode(.init(content: .folder(name: name, parentFolderID: fileSystemNodeID/*, kind: .folder*/)))
+            return try! database.insertNode(.init(content: .folder(name: name, parentFolderID: folderNodeID/*, kind: .folder*/)))
 
         }, createFolder: { name, insideFolderID in
 
