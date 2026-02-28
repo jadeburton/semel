@@ -23,6 +23,18 @@ final class RootNode: NodeType {
         let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
+    func didSave() throws {
+        try nodeContext.processingCycle.connectWire(fromNode: try inputFileSystem,
+                                                    fromPort: FolderNode.childrenOutputPort,
+                                                    toNode: try formulaFinder,
+                                                    toPort: FormulaFinder.fileListInputPort)
+
+        try nodeContext.processingCycle.connectWire(fromNode: try formulaFinder,
+                                                    fromPort: FormulaFinder.formulaeOutputPort,
+                                                    toNode: try formulaFinder,
+                                                    toPort: FormulaFinder.fileListInputPort)
+    }
+
     func encode(to encoder: Encoder) throws {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
@@ -33,9 +45,21 @@ final class RootNode: NodeType {
         }
     }
 
-    var inputFileSystem: Folder {
+    var inputFileSystem: FolderNode {
         get throws {
             try child(named: "inputFileSystem")
+        }
+    }
+
+    var formulaFinder: FormulaFinder {
+        get throws {
+            try child(named: "formulaFinder")
+        }
+    }
+
+    var buildGraph: BuildGraph {
+        get throws {
+            try child(named: "buildGraph")
         }
     }
 

@@ -28,6 +28,7 @@ import DatabaseModels
 let buildEngine = try! BuildEngine()
 
 func main() throws {
+    FileManager.default.changeCurrentDirectoryPath("/Users/jadeburton/Desktop/build_system/build_system")
     _ = buildEngine
 
     while let line = readLine() {
@@ -144,6 +145,15 @@ protocol NodeType: AnyObject, Codable {
     var nodeContext: NodeContext! { get set }
 
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort: NodeProcessPortOutput?]
+    func willSave() throws
+    func didSave() throws
+}
+
+extension NodeType {
+    func willSave() throws {
+    }
+    func didSave() throws {
+    }
 }
 
 extension NodeType {
@@ -198,6 +208,16 @@ struct NodeContext {
 }
 
 extension NodeType {
+    func parent<N: NodeType>() throws -> N? {
+        if let parentNodeID = nodeContext.parentNodeID {
+            let rawNode = try parentNodeID.loadNode(from: nodeContext.processingCycle.database)
+            let node = try nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
+            return node as? N
+        } else {
+            return nil
+        }
+    }
+
     func childNode<N: NodeType>(named name: String) throws -> N? {
         if let nodeRaw = try nodeContext.processingCycle.database.selectNodes(named: name, parentNodeID: nodeContext.nodeID!).first { // TODO
             return try nodeContext.processingCycle.wrapRawNode(nodeRaw: nodeRaw)
@@ -240,9 +260,32 @@ extension NodeType {
         return node
     }
 
-    // Returns a child at a path (e.g. [example, src, main.swift]), this IS recursive.
+    // Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
     func child(path: String) -> NodeType? {
-        nil
+        let components = path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        guard !components.isEmpty else { return self }
+
+        var currentNodeID = nodeContext.nodeID!
+
+        for (index, name) in components.enumerated() {
+            guard let rawNode = try? nodeContext.processingCycle.database
+                    .selectNodes(named: name, parentNodeID: currentNodeID).first else {
+                return nil
+            }
+
+            if index == components.count - 1 {
+                // Last component — wrap and return the node
+                return try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
+            } else {
+                // Intermediate component — step into this directory
+                currentNodeID = rawNode.id!
+            }
+        }
+
+        return nil
     }
 }
 
@@ -266,7 +309,7 @@ final class BuildEngine {
     let database: DatabaseLayer
     let nodeFactory: NodeFactory
 
-    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database37.sqlite"),
+    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database40.sqlite"),
          nodeFactory: NodeFactory = NodeFactory()) throws {
 
         self.database = database
@@ -300,6 +343,7 @@ final class BuildEngine {
             try work(processingCycle)
             processingCycle.endCycle()
 //        }
+        try processAllMessages()
     }
 
     private func processAllMessagesForOneRawNode(_ rawNode: Node) throws {
@@ -325,7 +369,7 @@ final class ProcessingCycle {
         // This is the first object that is created. It resides inside a plugin library that can be configured by the user.
         // The CommandInterpreter is responsible for interpreting the commands that are sent to the system, e.g. from a CLI or a UI, and translating them into node creations, wire connections, value assignments, etc. It is also responsible for creating and managing the "main" Node that represents the main build pipeline.
         rootNode = try rootObject()
-
+      //  try! printAll()
     }
 
     func endCycle() {
@@ -442,18 +486,23 @@ final class ProcessingCycle {
     }
 
     func saveNode(_ node: NodeType) throws -> ObjectID {
+        try node.willSave()
         if let nodeID = node.nodeContext.nodeID {
             try database.updateNode(.init(id: nodeID,
                                           parentNodeID: node.nodeContext.parentNodeID,
                                           kind: node.descriptor.kind,
                                           name: node.nodeContext.name,
                                           configuration: node.asJSONString()))
+            try node.didSave()
             return nodeID
         } else {
-            return try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
+            let nodeID = try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
                                                  kind: node.descriptor.kind,
                                                  name: node.nodeContext.name,
                                                  configuration: node.asJSONString()))
+            node.nodeContext.nodeID = nodeID
+            try node.didSave()
+            return nodeID
         }
     }
 

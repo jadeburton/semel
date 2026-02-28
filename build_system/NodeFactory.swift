@@ -11,9 +11,11 @@ final class NodeFactory {
 
         case RootNode.kind: return try RootNode.fromJSONString(encodedJSON)
         case CommandInterpreter.kind: return try CommandInterpreter.fromJSONString(encodedJSON)
-        //case Product.kind: return try Product.fromJSONString(encodedJSON)
+        case FormulaFinder.kind: return try FormulaFinder.fromJSONString(encodedJSON)
+        case FormulaExtractor.kind: return try FormulaExtractor.fromJSONString(encodedJSON)
+        case BuildGraph.kind: return try BuildGraph.fromJSONString(encodedJSON)
         case StaticFileNode.kind: return try StaticFileNode.fromJSONString(encodedJSON)
-        case Folder.kind: return try Folder.fromJSONString(encodedJSON)
+        case FolderNode.kind: return try FolderNode.fromJSONString(encodedJSON)
 
         default:
             fatalError("Unknown Node kind: \(kind)")

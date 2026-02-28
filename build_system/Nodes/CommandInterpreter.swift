@@ -67,13 +67,18 @@ final class FileWildcardMatcher {
             segments: segments,
             segmentIndex: 0,
             currentDirectory: input.rootDirectoryPath,
-            currentLogicalPath: input.rootDirectoryPath,
+            currentLogicalPath: "",
             results: &results
         )
         return results
     }
 
     // MARK: - Private recursive matcher
+
+    /// Join a logical path prefix with a child name, producing a clean relative path (no leading /).
+    private func joinLogicalPath(_ base: String, _ child: String) -> String {
+        base.isEmpty ? child : base + "/" + child
+    }
 
     /// Recursively walk the directory tree, consuming pattern segments as they
     /// match entries returned by `input.allFiles(inDirectoryPath:)`.
@@ -104,7 +109,7 @@ final class FileWildcardMatcher {
             // … or match one-or-more directories (recurse into each child dir).
             let children = input.allFiles(inDirectoryPath: currentDirectory)
             for child in children {
-                let childLogicalPath = (currentLogicalPath as NSString).appendingPathComponent(child.path)
+                let childLogicalPath = joinLogicalPath(currentLogicalPath, child.path)
 
                 if child.kind == .folder {
                     let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
@@ -128,7 +133,7 @@ final class FileWildcardMatcher {
         for child in children {
             guard segmentMatches(pattern: segment, name: child.path) else { continue }
 
-            let childLogicalPath = (currentLogicalPath as NSString).appendingPathComponent(child.path)
+            let childLogicalPath = joinLogicalPath(currentLogicalPath, child.path)
 
             if isLastSegment {
                 // Final segment — emit the match.
@@ -228,9 +233,9 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
 
 final class InternalFileSystemLister: FileWildcardMatcherInput {
     let rootDirectoryPath = "/"
-    let folder: Folder
+    let folder: FolderNode
 
-    init(folder: Folder) {
+    init(folder: FolderNode) {
         self.folder = folder
     }
 
@@ -348,9 +353,7 @@ final class CommandParser {
 
         case "ls", "list":
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
-            guard let path = remaining.first else {
-                throw CommandParserError.missingArgument(command: "ls", expected: "pathOrWildcard")
-            }
+            let path = remaining.first ?? "*.*"
             return .list(folder: folder, pathOrWildcard: path)
 
         default:
@@ -533,43 +536,41 @@ final class CommandInterpreter: NodeType {
         // Coming soon
     }
 
-    var inputFileSystem: Folder {
+    var inputFileSystem: FolderNode {
         get throws {
             try nodeContext.processingCycle.rootNode.inputFileSystem
         }
     }
 
-    var outputFileSystem: Folder { // TODO: this is inside the buildgraph node because it is a product of the graph
+    var outputFileSystem: FolderNode { // TODO: this is inside the buildgraph node because it is a product of the graph
         get throws {
             try child(named: "outputFileSystem")
         }
     }
 
     func pushOne(_ entry: FileWildcardEntry, baseDirectory: String) {
-        let relativePath = entry.path.relativeTo(baseDirectory)
+        let relativePath = entry.path
         outputMessage("Push: \(relativePath)")
         switch entry.kind {
 
         case .file:
-//            inputFileSystem.ensureEntirePathExists(relativePath.deletingLastPathComponent)
+            let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath)
+            let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
-            // locate the file in the external file system
-            // read the file
-            let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: entry.path)))
+            let filename = (relativePath as NSString).lastPathComponent
+            let containingPath = (relativePath as NSString).deletingLastPathComponent
 
-            // if it does not already exist, synchronously create a new Node representing this file in the internal file system
+            let containingFolder: FolderNode
+            if containingPath.isEmpty || containingPath == "." {
+                containingFolder = try! inputFileSystem
+            } else {
+                containingFolder = try! inputFileSystem.ensureEntirePathExists(containingPath)
+            }
 
-            // if it does already exist, write to its input port with the file content, which should cause it to emit mutation events if the content has changed
-            // creating a new Node will cause its parent folder to emit mutation events, and its parent, all the way to the root folder
-            // mutation events will be queued on other Nodes that are subscribed
-            let filename = relativePath // TODO: the last bit
-            try! inputFileSystem.addOrReplaceChild(content: fileContent.intern(), name: filename)
-
-            break
+            try! containingFolder.addOrReplaceChild(content: fileContent.intern(), name: filename)
 
         case .folder:
-//            inputFileSystem.ensureEntirePathExists(relativePath)
-            break
+            try! inputFileSystem.ensureEntirePathExists(relativePath)
         }
     }
 
@@ -589,25 +590,25 @@ final class CommandInterpreter: NodeType {
     private func handleRemove(pathOrWildcard: String) throws {
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try inputFileSystem))
 
-        matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
-            removeOne(entry)
+        try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+            try removeOne(entry)
         }
     }
 
-    private func removeOne(_ entry: FileWildcardEntry) {
-//        inputFileSystem.removeChild(path: entry.path)
+    private func removeOne(_ entry: FileWildcardEntry) throws {
 
-        // locate the file or folder in the internal file system
-        // if it does not exist, report error to user
-        // if it is a folder, recursively remove all files and folders inside
-        // remove the Node representing this file or folder from the internal file system
-        // deleting a Node will cause its parent folder to emit mutation events, and its parent, all the way to the root folder
-        // deleting a Node that has Wires will cause wire-removed events for wire targets
-        // mutation events will be queued on other Nodes that are subscribed
+        outputMessage("Remove: \(entry.path)")
+
+        guard let child = try inputFileSystem.child(path: entry.path) else {
+            outputError("Child not found")
+            return
+        }
+
+        try child.delete()
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String) throws {
-        func handle(folder: Folder) {
+        func handle(folder: FolderNode) {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
             matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
@@ -623,7 +624,7 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    private func copyOneFile(folder: Folder, entry: FileWildcardEntry, destinationPath: String) {
+    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) {
 /*        let node = folder.childNode(path: entry.path)
 
         if let staticFileNode = node as? StaticFileNode {
