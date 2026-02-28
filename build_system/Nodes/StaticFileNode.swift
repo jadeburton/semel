@@ -39,12 +39,15 @@ final class StaticFileNode: NodeType {
     }
 
     func replaceContent(_ content: DataObjectHash) throws {
-        try nodeContext.processingCycle.assignValue(nodeID: nodeContext.nodeID!, outputPort: Self.outputPort.index, value: .value(content))
+        try nodeContext.processingCycle.writeToOutputPort(Self.outputPort,
+                                                          value: .value(content),
+                                                          deltaMessage: nil,
+                                                          nodeID: nodeContext.nodeID!)
     }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
     // The input should not have any one-shot events, only persistent value changes
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort: NodeProcessPortOutput?] {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
         assert(inputs.count == descriptor.inputs.count)
 /*
         func outputValue() throws -> NodeProcessPortOutput? {
@@ -72,6 +75,5 @@ final class StaticFileNode: NodeType {
             }
         }
 */
-        return [Self.outputPort: nil]
     }
 }

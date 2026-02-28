@@ -17,11 +17,11 @@ final class BuildGraph: NodeType {
     }
 
     required init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
     func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
+        var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
     static let formulaeInputPort = NodeKindDescriptor.InputPort(index: 0,
@@ -34,12 +34,9 @@ final class BuildGraph: NodeType {
         .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [])
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort: NodeProcessPortOutput?] {
-        [:]
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
     }
 }
-
-
 
 
 // A factory and container for FormulaExtractor nodes, which will extract formulae from the project files and feed them into the BuildGraph.
@@ -55,11 +52,11 @@ final class FormulaFinder: NodeType {
     }
 
     required init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
     func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
+        var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
     static let fileListInputPort = NodeKindDescriptor.InputPort(index: 0,
@@ -77,17 +74,22 @@ final class FormulaFinder: NodeType {
     }
 
     func didAddFile(_ path: String) {
-        // if it is a .c file, we need to find the corresponding project file and update the formula.
+        // if the file is a .formula file:
+        // 1. create a FormulaExtractor as a child of self
+        // 2. Wire the formula file value to the FE's input
+        // 3. Wire the FE's filelist input to the parent directory of the formula, so it can monitor files
+        // 4. Wire the FE's formula output to the BuildGraph's formula input
+
+        // when the formula file is deleted and its wires deleted, the FE will self-delete
+        
+        
         
     }
 
-    func didRemoveFile(_ path: String) {
-    }
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+//        let inputMessages = inputs[Self.fileListInputPort]! ?? []
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort: NodeProcessPortOutput?] {
-        let inputMessages = inputs[Self.fileListInputPort]! ?? []
-
-        for fileListMessage in inputMessages {
+//        for fileListMessage in inputMessages {
 //            let originNodeID: ObjectID
 //            let originOutputPort: UInt8
 //            let kind: NodeInputMessageKind
@@ -97,9 +99,7 @@ final class FormulaFinder: NodeType {
             // filter, if a .formula file then wire up to listen for mutations
             // if deleted, remove the wires (should be already?)
             //
-            let path
-        }
-        return [:]
+//        }
     }
 }
 
@@ -118,11 +118,11 @@ final class FormulaExtractor: NodeType {
     }
 
     required init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
     func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
+        var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
     static let fileListInputPort = NodeKindDescriptor.InputPort(index: 0,
@@ -147,10 +147,10 @@ final class FormulaExtractor: NodeType {
     func didRemoveFile(_ path: String) {
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort: NodeProcessPortOutput?] {
-        let inputMessages = inputs[Self.fileListInputPort]! ?? []
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+        //let inputMessages = inputs[Self.fileListInputPort]! ?? []
 
-        for fileListMessage in inputMessages {
+        //for fileListMessage in inputMessages {
 //            let originNodeID: ObjectID
 //            let originOutputPort: UInt8
 //            let kind: NodeInputMessageKind
@@ -160,8 +160,6 @@ final class FormulaExtractor: NodeType {
             // filter, if a .formula file then wire up to listen for mutations
             // if deleted, remove the wires (should be already?)
             //
-            let path
-        }
-        return [:]
+        //}
     }
 }

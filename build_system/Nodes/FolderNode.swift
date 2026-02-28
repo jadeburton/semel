@@ -43,9 +43,9 @@ final class FolderNode: NodeType {
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
         let dataObjectHash = [UInt8]("ADDED \(name):\(nodeID)".data(using: .utf8)!).intern()
 
-        try nodeContext.processingCycle.postMutationEvent(nodeID: self.nodeContext.nodeID!,
-                                                          outputPort: Self.childrenOutputPort.index,
-                                                          dataObjectHash: dataObjectHash)
+        try writeToOutputPort(Self.childrenOutputPort,
+                              value: .noValue(reason: .lazy),
+                              deltaMessage: dataObjectHash)
 
         let parent: FolderNode? = try parent()
         try parent?.notifyChildAdded(nodeID: nodeContext.nodeID!, name: (self.nodeContext.name ?? "") + "/" + name)
@@ -77,18 +77,18 @@ final class FolderNode: NodeType {
         assert(!name.contains("\\"))
 
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
-            try existingChild.assignValue(outputPort: StaticFileNode.outputPort, value: .value(content))
+            try existingChild.writeToOutputPort(StaticFileNode.outputPort, value: .value(content))
         } else {
             // TODO: what if the type is not StaticFileNode
             let staticFile = StaticFileNode()
             staticFile.nodeContext = .init(processingCycle: nodeContext.processingCycle, parentNodeID: nodeContext.nodeID, name: name)
-            staticFile.nodeContext.nodeID = try nodeContext.processingCycle.saveNode(staticFile)
-            try staticFile.assignValue(outputPort: StaticFileNode.outputPort, value: .value(content))
+            try staticFile.save() // to create a DB ID
+            try staticFile.replaceContent(content)
+
             try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws -> [NodeKindDescriptor.OutputPort : NodeProcessPortOutput?] {
-        [:]
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
     }
 }
