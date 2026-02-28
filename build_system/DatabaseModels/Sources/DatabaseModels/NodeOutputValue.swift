@@ -15,6 +15,7 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
         case noValueAwaitingDependency = 3
         case noValueLazy = 4
         case noValueError = 5
+        case noValueNodeInitializing = 6
     }
 
     public var nodeID: ObjectID

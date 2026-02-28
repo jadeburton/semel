@@ -100,6 +100,7 @@ extension DatabaseLayer {
     public func insertNode(_ node: Node) throws -> ObjectID {
         try dbQueue.write { db in
             try node.insert(db)
+            
             return db.lastInsertedRowID
         }
     }

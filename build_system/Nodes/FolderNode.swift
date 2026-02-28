@@ -41,14 +41,14 @@ final class FolderNode: NodeType {
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
-        let dataObjectHash = [UInt8]("ADDED \(name):\(nodeID)".data(using: .utf8)!).intern()
-
         try writeToOutputPort(Self.childrenOutputPort,
                               value: .noValue(reason: .lazy),
-                              deltaMessage: dataObjectHash)
+                              message: FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)))
 
         let parent: FolderNode? = try parent()
-        try parent?.notifyChildAdded(nodeID: nodeContext.nodeID!, name: (self.nodeContext.name ?? "") + "/" + name)
+
+        try parent?.notifyChildAdded(nodeID: nodeContext.nodeID!,
+                                     name: (self.nodeContext.name ?? "") + "/" + name)
     }
 
     @discardableResult
@@ -80,9 +80,8 @@ final class FolderNode: NodeType {
             try existingChild.writeToOutputPort(StaticFileNode.outputPort, value: .value(content))
         } else {
             // TODO: what if the type is not StaticFileNode
-            let staticFile = StaticFileNode()
-            staticFile.nodeContext = .init(processingCycle: nodeContext.processingCycle, parentNodeID: nodeContext.nodeID, name: name)
-            try staticFile.save() // to create a DB ID
+
+            let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode
             try staticFile.replaceContent(content)
 
             try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
@@ -97,7 +96,6 @@ final class FolderNode: NodeType {
 
 
 final class FolderEvent: MessageType {
-
     enum FolderEventKind: Codable {
         case childAdded(nodeID: ObjectID, name: String)
         case childDeleted(nodeID: ObjectID, name: String)
@@ -114,7 +112,11 @@ final class FolderEvent: MessageType {
         case folderEventKind
     }
 
-    required init() {
+    required init() throws {
+    }
+
+    init(folderEventKind: FolderEventKind) {
+        self.folderEventKind = folderEventKind
     }
 
     required init(from decoder: Decoder) throws {
