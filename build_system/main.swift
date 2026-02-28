@@ -400,14 +400,14 @@ final class ProcessingCycle {
     }
 
     func wrapRawNodePoly(nodeRaw: Node) throws -> NodeType {
-        let node = try PolyFactory.makeNode(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
+        let node = try PolyFactory.make(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
         node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name)
         loadedNodes[nodeRaw.id!] = node
         return node
     }
 
     func makeNode(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeType {
-        let newObject = try PolyFactory.makeNode(kind: kind, encodedJSON: nil)
+        let newObject = try PolyFactory.make(kind: kind, encodedJSON: nil)
         newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
         return newObject
     }
@@ -420,12 +420,12 @@ final class ProcessingCycle {
                                           parentNodeID: node.nodeContext.parentNodeID,
                                           kind: node.descriptor.kind,
                                           name: node.nodeContext.name,
-                                          configuration: node.asJSONString()))
+                                          configuration: PolyFactory.encodeToJSON(node)))
         } else {
             node.nodeContext.nodeID = try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
                                                                     kind: node.descriptor.kind,
                                                                     name: node.nodeContext.name,
-                                                                    configuration: node.asJSONString()))
+                                                                    configuration: PolyFactory.encodeToJSON(node)))
         }
 
         try node.didSave()

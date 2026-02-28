@@ -13,24 +13,43 @@ protocol PolySerializable: AnyObject, Encodable, Decodable {
     init() throws
 }
 
-//extension PolySerializable {
-//    init(encodedJSON: String?) throws {
-//        self = try PolyFactory.make(kind: Self.kind, encodedJSON: encodedJSON) as! Self
-//    }
-//}
-
 final class PolyFactory {
-    static func make(kind: UInt, encodedJSON: String?) throws -> PolySerializable {
+
+    // Construct emtpy object with dynamically determined type
+    static func make(kind: UInt) throws -> PolySerializable {
+        try type(kind: kind).init()
+    }
+
+    // Construct object from JSON string with dynamically determined type embedded within the JSON
+    static func make(encodedJSON: String) throws -> PolySerializable {
+        try Cassette.fromJSONString(encodedJSON).object
+    }
+
+    // Convenience helper
+    static func make(kind: UInt, encodedJSON: String?) throws -> NodeType {
+        if let encodedJSON  {
+            return try make(encodedJSON: encodedJSON) as! NodeType
+        } else {
+            return try make(kind: kind) as! NodeType
+        }
+    }
+
+    static func encodeToJSON(_ object: PolySerializable) throws -> String {
+        try Cassette(object: object).asJSONString()
+    }
+
+    static func type(kind: UInt) throws -> PolySerializable.Type {
         switch kind {
 
-        case RootNode.kind: return try RootNode.fromJSONString(encodedJSON)
-        case CommandInterpreter.kind: return try CommandInterpreter.fromJSONString(encodedJSON)
-        case FormulaFinder.kind: return try FormulaFinder.fromJSONString(encodedJSON)
-        case FormulaExtractor.kind: return try FormulaExtractor.fromJSONString(encodedJSON)
-        case BuildGraph.kind: return try BuildGraph.fromJSONString(encodedJSON)
-        case StaticFileNode.kind: return try StaticFileNode.fromJSONString(encodedJSON)
-        case FolderNode.kind: return try FolderNode.fromJSONString(encodedJSON)
-        case FolderEvent.kind: return try FolderEvent.fromJSONString(encodedJSON)
+        // All polymorphic types must be added here with their unique kind value
+        case RootNode.kind: return RootNode.self
+        case CommandInterpreter.kind: return CommandInterpreter.self
+        case FormulaFinder.kind: return FormulaFinder.self
+        case FormulaExtractor.kind: return FormulaExtractor.self
+        case BuildGraph.kind: return BuildGraph.self
+        case StaticFileNode.kind: return StaticFileNode.self
+        case FolderNode.kind: return FolderNode.self
+        case FolderEvent.kind: return FolderEvent.self
 
         default:
             fatalError("Unknown object kind: \(kind)")
@@ -46,6 +65,7 @@ final class PolyFactory {
     }
 }
 
+// Wraps an object during serialization to add a "kind"
 private struct Cassette: Codable {
     enum CodingKeys: CodingKey {
         case kind
@@ -54,30 +74,26 @@ private struct Cassette: Codable {
 
     let object: PolySerializable
 
+    init(object: PolySerializable) {
+        self.object = object
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decode(UInt.self, forKey: .kind)
-        let json = try container.decodeIfPresent(String.self, forKey: .object)
-        object = try PolyFactory.make(kind: kind, encodedJSON: json)
-    }
-
-    init(object: PolySerializable) {
-        self.object = object
+        let type = try PolyFactory.type(kind: kind)
+        object = try container.decodeIfPresent(type.self, forKey: .object)!
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(type(of: object).kind, forKey: .kind)
-        try container.encode(object.asJSONString(), forKey: .object)
+        try container.encode(object, forKey: .object)
     }
 }
 
-extension PolySerializable {
-    static func fromJSONString(_ string: String?) throws -> Self {
-        guard let string else {
-            return try .init() // default initializer gives "starting" values to all properties
-        }
-
+private extension Cassette {
+    static func fromJSONString(_ string: String) throws -> Self {
         let decoder = JSONDecoder()
         let data = string.data(using: .utf8)!
         return try decoder.decode(Self.self, from: data)
@@ -87,15 +103,5 @@ extension PolySerializable {
         let encoder = JSONEncoder()
         let data = try encoder.encode(self)
         return String(data: data, encoding: .utf8)!
-    }
-}
-
-extension PolyFactory {
-    static func makeNode(kind: UInt, encodedJSON: String?) throws -> NodeType {
-        try make(kind: kind, encodedJSON: encodedJSON) as! NodeType
-    }
-
-    static func makeMessage(kind: UInt, encodedJSON: String?) throws -> MessageType {
-        try make(kind: kind, encodedJSON: encodedJSON) as! MessageType
     }
 }
