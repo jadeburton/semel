@@ -47,7 +47,7 @@ final class FolderNode: NodeType {
 
         let parent: FolderNode? = try parent()
 
-        try parent?.notifyChildAdded(nodeID: nodeContext.nodeID!,
+        try parent?.notifyChildAdded(nodeID: nodeID,
                                      name: (self.nodeContext.name ?? "") + "/" + name)
     }
 
@@ -61,10 +61,10 @@ final class FolderNode: NodeType {
         var currentFolder: FolderNode = self
 
         for name in components {
-            if let existingChild: FolderNode = try currentFolder.childIfExists(named: name) {
+            if let existingChild: FolderNode = try currentFolder.child(named: name) {
                 currentFolder = existingChild
             } else {
-                let newFolder: FolderNode = try currentFolder.child(named: name)
+                let newFolder: FolderNode = try currentFolder.child(named: name, createIfNotExist: true)!
                 try currentFolder.notifyChildAdded(nodeID: newFolder.nodeContext.nodeID!, name: name)
                 currentFolder = newFolder
             }

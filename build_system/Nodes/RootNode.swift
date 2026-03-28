@@ -36,25 +36,25 @@ final class RootNode: NodeType {
 
     var commandInterpreter: CommandInterpreter {
         get throws {
-            try child(named: "commandInterpreter")
+            try child(named: "commandInterpreter", createIfNotExist: true)!
         }
     }
 
     var inputFileSystem: FolderNode {
         get throws {
-            try child(named: "inputFileSystem")
+            try child(named: "inputFileSystem", createIfNotExist: true)!
         }
     }
 
     var formulaFinder: FormulaFinder {
         get throws {
-            try child(named: "formulaFinder")
+            try child(named: "formulaFinder", createIfNotExist: true)!
         }
     }
 
     var buildGraph: BuildGraph {
         get throws {
-            try child(named: "buildGraph")
+            try child(named: "buildGraph", createIfNotExist: true)!
         }
     }
 

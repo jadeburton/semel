@@ -107,6 +107,17 @@ struct NodeKindDescriptor {
     let outputs: [OutputPort]
 }
 
+extension NodeKindDescriptor {
+
+    func outputPort(named name: String) -> NodeKindDescriptor.OutputPort? {
+        return outputs.first(where: { $0.name == name })
+    }
+
+    func inputPort(named name: String) -> NodeKindDescriptor.InputPort? {
+        return inputs.first(where: { $0.name == name })
+    }
+}
+
 // MARK: Data objects
 
 typealias DataToken = DataObjectHash
@@ -182,66 +193,93 @@ struct NodeContext {
     let processingCycle: ProcessingCycle
     var nodeID: ObjectID? // nil when created in memory but not yet inserted
     var parentNodeID: ObjectID?
-    var name: String?
+    var name: String? {
+        didSet {
+            assert(name == nil || name!.contains("/") == false)
+        }
+    }
 }
 
 extension NodeType {
     func parent<N: NodeType>() throws -> N? {
         try nodeContext.processingCycle.parentNode(node: self)
     }
-
+    
     func save() throws {
         try nodeContext.processingCycle.saveNode(self)
     }
-
-    func child<N: NodeType>(named name: String) throws -> N? {
-        try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!)
+    
+    func child(named name: String) throws -> (any NodeType)? {
+        try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
     }
-
+    
     func delete() throws {
         if let nodeID = nodeContext.nodeID {
             _ = try nodeContext.processingCycle.deleteNode(nodeID)
         }
     }
-
+    
     func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeOutputValue] {
         try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
     }
-
+    
     func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, nodeID: ObjectID) throws -> NodeOutputValue? {
         try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeID)
     }
-
+    
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
                            value: NodeOutputValue,
                            message: MessageType? = nil) throws {
-
+        
         try nodeContext.processingCycle.writeToOutputPort(outputPort,
                                                           value: value,
                                                           message: message,
                                                           nodeID: nodeContext.nodeID!)
     }
-
+    
     // Returns a named child (without path support)
-    func childIfExists<N: NodeType>(named name: String) throws -> N? {
-        try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!)
-    }
-
+    //    func childIfExists<N: NodeType>(named name: String) throws -> N? {
+    //        try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!)
+    //    }
+    
     func allChildren() throws -> [NodeType] {
         try nodeContext.processingCycle.allChildNodes(nodeID: nodeContext.nodeID!)
     }
-
+    
+    func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeType? {
+        if let existingChild = try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!) {
+            return existingChild
+        }
+        if !createIfNotExist {
+            return nil
+        }
+        return try nodeContext.processingCycle.makeNodePoly(kind: kind, name: name, parentNodeID: nodeContext.nodeID!)
+    }
+    
     // Creates the child if it does not exist
-    func child<N: NodeType>(named name: String) throws -> N {
+    func child<N: NodeType>(named name: String, createIfNotExist: Bool = false) throws -> N? {
         if let existingChild: N = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) {
             return existingChild
         }
-        return try nodeContext.processingCycle.makeNode(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N
+        if !createIfNotExist {
+            return nil
+        }
+        return try nodeContext.processingCycle.makeNodePoly(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N?
+    }
+    
+    // Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
+    func child<N: NodeType>(path: String, createIfNotExist: Bool = false) throws -> N? {
+        try nodeContext.processingCycle.childNode(path: path,
+                                                  rootNodeID: nodeContext.nodeID!,
+                                                  createIfNotExist: createIfNotExist)
     }
 
     // Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func child(path: String) -> NodeType? {
-        nodeContext.processingCycle.childNode(path: path, rootNodeID: nodeContext.nodeID!)
+    func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeType? { // TODO: get rid of these optionals
+        try nodeContext.processingCycle.childNodePoly(path: path,
+                                                      rootNodeID: nodeContext.nodeID!,
+                                                      kind: kind,
+                                                      createIfNotExist: createIfNotExist)
     }
 }
 
@@ -254,7 +292,7 @@ extension PolySerializable {
 final class BuildEngine {
     let database: DatabaseLayer
 
-    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database41.sqlite")) throws {
+    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database46.sqlite")) throws {
         self.database = database
 
         try processAllMessages()
@@ -311,7 +349,7 @@ final class ProcessingCycle {
         // This is the first object that is created. It resides inside a plugin library that can be configured by the user.
         // The CommandInterpreter is responsible for interpreting the commands that are sent to the system, e.g. from a CLI or a UI, and translating them into node creations, wire connections, value assignments, etc. It is also responsible for creating and managing the "main" Node that represents the main build pipeline.
         rootNode = try rootObject()
-        //  try! printAll()
+         try! printAll()
     }
 
     func endCycle() throws {
@@ -356,6 +394,14 @@ extension ProcessingCycle {
         }
     }
 
+    func nodePoly(named name: String, parentNodeID: ObjectID) throws -> NodeType? {
+        if let nodeRaw = try database.selectNodes(named: name, parentNodeID: parentNodeID).first {
+            return try wrapRawNodePoly(nodeRaw: nodeRaw)
+        } else {
+            return nil
+        }
+    }
+
     func node<N: NodeType>(named name: String, parentNodeID: ObjectID) throws -> N? {
         if let nodeRaw = try database.selectNodes(named: name, parentNodeID: parentNodeID).first {
             return try wrapRawNode(nodeRaw: nodeRaw)
@@ -364,20 +410,23 @@ extension ProcessingCycle {
         }
     }
 
-    func childNode(path: String, rootNodeID: ObjectID) -> NodeType? {
+    func childNode<N: NodeType>(path: String, rootNodeID: ObjectID, createIfNotExist: Bool = false) throws -> N? {
+        try childNodePoly(path: path, rootNodeID: rootNodeID, kind: N.kind, createIfNotExist: createIfNotExist)! as? N
+    }
+
+    func childNodePoly(path: String, rootNodeID: ObjectID, kind: UInt, createIfNotExist: Bool = false) throws -> NodeType? {
         let components = path
             .split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
-
-        guard !components.isEmpty else {
-            return try? wrapRawNodePoly(nodeRaw: rootNodeID.loadNode(from: database))
-        }
 
         var currentNodeID = rootNodeID
 
         for (index, name) in components.enumerated() {
             guard let rawNode = try? database.selectNodes(named: name, parentNodeID: currentNodeID).first else {
-                return nil
+                if !createIfNotExist {
+                    return nil
+                }
+                return try makeNodePoly(kind: kind, name: name, parentNodeID: currentNodeID)
             }
 
             if index == components.count - 1 {
@@ -389,7 +438,7 @@ extension ProcessingCycle {
             }
         }
 
-        return nil
+        return try wrapRawNodePoly(nodeRaw: rootNodeID.loadNode(from: database))
     }
 
     func wrapRawNode<N: NodeType>(nodeRaw: Node) throws -> N {
@@ -404,10 +453,10 @@ extension ProcessingCycle {
     }
 
     func makeNode<N: NodeType>(name: String?, parentNodeID: ObjectID?) throws -> N {
-        try makeNode(kind: N.kind, name: name, parentNodeID: parentNodeID) as! N
+        try makeNodePoly(kind: N.kind, name: name, parentNodeID: parentNodeID) as! N
     }
 
-    func makeNode(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeType {
+    func makeNodePoly(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeType {
         let newObject = try PolyFactory.make(kind: kind, encodedJSON: nil)
         newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
 
@@ -439,6 +488,12 @@ extension ProcessingCycle {
     func deleteNode(_ nodeID: ObjectID) throws -> Bool {
         try database.deleteNode(nodeID: nodeID)
         // TODO: cascade deletion: and notify of wire-disconnects
+    }
+}
+
+extension NodeType {
+    func findNodeConnectedToNodeViaInputWire(named name: String, fromPort: String) throws -> (any NodeType)? {
+        try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, named: name, fromPort: fromPort)
     }
 }
 
@@ -484,7 +539,7 @@ extension ProcessingCycle {
             }
         }
 
-        print("processInputs: node \(node) -- \(inputMessages)")
+      //  print("processInputs: node \(node) -- \(inputMessages)")
 
         try node.processInputs(inputMessages)
 

@@ -5,6 +5,37 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
+final class ClangCCompiler {
+//    func compile(inputFiles: [String], )
+}
+
+struct BuildGraphInputWire {
+    let from: BuildGraphNode
+    let fromPort: String
+}
+
+struct BuildGraphInputPort {
+    let name: String
+    let inputWires: [BuildGraphInputWire]
+}
+
+struct BuildGraphDescription {
+    let outputs: [BuildGraphNode]
+}
+
+final class BuildGraphNode {
+    let name: String
+    let kind: UInt
+
+    let inputPorts: [BuildGraphInputPort]
+
+    init(name: String, kind: UInt, inputPorts: [BuildGraphInputPort]) {
+        self.name = name
+        self.kind = kind
+        self.inputPorts = inputPorts
+    }
+}
+
 final class BuildGraph: NodeType {
     static let kind: UInt = 2
 
@@ -34,8 +65,83 @@ final class BuildGraph: NodeType {
         .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [])
     }
 
-    func integrateFormula(formula: String) {
-        
+    func integrateFormula(formula: String) throws {
+        print("integrate formula: \(formula)")
+
+        let inputWiresForLinker = [BuildGraphInputWire(from: .init(name: "compiler-blah-c",
+                                                                  kind: StaticFileNode.kind, // TODO
+                                                                  inputPorts: [.init(name: "input",
+                                                                                     inputWires: [
+                                                                                    .init(from: .init(name: "Nodes/BuildGraph.swift", kind: StaticFileNode.kind, inputPorts: []),
+                                                                                          fromPort: "output")
+                                                                           ])]),
+                                                    fromPort: "output")]
+
+
+        let inputWiresForStaticFile = [BuildGraphInputWire(from: .init(name: "linker-mylib",
+                                                                      kind: StaticFileNode.kind,
+                                                                      inputPorts: [.init(name: "input",
+                                                                                         inputWires: inputWiresForLinker)]),
+                                                          fromPort: "output")]
+
+
+        let buildGraphDescription = BuildGraphDescription(
+            outputs: [
+                .init(name: "mylib.dylib",
+                      kind: StaticFileNode.kind,
+                      inputPorts: [.init(name: "input", inputWires: inputWiresForStaticFile)])])
+
+        try integrateBuildGraphDescription(buildGraphDescription)
+    }
+
+    var outputFileSystem: FolderNode {
+        get throws {
+            try child(named: "outputFileSystem", createIfNotExist: true)!
+        }
+    }
+
+    private func integrateBuildGraphDescription(_ buildGraphDescription: BuildGraphDescription) throws {
+        for output in buildGraphDescription.outputs {
+            try integrate(buildGraphOutput: output)
+        }
+    }
+
+    private func integrate(buildGraphOutput: BuildGraphNode) throws {
+        try integrate(buildGraphNode: buildGraphOutput,
+                      currentNode: try outputFileSystem.child(path: buildGraphOutput.name, createIfNotExist: true)! as StaticFileNode)
+    }
+
+    private func integrate(buildGraphNode: BuildGraphNode, currentNode: NodeType) throws {
+
+        for inputPort in buildGraphNode.inputPorts {
+            for inputWire in inputPort.inputWires {
+
+                var nodeConnectedToInputWire = try currentNode.findNodeConnectedToNodeViaInputWire(named: inputWire.from.name,
+                                                                                                   fromPort: inputWire.fromPort)
+
+                if nodeConnectedToInputWire == nil {
+                    // The Wire or Node we want does not exist.
+
+                    let isInputLeafNode = inputWire.from.inputPorts.isEmpty
+
+                    if isInputLeafNode {
+                        // IF it is a left side input file, we need to look in the input file system to locate the file and not create it if we don't find it
+                        let inputFileNode = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: inputWire.from.name, kind: StaticFileNode.kind)
+                        nodeConnectedToInputWire = inputFileNode
+                    } else {
+                        nodeConnectedToInputWire = try childPoly(named: inputWire.from.name, kind: inputWire.from.kind, createIfNotExist: true)!
+                    }
+                }
+
+                try nodeContext.processingCycle.connectWire(fromNode: nodeConnectedToInputWire!,
+                                                            fromPort: nodeConnectedToInputWire!.descriptor.outputPort(named: inputWire.fromPort)!,
+                                                            toNode: currentNode,
+                                                            toPort: currentNode.descriptor.inputPort(named: inputPort.name)!)
+
+                // Move leftwards to the next Node
+                try integrate(buildGraphNode: inputWire.from, currentNode: nodeConnectedToInputWire!)
+            }
+        }
     }
 
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
@@ -109,7 +215,11 @@ final class FormulaFinder: NodeType {
 
         // when the formula file is deleted and its wires deleted, the FE will self-delete
 
-        let extractor = try nodeContext.processingCycle.makeNode(name: "extractor1", parentNodeID: nodeContext.nodeID) as FormulaExtractor
+        guard name.hasSuffix(".yml") else {
+            return
+        }
+
+        let extractor = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID) as FormulaExtractor
 
         try nodeContext.processingCycle.connectWire(fromNode: try nodeContext.processingCycle.node(nodeID: nodeID) as StaticFileNode,
                                                     fromPort: StaticFileNode.outputPort,

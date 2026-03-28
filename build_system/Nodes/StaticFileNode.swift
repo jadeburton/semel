@@ -27,8 +27,9 @@ final class StaticFileNode: NodeType {
     }
 
     static let outputPort = NodeKindDescriptor.OutputPort(index: 0, name: "output", kind: .value(dataType: .utf8Text))
+    static let inputPort = NodeKindDescriptor.InputPort(index: 0, name: "input", kind: .value(dataType: .utf8Text), maximumConnections: 1, minimumConnections: 0)
 
-    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [], outputs: [outputPort])
+    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [inputPort], outputs: [outputPort])
 
     var descriptor: NodeKindDescriptor {
         Self.descriptor

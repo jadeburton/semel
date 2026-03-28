@@ -11,6 +11,7 @@
 		4C2018472F36AFCE009A6A19 /* DatabaseModels in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0F1DD62F1C50E400EF3942 /* DatabaseModels */; };
 		4CB110712F36C9A5005E6AE4 /* FileSystem-old.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */; };
 		4CC8955F2F538CD60063DB55 /* WireManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CC8955E2F538CD60063DB55 /* WireManagement.swift */; };
+		4CC895712F64B1AC0063DB55 /* FolderNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CC895662F64B1AC0063DB55 /* FolderNode.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -28,6 +29,7 @@
 		4C937AEF2F1AF44E0099662B /* build_system */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = build_system; sourceTree = BUILT_PRODUCTS_DIR; };
 		4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileSystem-old.swift"; sourceTree = "<group>"; };
 		4CC8955E2F538CD60063DB55 /* WireManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WireManagement.swift; sourceTree = "<group>"; };
+		4CC895662F64B1AC0063DB55 /* FolderNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderNode.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
@@ -84,6 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				4C937AEF2F1AF44E0099662B /* build_system */,
+				4CC895662F64B1AC0063DB55 /* FolderNode.swift */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -156,6 +159,7 @@
 			files = (
 				4CC8955F2F538CD60063DB55 /* WireManagement.swift in Sources */,
 				4CB110712F36C9A5005E6AE4 /* FileSystem-old.swift in Sources */,
+				4CC895712F64B1AC0063DB55 /* FolderNode.swift in Sources */,
 			);
 		};
 /* End PBXSourcesBuildPhase section */

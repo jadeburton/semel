@@ -32,7 +32,7 @@ struct FileWildcardEntry {
 protocol FileWildcardMatcherInput {
     var rootDirectoryPath: String { get }
 
-    func allFiles(inDirectoryPath: String) -> [FileWildcardEntry]
+    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry]
 }
 
 final class FileWildcardMatcher {
@@ -53,7 +53,7 @@ final class FileWildcardMatcher {
     /// - `/Example/src/myfile.c`  — exact path
     /// - `/Example/**/*.c`        — all `.c` files recursively under `/Example`
     /// - `/**/*.*`                — all files with an extension, recursively
-    func findAllMatching(pathOrWildcard: String) -> [FileWildcardEntry] {
+    func findAllMatching(pathOrWildcard: String) throws -> [FileWildcardEntry] {
         let normalised = pathOrWildcard.hasPrefix("/")
             ? pathOrWildcard
             : "/" + pathOrWildcard
@@ -63,7 +63,7 @@ final class FileWildcardMatcher {
             .map(String.init)
 
         var results: [FileWildcardEntry] = []
-        matchSegments(
+        try matchSegments(
             segments: segments,
             segmentIndex: 0,
             currentDirectory: input.rootDirectoryPath,
@@ -88,7 +88,7 @@ final class FileWildcardMatcher {
         currentDirectory: String,
         currentLogicalPath: String,
         results: inout [FileWildcardEntry]
-    ) {
+    ) throws {
         // All segments consumed — nothing more to match.
         guard segmentIndex < segments.count else { return }
 
@@ -98,7 +98,7 @@ final class FileWildcardMatcher {
         // ── ** (double-star / globstar) ──────────────────────────────
         if segment == "**" {
             // ** can match zero directories (skip it) …
-            matchSegments(
+            try matchSegments(
                 segments: segments,
                 segmentIndex: segmentIndex + 1,
                 currentDirectory: currentDirectory,
@@ -107,7 +107,7 @@ final class FileWildcardMatcher {
             )
 
             // … or match one-or-more directories (recurse into each child dir).
-            let children = input.allFiles(inDirectoryPath: currentDirectory)
+            let children = try input.allFiles(inDirectoryPath: currentDirectory)
             for child in children {
                 let childLogicalPath = joinLogicalPath(currentLogicalPath, child.path)
 
@@ -115,7 +115,7 @@ final class FileWildcardMatcher {
                     let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
 
                     // Keep consuming ** in this subfolder.
-                    matchSegments(
+                    try matchSegments(
                         segments: segments,
                         segmentIndex: segmentIndex,
                         currentDirectory: childPhysicalPath,
@@ -128,7 +128,7 @@ final class FileWildcardMatcher {
         }
 
         // ── Normal or single-star segment ────────────────────────────
-        let children = input.allFiles(inDirectoryPath: currentDirectory)
+        let children = try input.allFiles(inDirectoryPath: currentDirectory)
 
         for child in children {
             guard segmentMatches(pattern: segment, name: child.path) else { continue }
@@ -141,7 +141,7 @@ final class FileWildcardMatcher {
             } else if child.kind == .folder {
                 // More segments remain — descend into matching folder.
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
-                matchSegments(
+                try matchSegments(
                     segments: segments,
                     segmentIndex: segmentIndex + 1,
                     currentDirectory: childPhysicalPath,
@@ -239,8 +239,8 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
         self.folder = folder
     }
 
-    func allFiles(inDirectoryPath: String) -> [FileWildcardEntry] {
-        let start = folder.child(path: inDirectoryPath)! // TODO
+    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
+        let start = try folder.childPoly(path: inDirectoryPath, kind: FolderNode.kind)! // TODO
         return try! start.allChildren().map { node in
             FileWildcardEntry(path: node.nodeContext.name!, kind: node is StaticFileNode ? .file : .folder)
         }
@@ -493,7 +493,7 @@ final class CommandInterpreter: NodeType {
             handleDiscard()
 
         case .push(let externalPathOrWildcard):
-            handlePush(externalPathOrWildcard: externalPathOrWildcard)
+            try handlePush(externalPathOrWildcard: externalPathOrWildcard)
 
         case .remove(let pathOrWildcard):
             try handleRemove(pathOrWildcard: pathOrWildcard)
@@ -542,9 +542,9 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    var outputFileSystem: FolderNode { // TODO: this is inside the buildgraph node because it is a product of the graph
+    var outputFileSystem: FolderNode {
         get throws {
-            try child(named: "outputFileSystem")
+            try nodeContext.processingCycle.rootNode.buildGraph.outputFileSystem
         }
     }
 
@@ -574,7 +574,7 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    private func handlePush(externalPathOrWildcard: String) {
+    private func handlePush(externalPathOrWildcard: String) throws {
         guard let baseDirectory else {
             outputError("Set a base directory before pushing files")
             return
@@ -582,7 +582,7 @@ final class CommandInterpreter: NodeType {
 
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
 
-        matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
+        try matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
             pushOne(entry, baseDirectory: baseDirectory)
         }
     }
@@ -599,7 +599,7 @@ final class CommandInterpreter: NodeType {
 
         outputMessage("Remove: \(entry.path)")
 
-        guard let child = try inputFileSystem.child(path: entry.path) else {
+        guard let child = try inputFileSystem.childPoly(path: entry.path, kind: FolderNode.kind) else { // TODO: we don't even need this kind arg if we don't create it
             outputError("Child not found")
             return
         }
@@ -608,19 +608,19 @@ final class CommandInterpreter: NodeType {
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String) throws {
-        func handle(folder: FolderNode) {
+        func handle(folder: FolderNode) throws {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
-            matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+            try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
                 copyOneFile(folder: folder, entry: entry, destinationPath: destinationPath)
             }
         }
 
         switch folder {
         case .input:
-            handle(folder: try inputFileSystem)
+            try handle(folder: inputFileSystem)
         case .output:
-            handle(folder: try outputFileSystem)
+            try handle(folder: outputFileSystem)
         }
     }
 
@@ -641,7 +641,7 @@ final class CommandInterpreter: NodeType {
     private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try inputFileSystem))
 
-        matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+        try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
             outputMessage(entry.path)
         }
     }
