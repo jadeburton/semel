@@ -26,51 +26,58 @@ final class StaticFileNode: NodeType {
         // StaticFileNode has no stored properties to encode (nodeContext is not encoded)
     }
 
-    static let outputPort = NodeKindDescriptor.OutputPort(index: 0, name: "output", kind: .value(dataType: .utf8Text))
+    static let outputPort = NodeKindDescriptor.OutputPort(index: 0,
+                                                          name: "output",
+                                                          kind: .value(dataType: .utf8Text))
 
-    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [], outputs: [outputPort])
+    static let inputPort = NodeKindDescriptor.InputPort(index: 0,
+                                                        name: "input",
+                                                        kind: .value(dataType: .utf8Text),
+                                                        maximumConnections: 1,
+                                                        minimumConnections: 0,
+                                                        cascadingDelete: false)
+
+    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [inputPort], outputs: [outputPort])
 
     var descriptor: NodeKindDescriptor {
         Self.descriptor
     }
 
-    func read() throws -> NodeOutputValue? {
+    func read() throws -> NodeValue? {
         try nodeContext.processingCycle.readFromOutputPort(Self.outputPort, nodeID: nodeContext.nodeID!)
     }
 
-    func replaceContent(_ content: DataObjectHash) throws {
-        try writeToOutputPort(Self.outputPort, value: .value(content))
+    func replaceContent(_ content: DataObjectHash, metadata: String) throws {
+        try writeToOutputPort(Self.outputPort, value: .value(content, metadata: metadata))
+    }
+
+    func eraseContents() throws {
+        try writeToOutputPort(Self.outputPort,
+                              value: .noValue(reason: .error(message: "File deleted")))
     }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
-    // The input should not have any one-shot events, only persistent value changes
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
-        assert(inputs.count == descriptor.inputs.count)
-/*
-        func outputValue() throws -> NodeProcessPortOutput? {
-            switch oneMessageOnInputPort.kind {
+    func process() throws {
 
-            case .valueMutated(let delta):
-                print("StaticFileNode received value mutation, delta hash: [\(delta ?? "nil")]")
-                // StaticFile only supports a single connection on its input, and therefore has only one input value
-                let value = try nodeContext.readValues(inputPort: Self.inputPort.index).first!!
-                return .init(value: value, deltaMessage: delta)
-
-            case .wireConnected:
-                print("StaticFileNode received new wire")
-                let value = try nodeContext.readValues(inputPort: Self.inputPort.index).first!!
-                return .init(value: value, deltaMessage: nil)
-
-            case .error(let description):
-                print("StaticFileNode received error")
-                return .init(value: .noValue(reason: .error(stack: [])), deltaMessage: nil)
-
-            case .wireDisconnected:
-                print("StaticFileNode lost input wire")
-                return nil
-
+        guard let inputValue = try readOneValueFromInputPort(Self.inputPort) else {
+            // No input wire is connected.
+            // Special case: avoid trashing our output if it has a value set
+            if case .noValue = try readFromOutputPort(Self.outputPort).kind {
+                throw NodeError.missingInputs
             }
+            return
         }
-*/
+
+        // An input wire is connected
+
+        switch inputValue.kind {
+
+        case .noValue:
+            throw NodeError.missingInputs
+
+        default:
+            try writeToOutputPort(Self.outputPort, value: inputValue.kind)
+
+        }
     }
 }

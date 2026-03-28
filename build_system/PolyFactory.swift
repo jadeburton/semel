@@ -10,10 +10,8 @@ import Foundation
 // MARK: - Protocol
 
 /// A type that can be serialized/deserialized polymorphically via a `kind` discriminator.
-protocol PolySerializable: AnyObject, Codable {
+protocol PolySerializable: Codable {
     static var kind: UInt { get }
-
-    init() throws
 }
 
 // MARK: - Factory
@@ -31,6 +29,15 @@ enum PolyFactory {
         StaticFileNode.kind:     StaticFileNode.self,
         FolderNode.kind:         FolderNode.self,
         FolderEvent.kind:        FolderEvent.self,
+        ClangLinkerTool.kind:    ClangLinkerTool.self,
+        ClangCompilerTool.kind:  ClangCompilerTool.self,
+        ClangPreprocessorTool.kind: ClangPreprocessorTool.self,
+        FileMetadata.kind:       FileMetadata.self,
+        IncludeFinder.kind:      IncludeFinder.self,
+        ClangLinkerToolConfiguration.kind:       ClangLinkerToolConfiguration.self,
+        ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
+        ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
+        FolderManifest.kind:     FolderManifest.self,
     ]
 
     /// Look up the concrete type for a given kind.
@@ -41,25 +48,25 @@ enum PolyFactory {
         return type
     }
 
-    /// Construct a default instance of the type identified by `kind`.
-    static func make(kind: UInt) throws -> PolySerializable {
-        try type(kind: kind).init()
+    /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
+    static func decode(encodedJSON: String) throws -> any PolySerializable {
+        try Cassette.fromJSON(encodedJSON).object
     }
 
-    /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
-    static func make(encodedJSON: String) throws -> PolySerializable {
-        try Cassette.fromJSON(encodedJSON).object
+    static func decodeAndCast<P: PolySerializable>(encodedJSON: String) throws -> P {
+        let decoded = try decode(encodedJSON: encodedJSON)
+
+        if let object = decoded as? P {
+            return object
+        }
+
+        print("ERROR: expected type \(P.self), got \(Swift.type(of: decoded))")
+        throw PolyFactoryError.unexpectedType
     }
 }
 
-extension PolyFactory {
-    /// Convenience: decode from JSON if available, otherwise create a default instance.
-    static func make(kind: UInt, encodedJSON: String?) throws -> NodeType {
-        if let encodedJSON {
-            return try make(encodedJSON: encodedJSON) as! NodeType
-        }
-        return try make(kind: kind) as! NodeType
-    }
+enum PolyFactoryError: Error {
+    case unexpectedType
 }
 
 extension PolySerializable {
@@ -71,7 +78,7 @@ extension PolySerializable {
 
 // MARK: - Cassette (private wrapper that pairs kind + object for serialization)
 
-/// Wraps a `PolySerializable` during serialization to add a `kind` discriminator.
+/// Internal use. Wraps a `PolySerializable` during serialization to add a `kind` discriminator.
 private struct Cassette: Codable {
 
     let object: PolySerializable
@@ -103,14 +110,22 @@ private struct Cassette: Codable {
 
 // MARK: JSON helpers
 
-private extension Decodable {
+extension Decodable {
     static func fromJSON(_ string: String) throws -> Self {
         try JSONDecoder().decode(Self.self, from: Data(string.utf8))
     }
 }
 
-private extension Encodable {
+extension Encodable {
     func toJSON() throws -> String {
-        String(data: try JSONEncoder().encode(self), encoding: .utf8)!
+        String(data: try JSONEncoder().withSortedKeys().encode(self), encoding: .utf8)!
+    }
+}
+
+extension JSONEncoder {
+    /// Sorts the keys of all encoded dictionaries, for deterministic output.
+    func withSortedKeys() -> JSONEncoder {
+        outputFormatting.insert(.sortedKeys)
+        return self
     }
 }

@@ -7,6 +7,16 @@
 
 import Foundation
 
+struct FolderManifestEntry: Codable {
+    let name: String
+}
+
+struct FolderManifest: PolySerializable {
+    static let kind: UInt = 4
+
+    let entries: [FolderManifestEntry]
+}
+
 final class FolderNode: NodeType {
 
     static let kind: UInt = 1
@@ -27,28 +37,23 @@ final class FolderNode: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let childrenOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "children", kind: .value(dataType: .utf8Text))
-    static let logOutputPort = NodeKindDescriptor.OutputPort(index: 1, name: "log", kind: .value(dataType: .utf8Text))
-    static let hashOutputPort = NodeKindDescriptor.OutputPort(index: 2, name: "hash", kind: .value(dataType: .binary))
+    static let folderManifestOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "folderManifest", kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
               inputs: [],
-              outputs: [Self.childrenOutputPort, Self.logOutputPort, Self.hashOutputPort])
+              outputs: [Self.folderManifestOutputPort])
     }
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
-        try writeToOutputPort(Self.childrenOutputPort,
-                              value: .noValue(reason: .lazy),
-                              message: FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)))
+        try nodeContext.processingCycle.scheduleNode(nodeContext.nodeID!)
+    }
 
-        let parent: FolderNode? = try parent()
-
-        try parent?.notifyChildAdded(nodeID: nodeContext.nodeID!,
-                                     name: (self.nodeContext.name ?? "") + "/" + name)
+    func notifyChildContentChanged(nodeID: ObjectID, name: String) throws {
+        try nodeContext.processingCycle.scheduleNode(nodeContext.nodeID!)
     }
 
     @discardableResult
@@ -61,10 +66,10 @@ final class FolderNode: NodeType {
         var currentFolder: FolderNode = self
 
         for name in components {
-            if let existingChild: FolderNode = try currentFolder.childIfExists(named: name) {
+            if let existingChild: FolderNode = try currentFolder.child(named: name) {
                 currentFolder = existingChild
             } else {
-                let newFolder: FolderNode = try currentFolder.child(named: name)
+                let newFolder: FolderNode = try currentFolder.child(named: name, createIfNotExist: true)!
                 try currentFolder.notifyChildAdded(nodeID: newFolder.nodeContext.nodeID!, name: name)
                 currentFolder = newFolder
             }
@@ -76,24 +81,39 @@ final class FolderNode: NodeType {
     func addOrReplaceChild(content: DataObjectHash, name: String) throws {
         assert(!name.contains("\\"))
 
+        let metadata = name
+
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
-            try existingChild.writeToOutputPort(StaticFileNode.outputPort, value: .value(content))
+            try existingChild.replaceContent(content, metadata: metadata)
+            // TODO: only if changed
+            try notifyChildContentChanged(nodeID: existingChild.nodeContext.nodeID!, name: existingChild.nodeContext.name!)
         } else {
             // TODO: what if the type is not StaticFileNode
 
             let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode
-            try staticFile.replaceContent(content)
+            try staticFile.replaceContent(content, metadata: metadata)
 
             try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    private func buildManifest() throws -> FolderManifest {
+        var folderManifestEntries = [FolderManifestEntry]()
+        for child in try allChildren() {
+            folderManifestEntries.append(.init(name: child.nodeContext.name!))
+        }
+        return FolderManifest(entries: folderManifestEntries)
+    }
+
+    func process() throws {
+        try writeToOutputPort(Self.folderManifestOutputPort, value: .value(buildManifest().toJSON().intern(), metadata: nil) )
     }
 }
 
-
-
+struct FileMetadata: PolySerializable {
+    static let kind: UInt = 14
+    let name: String
+}
 
 final class FolderEvent: MessageType {
     enum FolderEventKind: Codable {

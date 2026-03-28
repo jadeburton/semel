@@ -27,12 +27,13 @@ enum FileWildcardEntryKind {
 struct FileWildcardEntry {
     let path: String
     let kind: FileWildcardEntryKind
+    let isMissing: Bool // the file is missing from the internal file system (e.g. it was deleted by the user but is still referenced by the build graph)
 }
 
 protocol FileWildcardMatcherInput {
     var rootDirectoryPath: String { get }
 
-    func allFiles(inDirectoryPath: String) -> [FileWildcardEntry]
+    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry]
 }
 
 final class FileWildcardMatcher {
@@ -53,7 +54,7 @@ final class FileWildcardMatcher {
     /// - `/Example/src/myfile.c`  — exact path
     /// - `/Example/**/*.c`        — all `.c` files recursively under `/Example`
     /// - `/**/*.*`                — all files with an extension, recursively
-    func findAllMatching(pathOrWildcard: String) -> [FileWildcardEntry] {
+    func findAllMatching(pathOrWildcard: String) throws -> [FileWildcardEntry] {
         let normalised = pathOrWildcard.hasPrefix("/")
             ? pathOrWildcard
             : "/" + pathOrWildcard
@@ -63,7 +64,7 @@ final class FileWildcardMatcher {
             .map(String.init)
 
         var results: [FileWildcardEntry] = []
-        matchSegments(
+        try matchSegments(
             segments: segments,
             segmentIndex: 0,
             currentDirectory: input.rootDirectoryPath,
@@ -88,7 +89,7 @@ final class FileWildcardMatcher {
         currentDirectory: String,
         currentLogicalPath: String,
         results: inout [FileWildcardEntry]
-    ) {
+    ) throws {
         // All segments consumed — nothing more to match.
         guard segmentIndex < segments.count else { return }
 
@@ -98,7 +99,7 @@ final class FileWildcardMatcher {
         // ── ** (double-star / globstar) ──────────────────────────────
         if segment == "**" {
             // ** can match zero directories (skip it) …
-            matchSegments(
+            try matchSegments(
                 segments: segments,
                 segmentIndex: segmentIndex + 1,
                 currentDirectory: currentDirectory,
@@ -107,7 +108,7 @@ final class FileWildcardMatcher {
             )
 
             // … or match one-or-more directories (recurse into each child dir).
-            let children = input.allFiles(inDirectoryPath: currentDirectory)
+            let children = try input.allFiles(inDirectoryPath: currentDirectory)
             for child in children {
                 let childLogicalPath = joinLogicalPath(currentLogicalPath, child.path)
 
@@ -115,7 +116,7 @@ final class FileWildcardMatcher {
                     let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
 
                     // Keep consuming ** in this subfolder.
-                    matchSegments(
+                    try matchSegments(
                         segments: segments,
                         segmentIndex: segmentIndex,
                         currentDirectory: childPhysicalPath,
@@ -128,7 +129,7 @@ final class FileWildcardMatcher {
         }
 
         // ── Normal or single-star segment ────────────────────────────
-        let children = input.allFiles(inDirectoryPath: currentDirectory)
+        let children = try input.allFiles(inDirectoryPath: currentDirectory)
 
         for child in children {
             guard segmentMatches(pattern: segment, name: child.path) else { continue }
@@ -137,11 +138,11 @@ final class FileWildcardMatcher {
 
             if isLastSegment {
                 // Final segment — emit the match.
-                results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind))
+                results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind, isMissing: child.isMissing))
             } else if child.kind == .folder {
                 // More segments remain — descend into matching folder.
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
-                matchSegments(
+                try matchSegments(
                     segments: segments,
                     segmentIndex: segmentIndex + 1,
                     currentDirectory: childPhysicalPath,
@@ -225,7 +226,8 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
             guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { return nil }
             return FileWildcardEntry(
                 path: name,
-                kind: isDir.boolValue ? .folder : .file
+                kind: isDir.boolValue ? .folder : .file,
+                isMissing: false
             )
         }.sorted { $0.path < $1.path }
     }
@@ -239,10 +241,18 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
         self.folder = folder
     }
 
-    func allFiles(inDirectoryPath: String) -> [FileWildcardEntry] {
-        let start = folder.child(path: inDirectoryPath)! // TODO
+    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
+        let start = try folder.childPoly(path: inDirectoryPath, kind: FolderNode.kind)! // TODO
         return try! start.allChildren().map { node in
-            FileWildcardEntry(path: node.nodeContext.name!, kind: node is StaticFileNode ? .file : .folder)
+            if let staticFileNode = node as? StaticFileNode {
+                return FileWildcardEntry(path: node.nodeContext.name!,
+                                         kind: .file,
+                                         isMissing: try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).isNoValue)
+            } else {
+                return FileWildcardEntry(path: node.nodeContext.name!,
+                                         kind: .folder,
+                                         isMissing: false)
+            }
         }
     }
 }
@@ -254,12 +264,13 @@ enum FileSystemForCommand {
 
 enum UserCommand {
     case base(externalPath: String) // strato base .
+    case debug
     case begin           // strato begin
     case commit          // strato commit
     case discard         // strato discard
     case push(externalPathOrWildcard: String) // strato push Example/src/myfile.c
     case remove(pathOrWildcard: String) // strato rm /**/*.*
-    case copy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String)   // strato cp [-i] /Example/src/myfile.c .
+    case copy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?)   // strato cp [-i] /Example/src/myfile.c .
     case list(folder: FileSystemForCommand, pathOrWildcard: String) // strato ls [-i] /Example/**/*.c
 }
 
@@ -323,6 +334,9 @@ final class CommandParser {
             }
             return .base(externalPath: path)
 
+        case "d", "debug":
+            return .debug
+
         case "begin":
             return .begin
 
@@ -346,14 +360,14 @@ final class CommandParser {
 
         case "cp", "copy":
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
-            guard remaining.count >= 2 else {
-                throw CommandParserError.missingArgument(command: "cp", expected: "pathOrWildcard destinationPath")
+            guard remaining.count >= 1 else {
+                throw CommandParserError.missingArgument(command: "cp", expected: "pathOrWildcard [destinationPath]")
             }
-            return .copy(folder: folder, pathOrWildcard: remaining[0], destinationPath: remaining[1])
+            return .copy(folder: folder, pathOrWildcard: remaining[0], destinationPath: remaining.count >= 2 ? remaining[1] : nil)
 
         case "ls", "list":
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
-            let path = remaining.first ?? "*.*"
+            let path = remaining.first ?? "*"
             return .list(folder: folder, pathOrWildcard: path)
 
         default:
@@ -472,9 +486,14 @@ final class CommandInterpreter: NodeType {
     func handleCommand(_ command: String) throws {
         do {
             try handleUserCommand(commandParser.parse(command: command))
+            try save()
         } catch {
             outputError(error.localizedDescription)
         }
+    }
+
+    func handleDebug() throws {
+        try nodeContext.processingCycle.printAll()
     }
 
     func handleUserCommand(_ userCommand: UserCommand) throws {
@@ -482,6 +501,9 @@ final class CommandInterpreter: NodeType {
 
         case .base(let externalPath):
             handleBase(externalPath: externalPath)
+
+        case .debug:
+            try handleDebug()
 
         case .begin:
             handleBegin()
@@ -493,7 +515,7 @@ final class CommandInterpreter: NodeType {
             handleDiscard()
 
         case .push(let externalPathOrWildcard):
-            handlePush(externalPathOrWildcard: externalPathOrWildcard)
+            try handlePush(externalPathOrWildcard: externalPathOrWildcard)
 
         case .remove(let pathOrWildcard):
             try handleRemove(pathOrWildcard: pathOrWildcard)
@@ -542,9 +564,9 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    var outputFileSystem: FolderNode { // TODO: this is inside the buildgraph node because it is a product of the graph
+    var outputFileSystem: FolderNode {
         get throws {
-            try child(named: "outputFileSystem")
+            try nodeContext.processingCycle.rootNode.buildGraph.outputFileSystem
         }
     }
 
@@ -574,7 +596,7 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    private func handlePush(externalPathOrWildcard: String) {
+    private func handlePush(externalPathOrWildcard: String) throws {
         guard let baseDirectory else {
             outputError("Set a base directory before pushing files")
             return
@@ -582,7 +604,7 @@ final class CommandInterpreter: NodeType {
 
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
 
-        matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
+        try matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
             pushOne(entry, baseDirectory: baseDirectory)
         }
     }
@@ -599,53 +621,94 @@ final class CommandInterpreter: NodeType {
 
         outputMessage("Remove: \(entry.path)")
 
-        guard let child = try inputFileSystem.child(path: entry.path) else {
+        guard let child = try inputFileSystem.childPoly(path: entry.path, kind: FolderNode.kind) else { // TODO: we don't even need this kind arg if we don't create it
             outputError("Child not found")
             return
         }
 
-        try child.delete()
+        // - if the Node is used by the build graph, it must not be user-deleted, as this will invalidate the graph even if the file is re-added.
+        // - instead, we "gut" the file, turning it into a ghost. when the user lists files, it will appear as "missing", according to the current build graph.
+        // - then, re-adding the file will replace the ghost with a new node, which will be picked up by the build graph and cause the necessary rebuilds.
+        // - however, some input files do not behave this way. project files (formulae) should instead perform a cascading delete. this is because they are not
+        //   part of the build graph.
+        // - the way we tell is by looking at the wires coming from the file; if one or more target nodes do not allow cascading-deleting, we use the ghost-technique.
+
+        if try child.noOutputWiresPreventCascadeDeletion() {
+            try child.delete()
+        } else {
+            guard let staticFileNode = child as? StaticFileNode else {
+                outputError("Cannot delete; object is in use.")
+                return
+            }
+            try staticFileNode.eraseContents() // turns it into a ghost
+        }
     }
 
-    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String) throws {
-        func handle(folder: FolderNode) {
+    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
+        func handle(folder: FolderNode) throws {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
-            matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
-                copyOneFile(folder: folder, entry: entry, destinationPath: destinationPath)
+            try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+                try? copyOneFile(folder: folder, entry: entry, destinationPath: destinationPath ?? ".")
             }
         }
 
         switch folder {
         case .input:
-            handle(folder: try inputFileSystem)
+            try handle(folder: inputFileSystem)
         case .output:
-            handle(folder: try outputFileSystem)
+            try handle(folder: outputFileSystem)
         }
     }
 
-    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) {
-/*        let node = folder.childNode(path: entry.path)
-
-        if let staticFileNode = node as? StaticFileNode {
-            let fileContent: [UInt8] = staticFileNode.outputValue.content
-
-            fileContent.write(to: URL(fileURLWithPath: destinationPath))
-        } else {
-            if let folderNode = node as? FileSystem {
-                // TODO: create a folder in external FS to match the one in the internal file system
+    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) throws {
+        switch entry.kind {
+        case .file:
+            guard let staticFileNode: StaticFileNode = try folder.child(path: entry.path) else {
+                outputError("File \(entry.path) not found in internal file system")
+                return
             }
-        }*/
+
+            switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).kind {
+
+            case .value(let dataObjectHash, _):
+                let fileContent = Data(try dataObjectHash.resolve())
+                let finalPath = destinationPath.appending("/").appending((entry.path as NSString).lastPathComponent)
+                try fileContent.write(to: URL(fileURLWithPath: finalPath))
+                outputMessage("File written: \(finalPath)")
+
+            case .noValue(let reason):
+                outputError("File \(entry.path) has no content: \(reason)")
+
+            }
+
+        case .folder:
+            break
+            // TODO
+        }
     }
 
     private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
-        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try inputFileSystem))
+        let fileSystem: FolderNode
 
-        matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
-            outputMessage(entry.path)
+        switch folder {
+        case .input:
+            fileSystem = try inputFileSystem
+        case .output:
+            fileSystem = try outputFileSystem
+        }
+
+        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
+
+        try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+            if entry.isMissing {
+                outputMessage("\(entry.path) (missing)")
+            } else {
+                outputMessage(entry.path)
+            }
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func process() throws {
     }
 }

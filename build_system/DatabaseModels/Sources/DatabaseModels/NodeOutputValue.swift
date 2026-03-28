@@ -1,43 +1,48 @@
 import Foundation
 import GRDB
 
-public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
+public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord, Equatable {
     public enum Columns {
         public static let nodeID = Column(CodingKeys.nodeID)
         public static let port = Column(CodingKeys.port)
         public static let kind = Column(CodingKeys.kind)
         public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
+        public static let metadata = Column(CodingKeys.metadata)
+        public static let errorMessage = Column(CodingKeys.errorMessage)
     }
 
     public enum ValueKind: UInt8, Codable {
         case value = 1
-        case noValueComputingValue = 2
-        case noValueAwaitingDependency = 3
-        case noValueLazy = 4
-        case noValueError = 5
-        case noValueNodeInitializing = 6
+        case pending = 2
+        case error = 5
     }
 
     public var nodeID: ObjectID
     public var port: UInt8
     public var kind: ValueKind
     public var dataObjectHash: DataObjectHash?
+    public var metadata: String?
+    public var errorMessage: String?
 
-    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHash: DataObjectHash?) {
+    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHash: DataObjectHash?, metadata: String?, errorMessage: String?) {
         self.nodeID = nodeID
         self.port = port
         self.kind = kind
         self.dataObjectHash = dataObjectHash
+        self.metadata = metadata
+        self.errorMessage = errorMessage
     }
 
     // NodeOutputValue uses a natural key instead of the usual "id" surrogate key.
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "NodeOutputValue", options: .ifNotExists) { t in
-                t.column("nodeID", .integer).notNull()
+                t.column("nodeID", .integer).notNull().indexed()
                 t.column("port", .integer).notNull()
                 t.column("kind", .integer).notNull()
                 t.column("dataObjectHash", .text) // nullable
+                t.column("metadata", .text) // nullable
+                t.column("errorMessage", .text) // nullable
                 t.primaryKey(["nodeID", "port"])
             }
         }
@@ -45,9 +50,13 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
 }
 
 extension DatabaseLayer {
-    public func selectAllNodeOutputValues() throws -> [NodeOutputValue] {
+
+    public func selectAllNodeOutputValues(limit: Int) throws -> [NodeOutputValue] {
         try dbQueue.read { db in
-            try NodeOutputValue.fetchAll(db)
+            try NodeOutputValue
+                .limit(limit)
+                .order(Column("nodeID").asc)
+                .fetchAll(db)
         }
     }
 
@@ -78,10 +87,18 @@ extension DatabaseLayer {
                 .deleteAll(db) > 0
         }
     }
+
+    public func deleteNodeOutputValues(nodeID: ObjectID) throws -> Int {
+        try dbQueue.write { db in
+            try NodeOutputValue
+                .filter(NodeOutputValue.Columns.nodeID == nodeID)
+                .deleteAll(db)
+        }
+    }
 }
 
 public extension NodeOutputValue {
     func description() -> String {
-        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectHash=\(String(describing: dataObjectHash))"
+        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectHash=\(dataObjectHash ?? "")"
     }
 }

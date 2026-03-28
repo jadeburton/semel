@@ -37,6 +37,12 @@ public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
 }
 
 extension DatabaseLayer {
+    public func selectAllWires() throws -> [Wire] {
+        try dbQueue.read { db in
+            try Wire.fetchAll(db)
+        }
+    }
+
     public func selectWires(goingToNodeID: ObjectID) throws -> [Wire] {
         try dbQueue.read { db in
             try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)

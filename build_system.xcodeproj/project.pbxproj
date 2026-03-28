@@ -10,7 +10,6 @@
 		4C0F1DD42F1C50E400EF3940 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0F1DD32F1C50E400EF3940 /* GRDB */; };
 		4C2018472F36AFCE009A6A19 /* DatabaseModels in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0F1DD62F1C50E400EF3942 /* DatabaseModels */; };
 		4CB110712F36C9A5005E6AE4 /* FileSystem-old.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */; };
-		4CC8955F2F538CD60063DB55 /* WireManagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CC8955E2F538CD60063DB55 /* WireManagement.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -27,25 +26,11 @@
 /* Begin PBXFileReference section */
 		4C937AEF2F1AF44E0099662B /* build_system */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = build_system; sourceTree = BUILT_PRODUCTS_DIR; };
 		4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileSystem-old.swift"; sourceTree = "<group>"; };
-		4CC8955E2F538CD60063DB55 /* WireManagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WireManagement.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
-
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		4CC895632F53A54F0063DB55 /* Exceptions for "build_system" folder in "Compile Sources" phase from "build_system" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = 4C937AEB2F1AF44E0099662B /* Sources */;
-			membershipExceptions = (
-				Nodes/formula.yml,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4C937AF12F1AF44E0099662B /* build_system */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				4CC895632F53A54F0063DB55 /* Exceptions for "build_system" folder in "Compile Sources" phase from "build_system" target */,
-			);
 			path = build_system;
 			sourceTree = "<group>";
 		};
@@ -76,7 +61,6 @@
 				4C0F1DD72F1C52B400EF3940 /* Frameworks */,
 				4C937AF02F1AF44E0099662B /* Products */,
 				4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */,
-				4CC8955E2F538CD60063DB55 /* WireManagement.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -154,7 +138,6 @@
 		4C937AEB2F1AF44E0099662B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				4CC8955F2F538CD60063DB55 /* WireManagement.swift in Sources */,
 				4CB110712F36C9A5005E6AE4 /* FileSystem-old.swift in Sources */,
 			);
 		};
