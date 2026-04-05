@@ -665,41 +665,220 @@ extension NodeOutputValue {
 }
 
 extension ProcessingCycle {
+
+    // MARK: - ASCII Art Graph
+
     func printAll() throws {
-        for node in try database.selectAllNodes() {
-            let highLevelNode = try! wrapRawNodePoly(nodeRaw: node)
+        let allNodes = try database.selectAllNodes()
+        let allWires = try database.selectAllWires()
+        let allMessages = try database.selectAllMessages(limit: 10000)
+        let allOutputValues = try database.selectAllNodeOutputValues()
+        let allDataObjects = try database.selectAllDataObjects()
 
-            print("- \(highLevelNode.description())")
+        // Index helpers
+        let nodeByID: [ObjectID: Node] = Dictionary(uniqueKeysWithValues: allNodes.compactMap { node in node.id.map { ($0, node) } })
+        let outputValuesByNodeID: [ObjectID: [DatabaseModels.NodeOutputValue]] = Dictionary(grouping: allOutputValues, by: { $0.nodeID })
+        let messagesByTargetNodeID: [ObjectID: [Message]] = Dictionary(grouping: allMessages, by: { $0.targetNodeID })
+        let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.fromNodeID })
+        let wiresByToNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.toNodeID })
 
-            for wire in try database.selectWires(goingToNodeID: node.id!) {
-                let fromNode = try? wire.fromNodeID.loadNode(from: database)
-                let toNode = try? wire.toNodeID.loadNode(from: database)
+        // Resolve the descriptor for a raw node (port names)
+        func descriptorFor(_ rawNode: Node) -> NodeKindDescriptor? {
+            guard let node = try? wrapRawNodePoly(nodeRaw: rawNode) else { return nil }
+            return node.descriptor
+        }
 
-                print("    Wire (\(wire.id ?? -1)) Node \(fromNode!.description()) port \(wire.fromPort) ----> Node \(toNode!.description()) port \(wire.toPort)")
+        // Friendly node label
+        func labelForNode(_ rawNode: Node) -> String {
+            let name = rawNode.name ?? "?"
+            let kindName = (try? PolyFactory.type(kind: rawNode.kind))
+                .map { String(describing: $0) } ?? "kind:\(rawNode.kind)"
+            return "\(name) [\(kindName)] #\(rawNode.id ?? -1)"
+        }
+
+        // Format an output value for display
+        func formatOutputValue(_ outputValue: DatabaseModels.NodeOutputValue) -> String {
+            switch outputValue.kind {
+            case .value:
+                let hash = outputValue.dataObjectHash ?? "nil"
+                let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
+                return "✔ \(shortHash)"
+            case .noValueComputingValue:    return "⏳ computing"
+            case .noValueAwaitingDependency: return "⏳ awaiting"
+            case .noValueNodeInitializing:  return "⏳ init"
+            case .noValueLazy:              return "💤 lazy"
+            case .noValueError:             return "❌ error"
+            }
+        }
+
+        // Format a message kind for display
+        func formatMessageKind(_ message: Message) -> String {
+            switch message.kind {
+            case .wireConnected:    return "📎 connected"
+            case .wireDisconnected: return "✂️ disconnected"
+            case .valueMutated:     return "📨 mutated"
+            case .error:            return "❌ error"
+            }
+        }
+
+        // ───────────────────────────────────────────────────
+        // Section 1: Node boxes
+        // ───────────────────────────────────────────────────
+        print("╔══════════════════════════════════════════════╗")
+        print("║              BUILD GRAPH STATE               ║")
+        print("╚══════════════════════════════════════════════╝")
+        print()
+
+        for rawNode in allNodes {
+            guard let nodeID = rawNode.id else { continue }
+            let label = labelForNode(rawNode)
+            let descriptor = descriptorFor(rawNode)
+            let inputPorts  = descriptor?.inputs  ?? []
+            let outputPorts = descriptor?.outputs ?? []
+            let incomingWires = wiresByToNodeID[nodeID] ?? []
+            let outgoingWires = wiresByFromNodeID[nodeID] ?? []
+            let pendingMessages = messagesByTargetNodeID[nodeID] ?? []
+            let outputValues = outputValuesByNodeID[nodeID] ?? []
+
+            // Build the content lines inside the box
+            var contentLines = [String]()
+
+            // Parent info
+            if let parentNodeID = rawNode.parentNodeID {
+                let parentName = nodeByID[parentNodeID]?.name ?? "?"
+                contentLines.append("  parent: \(parentName) #\(parentNodeID)")
             }
 
-            for wire in try database.selectWires(comingFromNodeID: node.id!) {
-                let fromNode = try? wire.fromNodeID.loadNode(from: database)
-                let toNode = try? wire.toNodeID.loadNode(from: database)
-
-                print("    Wire (\(wire.id ?? -1)) Node \(fromNode!.description()) port \(wire.fromPort) ----> Node \(toNode!.description()) port \(wire.toPort)")
+            // Input ports
+            if !inputPorts.isEmpty {
+                contentLines.append("  ┌─ inputs ─────────────────────")
+                for inputPort in inputPorts {
+                    let connectedWires = incomingWires.filter { $0.toPort == inputPort.index }
+                    if connectedWires.isEmpty {
+                        contentLines.append("  │ ▸ :\(inputPort.index) \"\(inputPort.name)\"  (disconnected)")
+                    } else {
+                        for wire in connectedWires {
+                            let sourceNodeName = nodeByID[wire.fromNodeID]?.name ?? "?"
+                            contentLines.append("  │ ▸ :\(inputPort.index) \"\(inputPort.name)\"  ◀── #\(wire.fromNodeID) \"\(sourceNodeName)\" :\(wire.fromPort)")
+                        }
+                    }
+                }
+                contentLines.append("  └─────────────────────────────")
             }
+
+            // Output ports + cached values
+            if !outputPorts.isEmpty {
+                contentLines.append("  ┌─ outputs ────────────────────")
+                for outputPort in outputPorts {
+                    let connectedWires = outgoingWires.filter { $0.fromPort == outputPort.index }
+                    let outputValue = outputValues.first(where: { $0.port == outputPort.index })
+                    let valueDescription = outputValue.map { formatOutputValue($0) } ?? "·"
+                    if connectedWires.isEmpty {
+                        contentLines.append("  │ ▹ :\(outputPort.index) \"\(outputPort.name)\"  [\(valueDescription)]  (no wires)")
+                    } else {
+                        for wire in connectedWires {
+                            let destinationNodeName = nodeByID[wire.toNodeID]?.name ?? "?"
+                            contentLines.append("  │ ▹ :\(outputPort.index) \"\(outputPort.name)\"  [\(valueDescription)]  ──▶ #\(wire.toNodeID) \"\(destinationNodeName)\" :\(wire.toPort)")
+                        }
+                    }
+                }
+                contentLines.append("  └─────────────────────────────")
+            }
+
+            // Pending messages
+            if !pendingMessages.isEmpty {
+                contentLines.append("  ┌─ pending messages (\(pendingMessages.count)) ──────")
+                for message in pendingMessages {
+                    contentLines.append("  │ \(formatMessageKind(message))  via wire #\(message.wireID)  pri=\(message.priority)")
+                }
+                contentLines.append("  └─────────────────────────────")
+            }
+
+            // Compute box width
+            let contentWidth = max(label.count, (contentLines.map { $0.count }.max() ?? 0)) + 4
+            let boxWidth = max(contentWidth, 40)
+
+            // Draw the box
+            let topBorder    = "┌" + String(repeating: "─", count: boxWidth) + "┐"
+            let bottomBorder = "└" + String(repeating: "─", count: boxWidth) + "┘"
+            let separator    = "├" + String(repeating: "─", count: boxWidth) + "┤"
+
+            func padLine(_ text: String) -> String {
+                let padding = boxWidth - text.count
+                return "│ " + text + String(repeating: " ", count: max(0, padding - 1)) + "│"
+            }
+
+            print(topBorder)
+            print(padLine("⬢ " + label))
+            if !contentLines.isEmpty {
+                print(separator)
+                for contentLine in contentLines {
+                    print(padLine(contentLine))
+                }
+            }
+            print(bottomBorder)
+            print()
         }
 
-        print("")
-
-        for message in try database.selectAllMessages(limit: 10000) {
-            print("- \(message.description())")
+        // ───────────────────────────────────────────────────
+        // Section 2: Wire list
+        // ───────────────────────────────────────────────────
+        if !allWires.isEmpty {
+            print("┌──────────────────────────────────────────────┐")
+            print("│  WIRES (\(allWires.count))                                     │")
+            print("├──────────────────────────────────────────────┤")
+            for wire in allWires {
+                let fromNodeName = nodeByID[wire.fromNodeID]?.name ?? "?"
+                let toNodeName   = nodeByID[wire.toNodeID]?.name ?? "?"
+                print("│  #\(wire.id ?? -1)  \"\(fromNodeName)\" :\(wire.fromPort)  ───▶  \"\(toNodeName)\" :\(wire.toPort)")
+            }
+            print("└──────────────────────────────────────────────┘")
+            print()
         }
 
-        print("")
-        for dataObject in try database.selectAllDataObjects() {
-            print("- \(dataObject.description())")
+        // ───────────────────────────────────────────────────
+        // Section 3: Pending messages
+        // ───────────────────────────────────────────────────
+        if !allMessages.isEmpty {
+            print("┌──────────────────────────────────────────────┐")
+            print("│  PENDING MESSAGES (\(allMessages.count))                        │")
+            print("├──────────────────────────────────────────────┤")
+            for message in allMessages {
+                let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
+                print("│  \(formatMessageKind(message))  → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)  pri=\(message.priority)")
+            }
+            print("└──────────────────────────────────────────────┘")
+            print()
         }
 
-        print("")
-        for nodeOutputValue in try database.selectAllNodeOutputValues() {
-            print("- \(nodeOutputValue.description())")
+        // ───────────────────────────────────────────────────
+        // Section 4: Data objects
+        // ───────────────────────────────────────────────────
+        if !allDataObjects.isEmpty {
+            print("┌──────────────────────────────────────────────┐")
+            print("│  DATA OBJECTS (\(allDataObjects.count))                          │")
+            print("├──────────────────────────────────────────────┤")
+            for dataObject in allDataObjects {
+                let shortHash = dataObject.hash.count > 16 ? String(dataObject.hash.prefix(16)) + "…" : dataObject.hash
+                print("│  🗄 \(shortHash)  \(dataObject.content.count) byte(s)")
+            }
+            print("└──────────────────────────────────────────────┘")
+            print()
+        }
+
+        // ───────────────────────────────────────────────────
+        // Section 5: Output values
+        // ───────────────────────────────────────────────────
+        if !allOutputValues.isEmpty {
+            print("┌──────────────────────────────────────────────┐")
+            print("│  OUTPUT VALUES (\(allOutputValues.count))                         │")
+            print("├──────────────────────────────────────────────┤")
+            for outputValue in allOutputValues {
+                let nodeName = nodeByID[outputValue.nodeID]?.name ?? "?"
+                print("│  \"\(nodeName)\" #\(outputValue.nodeID) :\(outputValue.port)  → \(formatOutputValue(outputValue))")
+            }
+            print("└──────────────────────────────────────────────┘")
+            print()
         }
     }
 }

@@ -100,6 +100,40 @@ final class BuildGraph: NodeType {
         }
     }
 
+    func debugPrintTree() {
+        // prints to the console an easy-to read dump of the build tree from right to left, e.g.
+
+        // - build tree
+        //   - StaticFile(mylib.dylib)
+        //     - Linker
+        //       - Compiler
+        //         - Preprocessor
+        //           - StaticFile(helpers.c)
+        //           - StaticFile(helpers.h)
+        //           - StaticFile(common.h)
+        //         - Preprocessor
+        //           - StaticFile(math.c)
+        //           - StaticFile(math.h)
+        //           - StaticFile(common.h)
+        //       - LibraryRef(somelib.dylib)
+        //   - StaticFile(someProgram)
+        //     - Linker
+        //       - Compiler
+        //         - Preprocessor
+        //           - StaticFile(main.c)
+        //           - StaticFile(utility.h)
+        //       - LibraryRef(somelib.dylib)
+
+        // This does not simply direclty print the hierachy according to the parent-child relationship between Nodes.
+        // (Nodes have both a parent-child relationship and relationships defined via Wires.)
+        // Imagine a root node that has N children, which are the immediate children of the outputFileSystem node
+        // then each of those children has N children, which are defined by what nodes they depend on (Nodes whose
+        // outputs have Wires that go to any of their inputs), and so on recursively until we reach the leaf nodes
+        // which have no dependencies (the input files.)
+        // The graph's leaf Nodes may be shared by the graph's non-leaf Nodes, e.g. if two different .o files both
+        // depend on common.h, then the Node representing common.h will be a child of both of the Nodes representing the .o files.
+    }
+
     private func integrateBuildGraphDescription(_ buildGraphDescription: BuildGraphDescription) throws {
         for output in buildGraphDescription.outputs {
             try integrate(buildGraphOutput: output)
