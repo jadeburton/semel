@@ -349,7 +349,8 @@ final class ProcessingCycle {
         // This is the first object that is created. It resides inside a plugin library that can be configured by the user.
         // The CommandInterpreter is responsible for interpreting the commands that are sent to the system, e.g. from a CLI or a UI, and translating them into node creations, wire connections, value assignments, etc. It is also responsible for creating and managing the "main" Node that represents the main build pipeline.
         rootNode = try rootObject()
-         try! printAll()
+        //try! printAll()
+        try rootNode.buildGraph.debugPrintTree()
     }
 
     func endCycle() throws {

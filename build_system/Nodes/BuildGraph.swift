@@ -132,6 +132,58 @@ final class BuildGraph: NodeType {
         // which have no dependencies (the input files.)
         // The graph's leaf Nodes may be shared by the graph's non-leaf Nodes, e.g. if two different .o files both
         // depend on common.h, then the Node representing common.h will be a child of both of the Nodes representing the .o files.
+
+        do {
+            let outputFolder = try outputFileSystem
+            let topLevelOutputNodes = try nodeContext.processingCycle.allChildNodes(nodeID: outputFolder.nodeContext.nodeID!)
+
+            print("- build tree")
+
+            for outputNode in topLevelOutputNodes {
+                printDependencyTree(node: outputNode, indentLevel: 1)
+            }
+        } catch {
+            print("- build tree (error: \(error))")
+        }
+    }
+
+    private func printDependencyTree(node: NodeType, indentLevel: Int) {
+        let indent = String(repeating: "  ", count: indentLevel)
+        let kindName = (try? PolyFactory.type(kind: node.descriptor.kind))
+            .map { String(describing: $0) } ?? "Node"
+        let nodeName = node.nodeContext.name ?? "?"
+        print("\(indent)- \(kindName)(\(nodeName))")
+
+        // Find all nodes that this node depends on by looking at its input wires.
+        // Each input wire's fromNodeID is a dependency.
+        let database = nodeContext.processingCycle.database
+        guard let nodeID = node.nodeContext.nodeID else { return }
+
+        do {
+            let incomingWires = try database.selectWires(goingToNodeID: nodeID)
+
+            // Deduplicate dependencies: a node may be wired to multiple input ports,
+            // but we only want to print it once at this level.
+            var visitedDependencyNodeIDs = Set<ObjectID>()
+            var dependencyNodes = [NodeType]()
+
+            for wire in incomingWires {
+                guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
+                visitedDependencyNodeIDs.insert(wire.fromNodeID)
+
+                if let rawNode = try? database.selectNodeByID(wire.fromNodeID) {
+                    if let dependencyNode = try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode) {
+                        dependencyNodes.append(dependencyNode)
+                    }
+                }
+            }
+
+            for dependencyNode in dependencyNodes {
+                printDependencyTree(node: dependencyNode, indentLevel: indentLevel + 1)
+            }
+        } catch {
+            print("\(indent)  (error loading dependencies: \(error))")
+        }
     }
 
     private func integrateBuildGraphDescription(_ buildGraphDescription: BuildGraphDescription) throws {
@@ -380,3 +432,133 @@ final class FormulaExtractor: NodeType {
         }
     }
 }
+
+struct ToolDescriptor: Hashable {
+    let name: String
+    let version: String
+    let platform: String
+    let architecture: String
+    let recursiveHash: String?
+}
+
+class ToolRegistry {
+    private var toolsByDescriptor: [ToolDescriptor: Tool] = [:]
+
+    func registerTool(descriptor: ToolDescriptor, tool: Tool) {
+        toolsByDescriptor[descriptor] = tool
+    }
+
+    func tool(descriptor: ToolDescriptor) throws -> Tool? {
+        toolsByDescriptor[descriptor]
+    }
+}
+
+class DefaultTools {
+    // TODO: in the future this would search the file system (or container's file system) for all known tools and register them,
+    // but for now we will just hardcode clang as an example
+    static func setup(toolRegistry: ToolRegistry) {
+        try? toolRegistry.registerTool(descriptor: .init(name: "clang",
+                                                         version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                                                         platform: "macOS",
+                                                         architecture: "arm64",
+                                                         recursiveHash: nil),
+                                       tool: LocalFileSystemTool(localPath: "/bin/clang"))
+    }
+}
+
+// A protocol that all build tools (compiler, linker, etc.) conform to, which allows the BuildGraph to treat them uniformly
+// when integrating the build graph description and printing the dependency tree.
+// Each Tool will have its own NodeKind and will be responsible for defining how it processes its inputs to produce outputs.
+protocol Tool {
+    func execute(arguments: [String],
+                 environment: [String: String],
+                 inputFiles: [FileNameAndContent],
+                 expectedOutputFileNames: [String],
+                 output: ToolOutput) throws
+}
+
+protocol ToolOutput {
+    func log(error: String)
+    func log(message: String)
+    func write(outputFilePath: String, data: [UInt8]) throws
+    func didTerminate(exitCode: Int32)
+}
+
+struct FileNameAndContent {
+    let fileName: String
+    let content: [UInt8]
+}
+
+// Runs a tool that exists in the local file system, e.g. /usr/bin/clang
+class LocalFileSystemTool: Tool {
+    private let localPath: String
+
+    init(localPath: String) throws {
+        self.localPath = localPath
+        // TODO: validate that the tool exists at the given path and is executable, and throw an error if not
+    }
+
+    func execute(arguments: [String],
+                 environment: [String: String],
+                 inputFiles: [FileNameAndContent],
+                 expectedOutputFileNames: [String],
+                 output: ToolOutput) throws {
+
+        // Executes the tool at localPath with the given arguments.
+        // Writes output files and logs via the ToolOutput protocol methods.
+        // An important goal is to isolate the tool as much as possible. This means we must not pull in source files from the local file system;
+        // all inputs must be explicitly passed in via the inputFiles, and all outputs must be explicitly written via the ToolOutput protocol methods.
+        // The file names inside inputFiles are relative to the tool's execution context, and the tool should not be able to access any files outside of
+        // those explicitly passed in. The same applies to output files.
+        // This isolation is important to ensure that the build is hermetic and reproducible, and that it does not have unintended side effects on the local file system.
+        // When a tool writes only to disk and does not support outputting to a pipe, we must use a temporary directory and let it write to that,
+        // then read the temporary file ourselves afterwards. We must ensure that we clean up any temporary files after execution to avoid cluttering the local file system.
+    }
+}
+/*
+class DockerContainerHost {
+    let hostAddress: String
+
+    init(hostAddress: String) {
+        self.hostAddress = hostAddress
+    }
+
+    // If containerName is provided, it should be used to identify an existing container to use for executing the tool.
+    // If containerName is not provided, a new container should be spun up for executing the tool
+    func container(imageName: String, containerName: String?) throws -> DockerContainer {
+        // TODO
+        .init()
+    }
+}
+
+class DockerContainer {
+//    let imageName: String
+//    let containerName: String
+}
+
+class DockerContainerizedTool: Tool {
+
+    // The remote or local Docker container to use for executing this tool, internally this has a name e.g. "clang-15-container".
+    // Ideally the container would be created and destroyed for every execution. However as this would be too slow,
+    // one container can receive multiple commands. Care should be taken to try to keep the state of the container
+    // clean by deleting temporary or output files after each execution, but this is not guaranteed to be perfectly clean.
+    // TODO: maybe a checkpoint and rollback is possible?
+    // In general we should also avoid executing multiple commands in parallel in the same container to avoid conflicts,
+    // but this is not strictly required as long as we can ensure that the commands do not step on each other's files.
+    private let dockerContainer: DockerContainer
+
+    // The path of the tool inside the docker container, e.g. /usr/bin/clang
+    private let toolPath: String
+
+    init(dockerContainer: DockerContainer, toolPath: String) {
+        self.dockerContainer = dockerContainer
+        self.toolPath = toolPath
+    }
+
+
+    func execute(arguments: [String], inputFiles: [FileNameAndContent], expectedOutputFileNames: [String], output: ToolOutput) throws {
+        // Connects to a remote Docker container host, spins up a container that contains the desired tool and runs the
+        // tool with arguments, then pulls the output files from the container.
+    }
+}
+*/
