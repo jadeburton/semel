@@ -510,14 +510,31 @@ class ClangPreprocessorTool: Tool {
 
                 var arguments = [String]()
 
-                arguments.append("-x")// TODO
-                arguments.append("cpp-output")
-                arguments.append("-c")
-                arguments.append("source.pc")
-                arguments.append("-o")
-                arguments.append("source.o")
+                // Preprocess only: -E tells clang to run only the preprocessor and output the result.
+                arguments.append("-E")
+
+                // Treat the input as C source.
+                arguments.append("-x")
+                arguments.append("c")
+
+                // Search the sandbox working directory for #include'd headers.
+                arguments.append("-I")
+                arguments.append(".")
+
+                // Do not search system include paths — all headers must be explicitly provided
+                // via inputFiles to maintain hermeticity.
+                arguments.append("-nostdinc")
+
+                // Target triple.
                 arguments.append("-target")
                 arguments.append("arm64-apple-macos14.0")
+
+                // Input file (the .c source).
+                arguments.append("source.c")
+
+                // Output file (the preprocessed result).
+                arguments.append("-o")
+                arguments.append("source.pc")
 
                 arguments.append(contentsOf: self.arguments)
 
@@ -616,8 +633,6 @@ class ClangLinkerTool: Tool {
                 return nil
             }
         }
-
- //       let bytes = dataObjectHash.resolve()!
 
         var output: [UInt8] = []
 
