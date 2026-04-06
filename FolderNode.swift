@@ -77,12 +77,12 @@ final class FolderNode: NodeType {
         assert(!name.contains("\\"))
 
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
-            try existingChild.writeToOutputPort(StaticFileNode.outputPort, value: .value(content))
+            try existingChild.writeToOutputPort(StaticFileNode.outputPort, value: .value(content, name))
         } else {
             // TODO: what if the type is not StaticFileNode
 
             let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode
-            try staticFile.replaceContent(content)
+            try staticFile.replaceContent(content, metadata: name)
 
             try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
         }

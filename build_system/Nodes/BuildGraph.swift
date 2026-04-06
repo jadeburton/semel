@@ -5,9 +5,7 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
-final class ClangCCompiler {
-//    func compile(inputFiles: [String], )
-}
+import Foundation
 
 struct BuildGraphInputWire {
     let from: BuildGraphNode
@@ -101,37 +99,7 @@ final class BuildGraph: NodeType {
     }
 
     func debugPrintTree() {
-        // prints to the console an easy-to read dump of the build tree from right to left, e.g.
-
-        // - build tree
-        //   - StaticFile(mylib.dylib)
-        //     - Linker
-        //       - Compiler
-        //         - Preprocessor
-        //           - StaticFile(helpers.c)
-        //           - StaticFile(helpers.h)
-        //           - StaticFile(common.h)
-        //         - Preprocessor
-        //           - StaticFile(math.c)
-        //           - StaticFile(math.h)
-        //           - StaticFile(common.h)
-        //       - LibraryRef(somelib.dylib)
-        //   - StaticFile(someProgram)
-        //     - Linker
-        //       - Compiler
-        //         - Preprocessor
-        //           - StaticFile(main.c)
-        //           - StaticFile(utility.h)
-        //       - LibraryRef(somelib.dylib)
-
-        // This does not simply direclty print the hierachy according to the parent-child relationship between Nodes.
-        // (Nodes have both a parent-child relationship and relationships defined via Wires.)
-        // Imagine a root node that has N children, which are the immediate children of the outputFileSystem node
-        // then each of those children has N children, which are defined by what nodes they depend on (Nodes whose
-        // outputs have Wires that go to any of their inputs), and so on recursively until we reach the leaf nodes
-        // which have no dependencies (the input files.)
-        // The graph's leaf Nodes may be shared by the graph's non-leaf Nodes, e.g. if two different .o files both
-        // depend on common.h, then the Node representing common.h will be a child of both of the Nodes representing the .o files.
+        // prints to the console an easy-to read dump of the build tree from right to left
 
         do {
             let outputFolder = try outputFileSystem
@@ -243,7 +211,7 @@ final class BuildGraph: NodeType {
                 case .noValue:
                     break
 
-                case .value(let dataObjectHash):
+                case .value(let dataObjectHash, let metadata):
                     let bytes = dataObjectHash.resolve()!
                     let string = String(decoding: bytes, as: Unicode.UTF8.self)
 
@@ -367,7 +335,415 @@ final class FormulaFinder: NodeType {
     }
 }
 
+protocol Tool: PolySerializable {
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws
+}
 
+class ClangCompilerTool: Tool {
+
+    let toolDescriptor: ToolDescriptor!
+    let arguments: [String]
+    let environment: [String: String]
+
+    required init() throws {
+        toolDescriptor = nil
+        arguments = []
+        environment = [:]
+    }
+
+    static let kind: UInt = 10
+
+    var nodeContext: NodeContext!
+
+    enum CodingKeys: CodingKey {
+        case toolDescriptor
+        case arguments
+        case environment
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.toolDescriptor = try container.decode(ToolDescriptor.self, forKey: .toolDescriptor)
+        self.arguments = try container.decode([String].self, forKey: .arguments)
+        self.environment = try container.decode([String: String].self, forKey: .environment)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(toolDescriptor, forKey: .toolDescriptor)
+        try container.encode(arguments, forKey: .arguments)
+        try container.encode(environment, forKey: .environment)
+    }
+
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+
+        guard let firstInputValue = try node.readFromInputPort(ToolNode.input).first else {
+            return
+        }
+
+        switch firstInputValue {
+
+            case .noValue:
+                try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .awaitingDependency))
+                return
+
+            case .value(let dataObjectHash, let metadata):
+
+                let bytes = dataObjectHash.resolve()!
+
+                var output: [UInt8] = []
+
+                var arguments = [String]()
+
+                arguments.append("-x")
+                arguments.append("cpp-output")
+                arguments.append("-c")
+                arguments.append("source.pc")
+                arguments.append("-o")
+                arguments.append("source.o")
+                arguments.append("-target")
+                arguments.append("arm64-apple-macos14.0")
+
+                arguments.append(contentsOf: self.arguments)
+
+                guard let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor) else {
+                    return
+                }
+
+                let exitCode = try tool.execute(arguments: arguments,
+                                                environment: environment,
+                                                inputFiles: [.init(fileName: "source.pc", content: bytes)],
+                                                expectedOutputFileNames: ["source.o"],
+                                                output: .init(logError: { error in },
+                                                              logMessage: { message in },
+                                                              write: { filePath, data in output.append(contentsOf: data) }))
+
+                if exitCode == 0 {
+                    try node.writeToOutputPort(ToolNode.output, value: .value(output.intern(), "source.o"))
+                } else {
+                    try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .error(stack: [])))
+                }
+        }
+    }
+}
+
+class ClangPreprocessorTool: Tool {
+
+    let toolDescriptor: ToolDescriptor!
+    let arguments: [String]
+    let environment: [String: String]
+
+    required init() throws {
+        toolDescriptor = nil
+        arguments = []
+        environment = [:]
+    }
+
+    static let kind: UInt = 11
+
+    var nodeContext: NodeContext!
+
+    enum CodingKeys: CodingKey {
+        case toolDescriptor
+        case arguments
+        case environment
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.toolDescriptor = try container.decode(ToolDescriptor.self, forKey: .toolDescriptor)
+        self.arguments = try container.decode([String].self, forKey: .arguments)
+        self.environment = try container.decode([String: String].self, forKey: .environment)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(toolDescriptor, forKey: .toolDescriptor)
+        try container.encode(arguments, forKey: .arguments)
+        try container.encode(environment, forKey: .environment)
+    }
+
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+
+        let inputValues = try node.readFromInputPort(ToolNode.input)
+
+        guard let primarySourceFile = inputValues.first(where: { nodeOutputValue in
+
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return metadata?.hasSuffix(".c") ?? false
+            default:
+                return false
+            }
+
+        }) else {
+            return
+        }
+
+        var headerFiles: [FileNameAndContent] = inputValues.filter { nodeOutputValue in
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return metadata?.hasSuffix(".h") ?? false
+            default:
+                return false
+            }
+        }.compactMap { nodeOutputValue in
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return FileNameAndContent(fileName: metadata!, content: dataObjectHash.resolve()!)
+            case .noValue:
+                return nil
+            }
+        }
+
+        switch primarySourceFile {
+
+            case .noValue:
+                try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .awaitingDependency))
+                return
+
+            case .value(let dataObjectHash, let metadata):
+
+                let bytes = dataObjectHash.resolve()!
+
+                var output: [UInt8] = []
+
+                var arguments = [String]()
+
+                arguments.append("-x")// TODO
+                arguments.append("cpp-output")
+                arguments.append("-c")
+                arguments.append("source.pc")
+                arguments.append("-o")
+                arguments.append("source.o")
+                arguments.append("-target")
+                arguments.append("arm64-apple-macos14.0")
+
+                arguments.append(contentsOf: self.arguments)
+
+                guard let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor) else {
+                    return
+                }
+
+                var inputFiles: [FileNameAndContent] = [.init(fileName: "source.c", content: bytes)]
+                inputFiles.append(contentsOf: headerFiles)
+
+                let exitCode = try tool.execute(arguments: arguments,
+                                                environment: environment,
+                                                inputFiles: inputFiles,
+                                                expectedOutputFileNames: ["source.pc"],
+                                                output: .init(logError: { error in },
+                                                              logMessage: { message in },
+                                                              write: { filePath, data in output.append(contentsOf: data) }))
+
+                if exitCode == 0 {
+                    try node.writeToOutputPort(ToolNode.output, value: .value(output.intern(), "source.pc"))
+                } else {
+                    try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .error(stack: [])))
+                }
+        }
+    }
+}
+
+class ClangLinkerTool: Tool {
+
+    let toolDescriptor: ToolDescriptor!
+    let arguments: [String]
+    let environment: [String: String]
+
+    required init() throws {
+        toolDescriptor = nil
+        arguments = []
+        environment = [:]
+    }
+
+    static let kind: UInt = 12
+
+    var nodeContext: NodeContext!
+
+    enum CodingKeys: CodingKey {
+        case toolDescriptor
+        case arguments
+        case environment
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.toolDescriptor = try container.decode(ToolDescriptor.self, forKey: .toolDescriptor)
+        self.arguments = try container.decode([String].self, forKey: .arguments)
+        self.environment = try container.decode([String: String].self, forKey: .environment)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(toolDescriptor, forKey: .toolDescriptor)
+        try container.encode(arguments, forKey: .arguments)
+        try container.encode(environment, forKey: .environment)
+    }
+
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+
+        let inputValues = try node.readFromInputPort(ToolNode.input)
+
+        var libraryFiles: [FileNameAndContent] = inputValues.filter { nodeOutputValue in
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return metadata?.hasSuffix(".dylib") ?? false
+            default:
+                return false
+            }
+        }.compactMap { nodeOutputValue in
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return FileNameAndContent(fileName: metadata!, content: dataObjectHash.resolve()!)
+            case .noValue:
+                return nil
+            }
+        }
+
+        var objectFiles: [FileNameAndContent] = inputValues.filter { nodeOutputValue in
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return metadata?.hasSuffix(".o") ?? false
+            default:
+                return false
+            }
+        }.compactMap { nodeOutputValue in
+            switch nodeOutputValue {
+            case .value(let dataObjectHash, let metadata):
+                return FileNameAndContent(fileName: metadata!, content: dataObjectHash.resolve()!)
+            case .noValue:
+                return nil
+            }
+        }
+
+ //       let bytes = dataObjectHash.resolve()!
+
+        var output: [UInt8] = []
+
+        var arguments = [String]()
+
+        arguments.append("-x")// TODO
+        arguments.append("cpp-output")
+        arguments.append("-c")
+        arguments.append("source.pc")
+        arguments.append("-o")
+        arguments.append("source.o")
+        arguments.append("-target")
+        arguments.append("arm64-apple-macos14.0")
+
+        arguments.append(contentsOf: self.arguments)
+
+        guard let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor) else {
+            return
+        }
+
+        var inputFiles: [FileNameAndContent] = []
+        inputFiles.append(contentsOf: libraryFiles)
+        inputFiles.append(contentsOf: objectFiles)
+
+        let exitCode = try tool.execute(arguments: arguments,
+                                        environment: environment,
+                                        inputFiles: inputFiles,
+                                        expectedOutputFileNames: ["source.dylib"],
+                                        output: .init(logError: { error in },
+                                                      logMessage: { message in },
+                                                      write: { filePath, data in output.append(contentsOf: data) }))
+
+        if exitCode == 0 {
+            try node.writeToOutputPort(ToolNode.output, value: .value(output.intern(), "source.dylib"))
+        } else {
+            try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .error(stack: [])))
+        }
+    }
+}
+
+
+class ToolNode: NodeType {
+
+    required init() throws {
+    }
+
+    static let kind: UInt = 9
+
+    var nodeContext: NodeContext!
+
+    enum CodingKeys: CodingKey {
+    }
+
+    required init(from decoder: Decoder) throws {
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var _ = encoder.container(keyedBy: CodingKeys.self)
+    }
+
+    static let input = NodeKindDescriptor.InputPort(index: 0,
+                                                    name: "input",
+                                                    kind: .value(dataType: .binary),
+                                                    maximumConnections: nil,
+                                                    minimumConnections: 1)
+
+    static let configuration = NodeKindDescriptor.InputPort(index: 1,
+                                                            name: "configuration",
+                                                            kind: .value(dataType: .utf8Text),
+                                                            maximumConnections: 1,
+                                                            minimumConnections: 1)
+
+    static let output = NodeKindDescriptor.OutputPort(index: 0,
+                                                      name: "output",
+                                                      kind: .value(dataType: .binary))
+
+    static let errorLog = NodeKindDescriptor.OutputPort(index: 1,
+                                                        name: "errorLog",
+                                                        kind: .value(dataType: .utf8Text))
+
+    static let infoLog = NodeKindDescriptor.OutputPort(index: 2,
+                                                       name: "infoLog",
+                                                       kind: .value(dataType: .utf8Text))
+
+    var descriptor: NodeKindDescriptor {
+        .init(kind: Self.kind,
+              inputs: [Self.input,
+                       Self.configuration],
+              outputs: [Self.output,
+                        Self.errorLog,
+                        Self.infoLog])
+    }
+
+    private func makeTool() throws -> Tool? {
+
+        guard let configurationValue = try readFromInputPort(Self.configuration).first else {
+            return nil
+        }
+
+        switch configurationValue {
+
+        case .noValue:
+            return nil
+
+        case .value(let dataObjectHash, let metadata):
+
+            guard let data = dataObjectHash.resolve() else {
+                return nil
+            }
+
+            let configurationString = String(decoding: data, as: Unicode.UTF8.self)
+            return try PolyFactory.make(encodedJSON: configurationString) as! Tool?
+        }
+    }
+
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+
+        guard let tool = try makeTool() else {
+            try writeToOutputPort(Self.output, value: .noValue(reason: .awaitingDependency))
+            return
+        }
+
+        try tool.processInputs(node: self, inputs: inputs)
+    }
+}
 
 // Connects to a .formula file in the file system. Also monitors the parent directory for add/remove of files referenced by the formula.
 final class FormulaExtractor: NodeType {
@@ -416,9 +792,9 @@ final class FormulaExtractor: NodeType {
                 case .noValue:
                     break
 
-                case .value(let dataObjectHash):
+                case .value(let dataObjectHash, let metadata):
                     // This extractor just passes through
-                    try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash))
+                    try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash, metadata))
 
                 }
 
@@ -433,7 +809,7 @@ final class FormulaExtractor: NodeType {
     }
 }
 
-struct ToolDescriptor: Hashable {
+struct ToolDescriptor: Hashable, Codable {
     let name: String
     let version: String
     let platform: String
@@ -441,14 +817,16 @@ struct ToolDescriptor: Hashable {
     let recursiveHash: String?
 }
 
-class ToolRegistry {
-    private var toolsByDescriptor: [ToolDescriptor: Tool] = [:]
+class ToolExecutorRegistry {
+    static let instance = ToolExecutorRegistry()
 
-    func registerTool(descriptor: ToolDescriptor, tool: Tool) {
-        toolsByDescriptor[descriptor] = tool
+    private var toolsByDescriptor: [ToolDescriptor: ToolExecutor] = [:]
+
+    func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolExecutor) {
+        toolsByDescriptor[descriptor] = toolExecutor
     }
 
-    func tool(descriptor: ToolDescriptor) throws -> Tool? {
+    func tool(descriptor: ToolDescriptor) throws -> ToolExecutor? {
         toolsByDescriptor[descriptor]
     }
 }
@@ -456,32 +834,31 @@ class ToolRegistry {
 class DefaultTools {
     // TODO: in the future this would search the file system (or container's file system) for all known tools and register them,
     // but for now we will just hardcode clang as an example
-    static func setup(toolRegistry: ToolRegistry) {
-        try? toolRegistry.registerTool(descriptor: .init(name: "clang",
-                                                         version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                                                         platform: "macOS",
-                                                         architecture: "arm64",
-                                                         recursiveHash: nil),
-                                       tool: LocalFileSystemTool(localPath: "/bin/clang"))
+    static func setup(toolExecutorRegistry: ToolExecutorRegistry) {
+        try? toolExecutorRegistry.registerTool(descriptor: .init(name: "clang",
+                                                                 version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                                                                 platform: "macOS",
+                                                                 architecture: "arm64",
+                                                                 recursiveHash: nil),
+                                               toolExecutor: LocalFileSystemTool(localPath: "/bin/clang"))
     }
 }
 
 // A protocol that all build tools (compiler, linker, etc.) conform to, which allows the BuildGraph to treat them uniformly
 // when integrating the build graph description and printing the dependency tree.
 // Each Tool will have its own NodeKind and will be responsible for defining how it processes its inputs to produce outputs.
-protocol Tool {
+protocol ToolExecutor {
     func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
-                 output: ToolOutput) throws
+                 output: ToolOutput) throws -> Int32
 }
 
-protocol ToolOutput {
-    func log(error: String)
-    func log(message: String)
-    func write(outputFilePath: String, data: [UInt8]) throws
-    func didTerminate(exitCode: Int32)
+struct ToolOutput {
+    let logError: (_ error: String) -> Void
+    let logMessage: (_ message: String) -> Void
+    let write: (_ filePath: String, _ data: [UInt8]) -> Void
 }
 
 struct FileNameAndContent {
@@ -489,20 +866,37 @@ struct FileNameAndContent {
     let content: [UInt8]
 }
 
+enum ToolExecutionError: Error {
+    case toolNotFound(path: String)
+    case toolNotExecutable(path: String)
+    case failedToCreateSandbox(underlying: Error)
+    case failedToWriteInputFile(fileName: String, underlying: Error)
+    case failedToReadOutputFile(fileName: String)
+    case processLaunchFailed(underlying: Error)
+}
+
 // Runs a tool that exists in the local file system, e.g. /usr/bin/clang
-class LocalFileSystemTool: Tool {
+class LocalFileSystemTool: ToolExecutor {
     private let localPath: String
 
     init(localPath: String) throws {
         self.localPath = localPath
-        // TODO: validate that the tool exists at the given path and is executable, and throw an error if not
+
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: localPath, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            throw ToolExecutionError.toolNotFound(path: localPath)
+        }
+        guard fileManager.isExecutableFile(atPath: localPath) else {
+            throw ToolExecutionError.toolNotExecutable(path: localPath)
+        }
     }
 
     func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
-                 output: ToolOutput) throws {
+                 output: ToolOutput) throws -> Int32 {
 
         // Executes the tool at localPath with the given arguments.
         // Writes output files and logs via the ToolOutput protocol methods.
@@ -513,6 +907,110 @@ class LocalFileSystemTool: Tool {
         // This isolation is important to ensure that the build is hermetic and reproducible, and that it does not have unintended side effects on the local file system.
         // When a tool writes only to disk and does not support outputting to a pipe, we must use a temporary directory and let it write to that,
         // then read the temporary file ourselves afterwards. We must ensure that we clean up any temporary files after execution to avoid cluttering the local file system.
+
+        let fileManager = FileManager.default
+
+        // 1. Create a temporary sandbox directory.
+        //    All input files will be written here, and the tool's working directory will be set to this path.
+        //    This ensures the tool cannot access files outside the sandbox.
+
+        let sandboxPath: String
+        do {
+            let sandboxURL = try fileManager.url(for: .itemReplacementDirectory,
+                                                 in: .userDomainMask,
+                                                 appropriateFor: fileManager.temporaryDirectory,
+                                                 create: true)
+            sandboxPath = sandboxURL.path
+        } catch {
+            throw ToolExecutionError.failedToCreateSandbox(underlying: error)
+        }
+
+        // Ensure the sandbox is always cleaned up, even if we throw partway through.
+        defer {
+            try? fileManager.removeItem(atPath: sandboxPath)
+        }
+
+        // 2. Write all input files into the sandbox.
+        //    Intermediate directories are created as needed so that relative paths like "src/main.c" work.
+
+        for inputFile in inputFiles {
+            let inputFileURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(inputFile.fileName)
+            let containingDirectory = inputFileURL.deletingLastPathComponent().path
+
+            do {
+                if !fileManager.fileExists(atPath: containingDirectory) {
+                    try fileManager.createDirectory(atPath: containingDirectory, withIntermediateDirectories: true)
+                }
+                try Foundation.Data(inputFile.content).write(to: inputFileURL)
+            } catch {
+                throw ToolExecutionError.failedToWriteInputFile(fileName: inputFile.fileName, underlying: error)
+            }
+        }
+
+        // 3. Configure and launch the process.
+
+        let process = Foundation.Process()
+        process.executableURL = Foundation.URL(fileURLWithPath: localPath)
+        process.arguments = arguments
+        process.currentDirectoryURL = Foundation.URL(fileURLWithPath: sandboxPath)
+
+        // Merge the caller-supplied environment on top of a minimal base environment.
+        // We intentionally do NOT inherit the host's full environment to maintain hermeticity.
+        var processEnvironment = [String: String]()
+        processEnvironment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        processEnvironment["HOME"] = sandboxPath
+        processEnvironment["TMPDIR"] = sandboxPath
+        for (key, value) in environment {
+            processEnvironment[key] = value
+        }
+        process.environment = processEnvironment
+
+        let stdoutPipe = Foundation.Pipe()
+        let stderrPipe = Foundation.Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw ToolExecutionError.processLaunchFailed(underlying: error)
+        }
+
+        // 4. Wait for the process to finish and collect stdout/stderr.
+
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        let exitCode = process.terminationStatus
+
+        // 5. Forward stdout and stderr to the ToolOutput as log messages.
+
+        if let stdoutString = String(data: stdoutData, encoding: .utf8), !stdoutString.isEmpty {
+            output.logMessage(stdoutString)
+        }
+
+        if let stderrString = String(data: stderrData, encoding: .utf8), !stderrString.isEmpty {
+            output.logError(stderrString)
+        }
+
+        // 6. Read back each expected output file from the sandbox and write it via ToolOutput.
+        //    If an expected output file is missing (e.g. because the tool failed), log an error but continue
+        //    reading other outputs so the caller gets as much information as possible.
+
+        for expectedOutputFileName in expectedOutputFileNames {
+            let outputFileURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(expectedOutputFileName)
+
+            if let outputFileData = fileManager.contents(atPath: outputFileURL.path) {
+                output.write(expectedOutputFileName, [UInt8](outputFileData))
+            } else {
+                output.logError("Expected output file not found: \(expectedOutputFileName)")
+            }
+        }
+
+        return exitCode
+
+        // The defer block above will clean up the sandbox directory.
     }
 }
 /*

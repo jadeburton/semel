@@ -22,12 +22,14 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
     public var port: UInt8
     public var kind: ValueKind
     public var dataObjectHash: DataObjectHash?
+    public var metadata: String?
 
-    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHash: DataObjectHash?) {
+    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHash: DataObjectHash?, metadata: String?) {
         self.nodeID = nodeID
         self.port = port
         self.kind = kind
         self.dataObjectHash = dataObjectHash
+        self.metadata = metadata
     }
 
     // NodeOutputValue uses a natural key instead of the usual "id" surrogate key.
@@ -38,6 +40,7 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
                 t.column("port", .integer).notNull()
                 t.column("kind", .integer).notNull()
                 t.column("dataObjectHash", .text) // nullable
+                t.column("metadata", .text) // nullable
                 t.primaryKey(["nodeID", "port"])
             }
         }

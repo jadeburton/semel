@@ -39,8 +39,8 @@ final class StaticFileNode: NodeType {
         try nodeContext.processingCycle.readFromOutputPort(Self.outputPort, nodeID: nodeContext.nodeID!)
     }
 
-    func replaceContent(_ content: DataObjectHash) throws {
-        try writeToOutputPort(Self.outputPort, value: .value(content))
+    func replaceContent(_ content: DataObjectHash, metadata: String?) throws {
+        try writeToOutputPort(Self.outputPort, value: .value(content, metadata))
     }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.

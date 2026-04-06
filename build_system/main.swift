@@ -28,7 +28,7 @@ import DatabaseModels
 let buildEngine = try! BuildEngine()
 
 func main() throws {
-    FileManager.default.changeCurrentDirectoryPath("/Users/jadeburton/Desktop/build_system/build_system")
+    FileManager.default.changeCurrentDirectoryPath("/Users/jadeburton/Desktop/C1/C1")
     _ = buildEngine
 
     while let line = readLine() {
@@ -72,7 +72,7 @@ enum NoValueReason {
 
 enum NodeOutputValue {
     case noValue(reason: NoValueReason)
-    case value(DataObjectHash)
+    case value(DataObjectHash, String?) // data, metadata
 }
 
 enum PortValueDataType: Codable, Hashable {
@@ -219,12 +219,12 @@ extension NodeType {
         }
     }
     
-    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeOutputValue] {
+    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeOutputValue] {
         try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
     }
     
-    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, nodeID: ObjectID) throws -> NodeOutputValue? {
-        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeID)
+    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort) throws -> NodeOutputValue? {
+        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeContext.nodeID!)
     }
     
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
@@ -575,12 +575,13 @@ extension ProcessingCycle {
                            message: MessageType?,
                            nodeID: ObjectID) throws {
 
-        let (dataObjectHash, kind) = try value.mapNodeOutputValue()
+        let (dataObjectHash, kind, metadata) = try value.mapNodeOutputValue()
 
         try database.insertOrReplaceNodeOutputValue(.init(nodeID: nodeID,
                                                           port: outputPort.index,
                                                           kind: kind,
-                                                          dataObjectHash: dataObjectHash))
+                                                          dataObjectHash: dataObjectHash,
+                                                          metadata: metadata))
 
         let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
                                                          fromPort: outputPort.index)
@@ -635,32 +636,32 @@ extension NodeOutputValue {
             self = .noValue(reason: .lazy)
         case .value:
             if let dataObjectHash = nodeOutputValue.dataObjectHash {
-                self = .value(dataObjectHash)
+                self = .value(dataObjectHash, nodeOutputValue.metadata)
             } else {
                 self = .noValue(reason: .nodeInitializing)
             }
         }
     }
 
-    func mapNodeOutputValue() throws -> (DataObjectHash?, DatabaseModels.NodeOutputValue.ValueKind) {
+    func mapNodeOutputValue() throws -> (DataObjectHash?, DatabaseModels.NodeOutputValue.ValueKind, String?) {
         switch self
         {
         case .noValue(let reason):
             switch reason {
             case .nodeInitializing:
-                return (nil, .noValueNodeInitializing)
+                return (nil, .noValueNodeInitializing, nil)
             case .awaitingDependency:
-                return (nil, .noValueAwaitingDependency)
+                return (nil, .noValueAwaitingDependency, nil)
             case .computingValue:
-                return (nil, .noValueComputingValue)
+                return (nil, .noValueComputingValue, nil)
             case .error://(stack) TODO
-                return (nil, .noValueError)
+                return (nil, .noValueError, nil)
             case .lazy:
-                return (nil, .noValueLazy)
+                return (nil, .noValueLazy, nil)
             }
 
-        case .value(let value):
-            return (value, .value)
+        case .value(let value, let metadata):
+            return (value, .value, metadata)
         }
     }
 }
