@@ -438,6 +438,8 @@ final class FormulaFinder: NodeType {
 }
 
 protocol Tool: PolySerializable {
+    var nodeKindDescriptor: NodeKindDescriptor { get }
+
     func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws
 }
 
@@ -482,16 +484,32 @@ class ClangCompilerTool: Tool {
         try container.encode(environment, forKey: .environment)
     }
 
+    static let input = NodeKindDescriptor.InputPort(index: 1,
+                                                    name: "input",
+                                                    kind: .value(dataType: .utf8Text),
+                                                    maximumConnections: 1,
+                                                    minimumConnections: 1)
+
+    static let output = NodeKindDescriptor.OutputPort(index: 2,
+                                                      name: "output",
+                                                      kind: .value(dataType: .binary))
+
+    var nodeKindDescriptor: NodeKindDescriptor {
+        .init(kind: ToolNode.kind,
+              inputs: [ToolNode.configuration, Self.input],
+              outputs: [Self.output, ToolNode.errorLog, ToolNode.infoLog])
+    }
+
     func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws {
 
-        guard let firstInputValue = try node.readFromInputPort(ToolNode.input).first else {
+        guard let firstInputValue = try node.readFromInputPort(Self.input).first else {
             return
         }
 
         switch firstInputValue.kind {
 
         case .noValue:
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                      kind: .noValue(reason: .awaitingDependency)))
             return
 
@@ -536,11 +554,11 @@ class ClangCompilerTool: Tool {
                                                           write: { filePath, data in output.append(contentsOf: data) }))
 
             if exitCode == 0 {
-                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                          kind: .value(dataObjectHash: output.intern(),
                                                                                       metadata: FileMetadata(name: outputFilename))))
             } else {
-                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                          kind: .noValue(reason: .error(stack: []))))
             }
         }
@@ -589,40 +607,54 @@ class ClangPreprocessorTool: Tool {
         try container.encode(environment, forKey: .environment)
     }
 
+    static let sourceFileInput = NodeKindDescriptor.InputPort(index: 1,
+                                                              name: "sourceFileInput",
+                                                              kind: .value(dataType: .utf8Text),
+                                                              maximumConnections: 1,
+                                                              minimumConnections: 1)
+
+    static let includeFiles = NodeKindDescriptor.InputPort(index: 2,
+                                                               name: "includeFiles",
+                                                               kind: .value(dataType: .utf8Text),
+                                                               maximumConnections: nil,
+                                                               minimumConnections: 0)
+
+    static let headerInputFiles = NodeKindDescriptor.InputPort(index: 3,
+                                                               name: "headerInputFiles",
+                                                               kind: .value(dataType: .utf8Text),
+                                                               maximumConnections: nil,
+                                                               minimumConnections: 0)
+
+    static let output = NodeKindDescriptor.OutputPort(index: 2,
+                                                      name: "output",
+                                                      kind: .value(dataType: .utf8Text))
+
+    var nodeKindDescriptor: NodeKindDescriptor {
+        .init(kind: ToolNode.kind,
+              inputs: [ToolNode.configuration, Self.sourceFileInput, Self.includeFiles, Self.headerInputFiles],
+              outputs: [Self.output, ToolNode.errorLog, ToolNode.infoLog])
+    }
+
     func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws {
 
-        let inputValues: [NodeValue]  = try node.readFromInputPort(ToolNode.input)
+        let sourceFileInputValues: [NodeValue]  = try node.readFromInputPort(Self.sourceFileInput)
 
-        guard inputValues.count > 0 else {
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
-                                                                     kind: .noValue(reason: .awaitingDependency)))
+        guard let primarySourceFile = sourceFileInputValues.first else {
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                 kind: .noValue(reason: .awaitingDependency)))
             return
         }
 
-        // when the .c file changes or is set for the first time:
-        // load the .c file and recursively discover all includes using a regex per file
-        // use this list of header files to create wires to the Input File System's nodes,
-        // if they do not already exist.
-        // if there are wires not in the list, remove them.
-        // once the contents of all newly-wired-in header files are ready to be read,
-        // do a run of the preprocessor with the flag that causes it to emit a tree of all
-        // actually-used include files, remembering that some may be conditionally excluded
-        // compare that list of actually-used files with the wires and delete any unneeded wires
+        // 1. ensure an IncludeFinder is attached to the output of the primarySourceFile and wired to our input
+        // 2. when the aggregated list of all include paths changes, ensure a wire exists for each.
+        // 3. As the wires are attached we will add IncludeFinders.
         
-        // when a header wire is deleted: treat it as though the .c file was modified
-        // when a header wire is added: treat it as though the .c file was modified
-        // when a header file is modified: treat it as though the .c file was modified
-        
-        // the problem with the above is the rescanning of files that have not changed.
-        // this could avoided by having a "includes" wire output from every .c and .h file that
-        // benefits from the built-in caching. The "includes" output would be updated whenever
-        // the file changes and would contain the list of included files. The preprocessor node
-        // would then read from the "includes" output to determine which header files to read
-        // and feed into the preprocessor, without having to re-scan the .c file for includes
-        // on every change. We would accept that some unused headers might be fed into the
-        // preprocessor, but that would be a performance win over rescanning and re-wiring on every change.
-        
-        
+        /*
+        switch sourceFileInputValue.kind {
+        case .value(let dataObjectHash, let metadata):
+            
+        }
+
         // Find the primary C source file among inputs.
         // Avoid throwing inside the sequence algorithms to keep type inference unambiguous.
         let primarySourceFile: NodeValue? = inputValues.first { nodeValue in
@@ -638,14 +670,14 @@ class ClangPreprocessorTool: Tool {
         }
 
         guard let primarySourceFile else {
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                      kind: .noValue(reason: .awaitingDependency)))
             return
-        }
+        }*/
 
         // Collect header files (.h) alongside their full sandbox paths.
         // Use a non-throwing predicate and make the closure's return type explicit to help the compiler.
-        let headerFiles: [FileNameAndContent] = inputValues
+        /*let headerFiles: [FileNameAndContent] = inputValues
             .filter { (nodeValue) -> Bool in
                 return (try? nodeValue.isFileWithExtension(".h", processingCycle: nodeContext.processingCycle)) ?? false
             }
@@ -660,16 +692,18 @@ class ClangPreprocessorTool: Tool {
                 case .noValue:
                     return nil
                 }
-            }
+            }*/
 
         switch primarySourceFile.kind {
 
         case .noValue:
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
-                                                                     kind: .noValue(reason: .awaitingDependency)))
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                 kind: .noValue(reason: .awaitingDependency)))
             return
 
         case .value(let dataObjectHash, let metadata):
+
+            ensureSourceFileHasIncludeFinderAttached(primarySourceFile.originNodeID!)
 
             let bytes = dataObjectHash.resolve()!
 
@@ -724,10 +758,48 @@ class ClangPreprocessorTool: Tool {
 
             arguments.append(contentsOf: self.arguments)
 
+            let includeFilesValues: [NodeValue]  = try node.readFromInputPort(Self.includeFiles)
+
+            let setOfIncludeFiles: Set<String> = Set(includeFilesValues.flatMap { includeFilesValue in
+                switch includeFilesValue.kind {
+                case .value(let dataObjectHash, let metadata):
+                    return dataObjectHash.resolveAsString()!.split(separator: "\n")
+                case .noValue:
+                    return []
+                }
+            })
+
+            for includeFilePath in setOfIncludeFiles {
+                ensureIncludeFileIsAttached(includeFilePath)
+            }
+
+            removeIncludeFileWiresNotInList(setOfIncludeFiles)
+
+            let headerInputFilesValues: [NodeValue]  = try node.readFromInputPort(Self.headerInputFiles)
+
+            for headerInputFilesValue in headerInputFilesValues {
+                ensureHeaderFileHasIncludeFinderAttached(headerInputFilesValue.originNodeID!)
+            }
+
             let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor)
 
             var inputFiles: [FileNameAndContent] = [.init(filePath: inputFilename, content: bytes)]
-            inputFiles.append(contentsOf: headerFiles)
+
+            inputFiles.append(contentsOf: headerInputFilesValues.compactMap { nodeValue in
+                switch nodeValue.kind {
+                case .value(let dataObjectHash, let metadata):
+                    if let staticFileNode: StaticFileNode = try? nodeContext.processingCycle.node(nodeID: nodeValue.originNodeID) {
+                        let filePath = (try? staticFileNode.buildFullPathName()) ?? (metadata as! FileMetadata).name
+                        return .init(filePath: filePath,
+                                     content: dataObjectHash.resolve()!)
+                    } else {
+                        return .init(filePath: (metadata as! FileMetadata).name,
+                                     content: dataObjectHash.resolve()!)
+                    }
+                case .noValue:
+                    return nil
+                }
+            })
 
             let exitCode = try tool.execute(arguments: arguments,
                                             environment: environment,
@@ -738,11 +810,11 @@ class ClangPreprocessorTool: Tool {
                                                           write: { filePath, data in output.append(contentsOf: data) }))
 
             if exitCode == 0 {
-                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                          kind: .value(dataObjectHash: output.intern(),
                                                                                       metadata: FileMetadata(name: outputFilename))))
             } else {
-                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                          kind: .noValue(reason: .error(stack: []))))
             }
         }
@@ -807,9 +879,31 @@ final class ClangLinkerTool: Tool {
         try container.encode(environment, forKey: .environment)
     }
 
+    static let input = NodeKindDescriptor.InputPort(index: 1,
+                                                    name: "input",
+                                                    kind: .value(dataType: .binary),
+                                                    maximumConnections: nil,
+                                                    minimumConnections: 1)
+
+    static let libraries = NodeKindDescriptor.InputPort(index: 2,
+                                                        name: "libraries",
+                                                        kind: .value(dataType: .binary),
+                                                        maximumConnections: nil,
+                                                        minimumConnections: 0)
+
+    static let output = NodeKindDescriptor.OutputPort(index: 2,
+                                                      name: "output",
+                                                      kind: .value(dataType: .binary))
+
+    var nodeKindDescriptor: NodeKindDescriptor {
+        .init(kind: ToolNode.kind,
+              inputs: [ToolNode.configuration, Self.input, Self.libraries],
+              outputs: [Self.output, ToolNode.errorLog, ToolNode.infoLog])
+    }
+
     func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws {
 
-        let inputValues = try node.readFromInputPort(ToolNode.input)
+        let inputValues = try node.readFromInputPort(Self.input)
 
         var libraryFiles: [FileNameAndContent] = []
 
@@ -834,7 +928,7 @@ final class ClangLinkerTool: Tool {
                 }
 
             case .noValue:
-                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                          kind: .noValue(reason: .error(stack: [])))) // TODO
                 return
             }
@@ -852,14 +946,14 @@ final class ClangLinkerTool: Tool {
                 }
 
             case .noValue:
-                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                          kind: .noValue(reason: .error(stack: [])))) // TODO
                 return
             }
         }
 
         if objectFiles.count == 0 {
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                      kind: .noValue(reason: .error(stack: [])))) // TODO
             return
         }
@@ -923,11 +1017,11 @@ final class ClangLinkerTool: Tool {
                                                       write: { filePath, data in output.append(contentsOf: data) }))
 
         if exitCode == 0 {
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                      kind: .value(dataObjectHash: output.intern(),
                                                                                   metadata: FileMetadata(name: "output.dylib"))))
         } else {
-            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+            try node.writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!,
                                                                      kind: .noValue(reason: .error(stack: []))))
         }
     }
@@ -954,37 +1048,27 @@ class ToolNode: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let input = NodeKindDescriptor.InputPort(index: 0,
-                                                    name: "input",
-                                                    kind: .value(dataType: .binary),
-                                                    maximumConnections: nil,
-                                                    minimumConnections: 1)
-
-    static let configuration = NodeKindDescriptor.InputPort(index: 1,
+    static let configuration = NodeKindDescriptor.InputPort(index: 0,
                                                             name: "configuration",
                                                             kind: .value(dataType: .utf8Text),
                                                             maximumConnections: 1,
                                                             minimumConnections: 1)
 
-    static let output = NodeKindDescriptor.OutputPort(index: 0,
-                                                      name: "output",
-                                                      kind: .value(dataType: .binary))
-
-    static let errorLog = NodeKindDescriptor.OutputPort(index: 1,
+    static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
                                                         name: "errorLog",
                                                         kind: .value(dataType: .utf8Text))
 
-    static let infoLog = NodeKindDescriptor.OutputPort(index: 2,
+    static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
                                                        name: "infoLog",
                                                        kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              inputs: [Self.input,
-                       Self.configuration],
-              outputs: [Self.output,
-                        Self.errorLog,
-                        Self.infoLog])
+        guard let tool = try? makeTool() else {
+            return .init(kind: Self.kind,
+                         inputs: [Self.configuration],
+                         outputs: [Self.errorLog, Self.infoLog])
+        }
+        return tool.nodeKindDescriptor
     }
 
     private func makeTool() throws -> Tool? {
@@ -1013,7 +1097,7 @@ class ToolNode: NodeType {
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
 
         guard let tool = try makeTool() else {
-            try writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!, kind: .noValue(reason: .awaitingDependency)))
+            //try writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!, kind: .noValue(reason: .awaitingDependency)))
             return
         }
 
@@ -1351,6 +1435,14 @@ class DockerContainerizedTool: Tool {
 */
 
 
+// locate the node whose output gives us the .C file content.
+// enumerate the node's output wires and search for a IncludeFinder node. there should not be more than one.
+// if there is no IncludeFinder, create and attach one.
+// add a wire from the output of the IncludeFinder to our .includes input, if one does not already exist
+// one tricky thing will be getting the output of the IncludeFinder synchronously rather than waiting for it to process its inputs.
+
+// alternative: a parasite approach. whenever a new node is created, a hook checks what kind it is, and if it is a .h/.c file, IncludeFinder is automatically attached.
+
 
 
 // Takes a .c or .h as input and outputs a list of paths to include files, ignoring system includes.
@@ -1388,7 +1480,41 @@ final class IncludeFinder: NodeType {
     }
 
     private func extractIncludePaths(sourceFileContent: String) -> [String] {
-        [] // TODO: scan for all #include statements in the given input file, which is a .c or .h file, and return their paths. Ignore includes with angle brackets.
+        // Strip C-style block comments and C++-style line comments so we don't accidentally
+        // match #include tokens that appear inside comments.
+        var text = sourceFileContent
+
+        // Remove block comments /* ... */
+        if let blockCommentRegex = try? NSRegularExpression(pattern: "/\\*[\\s\\S]*?\\*/", options: []) {
+            text = blockCommentRegex.stringByReplacingMatches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
+        }
+
+        // Remove line comments //...
+        if let lineCommentRegex = try? NSRegularExpression(pattern: "//.*", options: []) {
+            text = lineCommentRegex.stringByReplacingMatches(in: text, options: [], range: NSRange(location: 0, length: (text as NSString).length), withTemplate: "")
+        }
+
+        // Match #include "file.h" (quoted includes). Ignore angle-bracket includes (<...>).
+        // We support optional whitespace between tokens, and allow one or more spaces or tabs.
+        let pattern = "(?m)^[ \t]*#[ \t]*include[ \t]*\"([^\"]+)\""
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return [] }
+
+        let ns = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+
+        var results: [String] = []
+        var seen = Set<String>()
+        for m in matches {
+            if m.numberOfRanges >= 2 {
+                let path = ns.substring(with: m.range(at: 1))
+                if !seen.contains(path) {
+                    seen.insert(path)
+                    results.append(path)
+                }
+            }
+        }
+
+        return results
     }
 
     func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
