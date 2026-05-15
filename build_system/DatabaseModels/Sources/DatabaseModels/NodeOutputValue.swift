@@ -33,7 +33,7 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "NodeOutputValue", options: .ifNotExists) { t in
-                t.column("nodeID", .integer).notNull()
+                t.column("nodeID", .integer).notNull().indexed()
                 t.column("port", .integer).notNull()
                 t.column("kind", .integer).notNull()
                 t.column("dataObjectHash", .text) // nullable

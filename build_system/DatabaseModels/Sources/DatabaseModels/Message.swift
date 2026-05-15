@@ -27,31 +27,31 @@ public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord
 }
 
 extension DatabaseLayer {
-    // Select all Messages, ordered by priority (highest first) and then by ID (oldest first)
+    // Select all Messages, ordered by ID (oldest first)
     public func selectAllMessages(limit: Int) throws -> [Message] {
         try dbQueue.read { db in
             try Message
-                .order(Column("priority").desc, Column("id").asc)
+                .order(Column("id").asc)
                 .fetchAll(db) // TODO limit
         }
     }
 
-    // Select all Messages associated with the given Node, ordered by priority (highest first) and then by ID (oldest first)
+    // Select all Messages associated with the given Node, ordered by ID (oldest first)
     public func selectMessages(for nodeID: ObjectID) throws -> [Message] {
         try dbQueue.read { db in
             try Message
                 .filter(Column("targetNodeID") == nodeID)
-                .order(Column("priority").desc, Column("id").asc)
+                .order(Column("id").asc)
                 .fetchAll(db)
         }
     }
 
-    // Select all Messages associated with the given Node, ordered by priority (highest first) and then by ID (oldest first)
+    // Select all Messages associated with the given Node, ordered by ID (oldest first)
     public func selectMessages(for nodeID: ObjectID, wireID: ObjectID) throws -> [Message] {
         try dbQueue.read { db in
             try Message
                 .filter(Column("targetNodeID") == nodeID && Column("wireID") == wireID)
-                .order(Column("priority").desc, Column("id").asc)
+                .order(Column("id").asc)
                 .fetchAll(db)
         }
     }
