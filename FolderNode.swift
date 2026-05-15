@@ -42,7 +42,7 @@ final class FolderNode: NodeType {
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
         try writeToOutputPort(Self.childrenOutputPort,
-                              value: .noValue(reason: .lazy),
+                              value: .init(originNodeID: nodeID, kind: .noValue(reason: .lazy)), // note: not our own nodeID, our child's
                               message: FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)))
 
         let parent: FolderNode? = try parent()
@@ -76,23 +76,39 @@ final class FolderNode: NodeType {
     func addOrReplaceChild(content: DataObjectHash, name: String) throws {
         assert(!name.contains("\\"))
 
+        let metadata = FileMetadata(name: name)
+
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
-            try existingChild.writeToOutputPort(StaticFileNode.outputPort, value: .value(content, name))
+            try existingChild.writeToOutputPort(StaticFileNode.outputPort,
+                                                value: .init(originNodeID: existingChild.nodeContext.nodeID!,
+                                                             kind: .value(dataObjectHash: content, metadata: metadata)))
         } else {
             // TODO: what if the type is not StaticFileNode
 
             let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode
-            try staticFile.replaceContent(content, metadata: name)
+            try staticFile.replaceContent(content, metadata: metadata)
 
             try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
     }
 }
 
 
+final class FileMetadata: Codable, PolySerializable {
+
+    static let kind: UInt = 14
+    let name: String
+
+//    init() throws {
+//    }
+
+    init(name: String) {
+        self.name = name
+    }
+}
 
 
 final class FolderEvent: MessageType {

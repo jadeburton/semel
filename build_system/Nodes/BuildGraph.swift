@@ -21,17 +21,16 @@ struct BuildGraphDescription {
     let outputs: [BuildGraphNode]
 }
 
-final class BuildGraphNode {
+struct BuildGraphNode {
     let name: String
-    let kind: UInt
+    let kind: BuildGraphNodeKind
+}
 
-    let inputPorts: [BuildGraphInputPort]
-
-    init(name: String, kind: UInt, inputPorts: [BuildGraphInputPort]) {
-        self.name = name
-        self.kind = kind
-        self.inputPorts = inputPorts
-    }
+enum BuildGraphNodeKind {
+    case tool(inputPorts: [BuildGraphInputPort])
+    case configuration(_ configuration: String)
+    case inputFile
+    case outputFile(inputPorts: [BuildGraphInputPort])
 }
 
 final class BuildGraph: NodeType {
@@ -66,28 +65,78 @@ final class BuildGraph: NodeType {
     func integrateFormula(formula: String) throws {
         print("integrate formula: \(formula)")
 
-        let inputWiresForLinker = [BuildGraphInputWire(from: .init(name: "compiler-blah-c",
-                                                                  kind: StaticFileNode.kind, // TODO
-                                                                  inputPorts: [.init(name: "input",
-                                                                                     inputWires: [
-                                                                                    .init(from: .init(name: "Nodes/BuildGraph.swift", kind: StaticFileNode.kind, inputPorts: []),
-                                                                                          fromPort: "output")
-                                                                           ])]),
-                                                    fromPort: "output")]
+        // A key part of a formula is the arguments that go to the preprocessor, compiler and linker, as well as which version and vendor to use.
 
+        let standardClang = ToolDescriptor(name: "clang",
+                                           version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                                           platform: "macOS",
+                                           architecture: "arm64",
+                                           recursiveHash: nil)
 
-        let inputWiresForStaticFile = [BuildGraphInputWire(from: .init(name: "linker-mylib",
-                                                                      kind: StaticFileNode.kind,
-                                                                      inputPorts: [.init(name: "input",
-                                                                                         inputWires: inputWiresForLinker)]),
-                                                          fromPort: "output")]
+        let clangPreprocessorConfiguration = BuildGraphNode(name: "PreprocessorConfiguration",
+                                                            kind: .configuration(try! ClangPreprocessorTool(toolDescriptor: standardClang,
+                                                                                                            arguments: [],
+                                                                                                            environment: [:]).toJSON()))
 
+        let clangCompilerConfiguration = BuildGraphNode(name: "CompilerConfiguration",
+                                                        kind: .configuration(try! ClangCompilerTool(toolDescriptor: standardClang,
+                                                                                                    arguments: [],
+                                                                                                    environment: [:]).toJSON()))
+
+        let clangLinkerConfiguration = BuildGraphNode(name: "LinkerConfiguration",
+                                                      kind: .configuration(try! ClangLinkerTool(toolDescriptor: standardClang,
+                                                                                                arguments: [],
+                                                                                                environment: [:]).toJSON()))
+
+        let clangPreprocessorConfigurationOutputs = [BuildGraphInputWire(from: clangPreprocessorConfiguration, fromPort: "output")]
+        let clangCompilerConfigurationOutputs = [BuildGraphInputWire(from: clangCompilerConfiguration, fromPort: "output")]
+        let clangLinkerConfigurationOutputs = [BuildGraphInputWire(from: clangLinkerConfiguration, fromPort: "output")]
+
+        let helloC = BuildGraphNode(name: "hello.c", kind: .inputFile)
+        let helloH = BuildGraphNode(name: "hello.h", kind: .inputFile)
+        let mainC = BuildGraphNode(name: "main.c", kind: .inputFile)
+        let commonH = BuildGraphNode(name: "common.h", kind: .inputFile)
+
+        let helloOutputs = [BuildGraphInputWire(from: helloC, fromPort: "output"),
+                            BuildGraphInputWire(from: helloH, fromPort: "output"),
+                            BuildGraphInputWire(from: commonH, fromPort: "output")]
+
+        let mainOutputs = [BuildGraphInputWire(from: mainC, fromPort: "output"),
+                           BuildGraphInputWire(from: helloH, fromPort: "output"),
+                           BuildGraphInputWire(from: commonH, fromPort: "output")]
+
+        let preprocessorHello = BuildGraphNode(name: "preprocessorHello",
+                                               kind: .tool(inputPorts: [BuildGraphInputPort(name: "input", inputWires: helloOutputs),
+                                                                        BuildGraphInputPort(name: "configuration", inputWires: clangPreprocessorConfigurationOutputs)]))
+
+        let preprocessorMain = BuildGraphNode(name: "preprocessorMain",
+                                              kind: .tool(inputPorts: [BuildGraphInputPort(name: "input", inputWires: mainOutputs),
+                                                                       BuildGraphInputPort(name: "configuration", inputWires: clangPreprocessorConfigurationOutputs)]))
+
+        let preprocessorHelloOutput = BuildGraphInputWire(from: preprocessorHello, fromPort: "output")
+        let preprocessorMainOutput = BuildGraphInputWire(from: preprocessorMain, fromPort: "output")
+
+        let compilerHello = BuildGraphNode(name: "compilerHello",
+                                      kind: .tool(inputPorts: [BuildGraphInputPort(name: "input", inputWires: [preprocessorHelloOutput]),
+                                                               BuildGraphInputPort(name: "configuration", inputWires: clangCompilerConfigurationOutputs)]))
+
+        let compilerMain = BuildGraphNode(name: "compilerMain",
+                                      kind: .tool(inputPorts: [BuildGraphInputPort(name: "input", inputWires: [preprocessorMainOutput]),
+                                                               BuildGraphInputPort(name: "configuration", inputWires: clangCompilerConfigurationOutputs)]))
+
+        let compilerHelloOutput = BuildGraphInputWire(from: compilerHello, fromPort: "output")
+        let compilerMainOutput = BuildGraphInputWire(from: compilerMain, fromPort: "output")
+
+        let linker = BuildGraphNode(name: "linker",
+                                    kind: .tool(inputPorts: [BuildGraphInputPort(name: "input", inputWires: [compilerHelloOutput, compilerMainOutput]),
+                                                             BuildGraphInputPort(name: "configuration", inputWires: clangLinkerConfigurationOutputs)]))
+
+        let linkerOutput = [BuildGraphInputWire(from: linker, fromPort: "output")]
 
         let buildGraphDescription = BuildGraphDescription(
             outputs: [
                 .init(name: "mylib.dylib",
-                      kind: StaticFileNode.kind,
-                      inputPorts: [.init(name: "input", inputWires: inputWiresForStaticFile)])])
+                      kind: .outputFile(inputPorts: [BuildGraphInputPort(name: "input", inputWires: linkerOutput)]))])
 
         try integrateBuildGraphDescription(buildGraphDescription)
     }
@@ -165,9 +214,11 @@ final class BuildGraph: NodeType {
                       currentNode: try outputFileSystem.child(path: buildGraphOutput.name, createIfNotExist: true)! as StaticFileNode)
     }
 
+    // Makes sure that all the children of the BuildGraphNode are mirrored by the NodeType. This means creating Wires and connecting
+    // Nodes to them, then recursing into those Nodes to repeat the process.
     private func integrate(buildGraphNode: BuildGraphNode, currentNode: NodeType) throws {
 
-        for inputPort in buildGraphNode.inputPorts {
+        for inputPort in buildGraphNode.inputPorts() {
             for inputWire in inputPort.inputWires {
 
                 var nodeConnectedToInputWire = try currentNode.findNodeConnectedToNodeViaInputWire(named: inputWire.from.name,
@@ -176,15 +227,54 @@ final class BuildGraph: NodeType {
                 if nodeConnectedToInputWire == nil {
                     // The Wire or Node we want does not exist.
 
-                    let isInputLeafNode = inputWire.from.inputPorts.isEmpty
+                    switch inputWire.from.kind {
 
-                    if isInputLeafNode {
-                        // IF it is a left side input file, we need to look in the input file system to locate the file and not create it if we don't find it
-                        let inputFileNode = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: inputWire.from.name, kind: StaticFileNode.kind)
-                        nodeConnectedToInputWire = inputFileNode
-                    } else {
-                        nodeConnectedToInputWire = try childPoly(named: inputWire.from.name, kind: inputWire.from.kind, createIfNotExist: true)!
+                    case .configuration(let configuration):
+
+                        nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.configurationFolder.childPoly(path: inputWire.from.name,
+                                                                                                                          kind: StaticFileNode.kind,
+                                                                                                                          createIfNotExist: true)
+
+                        // HACK: copy across the configuration
+                        let configurationNode = nodeConnectedToInputWire as! StaticFileNode
+                        try configurationNode.writeToOutputPort(StaticFileNode.outputPort,
+                                                                value: .init(originNodeID: configurationNode.nodeContext.nodeID!,
+                                                                             kind: .value(dataObjectHash: configuration.intern(),
+                                                                                          metadata: FileMetadata(name: "configuration"))))
+
+                        if nodeConnectedToInputWire == nil {
+                            // we could not create or resolve the Configuration node!
+                            return
+                        }
+
+                    case .inputFile:
+
+                        nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: inputWire.from.name,
+                                                                                                                      kind: StaticFileNode.kind,
+                                                                                                                      createIfNotExist: false)
+
+                        if nodeConnectedToInputWire == nil {
+                            // we could not resolve the input file!
+                            return
+                        }
+
+                    case .outputFile:
+                        // should be impossible
+                        return
+
+                    case .tool:
+
+                        nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.buildGraph.childPoly(path: inputWire.from.name,
+                                                                                                                 kind: ToolNode.kind,
+                                                                                                                 createIfNotExist: true)
+
+                        if nodeConnectedToInputWire == nil {
+                            // we could not resolve or create the tool!
+                            return
+                        }
+
                     }
+
                 }
 
                 try nodeContext.processingCycle.connectWire(fromNode: nodeConnectedToInputWire!,
@@ -198,7 +288,7 @@ final class BuildGraph: NodeType {
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
         let inputMessages = inputs[Self.formulaeInputPort]! ?? []
 
         for formulaFileMessage in inputMessages {
@@ -206,16 +296,13 @@ final class BuildGraph: NodeType {
 
             case .valueMutated, .wireConnected:
 
-                switch formulaFileMessage.originOutputPortValue {
+                switch formulaFileMessage.originOutputPortValue.kind {
 
                 case .noValue:
                     break
 
-                case .value(let dataObjectHash, let metadata):
-                    let bytes = dataObjectHash.resolve()!
-                    let string = String(decoding: bytes, as: Unicode.UTF8.self)
-
-                    try integrateFormula(formula: string)
+                case .value(let dataObjectHash, let metdata):
+                    try integrateFormula(formula: dataObjectHash.resolveAsString()!)
                 }
 
             case .error:
@@ -229,6 +316,22 @@ final class BuildGraph: NodeType {
     }
 }
 
+
+extension BuildGraphNode {
+    func inputPorts() -> [BuildGraphInputPort] {
+        switch kind {
+
+        case .tool(let inputPorts):
+            return inputPorts
+
+        case .outputFile(let inputPorts):
+            return inputPorts
+
+        case .configuration, .inputFile:
+            return []
+        }
+    }
+}
 
 // A factory and container for FormulaExtractor nodes, which will extract formulae from the project files and feed them into the BuildGraph.
 final class FormulaFinder: NodeType {
@@ -286,7 +389,7 @@ final class FormulaFinder: NodeType {
                                                     toPort: BuildGraph.formulaeInputPort)
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
         let inputMessages = inputs[Self.fileListInputPort]! ?? []
 
         for fileListMessage in inputMessages {
@@ -294,9 +397,8 @@ final class FormulaFinder: NodeType {
 
             case .valueMutated(let delta):
                 if let delta {
-                    let bytes = delta.resolve()!
-                    let string = String(decoding: bytes, as: Unicode.UTF8.self)
-                    let message = try PolyFactory.make(encodedJSON: string)
+                    let string = delta.resolveAsString()!
+                    let message = try PolyFactory.decode(encodedJSON: string)
 
                     if let cast = message as? FolderEvent {
                         if let folderEventKind = cast.folderEventKind {
@@ -336,7 +438,7 @@ final class FormulaFinder: NodeType {
 }
 
 protocol Tool: PolySerializable {
-    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws
 }
 
 class ClangCompilerTool: Tool {
@@ -351,9 +453,14 @@ class ClangCompilerTool: Tool {
         environment = [:]
     }
 
-    static let kind: UInt = 10
+    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
+        self.toolDescriptor = toolDescriptor
+        self.arguments = arguments
+        self.environment = environment
+    }
 
-    var nodeContext: NodeContext!
+    static let kind: UInt = 13
+
 
     enum CodingKeys: CodingKey {
         case toolDescriptor
@@ -375,54 +482,67 @@ class ClangCompilerTool: Tool {
         try container.encode(environment, forKey: .environment)
     }
 
-    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws {
 
         guard let firstInputValue = try node.readFromInputPort(ToolNode.input).first else {
             return
         }
 
-        switch firstInputValue {
+        switch firstInputValue.kind {
 
-            case .noValue:
-                try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .awaitingDependency))
-                return
+        case .noValue:
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .noValue(reason: .awaitingDependency)))
+            return
 
-            case .value(let dataObjectHash, let metadata):
+        case .value(let dataObjectHash, let metadata):
 
-                let bytes = dataObjectHash.resolve()!
+            let bytes = dataObjectHash.resolve()!
 
-                var output: [UInt8] = []
+            var output: [UInt8] = []
 
-                var arguments = [String]()
+            let inputFilename: String
 
-                arguments.append("-x")
-                arguments.append("cpp-output")
-                arguments.append("-c")
-                arguments.append("source.pc")
-                arguments.append("-o")
-                arguments.append("source.o")
-                arguments.append("-target")
-                arguments.append("arm64-apple-macos14.0")
+            // BUG this never has metadata
+            if let fileMetadata = metadata as? FileMetadata {
+                inputFilename = fileMetadata.name
+            } else {
+                inputFilename = "source.pc"
+            }
 
-                arguments.append(contentsOf: self.arguments)
+            let outputFilename = inputFilename + ".o"
 
-                guard let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor) else {
-                    return
-                }
+            var arguments = [String]()
 
-                let exitCode = try tool.execute(arguments: arguments,
-                                                environment: environment,
-                                                inputFiles: [.init(fileName: "source.pc", content: bytes)],
-                                                expectedOutputFileNames: ["source.o"],
-                                                output: .init(logError: { error in },
-                                                              logMessage: { message in },
-                                                              write: { filePath, data in output.append(contentsOf: data) }))
+            arguments.append("-x")
+            arguments.append("c")
+            arguments.append("-c")
+            arguments.append(inputFilename)
+            arguments.append("-o")
+            arguments.append(outputFilename)
+            arguments.append("-target")
+            arguments.append("arm64-apple-macos14.0")
 
-                if exitCode == 0 {
-                    try node.writeToOutputPort(ToolNode.output, value: .value(output.intern(), "source.o"))
-                } else {
-                    try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .error(stack: [])))
-                }
+            arguments.append(contentsOf: self.arguments)
+
+            let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor)
+
+            let exitCode = try tool.execute(arguments: arguments,
+                                            environment: environment,
+                                            inputFiles: [.init(filePath: inputFilename, content: bytes)],
+                                            expectedOutputFileNames: [outputFilename],
+                                            output: .init(logError: { error in print(error) },
+                                                          logMessage: { message in print(message) },
+                                                          write: { filePath, data in output.append(contentsOf: data) }))
+
+            if exitCode == 0 {
+                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                         kind: .value(dataObjectHash: output.intern(),
+                                                                                      metadata: FileMetadata(name: outputFilename))))
+            } else {
+                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                         kind: .noValue(reason: .error(stack: []))))
+            }
         }
     }
 }
@@ -437,6 +557,12 @@ class ClangPreprocessorTool: Tool {
         toolDescriptor = nil
         arguments = []
         environment = [:]
+    }
+
+    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
+        self.toolDescriptor = toolDescriptor
+        self.arguments = arguments
+        self.environment = environment
     }
 
     static let kind: UInt = 11
@@ -463,106 +589,185 @@ class ClangPreprocessorTool: Tool {
         try container.encode(environment, forKey: .environment)
     }
 
-    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws {
 
-        let inputValues = try node.readFromInputPort(ToolNode.input)
+        let inputValues: [NodeValue]  = try node.readFromInputPort(ToolNode.input)
 
-        guard let primarySourceFile = inputValues.first(where: { nodeOutputValue in
-
-            switch nodeOutputValue {
-            case .value(let dataObjectHash, let metadata):
-                return metadata?.hasSuffix(".c") ?? false
-            default:
-                return false
-            }
-
-        }) else {
+        guard inputValues.count > 0 else {
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .noValue(reason: .awaitingDependency)))
             return
         }
 
-        var headerFiles: [FileNameAndContent] = inputValues.filter { nodeOutputValue in
-            switch nodeOutputValue {
-            case .value(let dataObjectHash, let metadata):
-                return metadata?.hasSuffix(".h") ?? false
-            default:
-                return false
-            }
-        }.compactMap { nodeOutputValue in
-            switch nodeOutputValue {
-            case .value(let dataObjectHash, let metadata):
-                return FileNameAndContent(fileName: metadata!, content: dataObjectHash.resolve()!)
+        // when the .c file changes or is set for the first time:
+        // load the .c file and recursively discover all includes using a regex per file
+        // use this list of header files to create wires to the Input File System's nodes,
+        // if they do not already exist.
+        // if there are wires not in the list, remove them.
+        // once the contents of all newly-wired-in header files are ready to be read,
+        // do a run of the preprocessor with the flag that causes it to emit a tree of all
+        // actually-used include files, remembering that some may be conditionally excluded
+        // compare that list of actually-used files with the wires and delete any unneeded wires
+        
+        // when a header wire is deleted: treat it as though the .c file was modified
+        // when a header wire is added: treat it as though the .c file was modified
+        // when a header file is modified: treat it as though the .c file was modified
+        
+        // the problem with the above is the rescanning of files that have not changed.
+        // this could avoided by having a "includes" wire output from every .c and .h file that
+        // benefits from the built-in caching. The "includes" output would be updated whenever
+        // the file changes and would contain the list of included files. The preprocessor node
+        // would then read from the "includes" output to determine which header files to read
+        // and feed into the preprocessor, without having to re-scan the .c file for includes
+        // on every change. We would accept that some unused headers might be fed into the
+        // preprocessor, but that would be a performance win over rescanning and re-wiring on every change.
+        
+        
+        // Find the primary C source file among inputs.
+        // Avoid throwing inside the sequence algorithms to keep type inference unambiguous.
+        let primarySourceFile: NodeValue? = inputValues.first { nodeValue in
+            switch nodeValue.kind {
             case .noValue:
-                return nil
+                return false
+            case .value(_, let metadata):
+                if let fileMetadata = metadata as? FileMetadata {
+                    return fileMetadata.name.hasSuffix(".c")
+                }
             }
+            return false
         }
 
-        switch primarySourceFile {
+        guard let primarySourceFile else {
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .noValue(reason: .awaitingDependency)))
+            return
+        }
 
-            case .noValue:
-                try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .awaitingDependency))
-                return
+        // Collect header files (.h) alongside their full sandbox paths.
+        // Use a non-throwing predicate and make the closure's return type explicit to help the compiler.
+        let headerFiles: [FileNameAndContent] = inputValues
+            .filter { (nodeValue) -> Bool in
+                return (try? nodeValue.isFileWithExtension(".h", processingCycle: nodeContext.processingCycle)) ?? false
+            }
+            .compactMap { (nodeValue) -> FileNameAndContent? in
+                switch nodeValue.kind {
+                case .value(let dataObjectHash, let metadata):
+                    guard let data = dataObjectHash.resolve() else { return nil }
+                    // TODO: may not come from StaticFileNode.
+                    guard let staticFileNode: StaticFileNode = try? nodeContext.processingCycle.node(nodeID: nodeValue.originNodeID) else { return nil }
+                    let filePath = (try? staticFileNode.buildFullPathName()) ?? "header.h"
+                    return FileNameAndContent(filePath: filePath, content: data)
+                case .noValue:
+                    return nil
+                }
+            }
 
-            case .value(let dataObjectHash, let metadata):
+        switch primarySourceFile.kind {
 
-                let bytes = dataObjectHash.resolve()!
+        case .noValue:
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .noValue(reason: .awaitingDependency)))
+            return
 
-                var output: [UInt8] = []
+        case .value(let dataObjectHash, let metadata):
 
-                var arguments = [String]()
+            let bytes = dataObjectHash.resolve()!
 
-                // Preprocess only: -E tells clang to run only the preprocessor and output the result.
-                arguments.append("-E")
+            var output: [UInt8] = []
 
-                // Treat the input as C source.
-                arguments.append("-x")
-                arguments.append("c")
+            let fileMetadata = metadata as! FileMetadata
 
-                // Search the sandbox working directory for #include'd headers.
+            let inputFilename = fileMetadata.name
+            let outputFilename = fileMetadata.name + ".p"
+
+            var arguments = [String]()
+
+            // Preprocess only: -E tells clang to run only the preprocessor and output the result.
+            arguments.append("-E")
+
+            // Treat the input as C source.
+            arguments.append("-x")
+            arguments.append("c")
+
+            // Search the sandbox working directory for #include'd headers.
+            arguments.append("-I")
+            arguments.append(".")
+
+/*          TODO  for includePath in includePaths {
                 arguments.append("-I")
-                arguments.append(".")
+                arguments.append(includePath)
+            }
+*/
+            // TODO standard includes are read-only and therefore won't change and require rebuilding. However,
+            // we need to guarantee that a particular set of headers are unadulterated. We need a concept
+            // of a ZIPed, versioned and hashed system-headers directory tree.
+            arguments.append("-I")
+            arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
 
-                // Do not search system include paths — all headers must be explicitly provided
-                // via inputFiles to maintain hermeticity.
-                arguments.append("-nostdinc")
+            //arguments.append("-v")
+            //arguments.append("-H")
 
-                // Target triple.
-                arguments.append("-target")
-                arguments.append("arm64-apple-macos14.0")
+            // Do not search system include paths — all headers must be explicitly provided
+            // via inputFiles to maintain hermeticity.
+            arguments.append("-nostdinc")
 
-                // Input file (the .c source).
-                arguments.append("source.c")
+            // Target triple.
+            arguments.append("-target")
+            arguments.append("arm64-apple-macos14.0")
 
-                // Output file (the preprocessed result).
-                arguments.append("-o")
-                arguments.append("source.pc")
+            // Input file (the .c source).
+            arguments.append(inputFilename)
 
-                arguments.append(contentsOf: self.arguments)
+            // Output file (the preprocessed result).
+            arguments.append("-o")
+            arguments.append(outputFilename)
 
-                guard let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor) else {
-                    return
-                }
+            arguments.append(contentsOf: self.arguments)
 
-                var inputFiles: [FileNameAndContent] = [.init(fileName: "source.c", content: bytes)]
-                inputFiles.append(contentsOf: headerFiles)
+            let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor)
 
-                let exitCode = try tool.execute(arguments: arguments,
-                                                environment: environment,
-                                                inputFiles: inputFiles,
-                                                expectedOutputFileNames: ["source.pc"],
-                                                output: .init(logError: { error in },
-                                                              logMessage: { message in },
-                                                              write: { filePath, data in output.append(contentsOf: data) }))
+            var inputFiles: [FileNameAndContent] = [.init(filePath: inputFilename, content: bytes)]
+            inputFiles.append(contentsOf: headerFiles)
 
-                if exitCode == 0 {
-                    try node.writeToOutputPort(ToolNode.output, value: .value(output.intern(), "source.pc"))
-                } else {
-                    try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .error(stack: [])))
-                }
+            let exitCode = try tool.execute(arguments: arguments,
+                                            environment: environment,
+                                            inputFiles: inputFiles,
+                                            expectedOutputFileNames: [outputFilename],
+                                            output: .init(logError: { error in print(error) },
+                                                          logMessage: { message in print(message) },
+                                                          write: { filePath, data in output.append(contentsOf: data) }))
+
+            if exitCode == 0 {
+                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                         kind: .value(dataObjectHash: output.intern(),
+                                                                                      metadata: FileMetadata(name: outputFilename))))
+            } else {
+                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                         kind: .noValue(reason: .error(stack: []))))
+            }
         }
     }
 }
 
-class ClangLinkerTool: Tool {
+extension NodeValue {
+    func isFileWithExtension(_ ext: String, processingCycle: ProcessingCycle) throws -> Bool {
+        switch kind {
+
+        case .value:
+            guard let staticFileNode = try processingCycle.nodePoly(nodeID: originNodeID) as? StaticFileNode else {
+                return false
+            }
+
+            return staticFileNode.nodeContext.name?.hasSuffix(ext) ?? false
+
+        default:
+            return false
+        }
+
+    }
+}
+
+final class ClangLinkerTool: Tool {
 
     let toolDescriptor: ToolDescriptor!
     let arguments: [String]
@@ -574,9 +779,13 @@ class ClangLinkerTool: Tool {
         environment = [:]
     }
 
-    static let kind: UInt = 12
+    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
+        self.toolDescriptor = toolDescriptor
+        self.arguments = arguments
+        self.environment = environment
+    }
 
-    var nodeContext: NodeContext!
+    static let kind: UInt = 12
 
     enum CodingKeys: CodingKey {
         case toolDescriptor
@@ -598,60 +807,108 @@ class ClangLinkerTool: Tool {
         try container.encode(environment, forKey: .environment)
     }
 
-    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(node: ToolNode, inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?], nodeContext: NodeContext) throws {
 
         let inputValues = try node.readFromInputPort(ToolNode.input)
 
-        var libraryFiles: [FileNameAndContent] = inputValues.filter { nodeOutputValue in
-            switch nodeOutputValue {
+        var libraryFiles: [FileNameAndContent] = []
+
+        for nodeValue in inputValues {
+            switch nodeValue.kind {
+
             case .value(let dataObjectHash, let metadata):
-                return metadata?.hasSuffix(".dylib") ?? false
-            default:
-                return false
-            }
-        }.compactMap { nodeOutputValue in
-            switch nodeOutputValue {
-            case .value(let dataObjectHash, let metadata):
-                return FileNameAndContent(fileName: metadata!, content: dataObjectHash.resolve()!)
+
+                if let fileMetadata = metadata as? FileMetadata, fileMetadata.name.hasSuffix(".dylib") {
+
+                    let originNode = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)
+
+                    if let data = dataObjectHash.resolve() {
+                        if let staticFileNode = originNode as? StaticFileNode {
+                            // Static file: use the path
+                            libraryFiles.append(FileNameAndContent(filePath: try staticFileNode.buildFullPathName(), content: data))
+                        } else {
+                            // A generated output from a node
+                            libraryFiles.append(FileNameAndContent(filePath: fileMetadata.name, content: data))
+                        }
+                    }
+                }
+
             case .noValue:
-                return nil
+                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                         kind: .noValue(reason: .error(stack: [])))) // TODO
+                return
             }
         }
 
-        var objectFiles: [FileNameAndContent] = inputValues.filter { nodeOutputValue in
-            switch nodeOutputValue {
+        var objectFiles: [FileNameAndContent] = []
+
+        for nodeValue in inputValues {
+            switch nodeValue.kind {
             case .value(let dataObjectHash, let metadata):
-                return metadata?.hasSuffix(".o") ?? false
-            default:
-                return false
-            }
-        }.compactMap { nodeOutputValue in
-            switch nodeOutputValue {
-            case .value(let dataObjectHash, let metadata):
-                return FileNameAndContent(fileName: metadata!, content: dataObjectHash.resolve()!)
+                if let fileMetadata = metadata as? FileMetadata, fileMetadata.name.hasSuffix(".o") {
+                    if let data = dataObjectHash.resolve() {
+                        objectFiles.append(FileNameAndContent(filePath: fileMetadata.name, content: data))
+                    }
+                }
+
             case .noValue:
-                return nil
+                try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                         kind: .noValue(reason: .error(stack: [])))) // TODO
+                return
             }
         }
 
+        if objectFiles.count == 0 {
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .noValue(reason: .error(stack: [])))) // TODO
+            return
+        }
         var output: [UInt8] = []
 
         var arguments = [String]()
 
-        arguments.append("-x")// TODO
-        arguments.append("cpp-output")
-        arguments.append("-c")
-        arguments.append("source.pc")
-        arguments.append("-o")
-        arguments.append("source.o")
+        arguments.append(contentsOf: self.arguments)
+
+        // Produce a dynamic library.
+//        arguments.append("-dynamiclib")
+
+        // Target triple.
         arguments.append("-target")
         arguments.append("arm64-apple-macos14.0")
 
+        // Search the sandbox working directory for libraries.
+        arguments.append("-L")
+        arguments.append(".")
+
+        // TODO: lock down version, hash
+        arguments.append("-L")
+        arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+
+        arguments.append("-lSystem")
+
+        // Do not link the standard library — all dependencies must be explicitly provided
+        // via inputFiles to maintain hermeticity.
+        arguments.append("-nostdlib")
+
+        // Add each object file by name.
+        for objectFile in objectFiles {
+            arguments.append(objectFile.filePath)
+        }
+
+        // Link each dynamic library by name.
+        // Clang expects -l<name> where the file is lib<name>.dylib,
+        // but since our files may not follow that convention, pass them directly as inputs.
+        for libraryFile in libraryFiles {
+            arguments.append(libraryFile.filePath)
+        }
+
+        // Output file.
+        arguments.append("-o")
+        arguments.append("output.dylib")
+
         arguments.append(contentsOf: self.arguments)
 
-        guard let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor) else {
-            return
-        }
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: toolDescriptor)
 
         var inputFiles: [FileNameAndContent] = []
         inputFiles.append(contentsOf: libraryFiles)
@@ -660,15 +917,18 @@ class ClangLinkerTool: Tool {
         let exitCode = try tool.execute(arguments: arguments,
                                         environment: environment,
                                         inputFiles: inputFiles,
-                                        expectedOutputFileNames: ["source.dylib"],
-                                        output: .init(logError: { error in },
-                                                      logMessage: { message in },
+                                        expectedOutputFileNames: ["output.dylib"],
+                                        output: .init(logError: { error in print(error) },
+                                                      logMessage: { message in print(message) },
                                                       write: { filePath, data in output.append(contentsOf: data) }))
 
         if exitCode == 0 {
-            try node.writeToOutputPort(ToolNode.output, value: .value(output.intern(), "source.dylib"))
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .value(dataObjectHash: output.intern(),
+                                                                                  metadata: FileMetadata(name: "output.dylib"))))
         } else {
-            try node.writeToOutputPort(ToolNode.output, value: .noValue(reason: .error(stack: [])))
+            try node.writeToOutputPort(ToolNode.output, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                     kind: .noValue(reason: .error(stack: []))))
         }
     }
 }
@@ -733,7 +993,7 @@ class ToolNode: NodeType {
             return nil
         }
 
-        switch configurationValue {
+        switch configurationValue.kind {
 
         case .noValue:
             return nil
@@ -745,18 +1005,19 @@ class ToolNode: NodeType {
             }
 
             let configurationString = String(decoding: data, as: Unicode.UTF8.self)
-            return try PolyFactory.make(encodedJSON: configurationString) as! Tool?
+            let tool = try PolyFactory.decode(encodedJSON: configurationString) as! Tool?
+            return tool
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
 
         guard let tool = try makeTool() else {
-            try writeToOutputPort(Self.output, value: .noValue(reason: .awaitingDependency))
+            try writeToOutputPort(Self.output, value: .init(originNodeID: nodeContext.nodeID!, kind: .noValue(reason: .awaitingDependency)))
             return
         }
 
-        try tool.processInputs(node: self, inputs: inputs)
+        try tool.processInputs(node: self, inputs: inputs, nodeContext: nodeContext)
     }
 }
 
@@ -794,7 +1055,7 @@ final class FormulaExtractor: NodeType {
         .init(kind: Self.kind, inputs: [Self.formulaFileInputPort], outputs: [Self.formulaOutputPort])
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
         let inputMessages = inputs[Self.formulaFileInputPort]! ?? []
 
         for formulaFileMessage in inputMessages {
@@ -802,14 +1063,16 @@ final class FormulaExtractor: NodeType {
 
             case .valueMutated, .wireConnected:
 
-                switch formulaFileMessage.originOutputPortValue {
+                switch formulaFileMessage.originOutputPortValue.kind {
 
                 case .noValue:
                     break
 
                 case .value(let dataObjectHash, let metadata):
                     // This extractor just passes through
-                    try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash, metadata))
+                    try writeToOutputPort(Self.formulaOutputPort, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                               kind: .value(dataObjectHash: dataObjectHash,
+                                                                                            metadata: FileMetadata(name: "formula"))))
 
                 }
 
@@ -841,21 +1104,30 @@ class ToolExecutorRegistry {
         toolsByDescriptor[descriptor] = toolExecutor
     }
 
-    func tool(descriptor: ToolDescriptor) throws -> ToolExecutor? {
-        toolsByDescriptor[descriptor]
+    func tool(descriptor: ToolDescriptor) throws -> ToolExecutor {
+
+        guard let tool = toolsByDescriptor[descriptor] else {
+            throw ToolError.noMatchingToolFound
+        }
+
+        return tool
     }
+}
+
+enum ToolError: Error {
+    case noMatchingToolFound
 }
 
 class DefaultTools {
     // TODO: in the future this would search the file system (or container's file system) for all known tools and register them,
     // but for now we will just hardcode clang as an example
-    static func setup(toolExecutorRegistry: ToolExecutorRegistry) {
-        try? toolExecutorRegistry.registerTool(descriptor: .init(name: "clang",
-                                                                 version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                                                                 platform: "macOS",
-                                                                 architecture: "arm64",
-                                                                 recursiveHash: nil),
-                                               toolExecutor: LocalFileSystemTool(localPath: "/bin/clang"))
+    static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
+        try toolExecutorRegistry.registerTool(descriptor: .init(name: "clang",
+                                                                version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                                                                platform: "macOS",
+                                                                architecture: "arm64",
+                                                                recursiveHash: nil),
+                                               toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
     }
 }
 
@@ -877,7 +1149,7 @@ struct ToolOutput {
 }
 
 struct FileNameAndContent {
-    let fileName: String
+    let filePath: String
     let content: [UInt8]
 }
 
@@ -945,11 +1217,13 @@ class LocalFileSystemTool: ToolExecutor {
             try? fileManager.removeItem(atPath: sandboxPath)
         }
 
+        print("Executing tool in sandbox path: \(sandboxPath)")
+
         // 2. Write all input files into the sandbox.
         //    Intermediate directories are created as needed so that relative paths like "src/main.c" work.
 
         for inputFile in inputFiles {
-            let inputFileURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(inputFile.fileName)
+            let inputFileURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(inputFile.filePath)
             let containingDirectory = inputFileURL.deletingLastPathComponent().path
 
             do {
@@ -958,7 +1232,7 @@ class LocalFileSystemTool: ToolExecutor {
                 }
                 try Foundation.Data(inputFile.content).write(to: inputFileURL)
             } catch {
-                throw ToolExecutionError.failedToWriteInputFile(fileName: inputFile.fileName, underlying: error)
+                throw ToolExecutionError.failedToWriteInputFile(fileName: inputFile.filePath, underlying: error)
             }
         }
 
@@ -1075,3 +1349,85 @@ class DockerContainerizedTool: Tool {
     }
 }
 */
+
+
+
+
+// Takes a .c or .h as input and outputs a list of paths to include files, ignoring system includes.
+final class IncludeFinder: NodeType {
+    static let kind: UInt = 15
+
+    var nodeContext: NodeContext!
+
+    enum CodingKeys: CodingKey {
+    }
+
+    required init() {
+    }
+
+    required init(from decoder: Decoder) throws {
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var _ = encoder.container(keyedBy: CodingKeys.self)
+    }
+
+    static let sourceFileInputPort = NodeKindDescriptor.InputPort(index: 0,
+                                                                  name: "sourceFile",
+                                                                  kind: .value(dataType: .utf8Text),
+                                                                  maximumConnections: 1,
+                                                                  minimumConnections: 1)
+
+    static let includePathListOutputPort = NodeKindDescriptor.OutputPort(index: 0,
+                                                                         name: "includePathList",
+                                                                         kind: .value(dataType: .utf8Text))
+
+    var descriptor: NodeKindDescriptor {
+        .init(kind: Self.kind, inputs: [Self.sourceFileInputPort], outputs: [Self.includePathListOutputPort])
+    }
+
+    private func extractIncludePaths(sourceFileContent: String) -> [String] {
+        [] // TODO: scan for all #include statements in the given input file, which is a .c or .h file, and return their paths. Ignore includes with angle brackets.
+    }
+
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
+        let inputMessages = inputs[Self.sourceFileInputPort]! ?? []
+
+        for inputMessage in inputMessages {
+            switch inputMessage.kind {
+
+            case .valueMutated:
+
+                switch inputMessage.originOutputPortValue.kind {
+                case .value(let dataObjectHash, let metadata):
+                    let inputFileContent = dataObjectHash.resolveAsString()!
+                    let includePathList = extractIncludePaths(sourceFileContent: inputFileContent).joined(separator: "\n")
+
+                    try writeToOutputPort(Self.includePathListOutputPort, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                                       kind: .value(dataObjectHash: includePathList.intern(),
+
+                                                                                                    metadata: FileMetadata(name: "includePathList"))))
+                case .noValue:
+                    try writeToOutputPort(Self.includePathListOutputPort, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                                       kind: .noValue(reason: .error(stack: []))))
+                    break
+                }
+
+                break
+
+            case .error:
+                try writeToOutputPort(Self.includePathListOutputPort, value: .init(originNodeID: nodeContext.nodeID!,
+                                                                                   kind: .noValue(reason: .error(stack: []))))
+                break
+
+            case .wireConnected:
+                print("wire connected")
+
+            case .wireDisconnected:
+                print("wire disconnected")
+
+            }
+        }
+    }
+}

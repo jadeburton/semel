@@ -58,10 +58,16 @@ final class RootNode: NodeType {
         }
     }
 
+    var configurationFolder: FolderNode {
+        get throws {
+            try child(named: "configurationFolder", createIfNotExist: true)!
+        }
+    }
+
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind, inputs: [], outputs: [])
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
     }
 }

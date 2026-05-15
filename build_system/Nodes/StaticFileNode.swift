@@ -35,43 +35,35 @@ final class StaticFileNode: NodeType {
         Self.descriptor
     }
 
-    func read() throws -> NodeOutputValue? {
+    func read() throws -> NodeValue? {
         try nodeContext.processingCycle.readFromOutputPort(Self.outputPort, nodeID: nodeContext.nodeID!)
     }
 
-    func replaceContent(_ content: DataObjectHash, metadata: String?) throws {
-        try writeToOutputPort(Self.outputPort, value: .value(content, metadata))
+    func replaceContent(_ content: DataObjectHash, metadata: FileMetadata) throws {
+        try writeToOutputPort(Self.outputPort, value: .init(originNodeID: nodeContext.nodeID!,
+                                                            kind: .value(dataObjectHash: content,
+                                                                         metadata: metadata)))
     }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
     // The input should not have any one-shot events, only persistent value changes
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
         assert(inputs.count == descriptor.inputs.count)
-/*
-        func outputValue() throws -> NodeProcessPortOutput? {
-            switch oneMessageOnInputPort.kind {
 
-            case .valueMutated(let delta):
-                print("StaticFileNode received value mutation, delta hash: [\(delta ?? "nil")]")
-                // StaticFile only supports a single connection on its input, and therefore has only one input value
-                let value = try nodeContext.readValues(inputPort: Self.inputPort.index).first!!
-                return .init(value: value, deltaMessage: delta)
-
-            case .wireConnected:
-                print("StaticFileNode received new wire")
-                let value = try nodeContext.readValues(inputPort: Self.inputPort.index).first!!
-                return .init(value: value, deltaMessage: nil)
-
-            case .error(let description):
-                print("StaticFileNode received error")
-                return .init(value: .noValue(reason: .error(stack: [])), deltaMessage: nil)
-
-            case .wireDisconnected:
-                print("StaticFileNode lost input wire")
-                return nil
-
-            }
+        guard let inputValue = try readFromInputPort(Self.inputPort).first else {
+            try writeToOutputPort(Self.outputPort, value: .init(originNodeID: nodeContext.nodeID!, kind: .noValue(reason: .awaitingDependency)))
+            return
         }
-*/
+
+        switch inputValue.kind {
+
+        case .noValue:
+            try writeToOutputPort(Self.outputPort, value: .init(originNodeID: nodeContext.nodeID!, kind:.noValue(reason: .awaitingDependency)))
+            return
+
+        case .value:
+            try writeToOutputPort(Self.outputPort, value: inputValue)
+
+        }
     }
 }

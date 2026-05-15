@@ -42,18 +42,18 @@ try main()
 
 // MARK: Messages and ports
 
-enum NodeInputMessageKind {
+enum NodeMessageKind {
     case wireConnected
     case wireDisconnected
     case valueMutated(delta: DataObjectHash?)
     case error(description: String)
 }
 
-struct NodeInputMessage {
+struct NodeMessage {
     let originNodeID: ObjectID
     let originOutputPort: UInt8
-    let kind: NodeInputMessageKind
-    let originOutputPortValue: NodeOutputValue
+    let kind: NodeMessageKind
+    let originOutputPortValue: NodeValue
 }
 
 struct ErrorInfo {
@@ -70,9 +70,14 @@ enum NoValueReason {
     case error(stack: [ErrorInfo])
 }
 
-enum NodeOutputValue {
+enum NodeValueKind {
     case noValue(reason: NoValueReason)
-    case value(DataObjectHash, String?) // data, metadata
+    case value(dataObjectHash: DataObjectHash, metadata: (any PolySerializable)?)
+}
+
+struct NodeValue {
+    let originNodeID: ObjectID
+    let kind: NodeValueKind
 }
 
 enum PortValueDataType: Codable, Hashable {
@@ -134,22 +139,52 @@ extension [UInt8] {
     }
 }
 
+extension String {
+    func intern() -> DataToken {
+        [UInt8](data(using: .utf8)!).intern()
+    }
+}
+
 extension DataToken {
     func resolve() -> [UInt8]? {
         (try? DatabaseLayer.shared.selectDataObject(hash: self))?.content
+    }
+
+    func resolveAsString() -> String? {
+        guard let bytes = resolve() else {
+            return nil
+        }
+        return String(decoding: bytes, as: Unicode.UTF8.self)
     }
 }
 
 // MARK: Nodes
 
-protocol NodeType: AnyObject, Codable, PolySerializable {
+protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer {
 
     var descriptor: NodeKindDescriptor { get }
     var nodeContext: NodeContext! { get set }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws
     func willSave() throws
     func didSave() throws
+}
+
+protocol WithDefaultInitializer {
+    init() throws
+}
+
+// NodeType
+extension PolyFactory {
+    /// Construct a default instance of the type identified by `kind`.
+    static func makeDefault(kind: UInt) throws -> NodeType {
+        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! NodeType
+    }
+
+    /// Convenience: decode from JSON if available, otherwise create a default instance.
+//    static func make(kind: UInt, encodedJSON: String) throws -> any NodeType {
+//        try decode(encodedJSON: encodedJSON) as! NodeType
+//    }
 }
 
 protocol MessageType: AnyObject, Codable, PolySerializable {
@@ -204,33 +239,49 @@ extension NodeType {
     func parent<N: NodeType>() throws -> N? {
         try nodeContext.processingCycle.parentNode(node: self)
     }
-    
+
     func save() throws {
         try nodeContext.processingCycle.saveNode(self)
     }
-    
+
+    func buildFullPathName(rootName: String = "root") throws -> String {
+        let name = nodeContext.name ?? "<no name>"
+
+        guard let parentNode = try nodeContext.processingCycle.parentNodePoly(node: self) else {
+            return name
+        }
+
+        if parentNode.nodeContext.name == rootName {
+            return ""
+        }
+
+        let parentPath = try parentNode.buildFullPathName()
+
+        return parentPath.isEmpty ? name : (parentPath + "/" + name)
+    }
+
     func child(named name: String) throws -> (any NodeType)? {
         try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
     }
-    
+
     func delete() throws {
         if let nodeID = nodeContext.nodeID {
             _ = try nodeContext.processingCycle.deleteNode(nodeID)
         }
     }
-    
-    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeOutputValue] {
+
+    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeValue] {
         try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
     }
-    
-    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort) throws -> NodeOutputValue? {
+
+    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort) throws -> NodeValue {
         try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeContext.nodeID!)
     }
-    
+
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
-                           value: NodeOutputValue,
+                           value: NodeValue,
                            message: MessageType? = nil) throws {
-        
+
         try nodeContext.processingCycle.writeToOutputPort(outputPort,
                                                           value: value,
                                                           message: message,
@@ -285,14 +336,16 @@ extension NodeType {
 
 extension PolySerializable {
     func asDataObjectHash() throws -> DataObjectHash {
-        [UInt8](try toJSON().data(using: .utf8)!).intern()
+        (try toJSON()).intern()
     }
 }
 
 final class BuildEngine {
     let database: DatabaseLayer
 
-    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database46.sqlite")) throws {
+    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database62.sqlite")) throws {
+        try DefaultTools.setup(toolExecutorRegistry: .instance)
+
         self.database = database
 
         try processAllMessages()
@@ -350,7 +403,7 @@ final class ProcessingCycle {
         // The CommandInterpreter is responsible for interpreting the commands that are sent to the system, e.g. from a CLI or a UI, and translating them into node creations, wire connections, value assignments, etc. It is also responsible for creating and managing the "main" Node that represents the main build pipeline.
         rootNode = try rootObject()
         //try! printAll()
-        try rootNode.buildGraph.debugPrintTree()
+        //try rootNode.buildGraph.debugPrintTree()
     }
 
     func endCycle() throws {
@@ -387,11 +440,29 @@ extension ProcessingCycle {
         }
     }
 
+    func parentNodePoly(node: NodeType) throws -> NodeType? {
+        if let parentNodeID = node.nodeContext.parentNodeID {
+            let rawNode = try parentNodeID.loadNode(from: node.nodeContext.processingCycle.database)
+            let node = try node.nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
+            return node
+        } else {
+            return nil
+        }
+    }
+
     func node<N: NodeType>(nodeID: ObjectID) throws -> N {
         if let nodeRaw = try database.selectNodeByID(nodeID) {
             return try wrapRawNode(nodeRaw: nodeRaw)
         } else {
             throw NodeError.nodeNotFound
+        }
+    }
+
+    func nodePoly(nodeID: ObjectID) throws -> NodeType? {
+        if let nodeRaw = try database.selectNodeByID(nodeID) {
+            return try wrapRawNodePoly(nodeRaw: nodeRaw)
+        } else {
+            return nil
         }
     }
 
@@ -447,7 +518,7 @@ extension ProcessingCycle {
     }
 
     func wrapRawNodePoly(nodeRaw: Node) throws -> NodeType {
-        let node = try PolyFactory.make(kind: nodeRaw.kind, encodedJSON: nodeRaw.configuration)
+        let node = try PolyFactory.decode(encodedJSON: nodeRaw.configuration!) as! NodeType
         node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name)
         loadedNodes[nodeRaw.id!] = node
         return node
@@ -458,7 +529,7 @@ extension ProcessingCycle {
     }
 
     func makeNodePoly(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeType {
-        let newObject = try PolyFactory.make(kind: kind, encodedJSON: nil)
+        let newObject = try PolyFactory.makeDefault(kind: kind)
         newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
 
         // To simplify things, even when a Node is created in memory it is also created on disk. We can always rollback.
@@ -513,7 +584,7 @@ extension ProcessingCycle {
         let allRawInputMessages = try database.selectMessages(for: nodeID)
         let rawMessagesGroupedByWireID: Dictionary<ObjectID, [Message]> = Dictionary(grouping: allRawInputMessages, by: { $0.wireID })
 
-        var inputMessages = [NodeKindDescriptor.InputPort: [NodeInputMessage]?]()
+        var inputMessages = [NodeKindDescriptor.InputPort: [NodeMessage]?]()
 
         let wiresOnAllInputs = try database.selectWires(goingToNodeID: nodeID)
         let wiresGroupedByInputPort: Dictionary<UInt8, [Wire]> = Dictionary(grouping: wiresOnAllInputs, by: { $0.toPort })
@@ -521,8 +592,12 @@ extension ProcessingCycle {
         for inputPort in node.descriptor.inputs {
             inputMessages[inputPort] = nil // default to nil, meaning no messages on this port
 
-            let wiresOnInputPort = wiresGroupedByInputPort[inputPort.index]!
-            var inputMessagesForThisPort = [NodeInputMessage]()
+            guard let wiresOnInputPort = wiresGroupedByInputPort[inputPort.index] else {
+                print("Input port not found: \(inputPort)")
+                break
+            }
+
+            var inputMessagesForThisPort = [NodeMessage]()
 
             for wire in wiresOnInputPort {
 
@@ -530,17 +605,18 @@ extension ProcessingCycle {
 
                     let sourceNodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)
 
-                    inputMessagesForThisPort.append(.init(originNodeID: message.targetNodeID,
-                                                          originOutputPort: wire.toPort,
-                                                          kind: try message.asNodeInputMessageKind(),
-                                                          originOutputPortValue: sourceNodeOutputValue?.asNodeOutputValue() ?? .noValue(reason: .computingValue)))
+                    try inputMessagesForThisPort.append(.init(originNodeID: message.targetNodeID,
+                                                              originOutputPort: wire.toPort,
+                                                              kind: message.asNodeInputMessageKind(),
+                                                              originOutputPortValue: sourceNodeOutputValue?.asNodeOutputValue() ?? .init(originNodeID: wire.fromNodeID,
+                                                                                                                                     kind: .noValue(reason: .computingValue))))
                 }
 
                 inputMessages[inputPort] = inputMessagesForThisPort
             }
         }
 
-      //  print("processInputs: node \(node) -- \(inputMessages)")
+        print("processInputs: node \(node) -- \(inputMessages)")
 
         try node.processInputs(inputMessages)
 
@@ -552,36 +628,41 @@ extension ProcessingCycle {
 
 // Port management
 extension ProcessingCycle {
-    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, nodeID: ObjectID) throws -> NodeOutputValue? {
-        try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort.index)?.asNodeOutputValue()
+    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, nodeID: ObjectID) throws -> NodeValue {
+        guard let nodeOutputValue = try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort.index) else {
+            return NodeValue.init(originNodeID: nodeID, kind: .noValue(reason: .nodeInitializing))
+        }
+
+        return try nodeOutputValue.asNodeOutputValue()
     }
 
-    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeOutputValue] {
+    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeValue] {
 
         let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toPort: inputPort.index)
 
         return try wiresOnThisInput.map { wire in
             if let nodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort) {
-                return nodeOutputValue.asNodeOutputValue()
+                return try nodeOutputValue.asNodeOutputValue()
             } else {
                 // No value on the Node's output yet
-                return .noValue(reason: .nodeInitializing)
+                return .init(originNodeID: wire.fromNodeID,
+                             kind: .noValue(reason: .nodeInitializing))
             }
         }
     }
 
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
-                           value: NodeOutputValue,
+                           value: NodeValue,
                            message: MessageType?,
                            nodeID: ObjectID) throws {
 
-        let (dataObjectHash, kind, metadata) = try value.mapNodeOutputValue()
+        let (dataObjectHash, kind, metadata) = try value.kind.mapNodeOutputValue()
 
         try database.insertOrReplaceNodeOutputValue(.init(nodeID: nodeID,
                                                           port: outputPort.index,
                                                           kind: kind,
                                                           dataObjectHash: dataObjectHash,
-                                                          metadata: metadata))
+                                                          metadata: metadata?.toJSON()))
 
         let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
                                                          fromPort: outputPort.index)
@@ -601,7 +682,7 @@ extension ProcessingCycle {
 }
 
 extension Message {
-    func asNodeInputMessageKind() throws -> NodeInputMessageKind {
+    func asNodeInputMessageKind() throws -> NodeMessageKind {
         switch kind {
         case .wireConnected:
             return .wireConnected
@@ -616,13 +697,14 @@ extension Message {
 }
 
 extension DatabaseModels.NodeOutputValue {
-    func asNodeOutputValue() -> NodeOutputValue {
-        .init(nodeOutputValue: self)
+    func asNodeOutputValue() throws -> NodeValue {
+        .init(originNodeID: nodeID,
+              kind: try .init(nodeOutputValue: self))
     }
 }
 
-extension NodeOutputValue {
-    init(nodeOutputValue: DatabaseModels.NodeOutputValue) {
+extension NodeValueKind {
+    init(nodeOutputValue: DatabaseModels.NodeOutputValue) throws {
         switch nodeOutputValue.kind {
         case .noValueNodeInitializing:
             self = .noValue(reason: .nodeInitializing)
@@ -636,14 +718,19 @@ extension NodeOutputValue {
             self = .noValue(reason: .lazy)
         case .value:
             if let dataObjectHash = nodeOutputValue.dataObjectHash {
-                self = .value(dataObjectHash, nodeOutputValue.metadata)
+                if let metadataJSON = nodeOutputValue.metadata {
+                    self = .value(dataObjectHash: dataObjectHash, metadata: try PolyFactory.decode(encodedJSON: metadataJSON))
+                } else {
+                    self = .value(dataObjectHash: dataObjectHash, metadata: nil)
+                }
             } else {
                 self = .noValue(reason: .nodeInitializing)
             }
         }
     }
 
-    func mapNodeOutputValue() throws -> (DataObjectHash?, DatabaseModels.NodeOutputValue.ValueKind, String?) {
+    // HACK
+    func mapNodeOutputValue() throws -> (DataObjectHash?, DatabaseModels.NodeOutputValue.ValueKind, (any PolySerializable)?) {
         switch self
         {
         case .noValue(let reason):
@@ -841,17 +928,15 @@ extension ProcessingCycle {
         // ───────────────────────────────────────────────────
         // Section 3: Pending messages
         // ───────────────────────────────────────────────────
-        if !allMessages.isEmpty {
-            print("┌──────────────────────────────────────────────┐")
-            print("│  PENDING MESSAGES (\(allMessages.count))                        │")
-            print("├──────────────────────────────────────────────┤")
-            for message in allMessages {
-                let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
-                print("│  \(formatMessageKind(message))  → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)  pri=\(message.priority)")
-            }
-            print("└──────────────────────────────────────────────┘")
-            print()
+        print("┌──────────────────────────────────────────────┐")
+        print("│  PENDING MESSAGES (\(allMessages.count))                        │")
+        print("├──────────────────────────────────────────────┤")
+        for message in allMessages {
+            let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
+            print("│  \(formatMessageKind(message))  → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)  pri=\(message.priority)")
         }
+        print("└──────────────────────────────────────────────┘")
+        print()
 
         // ───────────────────────────────────────────────────
         // Section 4: Data objects

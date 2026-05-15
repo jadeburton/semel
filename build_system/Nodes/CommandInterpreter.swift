@@ -259,7 +259,7 @@ enum UserCommand {
     case discard         // strato discard
     case push(externalPathOrWildcard: String) // strato push Example/src/myfile.c
     case remove(pathOrWildcard: String) // strato rm /**/*.*
-    case copy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String)   // strato cp [-i] /Example/src/myfile.c .
+    case copy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?)   // strato cp [-i] /Example/src/myfile.c .
     case list(folder: FileSystemForCommand, pathOrWildcard: String) // strato ls [-i] /Example/**/*.c
 }
 
@@ -346,14 +346,14 @@ final class CommandParser {
 
         case "cp", "copy":
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
-            guard remaining.count >= 2 else {
-                throw CommandParserError.missingArgument(command: "cp", expected: "pathOrWildcard destinationPath")
+            guard remaining.count >= 1 else {
+                throw CommandParserError.missingArgument(command: "cp", expected: "pathOrWildcard [destinationPath]")
             }
-            return .copy(folder: folder, pathOrWildcard: remaining[0], destinationPath: remaining[1])
+            return .copy(folder: folder, pathOrWildcard: remaining[0], destinationPath: remaining.count >= 2 ? remaining[1] : nil)
 
         case "ls", "list":
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
-            let path = remaining.first ?? "*.*"
+            let path = remaining.first ?? "*"
             return .list(folder: folder, pathOrWildcard: path)
 
         default:
@@ -607,12 +607,12 @@ final class CommandInterpreter: NodeType {
         try child.delete()
     }
 
-    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String) throws {
+    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
         func handle(folder: FolderNode) throws {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
             try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
-                copyOneFile(folder: folder, entry: entry, destinationPath: destinationPath)
+                try? copyOneFile(folder: folder, entry: entry, destinationPath: destinationPath ?? ".")
             }
         }
 
@@ -624,28 +624,46 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) {
-/*        let node = folder.childNode(path: entry.path)
-
-        if let staticFileNode = node as? StaticFileNode {
-            let fileContent: [UInt8] = staticFileNode.outputValue.content
-
-            fileContent.write(to: URL(fileURLWithPath: destinationPath))
-        } else {
-            if let folderNode = node as? FileSystem {
-                // TODO: create a folder in external FS to match the one in the internal file system
+    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) throws {
+        switch entry.kind {
+        case .file:
+            guard let staticFileNode: StaticFileNode = try folder.child(path: entry.path) else {
+                outputError("File \(entry.path) not found in internal file system")
+                return
             }
-        }*/
+
+            switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).kind {
+            case .value(let dataObjectHash, let metadata):
+                let fileContent = Data(dataObjectHash.resolve()!)
+                let finalPath = destinationPath.appending("/").appending((entry.path as NSString).lastPathComponent)
+                try fileContent.write(to: URL(fileURLWithPath: finalPath))
+                outputMessage("File written: \(finalPath)")
+            case .noValue(let reason):
+                outputError("File \(entry.path) has no content: \(reason)")
+            }
+        case .folder:
+            break
+            // TODO
+        }
     }
 
     private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
-        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try inputFileSystem))
+        let fileSystem: FolderNode
+
+        switch folder {
+        case .input:
+            fileSystem = try inputFileSystem
+        case .output:
+            fileSystem = try outputFileSystem
+        }
+
+        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
 
         try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
             outputMessage(entry.path)
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeInputMessage]?]) throws {
+    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
     }
 }

@@ -10,10 +10,8 @@ import Foundation
 // MARK: - Protocol
 
 /// A type that can be serialized/deserialized polymorphically via a `kind` discriminator.
-protocol PolySerializable: AnyObject, Codable {
+protocol PolySerializable: Codable {
     static var kind: UInt { get }
-
-    init() throws
 }
 
 // MARK: - Factory
@@ -31,6 +29,11 @@ enum PolyFactory {
         StaticFileNode.kind:     StaticFileNode.self,
         FolderNode.kind:         FolderNode.self,
         FolderEvent.kind:        FolderEvent.self,
+        ClangLinkerTool.kind:    ClangLinkerTool.self,
+        ClangCompilerTool.kind:  ClangCompilerTool.self,
+        ClangPreprocessorTool.kind: ClangPreprocessorTool.self,
+        ToolNode.kind:           ToolNode.self,
+        FileMetadata.kind:       FileMetadata.self,
     ]
 
     /// Look up the concrete type for a given kind.
@@ -41,24 +44,9 @@ enum PolyFactory {
         return type
     }
 
-    /// Construct a default instance of the type identified by `kind`.
-    static func make(kind: UInt) throws -> PolySerializable {
-        try type(kind: kind).init()
-    }
-
     /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
-    static func make(encodedJSON: String) throws -> PolySerializable {
+    static func decode(encodedJSON: String) throws -> any PolySerializable {
         try Cassette.fromJSON(encodedJSON).object
-    }
-}
-
-extension PolyFactory {
-    /// Convenience: decode from JSON if available, otherwise create a default instance.
-    static func make(kind: UInt, encodedJSON: String?) throws -> NodeType {
-        if let encodedJSON {
-            return try make(encodedJSON: encodedJSON) as! NodeType
-        }
-        return try make(kind: kind) as! NodeType
     }
 }
 
@@ -71,7 +59,7 @@ extension PolySerializable {
 
 // MARK: - Cassette (private wrapper that pairs kind + object for serialization)
 
-/// Wraps a `PolySerializable` during serialization to add a `kind` discriminator.
+/// Internal use. Wraps a `PolySerializable` during serialization to add a `kind` discriminator.
 private struct Cassette: Codable {
 
     let object: PolySerializable
@@ -101,7 +89,7 @@ private struct Cassette: Codable {
     }
 }
 
-// MARK: JSON helpers
+// MARK: JSON helpers - internal use
 
 private extension Decodable {
     static func fromJSON(_ string: String) throws -> Self {
