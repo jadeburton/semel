@@ -42,19 +42,10 @@ try main()
 
 // MARK: Messages and ports
 
-enum NodeMessageKind {
-    case wireConnected
-    case wireDisconnected
-    case valueMutated(delta: DataObjectHash?)
-    case error(description: String)
-}
-
-struct NodeMessage {
-    let originNodeID: ObjectID
-    let originOutputPort: UInt8
-    let kind: NodeMessageKind
-    let originOutputPortValue: NodeValue
-}
+//enum NodeMessageKind {
+//    case valueMutated(delta: DataObjectHash?)
+//    case error(description: String)
+//}
 
 struct ErrorInfo {
     let nodeID: ObjectID
@@ -63,11 +54,11 @@ struct ErrorInfo {
 }
 
 enum NoValueReason {
-    case computingValue
-    case nodeInitializing
-    case awaitingDependency
-    case lazy
-    case error(stack: [ErrorInfo])
+    case pending
+//    case nodeInitializing
+//    case awaitingDependency
+//    case lazy
+    case error(message: String)
 }
 
 enum NodeValueKind {
@@ -75,8 +66,17 @@ enum NodeValueKind {
     case value(dataObjectHash: DataObjectHash, metadata: (any PolySerializable)?)
 }
 
+struct NodeMessage {
+    let originNodeID: ObjectID
+    let originOutputPort: UInt8
+    let dataObjectHash: DataObjectHash
+//    let kind: NodeMessageKind
+//    let originOutputPortValue: NodeValue
+}
+
 struct NodeValue {
     let originNodeID: ObjectID
+    let originOutputPort: UInt8
     let kind: NodeValueKind
 }
 
@@ -90,7 +90,7 @@ enum PortValueDataType: Codable, Hashable {
 struct NodeKindDescriptor {
     enum PortKind: Codable, Hashable {
         case value(dataType: PortValueDataType)
-        case eventsOnly
+        case messageStream(dataType: PortValueDataType)
     }
 
     struct InputPort: Codable, Hashable {
@@ -145,16 +145,21 @@ extension String {
     }
 }
 
+enum DataObjectError: Error {
+    case dataObjectNotFoundByHash
+}
+
 extension DataToken {
-    func resolve() -> [UInt8]? {
-        (try? DatabaseLayer.shared.selectDataObject(hash: self))?.content
+    func resolve() throws -> [UInt8] {
+        guard let dataObject = try DatabaseLayer.shared.selectDataObject(hash: self) else {
+            throw DataObjectError.dataObjectNotFoundByHash
+        }
+
+        return dataObject.content
     }
 
-    func resolveAsString() -> String? {
-        guard let bytes = resolve() else {
-            return nil
-        }
-        return String(decoding: bytes, as: Unicode.UTF8.self)
+    func resolveAsString() throws -> String {
+        String(decoding: try resolve(), as: Unicode.UTF8.self)
     }
 }
 
@@ -165,7 +170,10 @@ protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer 
     var descriptor: NodeKindDescriptor { get }
     var nodeContext: NodeContext! { get set }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws
+    // Updates all output values based on the current input values, and also
+    // processes and removes all messages that are queued on any message-stream input ports.
+    func process() throws
+
     func willSave() throws
     func didSave() throws
 }
@@ -213,17 +221,6 @@ extension ObjectID {
     }
 }
 
-/*
-protocol BuildEngineType {
-    var database: DatabaseLayer { get }
-
-    func readValues(nodeID: ObjectID, inputPort: UInt8) throws -> [NodeOutputValue]
-    func assignValue(nodeID: ObjectID, outputPort: UInt8, value: NodeOutputValue) throws
-    func postMutationEvent(nodeID: ObjectID, outputPort: UInt8, dataObjectHash: DataObjectHash) throws
-    func loadOrCreateSingletonNode<N: NodeType>(kind: UInt, name: String) throws -> N
-
-}*/
-
 struct NodeContext {
     let processingCycle: ProcessingCycle
     var nodeID: ObjectID? // nil when created in memory but not yet inserted
@@ -270,24 +267,40 @@ extension NodeType {
         }
     }
 
-    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeValue] {
+    func removeAllMessagesFromInputPorts() throws -> [NodeKindDescriptor.InputPort: [NodeMessage]] {
+        try nodeContext.processingCycle.removeAllMessagesFromInputPorts(node: self)
+    }
+
+    func readAllValuesFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeValue] {
         try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
+    }
+
+    // Returning nil means there is nothing yet connected to the input port (i.e. not that the value is not set)
+    func readOneValueFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> NodeValue? {
+        let values = try readAllValuesFromInputPort(inputPort)
+
+        switch values.count {
+        case 0:
+            return nil
+        case 1:
+            return values.first!
+        default:
+            throw NodeError.onlyOneWireShouldBeConnectedToInput
+        }
     }
 
     func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort) throws -> NodeValue {
         try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeContext.nodeID!)
     }
 
-    func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
-                           value: NodeValue,
-                           message: MessageType? = nil) throws {
-
-        try nodeContext.processingCycle.writeToOutputPort(outputPort,
-                                                          value: value,
-                                                          message: message,
-                                                          nodeID: nodeContext.nodeID!)
+    func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, value: NodeValueKind) throws {
+        try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: nodeContext.nodeID!)
     }
-    
+
+    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, message: MessageType) throws {
+        try nodeContext.processingCycle.postMessageToOutputPort(outputPort, message: message, nodeID: nodeContext.nodeID!)
+    }
+
     // Returns a named child (without path support)
     //    func childIfExists<N: NodeType>(named name: String) throws -> N? {
     //        try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!)
@@ -343,7 +356,7 @@ extension PolySerializable {
 final class BuildEngine {
     let database: DatabaseLayer
 
-    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database62.sqlite")) throws {
+    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database65.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
 
         self.database = database
@@ -352,6 +365,7 @@ final class BuildEngine {
     }
 
     func processAllMessages() throws {
+        // TODO this needs some serious thought. we want to stop processing when there is no work to do, but there may still be messages that are not ready to be processed.
         while try processSomeMessages() {
         }
     }
@@ -381,7 +395,7 @@ final class BuildEngine {
 
     private func processAllMessagesForOneRawNode(_ rawNode: Node) throws {
         try process { processingCycle in
-            try processingCycle.processAllMessagesForOneNode(rawNode)
+            try processingCycle.processOneNode(rawNode)
         }
     }
 }
@@ -571,92 +585,114 @@ extension NodeType {
 
 enum NodeError: Error {
     case nodeNotFound
+    case onlyOneWireShouldBeConnectedToInput
 }
 
 extension ProcessingCycle {
-    func processAllMessagesForOneNode(_ rawNode: Node) throws {
+    func processOneNode(_ rawNode: Node) throws {
         let node = try wrapRawNodePoly(nodeRaw: rawNode)
         // TODO: create an object that represents the current message-processing cycle for a single node, so that all state can be kept there and discarded before moving on to the next node-message group.
-        try processAllMessagesForOneNode(node, nodeID: rawNode.id!)
+//        try processOneNode(node, nodeID: rawNode.id!)
+        print("process: node \(type(of: node)), nodeID \(rawNode.id!)")
+        try node.process()
     }
+}
 
-    private func processAllMessagesForOneNode(_ node: NodeType, nodeID: ObjectID) throws {
-        let allRawInputMessages = try database.selectMessages(for: nodeID)
-        let rawMessagesGroupedByWireID: Dictionary<ObjectID, [Message]> = Dictionary(grouping: allRawInputMessages, by: { $0.wireID })
-
-        var inputMessages = [NodeKindDescriptor.InputPort: [NodeMessage]?]()
-
-        let wiresOnAllInputs = try database.selectWires(goingToNodeID: nodeID)
-        let wiresGroupedByInputPort: Dictionary<UInt8, [Wire]> = Dictionary(grouping: wiresOnAllInputs, by: { $0.toPort })
-
-        for inputPort in node.descriptor.inputs {
-            inputMessages[inputPort] = nil // default to nil, meaning no messages on this port
-
-            guard let wiresOnInputPort = wiresGroupedByInputPort[inputPort.index] else {
-                print("Input port not found: \(inputPort)")
-                break
-            }
-
-            var inputMessagesForThisPort = [NodeMessage]()
-
-            for wire in wiresOnInputPort {
-
-                for message in rawMessagesGroupedByWireID[wire.id!] ?? [] {
-
-                    let sourceNodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)
-
-                    try inputMessagesForThisPort.append(.init(originNodeID: message.targetNodeID,
-                                                              originOutputPort: wire.toPort,
-                                                              kind: message.asNodeInputMessageKind(),
-                                                              originOutputPortValue: sourceNodeOutputValue?.asNodeOutputValue() ?? .init(originNodeID: wire.fromNodeID,
-                                                                                                                                     kind: .noValue(reason: .computingValue))))
-                }
-
-                inputMessages[inputPort] = inputMessagesForThisPort
-            }
-        }
-
-        print("processInputs: node \(node) -- \(inputMessages)")
-
-        try node.processInputs(inputMessages)
-
-        for message in allRawInputMessages {
-            _ = try database.deleteMessage(messageID: message.id!) // TODO: error handling
-        }
-    }
+enum ProcessingCycleError: Error {
+    case outputPortHasNoValue
 }
 
 // Port management
 extension ProcessingCycle {
     func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, nodeID: ObjectID) throws -> NodeValue {
         guard let nodeOutputValue = try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort.index) else {
-            return NodeValue.init(originNodeID: nodeID, kind: .noValue(reason: .nodeInitializing))
+            throw ProcessingCycleError.outputPortHasNoValue
         }
 
         return try nodeOutputValue.asNodeOutputValue()
     }
 
-    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeValue] {
+    func removeAllMessagesFromInputPorts(node: NodeType) throws -> [NodeKindDescriptor.InputPort: [NodeMessage]] {
 
+        let allRawInputMessages = try database.selectMessages(for: node.nodeContext.nodeID!)
+        let rawMessagesGroupedByWireID: Dictionary<ObjectID, [Message]> = Dictionary(grouping: allRawInputMessages, by: { $0.wireID })
+
+        var inputMessages = [NodeKindDescriptor.InputPort: [NodeMessage]]()
+
+        let wiresOnAllInputs = try database.selectWires(goingToNodeID: node.nodeContext.nodeID!)
+        let wiresGroupedByInputPort: Dictionary<UInt8, [Wire]> = Dictionary(grouping: wiresOnAllInputs, by: { $0.toPort })
+
+        for inputPort in node.descriptor.inputs.filter({ if case .messageStream = $0.kind { return true } else { return false }}) {
+
+            guard let wiresOnInputPort = wiresGroupedByInputPort[inputPort.index] else {
+                inputMessages[inputPort] = []
+                continue
+            }
+
+            var inputMessagesForThisPort = [NodeMessage]()
+
+            for wire in wiresOnInputPort {
+                for message in rawMessagesGroupedByWireID[wire.id!] ?? [] {
+
+                   // let sourceNodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)
+
+                    inputMessagesForThisPort.append(.init(originNodeID: message.targetNodeID,
+                                                          originOutputPort: wire.toPort,
+                                                          dataObjectHash: message.dataObjectHash))
+                }
+            }
+
+            inputMessages[inputPort] = inputMessagesForThisPort
+        }
+
+        for message in allRawInputMessages {
+            _ = try database.deleteMessage(messageID: message.id!) // TODO: error handling
+        }
+
+        return inputMessages
+    }
+
+    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeValue] {
         let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toPort: inputPort.index)
 
-        return try wiresOnThisInput.map { wire in
+        return try wiresOnThisInput.compactMap { wire in
             if let nodeOutputValue = try database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort) {
                 return try nodeOutputValue.asNodeOutputValue()
             } else {
-                // No value on the Node's output yet
-                return .init(originNodeID: wire.fromNodeID,
-                             kind: .noValue(reason: .nodeInitializing))
+                return nil
+            }
+        }
+    }
+
+    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
+                                 message: MessageType,
+                                 nodeID: ObjectID) throws {
+
+        let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
+                                                         fromPort: outputPort.index)
+
+        for wire in wiresOnThisOutput {
+            try database.insertMessage(.init(targetNodeID: wire.toNodeID,
+                                             wireID: wire.id!,
+                                             dataObjectHash: message.asDataObjectHash()))
+        }
+    }
+
+    private func writePendingToAllOutputsOfNode(nodeID: ObjectID) throws {
+        let node = try nodePoly(nodeID: nodeID)!
+
+        for output in node.descriptor.outputs {
+            if case .value = output.kind {
+                try node.writeToOutputPort(output, value: .noValue(reason: .pending))
             }
         }
     }
 
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
-                           value: NodeValue,
-                           message: MessageType?,
+                           value: NodeValueKind,
                            nodeID: ObjectID) throws {
 
-        let (dataObjectHash, kind, metadata) = try value.kind.mapNodeOutputValue()
+        let (dataObjectHash, kind, metadata) = try value.mapNodeOutputValue()
 
         try database.insertOrReplaceNodeOutputValue(.init(nodeID: nodeID,
                                                           port: outputPort.index,
@@ -667,55 +703,42 @@ extension ProcessingCycle {
         let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
                                                          fromPort: outputPort.index)
 
-        // When a Node's output value changes, all subscribers receive value-mutated events,
-        // which may optionally contain a message describing the mutation, e.g. a delta.
-        // We do not send the output value to each Node as it may become outdated; instead the
-        // recipient must explicitly read our output value during processing.
         for wire in wiresOnThisOutput {
-            try database.insertMessage(.init(kind: .valueMutated,
-                                             targetNodeID: wire.toNodeID,
-                                             wireID: wire.id!,
-                                             dataObjectHash: message?.asDataObjectHash(),
-                                             priority: 0))
+            try writePendingToAllOutputsOfNode(nodeID: wire.toNodeID)
         }
     }
 }
 
-extension Message {
-    func asNodeInputMessageKind() throws -> NodeMessageKind {
-        switch kind {
-        case .wireConnected:
-            return .wireConnected
-        case .wireDisconnected:
-            return .wireDisconnected
-        case .valueMutated:
-            return .valueMutated(delta: dataObjectHash)
-        case .error:
-            return .error(description: "TODO")
-        }
-    }
-}
+//extension Message {
+//    func asNodeInputMessageKind() throws -> NodeMessageKind {
+//        switch kind {
+//        case .valueMutated:
+//            return .valueMutated(delta: dataObjectHash)
+//        case .error:
+//            return .error(description: "TODO")
+//        }
+//    }
+//}
 
 extension DatabaseModels.NodeOutputValue {
     func asNodeOutputValue() throws -> NodeValue {
         .init(originNodeID: nodeID,
+              originOutputPort: port,
               kind: try .init(nodeOutputValue: self))
     }
+}
+
+enum NodeOutputValueError: Error {
+    case dataObjectHashNotSetOnNodeOutputValue
 }
 
 extension NodeValueKind {
     init(nodeOutputValue: DatabaseModels.NodeOutputValue) throws {
         switch nodeOutputValue.kind {
-        case .noValueNodeInitializing:
-            self = .noValue(reason: .nodeInitializing)
-        case .noValueAwaitingDependency:
-            self = .noValue(reason: .awaitingDependency)
-        case .noValueComputingValue:
-            self = .noValue(reason: .computingValue)
-        case .noValueError:
-            self = .noValue(reason: .error(stack: [])) // TODO
-        case .noValueLazy:
-            self = .noValue(reason: .lazy)
+        case .pending:
+            self = .noValue(reason: .pending)
+        case .error:
+            self = .noValue(reason: .error(message: "TODO")) // TODO
         case .value:
             if let dataObjectHash = nodeOutputValue.dataObjectHash {
                 if let metadataJSON = nodeOutputValue.metadata {
@@ -724,7 +747,7 @@ extension NodeValueKind {
                     self = .value(dataObjectHash: dataObjectHash, metadata: nil)
                 }
             } else {
-                self = .noValue(reason: .nodeInitializing)
+                throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
             }
         }
     }
@@ -735,16 +758,10 @@ extension NodeValueKind {
         {
         case .noValue(let reason):
             switch reason {
-            case .nodeInitializing:
-                return (nil, .noValueNodeInitializing, nil)
-            case .awaitingDependency:
-                return (nil, .noValueAwaitingDependency, nil)
-            case .computingValue:
-                return (nil, .noValueComputingValue, nil)
-            case .error://(stack) TODO
-                return (nil, .noValueError, nil)
-            case .lazy:
-                return (nil, .noValueLazy, nil)
+            case .pending:
+                return (nil, .pending, nil)
+            case .error://(let message)
+                return (nil, .error, nil)
             }
 
         case .value(let value, let metadata):
@@ -761,7 +778,7 @@ extension ProcessingCycle {
         let allNodes = try database.selectAllNodes()
         let allWires = try database.selectAllWires()
         let allMessages = try database.selectAllMessages(limit: 10000)
-        let allOutputValues = try database.selectAllNodeOutputValues()
+        let allOutputValues = try database.selectAllNodeOutputValues(limit: 10000000)
         let allDataObjects = try database.selectAllDataObjects()
 
         // Index helpers
@@ -792,23 +809,18 @@ extension ProcessingCycle {
                 let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
                 return "✔ \(shortHash)"
-            case .noValueComputingValue:    return "⏳ computing"
-            case .noValueAwaitingDependency: return "⏳ awaiting"
-            case .noValueNodeInitializing:  return "⏳ init"
-            case .noValueLazy:              return "💤 lazy"
-            case .noValueError:             return "❌ error"
+            case .pending:    return "⏳ pending"
+            case .error:             return "❌ error"
             }
         }
 
         // Format a message kind for display
-        func formatMessageKind(_ message: Message) -> String {
-            switch message.kind {
-            case .wireConnected:    return "📎 connected"
-            case .wireDisconnected: return "✂️ disconnected"
-            case .valueMutated:     return "📨 mutated"
-            case .error:            return "❌ error"
-            }
-        }
+//        func formatMessageKind(_ message: Message) -> String {
+//            switch message.kind {
+//            case .valueMutated:     return "📨 mutated"
+//            case .error:            return "❌ error"
+//            }
+//        }
 
         // ───────────────────────────────────────────────────
         // Section 1: Node boxes
@@ -878,7 +890,7 @@ extension ProcessingCycle {
             if !pendingMessages.isEmpty {
                 contentLines.append("  ┌─ pending messages (\(pendingMessages.count)) ──────")
                 for message in pendingMessages {
-                    contentLines.append("  │ \(formatMessageKind(message))  via wire #\(message.wireID)  pri=\(message.priority)")
+                    contentLines.append("  │   via wire #\(message.wireID)")
                 }
                 contentLines.append("  └─────────────────────────────")
             }
@@ -933,7 +945,7 @@ extension ProcessingCycle {
         print("├──────────────────────────────────────────────┤")
         for message in allMessages {
             let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
-            print("│  \(formatMessageKind(message))  → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)  pri=\(message.priority)")
+            print("│    → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)")
         }
         print("└──────────────────────────────────────────────┘")
         print()

@@ -22,8 +22,8 @@ extension ProcessingCycle {
 
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
-        let wireID = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
-        try database.insertMessage(.init(kind: .wireConnected, targetNodeID: toNodeID, wireID: wireID, dataObjectHash: nil, priority: 0))
+        _ = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
+//        try database.insertMessage(.init(kind: .wireConnected, targetNodeID: toNodeID, wireID: wireID, dataObjectHash: nil, priority: 0))
     }
 
     func connectWire(fromNode: NodeType,
@@ -80,7 +80,7 @@ extension ProcessingCycle {
         }
 
         let result = try database.deleteWire(wireID: wire.id!)
-        try database.insertMessage(.init(kind: .wireDisconnected, targetNodeID: toNodeID, wireID: wire.id!, dataObjectHash: nil, priority: 0))
+//        try database.insertMessage(.init(kind: .wireDisconnected, targetNodeID: toNodeID, wireID: wire.id!, dataObjectHash: nil, priority: 0))
 
         // TODO: cascade deletion:
         // - After deleting the Wire, check the origin Node. If it has no output wires at all, delete it and follow all wires going TO the origin Node. These wires should be deleted using this deleteWire method, e.g. recursive.

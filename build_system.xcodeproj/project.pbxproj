@@ -32,22 +32,9 @@
 		4CC895662F64B1AC0063DB55 /* FolderNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderNode.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		4CC895632F53A54F0063DB55 /* Exceptions for "build_system" folder in "Compile Sources" phase from "build_system" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = 4C937AEB2F1AF44E0099662B /* Sources */;
-			membershipExceptions = (
-				Nodes/formula.yml,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4C937AF12F1AF44E0099662B /* build_system */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				4CC895632F53A54F0063DB55 /* Exceptions for "build_system" folder in "Compile Sources" phase from "build_system" target */,
-			);
 			path = build_system;
 			sourceTree = "<group>";
 		};

@@ -39,6 +39,11 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
 
+    // Returns all Nodes that have at least one NodeOutputValue targeting them with a kind = pending, ordered by ID (oldest first)
+    public func selectAllNodesWithPendingNodeOutputValues(limit: Int) throws -> [Node] {
+        [] // TODO
+    }
+
     // Returns all Nodes that have at least one Message targeting them, ordered by ID (oldest first)
     public func selectAllNodesWithInputMessages(limit: Int) throws -> [Node] {
         try dbQueue.read { db in

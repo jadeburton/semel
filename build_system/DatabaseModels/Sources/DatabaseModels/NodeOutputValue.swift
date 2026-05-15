@@ -11,11 +11,8 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
 
     public enum ValueKind: UInt8, Codable {
         case value = 1
-        case noValueComputingValue = 2
-        case noValueAwaitingDependency = 3
-        case noValueLazy = 4
-        case noValueError = 5
-        case noValueNodeInitializing = 6
+        case pending = 2
+        case error = 5
     }
 
     public var nodeID: ObjectID
@@ -48,9 +45,13 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
 }
 
 extension DatabaseLayer {
-    public func selectAllNodeOutputValues() throws -> [NodeOutputValue] {
+
+    public func selectAllNodeOutputValues(limit: Int) throws -> [NodeOutputValue] {
         try dbQueue.read { db in
-            try NodeOutputValue.fetchAll(db)
+            try NodeOutputValue
+                .limit(limit)
+                .order(Column("nodeID").asc)
+                .fetchAll(db)
         }
     }
 

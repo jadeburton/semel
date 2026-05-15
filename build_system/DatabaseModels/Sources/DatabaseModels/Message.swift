@@ -1,39 +1,26 @@
 import Foundation
 import GRDB
 
-public enum MessageKind: Int, Codable {
-    case wireConnected = 1
-    case wireDisconnected = 2
-    case valueMutated = 3
-    case error = 4
-}
-
 public struct Message: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var id: ObjectID?
-    public var kind: MessageKind
     public var targetNodeID: ObjectID
     public var wireID: ObjectID
-    public var dataObjectHash: DataObjectHash?
-    public var priority: Int
+    public var dataObjectHash: DataObjectHash
 
-    public init(id: ObjectID? = nil, kind: MessageKind, targetNodeID: ObjectID, wireID: ObjectID, dataObjectHash: DataObjectHash?, priority: Int) {
+    public init(id: ObjectID? = nil, targetNodeID: ObjectID, wireID: ObjectID, dataObjectHash: DataObjectHash) {
         self.id = id
-        self.kind = kind
         self.targetNodeID = targetNodeID
         self.wireID = wireID
         self.dataObjectHash = dataObjectHash
-        self.priority = priority
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "Message", options: .ifNotExists) { t in
                 t.autoIncrementedPrimaryKey("id")
-                t.column("kind", .integer).notNull()
-                t.column("priority", .integer).indexed().notNull()
                 t.column("targetNodeID", .integer).notNull().indexed()
                 t.column("wireID", .integer).notNull()
-                t.column("dataObjectHash", .text)
+                t.column("dataObjectHash", .text).notNull()
             }
         }
     }
@@ -90,6 +77,6 @@ extension DatabaseLayer {
 
 public extension Message {
     func description() -> String {
-        "Message \(id ?? -1): kind=\(kind) targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectHash=\(dataObjectHash ?? "nil"), priority=\(priority)"
+        "Message \(id ?? -1): targetNodeID=\(targetNodeID), wireID=\(wireID), dataObjectHash=\(dataObjectHash)"
     }
 }

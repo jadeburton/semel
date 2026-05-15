@@ -40,30 +40,20 @@ final class StaticFileNode: NodeType {
     }
 
     func replaceContent(_ content: DataObjectHash, metadata: FileMetadata) throws {
-        try writeToOutputPort(Self.outputPort, value: .init(originNodeID: nodeContext.nodeID!,
-                                                            kind: .value(dataObjectHash: content,
-                                                                         metadata: metadata)))
+        try writeToOutputPort(Self.outputPort, value: .value(dataObjectHash: content, metadata: metadata))
     }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
     // The input should not have any one-shot events, only persistent value changes
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
-        assert(inputs.count == descriptor.inputs.count)
+    func process() throws {
 
-        guard let inputValue = try readFromInputPort(Self.inputPort).first else {
-            try writeToOutputPort(Self.outputPort, value: .init(originNodeID: nodeContext.nodeID!, kind: .noValue(reason: .awaitingDependency)))
+        guard let inputValue = try readOneValueFromInputPort(Self.inputPort) else {
+            // No input wire is connected.
+            // Special case: instead of trashing our output with an error state, we just preserve the current value.
             return
         }
 
-        switch inputValue.kind {
-
-        case .noValue:
-            try writeToOutputPort(Self.outputPort, value: .init(originNodeID: nodeContext.nodeID!, kind:.noValue(reason: .awaitingDependency)))
-            return
-
-        case .value:
-            try writeToOutputPort(Self.outputPort, value: inputValue)
-
-        }
+        // An input wire is connected
+        try writeToOutputPort(Self.outputPort, value: inputValue.kind)
     }
 }

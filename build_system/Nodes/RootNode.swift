@@ -68,6 +68,6 @@ final class RootNode: NodeType {
         .init(kind: Self.kind, inputs: [], outputs: [])
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
+    func process() throws {
     }
 }

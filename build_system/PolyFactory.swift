@@ -32,8 +32,11 @@ enum PolyFactory {
         ClangLinkerTool.kind:    ClangLinkerTool.self,
         ClangCompilerTool.kind:  ClangCompilerTool.self,
         ClangPreprocessorTool.kind: ClangPreprocessorTool.self,
-        ToolNode.kind:           ToolNode.self,
         FileMetadata.kind:       FileMetadata.self,
+        IncludeFinder.kind:      IncludeFinder.self,
+        ClangLinkerToolConfiguration.kind:       ClangLinkerToolConfiguration.self,
+        ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
+        ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
     ]
 
     /// Look up the concrete type for a given kind.
@@ -48,6 +51,21 @@ enum PolyFactory {
     static func decode(encodedJSON: String) throws -> any PolySerializable {
         try Cassette.fromJSON(encodedJSON).object
     }
+
+    static func decodeAndCast<P: PolySerializable>(encodedJSON: String) throws -> P {
+        let decoded = try decode(encodedJSON: encodedJSON)
+
+        if let object = decoded as? P {
+            return object
+        }
+
+        print("ERROR: expected type \(P.self), got \(Swift.type(of: decoded))")
+        throw PolyFactoryError.unexpectedType
+    }
+}
+
+enum PolyFactoryError: Error {
+    case unexpectedType
 }
 
 extension PolySerializable {

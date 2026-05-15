@@ -27,8 +27,8 @@ final class FolderNode: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let childrenOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "children", kind: .value(dataType: .utf8Text))
-    static let logOutputPort = NodeKindDescriptor.OutputPort(index: 1, name: "log", kind: .value(dataType: .utf8Text))
+    static let childrenOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "children", kind: .messageStream(dataType: .utf8Text))
+    static let logOutputPort = NodeKindDescriptor.OutputPort(index: 1, name: "log", kind: .messageStream(dataType: .utf8Text))
     static let hashOutputPort = NodeKindDescriptor.OutputPort(index: 2, name: "hash", kind: .value(dataType: .binary))
 
     var descriptor: NodeKindDescriptor {
@@ -41,9 +41,8 @@ final class FolderNode: NodeType {
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
-        try writeToOutputPort(Self.childrenOutputPort,
-                              value: .init(originNodeID: nodeID, kind: .noValue(reason: .lazy)), // note: not our own nodeID, our child's
-                              message: FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)))
+        try postMessageToOutputPort(Self.childrenOutputPort,
+                                    message: FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)))
 
         let parent: FolderNode? = try parent()
 
@@ -80,8 +79,7 @@ final class FolderNode: NodeType {
 
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
             try existingChild.writeToOutputPort(StaticFileNode.outputPort,
-                                                value: .init(originNodeID: existingChild.nodeContext.nodeID!,
-                                                             kind: .value(dataObjectHash: content, metadata: metadata)))
+                                                value: .value(dataObjectHash: content, metadata: metadata))
         } else {
             // TODO: what if the type is not StaticFileNode
 
@@ -92,24 +90,14 @@ final class FolderNode: NodeType {
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
+    func process() throws {
     }
 }
 
-
-final class FileMetadata: Codable, PolySerializable {
-
+struct FileMetadata: PolySerializable {
     static let kind: UInt = 14
     let name: String
-
-//    init() throws {
-//    }
-
-    init(name: String) {
-        self.name = name
-    }
 }
-
 
 final class FolderEvent: MessageType {
     enum FolderEventKind: Codable {

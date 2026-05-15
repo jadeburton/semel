@@ -633,14 +633,18 @@ final class CommandInterpreter: NodeType {
             }
 
             switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).kind {
-            case .value(let dataObjectHash, let metadata):
-                let fileContent = Data(dataObjectHash.resolve()!)
+
+            case .value(let dataObjectHash, _):
+                let fileContent = Data(try dataObjectHash.resolve())
                 let finalPath = destinationPath.appending("/").appending((entry.path as NSString).lastPathComponent)
                 try fileContent.write(to: URL(fileURLWithPath: finalPath))
                 outputMessage("File written: \(finalPath)")
+
             case .noValue(let reason):
                 outputError("File \(entry.path) has no content: \(reason)")
+
             }
+
         case .folder:
             break
             // TODO
@@ -664,6 +668,6 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    func processInputs(_ inputs: [NodeKindDescriptor.InputPort: [NodeMessage]?]) throws {
+    func process() throws {
     }
 }
