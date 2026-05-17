@@ -23,7 +23,10 @@ extension ProcessingCycle {
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
         _ = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
-//        try database.insertMessage(.init(kind: .wireConnected, targetNodeID: toNodeID, wireID: wireID, dataObjectHash: nil, priority: 0))
+
+        try writePendingToAllOutputsOfNode(nodeID: toNodeID)
+
+        try scheduleNode(toNodeID)
     }
 
     func connectWire(fromNode: NodeType,
@@ -108,6 +111,7 @@ extension ProcessingCycle {
         // 3. If a Node is deleted, all outbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
         // 4. If a Node is deleted, all inbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
 
+        // TODO: invalidate node bc its input changed
         return result
     }
 }

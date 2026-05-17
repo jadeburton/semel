@@ -91,6 +91,7 @@ final class FolderNode: NodeType {
     }
 
     func process() throws {
+        try writeToOutputPort(Self.hashOutputPort, value: .noValue(reason: .error(message: "X")))
     }
 }
 

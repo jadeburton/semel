@@ -56,14 +56,18 @@ final class BuildGraph: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
+    // ISSUE: there is no output port, so there is no way it can be queued to do work
+
     static let formulaeInputPort = NodeKindDescriptor.InputPort(index: 0,
                                                                 name: "formulae",
                                                                 kind: .value(dataType: .utf8Text),
                                                                 maximumConnections: nil,
                                                                 minimumConnections: 0)
 
+    static let dummyOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "dummy", kind: .value(dataType: .utf8Text))
+
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [])
+        .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [Self.dummyOutputPort])
     }
 
     func integrateFormula(formula: String) throws {
@@ -312,6 +316,7 @@ final class BuildGraph: NodeType {
                 try integrateFormula(formula: dataObjectHash.resolveAsString())
             }
         }
+        try writeToOutputPort(Self.dummyOutputPort, value: .noValue(reason: .error(message: "Blah")))
     }
 }
 
@@ -483,7 +488,6 @@ final class ClangCompilerTool: NodeType {
     }
 
     func process() throws {
-//        for formulaFileValue in try readAllValuesFromInputPort(Self.formulaeInputPort) {
 
         guard let configuration: ClangCompilerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
             return

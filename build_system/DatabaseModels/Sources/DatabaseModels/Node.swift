@@ -8,6 +8,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
         public static let name = Column(CodingKeys.name)
         public static let configuration = Column(CodingKeys.configuration)
         public static let parentNodeID = Column(CodingKeys.parentNodeID)
+        public static let scheduled = Column(CodingKeys.scheduled)
     }
 
     public var id: ObjectID?
@@ -15,13 +16,15 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var kind: UInt
     public var name: String?
     public var configuration: String? // JSON
+    public var scheduled: Bool
 
-    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil) {
+    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil, scheduled: Bool = false) {
         self.id = id
         self.parentNodeID = parentNodeID
         self.kind = kind
         self.name = name
         self.configuration = configuration
+        self.scheduled = scheduled
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
@@ -32,6 +35,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
                 t.column("kind", .integer).notNull()
                 t.column("name", .text)
                 t.column("configuration", .text)
+                t.column("scheduled", .integer).indexed().notNull()
             }
         }
     }
@@ -39,20 +43,10 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
 
-    // Returns all Nodes that have at least one NodeOutputValue targeting them with a kind = pending, ordered by ID (oldest first)
-    public func selectAllNodesWithPendingNodeOutputValues(limit: Int) throws -> [Node] {
-        [] // TODO
-    }
-
-    // Returns all Nodes that have at least one Message targeting them, ordered by ID (oldest first)
-    public func selectAllNodesWithInputMessages(limit: Int) throws -> [Node] {
+    public func selectAllScheduledNodes(limit: Int) throws -> [Node] {
         try dbQueue.read { db in
             try Node
-                .joining(required: Node.hasMany(Message.self,
-                                                using: ForeignKey(["targetNodeID"], to: ["id"])))
-                .group(Column("id"))
-                .order(Column("id").asc)
-                .limit(limit)
+                .filter(Node.Columns.scheduled == true)
                 .fetchAll(db)
         }
     }
@@ -105,7 +99,6 @@ extension DatabaseLayer {
     public func insertNode(_ node: Node) throws -> ObjectID {
         try dbQueue.write { db in
             try node.insert(db)
-            
             return db.lastInsertedRowID
         }
     }
@@ -131,6 +124,6 @@ extension DatabaseLayer {
 
 public extension Node {
     func description() -> String {
-        "Node \(id ?? -1): kind \(kind), name=\(name ?? "nil")"
+        "Node \(id ?? -1): kind \(kind), name=\(name ?? "nil"), scheduled=\(scheduled)"
     }
 }

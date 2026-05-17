@@ -356,29 +356,23 @@ extension PolySerializable {
 final class BuildEngine {
     let database: DatabaseLayer
 
-    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database65.sqlite")) throws {
+    init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database74.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
 
         self.database = database
 
-        try processAllMessages()
+        _ = try processSomeNodes()
     }
 
-    func processAllMessages() throws {
-        // TODO this needs some serious thought. we want to stop processing when there is no work to do, but there may still be messages that are not ready to be processed.
-        while try processSomeMessages() {
-        }
-    }
+    private func processSomeNodes() throws -> Bool {
+        let rawNodes = try database.selectAllScheduledNodes(limit: 10)
 
-    private func processSomeMessages() throws -> Bool {
-        let nodes = try database.selectAllNodesWithInputMessages(limit: 10)
-
-        guard !nodes.isEmpty else {
+        guard !rawNodes.isEmpty else {
             return false
         }
 
-        for rawNode in nodes {
-            try processAllMessagesForOneRawNode(rawNode)
+        for rawNode in rawNodes {
+            try processAllForOneRawNode(rawNode)
         }
 
         return true
@@ -390,10 +384,10 @@ final class BuildEngine {
             try work(processingCycle)
             try processingCycle.endCycle()
 //        }
-        try processAllMessages()
+        _ = try processSomeNodes()
     }
 
-    private func processAllMessagesForOneRawNode(_ rawNode: Node) throws {
+    private func processAllForOneRawNode(_ rawNode: Node) throws {
         try process { processingCycle in
             try processingCycle.processOneNode(rawNode)
         }
@@ -416,7 +410,7 @@ final class ProcessingCycle {
         // This is the first object that is created. It resides inside a plugin library that can be configured by the user.
         // The CommandInterpreter is responsible for interpreting the commands that are sent to the system, e.g. from a CLI or a UI, and translating them into node creations, wire connections, value assignments, etc. It is also responsible for creating and managing the "main" Node that represents the main build pipeline.
         rootNode = try rootObject()
-        //try! printAll()
+        try! printAll()
         //try rootNode.buildGraph.debugPrintTree()
     }
 
@@ -549,23 +543,35 @@ extension ProcessingCycle {
         // To simplify things, even when a Node is created in memory it is also created on disk. We can always rollback.
         try saveNode(newObject)
         loadedNodes[newObject.nodeContext.nodeID!] = newObject
+
+        // Create all NodeOutputValues for the Node, as these should always exist for all non-stream output ports
+        try writePendingToAllOutputsOfNode(nodeID: newObject.nodeContext.nodeID!)
         return newObject
     }
 
-    func saveNode(_ node: NodeType) throws {
+    func scheduleNode(_ nodeID: ObjectID) throws {
+        var existing = try database.selectNodeByID(nodeID)!
+        existing.scheduled = true
+        try database.updateNode(existing)
+    }
+
+    func saveNode(_ node: NodeType, scheduled: Bool? = nil) throws {
         try node.willSave()
 
         if let nodeID = node.nodeContext.nodeID {
+            let existing = try database.selectNodeByID(nodeID)!
             try database.updateNode(.init(id: nodeID,
                                           parentNodeID: node.nodeContext.parentNodeID,
                                           kind: node.descriptor.kind,
                                           name: node.nodeContext.name,
-                                          configuration: node.toJSON()))
+                                          configuration: node.toJSON(),
+                                          scheduled: scheduled == nil ? existing.scheduled : scheduled!))
         } else {
             node.nodeContext.nodeID = try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
                                                                     kind: node.descriptor.kind,
                                                                     name: node.nodeContext.name,
-                                                                    configuration: node.toJSON()))
+                                                                    configuration: node.toJSON(),
+                                                                    scheduled: scheduled ?? false))
         }
 
         try node.didSave()
@@ -592,9 +598,21 @@ extension ProcessingCycle {
     func processOneNode(_ rawNode: Node) throws {
         let node = try wrapRawNodePoly(nodeRaw: rawNode)
         // TODO: create an object that represents the current message-processing cycle for a single node, so that all state can be kept there and discarded before moving on to the next node-message group.
-//        try processOneNode(node, nodeID: rawNode.id!)
+        //        try processOneNode(node, nodeID: rawNode.id!)
         print("process: node \(type(of: node)), nodeID \(rawNode.id!)")
         try node.process()
+        try saveNode(node, scheduled: false)
+
+        validateNodeOutputValues(node: node)
+        validateMessagesWereProcessed(node: node)
+    }
+
+    private func validateNodeOutputValues(node: NodeType) {
+        assert(try! database.selectAllNodeOutputValues(nodeID: node.nodeContext.nodeID!).filter { $0.kind == .pending }.isEmpty, "Not all NodeOutputValues were processed for node \(node.description())")
+    }
+
+    private func validateMessagesWereProcessed(node: NodeType) {
+        assert(try! database.selectMessages(for: node.nodeContext.nodeID!).isEmpty, "Not all messages were processed for node \(node.description())")
     }
 }
 
@@ -675,10 +693,11 @@ extension ProcessingCycle {
             try database.insertMessage(.init(targetNodeID: wire.toNodeID,
                                              wireID: wire.id!,
                                              dataObjectHash: message.asDataObjectHash()))
+            try scheduleNode(wire.toNodeID)
         }
     }
 
-    private func writePendingToAllOutputsOfNode(nodeID: ObjectID) throws {
+    func writePendingToAllOutputsOfNode(nodeID: ObjectID) throws {
         let node = try nodePoly(nodeID: nodeID)!
 
         for output in node.descriptor.outputs {
@@ -706,6 +725,8 @@ extension ProcessingCycle {
         for wire in wiresOnThisOutput {
             try writePendingToAllOutputsOfNode(nodeID: wire.toNodeID)
         }
+
+        try scheduleNode(nodeID)
     }
 }
 
@@ -808,9 +829,11 @@ extension ProcessingCycle {
             case .value:
                 let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
-                return "✔ \(shortHash)"
-            case .pending:    return "⏳ pending"
-            case .error:             return "❌ error"
+                return "✔ '\(shortHash)'"
+            case .pending:    
+                return "⏳ pending"
+            case .error:      
+                return "❌ error"
             }
         }
 
@@ -925,43 +948,43 @@ extension ProcessingCycle {
         // Section 2: Wire list
         // ───────────────────────────────────────────────────
         if !allWires.isEmpty {
-            print("┌──────────────────────────────────────────────┐")
-            print("│  WIRES (\(allWires.count))                                     │")
-            print("├──────────────────────────────────────────────┤")
+            print("──────────────────────────────────────────────")
+            print("  WIRES (\(allWires.count))")
+            print("──────────────────────────────────────────────")
             for wire in allWires {
                 let fromNodeName = nodeByID[wire.fromNodeID]?.name ?? "?"
                 let toNodeName   = nodeByID[wire.toNodeID]?.name ?? "?"
-                print("│  #\(wire.id ?? -1)  \"\(fromNodeName)\" :\(wire.fromPort)  ───▶  \"\(toNodeName)\" :\(wire.toPort)")
+                print("  #\(wire.id ?? -1)  \"\(fromNodeName)\" :\(wire.fromPort)  ───▶  \"\(toNodeName)\" :\(wire.toPort)")
             }
-            print("└──────────────────────────────────────────────┘")
+            print("──────────────────────────────────────────────")
             print()
         }
 
         // ───────────────────────────────────────────────────
         // Section 3: Pending messages
         // ───────────────────────────────────────────────────
-        print("┌──────────────────────────────────────────────┐")
-        print("│  PENDING MESSAGES (\(allMessages.count))                        │")
-        print("├──────────────────────────────────────────────┤")
+        print("──────────────────────────────────────────────")
+        print("  PENDING MESSAGES (\(allMessages.count))")
+        print("──────────────────────────────────────────────")
         for message in allMessages {
             let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
-            print("│    → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)")
+            print("    → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)")
         }
-        print("└──────────────────────────────────────────────┘")
+        print("──────────────────────────────────────────────")
         print()
 
         // ───────────────────────────────────────────────────
         // Section 4: Data objects
         // ───────────────────────────────────────────────────
         if !allDataObjects.isEmpty {
-            print("┌──────────────────────────────────────────────┐")
-            print("│  DATA OBJECTS (\(allDataObjects.count))                          │")
-            print("├──────────────────────────────────────────────┤")
+            print("──────────────────────────────────────────────")
+            print("  DATA OBJECTS (\(allDataObjects.count))")
+            print("──────────────────────────────────────────────")
             for dataObject in allDataObjects {
                 let shortHash = dataObject.hash.count > 16 ? String(dataObject.hash.prefix(16)) + "…" : dataObject.hash
                 print("│  🗄 \(shortHash)  \(dataObject.content.count) byte(s)")
             }
-            print("└──────────────────────────────────────────────┘")
+            print("──────────────────────────────────────────────")
             print()
         }
 
@@ -969,14 +992,15 @@ extension ProcessingCycle {
         // Section 5: Output values
         // ───────────────────────────────────────────────────
         if !allOutputValues.isEmpty {
-            print("┌──────────────────────────────────────────────┐")
-            print("│  OUTPUT VALUES (\(allOutputValues.count))                         │")
-            print("├──────────────────────────────────────────────┤")
+            print("──────────────────────────────────────────────")
+            print("  OUTPUT VALUES (\(allOutputValues.count))")
+            print("──────────────────────────────────────────────")
             for outputValue in allOutputValues {
-                let nodeName = nodeByID[outputValue.nodeID]?.name ?? "?"
-                print("│  \"\(nodeName)\" #\(outputValue.nodeID) :\(outputValue.port)  → \(formatOutputValue(outputValue))")
+                let node = nodeByID[outputValue.nodeID]!
+                let nodeDecoded = try! PolyFactory.decode(encodedJSON: node.configuration!) as! NodeType
+                print("  \(type(of: nodeDecoded)) \"\(node.name ?? "?")\" #\(outputValue.nodeID) \(nodeDecoded.descriptor.outputs[Int(outputValue.port)].name) (\(outputValue.port))  → \(formatOutputValue(outputValue))")
             }
-            print("└──────────────────────────────────────────────┘")
+            print("──────────────────────────────────────────────")
             print()
         }
     }

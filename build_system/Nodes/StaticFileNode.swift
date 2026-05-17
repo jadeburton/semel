@@ -50,6 +50,14 @@ final class StaticFileNode: NodeType {
         guard let inputValue = try readOneValueFromInputPort(Self.inputPort) else {
             // No input wire is connected.
             // Special case: instead of trashing our output with an error state, we just preserve the current value.
+            if case .noValue = try readFromOutputPort(Self.outputPort).kind {
+                try writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "Blah")))
+            }
+            return
+        }
+
+        if case .noValue = inputValue.kind {
+            try writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "X")))
             return
         }
 
