@@ -40,7 +40,9 @@ final class StaticFileNode: NodeType {
     }
 
     func replaceContent(_ content: DataObjectHash, metadata: FileMetadata) throws {
-        try writeToOutputPort(Self.outputPort, value: .value(dataObjectHash: content, metadata: metadata))
+        try writeToOutputPort(Self.outputPort,
+                              value: .value(.dataObjectHash(content),
+                                            metadata: metadata))
     }
 
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.

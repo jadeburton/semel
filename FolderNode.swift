@@ -41,8 +41,9 @@ final class FolderNode: NodeType {
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
-        try postMessageToOutputPort(Self.childrenOutputPort,
-                                    message: FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)))
+
+//        writeToOutputPortStream(Self.childrenOutputPort,
+//                                data: "\(FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)).toJSON())\n\n")
 
         let parent: FolderNode? = try parent()
 
@@ -79,7 +80,7 @@ final class FolderNode: NodeType {
 
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
             try existingChild.writeToOutputPort(StaticFileNode.outputPort,
-                                                value: .value(dataObjectHash: content, metadata: metadata))
+                                                value: .value(.dataObjectHash(content), metadata: metadata))
         } else {
             // TODO: what if the type is not StaticFileNode
 

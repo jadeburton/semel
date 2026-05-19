@@ -251,7 +251,7 @@ final class BuildGraph: NodeType {
                         // HACK: copy across the configuration
                         let configurationNode = nodeConnectedToInputWire as! StaticFileNode
                         try configurationNode.writeToOutputPort(StaticFileNode.outputPort,
-                                                                value: .value(dataObjectHash: configuration.intern(),
+                                                                value: .value(.dataObjectHash(configuration.intern()),
                                                                               metadata: FileMetadata(name: "configuration")))
 
                         if nodeConnectedToInputWire == nil {
@@ -312,14 +312,28 @@ final class BuildGraph: NodeType {
             case .noValue:
                 break
 
-            case .value(let dataObjectHash, _):
-                try integrateFormula(formula: dataObjectHash.resolveAsString())
+            case .value(let payload, _):
+                try integrateFormula(formula: payload.expectDataObjectHash().resolveAsString())
             }
         }
         try writeToOutputPort(Self.dummyOutputPort, value: .noValue(reason: .error(message: "Blah")))
     }
 }
 
+enum NodeValueError: Error {
+    case nodeValueIsNotDataObjectHash
+}
+
+extension NodeValuePayload {
+    func expectDataObjectHash() throws -> DataObjectHash  {
+        switch self {
+        case .dataObjectHash(let dataObjectHash):
+            return dataObjectHash
+        case .stream:
+            throw NodeValueError.nodeValueIsNotDataObjectHash
+        }
+    }
+}
 
 extension BuildGraphNode {
     func inputPorts() -> [BuildGraphInputPort] {
@@ -394,32 +408,93 @@ final class FormulaFinder: NodeType {
     }
 
     func process() throws {
-        let allMessages = try removeAllMessagesFromInputPorts()
-
-        for fileListMessage in allMessages[Self.fileListInputPort]! {
-
-            let message = try PolyFactory.decode(encodedJSON: try fileListMessage.dataObjectHash.resolveAsString())
-
-            if let cast = message as? FolderEvent {
-                if let folderEventKind = cast.folderEventKind {
-                    print("folder event: \(folderEventKind)")
-
-                    switch folderEventKind {
-                    case .childAdded(let nodeID, let name):
-                        try didAddFile(nodeID: nodeID, name: name)
-
-                    default:
-                        break
+/*
+        for wire in wires(inputPort: Self.fileListInputPort) {
+            if let stream = wire.readValueAsStream() {
+                if let data = stream.readUntilEnd(), !data.isEmpty {
+                    let dataChunkAsString = String(dataChunk)
+                    let entriesAsStrings: [String] = dataChunkAsString.split("\n\n")
+                    
+                    for entryAsString in entriesAsStrings {
+                        let entry = try PolyFactory.decode(encodedJSON: entryAsString)
+                        
+                        if let cast = entry as? FolderEvent {
+                            if let folderEventKind = cast.folderEventKind {
+                                print("folder event: \(folderEventKind)")
+                                
+                                switch folderEventKind {
+                                case .childAdded(let nodeID, let name):
+                                    try didAddFile(nodeID: nodeID, name: name)
+                                    
+                                default:
+                                    break
+                                }
+                            }
+                        }
                     }
                 }
             }
+//        }
+ */
+//
+//        guard let fileListInputPortStreamValue = try readOneValueFromInputPort(Self.fileListInputPort) else {
+//            // no wire connected
+//            return
+//        }
+//
+//        switch fileListInputPortStreamValue.kind {
+//
+//        case .value(let value, let metadata):
+//
+//            switch value {
+//            case .dataObjectHash(let dataObjectHash):
+//            case .stream(let currentLength):
+//
+//                var wire: Wire
+//
+//                let filename = "\(fileListInputPortStreamValue.originNodeID)-\(fileListInputPortStreamValue.originOutputPort).stream"
+//
+//                let offset: UInt64 = wire.streamPosition!
+//                let length: UInt64 = currentLength - offset
+//
+//                // TODO: read offset-length chunk
+//                let dataChunk = read(filename, offset, length)
+//
+//                wire.streamPosition = currentLength
+//                saveWire(wire)
+//                
+//
+//
+//            }
+//
+//        case .noValue:
+//            break
+//        }
 
-            // add file/folder
-            // remove file/folder
-            // filter, if a .formula file then wire up to listen for mutations
-            // if deleted, remove the wires (should be already?)
-            //
-        }
+//        // Read all new bytes added to the stream since we last read it. This updates the position stored on the Wire.
+//        let dataChunk = fileListInputPortStreamValue.readStreamDataChunk()
+//
+//        if dataChunk.count > 0 {
+//        }
+//
+//                // add file/folder
+//                // remove file/folder
+//                // filter, if a .formula file then wire up to listen for mutations
+//                // if deleted, remove the wires (should be already?)
+//                //
+//            }
+//        }
+
+        // for each wire
+        // read stream length
+        // read stream position
+        // read delta bytes
+        // update stream position
+      //  let allMessages = try removeAllMessagesFromInputPorts()
+
+//        for fileListMessage in allMessages[Self.fileListInputPort]! {
+
+//        }
     }
 }
 
@@ -503,9 +578,9 @@ final class ClangCompilerTool: NodeType {
             try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Input has no value")))
             return
 
-        case .value(let dataObjectHash, let metadata):
+        case .value(let payload, let metadata):
 
-            let bytes = try dataObjectHash.resolve()
+            let bytes = try payload.expectDataObjectHash().resolve()
 
             var output: [UInt8] = []
 
@@ -543,7 +618,7 @@ final class ClangCompilerTool: NodeType {
                                                           write: { filePath, data in output.append(contentsOf: data) }))
 
             if exitCode == 0 {
-                try writeToOutputPort(Self.output, value: .value(dataObjectHash: output.intern(),
+                try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
                                                                  metadata: FileMetadata(name: outputFilename)))
             } else {
                 try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Compiler exited with nonzero status")))
@@ -576,8 +651,8 @@ extension NodeType {
 
         switch configurationNodeValue.kind {
 
-        case .value(let dataObjectHash, _):
-            return try PolyFactory.decodeAndCast(encodedJSON: dataObjectHash.resolveAsString()) as C
+        case .value(let payload, _):
+            return try PolyFactory.decodeAndCast(encodedJSON: payload.expectDataObjectHash().resolveAsString()) as C
 
         case .noValue:
             // The wire is connected but has no value
@@ -748,11 +823,11 @@ final class ClangPreprocessorTool: NodeType {
             try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input value")))
             return
 
-        case .value(let dataObjectHash, let metadata):
+        case .value(let payload, let metadata):
 
             try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
 
-            let bytes = try dataObjectHash.resolve()
+            let bytes = try payload.expectDataObjectHash().resolve()
 
             var output: [UInt8] = []
 
@@ -809,8 +884,8 @@ final class ClangPreprocessorTool: NodeType {
 
             let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue in
                 switch includeFilesValue.kind {
-                case .value(let dataObjectHash, _):
-                    return try dataObjectHash.resolveAsString().split(separator: "\n").map(String.init)
+                case .value(let payload, _):
+                    return try payload.expectDataObjectHash().resolveAsString().split(separator: "\n").map(String.init)
                 case .noValue:
                     return []
                 }
@@ -834,14 +909,14 @@ final class ClangPreprocessorTool: NodeType {
 
             inputFiles.append(contentsOf: try headerInputFilesValues.compactMap { nodeValue in
                 switch nodeValue.kind {
-                case .value(let dataObjectHash, let metadata):
+                case .value(let payload, let metadata):
                     if let staticFileNode: StaticFileNode = try? nodeContext.processingCycle.node(nodeID: nodeValue.originNodeID) {
                         let filePath = (try? staticFileNode.buildFullPathName()) ?? (metadata as! FileMetadata).name
                         return .init(filePath: filePath,
-                                     content: try dataObjectHash.resolve())
+                                     content: try payload.expectDataObjectHash().resolve())
                     } else {
                         return .init(filePath: (metadata as! FileMetadata).name,
-                                     content: try dataObjectHash.resolve())
+                                     content: try payload.expectDataObjectHash().resolve())
                     }
                 case .noValue:
                     return nil
@@ -857,7 +932,7 @@ final class ClangPreprocessorTool: NodeType {
                                                           write: { filePath, data in output.append(contentsOf: data) }))
 
             if exitCode == 0 {
-                try writeToOutputPort(Self.output, value: .value(dataObjectHash: output.intern(),
+                try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
                                                                  metadata: FileMetadata(name: outputFilename)))
             } else {
                 try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Nonzero exit code")))
@@ -968,13 +1043,13 @@ final class ClangLinkerTool: NodeType {
         for nodeValue in inputValues {
             switch nodeValue.kind {
 
-            case .value(let dataObjectHash, let metadata):
+            case .value(let payload, let metadata):
 
                 if let fileMetadata = metadata as? FileMetadata, fileMetadata.name.hasSuffix(".dylib") {
 
                     let originNode = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)
 
-                    let data = try dataObjectHash.resolve()
+                    let data = try payload.expectDataObjectHash().resolve()
 
                     if let staticFileNode = originNode as? StaticFileNode {
                         // Static file: use the path
@@ -997,7 +1072,8 @@ final class ClangLinkerTool: NodeType {
             switch nodeValue.kind {
             case .value(let dataObjectHash, let metadata):
                 if let fileMetadata = metadata as? FileMetadata, fileMetadata.name.hasSuffix(".o") {
-                    objectFiles.append(FileNameAndContent(filePath: fileMetadata.name, content: try dataObjectHash.resolve()))
+                    objectFiles.append(FileNameAndContent(filePath: fileMetadata.name,
+                                                          content: try dataObjectHash.expectDataObjectHash().resolve()))
                 }
 
             case .noValue:
@@ -1070,7 +1146,7 @@ final class ClangLinkerTool: NodeType {
                                                       write: { filePath, data in output.append(contentsOf: data) }))
 
         if exitCode == 0 {
-            try writeToOutputPort(Self.output, value: .value(dataObjectHash: output.intern(),
+            try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
                                                              metadata: FileMetadata(name: "output.dylib")))
         } else {
             try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
@@ -1120,9 +1196,9 @@ final class FormulaExtractor: NodeType {
             case .noValue:
                 break
 
-            case .value(let dataObjectHash, _):
+            case .value(let payload, _):
                 // This extractor just passes through
-                try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash: dataObjectHash,
+                try writeToOutputPort(Self.formulaOutputPort, value: .value(.dataObjectHash(payload.expectDataObjectHash()),
                                                                             metadata: FileMetadata(name: "formula")))
 
             }
@@ -1480,13 +1556,16 @@ final class IncludeFinder: NodeType {
         for sourceFileContent in try readAllValuesFromInputPort(Self.sourceFileInputPort) {
             switch sourceFileContent.kind {
 
-            case .value(let dataObjectHash, let metadata):
-                let inputFileContent = try dataObjectHash.resolveAsString()
+            case .value(let payload, let metadata):
+                let inputFileContent = try payload.expectDataObjectHash().resolveAsString()
                 let includePathList = extractIncludePaths(sourceFileContent: inputFileContent).joined(separator: "\n")
 
-                try writeToOutputPort(Self.includePathListOutputPort, value: .value(dataObjectHash: includePathList.intern(), metadata: metadata))
+                try writeToOutputPort(Self.includePathListOutputPort,
+                                      value: .value(.dataObjectHash(includePathList.intern()),
+                                                    metadata: metadata))
             case .noValue:
-                try writeToOutputPort(Self.includePathListOutputPort, value: .noValue(reason: .error(message: "No value")))
+                try writeToOutputPort(Self.includePathListOutputPort,
+                                      value: .noValue(reason: .error(message: "No value")))
                 break
             }
         }

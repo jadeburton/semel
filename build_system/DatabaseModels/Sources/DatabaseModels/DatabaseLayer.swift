@@ -24,7 +24,6 @@ public final class DatabaseLayer {
 
         try Node.createTable(dbQueue: dbQueue)
         try Wire.createTable(dbQueue: dbQueue)
-        try Message.createTable(dbQueue: dbQueue)
         try DataObject.createTable(dbQueue: dbQueue)
         try NodeOutputValue.createTable(dbQueue: dbQueue)
 

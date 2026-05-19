@@ -61,18 +61,23 @@ enum NoValueReason {
     case error(message: String)
 }
 
-enum NodeValueKind {
-    case noValue(reason: NoValueReason)
-    case value(dataObjectHash: DataObjectHash, metadata: (any PolySerializable)?)
+enum NodeValuePayload {
+    // A single value
+    case dataObjectHash(DataObjectHash)
+    // A stream that continually grows
+    case stream(currentLength: UInt64)
 }
 
-struct NodeMessage {
-    let originNodeID: ObjectID
-    let originOutputPort: UInt8
-    let dataObjectHash: DataObjectHash
-//    let kind: NodeMessageKind
-//    let originOutputPortValue: NodeValue
+enum NodeValueKind {
+    case noValue(reason: NoValueReason)
+    case value(_ value: NodeValuePayload, metadata: (any PolySerializable)?)
 }
+
+//struct NodeMessage {
+//    let originNodeID: ObjectID
+//    let originOutputPort: UInt8
+//    let dataObjectHash: DataObjectHash
+//}
 
 struct NodeValue {
     let originNodeID: ObjectID
@@ -267,9 +272,9 @@ extension NodeType {
         }
     }
 
-    func removeAllMessagesFromInputPorts() throws -> [NodeKindDescriptor.InputPort: [NodeMessage]] {
-        try nodeContext.processingCycle.removeAllMessagesFromInputPorts(node: self)
-    }
+//    func removeAllMessagesFromInputPorts() throws -> [NodeKindDescriptor.InputPort: [NodeMessage]] {
+//        try nodeContext.processingCycle.removeAllMessagesFromInputPorts(node: self)
+//    }
 
     func readAllValuesFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeValue] {
         try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
@@ -297,9 +302,9 @@ extension NodeType {
         try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: nodeContext.nodeID!)
     }
 
-    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, message: MessageType) throws {
-        try nodeContext.processingCycle.postMessageToOutputPort(outputPort, message: message, nodeID: nodeContext.nodeID!)
-    }
+//    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, message: MessageType) throws {
+//        try nodeContext.processingCycle.postMessageToOutputPort(outputPort, message: message, nodeID: nodeContext.nodeID!)
+//    }
 
     // Returns a named child (without path support)
     //    func childIfExists<N: NodeType>(named name: String) throws -> N? {
@@ -604,15 +609,10 @@ extension ProcessingCycle {
         try saveNode(node, scheduled: false)
 
         validateNodeOutputValues(node: node)
-        validateMessagesWereProcessed(node: node)
     }
 
     private func validateNodeOutputValues(node: NodeType) {
         assert(try! database.selectAllNodeOutputValues(nodeID: node.nodeContext.nodeID!).filter { $0.kind == .pending }.isEmpty, "Not all NodeOutputValues were processed for node \(node.description())")
-    }
-
-    private func validateMessagesWereProcessed(node: NodeType) {
-        assert(try! database.selectMessages(for: node.nodeContext.nodeID!).isEmpty, "Not all messages were processed for node \(node.description())")
     }
 }
 
@@ -629,7 +629,7 @@ extension ProcessingCycle {
 
         return try nodeOutputValue.asNodeOutputValue()
     }
-
+/*
     func removeAllMessagesFromInputPorts(node: NodeType) throws -> [NodeKindDescriptor.InputPort: [NodeMessage]] {
 
         let allRawInputMessages = try database.selectMessages(for: node.nodeContext.nodeID!)
@@ -668,7 +668,7 @@ extension ProcessingCycle {
         }
 
         return inputMessages
-    }
+    }*/
 
     func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeValue] {
         let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toPort: inputPort.index)
@@ -682,20 +682,20 @@ extension ProcessingCycle {
         }
     }
 
-    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
-                                 message: MessageType,
-                                 nodeID: ObjectID) throws {
-
-        let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
-                                                         fromPort: outputPort.index)
-
-        for wire in wiresOnThisOutput {
-            try database.insertMessage(.init(targetNodeID: wire.toNodeID,
-                                             wireID: wire.id!,
-                                             dataObjectHash: message.asDataObjectHash()))
-            try scheduleNode(wire.toNodeID)
-        }
-    }
+//    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
+//                                 message: MessageType,
+//                                 nodeID: ObjectID) throws {
+//
+//        let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
+//                                                         fromPort: outputPort.index)
+//
+//        for wire in wiresOnThisOutput {
+//            try database.insertMessage(.init(targetNodeID: wire.toNodeID,
+//                                             wireID: wire.id!,
+//                                             dataObjectHash: message.asDataObjectHash()))
+//            try scheduleNode(wire.toNodeID)
+//        }
+//    }
 
     func writePendingToAllOutputsOfNode(nodeID: ObjectID) throws {
         let node = try nodePoly(nodeID: nodeID)!
@@ -763,9 +763,9 @@ extension NodeValueKind {
         case .value:
             if let dataObjectHash = nodeOutputValue.dataObjectHash {
                 if let metadataJSON = nodeOutputValue.metadata {
-                    self = .value(dataObjectHash: dataObjectHash, metadata: try PolyFactory.decode(encodedJSON: metadataJSON))
+                    self = .value(.dataObjectHash(dataObjectHash), metadata: try PolyFactory.decode(encodedJSON: metadataJSON))
                 } else {
-                    self = .value(dataObjectHash: dataObjectHash, metadata: nil)
+                    self = .value(.dataObjectHash(dataObjectHash), metadata: nil)
                 }
             } else {
                 throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
@@ -785,8 +785,13 @@ extension NodeValueKind {
                 return (nil, .error, nil)
             }
 
-        case .value(let value, let metadata):
-            return (value, .value, metadata)
+        case .value(let payload, let metadata):
+            switch payload {
+            case .dataObjectHash(let dataObjectHash):
+                return (dataObjectHash, .value, metadata)
+            case .stream(let currentLength):
+                return (nil, .value, metadata) // TODO!
+            }
         }
     }
 }
@@ -798,14 +803,14 @@ extension ProcessingCycle {
     func printAll() throws {
         let allNodes = try database.selectAllNodes()
         let allWires = try database.selectAllWires()
-        let allMessages = try database.selectAllMessages(limit: 10000)
+//        let allMessages = try database.selectAllMessages(limit: 10000)
         let allOutputValues = try database.selectAllNodeOutputValues(limit: 10000000)
         let allDataObjects = try database.selectAllDataObjects()
 
         // Index helpers
         let nodeByID: [ObjectID: Node] = Dictionary(uniqueKeysWithValues: allNodes.compactMap { node in node.id.map { ($0, node) } })
         let outputValuesByNodeID: [ObjectID: [DatabaseModels.NodeOutputValue]] = Dictionary(grouping: allOutputValues, by: { $0.nodeID })
-        let messagesByTargetNodeID: [ObjectID: [Message]] = Dictionary(grouping: allMessages, by: { $0.targetNodeID })
+//        let messagesByTargetNodeID: [ObjectID: [Message]] = Dictionary(grouping: allMessages, by: { $0.targetNodeID })
         let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.fromNodeID })
         let wiresByToNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.toNodeID })
 
@@ -861,7 +866,7 @@ extension ProcessingCycle {
             let outputPorts = descriptor?.outputs ?? []
             let incomingWires = wiresByToNodeID[nodeID] ?? []
             let outgoingWires = wiresByFromNodeID[nodeID] ?? []
-            let pendingMessages = messagesByTargetNodeID[nodeID] ?? []
+//            let pendingMessages = messagesByTargetNodeID[nodeID] ?? []
             let outputValues = outputValuesByNodeID[nodeID] ?? []
 
             // Build the content lines inside the box
@@ -910,13 +915,13 @@ extension ProcessingCycle {
             }
 
             // Pending messages
-            if !pendingMessages.isEmpty {
-                contentLines.append("  ┌─ pending messages (\(pendingMessages.count)) ──────")
-                for message in pendingMessages {
-                    contentLines.append("  │   via wire #\(message.wireID)")
-                }
-                contentLines.append("  └─────────────────────────────")
-            }
+//            if !pendingMessages.isEmpty {
+//                contentLines.append("  ┌─ pending messages (\(pendingMessages.count)) ──────")
+//                for message in pendingMessages {
+//                    contentLines.append("  │   via wire #\(message.wireID)")
+//                }
+//                contentLines.append("  └─────────────────────────────")
+//            }
 
             // Compute box width
             let contentWidth = max(label.count, (contentLines.map { $0.count }.max() ?? 0)) + 4
@@ -963,15 +968,15 @@ extension ProcessingCycle {
         // ───────────────────────────────────────────────────
         // Section 3: Pending messages
         // ───────────────────────────────────────────────────
-        print("──────────────────────────────────────────────")
-        print("  PENDING MESSAGES (\(allMessages.count))")
-        print("──────────────────────────────────────────────")
-        for message in allMessages {
-            let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
-            print("    → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)")
-        }
-        print("──────────────────────────────────────────────")
-        print()
+//        print("──────────────────────────────────────────────")
+//        print("  PENDING MESSAGES (\(allMessages.count))")
+//        print("──────────────────────────────────────────────")
+//        for message in allMessages {
+//            let targetNodeName = nodeByID[message.targetNodeID]?.name ?? "?"
+//            print("    → \"\(targetNodeName)\" #\(message.targetNodeID)  wire=#\(message.wireID)")
+//        }
+//        print("──────────────────────────────────────────────")
+//        print()
 
         // ───────────────────────────────────────────────────
         // Section 4: Data objects

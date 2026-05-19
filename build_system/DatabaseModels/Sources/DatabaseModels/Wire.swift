@@ -14,13 +14,15 @@ public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var fromPort: UInt8
     public var toNodeID: ObjectID
     public var toPort: UInt8
+    public var streamPosition: Int64?
 
-    public init(id: ObjectID? = nil, fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) {
+    public init(id: ObjectID? = nil, fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8, streamPosition: Int64? = nil) {
         self.id = id
         self.fromNodeID = fromNodeID
         self.fromPort = fromPort
         self.toNodeID = toNodeID
         self.toPort = toPort
+        self.streamPosition = streamPosition
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
@@ -31,6 +33,7 @@ public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
                 t.column("fromPort", .integer).notNull()
                 t.column("toNodeID", .integer).notNull()
                 t.column("toPort", .integer).notNull()
+                t.column("streamPosition", .integer)
             }
         }
     }
