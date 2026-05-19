@@ -789,8 +789,9 @@ extension NodeValueKind {
             switch payload {
             case .dataObjectHash(let dataObjectHash):
                 return (dataObjectHash, .value, metadata)
-            case .stream(let currentLength):
-                return (nil, .value, metadata) // TODO!
+            case .stream:
+                // To write to a stream we should not use this method.
+                return (nil, .value, metadata)
             }
         }
     }
