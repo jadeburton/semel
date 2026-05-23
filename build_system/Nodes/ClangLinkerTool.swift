@@ -1,0 +1,171 @@
+// ClangLinkerTool.swift
+// build_system
+//
+// Clang linker stage: links one or more .o object files (and optional .dylib
+// libraries) into a final output binary.
+
+import Foundation
+
+// MARK: - Configuration
+
+struct ClangLinkerToolConfiguration: PolySerializable {
+    static let kind: UInt = 12
+
+    let toolDescriptor: ToolDescriptor
+    let arguments: [String]
+    let environment: [String: String]
+
+    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
+        self.toolDescriptor = toolDescriptor
+        self.arguments = arguments
+        self.environment = environment
+    }
+}
+
+// MARK: - Node
+
+final class ClangLinkerTool: NodeType {
+    static let kind: UInt = 18
+
+    var nodeContext: NodeContext!
+
+    enum CodingKeys: CodingKey {}
+
+    required init() {}
+
+    required init(from decoder: Decoder) throws {
+        let _ = try decoder.container(keyedBy: CodingKeys.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var _ = encoder.container(keyedBy: CodingKeys.self)
+    }
+
+    // MARK: Ports
+
+    static let configuration = NodeKindDescriptor.InputPort(index: 0,
+                                                            name: "configuration",
+                                                            kind: .value(dataType: .utf8Text),
+                                                            maximumConnections: 1,
+                                                            minimumConnections: 1)
+
+    static let input = NodeKindDescriptor.InputPort(index: 1,
+                                                    name: "input",
+                                                    kind: .value(dataType: .binary),
+                                                    maximumConnections: nil,
+                                                    minimumConnections: 1)
+
+    static let libraries = NodeKindDescriptor.InputPort(index: 2,
+                                                        name: "libraries",
+                                                        kind: .value(dataType: .binary),
+                                                        maximumConnections: nil,
+                                                        minimumConnections: 0)
+
+    static let output = NodeKindDescriptor.OutputPort(index: 2,
+                                                      name: "output",
+                                                      kind: .value(dataType: .binary))
+
+    static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
+                                                        name: "errorLog",
+                                                        kind: .stream(dataType: .utf8Text))
+
+    static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
+                                                       name: "infoLog",
+                                                       kind: .stream(dataType: .utf8Text))
+
+    var descriptor: NodeKindDescriptor {
+        .init(kind: Self.kind,
+              inputs: [Self.configuration, Self.input, Self.libraries],
+              outputs: [Self.output, Self.errorLog, Self.infoLog])
+    }
+
+    // MARK: Processing
+
+    func process() throws {
+
+        guard let configuration: ClangLinkerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
+            return
+        }
+
+        let inputValues = try readAllValuesFromInputPort(Self.input)
+
+        // Separate .dylib library files from .o object files.
+        var libraryFiles: [FileNameAndContent] = []
+        for nodeValue in inputValues {
+            switch nodeValue.kind {
+            case .value(let payload, let metadata):
+                guard let fileMetadata = metadata as? FileMetadata,
+                      fileMetadata.name.hasSuffix(".dylib") else { continue }
+                let data = try payload.expectDataObjectHash().resolve()
+                let originNode = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)
+                if let staticFileNode = originNode as? StaticFileNode {
+                    libraryFiles.append(.init(filePath: try staticFileNode.buildFullPathName(), content: data))
+                } else {
+                    libraryFiles.append(.init(filePath: fileMetadata.name, content: data))
+                }
+            case .noValue:
+                try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
+                return
+            }
+        }
+
+        var objectFiles: [FileNameAndContent] = []
+        for nodeValue in inputValues {
+            switch nodeValue.kind {
+            case .value(let payload, let metadata):
+                guard let fileMetadata = metadata as? FileMetadata,
+                      fileMetadata.name.hasSuffix(".o") else { continue }
+                objectFiles.append(.init(filePath: fileMetadata.name,
+                                         content: try payload.expectDataObjectHash().resolve()))
+            case .noValue:
+                try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
+                return
+            }
+        }
+
+        guard !objectFiles.isEmpty else {
+            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
+            return
+        }
+
+        var output: [UInt8] = []
+        var arguments = [String]()
+
+        arguments.append(contentsOf: configuration.arguments)
+        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        arguments.append("-L"); arguments.append(".")
+        // TODO: lock down SDK version and hash for full hermeticity.
+        arguments.append("-L")
+        arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+        arguments.append("-lSystem")
+        arguments.append("-nostdlib")
+
+        for objectFile in objectFiles   { arguments.append(objectFile.filePath)  }
+        for libraryFile in libraryFiles { arguments.append(libraryFile.filePath) }
+
+        arguments.append("-o"); arguments.append("output.dylib")
+        arguments.append(contentsOf: configuration.arguments)
+
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
+
+        var inputFiles: [FileNameAndContent] = []
+        inputFiles.append(contentsOf: libraryFiles)
+        inputFiles.append(contentsOf: objectFiles)
+
+        let exitCode = try tool.execute(
+            arguments: arguments,
+            environment: configuration.environment,
+            inputFiles: inputFiles,
+            expectedOutputFileNames: ["output.dylib"],
+            output: .init(logError:   { error   in print(error)   },
+                          logMessage: { message in print(message) },
+                          write:      { _, data in output.append(contentsOf: data) }))
+
+        if exitCode == 0 {
+            try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
+                                                             metadata: FileMetadata(name: "output.dylib")))
+        } else {
+            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Linker exited with nonzero status")))
+        }
+    }
+}

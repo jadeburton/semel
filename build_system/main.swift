@@ -95,7 +95,7 @@ enum PortValueDataType: Codable, Hashable {
 struct NodeKindDescriptor {
     enum PortKind: Codable, Hashable {
         case value(dataType: PortValueDataType)
-        case messageStream(dataType: PortValueDataType)
+        case stream(dataType: PortValueDataType)
     }
 
     struct InputPort: Codable, Hashable {
@@ -300,6 +300,10 @@ extension NodeType {
 
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, value: NodeValueKind) throws {
         try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: nodeContext.nodeID!)
+    }
+
+    func writeToOutputPortStream(_ outputPort: NodeKindDescriptor.OutputPort, data: Data) throws {
+        try nodeContext.processingCycle.writeToOutputPortStream(outputPort, data: data, nodeID: nodeContext.nodeID!)
     }
 
 //    func postMessageToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, message: MessageType) throws {
@@ -707,6 +711,30 @@ extension ProcessingCycle {
         }
     }
 
+    func writeToOutputPortStream(_ outputPort: NodeKindDescriptor.OutputPort, data: Data, nodeID: ObjectID) throws {
+
+        var nodeOutputValue = try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort.index)
+            ?? .init(nodeID: nodeID,
+                     port: outputPort.index,
+                     kind: .value,
+                     dataObjectHash: nil,
+                     metadata: nil, // TODO: bit weird
+                     lengthIfStream: 0)
+
+        try nodeOutputValue.appendBytesToStream(data: data)
+
+        try database.insertOrReplaceNodeOutputValue(nodeOutputValue)
+
+        let wiresOnThisOutput = try database.selectWires(comingFromNodeID: nodeID,
+                                                         fromPort: outputPort.index)
+
+        for wire in wiresOnThisOutput {
+            try writePendingToAllOutputsOfNode(nodeID: wire.toNodeID)
+        }
+
+        try scheduleNode(nodeID)
+    }
+
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
                            value: NodeValueKind,
                            nodeID: ObjectID) throws {
@@ -836,9 +864,9 @@ extension ProcessingCycle {
                 let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
                 return "✔ '\(shortHash)'"
-            case .pending:    
+            case .pending:
                 return "⏳ pending"
-            case .error:      
+            case .error:
                 return "❌ error"
             }
         }
