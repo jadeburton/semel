@@ -101,7 +101,7 @@ final class BuildGraph: NodeType {
 
     func integrateFormula(formula: String) throws {
         print("integrate formula: \(formula)")
-
+/*
         let standardClang = ToolDescriptor(name: "clang",
                                            version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
                                            platform: "macOS",
@@ -173,7 +173,18 @@ final class BuildGraph: NodeType {
                                                    kind: .outputFile(inputPorts: [BuildGraphInputPort(name: "input",
                                                                                                       inputWires: [BuildGraphInputWire(from: linker, fromPort: "output")])]))
 
+        let json = try JSONEncoder().encode(buildGraphDescription)
+        print("build graph description JSON: \(String(data: json, encoding: .utf8) ?? "nil") ")
+*/
+        let buildGraphDescription = try JSONDecoder().decode(BuildGraphNode.self, from: Data(formula.utf8))
         try integrate(buildGraphOutput: buildGraphDescription)
+    }
+
+    // Follows 'outputNode' backwards through its dependencies to reconstruct a live processing graph that mirrors the structure of the build graph description.
+    // Returns the node corresponding to 'outputNode' in the live processing graph.
+    // Note that there is one conceptual formula for each output file, but the graph may reuse nodes for shared dependencies.
+    func reverseEngineerFormula(outputNode: StaticFileNode) throws -> BuildGraphNode {
+        // TODO
     }
 
     private func integrate(buildGraphOutput: BuildGraphNode) throws {

@@ -10,7 +10,7 @@ import Foundation
 // MARK: - FormulaFinder
 
 /// Watches an input file-list stream and creates a FormulaExtractor child for
-/// every .yml file that appears, wiring it into the BuildGraph's formulae input.
+/// every formula.jsonl file that appears, wiring it into the BuildGraph's formulae input.
 final class FormulaFinder: NodeType {
     static let kind: UInt = 5
 
@@ -41,7 +41,7 @@ final class FormulaFinder: NodeType {
 
     func didAddFile(nodeID: ObjectID, name: String) throws {
         // Only handle .yml formula files.
-        guard name.hasSuffix(".yml") else { return }
+        guard name.hasSuffix("formula.json") else { return } // HACK
 
         let extractor = try nodeContext.processingCycle.makeNode(name: name,
                                                                  parentNodeID: nodeContext.nodeID) as FormulaExtractor
@@ -130,7 +130,7 @@ extension NodeValueAndWire {
 
 // MARK: - FormulaExtractor
 
-/// Reads a single .formula / .yml file and passes its text content through to
+/// Reads a single formula.json file and passes its text content through to
 /// BuildGraph's formulae input port.
 final class FormulaExtractor: NodeType {
     static let kind: UInt = 6
@@ -151,7 +151,7 @@ final class FormulaExtractor: NodeType {
 
     static let formulaFileInputPort = NodeKindDescriptor.InputPort(index: 0,
                                                                    name: "formulaFile",
-                                                                   kind: .value(dataType: .utf8Text),
+                                                                   kind: .value(dataType: .json),
                                                                    maximumConnections: 1,
                                                                    minimumConnections: 1,
                                                                    cascadingDelete: true)
