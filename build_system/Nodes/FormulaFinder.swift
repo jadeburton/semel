@@ -32,7 +32,8 @@ final class FormulaFinder: NodeType {
                                                                 name: "fileList",
                                                                 kind: .stream(dataType: .utf8Text),
                                                                 maximumConnections: 1,
-                                                                minimumConnections: 1)
+                                                                minimumConnections: 1,
+                                                                cascadingDelete: false)
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind, inputs: [Self.fileListInputPort], outputs: [])
@@ -59,9 +60,71 @@ final class FormulaFinder: NodeType {
     }
 
     func process() throws {
+        guard let fileListStreamCursor = try readOneValueFromInputPort(Self.fileListInputPort) else {
+            return
+        }
+
+        let data = try fileListStreamCursor.readBytesFromStream(nodeContext: nodeContext)
+
+        guard !data.isEmpty else {
+            return
+        }
+
+        let str = String(data: data, encoding: .utf8)!
+        let chunks = str.split(separator: "\n\n")
+
+        for chunk in chunks {
+            print("\(chunk)")
+            let object = try PolyFactory.decode(encodedJSON: String(chunk))
+            
+            if let folderEvent = object as? FolderEvent {
+                switch folderEvent.folderEventKind {
+
+                case .childAdded(let nodeID, let name):
+                    try didAddFile(nodeID: nodeID, name: name)
+                    break
+
+                default:
+                    break
+                }
+            }
+        }
+
         // TODO: read folder-event messages from fileListInputPort and call didAddFile
         // for each .childAdded event. See the commented-out implementation for a sketch
         // of the stream-reading logic needed here.
+    }
+}
+
+extension NodeValueAndWire {
+
+    var currentLengthIfStream: UInt64? {
+        switch kind {
+        case .value(let payload, _):
+            switch payload {
+            case .stream(_, let currentLength):
+                return currentLength
+            case .dataObjectHash:
+                return nil
+            }
+        case .noValue:
+            return nil
+        }
+    }
+
+    func readBytesFromStream(nodeContext: NodeContext) throws -> Data {
+        let currentLength = currentLengthIfStream!
+        var wire = wire
+
+        let nodeOutputValue = try nodeContext.processingCycle.database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)!
+
+        let data = try nodeOutputValue.readBytesFromStream(offset: UInt64(wire.streamPosition ?? 0), length: currentLength - UInt64(wire.streamPosition ?? 0))
+
+        // Save new offset
+        wire.streamPosition = Int64(currentLength)
+
+        try nodeContext.processingCycle.database.updateWire(wire)
+        return data
     }
 }
 
@@ -90,7 +153,8 @@ final class FormulaExtractor: NodeType {
                                                                    name: "formulaFile",
                                                                    kind: .value(dataType: .utf8Text),
                                                                    maximumConnections: 1,
-                                                                   minimumConnections: 1)
+                                                                   minimumConnections: 1,
+                                                                   cascadingDelete: true)
 
     static let formulaOutputPort = NodeKindDescriptor.OutputPort(index: 0,
                                                                  name: "formula",

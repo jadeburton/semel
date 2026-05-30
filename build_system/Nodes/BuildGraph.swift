@@ -32,14 +32,11 @@ final class BuildGraph: NodeType {
                                                                 name: "formulae",
                                                                 kind: .value(dataType: .utf8Text),
                                                                 maximumConnections: nil,
-                                                                minimumConnections: 0)
-
-    static let dummyOutputPort = NodeKindDescriptor.OutputPort(index: 0,
-                                                               name: "dummy",
-                                                               kind: .value(dataType: .utf8Text))
+                                                                minimumConnections: 0,
+                                                                cascadingDelete: false)
 
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [Self.dummyOutputPort])
+        .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [])
     }
 
     // MARK: File-system children
@@ -131,27 +128,20 @@ final class BuildGraph: NodeType {
         let clangLinkerConfigurationOutputs       = [BuildGraphInputWire(from: clangLinkerConfiguration,       fromPort: "output")]
 
         let helloC  = BuildGraphNode(name: "hello.c",  kind: .inputFile)
-        let helloH  = BuildGraphNode(name: "hello.h",  kind: .inputFile)
         let mainC   = BuildGraphNode(name: "main.c",   kind: .inputFile)
-        let commonH = BuildGraphNode(name: "common.h", kind: .inputFile)
 
-        let helloOutputs = [BuildGraphInputWire(from: helloC,  fromPort: "output"),
-                            BuildGraphInputWire(from: helloH,  fromPort: "output"),
-                            BuildGraphInputWire(from: commonH, fromPort: "output")]
-
-        let mainOutputs  = [BuildGraphInputWire(from: mainC,   fromPort: "output"),
-                            BuildGraphInputWire(from: helloH,  fromPort: "output"),
-                            BuildGraphInputWire(from: commonH, fromPort: "output")]
+        let helloOutputs = [BuildGraphInputWire(from: helloC,  fromPort: "output")]
+        let mainOutputs  = [BuildGraphInputWire(from: mainC,   fromPort: "output")]
 
         let preprocessorHello = BuildGraphNode(
             name: "preprocessorHello",
-            kind: .tool(kind: ClangPreprocessorTool.kind,
+            kind: .tool(kind: .preprocessor,
                         inputPorts: [BuildGraphInputPort(name: "input",         inputWires: helloOutputs),
                                      BuildGraphInputPort(name: "configuration", inputWires: clangPreprocessorConfigurationOutputs)]))
 
         let preprocessorMain = BuildGraphNode(
             name: "preprocessorMain",
-            kind: .tool(kind: ClangPreprocessorTool.kind,
+            kind: .tool(kind: .preprocessor,
                         inputPorts: [BuildGraphInputPort(name: "input",         inputWires: mainOutputs),
                                      BuildGraphInputPort(name: "configuration", inputWires: clangPreprocessorConfigurationOutputs)]))
 
@@ -160,13 +150,13 @@ final class BuildGraph: NodeType {
 
         let compilerHello = BuildGraphNode(
             name: "compilerHello",
-            kind: .tool(kind: ClangCompilerTool.kind,
+            kind: .tool(kind: .compiler,
                         inputPorts: [BuildGraphInputPort(name: "input",         inputWires: [preprocessorHelloOutput]),
                                      BuildGraphInputPort(name: "configuration", inputWires: clangCompilerConfigurationOutputs)]))
 
         let compilerMain = BuildGraphNode(
             name: "compilerMain",
-            kind: .tool(kind: ClangCompilerTool.kind,
+            kind: .tool(kind: .compiler,
                         inputPorts: [BuildGraphInputPort(name: "input",         inputWires: [preprocessorMainOutput]),
                                      BuildGraphInputPort(name: "configuration", inputWires: clangCompilerConfigurationOutputs)]))
 
@@ -175,22 +165,15 @@ final class BuildGraph: NodeType {
 
         let linker = BuildGraphNode(
             name: "linker",
-            kind: .tool(kind: ClangLinkerTool.kind,
+            kind: .tool(kind: .linker,
                         inputPorts: [BuildGraphInputPort(name: "input",         inputWires: [compilerHelloOutput, compilerMainOutput]),
                                      BuildGraphInputPort(name: "configuration", inputWires: clangLinkerConfigurationOutputs)]))
 
-        let buildGraphDescription = BuildGraphDescription(
-            outputs: [.init(name: "mylib.dylib",
-                            kind: .outputFile(inputPorts: [BuildGraphInputPort(name: "input",
-                                                                               inputWires: [BuildGraphInputWire(from: linker, fromPort: "output")])]))])
+        let buildGraphDescription = BuildGraphNode(name: "mylib.dylib",
+                                                   kind: .outputFile(inputPorts: [BuildGraphInputPort(name: "input",
+                                                                                                      inputWires: [BuildGraphInputWire(from: linker, fromPort: "output")])]))
 
-        try integrateBuildGraphDescription(buildGraphDescription)
-    }
-
-    private func integrateBuildGraphDescription(_ buildGraphDescription: BuildGraphDescription) throws {
-        for output in buildGraphDescription.outputs {
-            try integrate(buildGraphOutput: output)
-        }
+        try integrate(buildGraphOutput: buildGraphDescription)
     }
 
     private func integrate(buildGraphOutput: BuildGraphNode) throws {
@@ -227,7 +210,7 @@ final class BuildGraph: NodeType {
                         nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode
                             .inputFileSystem.childPoly(path: inputWire.from.name,
                                                        kind: StaticFileNode.kind,
-                                                       createIfNotExist: false)
+                                                       createIfNotExist: true)
                         if nodeConnectedToInputWire == nil { return }
 
                     case .outputFile:
@@ -236,7 +219,7 @@ final class BuildGraph: NodeType {
                     case .tool(let kind, _):
                         nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode
                             .buildGraph.childPoly(path: inputWire.from.name,
-                                                  kind: kind,
+                                                  kind: kind.asPolySerializableKind(),
                                                   createIfNotExist: true)
                         if nodeConnectedToInputWire == nil { return }
                     }
@@ -269,7 +252,16 @@ final class BuildGraph: NodeType {
                 try integrateFormula(formula: payload.expectDataObjectHash().resolveAsString())
             }
         }
-        try writeToOutputPort(Self.dummyOutputPort, value: .noValue(reason: .error(message: "Blah")))
+    }
+}
+
+extension BuildGraphToolKind {
+    func asPolySerializableKind() -> UInt {
+        switch self {
+        case .preprocessor: return ClangPreprocessorTool.kind
+        case .compiler: return ClangCompilerTool.kind
+        case .linker: return ClangLinkerTool.kind
+        }
     }
 }
 

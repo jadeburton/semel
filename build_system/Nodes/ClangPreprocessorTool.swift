@@ -47,25 +47,31 @@ final class ClangPreprocessorTool: NodeType {
                                                             name: "configuration",
                                                             kind: .value(dataType: .utf8Text),
                                                             maximumConnections: 1,
-                                                            minimumConnections: 1)
+                                                            minimumConnections: 1,
+                                                            cascadingDelete: false)
 
     static let sourceFileInput = NodeKindDescriptor.InputPort(index: 1,
                                                               name: "input",
                                                               kind: .value(dataType: .utf8Text),
                                                               maximumConnections: 1,
-                                                              minimumConnections: 1)
+                                                              minimumConnections: 1,
+                                                              cascadingDelete: false)
 
     static let includeFiles = NodeKindDescriptor.InputPort(index: 2,
                                                            name: "includeFiles",
                                                            kind: .value(dataType: .utf8Text),
                                                            maximumConnections: nil,
-                                                           minimumConnections: 0)
+                                                           minimumConnections: 0,
+                                                           cascadingDelete: false)
 
+    // ISSUE: if there is a missing header file but it is added, we don't get notified.
+    // we need to monitor for all new header files - but only if we are in an error state
     static let headerInputFiles = NodeKindDescriptor.InputPort(index: 3,
                                                                name: "headerInputFiles",
                                                                kind: .value(dataType: .utf8Text),
                                                                maximumConnections: nil,
-                                                               minimumConnections: 0)
+                                                               minimumConnections: 0,
+                                                               cascadingDelete: false)
 
     static let output = NodeKindDescriptor.OutputPort(index: 2,
                                                       name: "output",
@@ -90,14 +96,11 @@ final class ClangPreprocessorTool: NodeType {
     func process() throws {
 
         guard let configuration: ClangPreprocessorToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            return
+            throw NodeError.missingInput
         }
 
-        let sourceFileInputValues: [NodeValue] = try readAllValuesFromInputPort(Self.sourceFileInput)
-
-        guard let primarySourceFile = sourceFileInputValues.first else {
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
-            return
+        guard let primarySourceFile = try readOneValueFromInputPort(Self.sourceFileInput) else {
+            throw NodeError.missingInput
         }
 
         // MARK: Include-finder helpers
@@ -133,13 +136,13 @@ final class ClangPreprocessorTool: NodeType {
         }
 
         func ensureIncludeFileIsAttached(_ includePath: String) throws {
-            guard let staticFileNode = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(
-                path: includePath,
-                kind: StaticFileNode.kind,
-                createIfNotExist: false) as? StaticFileNode else {
-                print("ERROR: could not find a StaticFileNode that corresponds to \(includePath)")
-                return
+            guard let staticFileNode = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: includePath,
+                                                                                                          kind: StaticFileNode.kind,
+                                                                                                          createIfNotExist: true) as? StaticFileNode else {
+
+                throw NodeError.other(message: "Could not find a StaticFileNode that corresponds to \(includePath)")
             }
+
             try nodeContext.processingCycle.connectWire(fromNode: staticFileNode,
                                                         fromPort: StaticFileNode.outputPort,
                                                         toNode: self,
@@ -173,8 +176,7 @@ final class ClangPreprocessorTool: NodeType {
         switch primarySourceFile.kind {
 
         case .noValue:
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input value")))
-            return
+            throw NodeError.missingInput
 
         case .value(let payload, let metadata):
 
@@ -203,14 +205,15 @@ final class ClangPreprocessorTool: NodeType {
             arguments.append(contentsOf: configuration.arguments)
 
             // Wire up include files discovered by IncludeFinder nodes.
-            let includeFilesValues: [NodeValue] = try readAllValuesFromInputPort(Self.includeFiles)
+            let includeFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.includeFiles)
+
             let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
                 switch includeFilesValue.kind {
                 case .value(let payload, _):
                     return try payload.expectDataObjectHash().resolveAsString()
                         .split(separator: "\n").map(String.init)
                 case .noValue:
-                    return []
+                    throw NodeError.missingInput
                 }
             })
 
@@ -219,7 +222,7 @@ final class ClangPreprocessorTool: NodeType {
             }
             try removeIncludeFileWiresNotInList(setOfIncludeFiles)
 
-            let headerInputFilesValues: [NodeValue] = try readAllValuesFromInputPort(Self.headerInputFiles)
+            let headerInputFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.headerInputFiles)
             for headerInputFilesValue in headerInputFilesValues {
                 try ensureSourceOrHeaderNodeHasIncludeFinderAttached(headerInputFilesValue.originNodeID)
             }
@@ -227,6 +230,7 @@ final class ClangPreprocessorTool: NodeType {
             let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
 
             var inputFiles: [FileNameAndContent] = [.init(filePath: inputFilename, content: bytes)]
+
             inputFiles.append(contentsOf: try headerInputFilesValues.compactMap { nodeValue -> FileNameAndContent? in
                 switch nodeValue.kind {
                 case .value(let payload, let metadata):
@@ -238,17 +242,33 @@ final class ClangPreprocessorTool: NodeType {
                     }
                     return .init(filePath: filePath, content: try payload.expectDataObjectHash().resolve())
                 case .noValue:
-                    return nil
+                    throw NodeError.missingInput
                 }
             })
+
+            var errorOutput = ""
+            var infoOutput = ""
 
             let exitCode = try tool.execute(arguments: arguments,
                                             environment: configuration.environment,
                                             inputFiles: inputFiles,
                                             expectedOutputFileNames: [outputFilename],
-                                            output: .init(logError:   { error   in print(error)   },
-                                                          logMessage: { message in print(message) },
-                                                          write:      { _, data in output.append(contentsOf: data) }))
+                                            output: .init(logError: { error in
+                                                              errorOutput += error
+                                                              errorOutput += "\n"
+                                                              print(error)
+                                                          },
+                                                          logMessage: { message in
+                                                              infoOutput += message
+                                                              infoOutput += "\n"
+                                                              print(message)
+                                                          },
+                                                          write: { _, data in
+                                                              output.append(contentsOf: data)
+                                                          }))
+
+            try writeToOutputPortStream(Self.errorLog, data: errorOutput.data(using: .utf8) ?? Data())
+            try writeToOutputPortStream(Self.infoLog, data: infoOutput.data(using: .utf8) ?? Data())
 
             if exitCode == 0 {
                 try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),

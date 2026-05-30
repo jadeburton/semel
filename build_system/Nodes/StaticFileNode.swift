@@ -26,8 +26,16 @@ final class StaticFileNode: NodeType {
         // StaticFileNode has no stored properties to encode (nodeContext is not encoded)
     }
 
-    static let outputPort = NodeKindDescriptor.OutputPort(index: 0, name: "output", kind: .value(dataType: .utf8Text))
-    static let inputPort = NodeKindDescriptor.InputPort(index: 0, name: "input", kind: .value(dataType: .utf8Text), maximumConnections: 1, minimumConnections: 0)
+    static let outputPort = NodeKindDescriptor.OutputPort(index: 0,
+                                                          name: "output",
+                                                          kind: .value(dataType: .utf8Text))
+
+    static let inputPort = NodeKindDescriptor.InputPort(index: 0,
+                                                        name: "input",
+                                                        kind: .value(dataType: .utf8Text),
+                                                        maximumConnections: 1,
+                                                        minimumConnections: 0,
+                                                        cascadingDelete: false)
 
     static let descriptor = NodeKindDescriptor(kind: kind, inputs: [inputPort], outputs: [outputPort])
 
@@ -45,25 +53,33 @@ final class StaticFileNode: NodeType {
                                             metadata: metadata))
     }
 
+    func eraseContents() throws {
+        try writeToOutputPort(Self.outputPort,
+                              value: .noValue(reason: .error(message: "File deleted")))
+    }
+
     // If this node receives a write to its one input, it immediately copies the value to its persistent output.
-    // The input should not have any one-shot events, only persistent value changes
     func process() throws {
 
         guard let inputValue = try readOneValueFromInputPort(Self.inputPort) else {
             // No input wire is connected.
-            // Special case: instead of trashing our output with an error state, we just preserve the current value.
+            // Special case: avoid trashing our output if it has a value set
             if case .noValue = try readFromOutputPort(Self.outputPort).kind {
-                try writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "Blah")))
+                throw NodeError.missingInput
             }
             return
         }
 
-        if case .noValue = inputValue.kind {
-            try writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "X")))
-            return
-        }
-
         // An input wire is connected
-        try writeToOutputPort(Self.outputPort, value: inputValue.kind)
+
+        switch inputValue.kind {
+
+        case .noValue:
+            throw NodeError.missingInput
+
+        default:
+            try writeToOutputPort(Self.outputPort, value: inputValue.kind)
+
+        }
     }
 }

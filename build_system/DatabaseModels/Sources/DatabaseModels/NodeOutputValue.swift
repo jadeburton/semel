@@ -6,8 +6,9 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
         public static let nodeID = Column(CodingKeys.nodeID)
         public static let port = Column(CodingKeys.port)
         public static let kind = Column(CodingKeys.kind)
-        public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
+        public static let dataObjectHashOrStreamID = Column(CodingKeys.dataObjectHashOrStreamID)
         public static let metadata = Column(CodingKeys.metadata)
+        public static let errorMessage = Column(CodingKeys.errorMessage)
         public static let lengthIfStream = Column(CodingKeys.lengthIfStream)
     }
 
@@ -20,16 +21,18 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
     public var nodeID: ObjectID
     public var port: UInt8
     public var kind: ValueKind
-    public var dataObjectHash: DataObjectHash?
+    public var dataObjectHashOrStreamID: String?
     public var metadata: String?
+    public var errorMessage: String?
     public var lengthIfStream: Int?
 
-    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHash: DataObjectHash?, metadata: String?, lengthIfStream: Int? = nil) {
+    public init(nodeID: ObjectID, port: UInt8, kind: ValueKind, dataObjectHashOrStreamID: String?, metadata: String?, errorMessage: String?, lengthIfStream: Int? = nil) {
         self.nodeID = nodeID
         self.port = port
         self.kind = kind
-        self.dataObjectHash = dataObjectHash
+        self.dataObjectHashOrStreamID = dataObjectHashOrStreamID
         self.metadata = metadata
+        self.errorMessage = errorMessage
         self.lengthIfStream = lengthIfStream
     }
 
@@ -40,9 +43,10 @@ public struct NodeOutputValue: Codable, FetchableRecord, PersistableRecord {
                 t.column("nodeID", .integer).notNull().indexed()
                 t.column("port", .integer).notNull()
                 t.column("kind", .integer).notNull()
-                t.column("dataObjectHash", .text) // nullable
+                t.column("dataObjectHashOrStreamID", .text) // nullable
                 t.column("metadata", .text) // nullable
-                t.column("lengthIfStream", .integer)
+                t.column("errorMessage", .text) // nullable
+                t.column("lengthIfStream", .integer) // nullable
                 t.primaryKey(["nodeID", "port"])
             }
         }
@@ -71,9 +75,9 @@ extension NodeOutputValue {
         return appSupport.appendingPathComponent("build_system/streams", isDirectory: true)
     }
 
-    private static func urlForStream(nodeID: ObjectID, port: UInt8) -> URL {
-        let filename = "\(nodeID)-\(port).stream"
-        return streamsDirectory.appendingPathComponent(filename)
+    private func urlForStream() -> URL {
+        let filename = "\(dataObjectHashOrStreamID!).stream"
+        return Self.streamsDirectory.appendingPathComponent(filename)
     }
 
     // MARK: - Append
@@ -86,7 +90,9 @@ extension NodeOutputValue {
     /// If the on-disk file is *shorter* than `lengthIfStream`, the data is corrupt and an error
     /// is thrown.
     public mutating func appendBytesToStream(data: Data) throws {
-        let fileURL = Self.urlForStream(nodeID: nodeID, port: port)
+        let fileURL = urlForStream()
+
+        print("appendBytesToStream: \(fileURL)")
         let fileManager = FileManager.default
 
         // Ensure the streams directory exists.
@@ -137,7 +143,7 @@ extension NodeOutputValue {
     /// - Throws: `StreamError.streamFileNotFound` if the file does not exist.
     /// - Throws: `StreamError.readOutOfBounds` if `offset + length` exceeds `lengthIfStream`.
     public func readBytesFromStream(offset: UInt64, length: UInt64) throws -> Data {
-        let fileURL = Self.urlForStream(nodeID: nodeID, port: port)
+        let fileURL = urlForStream()
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw StreamError.streamFileNotFound(fileURL.path)
@@ -200,10 +206,18 @@ extension DatabaseLayer {
                 .deleteAll(db) > 0
         }
     }
+
+    public func deleteNodeOutputValues(nodeID: ObjectID) throws -> Int {
+        try dbQueue.write { db in
+            try NodeOutputValue
+                .filter(NodeOutputValue.Columns.nodeID == nodeID)
+                .deleteAll(db)
+        }
+    }
 }
 
 public extension NodeOutputValue {
     func description() -> String {
-        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectHash=\(String(describing: dataObjectHash))"
+        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectHashOrStreamID=\(String(describing: dataObjectHashOrStreamID))"
     }
 }

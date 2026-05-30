@@ -29,27 +29,28 @@ final class FolderNode: NodeType {
 
     static let childrenOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "children", kind: .stream(dataType: .utf8Text))
     static let logOutputPort = NodeKindDescriptor.OutputPort(index: 1, name: "log", kind: .stream(dataType: .utf8Text))
-    static let hashOutputPort = NodeKindDescriptor.OutputPort(index: 2, name: "hash", kind: .value(dataType: .binary))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
               inputs: [],
-              outputs: [Self.childrenOutputPort, Self.logOutputPort, Self.hashOutputPort])
+              outputs: [Self.childrenOutputPort, Self.logOutputPort])
     }
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
-
         let data = try Data("\(FolderEvent(folderEventKind: .childAdded(nodeID: nodeID, name: name)).toJSON())\n\n".utf8)
-
         try writeToOutputPortStream(Self.childrenOutputPort, data: data)
-
         let parent: FolderNode? = try parent()
+        try parent?.notifyChildAdded(nodeID: nodeID, name: (nodeContext.name ?? "") + "/" + name)
+    }
 
-        try parent?.notifyChildAdded(nodeID: nodeID,
-                                     name: (self.nodeContext.name ?? "") + "/" + name)
+    func notifyChildContentChanged(nodeID: ObjectID, name: String) throws {
+        let data = try Data("\(FolderEvent(folderEventKind: .childContentChanged(nodeID: nodeID, name: name)).toJSON())\n\n".utf8)
+        try writeToOutputPortStream(Self.childrenOutputPort, data: data)
+        let parent: FolderNode? = try parent()
+        try parent?.notifyChildContentChanged(nodeID: nodeID, name: (nodeContext.name ?? "") + "/" + name)
     }
 
     @discardableResult
@@ -80,8 +81,8 @@ final class FolderNode: NodeType {
         let metadata = FileMetadata(name: name)
 
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
-            try existingChild.writeToOutputPort(StaticFileNode.outputPort,
-                                                value: .value(.dataObjectHash(content), metadata: metadata))
+            try existingChild.replaceContent(content, metadata: metadata)
+            try notifyChildContentChanged(nodeID: existingChild.nodeContext.nodeID!, name: existingChild.nodeContext.name!)
         } else {
             // TODO: what if the type is not StaticFileNode
 
@@ -93,7 +94,8 @@ final class FolderNode: NodeType {
     }
 
     func process() throws {
-        try writeToOutputPort(Self.hashOutputPort, value: .noValue(reason: .error(message: "X")))
+        try writeToOutputPortStream(Self.logOutputPort, data: Data())
+        try writeToOutputPortStream(Self.childrenOutputPort, data: Data())
     }
 }
 

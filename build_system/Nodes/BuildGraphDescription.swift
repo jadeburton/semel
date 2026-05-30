@@ -6,30 +6,37 @@
 
 import Foundation
 
-struct BuildGraphInputWire {
+struct BuildGraphNode: Codable, Equatable, Hashable {
+    let name: String
+    let kind: BuildGraphNodeKind
+
+    func describe() -> String {
+        // TODO: recursively describe the entire graph structure rooted at this node, in a human-readable manner, i.e. a tree with indentation
+        ""
+    }
+}
+
+enum BuildGraphToolKind: Codable, Equatable, Hashable {
+    case preprocessor
+    case compiler
+    case linker
+}
+
+enum BuildGraphNodeKind: Codable, Equatable, Hashable {
+    case tool(kind: BuildGraphToolKind, inputPorts: [BuildGraphInputPort])
+    case configuration(_ configuration: String)
+    case inputFile
+    case outputFile(inputPorts: [BuildGraphInputPort])
+}
+
+struct BuildGraphInputWire: Codable, Equatable, Hashable {
     let from: BuildGraphNode
     let fromPort: String
 }
 
-struct BuildGraphInputPort {
+struct BuildGraphInputPort: Codable, Equatable, Hashable {
     let name: String
     let inputWires: [BuildGraphInputWire]
-}
-
-struct BuildGraphDescription {
-    let outputs: [BuildGraphNode]
-}
-
-struct BuildGraphNode {
-    let name: String
-    let kind: BuildGraphNodeKind
-}
-
-enum BuildGraphNodeKind {
-    case tool(kind: UInt, inputPorts: [BuildGraphInputPort])
-    case configuration(_ configuration: String)
-    case inputFile
-    case outputFile(inputPorts: [BuildGraphInputPort])
 }
 
 enum BuildGraphError: Error {

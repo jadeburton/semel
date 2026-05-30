@@ -46,13 +46,15 @@ final class ClangCompilerTool: NodeType {
                                                             name: "configuration",
                                                             kind: .value(dataType: .utf8Text),
                                                             maximumConnections: 1,
-                                                            minimumConnections: 1)
+                                                            minimumConnections: 1,
+                                                            cascadingDelete: false)
 
     static let input = NodeKindDescriptor.InputPort(index: 1,
                                                     name: "input",
                                                     kind: .value(dataType: .utf8Text),
                                                     maximumConnections: 1,
-                                                    minimumConnections: 1)
+                                                    minimumConnections: 1,
+                                                    cascadingDelete: true)
 
     static let output = NodeKindDescriptor.OutputPort(index: 2,
                                                       name: "output",
@@ -77,18 +79,17 @@ final class ClangCompilerTool: NodeType {
     func process() throws {
 
         guard let configuration: ClangCompilerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            return
+            throw NodeError.missingInput
         }
 
         guard let firstInputValue = try readOneValueFromInputPort(Self.input) else {
-            return
+            throw NodeError.missingInput
         }
 
         switch firstInputValue.kind {
 
         case .noValue:
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Input has no value")))
-            return
+            throw NodeError.missingInput
 
         case .value(let payload, let metadata):
 
@@ -113,14 +114,30 @@ final class ClangCompilerTool: NodeType {
 
             let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
 
+            var errorOutput = ""
+            var infoOutput = ""
+
             let exitCode = try tool.execute(
                 arguments: arguments,
                 environment: configuration.environment,
                 inputFiles: [.init(filePath: inputFilename, content: bytes)],
                 expectedOutputFileNames: [outputFilename],
-                output: .init(logError:   { error   in print(error)   },
-                              logMessage: { message in print(message) },
-                              write:      { _, data in output.append(contentsOf: data) }))
+                output: .init(logError: { error in
+                                  errorOutput += error
+                                  errorOutput += "\n"
+                                  print(error)
+                              },
+                              logMessage: { message in
+                                  infoOutput += message
+                                  infoOutput += "\n"
+                                  print(message)
+                              },
+                              write: { _, data in
+                                  output.append(contentsOf: data)
+                              }))
+
+            try writeToOutputPortStream(Self.errorLog, data: errorOutput.data(using: .utf8) ?? Data())
+            try writeToOutputPortStream(Self.infoLog, data: infoOutput.data(using: .utf8) ?? Data())
 
             if exitCode == 0 {
                 try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),

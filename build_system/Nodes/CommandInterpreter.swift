@@ -27,6 +27,7 @@ enum FileWildcardEntryKind {
 struct FileWildcardEntry {
     let path: String
     let kind: FileWildcardEntryKind
+    let isMissing: Bool // the file is missing from the internal file system (e.g. it was deleted by the user but is still referenced by the build graph)
 }
 
 protocol FileWildcardMatcherInput {
@@ -137,7 +138,7 @@ final class FileWildcardMatcher {
 
             if isLastSegment {
                 // Final segment — emit the match.
-                results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind))
+                results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind, isMissing: child.isMissing))
             } else if child.kind == .folder {
                 // More segments remain — descend into matching folder.
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
@@ -225,7 +226,8 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
             guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { return nil }
             return FileWildcardEntry(
                 path: name,
-                kind: isDir.boolValue ? .folder : .file
+                kind: isDir.boolValue ? .folder : .file,
+                isMissing: false
             )
         }.sorted { $0.path < $1.path }
     }
@@ -242,7 +244,15 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
         let start = try folder.childPoly(path: inDirectoryPath, kind: FolderNode.kind)! // TODO
         return try! start.allChildren().map { node in
-            FileWildcardEntry(path: node.nodeContext.name!, kind: node is StaticFileNode ? .file : .folder)
+            if let staticFileNode = node as? StaticFileNode {
+                return FileWildcardEntry(path: node.nodeContext.name!,
+                                         kind: .file,
+                                         isMissing: try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).isNoValue)
+            } else {
+                return FileWildcardEntry(path: node.nodeContext.name!,
+                                         kind: .folder,
+                                         isMissing: false)
+            }
         }
     }
 }
@@ -254,6 +264,7 @@ enum FileSystemForCommand {
 
 enum UserCommand {
     case base(externalPath: String) // strato base .
+    case debug
     case begin           // strato begin
     case commit          // strato commit
     case discard         // strato discard
@@ -322,6 +333,9 @@ final class CommandParser {
                 throw CommandParserError.missingArgument(command: "base", expected: "externalPath")
             }
             return .base(externalPath: path)
+
+        case "d", "debug":
+            return .debug
 
         case "begin":
             return .begin
@@ -472,9 +486,14 @@ final class CommandInterpreter: NodeType {
     func handleCommand(_ command: String) throws {
         do {
             try handleUserCommand(commandParser.parse(command: command))
+            try save()
         } catch {
             outputError(error.localizedDescription)
         }
+    }
+
+    func handleDebug() throws {
+        try nodeContext.processingCycle.printAll()
     }
 
     func handleUserCommand(_ userCommand: UserCommand) throws {
@@ -482,6 +501,9 @@ final class CommandInterpreter: NodeType {
 
         case .base(let externalPath):
             handleBase(externalPath: externalPath)
+
+        case .debug:
+            try handleDebug()
 
         case .begin:
             handleBegin()
@@ -604,7 +626,22 @@ final class CommandInterpreter: NodeType {
             return
         }
 
-        try child.delete()
+        // - if the Node is used by the build graph, it must not be user-deleted, as this will invalidate the graph even if the file is re-added.
+        // - instead, we "gut" the file, turning it into a ghost. when the user lists files, it will appear as "missing", according to the current build graph.
+        // - then, re-adding the file will replace the ghost with a new node, which will be picked up by the build graph and cause the necessary rebuilds.
+        // - however, some input files do not behave this way. project files (formulae) should instead perform a cascading delete. this is because they are not
+        //   part of the build graph.
+        // - the way we tell is by looking at the wires coming from the file; if one or more target nodes do not allow cascading-deleting, we use the ghost-technique.
+
+        if try child.noOutputWiresPreventCascadeDeletion() {
+            try child.delete()
+        } else {
+            guard let staticFileNode = child as? StaticFileNode else {
+                outputError("Cannot delete; object is in use.")
+                return
+            }
+            try staticFileNode.eraseContents() // turns it into a ghost
+        }
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
@@ -664,7 +701,11 @@ final class CommandInterpreter: NodeType {
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
 
         try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
-            outputMessage(entry.path)
+            if entry.isMissing {
+                outputMessage("\(entry.path) (missing)")
+            } else {
+                outputMessage(entry.path)
+            }
         }
     }
 

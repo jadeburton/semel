@@ -47,19 +47,22 @@ final class ClangLinkerTool: NodeType {
                                                             name: "configuration",
                                                             kind: .value(dataType: .utf8Text),
                                                             maximumConnections: 1,
-                                                            minimumConnections: 1)
+                                                            minimumConnections: 1,
+                                                            cascadingDelete: false)
 
     static let input = NodeKindDescriptor.InputPort(index: 1,
                                                     name: "input",
                                                     kind: .value(dataType: .binary),
                                                     maximumConnections: nil,
-                                                    minimumConnections: 1)
+                                                    minimumConnections: 1,
+                                                    cascadingDelete: true)
 
     static let libraries = NodeKindDescriptor.InputPort(index: 2,
                                                         name: "libraries",
                                                         kind: .value(dataType: .binary),
                                                         maximumConnections: nil,
-                                                        minimumConnections: 0)
+                                                        minimumConnections: 0,
+                                                        cascadingDelete: false)
 
     static let output = NodeKindDescriptor.OutputPort(index: 2,
                                                       name: "output",
@@ -84,7 +87,7 @@ final class ClangLinkerTool: NodeType {
     func process() throws {
 
         guard let configuration: ClangLinkerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            return
+            throw NodeError.missingInput
         }
 
         let inputValues = try readAllValuesFromInputPort(Self.input)
@@ -104,8 +107,7 @@ final class ClangLinkerTool: NodeType {
                     libraryFiles.append(.init(filePath: fileMetadata.name, content: data))
                 }
             case .noValue:
-                try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
-                return
+                throw NodeError.missingInput
             }
         }
 
@@ -118,14 +120,12 @@ final class ClangLinkerTool: NodeType {
                 objectFiles.append(.init(filePath: fileMetadata.name,
                                          content: try payload.expectDataObjectHash().resolve()))
             case .noValue:
-                try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
-                return
+                throw NodeError.missingInput
             }
         }
 
         guard !objectFiles.isEmpty else {
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "No input")))
-            return
+            throw NodeError.missingInput
         }
 
         var output: [UInt8] = []
@@ -152,14 +152,30 @@ final class ClangLinkerTool: NodeType {
         inputFiles.append(contentsOf: libraryFiles)
         inputFiles.append(contentsOf: objectFiles)
 
+        var errorOutput = ""
+        var infoOutput = ""
+
         let exitCode = try tool.execute(
             arguments: arguments,
             environment: configuration.environment,
             inputFiles: inputFiles,
             expectedOutputFileNames: ["output.dylib"],
-            output: .init(logError:   { error   in print(error)   },
-                          logMessage: { message in print(message) },
-                          write:      { _, data in output.append(contentsOf: data) }))
+            output: .init(logError: { error in
+                              errorOutput += error
+                              errorOutput += "\n"
+                              print(error)
+                          },
+                          logMessage: { message in
+                              infoOutput += message
+                              infoOutput += "\n"
+                              print(message)
+                          },
+                          write: { _, data in
+                              output.append(contentsOf: data)
+                          }))
+
+        try writeToOutputPortStream(Self.errorLog, data: errorOutput.data(using: .utf8) ?? Data())
+        try writeToOutputPortStream(Self.infoLog, data: infoOutput.data(using: .utf8) ?? Data())
 
         if exitCode == 0 {
             try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
