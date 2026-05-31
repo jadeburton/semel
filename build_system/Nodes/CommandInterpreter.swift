@@ -671,8 +671,8 @@ final class CommandInterpreter: NodeType {
 
             switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).kind {
 
-            case .value(let payload, _):
-                let fileContent = Data(try payload.expectDataObjectHash().resolve())
+            case .value(let dataObjectHash, _):
+                let fileContent = Data(try dataObjectHash.resolve())
                 let finalPath = destinationPath.appending("/").appending((entry.path as NSString).lastPathComponent)
                 try fileContent.write(to: URL(fileURLWithPath: finalPath))
                 outputMessage("File written: \(finalPath)")

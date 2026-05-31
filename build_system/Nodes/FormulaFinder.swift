@@ -10,7 +10,7 @@ import Foundation
 // MARK: - FormulaFinder
 
 /// Watches an input file-list stream and creates a FormulaExtractor child for
-/// every formula.jsonl file that appears, wiring it into the BuildGraph's formulae input.
+/// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
 final class FormulaFinder: NodeType {
     static let kind: UInt = 5
 
@@ -28,26 +28,29 @@ final class FormulaFinder: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let fileListInputPort = NodeKindDescriptor.InputPort(index: 0,
-                                                                name: "fileList",
-                                                                kind: .stream(dataType: .utf8Text),
-                                                                maximumConnections: 1,
-                                                                minimumConnections: 1,
-                                                                cascadingDelete: false)
+    static let folderManifestInputPort = NodeKindDescriptor.InputPort(index: 0,
+                                                                      name: "folderManifest",
+                                                                      kind: .value(dataType: .utf8Text),
+                                                                      maximumConnections: nil,
+                                                                      minimumConnections: 1,
+                                                                      cascadingDelete: false)
 
     var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.fileListInputPort], outputs: [])
+        .init(kind: Self.kind, inputs: [Self.folderManifestInputPort], outputs: [])
     }
 
-    func didAddFile(nodeID: ObjectID, name: String) throws {
-        // Only handle .yml formula files.
-        guard name.hasSuffix(".json") else { return } // HACK
+    private func ensureExtractorExists(folderManifestEntry: FolderManifestEntry, folderNode: FolderNode) throws {
 
-        let extractor = try nodeContext.processingCycle.makeNode(name: name,
-                                                                 parentNodeID: nodeContext.nodeID) as FormulaExtractor
+        guard folderManifestEntry.name.hasSuffix(".json") else {
+            return
+        } // HACK
+
+        let extractor = try childPoly(path: folderManifestEntry.name, kind: FormulaExtractor.kind, createIfNotExist: true)! as! FormulaExtractor
+
+        let fileNode = try folderNode.childPoly(path: folderManifestEntry.name, kind: StaticFileNode.kind) as! StaticFileNode
 
         try nodeContext.processingCycle.connectWire(
-            fromNode: try nodeContext.processingCycle.node(nodeID: nodeID) as StaticFileNode,
+            fromNode: fileNode,
             fromPort: StaticFileNode.outputPort,
             toNode: extractor,
             toPort: FormulaExtractor.formulaFileInputPort)
@@ -60,74 +63,34 @@ final class FormulaFinder: NodeType {
     }
 
     func process() throws {
-        guard let fileListStreamCursor = try readOneValueFromInputPort(Self.fileListInputPort) else {
+        guard let folderManifestValue = try readOneValueFromInputPort(Self.folderManifestInputPort) else {
             throw NodeError.missingInputs
         }
 
-        let data = try fileListStreamCursor.readBytesFromStream(nodeContext: nodeContext)
+        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: folderManifestValue.originNodeID)
 
-        guard !data.isEmpty else {
-            throw NodeError.missingInputs
-        }
+        switch folderManifestValue.kind {
 
-        let str = String(data: data, encoding: .utf8)!
-        let chunks = str.split(separator: "\n\n")
+        case .value(let dataObjectHash, _):
+            let object = try PolyFactory.decode(encodedJSON: dataObjectHash.resolveAsString())
 
-        for chunk in chunks {
-            print("\(chunk)")
-            let object = try PolyFactory.decode(encodedJSON: String(chunk))
-            
-            if let folderEvent = object as? FolderEvent {
-                switch folderEvent.folderEventKind {
+            guard let folderManifest = object as? FolderManifest else {
+                throw NodeError.other(message: "Could not decode FolderManifest")
+            }
 
-                case .childAdded(let nodeID, let name):
-                    try didAddFile(nodeID: nodeID, name: name)
-                    break
+            for entry in folderManifest.entries {
+                try ensureExtractorExists(folderManifestEntry: entry, folderNode: folderNode)
+            }
 
-                default:
-                    break
+            for formulaExtractorChild in try allChildren().filter({ node in node is FormulaExtractor }) {
+                if !folderManifest.entries.contains(where: { $0.name == formulaExtractorChild.nodeContext.name }) {
+                    try formulaExtractorChild.delete()
                 }
             }
-        }
 
-        // TODO: read folder-event messages from fileListInputPort and call didAddFile
-        // for each .childAdded event. See the commented-out implementation for a sketch
-        // of the stream-reading logic needed here.
-    }
-}
-
-extension NodeValueAndWire {
-
-    var currentLengthIfStream: UInt64? {
-        switch kind {
-        case .value(let payload, _):
-            switch payload {
-            case .stream(_, let currentLength):
-                return currentLength
-            case .dataObjectHash:
-                return nil
-            }
         case .noValue:
-            return nil
+            throw NodeError.missingInputs
         }
-    }
-
-    func readBytesFromStream(nodeContext: NodeContext) throws -> Data {
-        let currentLength = currentLengthIfStream!
-        var wire = wire
-
-        let nodeOutputValue = try nodeContext.processingCycle.database.selectNodeOutputValue(nodeID: wire.fromNodeID, port: wire.fromPort)!
-
-        let data = try nodeOutputValue.readBytesFromStream(offset: UInt64(wire.streamPosition ?? 0), length: currentLength - UInt64(wire.streamPosition ?? 0))
-
-        // Save new offset
-        wire.streamPosition = Int64(currentLength)
-
-        try nodeContext.processingCycle.database.updateWire(wire)
-
-        nodeContext.processingCycle.wiresModified = true
-
-        return data
     }
 }
 
@@ -172,11 +135,9 @@ final class FormulaExtractor: NodeType {
             switch formulaFileValue.kind {
             case .noValue:
                 break
-            case .value(let payload, _):
+            case .value(let dataObjectHash, _):
                 // Pass the formula content through unchanged.
-                try writeToOutputPort(Self.formulaOutputPort,
-                                      value: .value(.dataObjectHash(payload.expectDataObjectHash()),
-                                                    metadata: "formula"))
+                try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash, metadata: "formula"))
             }
         }
     }

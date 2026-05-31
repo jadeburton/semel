@@ -41,18 +41,7 @@ extension NodeType {
 
         var aggregated = try toJSON()
 
-        for outputPort in descriptor.outputs {
-            if case .stream = outputPort.kind {
-                // not supported
-                return nil
-            }
-        }
-
         for inputPort in descriptor.inputs.sorted(by: { a, b in a.index < b.index }) {
-            if case .stream = inputPort.kind {
-                // not supported
-                return nil
-            }
             aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort))
             aggregated.append("\n")
         }
@@ -121,14 +110,6 @@ extension NodeType {
 
         for outputPort in descriptor.outputs {
             let value = try readFromOutputPort(outputPort)
-
-            if case .value(let payload, _) = value.kind {
-                if case .stream = payload {
-                    // Stop - streams not cachable
-                    return
-                }
-            }
-
             outputValues[outputPort.index] = value.kind // we do not save NodeIDs
         }
 
@@ -328,10 +309,6 @@ extension NodeType {
 
     func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, value: NodeValueKind) throws {
         try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: nodeContext.nodeID!)
-    }
-
-    func writeToOutputPortStream(_ outputPort: NodeKindDescriptor.OutputPort, data: Data) throws {
-        try nodeContext.processingCycle.writeToOutputPortStream(outputPort, data: data, nodeID: nodeContext.nodeID!)
     }
 
     func allChildren() throws -> [NodeType] {

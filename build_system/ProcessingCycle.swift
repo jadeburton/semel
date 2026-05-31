@@ -265,44 +265,24 @@ extension ProcessingCycle {
         }
     }
 
-    func writeToOutputPortStream(_ outputPort: NodeKindDescriptor.OutputPort,
-                                 data: Data,
-                                 nodeID: ObjectID) throws {
-
-        // TODO: read a NodeValue and write back a NodeValue, not this DB type
-
-        var nodeOutputValue = try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort.index)
-            ?? .init(nodeID: nodeID,
-                     port: outputPort.index,
-                     kind: .value,
-                     dataObjectHashOrStreamID: UUID().uuidString,
-                     metadata: nil,
-                     errorMessage: nil,
-                     lengthIfStream: 0)
-
-        if nodeOutputValue.dataObjectHashOrStreamID == nil {
-            // HACK
-            nodeOutputValue.dataObjectHashOrStreamID = UUID().uuidString
-        }
-
-        nodeOutputValue.kind = .value
-        nodeOutputValue.errorMessage = nil
-
-        try nodeOutputValue.appendBytesToStream(data: data)
-
-        try writeToOutputPort(nodeOutputValue: nodeOutputValue, nodeID: nodeID, outputPort: outputPort.index)
-    }
-
-    func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
+    @discardableResult func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
                            value: NodeValueKind,
-                           nodeID: ObjectID) throws {
+                           nodeID: ObjectID) throws -> Bool {
 
         try writeToOutputPort(nodeOutputValue: try value.mapNodeOutputValue(nodeID: nodeID, outputPortIndex: outputPort.index),
                               nodeID: nodeID,
                               outputPort: outputPort.index)
     }
 
-    func writeToOutputPort(nodeOutputValue: NodeOutputValue, nodeID: ObjectID, outputPort: UInt8) throws {
+    @discardableResult func writeToOutputPort(nodeOutputValue: NodeOutputValue, nodeID: ObjectID, outputPort: UInt8) throws -> Bool {
+
+        if let existing = try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort) {
+            if existing == nodeOutputValue {
+                print("No change to NodeOutputValue, ignoring")
+                return false
+            }
+        }
+
         try database.insertOrReplaceNodeOutputValue(nodeOutputValue)
 
         for wire in try database.selectWires(comingFromNodeID: nodeID, fromPort: outputPort) {
@@ -311,6 +291,7 @@ extension ProcessingCycle {
                 try scheduleNode(wire.toNodeID)
             }
         }
+        return true
     }
 }
 
@@ -346,13 +327,13 @@ extension ProcessingCycle {
         func formatOutputValue(_ outputValue: DatabaseModels.NodeOutputValue) -> String {
             switch outputValue.kind {
             case .value:
-                let hash = outputValue.dataObjectHashOrStreamID ?? "nil"
+                let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
                 return "✔ '\(shortHash)'"
             case .pending:
                 return "⏳ pending"
             case .error:
-                let hash = outputValue.dataObjectHashOrStreamID ?? "nil"
+                let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
                 return "❌ error '\(outputValue.errorMessage ?? "<no message>")' hash '\(shortHash)'"
             }

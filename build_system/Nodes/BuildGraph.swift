@@ -99,9 +99,8 @@ final class BuildGraph: NodeType {
 
     // MARK: Formula integration
 
-    func integrateFormula(formula: String) throws {
-//        print("integrate formula: \(formula)")
-/*
+    func integrateFormula() throws {
+
         let standardClang = ToolDescriptor(name: "clang",
                                            version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
                                            platform: "macOS",
@@ -175,7 +174,7 @@ final class BuildGraph: NodeType {
 
         let json = try JSONEncoder().encode(buildGraphDescription)
         print("build graph description JSON: \(String(data: json, encoding: .utf8) ?? "nil") ")
-*/
+
 //        let buildGraphDescription = try JSONDecoder().decode(BuildGraphNode.self, from: Data(formula.utf8))
 //        try integrate(buildGraphOutput: buildGraphDescription)
     }
@@ -321,9 +320,7 @@ final class BuildGraph: NodeType {
 
                             let configurationNode = nodeConnectedToInputWire as! StaticFileNode
 
-                            try configurationNode.writeToOutputPort(StaticFileNode.outputPort,
-                                                                    value: .value(.dataObjectHash(configuration.intern()),
-                                                                                  metadata: "configuration"))
+                            try configurationNode.writeToOutputPort(StaticFileNode.outputPort, value: .value(configuration.intern(), metadata: "configuration"))
                             return nodeConnectedToInputWire
 
                         case .tool(let kind, _):
@@ -421,8 +418,8 @@ final class BuildGraph: NodeType {
             switch formulaFileValue.kind {
             case .noValue:
                 throw NodeError.missingInputs
-            case .value(let payload, _):
-                return try BuildGraphNode.fromJSON(payload.expectDataObjectHash().resolveAsString())
+            case .value(let dataObjectHash, _):
+                return try BuildGraphNode.fromJSON(dataObjectHash.resolveAsString())
             }
         }
 
@@ -455,15 +452,4 @@ extension BuildGraphToolKind {
 
 enum NodeValueError: Error {
     case nodeValueIsNotDataObjectHash
-}
-
-extension NodeValuePayload {
-    func expectDataObjectHash() throws -> DataObjectHash {
-        switch self {
-        case .dataObjectHash(let dataObjectHash):
-            return dataObjectHash
-        case .stream:
-            throw NodeValueError.nodeValueIsNotDataObjectHash
-        }
-    }
 }

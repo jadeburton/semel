@@ -96,9 +96,9 @@ final class ClangLinkerTool: NodeType {
         var libraryFiles: [FileNameAndContent] = []
         for nodeValue in inputValues {
             switch nodeValue.kind {
-            case .value(let payload, let metadata):
+            case .value(let dataObjectHash, let metadata):
                 guard let metadata, metadata.hasSuffix(".dylib") else { continue }
-                let data = try payload.expectDataObjectHash().resolve()
+                let data = try dataObjectHash.resolve()
                 let originNode = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)
                 if let staticFileNode = originNode as? StaticFileNode {
                     libraryFiles.append(.init(filePath: try staticFileNode.buildFullPathName(), content: data))
@@ -113,10 +113,9 @@ final class ClangLinkerTool: NodeType {
         var objectFiles: [FileNameAndContent] = []
         for nodeValue in inputValues {
             switch nodeValue.kind {
-            case .value(let payload, let metadata):
+            case .value(let dataObjectHash, let metadata):
                 guard let metadata, metadata.hasSuffix(".o") else { continue }
-                objectFiles.append(.init(filePath: metadata,
-                                         content: try payload.expectDataObjectHash().resolve()))
+                objectFiles.append(.init(filePath: metadata, content: try dataObjectHash.resolve()))
             case .noValue:
                 throw NodeError.missingInputs
             }
@@ -172,12 +171,11 @@ final class ClangLinkerTool: NodeType {
                               output.append(contentsOf: data)
                           }))
 
-        try writeToOutputPort(Self.errorLog, value: .value(.dataObjectHash(errorOutput.intern()), metadata: nil))
-        try writeToOutputPort(Self.infoLog, value: .value(.dataObjectHash(infoOutput.intern()), metadata: nil))
+        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern(), metadata: nil))
+        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern(), metadata: nil))
 
         if exitCode == 0 {
-            try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
-                                                             metadata: "output.dylib"))
+            try writeToOutputPort(Self.output, value: .value(output.intern(), metadata: "output.dylib"))
         } else {
             try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Linker exited with nonzero status")))
         }

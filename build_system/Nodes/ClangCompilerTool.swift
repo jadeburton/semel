@@ -91,9 +91,9 @@ final class ClangCompilerTool: NodeType {
         case .noValue:
             throw NodeError.missingInputs
 
-        case .value(let payload, let metadata):
+        case .value(let dataObjectHash, let metadata):
 
-            let bytes = try payload.expectDataObjectHash().resolve()
+            let bytes = try dataObjectHash.resolve()
             var output: [UInt8] = []
 
             let inputFilename = metadata ?? "source.pc"
@@ -131,12 +131,11 @@ final class ClangCompilerTool: NodeType {
                                   output.append(contentsOf: data)
                               }))
 
-            try writeToOutputPort(Self.errorLog, value: .value(.dataObjectHash(errorOutput.intern()), metadata: nil))
-            try writeToOutputPort(Self.infoLog, value: .value(.dataObjectHash(infoOutput.intern()), metadata: nil))
+            try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern(), metadata: nil))
+            try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern(), metadata: nil))
 
             if exitCode == 0 {
-                try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
-                                                                 metadata: outputFilename))
+                try writeToOutputPort(Self.output, value: .value(output.intern(), metadata: outputFilename))
             } else {
                 try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Compiler exited with nonzero status")))
             }

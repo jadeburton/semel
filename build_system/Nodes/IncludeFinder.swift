@@ -89,8 +89,8 @@ final class IncludeFinder: NodeType {
         for sourceFileValue in try readAllValuesFromInputPort(Self.sourceFileInputPort) {
             switch sourceFileValue.kind {
 
-            case .value(let payload, let metadata):
-                let sourceText = try payload.expectDataObjectHash().resolveAsString()
+            case .value(let dataObjectHash, let metadata):
+                let sourceText = try dataObjectHash.resolveAsString()
                 let includePathList = extractIncludePaths(sourceFileContent: sourceText)
                     .joined(separator: "\n")
                 firstMetadata = metadata!
@@ -101,8 +101,6 @@ final class IncludeFinder: NodeType {
             }
         }
 
-        try writeToOutputPort(Self.includePathListOutputPort,
-                              value: .value(.dataObjectHash(aggregatedIncludePathList.intern()),
-                                            metadata: firstMetadata))
+        try writeToOutputPort(Self.includePathListOutputPort, value: .value(aggregatedIncludePathList.intern(), metadata: firstMetadata))
     }
 }

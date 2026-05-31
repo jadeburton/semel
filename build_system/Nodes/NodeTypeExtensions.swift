@@ -15,8 +15,8 @@ extension NodeType {
         }
 
         switch configurationNodeValue.kind {
-        case .value(let payload, _):
-            return try PolyFactory.decodeAndCast(encodedJSON: payload.expectDataObjectHash().resolveAsString()) as C
+        case .value(let dataObjectHash, _):
+            return try PolyFactory.decodeAndCast(encodedJSON: dataObjectHash.resolveAsString()) as C
         case .noValue:
             // The wire is connected but has no value yet.
             return nil

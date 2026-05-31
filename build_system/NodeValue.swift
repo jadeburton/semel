@@ -12,19 +12,12 @@ enum NoValueReason: Codable {
     case error(message: String)
 }
 
-enum NodeValuePayload: Codable {
-    /// A single value
-    case dataObjectHash(DataObjectHash)
-    /// A stream that continually grows
-    case stream(streamID: String, currentLength: UInt64)
-}
-
 // NodeValueKind cannot use synthesised Codable because `metadata` is `any PolySerializable`,
 // a protocol existential. We encode it as a JSON string via PolyFactory — the same approach
 // used throughout the rest of this file.
 enum NodeValueKind: Codable {
     case noValue(reason: NoValueReason)
-    case value(_ value: NodeValuePayload, metadata: String?)
+    case value(_ value: DataObjectHash, metadata: String?)
 }
 
 struct NodeValue: Codable {
@@ -52,7 +45,6 @@ struct NodeValueAndWire: Codable {
 
 enum NodeOutputValueError: Error {
     case dataObjectHashNotSetOnNodeOutputValue
-    case streamIDNotSetOnNodeOutputValue
 }
 
 enum ProcessingCycleError: Error {
@@ -89,40 +81,11 @@ extension NodeValueKind {
 
         case .value:
 
-            if let lengthIfStream = nodeOutputValue.lengthIfStream {
-
-                // Stream value
-
-                let currentLength = UInt64(lengthIfStream)
-
-                guard let streamID = nodeOutputValue.dataObjectHashOrStreamID else {
-                    throw NodeOutputValueError.streamIDNotSetOnNodeOutputValue
-                }
-
-                if let metadata = nodeOutputValue.metadata {
-                    self = .value(.stream(streamID: streamID,
-                                          currentLength: currentLength),
-                                  metadata: metadata)
-                } else {
-                    self = .value(.stream(streamID: streamID,
-                                          currentLength: currentLength),
-                                  metadata: nil)
-                }
-            } else {
-                // Regular value
-
-                guard let dataObjectHash = nodeOutputValue.dataObjectHashOrStreamID else {
-                    throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
-                }
-
-                if let metadata = nodeOutputValue.metadata {
-                    self = .value(.dataObjectHash(dataObjectHash),
-                                  metadata: metadata)
-                } else {
-                    self = .value(.dataObjectHash(dataObjectHash),
-                                  metadata: nil)
-                }
+            guard let dataObjectHash = nodeOutputValue.dataObjectHash else {
+                throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
             }
+
+            self = .value(dataObjectHash, metadata: nodeOutputValue.metadata)
         }
     }
 
@@ -136,7 +99,7 @@ extension NodeValueKind {
                 return .init(nodeID: nodeID,
                              port: outputPortIndex,
                              kind: .pending,
-                             dataObjectHashOrStreamID: nil,
+                             dataObjectHash: nil,
                              metadata: nil,
                              errorMessage: nil)
 
@@ -144,31 +107,18 @@ extension NodeValueKind {
                 return .init(nodeID: nodeID,
                              port: outputPortIndex,
                              kind: .error,
-                             dataObjectHashOrStreamID: nil,
+                             dataObjectHash: nil,
                              metadata: nil,
                              errorMessage: message)
             }
 
-        case .value(let payload, let metadata):
-
-            switch payload {
-            case .dataObjectHash(let dataObjectHash):
-                return .init(nodeID: nodeID,
-                             port: outputPortIndex,
-                             kind: .value,
-                             dataObjectHashOrStreamID: dataObjectHash,
-                             metadata: metadata,
-                             errorMessage: nil)
-
-            case .stream(let streamID, let currentLength):
-                return .init(nodeID: nodeID,
-                             port: outputPortIndex,
-                             kind: .value,
-                             dataObjectHashOrStreamID: streamID,
-                             metadata: nil,
-                             errorMessage: nil,
-                             lengthIfStream: Int(currentLength))
-            }
+        case .value(let dataObjectHash, let metadata):
+            return .init(nodeID: nodeID,
+                         port: outputPortIndex,
+                         kind: .value,
+                         dataObjectHash: dataObjectHash,
+                         metadata: metadata,
+                         errorMessage: nil)
         }
     }
 }

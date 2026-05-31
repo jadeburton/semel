@@ -8,6 +8,25 @@ import Foundation
 
 // MARK: - Configuration
 
+struct Schema: PolySerializable {
+    static let kind: UInt = 7
+
+    struct WireSchemaEntry: Codable {
+        let fromNodePath: String
+        let fromNodeOutputName: String
+        let toNodePath: String
+        let toOutputName: String
+    }
+
+    struct NodeSchemaEntry: Codable {
+        let path: String
+        let nodeKind: UInt
+    }
+
+    let wires: [WireSchemaEntry]
+    let nodes: [NodeSchemaEntry]
+}
+
 struct ClangPreprocessorToolConfiguration: PolySerializable {
     static let kind: UInt = 11
 
@@ -178,11 +197,11 @@ final class ClangPreprocessorTool: NodeType {
         case .noValue:
             throw NodeError.missingInputs
 
-        case .value(let payload, let metadata):
+        case .value(let dataObjectHash, let metadata):
 
             try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
 
-            let bytes = try payload.expectDataObjectHash().resolve()
+            let bytes = try dataObjectHash.resolve()
             var output: [UInt8] = []
 
             let inputFilename  = metadata ?? "input.c"
@@ -208,8 +227,8 @@ final class ClangPreprocessorTool: NodeType {
 
             let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
                 switch includeFilesValue.kind {
-                case .value(let payload, _):
-                    return try payload.expectDataObjectHash().resolveAsString()
+                case .value(let dataObjectHash, _):
+                    return try dataObjectHash.resolveAsString()
                         .split(separator: "\n").map(String.init)
                 case .noValue:
                     throw NodeError.missingInputs
@@ -232,14 +251,14 @@ final class ClangPreprocessorTool: NodeType {
 
             inputFiles.append(contentsOf: try headerInputFilesValues.compactMap { nodeValue -> FileNameAndContent? in
                 switch nodeValue.kind {
-                case .value(let payload, let metadata):
+                case .value(let dataObjectHash, let metadata):
                     let filePath: String
                     if let staticFileNode: StaticFileNode = try? nodeContext.processingCycle.node(nodeID: nodeValue.originNodeID) {
                         filePath = (try? staticFileNode.buildFullPathName()) ?? metadata!
                     } else {
                         filePath = metadata!
                     }
-                    return .init(filePath: filePath, content: try payload.expectDataObjectHash().resolve())
+                    return .init(filePath: filePath, content: try dataObjectHash.resolve())
                 case .noValue:
                     throw NodeError.missingInputs
                 }
@@ -266,12 +285,11 @@ final class ClangPreprocessorTool: NodeType {
                                                               output.append(contentsOf: data)
                                                           }))
 
-            try writeToOutputPort(Self.errorLog, value: .value(.dataObjectHash(errorOutput.intern()), metadata: nil))
-            try writeToOutputPort(Self.infoLog, value: .value(.dataObjectHash(infoOutput.intern()), metadata: nil))
+            try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern(), metadata: nil))
+            try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern(), metadata: nil))
 
             if exitCode == 0 {
-                try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
-                                                                 metadata: outputFilename))
+                try writeToOutputPort(Self.output, value: .value(output.intern(), metadata: outputFilename))
             } else {
                 try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Nonzero exit code")))
             }

@@ -48,9 +48,7 @@ final class StaticFileNode: NodeType {
     }
 
     func replaceContent(_ content: DataObjectHash, metadata: String) throws {
-        try writeToOutputPort(Self.outputPort,
-                              value: .value(.dataObjectHash(content),
-                                            metadata: metadata))
+        try writeToOutputPort(Self.outputPort, value: .value(content, metadata: metadata))
     }
 
     func eraseContents() throws {
