@@ -7,19 +7,19 @@
 import Foundation
 import DatabaseModels
 
-enum NoValueReason {
+enum NoValueReason: Codable {
     case pending
     case error(message: String)
 }
 
-enum NodeValuePayload {
+enum NodeValuePayload: Codable {
     /// A single value
     case dataObjectHash(DataObjectHash)
     /// A stream that continually grows
     case stream(streamID: String, currentLength: UInt64)
 }
 
-enum NodeValueKind {
+enum NodeValueKind: Codable {
     case noValue(reason: NoValueReason)
     case value(_ value: NodeValuePayload, metadata: (any PolySerializable)?)
 }
@@ -40,7 +40,7 @@ extension NodeValue {
     }
 }
 
-struct NodeValueAndWire {
+struct NodeValueAndWire: Codable {
     let originNodeID: ObjectID
     let originOutputPort: UInt8
     let kind: NodeValueKind

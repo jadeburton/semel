@@ -376,12 +376,39 @@ final class BuildGraph: NodeType {
     }
 
     private func cascadeDeleteFromOutputFile(_ outputFile: StaticFileNode) throws {
-        // cascading delete leftwards..
-        // enumerate each Input
-        // enumerate each Wire on each Input
-        // find the originating Node for each Wire
-        // if the originating Node has only one output Wire on all Outputs, delete it recursively
-        try outputFile.delete()
+        guard let outputNodeID = outputFile.nodeContext.nodeID else { return }
+        var visited = Set<ObjectID>()
+        try cascadeDeleteUpstreamNode(nodeID: outputNodeID, visited: &visited)
+    }
+
+    /// Recursively deletes `nodeID` and any upstream node that exclusively feeds it
+    /// (i.e. has no other consumers). Nodes under `inputFileSystem` are never deleted —
+    /// they are user-provided source files that persist independently of any formula.
+    private func cascadeDeleteUpstreamNode(nodeID: ObjectID, visited: inout Set<ObjectID>) throws {
+        guard !visited.contains(nodeID) else { return }
+        visited.insert(nodeID)
+
+        let database = nodeContext.processingCycle.database
+        let incomingWires = try database.selectWires(goingToNodeID: nodeID)
+
+        for wire in incomingWires {
+            let sourceNodeID = wire.fromNodeID
+
+            let currentRaw = try database.selectNodeByID(sourceNodeID)!
+
+            // Skip nodes outside of BuildGraph — those should not be deleted by a formula cascade delete.
+            if try (currentRaw.parentNodeID == nodeContext.nodeID) || (currentRaw.parentNodeID == outputFileSystem.nodeContext.nodeID) {
+                // Only cascade-delete the source if this formula's output is its sole consumer.
+                let allOutgoingWiresFromSource = try database.selectWires(comingFromNodeID: sourceNodeID)
+
+                if allOutgoingWiresFromSource.count <= 1 {
+                    try cascadeDeleteUpstreamNode(nodeID: sourceNodeID, visited: &visited)
+                }
+            }
+        }
+
+        // deleteNode cleans up all incoming and outgoing wires for this node.
+        _ = try nodeContext.processingCycle.deleteNode(nodeID)
     }
 
     // MARK: Process

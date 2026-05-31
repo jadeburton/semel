@@ -92,6 +92,7 @@ enum BuildGraphError: Error {
     case unknownInputPortNameReference
     case multipleMatchingNodesBySearchKey
     case invalidPortNodeKind
+    case nodeNotFound
 }
 
 extension BuildGraphNode {

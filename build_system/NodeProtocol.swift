@@ -9,6 +9,11 @@ import DatabaseModels
 
 // MARK: - Protocols
 
+struct CacheEntry {
+//    let inputValuesHash: [UInt8: [DataObjectHash]]
+    let outputValues: [UInt8: NodeValueKind]
+}
+
 protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer {
 
     var descriptor: NodeKindDescriptor { get }
@@ -23,16 +28,48 @@ protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer 
 }
 
 extension NodeType {
+    func buildCacheKeyPartFromOneInput(inputPort: NodeKindDescriptor.InputPort) throws -> String {
+        let values = try readAllValuesFromInputPort(inputPort).sorted { a, b in a.originNodeID < b.originNodeID }
+        return try values.toJSON()
+    }
+
+    func buildCacheKeyFromAllInputs() throws -> String {
+
+        var aggregated = ""
+
+        for inputPort in descriptor.inputs.sorted(by: { a, b in a.index < b.index }) {
+            aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort))
+            aggregated.append("\n")
+        }
+
+        return String(decoding: Sha256.hash(Data(aggregated)), as: Unicode.UTF8.self)
+    }
+
+    func loadAndWriteCachedOutputs(cacheKey: String) throws {
+        
+    }
+
+    func saveCacheForAllInputsAndOutputs() throws {
+    }
+
+
     func processWithPreCheck() throws {
         guard allInputsAreSatisfied() else {
             writeToOutputPortsOnError(NodeError.missingInput)
             return
         }
-        do {
-            try process()
-        } catch {
-            writeToOutputPortsOnError(error)
+
+        if let cacheKey = buildCacheKeyFromAllInputs() {
+            try loadAndWriteCachedOutputs(cacheKey: cacheKey)
+        } else {
+            do {
+                try process()
+            } catch {
+                writeToOutputPortsOnError(error)
+            }
         }
+
+        try saveCacheForAllInputsAndOutputs()
     }
 
     func writeToOutputPortsOnError(_ error: Error) {
