@@ -107,16 +107,24 @@ private struct Cassette: Codable {
     }
 }
 
-// MARK: JSON helpers - internal use
+// MARK: JSON helpers
 
-private extension Decodable {
+extension Decodable {
     static func fromJSON(_ string: String) throws -> Self {
         try JSONDecoder().decode(Self.self, from: Data(string.utf8))
     }
 }
 
-private extension Encodable {
+extension Encodable {
     func toJSON() throws -> String {
-        String(data: try JSONEncoder().encode(self), encoding: .utf8)!
+        String(data: try JSONEncoder().withSortedKeys().encode(self), encoding: .utf8)!
+    }
+}
+
+extension JSONEncoder {
+    /// Sorts the keys of all encoded dictionaries, for deterministic output.
+    func withSortedKeys() -> JSONEncoder {
+        outputFormatting.insert(.sortedKeys)
+        return self
     }
 }

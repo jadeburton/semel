@@ -41,7 +41,7 @@ final class FormulaFinder: NodeType {
 
     func didAddFile(nodeID: ObjectID, name: String) throws {
         // Only handle .yml formula files.
-        guard name.hasSuffix("formula.json") else { return } // HACK
+        guard name.hasSuffix(".json") else { return } // HACK
 
         let extractor = try nodeContext.processingCycle.makeNode(name: name,
                                                                  parentNodeID: nodeContext.nodeID) as FormulaExtractor
@@ -61,13 +61,13 @@ final class FormulaFinder: NodeType {
 
     func process() throws {
         guard let fileListStreamCursor = try readOneValueFromInputPort(Self.fileListInputPort) else {
-            return
+            throw NodeError.missingInput
         }
 
         let data = try fileListStreamCursor.readBytesFromStream(nodeContext: nodeContext)
 
         guard !data.isEmpty else {
-            return
+            throw NodeError.missingInput
         }
 
         let str = String(data: data, encoding: .utf8)!

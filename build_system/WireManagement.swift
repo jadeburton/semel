@@ -51,16 +51,12 @@ extension ProcessingCycle {
                        toPort: toPort.index)
     }
 
-    func findNodeConnectedToNodeViaInputWire(_ toNode: NodeType, named name: String, fromPort: String) throws -> (any NodeType)? {
-        for wire in try database.selectWires(goingToNodeID: toNode.nodeContext.nodeID!) {
+    func findNodeConnectedToNodeViaInputWire(_ toNode: NodeType, toInputPortNamed inputPortName: String) throws -> [any NodeType] {
+        let inputPortDescriptor = toNode.descriptor.inputs.first(where: { $0.name == inputPortName })!
 
-            let fromNode = try wire.fromNodeID.loadNode(from: database)
-
-            if fromNode.name == name {
-                return try wrapRawNodePoly(nodeRaw: fromNode)
-            }
+        return try database.selectWires(goingToNodeID: toNode.nodeContext.nodeID!, toPort: inputPortDescriptor.index).map { wire in
+            try nodePoly(nodeID: wire.fromNodeID)!
         }
-        return nil
     }
 
     func deleteWire(fromNodeID: ObjectID,

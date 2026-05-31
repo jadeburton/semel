@@ -9,6 +9,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
         public static let configuration = Column(CodingKeys.configuration)
         public static let parentNodeID = Column(CodingKeys.parentNodeID)
         public static let scheduled = Column(CodingKeys.scheduled)
+        public static let searchKey = Column(CodingKeys.searchKey)
     }
 
     public var id: ObjectID?
@@ -17,14 +18,16 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var name: String?
     public var configuration: String? // JSON
     public var scheduled: Bool
+    public var searchKey: String?
 
-    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil, scheduled: Bool = false) {
+    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil, scheduled: Bool = false, searchKey: String?) {
         self.id = id
         self.parentNodeID = parentNodeID
         self.kind = kind
         self.name = name
         self.configuration = configuration
         self.scheduled = scheduled
+        self.searchKey = searchKey
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
@@ -36,6 +39,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
                 t.column("name", .text)
                 t.column("configuration", .text)
                 t.column("scheduled", .integer).indexed().notNull()
+                t.column("searchKey", .text).indexed()
             }
         }
     }
@@ -85,6 +89,12 @@ extension DatabaseLayer {
     public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
         try dbQueue.read { db in
             try Node.filter(Node.Columns.name == name && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+        }
+    }
+
+    public func selectNodes(searchKey: String, parentNodeID: ObjectID) throws -> [Node] {
+        try dbQueue.read { db in
+            try Node.filter(Node.Columns.searchKey == searchKey && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 

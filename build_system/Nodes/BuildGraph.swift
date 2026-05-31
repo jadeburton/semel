@@ -100,7 +100,7 @@ final class BuildGraph: NodeType {
     // MARK: Formula integration
 
     func integrateFormula(formula: String) throws {
-        print("integrate formula: \(formula)")
+//        print("integrate formula: \(formula)")
 /*
         let standardClang = ToolDescriptor(name: "clang",
                                            version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
@@ -176,15 +176,115 @@ final class BuildGraph: NodeType {
         let json = try JSONEncoder().encode(buildGraphDescription)
         print("build graph description JSON: \(String(data: json, encoding: .utf8) ?? "nil") ")
 */
-        let buildGraphDescription = try JSONDecoder().decode(BuildGraphNode.self, from: Data(formula.utf8))
-        try integrate(buildGraphOutput: buildGraphDescription)
+//        let buildGraphDescription = try JSONDecoder().decode(BuildGraphNode.self, from: Data(formula.utf8))
+//        try integrate(buildGraphOutput: buildGraphDescription)
     }
 
     // Follows 'outputNode' backwards through its dependencies to reconstruct a live processing graph that mirrors the structure of the build graph description.
     // Returns the node corresponding to 'outputNode' in the live processing graph.
     // Note that there is one conceptual formula for each output file, but the graph may reuse nodes for shared dependencies.
     func reverseEngineerFormula(outputNode: StaticFileNode) throws -> BuildGraphNode {
-        // TODO
+        var cache: [ObjectID: BuildGraphNode] = [:]
+        return try reverseEngineerNode(liveNode: outputNode, cache: &cache)
+    }
+
+    /// Recursively reconstructs a `BuildGraphNode` from the live node/wire graph.
+    /// `cache` stores already-reconstructed nodes so shared dependencies are visited once
+    /// and cycles (which should not exist in a valid build graph) are handled safely.
+    private func reverseEngineerNode(liveNode: NodeType,
+                                     cache: inout [ObjectID: BuildGraphNode]) throws -> BuildGraphNode {
+        let database = nodeContext.processingCycle.database
+
+        guard let nodeID = liveNode.nodeContext.nodeID else {
+            throw BuildGraphError.unknownInputPortNameReference
+        }
+
+        // Return cached result if this node has already been reconstructed
+        if let cached = cache[nodeID] { return cached }
+
+        // Store a placeholder immediately to break any accidental cycles
+        let nodeName = liveNode.nodeContext.name ?? "?"
+        cache[nodeID] = BuildGraphNode(name: nodeName, kind: .inputFile)
+
+        // Gather all incoming wires and group them by destination port index
+        let incomingWires = try database.selectWires(goingToNodeID: nodeID)
+
+        var wiresByDestinationPort: [UInt8: [BuildGraphInputWire]] = [:]
+        for wire in incomingWires {
+            guard let sourceRawNode = try? database.selectNodeByID(wire.fromNodeID),
+                  let sourceNode = try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: sourceRawNode)
+            else { continue }
+
+            // Recursively reconstruct the source node
+            let sourceBuildGraphNode = try reverseEngineerNode(liveNode: sourceNode, cache: &cache)
+
+            // Resolve the source's output port name from its descriptor
+            let fromPortName = sourceNode.descriptor.outputs
+                .first(where: { $0.index == wire.fromPort })?.name ?? "output"
+
+            wiresByDestinationPort[wire.toPort, default: []]
+                .append(BuildGraphInputWire(from: sourceBuildGraphNode, fromPort: fromPortName))
+        }
+
+        // Build the ordered input-port list, skipping ports with no wires
+        let inputPorts: [BuildGraphInputPort] = liveNode.descriptor.inputs.compactMap { port in
+            let wires = wiresByDestinationPort[port.index] ?? []
+            guard !wires.isEmpty else { return nil }
+            return BuildGraphInputPort(name: port.name, inputWires: wires)
+        }
+
+        // Determine the BuildGraphNodeKind for this node
+        let nodeKind = try reverseEngineerNodeKind(for: liveNode, inputPorts: inputPorts)
+        let result = BuildGraphNode(name: nodeName, kind: nodeKind)
+        cache[nodeID] = result
+        return result
+    }
+
+    /// Maps a live NodeType to the appropriate BuildGraphNodeKind.
+    private func reverseEngineerNodeKind(for liveNode: NodeType,
+                                         inputPorts: [BuildGraphInputPort]) throws -> BuildGraphNodeKind {
+        switch type(of: liveNode).kind {
+        case ClangPreprocessorTool.kind:
+            return .tool(kind: .preprocessor, inputPorts: inputPorts)
+        case ClangCompilerTool.kind:
+            return .tool(kind: .compiler, inputPorts: inputPorts)
+        case ClangLinkerTool.kind:
+            return .tool(kind: .linker, inputPorts: inputPorts)
+        case StaticFileNode.kind:
+            return try reverseEngineerStaticFileNodeKind(for: liveNode as! StaticFileNode,
+                                                         inputPorts: inputPorts)
+        default:
+            return .inputFile
+        }
+    }
+
+    /// Distinguishes whether a StaticFileNode is an input file, a configuration node, or
+    /// an output file by walking up its parent chain until a well-known root folder is found.
+    private func reverseEngineerStaticFileNodeKind(for node: StaticFileNode,
+                                                   inputPorts: [BuildGraphInputPort]) throws -> BuildGraphNodeKind {
+        let database = nodeContext.processingCycle.database
+
+        guard let nodeID = node.nodeContext.nodeID,
+              var currentRaw = try database.selectNodeByID(nodeID)
+        else { return .inputFile }
+
+        while let parentID = currentRaw.parentNodeID {
+            guard let parentRaw = try database.selectNodeByID(parentID) else { break }
+
+            switch parentRaw.name {
+            case "outputFileSystem":
+                return .outputFile(inputPorts: inputPorts)
+
+            case "inputFileSystem":
+                return .inputFile
+
+            default:
+                // Not a recognised root — keep walking up
+                currentRaw = parentRaw
+            }
+        }
+
+        return .inputFile
     }
 
     private func integrate(buildGraphOutput: BuildGraphNode) throws {
@@ -199,68 +299,116 @@ final class BuildGraph: NodeType {
         for inputPort in buildGraphNode.inputPorts() {
             for inputWire in inputPort.inputWires {
 
-                var nodeConnectedToInputWire = try currentNode.findNodeConnectedToNodeViaInputWire(
-                    named: inputWire.from.name, fromPort: inputWire.fromPort)
+                // We are walking from the current BuildGraphNode to its children
 
-                if nodeConnectedToInputWire == nil {
-                    switch inputWire.from.kind {
+                let searchKey = try inputWire.from.toJSON()
 
-                    case .configuration(let configuration):
-                        nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode
-                            .configurationFolder.childPoly(path: inputWire.from.name,
-                                                           kind: StaticFileNode.kind,
-                                                           createIfNotExist: true)
-                        let configurationNode = nodeConnectedToInputWire as! StaticFileNode
-                        try configurationNode.writeToOutputPort(
-                            StaticFileNode.outputPort,
-                            value: .value(.dataObjectHash(configuration.intern()),
-                                          metadata: FileMetadata(name: "configuration")))
-                        if nodeConnectedToInputWire == nil { return }
+                // do a database search of all the BuildGraph children using the formula as the searchKey
 
-                    case .inputFile:
-                        nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode
-                            .inputFileSystem.childPoly(path: inputWire.from.name,
-                                                       kind: StaticFileNode.kind,
-                                                       createIfNotExist: true)
-                        if nodeConnectedToInputWire == nil { return }
+                let rawNodes = try nodeContext.processingCycle.database.selectNodes(searchKey: searchKey,
+                                                                                    parentNodeID: self.nodeContext.nodeID!)
 
-                    case .outputFile:
-                        return  // should be impossible
+                func createOrGetNode() throws -> any NodeType {
+                    if rawNodes.isEmpty {
+                        // No existing nodes match this child BuildGraphNode, so we need to create a new one
 
-                    case .tool(let kind, _):
-                        nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode
-                            .buildGraph.childPoly(path: inputWire.from.name,
-                                                  kind: kind.asPolySerializableKind(),
-                                                  createIfNotExist: true)
-                        if nodeConnectedToInputWire == nil { return }
+                        switch inputWire.from.kind {
+
+                        case .configuration(let configuration):
+                            let nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.buildGraph.childPoly(path: inputWire.from.name,
+                                                                                                                         kind: StaticFileNode.kind,
+                                                                                                                         createIfNotExist: true)!
+
+                            let configurationNode = nodeConnectedToInputWire as! StaticFileNode
+
+                            try configurationNode.writeToOutputPort(StaticFileNode.outputPort,
+                                                                    value: .value(.dataObjectHash(configuration.intern()),
+                                                                                  metadata: FileMetadata(name: "configuration")))
+                            return nodeConnectedToInputWire
+
+                        case .tool(let kind, _):
+                            return try nodeContext.processingCycle.rootNode.buildGraph.childPoly(path: inputWire.from.name,
+                                                                                                 kind: kind.asPolySerializableKind(),
+                                                                                                 createIfNotExist: true)!
+
+                        case .inputFile:
+                            return try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: inputWire.from.name,
+                                                                                                      kind: StaticFileNode.kind,
+                                                                                                      createIfNotExist: true)!
+
+                        case .outputFile:
+                            // should be impossible
+                            throw BuildGraphError.invalidPortNodeKind
+
+                        }
+
+                    } else {
+                        if rawNodes.count > 1 {
+                            throw BuildGraphError.multipleMatchingNodesBySearchKey
+                        }
+
+                        let rawNode = rawNodes[0]
+
+                        // connect to the existing node....
+                        return try nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
                     }
                 }
+
+                let nodeConnectedToInputWire = try createOrGetNode()
+
+                nodeConnectedToInputWire.nodeContext.searchKey = searchKey
+                try nodeConnectedToInputWire.save()
 
                 guard let toPort = currentNode.descriptor.inputPort(named: inputPort.name) else {
                     print("ERROR: Could not find input port named '\(inputPort.name)' on \(type(of: currentNode))")
                     throw BuildGraphError.unknownInputPortNameReference
                 }
 
-                try nodeContext.processingCycle.connectWire(
-                    fromNode: nodeConnectedToInputWire!,
-                    fromPort: nodeConnectedToInputWire!.descriptor.outputPort(named: inputWire.fromPort)!,
-                    toNode: currentNode,
-                    toPort: toPort)
+                try nodeContext.processingCycle.connectWire(fromNode: nodeConnectedToInputWire,
+                                                            fromPort: nodeConnectedToInputWire.descriptor.outputPort(named: inputWire.fromPort)!,
+                                                            toNode: currentNode,
+                                                            toPort: toPort)
 
-                try integrate(buildGraphNode: inputWire.from, currentNode: nodeConnectedToInputWire!)
+                try integrate(buildGraphNode: inputWire.from, currentNode: nodeConnectedToInputWire)
+
             }
         }
+    }
+
+    private func cascadeDeleteFromOutputFile(_ outputFile: StaticFileNode) throws {
+        // cascading delete leftwards..
+        // enumerate each Input
+        // enumerate each Wire on each Input
+        // find the originating Node for each Wire
+        // if the originating Node has only one output Wire on all Outputs, delete it recursively
+        try outputFile.delete()
     }
 
     // MARK: Process
 
     func process() throws {
-        for formulaFileValue in try readAllValuesFromInputPort(Self.formulaeInputPort) {
+
+        let allFormulae = try readAllValuesFromInputPort(Self.formulaeInputPort)
+
+        let decodedFormulae = try allFormulae.map { formulaFileValue in
             switch formulaFileValue.kind {
             case .noValue:
-                break
+                throw NodeError.missingInput
             case .value(let payload, _):
-                try integrateFormula(formula: payload.expectDataObjectHash().resolveAsString())
+                return try BuildGraphNode.fromJSON(payload.expectDataObjectHash().resolveAsString())
+            }
+        }
+
+        for formula in decodedFormulae {
+            try integrate(buildGraphOutput: formula)
+        }
+
+        // iterate output artifacts on the graph and find those that have no corresponding formula anymore. cascade-delete these artifacts.
+        for outputFiles in try self.outputFileSystem.allChildren() {
+            if let outputFile = outputFiles as? StaticFileNode {
+                if !decodedFormulae.contains(where: { formula in formula.name == outputFile.nodeContext.name }) {
+                    try cascadeDeleteFromOutputFile(outputFile)
+                }
             }
         }
     }

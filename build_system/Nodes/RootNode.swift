@@ -58,11 +58,11 @@ final class RootNode: NodeType {
         }
     }
 
-    var configurationFolder: FolderNode {
-        get throws {
-            try child(named: "configurationFolder", createIfNotExist: true)!
-        }
-    }
+//    var configurationFolder: FolderNode {
+//        get throws {
+//            try child(named: "configurationFolder", createIfNotExist: true)!
+//        }
+//    }
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind, inputs: [], outputs: [])

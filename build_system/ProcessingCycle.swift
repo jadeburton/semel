@@ -138,7 +138,7 @@ extension ProcessingCycle {
 
     func wrapRawNodePoly(nodeRaw: Node) throws -> NodeType {
         let node = try PolyFactory.decode(encodedJSON: nodeRaw.configuration!) as! NodeType
-        node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name)
+        node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name, searchKey: nodeRaw.searchKey)
 //        loadedNodes[nodeRaw.id!] = node
         return node
     }
@@ -177,13 +177,15 @@ extension ProcessingCycle {
                                           kind: node.descriptor.kind,
                                           name: node.nodeContext.name,
                                           configuration: node.toJSON(),
-                                          scheduled: scheduled == nil ? existing.scheduled : scheduled!))
+                                          scheduled: scheduled == nil ? existing.scheduled : scheduled!,
+                                          searchKey: node.nodeContext.searchKey))
         } else {
             node.nodeContext.nodeID = try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
                                                                     kind: node.descriptor.kind,
                                                                     name: node.nodeContext.name,
                                                                     configuration: node.toJSON(),
-                                                                    scheduled: true)) // trigger first "process" iteration to complete init process
+                                                                    scheduled: true,
+                                                                    searchKey: node.nodeContext.searchKey)) // trigger first "process" iteration to complete init process
         }
 
         try node.didSave()
@@ -336,7 +338,7 @@ extension ProcessingCycle {
             let name = rawNode.name ?? "?"
             let kindName = (try? PolyFactory.type(kind: rawNode.kind))
                 .map { String(describing: $0) } ?? "kind:\(rawNode.kind)"
-            return "\(name) [\(kindName)] #\(rawNode.id ?? -1) scheduled: \(rawNode.scheduled)"
+            return "\(name) [\(kindName)] #\(rawNode.id ?? -1) scheduled: \(rawNode.scheduled) searchKey: '\(rawNode.searchKey ?? "nil")'"
         }
 
         func formatOutputValue(_ outputValue: DatabaseModels.NodeOutputValue) -> String {

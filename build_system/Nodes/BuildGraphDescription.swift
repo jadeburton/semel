@@ -90,6 +90,8 @@ struct BuildGraphInputPort: Codable, Equatable, Hashable {
 
 enum BuildGraphError: Error {
     case unknownInputPortNameReference
+    case multipleMatchingNodesBySearchKey
+    case invalidPortNodeKind
 }
 
 extension BuildGraphNode {

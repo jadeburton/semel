@@ -85,6 +85,7 @@ struct NodeContext {
             assert(name == nil || name!.contains("/") == false)
         }
     }
+    var searchKey: String?
 }
 
 // MARK: - NodeError
@@ -243,8 +244,8 @@ extension NodeType {
                                                       createIfNotExist: createIfNotExist)
     }
 
-    func findNodeConnectedToNodeViaInputWire(named name: String, fromPort: String) throws -> (any NodeType)? {
-        try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, named: name, fromPort: fromPort)
+    func findNodesConnectedToNodeViaInputWire(toInputPortNamed inputPortName: String) throws -> [any NodeType] {
+        try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, toInputPortNamed: inputPortName)
     }
 }
 
