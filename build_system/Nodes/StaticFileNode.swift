@@ -47,7 +47,7 @@ final class StaticFileNode: NodeType {
         try nodeContext.processingCycle.readFromOutputPort(Self.outputPort, nodeID: nodeContext.nodeID!)
     }
 
-    func replaceContent(_ content: DataObjectHash, metadata: FileMetadata) throws {
+    func replaceContent(_ content: DataObjectHash, metadata: String) throws {
         try writeToOutputPort(Self.outputPort,
                               value: .value(.dataObjectHash(content),
                                             metadata: metadata))
@@ -65,7 +65,7 @@ final class StaticFileNode: NodeType {
             // No input wire is connected.
             // Special case: avoid trashing our output if it has a value set
             if case .noValue = try readFromOutputPort(Self.outputPort).kind {
-                throw NodeError.missingInput
+                throw NodeError.missingInputs
             }
             return
         }
@@ -75,7 +75,7 @@ final class StaticFileNode: NodeType {
         switch inputValue.kind {
 
         case .noValue:
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
 
         default:
             try writeToOutputPort(Self.outputPort, value: inputValue.kind)

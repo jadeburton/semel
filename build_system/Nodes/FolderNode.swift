@@ -78,7 +78,7 @@ final class FolderNode: NodeType {
     func addOrReplaceChild(content: DataObjectHash, name: String) throws {
         assert(!name.contains("\\"))
 
-        let metadata = FileMetadata(name: name)
+        let metadata = name
 
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
             try existingChild.replaceContent(content, metadata: metadata)

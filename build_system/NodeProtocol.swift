@@ -9,8 +9,7 @@ import DatabaseModels
 
 // MARK: - Protocols
 
-struct CacheEntry {
-//    let inputValuesHash: [UInt8: [DataObjectHash]]
+struct ProcessCacheEntry: Codable {
     let outputValues: [UInt8: NodeValueKind]
 }
 
@@ -29,47 +28,136 @@ protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer 
 
 extension NodeType {
     func buildCacheKeyPartFromOneInput(inputPort: NodeKindDescriptor.InputPort) throws -> String {
-        let values = try readAllValuesFromInputPort(inputPort).sorted { a, b in a.originNodeID < b.originNodeID }
+        // Note: we zero-out the NodeID
+        let values = try readAllValuesFromInputPort(inputPort).sorted { a, b in a.originNodeID < b.originNodeID }.map { NodeValue(originNodeID: 0, originOutputPort: $0.originOutputPort, kind: $0.kind) }
+        
         return try values.toJSON()
     }
 
-    func buildCacheKeyFromAllInputs() throws -> String {
+    func buildCacheKeyFromAllInputs() throws -> String? {
+        if descriptor.inputs.isEmpty {
+            return ""
+        }
 
-        var aggregated = ""
+        var aggregated = try toJSON()
+
+        for outputPort in descriptor.outputs {
+            if case .stream = outputPort.kind {
+                // not supported
+                return nil
+            }
+        }
 
         for inputPort in descriptor.inputs.sorted(by: { a, b in a.index < b.index }) {
+            if case .stream = inputPort.kind {
+                // not supported
+                return nil
+            }
             aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort))
             aggregated.append("\n")
         }
 
-        return String(decoding: Sha256.hash(Data(aggregated)), as: Unicode.UTF8.self)
+        return Sha256.hash(Array(aggregated.utf8))
     }
 
-    func loadAndWriteCachedOutputs(cacheKey: String) throws {
-        
+    func loadAndWriteCachedOutputs(cacheKey: String?) throws -> Bool {
+
+        guard let cacheKey else {
+            return false
+        }
+
+        // HACK: StaticFileNode gets inputs from direct calls..
+        if (self is StaticFileNode) {
+            return false
+        }
+
+//        if !((self is ClangCompilerTool) || (self is ClangLinkerTool) || (self is ClangPreprocessorTool)) {
+//            return false
+//        }
+
+        if descriptor.inputs.isEmpty {
+            return false
+        }
+
+        if descriptor.outputs.isEmpty {
+            return false
+        }
+
+        guard let cacheEntry = try nodeContext.processingCycle.database.selectCacheEntry(hash: cacheKey) else {
+            return false
+        }
+
+        guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
+            return false
+        }
+
+        for outputPort in descriptor.outputs {
+            if let outputValue = decodedCacheEntry.outputValues[outputPort.index] {
+                print("Using cached output for node \(self.description()), output port \(outputPort.name)")
+                try writeToOutputPort(outputPort, value: outputValue)
+            } else {
+                // Invalid cache
+                return false
+            }
+        }
+
+        return true
     }
 
-    func saveCacheForAllInputsAndOutputs() throws {
-    }
-
-
-    func processWithPreCheck() throws {
-        guard allInputsAreSatisfied() else {
-            writeToOutputPortsOnError(NodeError.missingInput)
+    func saveCacheForAllInputsAndOutputs(cacheKey: String?) throws {
+        guard let cacheKey else {
             return
         }
 
-        if let cacheKey = buildCacheKeyFromAllInputs() {
-            try loadAndWriteCachedOutputs(cacheKey: cacheKey)
-        } else {
+        if descriptor.inputs.isEmpty {
+            return
+        }
+
+        if descriptor.outputs.isEmpty {
+            return
+        }
+
+        var outputValues: [UInt8: NodeValueKind] = [:]
+
+        for outputPort in descriptor.outputs {
+            let value = try readFromOutputPort(outputPort)
+
+            if case .value(let payload, _) = value.kind {
+                if case .stream = payload {
+                    // Stop - streams not cachable
+                    return
+                }
+            }
+
+            outputValues[outputPort.index] = value.kind // we do not save NodeIDs
+        }
+
+        let cacheEntry = ProcessCacheEntry(outputValues: outputValues)
+        let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
+        try nodeContext.processingCycle.database.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
+    }
+
+    func processWithPreCheck() throws {
+        guard allInputsAreSatisfied() else {
+            writeToOutputPortsOnError(NodeError.missingInput(name: "processWithPreCheck"))
+            return
+        }
+
+        nodeContext.processingCycle.wiresModified = false
+        let cacheKey = try buildCacheKeyFromAllInputs()
+
+        if try !loadAndWriteCachedOutputs(cacheKey: cacheKey) {
+
             do {
                 try process()
             } catch {
                 writeToOutputPortsOnError(error)
             }
-        }
 
-        try saveCacheForAllInputsAndOutputs()
+            if !nodeContext.processingCycle.wiresModified {
+                try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey)
+            }
+        }
     }
 
     func writeToOutputPortsOnError(_ error: Error) {
@@ -130,7 +218,8 @@ struct NodeContext {
 enum NodeError: Error {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
-    case missingInput
+    case missingInputs
+    case missingInput(name: String)
     case other(message: String)
 }
 

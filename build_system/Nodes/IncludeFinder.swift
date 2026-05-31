@@ -83,7 +83,7 @@ final class IncludeFinder: NodeType {
     // MARK: Processing
 
     func process() throws {
-        var firstMetadata: (any PolySerializable)?
+        var firstMetadata: String?
         var aggregatedIncludePathList = ""
 
         for sourceFileValue in try readAllValuesFromInputPort(Self.sourceFileInputPort) {
@@ -93,11 +93,11 @@ final class IncludeFinder: NodeType {
                 let sourceText = try payload.expectDataObjectHash().resolveAsString()
                 let includePathList = extractIncludePaths(sourceFileContent: sourceText)
                     .joined(separator: "\n")
-                firstMetadata = metadata
+                firstMetadata = metadata!
                 aggregatedIncludePathList.append(includePathList)
 
             case .noValue:
-                throw NodeError.missingInput
+                throw NodeError.missingInputs
             }
         }
 

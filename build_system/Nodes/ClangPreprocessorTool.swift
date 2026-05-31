@@ -79,11 +79,11 @@ final class ClangPreprocessorTool: NodeType {
 
     static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
                                                         name: "errorLog",
-                                                        kind: .stream(dataType: .utf8Text))
+                                                        kind: .value(dataType: .utf8Text))
 
     static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
                                                        name: "infoLog",
-                                                       kind: .stream(dataType: .utf8Text))
+                                                       kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -96,11 +96,11 @@ final class ClangPreprocessorTool: NodeType {
     func process() throws {
 
         guard let configuration: ClangPreprocessorToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         guard let primarySourceFile = try readOneValueFromInputPort(Self.sourceFileInput) else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         // MARK: Include-finder helpers
@@ -176,7 +176,7 @@ final class ClangPreprocessorTool: NodeType {
         switch primarySourceFile.kind {
 
         case .noValue:
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
 
         case .value(let payload, let metadata):
 
@@ -185,9 +185,8 @@ final class ClangPreprocessorTool: NodeType {
             let bytes = try payload.expectDataObjectHash().resolve()
             var output: [UInt8] = []
 
-            let fileMetadata = metadata as! FileMetadata
-            let inputFilename  = fileMetadata.name
-            let outputFilename = fileMetadata.name + ".p"
+            let inputFilename  = metadata ?? "input.c"
+            let outputFilename = inputFilename + ".p"
 
             var arguments = [String]()
 
@@ -213,7 +212,7 @@ final class ClangPreprocessorTool: NodeType {
                     return try payload.expectDataObjectHash().resolveAsString()
                         .split(separator: "\n").map(String.init)
                 case .noValue:
-                    throw NodeError.missingInput
+                    throw NodeError.missingInputs
                 }
             })
 
@@ -236,13 +235,13 @@ final class ClangPreprocessorTool: NodeType {
                 case .value(let payload, let metadata):
                     let filePath: String
                     if let staticFileNode: StaticFileNode = try? nodeContext.processingCycle.node(nodeID: nodeValue.originNodeID) {
-                        filePath = (try? staticFileNode.buildFullPathName()) ?? (metadata as! FileMetadata).name
+                        filePath = (try? staticFileNode.buildFullPathName()) ?? metadata!
                     } else {
-                        filePath = (metadata as! FileMetadata).name
+                        filePath = metadata!
                     }
                     return .init(filePath: filePath, content: try payload.expectDataObjectHash().resolve())
                 case .noValue:
-                    throw NodeError.missingInput
+                    throw NodeError.missingInputs
                 }
             })
 
@@ -267,12 +266,12 @@ final class ClangPreprocessorTool: NodeType {
                                                               output.append(contentsOf: data)
                                                           }))
 
-            try writeToOutputPortStream(Self.errorLog, data: errorOutput.data(using: .utf8) ?? Data())
-            try writeToOutputPortStream(Self.infoLog, data: infoOutput.data(using: .utf8) ?? Data())
+            try writeToOutputPort(Self.errorLog, value: .value(.dataObjectHash(errorOutput.intern()), metadata: nil))
+            try writeToOutputPort(Self.infoLog, value: .value(.dataObjectHash(infoOutput.intern()), metadata: nil))
 
             if exitCode == 0 {
                 try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
-                                                                 metadata: FileMetadata(name: outputFilename)))
+                                                                 metadata: outputFilename))
             } else {
                 try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Nonzero exit code")))
             }

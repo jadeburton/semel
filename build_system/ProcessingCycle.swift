@@ -17,6 +17,8 @@ final class ProcessingCycle {
     var rootNode: RootNode!
 //    private var loadedNodes = [ObjectID: NodeType]()
 
+    var wiresModified = false
+
     init(database: DatabaseLayer, buildEngine: BuildEngine?) throws {
         self.database = database
         self.buildEngine = buildEngine

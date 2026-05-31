@@ -70,11 +70,11 @@ final class ClangLinkerTool: NodeType {
 
     static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
                                                         name: "errorLog",
-                                                        kind: .stream(dataType: .utf8Text))
+                                                        kind: .value(dataType: .utf8Text))
 
     static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
                                                        name: "infoLog",
-                                                       kind: .stream(dataType: .utf8Text))
+                                                       kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -87,7 +87,7 @@ final class ClangLinkerTool: NodeType {
     func process() throws {
 
         guard let configuration: ClangLinkerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         let inputValues = try readAllValuesFromInputPort(Self.input)
@@ -97,17 +97,16 @@ final class ClangLinkerTool: NodeType {
         for nodeValue in inputValues {
             switch nodeValue.kind {
             case .value(let payload, let metadata):
-                guard let fileMetadata = metadata as? FileMetadata,
-                      fileMetadata.name.hasSuffix(".dylib") else { continue }
+                guard let metadata, metadata.hasSuffix(".dylib") else { continue }
                 let data = try payload.expectDataObjectHash().resolve()
                 let originNode = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)
                 if let staticFileNode = originNode as? StaticFileNode {
                     libraryFiles.append(.init(filePath: try staticFileNode.buildFullPathName(), content: data))
                 } else {
-                    libraryFiles.append(.init(filePath: fileMetadata.name, content: data))
+                    libraryFiles.append(.init(filePath: metadata, content: data))
                 }
             case .noValue:
-                throw NodeError.missingInput
+                throw NodeError.missingInputs
             }
         }
 
@@ -115,17 +114,16 @@ final class ClangLinkerTool: NodeType {
         for nodeValue in inputValues {
             switch nodeValue.kind {
             case .value(let payload, let metadata):
-                guard let fileMetadata = metadata as? FileMetadata,
-                      fileMetadata.name.hasSuffix(".o") else { continue }
-                objectFiles.append(.init(filePath: fileMetadata.name,
+                guard let metadata, metadata.hasSuffix(".o") else { continue }
+                objectFiles.append(.init(filePath: metadata,
                                          content: try payload.expectDataObjectHash().resolve()))
             case .noValue:
-                throw NodeError.missingInput
+                throw NodeError.missingInputs
             }
         }
 
         guard !objectFiles.isEmpty else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         var output: [UInt8] = []
@@ -174,12 +172,12 @@ final class ClangLinkerTool: NodeType {
                               output.append(contentsOf: data)
                           }))
 
-        try writeToOutputPortStream(Self.errorLog, data: errorOutput.data(using: .utf8) ?? Data())
-        try writeToOutputPortStream(Self.infoLog, data: infoOutput.data(using: .utf8) ?? Data())
+        try writeToOutputPort(Self.errorLog, value: .value(.dataObjectHash(errorOutput.intern()), metadata: nil))
+        try writeToOutputPort(Self.infoLog, value: .value(.dataObjectHash(infoOutput.intern()), metadata: nil))
 
         if exitCode == 0 {
             try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
-                                                             metadata: FileMetadata(name: "output.dylib")))
+                                                             metadata: "output.dylib"))
         } else {
             try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Linker exited with nonzero status")))
         }

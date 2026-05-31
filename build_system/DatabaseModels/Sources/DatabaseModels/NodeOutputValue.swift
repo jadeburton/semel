@@ -92,7 +92,7 @@ extension NodeOutputValue {
     public mutating func appendBytesToStream(data: Data) throws {
         let fileURL = urlForStream()
 
-        print("appendBytesToStream: \(fileURL)")
+//        print("appendBytesToStream: \(fileURL)")
         let fileManager = FileManager.default
 
         // Ensure the streams directory exists.

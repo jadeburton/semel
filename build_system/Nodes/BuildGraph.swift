@@ -323,7 +323,7 @@ final class BuildGraph: NodeType {
 
                             try configurationNode.writeToOutputPort(StaticFileNode.outputPort,
                                                                     value: .value(.dataObjectHash(configuration.intern()),
-                                                                                  metadata: FileMetadata(name: "configuration")))
+                                                                                  metadata: "configuration"))
                             return nodeConnectedToInputWire
 
                         case .tool(let kind, _):
@@ -420,7 +420,7 @@ final class BuildGraph: NodeType {
         let decodedFormulae = try allFormulae.map { formulaFileValue in
             switch formulaFileValue.kind {
             case .noValue:
-                throw NodeError.missingInput
+                throw NodeError.missingInputs
             case .value(let payload, _):
                 return try BuildGraphNode.fromJSON(payload.expectDataObjectHash().resolveAsString())
             }

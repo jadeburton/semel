@@ -62,11 +62,11 @@ final class ClangCompilerTool: NodeType {
 
     static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
                                                         name: "errorLog",
-                                                        kind: .stream(dataType: .utf8Text))
+                                                        kind: .value(dataType: .utf8Text))
 
     static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
                                                        name: "infoLog",
-                                                       kind: .stream(dataType: .utf8Text))
+                                                       kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -79,29 +79,24 @@ final class ClangCompilerTool: NodeType {
     func process() throws {
 
         guard let configuration: ClangCompilerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         guard let firstInputValue = try readOneValueFromInputPort(Self.input) else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         switch firstInputValue.kind {
 
         case .noValue:
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
 
         case .value(let payload, let metadata):
 
             let bytes = try payload.expectDataObjectHash().resolve()
             var output: [UInt8] = []
 
-            let inputFilename: String
-            if let fileMetadata = metadata as? FileMetadata {
-                inputFilename = fileMetadata.name
-            } else {
-                inputFilename = "source.pc"
-            }
+            let inputFilename = metadata ?? "source.pc"
             let outputFilename = inputFilename + ".o"
 
             var arguments = [String]()
@@ -136,12 +131,12 @@ final class ClangCompilerTool: NodeType {
                                   output.append(contentsOf: data)
                               }))
 
-            try writeToOutputPortStream(Self.errorLog, data: errorOutput.data(using: .utf8) ?? Data())
-            try writeToOutputPortStream(Self.infoLog, data: infoOutput.data(using: .utf8) ?? Data())
+            try writeToOutputPort(Self.errorLog, value: .value(.dataObjectHash(errorOutput.intern()), metadata: nil))
+            try writeToOutputPort(Self.infoLog, value: .value(.dataObjectHash(infoOutput.intern()), metadata: nil))
 
             if exitCode == 0 {
                 try writeToOutputPort(Self.output, value: .value(.dataObjectHash(output.intern()),
-                                                                 metadata: FileMetadata(name: outputFilename)))
+                                                                 metadata: outputFilename))
             } else {
                 try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Compiler exited with nonzero status")))
             }

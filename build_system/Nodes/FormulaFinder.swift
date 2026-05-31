@@ -61,13 +61,13 @@ final class FormulaFinder: NodeType {
 
     func process() throws {
         guard let fileListStreamCursor = try readOneValueFromInputPort(Self.fileListInputPort) else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         let data = try fileListStreamCursor.readBytesFromStream(nodeContext: nodeContext)
 
         guard !data.isEmpty else {
-            throw NodeError.missingInput
+            throw NodeError.missingInputs
         }
 
         let str = String(data: data, encoding: .utf8)!
@@ -124,6 +124,9 @@ extension NodeValueAndWire {
         wire.streamPosition = Int64(currentLength)
 
         try nodeContext.processingCycle.database.updateWire(wire)
+
+        nodeContext.processingCycle.wiresModified = true
+
         return data
     }
 }
@@ -173,7 +176,7 @@ final class FormulaExtractor: NodeType {
                 // Pass the formula content through unchanged.
                 try writeToOutputPort(Self.formulaOutputPort,
                                       value: .value(.dataObjectHash(payload.expectDataObjectHash()),
-                                                    metadata: FileMetadata(name: "formula")))
+                                                    metadata: "formula"))
             }
         }
     }

@@ -24,6 +24,8 @@ extension ProcessingCycle {
         // TODO: if there is a circular reference, block the creation of the Wire
         _ = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
 
+        wiresModified = true
+
         try writePendingToAllOutputsOfNode(nodeID: toNodeID)
 
         try scheduleNode(toNodeID)
@@ -94,6 +96,8 @@ extension ProcessingCycle {
                 _ = try deleteNode(wire.toNodeID)
             }
         }
+
+        wiresModified = true
 
         //        if toNode
 

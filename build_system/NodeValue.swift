@@ -19,12 +19,15 @@ enum NodeValuePayload: Codable {
     case stream(streamID: String, currentLength: UInt64)
 }
 
+// NodeValueKind cannot use synthesised Codable because `metadata` is `any PolySerializable`,
+// a protocol existential. We encode it as a JSON string via PolyFactory — the same approach
+// used throughout the rest of this file.
 enum NodeValueKind: Codable {
     case noValue(reason: NoValueReason)
-    case value(_ value: NodeValuePayload, metadata: (any PolySerializable)?)
+    case value(_ value: NodeValuePayload, metadata: String?)
 }
 
-struct NodeValue {
+struct NodeValue: Codable {
     let originNodeID: ObjectID
     let originOutputPort: UInt8
     let kind: NodeValueKind
@@ -96,10 +99,10 @@ extension NodeValueKind {
                     throw NodeOutputValueError.streamIDNotSetOnNodeOutputValue
                 }
 
-                if let metadataJSON = nodeOutputValue.metadata {
+                if let metadata = nodeOutputValue.metadata {
                     self = .value(.stream(streamID: streamID,
                                           currentLength: currentLength),
-                                  metadata: try PolyFactory.decode(encodedJSON: metadataJSON))
+                                  metadata: metadata)
                 } else {
                     self = .value(.stream(streamID: streamID,
                                           currentLength: currentLength),
@@ -112,9 +115,9 @@ extension NodeValueKind {
                     throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
                 }
 
-                if let metadataJSON = nodeOutputValue.metadata {
+                if let metadata = nodeOutputValue.metadata {
                     self = .value(.dataObjectHash(dataObjectHash),
-                                  metadata: try PolyFactory.decode(encodedJSON: metadataJSON))
+                                  metadata: metadata)
                 } else {
                     self = .value(.dataObjectHash(dataObjectHash),
                                   metadata: nil)
@@ -154,7 +157,7 @@ extension NodeValueKind {
                              port: outputPortIndex,
                              kind: .value,
                              dataObjectHashOrStreamID: dataObjectHash,
-                             metadata: try metadata?.toJSON(),
+                             metadata: metadata,
                              errorMessage: nil)
 
             case .stream(let streamID, let currentLength):
