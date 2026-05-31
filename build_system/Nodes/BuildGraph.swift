@@ -99,7 +99,7 @@ final class BuildGraph: NodeType {
 
     // MARK: Formula integration
 
-    func integrateFormula() throws {
+    func generateSimpleFormula(sourceFiles: [String], productName: String, dynamicLibrary: Bool) throws -> BuildGraphNode {
 
         let standardClang = ToolDescriptor(name: "clang",
                                            version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
@@ -107,76 +107,79 @@ final class BuildGraph: NodeType {
                                            architecture: "arm64",
                                            recursiveHash: nil)
 
+        // Shared tool configuration nodes (one per tool kind, reused by all source files)
         let clangPreprocessorConfiguration = BuildGraphNode(
             name: "PreprocessorConfiguration",
-            kind: .configuration(try! ClangPreprocessorToolConfiguration(
+            kind: .configuration(try ClangPreprocessorToolConfiguration(
                 toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
 
         let clangCompilerConfiguration = BuildGraphNode(
             name: "CompilerConfiguration",
-            kind: .configuration(try! ClangCompilerToolConfiguration(
+            kind: .configuration(try ClangCompilerToolConfiguration(
                 toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
 
         let clangLinkerConfiguration = BuildGraphNode(
             name: "LinkerConfiguration",
-            kind: .configuration(try! ClangLinkerToolConfiguration(
-                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
+            kind: .configuration(try ClangLinkerToolConfiguration(toolDescriptor: standardClang,
+                                                                  arguments: dynamicLibrary ? ["-dynamiclib"] : [],
+                                                                  environment: [:]).toJSON()))
 
-        let clangPreprocessorConfigurationOutputs = [BuildGraphInputWire(from: clangPreprocessorConfiguration, fromPort: "output")]
-        let clangCompilerConfigurationOutputs     = [BuildGraphInputWire(from: clangCompilerConfiguration,     fromPort: "output")]
-        let clangLinkerConfigurationOutputs       = [BuildGraphInputWire(from: clangLinkerConfiguration,       fromPort: "output")]
+        // Convenience: single-element wire arrays for the shared configuration nodes
+        let clangPreprocessorConfigurationWires = [BuildGraphInputWire(from: clangPreprocessorConfiguration, fromPort: "output")]
+        let clangCompilerConfigurationWires     = [BuildGraphInputWire(from: clangCompilerConfiguration,     fromPort: "output")]
+        let clangLinkerConfigurationWires       = [BuildGraphInputWire(from: clangLinkerConfiguration,       fromPort: "output")]
 
-        let helloC  = BuildGraphNode(name: "hello.c",  kind: .inputFile)
-        let mainC   = BuildGraphNode(name: "main.c",   kind: .inputFile)
+        // One input-file node per source file (e.g. hello.c, main.c)
+        let sourceFileNodes = sourceFiles.map { sourceFile in
+            BuildGraphNode(name: sourceFile, kind: .inputFile)
+        }
 
-        let helloOutputs = [BuildGraphInputWire(from: helloC,  fromPort: "output")]
-        let mainOutputs  = [BuildGraphInputWire(from: mainC,   fromPort: "output")]
+        // One preprocessor node per source file, connected to the source file and the shared config
+        let preprocessorNodes = sourceFileNodes.map { sourceFileNode in
+            BuildGraphNode(
+                name: "preprocessor(\(sourceFileNode.name))",
+                kind: .tool(kind: .preprocessor,
+                            inputPorts: [
+                                BuildGraphInputPort(name: "input",
+                                                   inputWires: [BuildGraphInputWire(from: sourceFileNode, fromPort: "output")]),
+                                BuildGraphInputPort(name: "configuration",
+                                                   inputWires: clangPreprocessorConfigurationWires)
+                            ]))
+        }
 
-        let preprocessorHello = BuildGraphNode(
-            name: "preprocessorHello",
-            kind: .tool(kind: .preprocessor,
-                        inputPorts: [BuildGraphInputPort(name: "input",         inputWires: helloOutputs),
-                                     BuildGraphInputPort(name: "configuration", inputWires: clangPreprocessorConfigurationOutputs)]))
+        // One compiler node per preprocessor, connected to the preprocessed output and the shared config
+        let compilerNodes = preprocessorNodes.map { preprocessorNode in
+            BuildGraphNode(
+                name: "compiler(\(preprocessorNode.name))",
+                kind: .tool(kind: .compiler,
+                            inputPorts: [
+                                BuildGraphInputPort(name: "input",
+                                                   inputWires: [BuildGraphInputWire(from: preprocessorNode, fromPort: "output")]),
+                                BuildGraphInputPort(name: "configuration",
+                                                   inputWires: clangCompilerConfigurationWires)
+                            ]))
+        }
 
-        let preprocessorMain = BuildGraphNode(
-            name: "preprocessorMain",
-            kind: .tool(kind: .preprocessor,
-                        inputPorts: [BuildGraphInputPort(name: "input",         inputWires: mainOutputs),
-                                     BuildGraphInputPort(name: "configuration", inputWires: clangPreprocessorConfigurationOutputs)]))
+        // The linker takes all compiler outputs as inputs, plus the shared linker configuration
+        let linkerInputWires = compilerNodes.map { compilerNode in
+            BuildGraphInputWire(from: compilerNode, fromPort: "output")
+        }
 
-        let preprocessorHelloOutput = BuildGraphInputWire(from: preprocessorHello, fromPort: "output")
-        let preprocessorMainOutput  = BuildGraphInputWire(from: preprocessorMain,  fromPort: "output")
-
-        let compilerHello = BuildGraphNode(
-            name: "compilerHello",
-            kind: .tool(kind: .compiler,
-                        inputPorts: [BuildGraphInputPort(name: "input",         inputWires: [preprocessorHelloOutput]),
-                                     BuildGraphInputPort(name: "configuration", inputWires: clangCompilerConfigurationOutputs)]))
-
-        let compilerMain = BuildGraphNode(
-            name: "compilerMain",
-            kind: .tool(kind: .compiler,
-                        inputPorts: [BuildGraphInputPort(name: "input",         inputWires: [preprocessorMainOutput]),
-                                     BuildGraphInputPort(name: "configuration", inputWires: clangCompilerConfigurationOutputs)]))
-
-        let compilerHelloOutput = BuildGraphInputWire(from: compilerHello, fromPort: "output")
-        let compilerMainOutput  = BuildGraphInputWire(from: compilerMain,  fromPort: "output")
-
-        let linker = BuildGraphNode(
-            name: "linker",
+        let linkerNode = BuildGraphNode(
+            name: "linker(\(productName))",
             kind: .tool(kind: .linker,
-                        inputPorts: [BuildGraphInputPort(name: "input",         inputWires: [compilerHelloOutput, compilerMainOutput]),
-                                     BuildGraphInputPort(name: "configuration", inputWires: clangLinkerConfigurationOutputs)]))
+                        inputPorts: [
+                            BuildGraphInputPort(name: "input",         inputWires: linkerInputWires),
+                            BuildGraphInputPort(name: "configuration", inputWires: clangLinkerConfigurationWires)
+                        ]))
 
-        let buildGraphDescription = BuildGraphNode(name: "mylib.dylib",
-                                                   kind: .outputFile(inputPorts: [BuildGraphInputPort(name: "input",
-                                                                                                      inputWires: [BuildGraphInputWire(from: linker, fromPort: "output")])]))
-
-        let json = try JSONEncoder().encode(buildGraphDescription)
-        print("build graph description JSON: \(String(data: json, encoding: .utf8) ?? "nil") ")
-
-//        let buildGraphDescription = try JSONDecoder().decode(BuildGraphNode.self, from: Data(formula.utf8))
-//        try integrate(buildGraphOutput: buildGraphDescription)
+        // The output file node, wired from the linker
+        return BuildGraphNode(
+            name: productName,
+            kind: .outputFile(inputPorts: [
+                BuildGraphInputPort(name: "input",
+                                   inputWires: [BuildGraphInputWire(from: linkerNode, fromPort: "output")])
+            ]))
     }
 
     // Follows 'outputNode' backwards through its dependencies to reconstruct a live processing graph that mirrors the structure of the build graph description.

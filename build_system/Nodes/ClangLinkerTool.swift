@@ -8,6 +8,7 @@ import Foundation
 
 // MARK: - Configuration
 
+// TODO: multiple partial config objects can be bound to an Input port, then they will be merged automatically.
 struct ClangLinkerToolConfiguration: PolySerializable {
     static let kind: UInt = 12
 
@@ -133,6 +134,7 @@ final class ClangLinkerTool: NodeType {
         arguments.append("-L"); arguments.append(".")
         // TODO: lock down SDK version and hash for full hermeticity.
         arguments.append("-L")
+        arguments.append("-dynamiclib")
         arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
         arguments.append("-lSystem")
         arguments.append("-nostdlib")
