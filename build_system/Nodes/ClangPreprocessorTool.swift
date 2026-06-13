@@ -8,24 +8,7 @@ import Foundation
 
 // MARK: - Configuration
 
-struct Schema: PolySerializable {
-    static let kind: UInt = 7
 
-    struct WireSchemaEntry: Codable {
-        let fromNodePath: String
-        let fromNodeOutputName: String
-        let toNodePath: String
-        let toOutputName: String
-    }
-
-    struct NodeSchemaEntry: Codable {
-        let path: String
-        let nodeKind: UInt
-    }
-
-    let wires: [WireSchemaEntry]
-    let nodes: [NodeSchemaEntry]
-}
 
 struct ClangPreprocessorToolConfiguration: PolySerializable {
     static let kind: UInt = 11
@@ -62,21 +45,21 @@ final class ClangPreprocessorTool: NodeType {
 
     // MARK: Ports
 
-    static let configuration = NodeKindDescriptor.InputPort(index: 0,
+    static let configuration = InputPort(index: 0,
                                                             name: "configuration",
                                                             kind: .value(dataType: .utf8Text),
                                                             maximumConnections: 1,
                                                             minimumConnections: 1,
                                                             cascadingDelete: false)
 
-    static let sourceFileInput = NodeKindDescriptor.InputPort(index: 1,
+    static let sourceFileInput = InputPort(index: 1,
                                                               name: "input",
                                                               kind: .value(dataType: .utf8Text),
                                                               maximumConnections: 1,
                                                               minimumConnections: 1,
                                                               cascadingDelete: false)
 
-    static let includeFiles = NodeKindDescriptor.InputPort(index: 2,
+    static let includeFiles = InputPort(index: 2,
                                                            name: "includeFiles",
                                                            kind: .value(dataType: .utf8Text),
                                                            maximumConnections: nil,
@@ -85,22 +68,22 @@ final class ClangPreprocessorTool: NodeType {
 
     // ISSUE: if there is a missing header file but it is added, we don't get notified.
     // we need to monitor for all new header files - but only if we are in an error state
-    static let headerInputFiles = NodeKindDescriptor.InputPort(index: 3,
+    static let headerInputFiles = InputPort(index: 3,
                                                                name: "headerInputFiles",
                                                                kind: .value(dataType: .utf8Text),
                                                                maximumConnections: nil,
                                                                minimumConnections: 0,
                                                                cascadingDelete: false)
 
-    static let output = NodeKindDescriptor.OutputPort(index: 2,
+    static let output = OutputPort(index: 2,
                                                       name: "output",
                                                       kind: .value(dataType: .utf8Text))
 
-    static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
+    static let errorLog = OutputPort(index: 0,
                                                         name: "errorLog",
                                                         kind: .value(dataType: .utf8Text))
 
-    static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
+    static let infoLog = OutputPort(index: 1,
                                                        name: "infoLog",
                                                        kind: .value(dataType: .utf8Text))
 
@@ -114,13 +97,8 @@ final class ClangPreprocessorTool: NodeType {
 
     func process() throws {
 
-        guard let configuration: ClangPreprocessorToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            throw NodeError.missingInputs
-        }
-
-        guard let primarySourceFile = try readOneValueFromInputPort(Self.sourceFileInput) else {
-            throw NodeError.missingInputs
-        }
+        let configuration: ClangPreprocessorToolConfiguration = try readConfiguration(fromInputPort: Self.configuration)
+        let primarySourceFile = try readOneValueFromInputPort(Self.sourceFileInput)
 
         // MARK: Include-finder helpers
 
@@ -192,107 +170,84 @@ final class ClangPreprocessorTool: NodeType {
 
         // MARK: Main switch
 
-        switch primarySourceFile.kind {
+        try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
 
-        case .noValue:
-            throw NodeError.missingInputs
+        let bytes = try primarySourceFile.dataObjectHash.resolve()
+        var output: [UInt8] = []
 
-        case .value(let dataObjectHash, let metadata):
+        let inputFilename  = "input.c"
+        let outputFilename = inputFilename + ".p"
 
-            try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
+        var arguments = [String]()
 
-            let bytes = try dataObjectHash.resolve()
-            var output: [UInt8] = []
+        // Preprocess only.
+        arguments.append("-E")
+        arguments.append("-x"); arguments.append("c")
+        arguments.append("-I"); arguments.append(".")
+        // TODO: standard includes should come from a versioned, hashed SDK snapshot.
+        arguments.append("-I")
+        arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
+        arguments.append("-nostdinc")
+        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        arguments.append(inputFilename)
+        arguments.append("-o"); arguments.append(outputFilename)
+        arguments.append(contentsOf: configuration.arguments)
 
-            let inputFilename  = metadata ?? "input.c"
-            let outputFilename = inputFilename + ".p"
+        // Wire up include files discovered by IncludeFinder nodes.
+        let includeFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.includeFiles)
 
-            var arguments = [String]()
+        let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
+            try includeFilesValue.kind.expectValue().resolveAsString().split(separator: "\n").map(String.init)
+        })
 
-            // Preprocess only.
-            arguments.append("-E")
-            arguments.append("-x"); arguments.append("c")
-            arguments.append("-I"); arguments.append(".")
-            // TODO: standard includes should come from a versioned, hashed SDK snapshot.
-            arguments.append("-I")
-            arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
-            arguments.append("-nostdinc")
-            arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
-            arguments.append(inputFilename)
-            arguments.append("-o"); arguments.append(outputFilename)
-            arguments.append(contentsOf: configuration.arguments)
+        for includeFilePath in setOfIncludeFiles {
+            try ensureIncludeFileIsAttached(includeFilePath)
+        }
+        try removeIncludeFileWiresNotInList(setOfIncludeFiles)
 
-            // Wire up include files discovered by IncludeFinder nodes.
-            let includeFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.includeFiles)
+        let headerInputFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.headerInputFiles)
+        for headerInputFilesValue in headerInputFilesValues {
+            try ensureSourceOrHeaderNodeHasIncludeFinderAttached(headerInputFilesValue.originNodeID)
+        }
 
-            let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
-                switch includeFilesValue.kind {
-                case .value(let dataObjectHash, _):
-                    return try dataObjectHash.resolveAsString()
-                        .split(separator: "\n").map(String.init)
-                case .noValue:
-                    throw NodeError.missingInputs
-                }
-            })
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
 
-            for includeFilePath in setOfIncludeFiles {
-                try ensureIncludeFileIsAttached(includeFilePath)
-            }
-            try removeIncludeFileWiresNotInList(setOfIncludeFiles)
+        var inputFiles: [FileNameAndContent] = [.init(filePath: inputFilename, content: bytes)]
 
-            let headerInputFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.headerInputFiles)
-            for headerInputFilesValue in headerInputFilesValues {
-                try ensureSourceOrHeaderNodeHasIncludeFinderAttached(headerInputFilesValue.originNodeID)
-            }
+        inputFiles.append(contentsOf: try headerInputFilesValues.compactMap { nodeValue -> FileNameAndContent? in
+            // TODO! the inputs should have paths not IDs
+            let originNodePath = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)!.nodeContext.name!
+            return .init(filePath: originNodePath, content: try nodeValue.kind.expectValue().resolve())
+        })
 
-            let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
+        var errorOutput = ""
+        var infoOutput = ""
 
-            var inputFiles: [FileNameAndContent] = [.init(filePath: inputFilename, content: bytes)]
+        let exitCode = try tool.execute(arguments: arguments,
+                                        environment: configuration.environment,
+                                        inputFiles: inputFiles,
+                                        expectedOutputFileNames: [outputFilename],
+                                        output: .init(logError: { error in
+                                                          errorOutput += error
+                                                          errorOutput += "\n"
+                                                          print(error)
+                                                      },
+                                                      logMessage: { message in
+                                                          infoOutput += message
+                                                          infoOutput += "\n"
+                                                          print(message)
+                                                      },
+                                                      write: { _, data in
+                                                          output.append(contentsOf: data)
+                                                      }))
 
-            inputFiles.append(contentsOf: try headerInputFilesValues.compactMap { nodeValue -> FileNameAndContent? in
-                switch nodeValue.kind {
-                case .value(let dataObjectHash, let metadata):
-                    let filePath: String
-                    if let staticFileNode: StaticFileNode = try? nodeContext.processingCycle.node(nodeID: nodeValue.originNodeID) {
-                        filePath = (try? staticFileNode.buildFullPathName()) ?? metadata!
-                    } else {
-                        filePath = metadata!
-                    }
-                    return .init(filePath: filePath, content: try dataObjectHash.resolve())
-                case .noValue:
-                    throw NodeError.missingInputs
-                }
-            })
+        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern()))
+        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern()))
 
-            var errorOutput = ""
-            var infoOutput = ""
-
-            let exitCode = try tool.execute(arguments: arguments,
-                                            environment: configuration.environment,
-                                            inputFiles: inputFiles,
-                                            expectedOutputFileNames: [outputFilename],
-                                            output: .init(logError: { error in
-                                                              errorOutput += error
-                                                              errorOutput += "\n"
-                                                              print(error)
-                                                          },
-                                                          logMessage: { message in
-                                                              infoOutput += message
-                                                              infoOutput += "\n"
-                                                              print(message)
-                                                          },
-                                                          write: { _, data in
-                                                              output.append(contentsOf: data)
-                                                          }))
-
-            try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern(), metadata: nil))
-            try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern(), metadata: nil))
-
-            if exitCode == 0 {
-                try writeToOutputPort(Self.output, value: .value(output.intern(), metadata: outputFilename))
-            } else {
-                try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Nonzero exit code")))
-            }
+        if exitCode == 0 {
+            try writeToOutputPort(Self.output, value: .value(output.intern()))
+        } else {
+            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Nonzero exit code")))
         }
     }
 }

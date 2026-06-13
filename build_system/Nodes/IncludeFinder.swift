@@ -26,14 +26,14 @@ final class IncludeFinder: NodeType {
 
     // MARK: Ports
 
-    static let sourceFileInputPort = NodeKindDescriptor.InputPort(index: 0,
+    static let sourceFileInputPort = InputPort(index: 0,
                                                                   name: "sourceFile",
                                                                   kind: .value(dataType: .utf8Text),
                                                                   maximumConnections: 1,
                                                                   minimumConnections: 1,
                                                                   cascadingDelete: true)
 
-    static let includePathListOutputPort = NodeKindDescriptor.OutputPort(index: 0,
+    static let includePathListOutputPort = OutputPort(index: 0,
                                                                          name: "includePathList",
                                                                          kind: .value(dataType: .utf8Text))
 
@@ -83,17 +83,17 @@ final class IncludeFinder: NodeType {
     // MARK: Processing
 
     func process() throws {
-        var firstMetadata: String?
         var aggregatedIncludePathList = ""
 
         for sourceFileValue in try readAllValuesFromInputPort(Self.sourceFileInputPort) {
             switch sourceFileValue.kind {
 
-            case .value(let dataObjectHash, let metadata):
+            case .value(let dataObjectHash):
                 let sourceText = try dataObjectHash.resolveAsString()
+
                 let includePathList = extractIncludePaths(sourceFileContent: sourceText)
                     .joined(separator: "\n")
-                firstMetadata = metadata!
+
                 aggregatedIncludePathList.append(includePathList)
 
             case .noValue:
@@ -101,6 +101,6 @@ final class IncludeFinder: NodeType {
             }
         }
 
-        try writeToOutputPort(Self.includePathListOutputPort, value: .value(aggregatedIncludePathList.intern(), metadata: firstMetadata))
+        try writeToOutputPort(Self.includePathListOutputPort, value: .value(aggregatedIncludePathList.intern()))
     }
 }

@@ -32,9 +32,9 @@ extension ProcessingCycle {
     }
 
     func connectWire(fromNode: NodeType,
-                     fromPort: NodeKindDescriptor.OutputPort,
+                     fromPort: OutputPort,
                      toNode: NodeType,
-                     toPort: NodeKindDescriptor.InputPort) throws {
+                     toPort: InputPort) throws {
 
         try connectWire(fromNodeID: fromNode.nodeContext.nodeID!,
                         fromPort: fromPort.index,
@@ -43,9 +43,9 @@ extension ProcessingCycle {
     }
 
     func deleteWire(fromNode: NodeType,
-                    fromPort: NodeKindDescriptor.OutputPort,
+                    fromPort: OutputPort,
                     toNode: NodeType,
-                    toPort: NodeKindDescriptor.InputPort) throws -> Bool {
+                    toPort: InputPort) throws -> Bool {
 
         try deleteWire(fromNodeID: fromNode.nodeContext.nodeID!,
                        fromPort: fromPort.index,

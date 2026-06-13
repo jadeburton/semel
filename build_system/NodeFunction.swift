@@ -10,7 +10,7 @@ import DatabaseModels
 // MARK: - Protocols
 
 struct ProcessCacheEntry: Codable {
-    let outputValues: [UInt8: NodeValueKind]
+    let outputValues: [String: NodeValueKind]
 }
 
 protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer {
@@ -27,9 +27,10 @@ protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer 
 }
 
 extension NodeType {
-    func buildCacheKeyPartFromOneInput(inputPort: NodeKindDescriptor.InputPort) throws -> String {
+    func buildCacheKeyPartFromOneInput(inputPort: InputPort) throws -> String {
         // Note: we zero-out the NodeID
-        let values = try readAllValuesFromInputPort(inputPort).sorted { a, b in a.originNodeID < b.originNodeID }.map { NodeValue(originNodeID: 0, originOutputPort: $0.originOutputPort, kind: $0.kind) }
+        #warning("This should not reference surrogate IDs")
+        let values = try readAllValuesFromInputPort(inputPort).sorted { a, b in a.originNodeID < b.originNodeID }.map { NodeValue(originNodeID: 0, originOutputPortDefID: $0.originOutputPortDefID, kind: $0.kind) }
         
         return try values.toJSON()
     }
@@ -41,7 +42,7 @@ extension NodeType {
 
         var aggregated = try toJSON()
 
-        for inputPort in descriptor.inputs.sorted(by: { a, b in a.index < b.index }) {
+        for inputPort in descriptor.inputs.sorted(by: { a, b in a.name < b.name }) {
             aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort))
             aggregated.append("\n")
         }
@@ -81,7 +82,7 @@ extension NodeType {
         }
 
         for outputPort in descriptor.outputs {
-            if let outputValue = decodedCacheEntry.outputValues[outputPort.index] {
+            if let outputValue = decodedCacheEntry.outputValues[outputPort.name] {
                 print("Using cached output for node \(self.description()), output port \(outputPort.name)")
                 try writeToOutputPort(outputPort, value: outputValue)
             } else {
@@ -106,11 +107,11 @@ extension NodeType {
             return
         }
 
-        var outputValues: [UInt8: NodeValueKind] = [:]
+        var outputValues: [String: NodeValueKind] = [:]
 
         for outputPort in descriptor.outputs {
             let value = try readFromOutputPort(outputPort)
-            outputValues[outputPort.index] = value.kind // we do not save NodeIDs
+            outputValues[outputPort.name] = value.kind // we do not save NodeIDs
         }
 
         let cacheEntry = ProcessCacheEntry(outputValues: outputValues)
@@ -202,6 +203,7 @@ enum NodeError: Error {
     case missingInputs
     case missingInput(name: String)
     case other(message: String)
+    case portDefNotFound(name: String, kind: PortDef.PortKind)
 }
 
 // MARK: - ObjectID helper
@@ -226,6 +228,11 @@ extension NodeType {
     func description() -> String {
         "\(String(describing: Self.self)) (kind: \(descriptor.kind)), NodeID: \(nodeContext.nodeID ?? -1), name: \(nodeContext.name ?? "nil"), inputs: \(descriptor.inputs.count), outputs: \(descriptor.outputs.count)"
     }
+}
+
+struct OneNodeValue {
+    let dataObjectHash: DataObjectHash
+    let originNodeID: ObjectID
 }
 
 // MARK: - NodeType navigation / port helpers
@@ -267,6 +274,8 @@ extension NodeType {
 
     func noOutputWiresPreventCascadeDeletion() throws -> Bool {
 
+        #warning("TODO")
+        return true /*
         guard let wires = try? nodeContext.processingCycle.database.selectWires(comingFromNodeID: nodeContext.nodeID!), !wires.isEmpty else {
             return true
         }
@@ -281,33 +290,43 @@ extension NodeType {
             }
         }
 
-        return true
+        return true*/
     }
 
-    func readAllValuesFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> [NodeValueAndWire] {
+    func readAllValuesFromInputPort(_ inputPort: InputPort) throws -> [NodeValueAndWire] {
         try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
     }
 
     /// Returning nil means there is nothing yet connected to the input port
     /// (i.e. not that the value is not set).
-    func readOneValueFromInputPort(_ inputPort: NodeKindDescriptor.InputPort) throws -> NodeValueAndWire? {
+    func readOneValueFromInputPort(_ inputPort: InputPort) throws -> OneNodeValue {
         let values = try readAllValuesFromInputPort(inputPort)
 
         switch values.count {
+
         case 0:
-            return nil
+            throw NodeError.missingInputs
+
         case 1:
-            return values.first!
+            switch values.first!.kind {
+
+            case .noValue:
+                throw NodeError.missingInputs
+
+            case .value(let dataObjectHash):
+                return .init(dataObjectHash: dataObjectHash, originNodeID: values.first!.originNodeID)
+            }
+
         default:
             throw NodeError.onlyOneWireShouldBeConnectedToInput
         }
     }
 
-    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort) throws -> NodeValue {
+    func readFromOutputPort(_ outputPort: OutputPort) throws -> NodeValue {
         try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeContext.nodeID!)
     }
 
-    func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, value: NodeValueKind) throws {
+    func writeToOutputPort(_ outputPort: OutputPort, value: NodeValueKind) throws {
         try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: nodeContext.nodeID!)
     }
 

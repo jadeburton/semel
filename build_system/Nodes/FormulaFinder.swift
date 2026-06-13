@@ -28,7 +28,7 @@ final class FormulaFinder: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let folderManifestInputPort = NodeKindDescriptor.InputPort(index: 0,
+    static let folderManifestInputPort = InputPort(index: 0,
                                                                       name: "folderManifest",
                                                                       kind: .value(dataType: .utf8Text),
                                                                       maximumConnections: nil,
@@ -63,34 +63,24 @@ final class FormulaFinder: NodeType {
     }
 
     func process() throws {
-        guard let folderManifestValue = try readOneValueFromInputPort(Self.folderManifestInputPort) else {
-            throw NodeError.missingInputs
+        let oneValue = try readOneValueFromInputPort(Self.folderManifestInputPort)
+        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: oneValue.originNodeID)
+        let object = try PolyFactory.decode(encodedJSON: oneValue.dataObjectHash.resolveAsString())
+
+        guard let folderManifest = object as? FolderManifest else {
+            throw NodeError.other(message: "Could not decode FolderManifest")
         }
 
-        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: folderManifestValue.originNodeID)
-
-        switch folderManifestValue.kind {
-
-        case .value(let dataObjectHash, _):
-            let object = try PolyFactory.decode(encodedJSON: dataObjectHash.resolveAsString())
-
-            guard let folderManifest = object as? FolderManifest else {
-                throw NodeError.other(message: "Could not decode FolderManifest")
-            }
-
-            for entry in folderManifest.entries {
-                try ensureExtractorExists(folderManifestEntry: entry, folderNode: folderNode)
-            }
-
-            for formulaExtractorChild in try allChildren().filter({ node in node is FormulaExtractor }) {
-                if !folderManifest.entries.contains(where: { $0.name == formulaExtractorChild.nodeContext.name }) {
-                    try formulaExtractorChild.delete()
-                }
-            }
-
-        case .noValue:
-            throw NodeError.missingInputs
+        for entry in folderManifest.entries {
+            try ensureExtractorExists(folderManifestEntry: entry, folderNode: folderNode)
         }
+
+        for formulaExtractorChild in try allChildren().filter({ node in node is FormulaExtractor }) {
+            if !folderManifest.entries.contains(where: { $0.name == formulaExtractorChild.nodeContext.name }) {
+                try formulaExtractorChild.delete()
+            }
+        }
+
     }
 }
 
@@ -115,14 +105,14 @@ final class FormulaExtractor: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let formulaFileInputPort = NodeKindDescriptor.InputPort(index: 0,
+    static let formulaFileInputPort = InputPort(index: 0,
                                                                    name: "formulaFile",
                                                                    kind: .value(dataType: .json),
                                                                    maximumConnections: 1,
                                                                    minimumConnections: 1,
                                                                    cascadingDelete: true)
 
-    static let formulaOutputPort = NodeKindDescriptor.OutputPort(index: 0,
+    static let formulaOutputPort = OutputPort(index: 0,
                                                                  name: "formula",
                                                                  kind: .value(dataType: .utf8Text))
 
@@ -135,9 +125,9 @@ final class FormulaExtractor: NodeType {
             switch formulaFileValue.kind {
             case .noValue:
                 break
-            case .value(let dataObjectHash, _):
+            case .value(let dataObjectHash):
                 // Pass the formula content through unchanged.
-                try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash, metadata: "formula"))
+                try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash))
             }
         }
     }

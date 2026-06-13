@@ -37,7 +37,7 @@ final class FolderNode: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let folderManifestOutputPort = NodeKindDescriptor.OutputPort(index: 0, name: "folderManifest", kind: .value(dataType: .utf8Text))
+    static let folderManifestOutputPort = OutputPort(index: 0, name: "folderManifest", kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -81,17 +81,15 @@ final class FolderNode: NodeType {
     func addOrReplaceChild(content: DataObjectHash, name: String) throws {
         assert(!name.contains("\\"))
 
-        let metadata = name
-
         if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
-            try existingChild.replaceContent(content, metadata: metadata)
+            try existingChild.replaceContent(content)
             // TODO: only if changed
             try notifyChildContentChanged(nodeID: existingChild.nodeContext.nodeID!, name: existingChild.nodeContext.name!)
         } else {
             // TODO: what if the type is not StaticFileNode
 
             let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode
-            try staticFile.replaceContent(content, metadata: metadata)
+            try staticFile.replaceContent(content)
 
             try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
         }
@@ -106,7 +104,7 @@ final class FolderNode: NodeType {
     }
 
     func process() throws {
-        try writeToOutputPort(Self.folderManifestOutputPort, value: .value(buildManifest().toJSON().intern(), metadata: nil) )
+        try writeToOutputPort(Self.folderManifestOutputPort, value: .value(buildManifest().toJSON().intern()) )
     }
 }
 

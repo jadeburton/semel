@@ -35,7 +35,7 @@ final class RootNode: NodeType {
      
      */
     
-//    static let schemaInputPort = NodeKindDescriptor.InputPort(index: 0,
+//    static let schemaInputPort = InputPort(index: 0,
 //                                                              name: "schemaInput",
 //                                                              kind: .value(dataType: .utf8Text),
 //                                                              maximumConnections: nil,
@@ -47,7 +47,7 @@ final class RootNode: NodeType {
     Contains a full merged schema of all Wires and Nodes. There are no NodeIDs or WireIDs.
 
      */
-//    static let schemaOutputPort = NodeKindDescriptor.OutputPort(index: 0,
+//    static let schemaOutputPort = OutputPort(index: 0,
 //                                                                name: "schemaOutput",
 //                                                                kind: .value(dataType: .utf8Text))
 //

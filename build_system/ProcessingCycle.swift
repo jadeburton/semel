@@ -236,14 +236,14 @@ extension ProcessingCycle {
 // MARK: - Port management
 
 extension ProcessingCycle {
-    func readFromOutputPort(_ outputPort: NodeKindDescriptor.OutputPort, nodeID: ObjectID) throws -> NodeValue {
+    func readFromOutputPort(_ outputPort: OutputPort, nodeID: ObjectID) throws -> NodeValue {
         guard let nodeOutputValue = try database.selectNodeOutputValue(nodeID: nodeID, port: outputPort.index) else {
             return .init(originNodeID: nodeID, originOutputPort: outputPort.index, kind: .noValue(reason: .error(message: "No value ever existed")))
         }
         return try nodeOutputValue.asNodeOutputValue()
     }
 
-    func readFromInputPort(_ inputPort: NodeKindDescriptor.InputPort, nodeID: ObjectID) throws -> [NodeValueAndWire] {
+    func readFromInputPort(_ inputPort: InputPort, nodeID: ObjectID) throws -> [NodeValueAndWire] {
         let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toPort: inputPort.index)
 
         return try wiresOnThisInput.compactMap { wire in
@@ -265,7 +265,7 @@ extension ProcessingCycle {
         }
     }
 
-    @discardableResult func writeToOutputPort(_ outputPort: NodeKindDescriptor.OutputPort,
+    @discardableResult func writeToOutputPort(_ outputPort: OutputPort,
                            value: NodeValueKind,
                            nodeID: ObjectID) throws -> Bool {
 

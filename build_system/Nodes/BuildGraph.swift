@@ -28,7 +28,7 @@ final class BuildGraph: NodeType {
 
     // MARK: Ports
 
-    static let formulaeInputPort = NodeKindDescriptor.InputPort(index: 0,
+    static let formulaeInputPort = InputPort(index: 0,
                                                                 name: "formulae",
                                                                 kind: .value(dataType: .utf8Text),
                                                                 maximumConnections: nil,
@@ -97,198 +97,6 @@ final class BuildGraph: NodeType {
         }
     }
 
-    // MARK: Formula integration
-
-    func generateSimpleFormula(sourceFiles: [String], productName: String, dynamicLibrary: Bool) throws -> BuildGraphNode {
-
-        let standardClang = ToolDescriptor(name: "clang",
-                                           version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                                           platform: "macOS",
-                                           architecture: "arm64",
-                                           recursiveHash: nil)
-
-        // Shared tool configuration nodes (one per tool kind, reused by all source files)
-        let clangPreprocessorConfiguration = BuildGraphNode(
-            name: "PreprocessorConfiguration",
-            kind: .configuration(try ClangPreprocessorToolConfiguration(
-                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
-
-        let clangCompilerConfiguration = BuildGraphNode(
-            name: "CompilerConfiguration",
-            kind: .configuration(try ClangCompilerToolConfiguration(
-                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
-
-        let clangLinkerConfiguration = BuildGraphNode(
-            name: "LinkerConfiguration",
-            kind: .configuration(try ClangLinkerToolConfiguration(toolDescriptor: standardClang,
-                                                                  arguments: dynamicLibrary ? ["-dynamiclib"] : [],
-                                                                  environment: [:]).toJSON()))
-
-        // Convenience: single-element wire arrays for the shared configuration nodes
-        let clangPreprocessorConfigurationWires = [BuildGraphInputWire(from: clangPreprocessorConfiguration, fromPort: "output")]
-        let clangCompilerConfigurationWires     = [BuildGraphInputWire(from: clangCompilerConfiguration,     fromPort: "output")]
-        let clangLinkerConfigurationWires       = [BuildGraphInputWire(from: clangLinkerConfiguration,       fromPort: "output")]
-
-        // One input-file node per source file (e.g. hello.c, main.c)
-        let sourceFileNodes = sourceFiles.map { sourceFile in
-            BuildGraphNode(name: sourceFile, kind: .inputFile)
-        }
-
-        // One preprocessor node per source file, connected to the source file and the shared config
-        let preprocessorNodes = sourceFileNodes.map { sourceFileNode in
-            BuildGraphNode(
-                name: "preprocessor(\(sourceFileNode.name))",
-                kind: .tool(kind: .preprocessor,
-                            inputPorts: [
-                                BuildGraphInputPort(name: "input",
-                                                   inputWires: [BuildGraphInputWire(from: sourceFileNode, fromPort: "output")]),
-                                BuildGraphInputPort(name: "configuration",
-                                                   inputWires: clangPreprocessorConfigurationWires)
-                            ]))
-        }
-
-        // One compiler node per preprocessor, connected to the preprocessed output and the shared config
-        let compilerNodes = preprocessorNodes.map { preprocessorNode in
-            BuildGraphNode(
-                name: "compiler(\(preprocessorNode.name))",
-                kind: .tool(kind: .compiler,
-                            inputPorts: [
-                                BuildGraphInputPort(name: "input",
-                                                   inputWires: [BuildGraphInputWire(from: preprocessorNode, fromPort: "output")]),
-                                BuildGraphInputPort(name: "configuration",
-                                                   inputWires: clangCompilerConfigurationWires)
-                            ]))
-        }
-
-        // The linker takes all compiler outputs as inputs, plus the shared linker configuration
-        let linkerInputWires = compilerNodes.map { compilerNode in
-            BuildGraphInputWire(from: compilerNode, fromPort: "output")
-        }
-
-        let linkerNode = BuildGraphNode(
-            name: "linker(\(productName))",
-            kind: .tool(kind: .linker,
-                        inputPorts: [
-                            BuildGraphInputPort(name: "input",         inputWires: linkerInputWires),
-                            BuildGraphInputPort(name: "configuration", inputWires: clangLinkerConfigurationWires)
-                        ]))
-
-        // The output file node, wired from the linker
-        return BuildGraphNode(
-            name: productName,
-            kind: .outputFile(inputPorts: [
-                BuildGraphInputPort(name: "input",
-                                   inputWires: [BuildGraphInputWire(from: linkerNode, fromPort: "output")])
-            ]))
-    }
-
-    // Follows 'outputNode' backwards through its dependencies to reconstruct a live processing graph that mirrors the structure of the build graph description.
-    // Returns the node corresponding to 'outputNode' in the live processing graph.
-    // Note that there is one conceptual formula for each output file, but the graph may reuse nodes for shared dependencies.
-    func reverseEngineerFormula(outputNode: StaticFileNode) throws -> BuildGraphNode {
-        var cache: [ObjectID: BuildGraphNode] = [:]
-        return try reverseEngineerNode(liveNode: outputNode, cache: &cache)
-    }
-
-    /// Recursively reconstructs a `BuildGraphNode` from the live node/wire graph.
-    /// `cache` stores already-reconstructed nodes so shared dependencies are visited once
-    /// and cycles (which should not exist in a valid build graph) are handled safely.
-    private func reverseEngineerNode(liveNode: NodeType,
-                                     cache: inout [ObjectID: BuildGraphNode]) throws -> BuildGraphNode {
-        let database = nodeContext.processingCycle.database
-
-        guard let nodeID = liveNode.nodeContext.nodeID else {
-            throw BuildGraphError.unknownInputPortNameReference
-        }
-
-        // Return cached result if this node has already been reconstructed
-        if let cached = cache[nodeID] { return cached }
-
-        // Store a placeholder immediately to break any accidental cycles
-        let nodeName = liveNode.nodeContext.name ?? "?"
-        cache[nodeID] = BuildGraphNode(name: nodeName, kind: .inputFile)
-
-        // Gather all incoming wires and group them by destination port index
-        let incomingWires = try database.selectWires(goingToNodeID: nodeID)
-
-        var wiresByDestinationPort: [UInt8: [BuildGraphInputWire]] = [:]
-        for wire in incomingWires {
-            guard let sourceRawNode = try? database.selectNodeByID(wire.fromNodeID),
-                  let sourceNode = try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: sourceRawNode)
-            else { continue }
-
-            // Recursively reconstruct the source node
-            let sourceBuildGraphNode = try reverseEngineerNode(liveNode: sourceNode, cache: &cache)
-
-            // Resolve the source's output port name from its descriptor
-            let fromPortName = sourceNode.descriptor.outputs
-                .first(where: { $0.index == wire.fromPort })?.name ?? "output"
-
-            wiresByDestinationPort[wire.toPort, default: []]
-                .append(BuildGraphInputWire(from: sourceBuildGraphNode, fromPort: fromPortName))
-        }
-
-        // Build the ordered input-port list, skipping ports with no wires
-        let inputPorts: [BuildGraphInputPort] = liveNode.descriptor.inputs.compactMap { port in
-            let wires = wiresByDestinationPort[port.index] ?? []
-            guard !wires.isEmpty else { return nil }
-            return BuildGraphInputPort(name: port.name, inputWires: wires)
-        }
-
-        // Determine the BuildGraphNodeKind for this node
-        let nodeKind = try reverseEngineerNodeKind(for: liveNode, inputPorts: inputPorts)
-        let result = BuildGraphNode(name: nodeName, kind: nodeKind)
-        cache[nodeID] = result
-        return result
-    }
-
-    /// Maps a live NodeType to the appropriate BuildGraphNodeKind.
-    private func reverseEngineerNodeKind(for liveNode: NodeType,
-                                         inputPorts: [BuildGraphInputPort]) throws -> BuildGraphNodeKind {
-        switch type(of: liveNode).kind {
-        case ClangPreprocessorTool.kind:
-            return .tool(kind: .preprocessor, inputPorts: inputPorts)
-        case ClangCompilerTool.kind:
-            return .tool(kind: .compiler, inputPorts: inputPorts)
-        case ClangLinkerTool.kind:
-            return .tool(kind: .linker, inputPorts: inputPorts)
-        case StaticFileNode.kind:
-            return try reverseEngineerStaticFileNodeKind(for: liveNode as! StaticFileNode,
-                                                         inputPorts: inputPorts)
-        default:
-            return .inputFile
-        }
-    }
-
-    /// Distinguishes whether a StaticFileNode is an input file, a configuration node, or
-    /// an output file by walking up its parent chain until a well-known root folder is found.
-    private func reverseEngineerStaticFileNodeKind(for node: StaticFileNode,
-                                                   inputPorts: [BuildGraphInputPort]) throws -> BuildGraphNodeKind {
-        let database = nodeContext.processingCycle.database
-
-        guard let nodeID = node.nodeContext.nodeID,
-              var currentRaw = try database.selectNodeByID(nodeID)
-        else { return .inputFile }
-
-        while let parentID = currentRaw.parentNodeID {
-            guard let parentRaw = try database.selectNodeByID(parentID) else { break }
-
-            switch parentRaw.name {
-            case "outputFileSystem":
-                return .outputFile(inputPorts: inputPorts)
-
-            case "inputFileSystem":
-                return .inputFile
-
-            default:
-                // Not a recognised root — keep walking up
-                currentRaw = parentRaw
-            }
-        }
-
-        return .inputFile
-    }
-
     private func integrate(buildGraphOutput: BuildGraphNode) throws {
         try integrate(buildGraphNode: buildGraphOutput,
                       currentNode: try outputFileSystem.child(path: buildGraphOutput.name,
@@ -323,7 +131,7 @@ final class BuildGraph: NodeType {
 
                             let configurationNode = nodeConnectedToInputWire as! StaticFileNode
 
-                            try configurationNode.writeToOutputPort(StaticFileNode.outputPort, value: .value(configuration.intern(), metadata: "configuration"))
+                            try configurationNode.writeToOutputPort(StaticFileNode.outputPort, value: .value(configuration.intern()))
                             return nodeConnectedToInputWire
 
                         case .tool(let kind, _):
@@ -421,7 +229,7 @@ final class BuildGraph: NodeType {
             switch formulaFileValue.kind {
             case .noValue:
                 throw NodeError.missingInputs
-            case .value(let dataObjectHash, _):
+            case .value(let dataObjectHash):
                 return try BuildGraphNode.fromJSON(dataObjectHash.resolveAsString())
             }
         }
@@ -438,6 +246,93 @@ final class BuildGraph: NodeType {
                 }
             }
         }
+    }
+}
+
+
+extension BuildGraphNode {
+
+    static func generateSimpleFormula(sourceFiles: [String], productName: String, dynamicLibrary: Bool) throws -> BuildGraphNode {
+
+        let standardClang = ToolDescriptor(name: "clang",
+                                           version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                                           platform: "macOS",
+                                           architecture: "arm64",
+                                           recursiveHash: nil)
+
+        // Shared tool configuration nodes (one per tool kind, reused by all source files)
+        let clangPreprocessorConfiguration = BuildGraphNode(
+            name: "PreprocessorConfiguration",
+            kind: .configuration(try ClangPreprocessorToolConfiguration(
+                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
+
+        let clangCompilerConfiguration = BuildGraphNode(
+            name: "CompilerConfiguration",
+            kind: .configuration(try ClangCompilerToolConfiguration(
+                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
+
+        let clangLinkerConfiguration = BuildGraphNode(
+            name: "LinkerConfiguration",
+            kind: .configuration(try ClangLinkerToolConfiguration(toolDescriptor: standardClang,
+                                                                  arguments: dynamicLibrary ? ["-dynamiclib"] : [],
+                                                                  environment: [:]).toJSON()))
+
+        // Convenience: single-element wire arrays for the shared configuration nodes
+        let clangPreprocessorConfigurationWires = [BuildGraphInputWire(from: clangPreprocessorConfiguration, fromPort: "output")]
+        let clangCompilerConfigurationWires     = [BuildGraphInputWire(from: clangCompilerConfiguration,     fromPort: "output")]
+        let clangLinkerConfigurationWires       = [BuildGraphInputWire(from: clangLinkerConfiguration,       fromPort: "output")]
+
+        // One input-file node per source file (e.g. hello.c, main.c)
+        let sourceFileNodes = sourceFiles.map { sourceFile in
+            BuildGraphNode(name: sourceFile, kind: .inputFile)
+        }
+
+        // One preprocessor node per source file, connected to the source file and the shared config
+        let preprocessorNodes = sourceFileNodes.map { sourceFileNode in
+            BuildGraphNode(
+                name: "preprocessor(\(sourceFileNode.name))",
+                kind: .tool(kind: .preprocessor,
+                            inputPorts: [
+                                BuildGraphInputPort(name: "input",
+                                                   inputWires: [BuildGraphInputWire(from: sourceFileNode, fromPort: "output")]),
+                                BuildGraphInputPort(name: "configuration",
+                                                   inputWires: clangPreprocessorConfigurationWires)
+                            ]))
+        }
+
+        // One compiler node per preprocessor, connected to the preprocessed output and the shared config
+        let compilerNodes = preprocessorNodes.map { preprocessorNode in
+            BuildGraphNode(
+                name: "compiler(\(preprocessorNode.name))",
+                kind: .tool(kind: .compiler,
+                            inputPorts: [
+                                BuildGraphInputPort(name: "input",
+                                                   inputWires: [BuildGraphInputWire(from: preprocessorNode, fromPort: "output")]),
+                                BuildGraphInputPort(name: "configuration",
+                                                   inputWires: clangCompilerConfigurationWires)
+                            ]))
+        }
+
+        // The linker takes all compiler outputs as inputs, plus the shared linker configuration
+        let linkerInputWires = compilerNodes.map { compilerNode in
+            BuildGraphInputWire(from: compilerNode, fromPort: "output")
+        }
+
+        let linkerNode = BuildGraphNode(
+            name: "linker(\(productName))",
+            kind: .tool(kind: .linker,
+                        inputPorts: [
+                            BuildGraphInputPort(name: "input",         inputWires: linkerInputWires),
+                            BuildGraphInputPort(name: "configuration", inputWires: clangLinkerConfigurationWires)
+                        ]))
+
+        // The output file node, wired from the linker
+        return BuildGraphNode(
+            name: productName,
+            kind: .outputFile(inputPorts: [
+                BuildGraphInputPort(name: "input",
+                                   inputWires: [BuildGraphInputWire(from: linkerNode, fromPort: "output")])
+            ]))
     }
 }
 

@@ -4,23 +4,22 @@ import GRDB
 public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let fromNodeID = Column(CodingKeys.fromNodeID)
-        public static let fromPort = Column(CodingKeys.fromPort)
+        public static let fromPortDefID = Column(CodingKeys.fromPortDefID)
         public static let toNodeID = Column(CodingKeys.toNodeID)
-        public static let toPort = Column(CodingKeys.toPort)
+        public static let toPortDefID = Column(CodingKeys.toPortDefID)
     }
 
     public var id: ObjectID?
     public var fromNodeID: ObjectID
-    public var fromPort: UInt8
+    public var fromPortDefID: ObjectID
     public var toNodeID: ObjectID
-    public var toPort: UInt8
+    public var toPortDefID: ObjectID
 
-    public init(id: ObjectID? = nil, fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) {
-        self.id = id
+    public init(fromNodeID: ObjectID, fromPortDefID: ObjectID, toNodeID: ObjectID, toPortDefID: ObjectID) {
         self.fromNodeID = fromNodeID
-        self.fromPort = fromPort
+        self.fromPortDefID = fromPortDefID
         self.toNodeID = toNodeID
-        self.toPort = toPort
+        self.toPortDefID = toPortDefID
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
@@ -28,9 +27,9 @@ public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
             try db.create(table: "Wire", options: .ifNotExists) { t in
                 t.autoIncrementedPrimaryKey("id")
                 t.column("fromNodeID", .integer).notNull()
-                t.column("fromPort", .integer).notNull()
+                t.column("fromPortDefID", .integer).notNull()
                 t.column("toNodeID", .integer).notNull()
-                t.column("toPort", .integer).notNull()
+                t.column("toPortDefID", .integer).notNull()
             }
         }
     }
@@ -49,10 +48,10 @@ extension DatabaseLayer {
         }
     }
 
-    public func selectWires(goingToNodeID: ObjectID, toPort: UInt8) throws -> [Wire] {
+    public func selectWires(goingToNodeID: ObjectID, toPortDefID: ObjectID) throws -> [Wire] {
         try dbQueue.read { db in
             try Wire
-                .filter(Wire.Columns.toNodeID == goingToNodeID && Wire.Columns.toPort == toPort)
+                .filter(Wire.Columns.toNodeID == goingToNodeID && Wire.Columns.toPortDefID == toPortDefID)
                 .fetchAll(db)
         }
     }
@@ -63,10 +62,10 @@ extension DatabaseLayer {
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID, fromPort: UInt8) throws -> [Wire] {
+    public func selectWires(comingFromNodeID: ObjectID, fromPortDefID: ObjectID) throws -> [Wire] {
         try dbQueue.read { db in
             try Wire
-                .filter(Wire.Columns.fromNodeID == comingFromNodeID && Wire.Columns.fromPort == fromPort)
+                .filter(Wire.Columns.fromNodeID == comingFromNodeID && Wire.Columns.fromPortDefID == fromPortDefID)
                 .fetchAll(db)
         }
     }
@@ -78,12 +77,12 @@ extension DatabaseLayer {
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID, fromPort: UInt8, goingToNodeID: ObjectID, toPort: UInt8) throws -> [Wire] {
+    public func selectWires(comingFromNodeID: ObjectID, fromPortDefID: ObjectID, goingToNodeID: ObjectID, toPortDefID: ObjectID) throws -> [Wire] {
         try dbQueue.read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromPort == fromPort &&
+                            Wire.Columns.fromPortDefID == fromPortDefID &&
                             Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toPort == toPort).fetchAll(db)
+                            Wire.Columns.toPortDefID == toPortDefID).fetchAll(db)
         }
     }
 

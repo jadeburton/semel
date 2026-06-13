@@ -44,36 +44,37 @@ final class ClangLinkerTool: NodeType {
 
     // MARK: Ports
 
-    static let configuration = NodeKindDescriptor.InputPort(index: 0,
-                                                            name: "configuration",
-                                                            kind: .value(dataType: .utf8Text),
-                                                            maximumConnections: 1,
-                                                            minimumConnections: 1,
-                                                            cascadingDelete: false)
+    static let configuration = InputPort(index: 0,
+                                        name: "configuration",
+                                        kind: .value(dataType: .utf8Text),
+                                        maximumConnections: 1,
+                                        minimumConnections: 1,
+                                        cascadingDelete: false)
 
-    static let input = NodeKindDescriptor.InputPort(index: 1,
-                                                    name: "input",
-                                                    kind: .value(dataType: .binary),
-                                                    maximumConnections: nil,
-                                                    minimumConnections: 1,
-                                                    cascadingDelete: true)
+    // TODO: rename to "objectFiles"
+    static let input = InputPort(index: 1,
+                                name: "input",
+                                kind: .value(dataType: .binary),
+                                maximumConnections: nil,
+                                minimumConnections: 1,
+                                cascadingDelete: true)
 
-    static let libraries = NodeKindDescriptor.InputPort(index: 2,
-                                                        name: "libraries",
-                                                        kind: .value(dataType: .binary),
-                                                        maximumConnections: nil,
-                                                        minimumConnections: 0,
-                                                        cascadingDelete: false)
+    static let libraries = InputPort(index: 2,
+                                     name: "libraries",
+                                     kind: .value(dataType: .binary),
+                                     maximumConnections: nil,
+                                     minimumConnections: 0,
+                                     cascadingDelete: false)
 
-    static let output = NodeKindDescriptor.OutputPort(index: 2,
+    static let output = OutputPort(index: 2,
                                                       name: "output",
                                                       kind: .value(dataType: .binary))
 
-    static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
+    static let errorLog = OutputPort(index: 0,
                                                         name: "errorLog",
                                                         kind: .value(dataType: .utf8Text))
 
-    static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
+    static let infoLog = OutputPort(index: 1,
                                                        name: "infoLog",
                                                        kind: .value(dataType: .utf8Text))
 
@@ -87,39 +88,30 @@ final class ClangLinkerTool: NodeType {
 
     func process() throws {
 
-        guard let configuration: ClangLinkerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            throw NodeError.missingInputs
-        }
+        let configuration: ClangLinkerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration)
 
         let inputValues = try readAllValuesFromInputPort(Self.input)
+        let libraryValues = try readAllValuesFromInputPort(Self.libraries)
 
         // Separate .dylib library files from .o object files.
         var libraryFiles: [FileNameAndContent] = []
-        for nodeValue in inputValues {
-            switch nodeValue.kind {
-            case .value(let dataObjectHash, let metadata):
-                guard let metadata, metadata.hasSuffix(".dylib") else { continue }
-                let data = try dataObjectHash.resolve()
-                let originNode = try nodeContext.processingCycle.nodePoly(nodeID: nodeValue.originNodeID)
-                if let staticFileNode = originNode as? StaticFileNode {
-                    libraryFiles.append(.init(filePath: try staticFileNode.buildFullPathName(), content: data))
-                } else {
-                    libraryFiles.append(.init(filePath: metadata, content: data))
-                }
-            case .noValue:
-                throw NodeError.missingInputs
-            }
+
+        var i = 0
+
+        for nodeValue in libraryValues {
+            let data = try nodeValue.kind.expectValue().resolve()
+            libraryFiles.append(.init(filePath: "\(i).dylib", content: data))
+
+            i += 1
         }
+
+        var j = 0
 
         var objectFiles: [FileNameAndContent] = []
         for nodeValue in inputValues {
-            switch nodeValue.kind {
-            case .value(let dataObjectHash, let metadata):
-                guard let metadata, metadata.hasSuffix(".o") else { continue }
-                objectFiles.append(.init(filePath: metadata, content: try dataObjectHash.resolve()))
-            case .noValue:
-                throw NodeError.missingInputs
-            }
+            objectFiles.append(.init(filePath: "\(j).o", content: try nodeValue.kind.expectValue().resolve()))
+
+            j += 1
         }
 
         guard !objectFiles.isEmpty else {
@@ -173,11 +165,11 @@ final class ClangLinkerTool: NodeType {
                               output.append(contentsOf: data)
                           }))
 
-        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern(), metadata: nil))
-        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern(), metadata: nil))
+        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern()))
+        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern()))
 
         if exitCode == 0 {
-            try writeToOutputPort(Self.output, value: .value(output.intern(), metadata: "output.dylib"))
+            try writeToOutputPort(Self.output, value: .value(output.intern()))
         } else {
             try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Linker exited with nonzero status")))
         }

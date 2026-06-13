@@ -42,31 +42,31 @@ final class ClangCompilerTool: NodeType {
 
     // MARK: Ports
 
-    static let configuration = NodeKindDescriptor.InputPort(index: 0,
+    static let configuration = InputPort(index: 0,
                                                             name: "configuration",
                                                             kind: .value(dataType: .utf8Text),
                                                             maximumConnections: 1,
                                                             minimumConnections: 1,
                                                             cascadingDelete: false)
 
-    static let input = NodeKindDescriptor.InputPort(index: 1,
+    static let input = InputPort(index: 1,
                                                     name: "input",
                                                     kind: .value(dataType: .utf8Text),
                                                     maximumConnections: 1,
                                                     minimumConnections: 1,
                                                     cascadingDelete: true)
 
-    static let output = NodeKindDescriptor.OutputPort(index: 2,
+    static let output = OutputPort(index: 2,
                                                       name: "output",
                                                       kind: .value(dataType: .binary))
 
-    static let errorLog = NodeKindDescriptor.OutputPort(index: 0,
-                                                        name: "errorLog",
-                                                        kind: .value(dataType: .utf8Text))
+    static let errorLog = OutputPort(index: 0,
+                                     name: "errorLog",
+                                     kind: .value(dataType: .utf8Text))
 
-    static let infoLog = NodeKindDescriptor.OutputPort(index: 1,
-                                                       name: "infoLog",
-                                                       kind: .value(dataType: .utf8Text))
+    static let infoLog = OutputPort(index: 1,
+                                    name: "infoLog",
+                                    kind: .value(dataType: .utf8Text))
 
     var descriptor: NodeKindDescriptor {
         .init(kind: Self.kind,
@@ -76,69 +76,84 @@ final class ClangCompilerTool: NodeType {
 
     // MARK: Processing
 
+    // The process method cannot access any information outside of what is passed to it. This is because doing so would bypass the caching system.
+    // Also, what is passed to it cannot contain any surrogate identifiers, as we want the cache to be universal and sharable between different
+    // machines and different runs.
+    func process(inputs: [InputPort: [NodeValueKind]]) throws -> [OutputPort: NodeValueKind] {
+        [:]
+    }
+
+//    func process<I, O>(inputs: I) throws -> O {
+//    }
+
+    struct ClangCompilerToolInputs {
+        private let rawInputs: [InputPort: [NodeValueKind]]
+
+        var configuration: String { get throws { try rawInputs[ClangCompilerTool.configuration]!.first!.expectValue().resolveAsString() } }
+        var inputSourceFile: String {  get throws { try rawInputs[ClangCompilerTool.input]!.first!.expectValue().resolveAsString() } }
+
+        init(rawInputs: [InputPort: [NodeValueKind]]) {
+            self.rawInputs = rawInputs
+        }
+    }
+
+    struct ClangCompilerToolOutputs {
+    }
+
+    func process(inputs: ClangCompilerToolInputs) throws -> ClangCompilerToolOutputs {
+        .init()
+    }
+
     func process() throws {
 
-        guard let configuration: ClangCompilerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration) else {
-            throw NodeError.missingInputs
-        }
+        let configuration: ClangCompilerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration)
+        let inputValue = try readOneValueFromInputPort(Self.input)
 
-        guard let firstInputValue = try readOneValueFromInputPort(Self.input) else {
-            throw NodeError.missingInputs
-        }
+        let bytes = try inputValue.dataObjectHash.resolve()
+        var output: [UInt8] = []
 
-        switch firstInputValue.kind {
+        let inputFilename = "source.pc"
+        let outputFilename = inputFilename + ".o"
 
-        case .noValue:
-            throw NodeError.missingInputs
+        var arguments = [String]()
+        arguments.append("-x");      arguments.append("c")
+        arguments.append("-c")
+        arguments.append(inputFilename)
+        arguments.append("-o");      arguments.append(outputFilename)
+        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        arguments.append(contentsOf: configuration.arguments)
 
-        case .value(let dataObjectHash, let metadata):
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
 
-            let bytes = try dataObjectHash.resolve()
-            var output: [UInt8] = []
+        var errorOutput = ""
+        var infoOutput = ""
 
-            let inputFilename = metadata ?? "source.pc"
-            let outputFilename = inputFilename + ".o"
+        let exitCode = try tool.execute(
+            arguments: arguments,
+            environment: configuration.environment,
+            inputFiles: [.init(filePath: inputFilename, content: bytes)],
+            expectedOutputFileNames: [outputFilename],
+            output: .init(logError: { error in
+                              errorOutput += error
+                              errorOutput += "\n"
+                              print(error)
+                          },
+                          logMessage: { message in
+                              infoOutput += message
+                              infoOutput += "\n"
+                              print(message)
+                          },
+                          write: { _, data in
+                              output.append(contentsOf: data)
+                          }))
 
-            var arguments = [String]()
-            arguments.append("-x");      arguments.append("c")
-            arguments.append("-c")
-            arguments.append(inputFilename)
-            arguments.append("-o");      arguments.append(outputFilename)
-            arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
-            arguments.append(contentsOf: configuration.arguments)
+        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern()))
+        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern()))
 
-            let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
-
-            var errorOutput = ""
-            var infoOutput = ""
-
-            let exitCode = try tool.execute(
-                arguments: arguments,
-                environment: configuration.environment,
-                inputFiles: [.init(filePath: inputFilename, content: bytes)],
-                expectedOutputFileNames: [outputFilename],
-                output: .init(logError: { error in
-                                  errorOutput += error
-                                  errorOutput += "\n"
-                                  print(error)
-                              },
-                              logMessage: { message in
-                                  infoOutput += message
-                                  infoOutput += "\n"
-                                  print(message)
-                              },
-                              write: { _, data in
-                                  output.append(contentsOf: data)
-                              }))
-
-            try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern(), metadata: nil))
-            try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern(), metadata: nil))
-
-            if exitCode == 0 {
-                try writeToOutputPort(Self.output, value: .value(output.intern(), metadata: outputFilename))
-            } else {
-                try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Compiler exited with nonzero status")))
-            }
+        if exitCode == 0 {
+            try writeToOutputPort(Self.output, value: .value(output.intern()))
+        } else {
+            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Compiler exited with nonzero status")))
         }
     }
 }
