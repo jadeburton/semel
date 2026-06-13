@@ -23,7 +23,7 @@ struct ClangCompilerToolConfiguration: PolySerializable {
 
 // MARK: - Node
 
-final class ClangCompilerTool: NodeType {
+final class ClangCompilerTool: NodeFunction {
     static let kind: UInt = 19
 
     var nodeContext: NodeContext!
@@ -42,44 +42,21 @@ final class ClangCompilerTool: NodeType {
 
     // MARK: Ports
 
-    static let configuration = InputPort(index: 0,
-                                                            name: "configuration",
-                                                            kind: .value(dataType: .utf8Text),
-                                                            maximumConnections: 1,
-                                                            minimumConnections: 1,
-                                                            cascadingDelete: false)
+    static let configuration = "configuration"
+    static let input = "input"
+    static let output = "output"
+    static let errorLog = "errorLog"
+    static let infoLog = "infoLog"
 
-    static let input = InputPort(index: 1,
-                                                    name: "input",
-                                                    kind: .value(dataType: .utf8Text),
-                                                    maximumConnections: 1,
-                                                    minimumConnections: 1,
-                                                    cascadingDelete: true)
-
-    static let output = OutputPort(index: 2,
-                                                      name: "output",
-                                                      kind: .value(dataType: .binary))
-
-    static let errorLog = OutputPort(index: 0,
-                                     name: "errorLog",
-                                     kind: .value(dataType: .utf8Text))
-
-    static let infoLog = OutputPort(index: 1,
-                                    name: "infoLog",
-                                    kind: .value(dataType: .utf8Text))
-
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              inputs: [Self.configuration, Self.input],
-              outputs: [Self.output, Self.errorLog, Self.infoLog])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
+                                            staticOutputPorts: [output, errorLog, infoLog])
 
     // MARK: Processing
 
     // The process method cannot access any information outside of what is passed to it. This is because doing so would bypass the caching system.
     // Also, what is passed to it cannot contain any surrogate identifiers, as we want the cache to be universal and sharable between different
     // machines and different runs.
-    func process(inputs: [InputPort: [NodeValueKind]]) throws -> [OutputPort: NodeValueKind] {
+    func process(inputs: [String: [NodeValueKind]]) throws -> [String: NodeValueKind] {
         [:]
     }
 
@@ -87,12 +64,12 @@ final class ClangCompilerTool: NodeType {
 //    }
 
     struct ClangCompilerToolInputs {
-        private let rawInputs: [InputPort: [NodeValueKind]]
+        private let rawInputs: [String: [NodeValueKind]]
 
         var configuration: String { get throws { try rawInputs[ClangCompilerTool.configuration]!.first!.expectValue().resolveAsString() } }
         var inputSourceFile: String {  get throws { try rawInputs[ClangCompilerTool.input]!.first!.expectValue().resolveAsString() } }
 
-        init(rawInputs: [InputPort: [NodeValueKind]]) {
+        init(rawInputs: [String: [NodeValueKind]]) {
             self.rawInputs = rawInputs
         }
     }

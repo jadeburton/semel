@@ -26,7 +26,8 @@ public final class DatabaseLayer {
         try Wire.createTable(dbQueue: dbQueue)
         try DataObject.createTable(dbQueue: dbQueue)
         try CacheEntry.createTable(dbQueue: dbQueue)
-        try NodeOutputValue.createTable(dbQueue: dbQueue)
+        try PortName.createTable(dbQueue: dbQueue)
+        try Port.createTable(dbQueue: dbQueue)
 
         assert(Self.shared == nil)
         Self.shared = self

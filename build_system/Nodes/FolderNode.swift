@@ -17,7 +17,7 @@ struct FolderManifest: PolySerializable {
     let entries: [FolderManifestEntry]
 }
 
-final class FolderNode: NodeType {
+final class FolderNode: NodeFunction {
 
     static let kind: UInt = 1
 
@@ -37,23 +37,20 @@ final class FolderNode: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let folderManifestOutputPort = OutputPort(index: 0, name: "folderManifest", kind: .value(dataType: .utf8Text))
+    static let folderManifestOutputPort = "folderManifest"
 
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              inputs: [],
-              outputs: [Self.folderManifestOutputPort])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
+                                            staticOutputPorts: [folderManifestOutputPort])
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String) throws {
-        try nodeContext.processingCycle.scheduleNode(nodeContext.nodeID!)
+        try nodeContext.processingCycle.scheduleNode(self.nodeID)
     }
 
     func notifyChildContentChanged(nodeID: ObjectID, name: String) throws {
-        try nodeContext.processingCycle.scheduleNode(nodeContext.nodeID!)
+        try nodeContext.processingCycle.scheduleNode(self.nodeID)
     }
 
     @discardableResult
@@ -70,7 +67,7 @@ final class FolderNode: NodeType {
                 currentFolder = existingChild
             } else {
                 let newFolder: FolderNode = try currentFolder.child(named: name, createIfNotExist: true)!
-                try currentFolder.notifyChildAdded(nodeID: newFolder.nodeContext.nodeID!, name: name)
+                try currentFolder.notifyChildAdded(nodeID: newFolder.nodeID, name: name)
                 currentFolder = newFolder
             }
         }
@@ -81,17 +78,17 @@ final class FolderNode: NodeType {
     func addOrReplaceChild(content: DataObjectHash, name: String) throws {
         assert(!name.contains("\\"))
 
-        if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode? {
+        if let existingChild = try nodeContext.processingCycle.node(named: name, parentNodeID: self.nodeID) as StaticFileNode? {
             try existingChild.replaceContent(content)
             // TODO: only if changed
-            try notifyChildContentChanged(nodeID: existingChild.nodeContext.nodeID!, name: existingChild.nodeContext.name!)
+            try notifyChildContentChanged(nodeID: existingChild.nodeID, name: existingChild.nodeContext.name!)
         } else {
             // TODO: what if the type is not StaticFileNode
 
-            let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: nodeContext.nodeID!) as StaticFileNode
+            let staticFile = try nodeContext.processingCycle.makeNode(name: name, parentNodeID: self.nodeID) as StaticFileNode
             try staticFile.replaceContent(content)
 
-            try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
+            try notifyChildAdded(nodeID: staticFile.nodeID, name: staticFile.nodeContext.name!)
         }
     }
 

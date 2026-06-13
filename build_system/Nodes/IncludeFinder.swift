@@ -4,10 +4,10 @@
 // Takes a .c or .h source file as input and outputs a newline-separated list
 // of quoted #include paths found in that file (system angle-bracket includes
 // are intentionally ignored).
-
+/*
 import Foundation
 
-final class IncludeFinder: NodeType {
+final class IncludeFinder: NodeFunction {
     static let kind: UInt = 15
 
     var nodeContext: NodeContext!
@@ -26,21 +26,13 @@ final class IncludeFinder: NodeType {
 
     // MARK: Ports
 
-    static let sourceFileInputPort = InputPort(index: 0,
-                                                                  name: "sourceFile",
-                                                                  kind: .value(dataType: .utf8Text),
-                                                                  maximumConnections: 1,
-                                                                  minimumConnections: 1,
-                                                                  cascadingDelete: true)
+    static let sourceFileInputPort = "sourceFile"
+    static let includePathListOutputPort = "includePathList"
 
-    static let includePathListOutputPort = OutputPort(index: 0,
-                                                                         name: "includePathList",
-                                                                         kind: .value(dataType: .utf8Text))
-
-    var descriptor: NodeKindDescriptor {
+    var descriptor: NodeFunctionDescriptor {
         .init(kind: Self.kind,
-              inputs: [Self.sourceFileInputPort],
-              outputs: [Self.includePathListOutputPort])
+              staticInputPorts: [Self.sourceFileInputPort],
+              staticOutputPorts: [Self.includePathListOutputPort])
     }
 
     // MARK: Include extraction
@@ -50,9 +42,9 @@ final class IncludeFinder: NodeType {
     private func extractIncludePaths(sourceFileContent: String) -> [String] {
         var text = sourceFileContent
 
-        // Remove block comments /* ... */
-        if let blockCommentRegex = try? NSRegularExpression(pattern: "/\\*[\\s\\S]*?\\*/") {
-            text = blockCommentRegex.stringByReplacingMatches(
+        // Remove block comments*/
+//        if let blockCommentRegex = try? NSRegularExpression(pattern: "/\\*[\\s\\S]*?\\*/") {
+/*            text = blockCommentRegex.stringByReplacingMatches(
                 in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
         }
 
@@ -104,3 +96,4 @@ final class IncludeFinder: NodeType {
         try writeToOutputPort(Self.includePathListOutputPort, value: .value(aggregatedIncludePathList.intern()))
     }
 }
+*/

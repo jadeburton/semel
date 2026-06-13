@@ -8,21 +8,26 @@
 // Wire management
 extension ProcessingCycle {
 
-    private func connectWire(fromNodeID: ObjectID,
-                             fromPort: UInt8,
-                             toNodeID: ObjectID,
-                             toPort: UInt8) throws {
+    func connectWire(fromNodeID: ObjectID,
+                     fromPortNameID: ObjectID,
+                     toNodeID: ObjectID,
+                     toPortNameID: ObjectID,
+                     name: ObjectID) throws {
 
         guard try database.selectWires(comingFromNodeID: fromNodeID,
-                                       fromPort: fromPort,
+                                       fromPortNameID: fromPortNameID,
                                        goingToNodeID: toNodeID,
-                                       toPort: toPort).isEmpty else {
+                                       toPortNameID: toPortNameID).isEmpty else {
             return
         }
 
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
-        _ = try database.insertWire(.init(fromNodeID: fromNodeID, fromPort: fromPort, toNodeID: toNodeID, toPort: toPort))
+        _ = try database.insertWire(.init(fromNodeID: fromNodeID,
+                                          fromPortNameID: fromPortNameID,
+                                          toNodeID: toNodeID,
+                                          toPortNameID: toPortNameID,
+                                          name: name))
 
         wiresModified = true
 
@@ -30,45 +35,45 @@ extension ProcessingCycle {
 
         try scheduleNode(toNodeID)
     }
+/*
+    func connectWire(fromNode: NodeFunction,
+                     fromPort: String,
+                     toNode: NodeFunction,
+                     toPort: String) throws {
 
-    func connectWire(fromNode: NodeType,
-                     fromPort: OutputPort,
-                     toNode: NodeType,
-                     toPort: InputPort) throws {
-
-        try connectWire(fromNodeID: fromNode.nodeContext.nodeID!,
-                        fromPort: fromPort.index,
-                        toNodeID: toNode.nodeContext.nodeID!,
-                        toPort: toPort.index)
+        try connectWire(fromNodeID: fromNode.nodeID,
+                        fromPortNameID: PortName. fromPort.asPortNameID(database: database),
+                        toNodeID: toNode.nodeID,
+                        toPortNameID: toPort.asPortNameID(database: database))
     }
 
-    func deleteWire(fromNode: NodeType,
-                    fromPort: OutputPort,
-                    toNode: NodeType,
-                    toPort: InputPort) throws -> Bool {
+    func deleteWire(fromNodeID: ObjectID,
+                    fromPortNameID: ObjectID,
+                    toNodeID: ObjectID,
+                    toPortNameID: ObjectID) throws -> Bool {
 
-        try deleteWire(fromNodeID: fromNode.nodeContext.nodeID!,
-                       fromPort: fromPort.index,
-                       toNodeID: toNode.nodeContext.nodeID!,
-                       toPort: toPort.index)
+        try deleteWire(fromNodeID: fromNode.nodeID,
+                       fromPortNameID: fromPort.asPortNameID(database: database),
+                       toNodeID: toNode.nodeID,
+                       toPortNameID: toPort.asPortNameID(database: database))
     }
+*/
+    func findNodeConnectedToNodeViaInputWire(_ toNode: NodeFunction, toInputPortNamed inputPortName: String) throws -> [any NodeFunction] {
 
-    func findNodeConnectedToNodeViaInputWire(_ toNode: NodeType, toInputPortNamed inputPortName: String) throws -> [any NodeType] {
-        let inputPortDescriptor = toNode.descriptor.inputs.first(where: { $0.name == inputPortName })!
-
-        return try database.selectWires(goingToNodeID: toNode.nodeContext.nodeID!, toPort: inputPortDescriptor.index).map { wire in
+        return try database.selectWires(goingToNodeID: toNode.nodeID,
+                                        toPortNameID: inputPortName.asPortNameID()).map { wire in
             try nodePoly(nodeID: wire.fromNodeID)!
         }
     }
 
     func deleteWire(fromNodeID: ObjectID,
-                    fromPort: UInt8,
+                    fromPortNameID: ObjectID,
                     toNodeID: ObjectID,
-                    toPort: UInt8) throws -> Bool {
+                    toPortNameID: ObjectID) throws -> Bool {
         let wires = try database.selectWires(comingFromNodeID: fromNodeID,
-                                             fromPort: fromPort,
+                                             fromPortNameID: fromPortNameID,
                                              goingToNodeID: toNodeID,
-                                             toPort: toPort)
+                                             toPortNameID: toPortNameID)
         guard let wire = wires.first else {
             return false
         }
@@ -78,9 +83,10 @@ extension ProcessingCycle {
 
     func deleteWire(_ wire: Wire) throws -> Bool {
 
-        print("delete wire #\(wire.id!)")
-
-        let result = try database.deleteWire(wireID: wire.id!)
+        let result = try database.deleteWire(comingFromNodeID: wire.fromNodeID,
+                                             fromPortNameID: wire.fromPortNameID,
+                                             goingToNodeID: wire.toNodeID,
+                                             toPortNameID: wire.toPortNameID)
 
         try scheduleNode(wire.toNodeID)
 
@@ -88,15 +94,18 @@ extension ProcessingCycle {
 
         // is the target Input marked as "holds alive"? if so, then removing this wire should delete the node unless there is another holds-alive Input
 
-        if toNode.descriptor.inputs.first(where: { $0.index == wire.toPort })?.cascadingDelete ?? false {
-            let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: wire.toNodeID, toPort: wire.toPort).count
+        let wireToPortName = try database.selectPortName(portNameID: wire.toPortNameID)!.name
+
+/* TODO cascading delete: Nodes are held alive by their Output wires, unless they are Input File System Nodes or they have no Output wires.
+ if toNode.descriptor.staticInputPorts.first(where: { $0.name == wireToPortName })?.cascadingDelete ?? false {
+            let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: wire.toNodeID, toPortNameID: wire.toPortNameID).count
 
             if numberOfInboundWiresToTarget == 0 {
                 print("cascading delete of Node: \(toNode.description())")
                 _ = try deleteNode(wire.toNodeID)
             }
         }
-
+*/
         wiresModified = true
 
         //        if toNode

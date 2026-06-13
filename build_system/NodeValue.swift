@@ -1,4 +1,3 @@
-
 //
 //  NodeValue.swift
 //  build_system
@@ -30,7 +29,7 @@ extension NodeValueKind {
 
 struct NodeValue: Codable {
     let originNodeID: ObjectID
-    let originOutputPort: UInt8
+    let originOutputPortNameID: ObjectID
     let kind: NodeValueKind
 }
 
@@ -47,84 +46,84 @@ extension NodeValue {
 struct NodeValueAndWire: Codable {
     let originNodeID: ObjectID
    // let originNodePath: String
-    let originOutputPort: UInt8
+    let originOutputPortNameID: ObjectID
     let kind: NodeValueKind
     let wire: Wire
 }
 
-enum NodeOutputValueError: Error {
-    case dataObjectHashNotSetOnNodeOutputValue
+enum PortError: Error {
+    case dataObjectHashNotSetOnPort
 }
 
 enum ProcessingCycleError: Error {
     case outputPortHasNoValue
 }
 
-// MARK: - DatabaseModels.NodeOutputValue → NodeValue
+// MARK: - DatabaseModels.Port → NodeValue
 
-extension DatabaseModels.NodeOutputValue {
-    func asNodeOutputValue(wire: Wire) throws -> NodeValueAndWire {
+extension DatabaseModels.Port {
+    func asPort(wire: Wire) throws -> NodeValueAndWire {
         .init(originNodeID: nodeID,
-              originOutputPort: port,
-              kind: try .init(nodeOutputValue: self),
+              originOutputPortNameID: portNameID,
+              kind: try .init(port: self),
               wire: wire)
     }
-    func asNodeOutputValue() throws -> NodeValue {
+    func asPort() throws -> NodeValue {
         .init(originNodeID: nodeID,
-              originOutputPort: port,
-              kind: try .init(nodeOutputValue: self))
+              originOutputPortNameID: portNameID,
+              kind: try .init(port: self))
     }
 }
 
 // MARK: - NodeValueKind helpers
 
 extension NodeValueKind {
-    init(nodeOutputValue: DatabaseModels.NodeOutputValue) throws {
-        switch nodeOutputValue.kind {
+    init(port: DatabaseModels.Port) throws {
+        switch port.valueKind {
+
+        case .notApplicable:
+            self = .noValue(reason: .error(message: "Value not applicable; is input port"))
 
         case .pending:
             self = .noValue(reason: .pending)
 
         case .error:
-            self = .noValue(reason: .error(message: nodeOutputValue.errorMessage ?? "<unknown>"))
+            self = .noValue(reason: .error(message: (try? port.dataObjectHash?.resolveAsString()) ?? "<unknown>"))
 
         case .value:
 
-            guard let dataObjectHash = nodeOutputValue.dataObjectHash else {
-                throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
+            guard let dataObjectHash = port.dataObjectHash else {
+                throw PortError.dataObjectHashNotSetOnPort
             }
 
             self = .value(dataObjectHash)
         }
     }
 
-    func mapNodeOutputValue(nodeID: ObjectID, outputPortIndex: UInt8) throws -> NodeOutputValue {
+    func mapPort(nodeID: ObjectID, outputPortNameID: ObjectID) throws -> build_system.Port {
         switch self {
 
         case .noValue(let reason):
 
             switch reason {
             case .pending:
-                return .init(nodeID: nodeID,
-                             port: outputPortIndex,
-                             kind: .pending,
-                             dataObjectHash: nil,
-                             errorMessage: nil)
+                return Port(nodeID: nodeID,
+                            portNameID: outputPortNameID,
+                            valueKind: .pending,
+                            dataObjectHash: nil)
 
             case .error(let message):
-                return .init(nodeID: nodeID,
-                             port: outputPortIndex,
-                             kind: .error,
-                             dataObjectHash: nil,
-                             errorMessage: message)
+                return Port(nodeID: nodeID,
+                            portNameID: outputPortNameID,
+                            valueKind: .error,
+                            dataObjectHash: message.intern())
             }
 
         case .value(let dataObjectHash):
-            return .init(nodeID: nodeID,
-                         port: outputPortIndex,
-                         kind: .value,
-                         dataObjectHash: dataObjectHash,
-                         errorMessage: nil)
+            return Port(nodeID: nodeID,
+                        portNameID: outputPortNameID,
+                        valueKind: .value,
+                        dataObjectHash: dataObjectHash)
         }
     }
 }
@@ -212,3 +211,4 @@ final class SchemaIntegrator {
 //    let nodeSchemas: [NodeSchema]
 //    let wireSchemas: [WireSchema]
 //}
+

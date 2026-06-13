@@ -7,7 +7,7 @@
 
 import Foundation
 
-final class RootNode: NodeType {
+final class RootNode: NodeFunction {
 
     static let kind: UInt = 10
 
@@ -51,23 +51,18 @@ final class RootNode: NodeType {
 //                                                                name: "schemaOutput",
 //                                                                kind: .value(dataType: .utf8Text))
 //
-//    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [schemaInputPort], outputs: [schemaOutputPort])
+//    static let descriptor = NodeFunctionDescriptor(kind: kind, inputs: [schemaInputPort], outputs: [schemaOutputPort])
 
     func didSave() throws {
-        try nodeContext.processingCycle.connectWire(fromNode: try inputFileSystem,
-                                                    fromPort: FolderNode.folderManifestOutputPort,
-                                                    toNode: try formulaFinder,
-                                                    toPort: FormulaFinder.folderManifestInputPort)
+        // TODO!
+//        try nodeContext.processingCycle.connectWire(fromNode: try inputFileSystem,
+//                                                    fromPort: FolderNode.folderManifestOutputPort,
+//                                                    toNode: try formulaFinder,
+//                                                    toPort: ProjectFinder.folderManifestInputPort)
     }
 
     func encode(to encoder: Encoder) throws {
         var _ = encoder.container(keyedBy: CodingKeys.self)
-    }
-
-    var commandInterpreter: CommandInterpreter {
-        get throws {
-            try child(named: "commandInterpreter", createIfNotExist: true)!
-        }
     }
 
     var inputFileSystem: FolderNode {
@@ -76,28 +71,70 @@ final class RootNode: NodeType {
         }
     }
 
-    var formulaFinder: FormulaFinder {
+    var outputFileSystem: FolderNode {
         get throws {
-            try child(named: "formulaFinder", createIfNotExist: true)!
+            try child(named: "outputFileSystem", createIfNotExist: true)!
         }
     }
 
-    var buildGraph: BuildGraph {
+    var projectFinder: ProjectFinder {
         get throws {
-            try child(named: "buildGraph", createIfNotExist: true)!
+            try child(named: "projectFinder", createIfNotExist: true)!
         }
     }
 
-//    var configurationFolder: FolderNode {
-//        get throws {
-//            try child(named: "configurationFolder", createIfNotExist: true)!
-//        }
-//    }
-
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [], outputs: [])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], staticOutputPorts: [])
 
     func process() throws {
+    }
+
+    // MARK: Debug
+
+    func debugPrintTree() {
+        do {
+            let projectFinder = try projectFinder
+            let topLevelOutputNodes = try nodeContext.processingCycle.allChildNodes(nodeID: projectFinder.nodeID)
+
+            print("- build tree")
+            for outputNode in topLevelOutputNodes {
+                printDependencyTree(node: outputNode, indentLevel: 1)
+            }
+        } catch {
+            print("- build tree (error: \(error))")
+        }
+    }
+
+    private func printDependencyTree(node: NodeFunction, indentLevel: Int) {
+        let indent = String(repeating: "  ", count: indentLevel)
+        let kindName = (try? PolyFactory.type(kind: type(of: node).kind))
+            .map { String(describing: $0) } ?? "Node"
+        let nodeName = node.nodeContext.name ?? "?"
+        print("\(indent)- \(kindName)(\(nodeName))")
+
+        let database = nodeContext.processingCycle.database
+        guard let nodeID = node.nodeContext.nodeID else { return }
+
+        do {
+            let incomingWires = try database.selectWires(goingToNodeID: nodeID)
+
+            var visitedDependencyNodeIDs = Set<ObjectID>()
+            var dependencyNodes = [NodeFunction]()
+
+            for wire in incomingWires {
+                guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
+                visitedDependencyNodeIDs.insert(wire.fromNodeID)
+
+                if let rawNode = try? database.selectNodeByID(wire.fromNodeID),
+                   let dependencyNode = try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode) {
+                    dependencyNodes.append(dependencyNode)
+                }
+            }
+
+            for dependencyNode in dependencyNodes {
+                printDependencyTree(node: dependencyNode, indentLevel: indentLevel + 1)
+            }
+        } catch {
+            print("\(indent)  (error loading dependencies: \(error))")
+        }
     }
 }

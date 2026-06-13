@@ -68,6 +68,14 @@ final class BuildEngine {
         }
     }
 
+    private let commandInterpreter = CommandInterpreter()
+
+    func receiveUserInput(line: String) {
+        try? process { processingCycle in
+            try self.commandInterpreter.handleCommand(line)
+        }
+    }
+
     // MARK: - Signalling
 
     /// Safe to call from any actor or thread. A signal will never be lost:

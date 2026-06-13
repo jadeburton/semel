@@ -62,7 +62,7 @@ final class FileSystem {
             let dataObjectHash = content.intern()
             let nodeID = try! database.insertNode(.init(content: .staticFile(name: name, parentFolderID: insideFolderID/*, kind: .staticFile*/)))
 
-            _ = try! database.insertOrReplaceNodeOutputValue(.init(nodeID: nodeID, port: 0, dataObjectHash: dataObjectHash))
+            _ = try! database.insertOrReplacePort(.init(nodeID: nodeID, port: 0, dataObjectHash: dataObjectHash))
 
         }, excludeRule: { filename in
             filename == "cmake-build-debug"

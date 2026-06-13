@@ -26,7 +26,7 @@ struct ClangPreprocessorToolConfiguration: PolySerializable {
 
 // MARK: - Node
 
-final class ClangPreprocessorTool: NodeType {
+final class ClangPreprocessorTool: NodeFunction {
     static let kind: UInt = 17
 
     var nodeContext: NodeContext!
@@ -45,52 +45,21 @@ final class ClangPreprocessorTool: NodeType {
 
     // MARK: Ports
 
-    static let configuration = InputPort(index: 0,
-                                                            name: "configuration",
-                                                            kind: .value(dataType: .utf8Text),
-                                                            maximumConnections: 1,
-                                                            minimumConnections: 1,
-                                                            cascadingDelete: false)
-
-    static let sourceFileInput = InputPort(index: 1,
-                                                              name: "input",
-                                                              kind: .value(dataType: .utf8Text),
-                                                              maximumConnections: 1,
-                                                              minimumConnections: 1,
-                                                              cascadingDelete: false)
-
-    static let includeFiles = InputPort(index: 2,
-                                                           name: "includeFiles",
-                                                           kind: .value(dataType: .utf8Text),
-                                                           maximumConnections: nil,
-                                                           minimumConnections: 0,
-                                                           cascadingDelete: false)
+    static let configuration = "configuration"
+    static let sourceFileInput = "input"
+    static let includeFiles = "includeFiles"
 
     // ISSUE: if there is a missing header file but it is added, we don't get notified.
     // we need to monitor for all new header files - but only if we are in an error state
-    static let headerInputFiles = InputPort(index: 3,
-                                                               name: "headerInputFiles",
-                                                               kind: .value(dataType: .utf8Text),
-                                                               maximumConnections: nil,
-                                                               minimumConnections: 0,
-                                                               cascadingDelete: false)
+    static let headerInputFiles = "headerInputFiles"
 
-    static let output = OutputPort(index: 2,
-                                                      name: "output",
-                                                      kind: .value(dataType: .utf8Text))
+    static let output = "output"
+    static let errorLog = "errorLog"
+    static let infoLog = "infoLog"
 
-    static let errorLog = OutputPort(index: 0,
-                                                        name: "errorLog",
-                                                        kind: .value(dataType: .utf8Text))
-
-    static let infoLog = OutputPort(index: 1,
-                                                       name: "infoLog",
-                                                       kind: .value(dataType: .utf8Text))
-
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              inputs: [Self.configuration, Self.sourceFileInput, Self.includeFiles, Self.headerInputFiles],
-              outputs: [Self.output, Self.errorLog, Self.infoLog])
+    var descriptor: NodeFunctionDescriptor {
+        .init(staticInputPorts: [Self.configuration, Self.sourceFileInput, Self.includeFiles, Self.headerInputFiles],
+              staticOutputPorts: [Self.output, Self.errorLog, Self.infoLog])
     }
 
     // MARK: Processing
@@ -101,7 +70,7 @@ final class ClangPreprocessorTool: NodeType {
         let primarySourceFile = try readOneValueFromInputPort(Self.sourceFileInput)
 
         // MARK: Include-finder helpers
-
+/*
         func createOrFindIncludeFinderAttachedToNode(sourceNodeID: ObjectID) throws -> IncludeFinder {
             let db = nodeContext.processingCycle.database
             let allWiresFromSourceNode = try db.selectWires(comingFromNodeID: sourceNodeID)
@@ -115,23 +84,23 @@ final class ClangPreprocessorTool: NodeType {
             return try nodeContext.processingCycle.makeNodePoly(
                 kind: IncludeFinder.kind,
                 name: "includeFinder",
-                parentNodeID: nodeContext.processingCycle.rootNode.nodeContext.nodeID!) as! IncludeFinder
-        }
+                parentNodeID: nodeContext.processingCycle.rootNode.nodeID) as! IncludeFinder
+        }*/
 
-        func ensureSourceOrHeaderNodeHasIncludeFinderAttached(_ sourceNodeID: ObjectID) throws {
+/*        func ensureSourceOrHeaderNodeHasIncludeFinderAttached(_ sourceNodeID: ObjectID) throws {
             let includeFinder = try createOrFindIncludeFinderAttachedToNode(sourceNodeID: sourceNodeID)
 
             let sourceNode = try nodeContext.processingCycle.node(nodeID: sourceNodeID) as StaticFileNode
-            try nodeContext.processingCycle.connectWire(fromNode: sourceNode,
-                                                        fromPort: StaticFileNode.outputPort,
-                                                        toNode: includeFinder,
-                                                        toPort: IncludeFinder.sourceFileInputPort)
-            try nodeContext.processingCycle.connectWire(fromNode: includeFinder,
-                                                        fromPort: IncludeFinder.includePathListOutputPort,
-                                                        toNode: self,
-                                                        toPort: Self.includeFiles)
+            try nodeContext.processingCycle.connectWire(fromNodeID: sourceNode.nodeID,
+                                                        fromPortNameID: StaticFileNode.outputPort.asPortNameID(),
+                                                        toNodeID: includeFinder.nodeID,
+                                                        toPortNameID: IncludeFinder.sourceFileInputPort.asPortNameID())
+            try nodeContext.processingCycle.connectWire(fromNodeID: includeFinder.nodeID,
+                                                        fromPortNameID: IncludeFinder.includePathListOutputPort.asPortNameID(),
+                                                        toNodeID: self.nodeID,
+                                                        toPortNameID: Self.includeFiles.asPortNameID())
         }
-
+*/
         func ensureIncludeFileIsAttached(_ includePath: String) throws {
             guard let staticFileNode = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: includePath,
                                                                                                           kind: StaticFileNode.kind,
@@ -140,18 +109,20 @@ final class ClangPreprocessorTool: NodeType {
                 throw NodeError.other(message: "Could not find a StaticFileNode that corresponds to \(includePath)")
             }
 
-            try nodeContext.processingCycle.connectWire(fromNode: staticFileNode,
-                                                        fromPort: StaticFileNode.outputPort,
-                                                        toNode: self,
-                                                        toPort: Self.headerInputFiles)
+            try nodeContext.processingCycle.connectWire(fromNodeID: staticFileNode.nodeID,
+                                                        fromPortNameID: StaticFileNode.outputPort.asPortNameID(),
+                                                        toNodeID: self.nodeID,
+                                                        toPortNameID: Self.headerInputFiles.asPortNameID(),
+                                                        name: includePath.asPortNameID())
         }
 
         func removeIncludeFileWiresNotInList(_ allowedIncludePaths: Set<String>) throws {
             let db = nodeContext.processingCycle.database
-            let allWiresToNode = try db.selectWires(goingToNodeID: nodeContext.nodeID!)
+            let allWiresToNode = try db.selectWires(goingToNodeID: self.nodeID)
 
             for wire in allWiresToNode {
-                guard wire.toPort == Self.headerInputFiles.index else { continue }
+                #warning("TODO")
+/*                guard wire.toPort == Self.headerInputFiles.index else { continue }
 
                 let fromRaw = try wire.fromNodeID.loadNode(from: db)
                 let fromNode = try nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: fromRaw)
@@ -164,13 +135,13 @@ final class ClangPreprocessorTool: NodeType {
                                                                        toNode: self,
                                                                        toPort: Self.headerInputFiles)
                     }
-                }
+                }*/
             }
         }
 
         // MARK: Main switch
 
-        try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
+        //try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
 
         let bytes = try primarySourceFile.dataObjectHash.resolve()
         var output: [UInt8] = []
@@ -194,10 +165,10 @@ final class ClangPreprocessorTool: NodeType {
         arguments.append(contentsOf: configuration.arguments)
 
         // Wire up include files discovered by IncludeFinder nodes.
-        let includeFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.includeFiles)
+        let includeFilesValues: [String: NodeValueAndWire] = try readAllValuesFromInputPort(Self.includeFiles)
 
         let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
-            try includeFilesValue.kind.expectValue().resolveAsString().split(separator: "\n").map(String.init)
+            try includeFilesValue.value.kind.expectValue().resolveAsString().split(separator: "\n").map(String.init)
         })
 
         for includeFilePath in setOfIncludeFiles {
@@ -205,9 +176,9 @@ final class ClangPreprocessorTool: NodeType {
         }
         try removeIncludeFileWiresNotInList(setOfIncludeFiles)
 
-        let headerInputFilesValues: [NodeValueAndWire] = try readAllValuesFromInputPort(Self.headerInputFiles)
+        let headerInputFilesValues: [String: NodeValueAndWire] = try readAllValuesFromInputPort(Self.headerInputFiles)
         for headerInputFilesValue in headerInputFilesValues {
-            try ensureSourceOrHeaderNodeHasIncludeFinderAttached(headerInputFilesValue.originNodeID)
+            //try ensureSourceOrHeaderNodeHasIncludeFinderAttached(headerInputFilesValue.originNodeID)
         }
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)

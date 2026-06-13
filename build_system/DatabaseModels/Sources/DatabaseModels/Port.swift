@@ -6,7 +6,7 @@ import GRDB
 public struct Port: Codable, FetchableRecord, PersistableRecord, Equatable {
     public enum Columns {
         public static let nodeID = Column(CodingKeys.nodeID)
-        public static let portDefID = Column(CodingKeys.portDefID)
+        public static let portNameID = Column(CodingKeys.portNameID)
         public static let valueKind = Column(CodingKeys.valueKind)
         public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
     }
@@ -19,25 +19,26 @@ public struct Port: Codable, FetchableRecord, PersistableRecord, Equatable {
     }
 
     public var nodeID: ObjectID
-    public var portDefID: ObjectID
+    public var portNameID: ObjectID
     public var valueKind: ValueKind
     public var dataObjectHash: DataObjectHash?
 
-    public init(nodeID: ObjectID, portDefID: ObjectID, valueKind: ValueKind, dataObjectHash: DataObjectHash?) {
+    public init(nodeID: ObjectID, portNameID: ObjectID, valueKind: ValueKind, dataObjectHash: DataObjectHash?) {
         self.nodeID = nodeID
-        self.portDefID = portDefID
+        self.portNameID = portNameID
         self.valueKind = valueKind
         self.dataObjectHash = dataObjectHash
     }
 
-    // NodeOutputValue uses a natural key instead of the usual "id" surrogate key.
+    // Port uses a natural key instead of the usual "id" surrogate key.
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "Port", options: .ifNotExists) { t in
                 t.column("nodeID", .integer).notNull().indexed()
-                t.column("portDefID", .integer).notNull().indexed()
+                t.column("portNameID", .integer).notNull().indexed()
                 t.column("valueKind", .integer).notNull()
                 t.column("dataObjectHash", .text) // nullable
+                t.primaryKey(["nodeID", "portNameID"])
             }
         }
     }
@@ -45,46 +46,45 @@ public struct Port: Codable, FetchableRecord, PersistableRecord, Equatable {
 
 extension DatabaseLayer {
 
-    // Select all NodeOutputValues associated with the given Node
     public func selectAllPorts(nodeID: ObjectID) throws -> [Port] {
         try dbQueue.read { db in
             try Port.filter(Port.Columns.nodeID == nodeID).fetchAll(db)
         }
     }
 
-    public func selectPort(nodeID: ObjectID, portID: ObjectID) throws -> Port? {
+    public func selectPort(nodeID: ObjectID, portNameID: ObjectID) throws -> Port? {
         try dbQueue.read { db in
             try Port.filter(Port.Columns.nodeID == nodeID &&
-                            Port.Columns.portID == portID).fetchOne(db)
+                            Port.Columns.portNameID == portNameID).fetchOne(db)
         }
     }
 
-    public func insertOrReplaceNodeOutputValue(_ nodeOutputValue: NodeOutputValue) throws {
+    public func insertOrUpdatePort(_ port: Port) throws {
         try dbQueue.write { db in
-            try nodeOutputValue.save(db)
+            try port.save(db)
         }
     }
 
-    public func deleteNodeOutputValue(nodeID: ObjectID, portID: ObjectID) throws -> Bool {
+    public func deletePort(nodeID: ObjectID, portNameID: ObjectID) throws -> Bool {
         try dbQueue.write { db in
-            try NodeOutputValue
-                .filter(NodeOutputValue.Columns.nodeID == nodeID &&
-                        NodeOutputValue.Columns.portID == portID)
+            try Port
+                .filter(Port.Columns.nodeID == nodeID &&
+                        Port.Columns.portNameID == portNameID)
                 .deleteAll(db) > 0
         }
     }
 
-    public func deleteNodeOutputValues(nodeID: ObjectID) throws -> Int {
+    public func deletePorts(nodeID: ObjectID) throws -> Int {
         try dbQueue.write { db in
-            try NodeOutputValue
-                .filter(NodeOutputValue.Columns.nodeID == nodeID)
+            try Port
+                .filter(Port.Columns.nodeID == nodeID)
                 .deleteAll(db)
         }
     }
 }
 
-public extension NodeOutputValue {
+public extension Port {
     func description() -> String {
-        "NodeOutputValue: nodeID=\(nodeID), port=\(port), dataObjectHash=\(dataObjectHash ?? "")"
+        "Port: nodeID=\(nodeID), portNameID=\(portNameID), valueKind=\(valueKind), dataObjectHash=\(dataObjectHash ?? "")"
     }
 }

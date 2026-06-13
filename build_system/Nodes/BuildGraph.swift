@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - BuildGraph
 
-final class BuildGraph: NodeType {
+final class BuildGraph: NodeFunction {
     static let kind: UInt = 2
 
     var nodeContext: NodeContext!
@@ -28,15 +28,10 @@ final class BuildGraph: NodeType {
 
     // MARK: Ports
 
-    static let formulaeInputPort = InputPort(index: 0,
-                                                                name: "formulae",
-                                                                kind: .value(dataType: .utf8Text),
-                                                                maximumConnections: nil,
-                                                                minimumConnections: 0,
-                                                                cascadingDelete: false)
+    static let formulaeInputPort = "formulae"
 
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.formulaeInputPort], outputs: [])
+    var descriptor: NodeFunctionDescriptor {
+        .init(kind: Self.kind, staticInputPorts: [Self.formulaeInputPort], staticOutputPorts: [])
     }
 
     // MARK: File-system children
@@ -44,56 +39,6 @@ final class BuildGraph: NodeType {
     var outputFileSystem: FolderNode {
         get throws {
             try child(named: "outputFileSystem", createIfNotExist: true)!
-        }
-    }
-
-    // MARK: Debug
-
-    func debugPrintTree() {
-        do {
-            let outputFolder = try outputFileSystem
-            let topLevelOutputNodes = try nodeContext.processingCycle.allChildNodes(nodeID: outputFolder.nodeContext.nodeID!)
-
-            print("- build tree")
-            for outputNode in topLevelOutputNodes {
-                printDependencyTree(node: outputNode, indentLevel: 1)
-            }
-        } catch {
-            print("- build tree (error: \(error))")
-        }
-    }
-
-    private func printDependencyTree(node: NodeType, indentLevel: Int) {
-        let indent = String(repeating: "  ", count: indentLevel)
-        let kindName = (try? PolyFactory.type(kind: node.descriptor.kind))
-            .map { String(describing: $0) } ?? "Node"
-        let nodeName = node.nodeContext.name ?? "?"
-        print("\(indent)- \(kindName)(\(nodeName))")
-
-        let database = nodeContext.processingCycle.database
-        guard let nodeID = node.nodeContext.nodeID else { return }
-
-        do {
-            let incomingWires = try database.selectWires(goingToNodeID: nodeID)
-
-            var visitedDependencyNodeIDs = Set<ObjectID>()
-            var dependencyNodes = [NodeType]()
-
-            for wire in incomingWires {
-                guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
-                visitedDependencyNodeIDs.insert(wire.fromNodeID)
-
-                if let rawNode = try? database.selectNodeByID(wire.fromNodeID),
-                   let dependencyNode = try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode) {
-                    dependencyNodes.append(dependencyNode)
-                }
-            }
-
-            for dependencyNode in dependencyNodes {
-                printDependencyTree(node: dependencyNode, indentLevel: indentLevel + 1)
-            }
-        } catch {
-            print("\(indent)  (error loading dependencies: \(error))")
         }
     }
 
@@ -105,7 +50,7 @@ final class BuildGraph: NodeType {
 
     /// Recursively ensures that all children of `buildGraphNode` are mirrored by live
     /// nodes and wires in the processing graph.
-    private func integrate(buildGraphNode: BuildGraphNode, currentNode: NodeType) throws {
+    private func integrate(buildGraphNode: BuildGraphNode, currentNode: NodeFunction) throws {
         for inputPort in buildGraphNode.inputPorts() {
             for inputWire in inputPort.inputWires {
 
@@ -116,16 +61,17 @@ final class BuildGraph: NodeType {
                 // do a database search of all the BuildGraph children using the formula as the searchKey
 
                 let rawNodes = try nodeContext.processingCycle.database.selectNodes(searchKey: searchKey,
-                                                                                    parentNodeID: self.nodeContext.nodeID!)
+                                                                                    parentNodeID: self.nodeID)
 
-                func createOrGetNode() throws -> any NodeType {
+                func createOrGetNode() throws -> any NodeFunction {
                     if rawNodes.isEmpty {
                         // No existing nodes match this child BuildGraphNode, so we need to create a new one
 
                         switch inputWire.from.kind {
 
                         case .configuration(let configuration):
-                            let nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.buildGraph.childPoly(path: inputWire.from.name,
+                            #warning("TODO") // formerly rootNode.buildGraph
+                            let nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.childPoly(path: inputWire.from.name,
                                                                                                                          kind: StaticFileNode.kind,
                                                                                                                          createIfNotExist: true)!
 
@@ -135,7 +81,7 @@ final class BuildGraph: NodeType {
                             return nodeConnectedToInputWire
 
                         case .tool(let kind, _):
-                            return try nodeContext.processingCycle.rootNode.buildGraph.childPoly(path: inputWire.from.name,
+                            return try nodeContext.processingCycle.rootNode.childPoly(path: inputWire.from.name,
                                                                                                  kind: kind.asPolySerializableKind(),
                                                                                                  createIfNotExist: true)!
 
@@ -167,15 +113,11 @@ final class BuildGraph: NodeType {
                 nodeConnectedToInputWire.nodeContext.searchKey = searchKey
                 try nodeConnectedToInputWire.save()
 
-                guard let toPort = currentNode.descriptor.inputPort(named: inputPort.name) else {
-                    print("ERROR: Could not find input port named '\(inputPort.name)' on \(type(of: currentNode))")
-                    throw BuildGraphError.unknownInputPortNameReference
-                }
-
-                try nodeContext.processingCycle.connectWire(fromNode: nodeConnectedToInputWire,
-                                                            fromPort: nodeConnectedToInputWire.descriptor.outputPort(named: inputWire.fromPort)!,
-                                                            toNode: currentNode,
-                                                            toPort: toPort)
+                try nodeContext.processingCycle.connectWire(fromNodeID: nodeConnectedToInputWire.nodeID,
+                                                            fromPortNameID: inputWire.fromPort.asPortNameID(),
+                                                            toNodeID: currentNode.nodeID,
+                                                            toPortNameID: inputPort.name.asPortNameID(),
+                                                            name: "default".asPortNameID()) // TODO
 
                 try integrate(buildGraphNode: inputWire.from, currentNode: nodeConnectedToInputWire)
 

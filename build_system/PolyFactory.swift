@@ -23,7 +23,7 @@ enum PolyFactory {
     private static let registry: [UInt: PolySerializable.Type] = [
         RootNode.kind:           RootNode.self,
         CommandInterpreter.kind: CommandInterpreter.self,
-        FormulaFinder.kind:      FormulaFinder.self,
+        ProjectFinder.kind:      ProjectFinder.self,
         FormulaExtractor.kind:   FormulaExtractor.self,
         BuildGraph.kind:         BuildGraph.self,
         StaticFileNode.kind:     StaticFileNode.self,
@@ -33,7 +33,6 @@ enum PolyFactory {
         ClangCompilerTool.kind:  ClangCompilerTool.self,
         ClangPreprocessorTool.kind: ClangPreprocessorTool.self,
         FileMetadata.kind:       FileMetadata.self,
-        IncludeFinder.kind:      IncludeFinder.self,
         ClangLinkerToolConfiguration.kind:       ClangLinkerToolConfiguration.self,
         ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
         ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,

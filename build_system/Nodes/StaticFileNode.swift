@@ -5,7 +5,7 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
-final class StaticFileNode: NodeType {
+final class StaticFileNode: NodeFunction {
 
     static let kind: UInt = 3
     var nodeContext: NodeContext!
@@ -26,25 +26,17 @@ final class StaticFileNode: NodeType {
         // StaticFileNode has no stored properties to encode (nodeContext is not encoded)
     }
 
-    static let outputPort = OutputPort(index: 0,
-                                                          name: "output",
-                                                          kind: .value(dataType: .utf8Text))
+    static let outputPort = "output"
+    static let inputPort = "input"
 
-    static let inputPort = InputPort(index: 0,
-                                                        name: "input",
-                                                        kind: .value(dataType: .utf8Text),
-                                                        maximumConnections: 1,
-                                                        minimumConnections: 0,
-                                                        cascadingDelete: false)
+    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], staticOutputPorts: [outputPort])
 
-    static let descriptor = NodeKindDescriptor(kind: kind, inputs: [inputPort], outputs: [outputPort])
-
-    var descriptor: NodeKindDescriptor {
+    var descriptor: NodeFunctionDescriptor {
         Self.descriptor
     }
 
     func read() throws -> NodeValue? {
-        try nodeContext.processingCycle.readFromOutputPort(Self.outputPort, nodeID: nodeContext.nodeID!)
+        try nodeContext.processingCycle.readFromOutputPort(Self.outputPort, nodeID: self.nodeID)
     }
 
     func replaceContent(_ content: DataObjectHash) throws {

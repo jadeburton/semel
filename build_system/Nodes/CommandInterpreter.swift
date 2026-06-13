@@ -447,7 +447,7 @@ final class ExternalPathSanitizer {
     }
 }
 
-final class CommandInterpreter: NodeType {
+final class CommandInterpreter: PolySerializable {
     static let kind: UInt = 0
 
     let commandParser = CommandParser()
@@ -471,8 +471,8 @@ final class CommandInterpreter: NodeType {
         try container.encode(baseDirectory, forKey: .baseDirectory)
     }
 
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [], outputs: [])
+    var descriptor: NodeFunctionDescriptor {
+        .init(kind: Self.kind, staticInputPorts: [], staticOutputPorts: [])
     }
 
     func outputMessage(_ message: String) {
@@ -486,7 +486,7 @@ final class CommandInterpreter: NodeType {
     func handleCommand(_ command: String) throws {
         do {
             try handleUserCommand(commandParser.parse(command: command))
-            try save()
+          //  try save()
         } catch {
             outputError(error.localizedDescription)
         }
@@ -566,7 +566,7 @@ final class CommandInterpreter: NodeType {
 
     var outputFileSystem: FolderNode {
         get throws {
-            try nodeContext.processingCycle.rootNode.buildGraph.outputFileSystem
+            try nodeContext.processingCycle.rootNode.outputFileSystem
         }
     }
 

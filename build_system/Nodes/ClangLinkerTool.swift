@@ -25,7 +25,7 @@ struct ClangLinkerToolConfiguration: PolySerializable {
 
 // MARK: - Node
 
-final class ClangLinkerTool: NodeType {
+final class ClangLinkerTool: NodeFunction {
     static let kind: UInt = 18
 
     var nodeContext: NodeContext!
@@ -44,45 +44,18 @@ final class ClangLinkerTool: NodeType {
 
     // MARK: Ports
 
-    static let configuration = InputPort(index: 0,
-                                        name: "configuration",
-                                        kind: .value(dataType: .utf8Text),
-                                        maximumConnections: 1,
-                                        minimumConnections: 1,
-                                        cascadingDelete: false)
+    static let configuration = "configuration"
 
     // TODO: rename to "objectFiles"
-    static let input = InputPort(index: 1,
-                                name: "input",
-                                kind: .value(dataType: .binary),
-                                maximumConnections: nil,
-                                minimumConnections: 1,
-                                cascadingDelete: true)
+    static let input = "input"
 
-    static let libraries = InputPort(index: 2,
-                                     name: "libraries",
-                                     kind: .value(dataType: .binary),
-                                     maximumConnections: nil,
-                                     minimumConnections: 0,
-                                     cascadingDelete: false)
+    static let libraries = "libraries"
+    static let output = "output"
+    static let errorLog = "errorLog"
+    static let infoLog = "infoLog"
 
-    static let output = OutputPort(index: 2,
-                                                      name: "output",
-                                                      kind: .value(dataType: .binary))
-
-    static let errorLog = OutputPort(index: 0,
-                                                        name: "errorLog",
-                                                        kind: .value(dataType: .utf8Text))
-
-    static let infoLog = OutputPort(index: 1,
-                                                       name: "infoLog",
-                                                       kind: .value(dataType: .utf8Text))
-
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind,
-              inputs: [Self.configuration, Self.input, Self.libraries],
-              outputs: [Self.output, Self.errorLog, Self.infoLog])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input, libraries],
+                                            staticOutputPorts: [output, errorLog, infoLog])
 
     // MARK: Processing
 
@@ -96,22 +69,14 @@ final class ClangLinkerTool: NodeType {
         // Separate .dylib library files from .o object files.
         var libraryFiles: [FileNameAndContent] = []
 
-        var i = 0
-
-        for nodeValue in libraryValues {
-            let data = try nodeValue.kind.expectValue().resolve()
-            libraryFiles.append(.init(filePath: "\(i).dylib", content: data))
-
-            i += 1
+        for (libraryName, nodeValue) in libraryValues {
+            libraryFiles.append(.init(filePath: libraryName, content: try nodeValue.kind.expectValue().resolve()))
         }
 
-        var j = 0
-
         var objectFiles: [FileNameAndContent] = []
-        for nodeValue in inputValues {
-            objectFiles.append(.init(filePath: "\(j).o", content: try nodeValue.kind.expectValue().resolve()))
 
-            j += 1
+        for (objectFileName, nodeValue) in inputValues {
+            objectFiles.append(.init(filePath: objectFileName, content: try nodeValue.kind.expectValue().resolve()))
         }
 
         guard !objectFiles.isEmpty else {

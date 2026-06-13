@@ -1,17 +1,17 @@
-// FormulaFinder.swift
+// ProjectFinder.swift
 // build_system
 //
-// FormulaFinder monitors a directory for .yml formula files and wires each one
+// ProjectFinder monitors a directory for .yml formula files and wires each one
 // up to a FormulaExtractor, which in turn feeds the formula text to BuildGraph.
 // FormulaExtractor reads a formula file and passes its content through to BuildGraph.
 
 import Foundation
 
-// MARK: - FormulaFinder
+// MARK: - ProjectFinder
 
 /// Watches an input file-list stream and creates a FormulaExtractor child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
-final class FormulaFinder: NodeType {
+final class ProjectFinder: NodeFunction {
     static let kind: UInt = 5
 
     var nodeContext: NodeContext!
@@ -28,16 +28,9 @@ final class FormulaFinder: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let folderManifestInputPort = InputPort(index: 0,
-                                                                      name: "folderManifest",
-                                                                      kind: .value(dataType: .utf8Text),
-                                                                      maximumConnections: nil,
-                                                                      minimumConnections: 1,
-                                                                      cascadingDelete: false)
+    static let folderManifestInputPort = "folderManifest"
 
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.folderManifestInputPort], outputs: [])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [folderManifestInputPort], staticOutputPorts: [])
 
     private func ensureExtractorExists(folderManifestEntry: FolderManifestEntry, folderNode: FolderNode) throws {
 
@@ -50,16 +43,18 @@ final class FormulaFinder: NodeType {
         let fileNode = try folderNode.childPoly(path: folderManifestEntry.name, kind: StaticFileNode.kind) as! StaticFileNode
 
         try nodeContext.processingCycle.connectWire(
-            fromNode: fileNode,
-            fromPort: StaticFileNode.outputPort,
-            toNode: extractor,
-            toPort: FormulaExtractor.formulaFileInputPort)
+            fromNodeID: fileNode.nodeID,
+            fromPortNameID: StaticFileNode.outputPort.asPortNameID(),
+            toNodeID: extractor.nodeID,
+            toPortNameID: FormulaExtractor.formulaFileInputPort.asPortNameID(),
+            name: folderManifestEntry.name.asPortNameID())
 
-        try nodeContext.processingCycle.connectWire(
-            fromNode: extractor,
-            fromPort: FormulaExtractor.formulaOutputPort,
-            toNode: try nodeContext.processingCycle.rootNode.buildGraph,
-            toPort: BuildGraph.formulaeInputPort)
+        #warning("TODO")
+//        try nodeContext.processingCycle.connectWire(
+//            fromNodeID: extractor.nodeID,
+//            fromPortNameID: FormulaExtractor.formulaOutputPort.asPortNameID(),
+//            toNodeID: try nodeContext.processingCycle.rootNode.buildGraph.nodeID,
+//            toPortNameID: BuildGraph.formulaeInputPort.asPortNameID())
     }
 
     func process() throws {
@@ -88,7 +83,7 @@ final class FormulaFinder: NodeType {
 
 /// Reads a single formula.json file and passes its text content through to
 /// BuildGraph's formulae input port.
-final class FormulaExtractor: NodeType {
+final class FormulaExtractor: NodeFunction {
     static let kind: UInt = 6
 
     var nodeContext: NodeContext!
@@ -105,24 +100,14 @@ final class FormulaExtractor: NodeType {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let formulaFileInputPort = InputPort(index: 0,
-                                                                   name: "formulaFile",
-                                                                   kind: .value(dataType: .json),
-                                                                   maximumConnections: 1,
-                                                                   minimumConnections: 1,
-                                                                   cascadingDelete: true)
+    static let formulaFileInputPort = "formulaFile"
+    static let formulaOutputPort = "formula"
 
-    static let formulaOutputPort = OutputPort(index: 0,
-                                                                 name: "formula",
-                                                                 kind: .value(dataType: .utf8Text))
-
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [Self.formulaFileInputPort], outputs: [Self.formulaOutputPort])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaFileInputPort], staticOutputPorts: [formulaOutputPort])
 
     func process() throws {
         for formulaFileValue in try readAllValuesFromInputPort(Self.formulaFileInputPort) {
-            switch formulaFileValue.kind {
+            switch formulaFileValue.value.kind {
             case .noValue:
                 break
             case .value(let dataObjectHash):

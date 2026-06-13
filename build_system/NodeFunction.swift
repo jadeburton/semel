@@ -13,9 +13,11 @@ struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValueKind]
 }
 
-protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer {
+// A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
+// Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
+protocol NodeFunction: AnyObject, Codable, PolySerializable, WithDefaultInitializer {
 
-    var descriptor: NodeKindDescriptor { get }
+    var descriptor: NodeFunctionDescriptor { get }
     var nodeContext: NodeContext! { get set }
 
     /// Updates all output values based on the current input values, and also
@@ -26,23 +28,24 @@ protocol NodeType: AnyObject, Codable, PolySerializable, WithDefaultInitializer 
     func didSave() throws
 }
 
-extension NodeType {
-    func buildCacheKeyPartFromOneInput(inputPort: InputPort) throws -> String {
-        // Note: we zero-out the NodeID
-        #warning("This should not reference surrogate IDs")
-        let values = try readAllValuesFromInputPort(inputPort).sorted { a, b in a.originNodeID < b.originNodeID }.map { NodeValue(originNodeID: 0, originOutputPortDefID: $0.originOutputPortDefID, kind: $0.kind) }
-        
-        return try values.toJSON()
+extension NodeFunction {
+    var nodeID: ObjectID {
+        nodeContext.nodeID!
+    }
+
+    func buildCacheKeyPartFromOneInput(inputPort: String) throws -> String {
+        let sortedKeyValues: [NodeValueAndWire] = try readAllValuesFromInputPort(inputPort).valuesSortedByKey()
+        return try sortedKeyValues.map { $0.kind }.toJSON()
     }
 
     func buildCacheKeyFromAllInputs() throws -> String? {
-        if descriptor.inputs.isEmpty {
+        if descriptor.staticInputPorts.isEmpty {
             return ""
         }
 
         var aggregated = try toJSON()
 
-        for inputPort in descriptor.inputs.sorted(by: { a, b in a.name < b.name }) {
+        for inputPort in descriptor.staticInputPorts.sorted() {
             aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort))
             aggregated.append("\n")
         }
@@ -65,11 +68,11 @@ extension NodeType {
 //            return false
 //        }
 
-        if descriptor.inputs.isEmpty {
+        if descriptor.staticInputPorts.isEmpty {
             return false
         }
 
-        if descriptor.outputs.isEmpty {
+        if descriptor.staticOutputPorts.isEmpty {
             return false
         }
 
@@ -81,9 +84,9 @@ extension NodeType {
             return false
         }
 
-        for outputPort in descriptor.outputs {
-            if let outputValue = decodedCacheEntry.outputValues[outputPort.name] {
-                print("Using cached output for node \(self.description()), output port \(outputPort.name)")
+        for outputPort in descriptor.staticOutputPorts {
+            if let outputValue = decodedCacheEntry.outputValues[outputPort] {
+                print("Using cached output for node \(self.description()), output port \(outputPort)")
                 try writeToOutputPort(outputPort, value: outputValue)
             } else {
                 // Invalid cache
@@ -99,19 +102,19 @@ extension NodeType {
             return
         }
 
-        if descriptor.inputs.isEmpty {
+        if descriptor.staticInputPorts.isEmpty {
             return
         }
 
-        if descriptor.outputs.isEmpty {
+        if descriptor.staticOutputPorts.isEmpty {
             return
         }
 
         var outputValues: [String: NodeValueKind] = [:]
 
-        for outputPort in descriptor.outputs {
+        for outputPort in descriptor.staticOutputPorts {
             let value = try readFromOutputPort(outputPort)
-            outputValues[outputPort.name] = value.kind // we do not save NodeIDs
+            outputValues[outputPort] = value.kind // we do not save NodeIDs
         }
 
         let cacheEntry = ProcessCacheEntry(outputValues: outputValues)
@@ -143,21 +146,19 @@ extension NodeType {
     }
 
     func writeToOutputPortsOnError(_ error: Error) {
-        for outputPort in descriptor.outputs {
+        for outputPort in descriptor.staticOutputPorts {
             try? writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "\(error)")))
         }
     }
 
     func allInputsAreSatisfied() -> Bool {
-        for inputPort in descriptor.inputs {
-            if inputPort.minimumConnections > 0 {
-                guard let values = try? readAllValuesFromInputPort(inputPort), !values.isEmpty else {
-                    return false
-                }
+        for inputPort in descriptor.staticInputPorts {
+            guard let values = try? readAllValuesFromInputPort(inputPort), !values.isEmpty else {
+                return false
+            }
 
-                if values.contains(where: { if case .noValue = $0.kind { return true } else { return false } }) {
-                    return false
-                }
+            if values.contains(where: { if case .noValue = $0.value.kind { return true } else { return false } }) {
+                return false
             }
         }
 
@@ -172,12 +173,12 @@ protocol WithDefaultInitializer {
 protocol MessageType: AnyObject, Codable, PolySerializable {
 }
 
-// MARK: - PolyFactory + NodeType
+// MARK: - PolyFactory + NodeFunction
 
 extension PolyFactory {
     /// Construct a default instance of the type identified by `kind`.
-    static func makeDefault(kind: UInt) throws -> NodeType {
-        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! NodeType
+    static func makeDefault(kind: UInt) throws -> NodeFunction {
+        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! NodeFunction
     }
 }
 
@@ -203,7 +204,6 @@ enum NodeError: Error {
     case missingInputs
     case missingInput(name: String)
     case other(message: String)
-    case portDefNotFound(name: String, kind: PortDef.PortKind)
 }
 
 // MARK: - ObjectID helper
@@ -217,16 +217,16 @@ extension ObjectID {
     }
 }
 
-// MARK: - NodeType default implementations
+// MARK: - NodeFunction default implementations
 
-extension NodeType {
+extension NodeFunction {
     func willSave() throws {}
     func didSave() throws {}
 }
 
-extension NodeType {
+extension NodeFunction {
     func description() -> String {
-        "\(String(describing: Self.self)) (kind: \(descriptor.kind)), NodeID: \(nodeContext.nodeID ?? -1), name: \(nodeContext.name ?? "nil"), inputs: \(descriptor.inputs.count), outputs: \(descriptor.outputs.count)"
+        "\(String(describing: Self.self)) (kind: \(type(of: self).kind)), NodeID: \(nodeContext.nodeID ?? -1), name: \(nodeContext.name ?? "nil"), inputs: \(descriptor.staticInputPorts.count), outputs: \(descriptor.staticOutputPorts.count)"
     }
 }
 
@@ -235,10 +235,10 @@ struct OneNodeValue {
     let originNodeID: ObjectID
 }
 
-// MARK: - NodeType navigation / port helpers
+// MARK: - NodeFunction navigation / port helpers
 
-extension NodeType {
-    func parent<N: NodeType>() throws -> N? {
+extension NodeFunction {
+    func parent<N: NodeFunction>() throws -> N? {
         try nodeContext.processingCycle.parentNode(node: self)
     }
 
@@ -262,8 +262,8 @@ extension NodeType {
         return parentPath.isEmpty ? name : (parentPath + "/" + name)
     }
 
-    func child(named name: String) throws -> (any NodeType)? {
-        try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
+    func child(named name: String) throws -> (any NodeFunction)? {
+        try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: self.nodeID)
     }
 
     func delete() throws {
@@ -276,7 +276,7 @@ extension NodeType {
 
         #warning("TODO")
         return true /*
-        guard let wires = try? nodeContext.processingCycle.database.selectWires(comingFromNodeID: nodeContext.nodeID!), !wires.isEmpty else {
+        guard let wires = try? nodeContext.processingCycle.database.selectWires(comingFromNodeID: self.nodeID), !wires.isEmpty else {
             return true
         }
 
@@ -293,13 +293,11 @@ extension NodeType {
         return true*/
     }
 
-    func readAllValuesFromInputPort(_ inputPort: InputPort) throws -> [NodeValueAndWire] {
-        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeContext.nodeID!)
+    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValueAndWire] {
+        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: self.nodeID)
     }
 
-    /// Returning nil means there is nothing yet connected to the input port
-    /// (i.e. not that the value is not set).
-    func readOneValueFromInputPort(_ inputPort: InputPort) throws -> OneNodeValue {
+    func readOneValueFromInputPort(_ inputPort: String) throws -> OneNodeValue {
         let values = try readAllValuesFromInputPort(inputPort)
 
         switch values.count {
@@ -308,13 +306,13 @@ extension NodeType {
             throw NodeError.missingInputs
 
         case 1:
-            switch values.first!.kind {
+            switch values.first!.value.kind {
 
             case .noValue:
                 throw NodeError.missingInputs
 
             case .value(let dataObjectHash):
-                return .init(dataObjectHash: dataObjectHash, originNodeID: values.first!.originNodeID)
+                return .init(dataObjectHash: dataObjectHash, originNodeID: values.first!.value.originNodeID)
             }
 
         default:
@@ -322,51 +320,51 @@ extension NodeType {
         }
     }
 
-    func readFromOutputPort(_ outputPort: OutputPort) throws -> NodeValue {
-        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: nodeContext.nodeID!)
+    func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
+        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: self.nodeID)
     }
 
-    func writeToOutputPort(_ outputPort: OutputPort, value: NodeValueKind) throws {
-        try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: nodeContext.nodeID!)
+    func writeToOutputPort(_ outputPort: String, value: NodeValueKind) throws {
+        try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
     }
 
-    func allChildren() throws -> [NodeType] {
-        try nodeContext.processingCycle.allChildNodes(nodeID: nodeContext.nodeID!)
+    func allChildren() throws -> [NodeFunction] {
+        try nodeContext.processingCycle.allChildNodes(nodeID: self.nodeID)
     }
 
-    func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeType? {
-        if let existingChild = try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!) {
+    func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeFunction? {
+        if let existingChild = try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: self.nodeID) {
             return existingChild
         }
         if !createIfNotExist { return nil }
-        return try nodeContext.processingCycle.makeNodePoly(kind: kind, name: name, parentNodeID: nodeContext.nodeID!)
+        return try nodeContext.processingCycle.makeNodePoly(kind: kind, name: name, parentNodeID: self.nodeID)
     }
 
     /// Creates the child if it does not exist.
-    func child<N: NodeType>(named name: String, createIfNotExist: Bool = false) throws -> N? {
-        if let existingChild: N = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) {
+    func child<N: NodeFunction>(named name: String, createIfNotExist: Bool = false) throws -> N? {
+        if let existingChild: N = try nodeContext.processingCycle.node(named: name, parentNodeID: self.nodeID) {
             return existingChild
         }
         if !createIfNotExist { return nil }
-        return try nodeContext.processingCycle.makeNodePoly(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N?
+        return try nodeContext.processingCycle.makeNodePoly(kind: N.kind, name: name, parentNodeID: self.nodeID) as! N?
     }
 
     /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func child<N: NodeType>(path: String, createIfNotExist: Bool = false) throws -> N? {
+    func child<N: NodeFunction>(path: String, createIfNotExist: Bool = false) throws -> N? {
         try nodeContext.processingCycle.childNode(path: path,
-                                                  rootNodeID: nodeContext.nodeID!,
+                                                  rootNodeID: self.nodeID,
                                                   createIfNotExist: createIfNotExist)
     }
 
     /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeType? {
+    func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeFunction? {
         try nodeContext.processingCycle.childNodePoly(path: path,
-                                                      rootNodeID: nodeContext.nodeID!,
+                                                      rootNodeID: self.nodeID,
                                                       kind: kind,
                                                       createIfNotExist: createIfNotExist)
     }
 
-    func findNodesConnectedToNodeViaInputWire(toInputPortNamed inputPortName: String) throws -> [any NodeType] {
+    func findNodesConnectedToNodeViaInputWire(toInputPortNamed inputPortName: String) throws -> [any NodeFunction] {
         try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, toInputPortNamed: inputPortName)
     }
 }
