@@ -19,38 +19,35 @@ protocol PolySerializable: Codable {
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
 enum PolyFactory {
 
-    /// All polymorphic types must be registered here.
-    private static let registry: [UInt: PolySerializable.Type] = [
-        RootNode.kind:           RootNode.self,
-        CommandInterpreter.kind: CommandInterpreter.self,
-        FormulaFinder.kind:      FormulaFinder.self,
-        FormulaExtractor.kind:   FormulaExtractor.self,
-        BuildGraph.kind:         BuildGraph.self,
-        StaticFileNode.kind:     StaticFileNode.self,
-        FolderNode.kind:         FolderNode.self,
-        FolderEvent.kind:        FolderEvent.self,
-        ClangLinkerTool.kind:    ClangLinkerTool.self,
-        ClangCompilerTool.kind:  ClangCompilerTool.self,
-        ClangPreprocessorTool.kind: ClangPreprocessorTool.self,
-        FileMetadata.kind:       FileMetadata.self,
-        IncludeFinder.kind:      IncludeFinder.self,
-        ClangLinkerToolConfiguration.kind:       ClangLinkerToolConfiguration.self,
-        ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
-        ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
-        FolderManifest.kind:     FolderManifest.self,
-    ]
+    private static var registryCache = [UInt: PolySerializable.Type]()
+
+    /// All polymorphic types must be registered with the factory before they can be serialized/deserialized.
+    static func register(types: [PolySerializable.Type]) {
+        for type in types {
+            registryCache[type.self.kind] = type
+        }
+    }
 
     /// Look up the concrete type for a given kind.
     static func type(kind: UInt) throws -> PolySerializable.Type {
-        guard let type = registry[kind] else {
+        guard let type = registryCache[kind] else {
             fatalError("Unknown object kind: \(kind)")
         }
         return type
     }
 
+    /// Look up the `kind` discriminator for a type identified by its Swift type name.
+    /// Used when reconstructing a node from a `GraphShapeNode` string.
+    static func kind(forTypeName typeName: String) throws -> UInt {
+        guard let entry = registryCache.first(where: { String(describing: $0.value) == typeName }) else {
+            throw PolyFactoryError.unknownTypeName(typeName)
+        }
+        return entry.key
+    }
+
     /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
     static func decode(encodedJSON: String) throws -> any PolySerializable {
-        try Cassette.fromJSON(encodedJSON).object
+        try Caddy.fromJSON(encodedJSON).object
     }
 
     static func decodeAndCast<P: PolySerializable>(encodedJSON: String) throws -> P {
@@ -67,19 +64,20 @@ enum PolyFactory {
 
 enum PolyFactoryError: Error {
     case unexpectedType
+    case unknownTypeName(String)
 }
 
 extension PolySerializable {
     /// Encode a `PolySerializable` to a JSON string, embedding its `kind`.
     func toJSON() throws -> String {
-        try Cassette(object: self).toJSON()
+        try Caddy(object: self).toJSON()
     }
 }
 
-// MARK: - Cassette (private wrapper that pairs kind + object for serialization)
+// MARK: - Caddy (private wrapper that pairs kind + object for serialization)
 
 /// Internal use. Wraps a `PolySerializable` during serialization to add a `kind` discriminator.
-private struct Cassette: Codable {
+private struct Caddy: Codable {
 
     let object: PolySerializable
 

@@ -1,4 +1,3 @@
-
 //
 //  NodeValue.swift
 //  build_system
@@ -12,113 +11,101 @@ enum NoValueReason: Codable {
     case error(message: String)
 }
 
-// NodeValueKind cannot use synthesised Codable because `metadata` is `any PolySerializable`,
-// a protocol existential. We encode it as a JSON string via PolyFactory — the same approach
-// used throughout the rest of this file.
-enum NodeValueKind: Codable {
+enum NodeValue: Codable {
     case noValue(reason: NoValueReason)
-    case value(_ value: DataObjectHash, metadata: String?)
-}
-
-struct NodeValue: Codable {
-    let originNodeID: ObjectID
-    let originOutputPort: UInt8
-    let kind: NodeValueKind
+    case value(_ value: DataObjectHash)
 }
 
 extension NodeValue {
+    func expectValue() throws -> DataObjectHash {
+        switch self {
+        case .noValue:
+            throw NodeError.missingInputs
+        case .value(let value):
+            return value
+        }
+    }
+
     var isNoValue: Bool {
-        if case .noValue = kind {
+        if case .noValue = self {
             return true
         } else {
             return false
         }
     }
+
+    var isPending: Bool {
+        if case .noValue(let reason) = self {
+            if case .pending = reason {
+                return true
+            }
+        }
+        return false
+    }
 }
 
-struct NodeValueAndWire: Codable {
-    let originNodeID: ObjectID
-    let originOutputPort: UInt8
-    let kind: NodeValueKind
-    let wire: Wire
-}
-
-enum NodeOutputValueError: Error {
-    case dataObjectHashNotSetOnNodeOutputValue
+enum PortError: Error {
+    case dataObjectHashNotSetOnPort
 }
 
 enum ProcessingCycleError: Error {
     case outputPortHasNoValue
 }
 
-// MARK: - DatabaseModels.NodeOutputValue → NodeValue
+// MARK: - DatabaseModels.Port → NodeValue
 
-extension DatabaseModels.NodeOutputValue {
-    func asNodeOutputValue(wire: Wire) throws -> NodeValueAndWire {
-        .init(originNodeID: nodeID,
-              originOutputPort: port,
-              kind: try .init(nodeOutputValue: self),
-              wire: wire)
-    }
-    func asNodeOutputValue() throws -> NodeValue {
-        .init(originNodeID: nodeID,
-              originOutputPort: port,
-              kind: try .init(nodeOutputValue: self))
+extension DatabaseModels.OutputPort {
+    func asNodeValue() throws -> NodeValue {
+        try .init(port: self)
     }
 }
 
-// MARK: - NodeValueKind helpers
+// MARK: - NodeValue helpers
 
-extension NodeValueKind {
-    init(nodeOutputValue: DatabaseModels.NodeOutputValue) throws {
-        switch nodeOutputValue.kind {
+extension NodeValue {
+    init(port: DatabaseModels.OutputPort) throws {
+        switch port.valueKind {
 
         case .pending:
             self = .noValue(reason: .pending)
 
         case .error:
-            self = .noValue(reason: .error(message: nodeOutputValue.errorMessage ?? "<unknown>"))
+            self = .noValue(reason: .error(message: (try? port.dataObjectHash?.resolveAsString()) ?? "<unknown>"))
 
         case .value:
 
-            guard let dataObjectHash = nodeOutputValue.dataObjectHash else {
-                throw NodeOutputValueError.dataObjectHashNotSetOnNodeOutputValue
+            guard let dataObjectHash = port.dataObjectHash else {
+                throw PortError.dataObjectHashNotSetOnPort
             }
 
-            self = .value(dataObjectHash, metadata: nodeOutputValue.metadata)
+            self = .value(dataObjectHash)
         }
     }
 
-    func mapNodeOutputValue(nodeID: ObjectID, outputPortIndex: UInt8) throws -> NodeOutputValue {
+    func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> OutputPort {
         switch self {
 
         case .noValue(let reason):
 
             switch reason {
             case .pending:
-                return .init(nodeID: nodeID,
-                             port: outputPortIndex,
-                             kind: .pending,
-                             dataObjectHash: nil,
-                             metadata: nil,
-                             errorMessage: nil)
+                return OutputPort(nodeID: nodeID,
+                                  nameSymbolID: outputSymbolID,
+                                  valueKind: .pending,
+                                  dataObjectHash: nil)
 
             case .error(let message):
-                return .init(nodeID: nodeID,
-                             port: outputPortIndex,
-                             kind: .error,
-                             dataObjectHash: nil,
-                             metadata: nil,
-                             errorMessage: message)
+                return OutputPort(nodeID: nodeID,
+                                  nameSymbolID: outputSymbolID,
+                                  valueKind: .error,
+                                  dataObjectHash: message.intern())
             }
 
-        case .value(let dataObjectHash, let metadata):
-            return .init(nodeID: nodeID,
-                         port: outputPortIndex,
-                         kind: .value,
-                         dataObjectHash: dataObjectHash,
-                         metadata: metadata,
-                         errorMessage: nil)
+        case .value(let dataObjectHash):
+            return OutputPort(nodeID: nodeID,
+                              nameSymbolID: outputSymbolID,
+                              valueKind: .value,
+                              dataObjectHash: dataObjectHash)
         }
     }
 }

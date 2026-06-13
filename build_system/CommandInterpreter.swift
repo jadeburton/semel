@@ -28,6 +28,7 @@ struct FileWildcardEntry {
     let path: String
     let kind: FileWildcardEntryKind
     let isMissing: Bool // the file is missing from the internal file system (e.g. it was deleted by the user but is still referenced by the build graph)
+    let isUnreferenced: Bool
 }
 
 protocol FileWildcardMatcherInput {
@@ -138,7 +139,11 @@ final class FileWildcardMatcher {
 
             if isLastSegment {
                 // Final segment — emit the match.
-                results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind, isMissing: child.isMissing))
+                results.append(FileWildcardEntry(path: childLogicalPath,
+                                                 kind: child.kind,
+                                                 isMissing: child.isMissing,
+                                                 isUnreferenced: child.isUnreferenced))
+
             } else if child.kind == .folder {
                 // More segments remain — descend into matching folder.
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
@@ -227,7 +232,8 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
             return FileWildcardEntry(
                 path: name,
                 kind: isDir.boolValue ? .folder : .file,
-                isMissing: false
+                isMissing: false,
+                isUnreferenced: false
             )
         }.sorted { $0.path < $1.path }
     }
@@ -235,23 +241,37 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
 
 final class InternalFileSystemLister: FileWildcardMatcherInput {
     let rootDirectoryPath = "/"
-    let folder: FolderNode
+    let folder: Node
 
-    init(folder: FolderNode) {
+    init(folder: Node) {
         self.folder = folder
     }
 
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
-        let start = try folder.childPoly(path: inDirectoryPath, kind: FolderNode.kind)! // TODO
-        return try! start.allChildren().map { node in
-            if let staticFileNode = node as? StaticFileNode {
-                return FileWildcardEntry(path: node.nodeContext.name!,
-                                         kind: .file,
-                                         isMissing: try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).isNoValue)
-            } else {
-                return FileWildcardEntry(path: node.nodeContext.name!,
+        let start = try folder.childNode(path: inDirectoryPath)! // TODO
+
+        return try! start.allChildren.map { node in
+
+            switch node.kind {
+
+            case Folder.kind:
+                guard let folder = try node.nodeFunction() as? Folder else {
+                    throw NodeError.other(message: "Unexpected object kind")
+                }
+                return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
-                                         isMissing: false)
+                                         isMissing: false,
+                                         isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
+
+            default:
+                let nodeFunction = try node.nodeFunction()
+                guard let file = nodeFunction as? FileType else {
+                    throw NodeError.other(message: "Unexpected object kind")
+                }
+                return FileWildcardEntry(path: node.name!,
+                                         kind: .file,
+                                         isMissing: try file.read()!.isNoValue,
+                                         isUnreferenced: try nodeFunction.hasNoOutputWires())
             }
         }
     }
@@ -265,6 +285,8 @@ enum FileSystemForCommand {
 enum UserCommand {
     case base(externalPath: String) // strato base .
     case debug
+    case nudge // schedule all nodes currently in an error state
+    case quit
     case begin           // strato begin
     case commit          // strato commit
     case discard         // strato discard
@@ -336,6 +358,12 @@ final class CommandParser {
 
         case "d", "debug":
             return .debug
+
+        case "n", "nudge":
+            return .nudge
+
+        case "q", "quit", "exit":
+            return .quit
 
         case "begin":
             return .begin
@@ -447,32 +475,19 @@ final class ExternalPathSanitizer {
     }
 }
 
-final class CommandInterpreter: NodeType {
-    static let kind: UInt = 0
+enum  CommandInterpreterError: Error {
+    case quit
+}
+
+final class CommandInterpreter {
 
     let commandParser = CommandParser()
-    var nodeContext: NodeContext!
     var baseDirectory: String?
+    let database: DatabaseLayer
 
-    enum CodingKeys: String, CodingKey {
-        case baseDirectory
-    }
-
-    required init() {
-    }
-
-    required init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        baseDirectory = try container.decodeIfPresent(String.self, forKey: .baseDirectory)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(baseDirectory, forKey: .baseDirectory)
-    }
-
-    var descriptor: NodeKindDescriptor {
-        .init(kind: Self.kind, inputs: [], outputs: [])
+    required init(database: DatabaseLayer) {
+        self.database = database
+        handleBase(externalPath: "/Users/jadeburton/Desktop/C1/C1")
     }
 
     func outputMessage(_ message: String) {
@@ -486,14 +501,28 @@ final class CommandInterpreter: NodeType {
     func handleCommand(_ command: String) throws {
         do {
             try handleUserCommand(commandParser.parse(command: command))
-            try save()
+            //  try save()
+        } catch CommandInterpreterError.quit {
+            throw CommandInterpreterError.quit
         } catch {
             outputError(error.localizedDescription)
         }
     }
 
+    var buildEngine: BuildEngine {
+        BuildEngine.shared
+    }
+
     func handleDebug() throws {
-        try nodeContext.processingCycle.printAll()
+        try buildEngine.printAll()
+    }
+
+    func handleNudge() throws {
+        try buildEngine.nudge()
+    }
+
+    func handleQuit() throws {
+        throw CommandInterpreterError.quit
     }
 
     func handleUserCommand(_ userCommand: UserCommand) throws {
@@ -504,6 +533,12 @@ final class CommandInterpreter: NodeType {
 
         case .debug:
             try handleDebug()
+
+        case .nudge:
+            try handleNudge()
+
+        case .quit:
+            try handleQuit()
 
         case .begin:
             handleBegin()
@@ -558,19 +593,19 @@ final class CommandInterpreter: NodeType {
         // Coming soon
     }
 
-    var inputFileSystem: FolderNode {
+    var inputFileSystem: Node {
         get throws {
-            try nodeContext.processingCycle.rootNode.inputFileSystem
+            try buildEngine.inputFileSystem
         }
     }
 
-    var outputFileSystem: FolderNode {
+    var outputFileSystem: Node {
         get throws {
-            try nodeContext.processingCycle.rootNode.buildGraph.outputFileSystem
+            try buildEngine.outputFileSystem
         }
     }
 
-    func pushOne(_ entry: FileWildcardEntry, baseDirectory: String) {
+    func pushOne(_ entry: FileWildcardEntry, baseDirectory: String) throws {
         let relativePath = entry.path
         outputMessage("Push: \(relativePath)")
         switch entry.kind {
@@ -579,20 +614,14 @@ final class CommandInterpreter: NodeType {
             let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath)
             let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
-            let filename = (relativePath as NSString).lastPathComponent
-            let containingPath = (relativePath as NSString).deletingLastPathComponent
-
-            let containingFolder: FolderNode
-            if containingPath.isEmpty || containingPath == "." {
-                containingFolder = try! inputFileSystem
-            } else {
-                containingFolder = try! inputFileSystem.ensureEntirePathExists(containingPath)
-            }
-
-            try! containingFolder.addOrReplaceChild(content: fileContent.intern(), name: filename)
+            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
+            let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
+            let fromNode = try database.node.select(nodeID: fromNodeID)
+            _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(fileContent.intern())
 
         case .folder:
-            try! inputFileSystem.ensureEntirePathExists(relativePath)
+            // TODO: each folder should notify its parent of creation
+            _ = try inputFileSystem.ensureEntirePathExistsAsFolders(relativePath)
         }
     }
 
@@ -605,7 +634,7 @@ final class CommandInterpreter: NodeType {
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
 
         try matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
-            pushOne(entry, baseDirectory: baseDirectory)
+            try pushOne(entry, baseDirectory: baseDirectory)
         }
     }
 
@@ -618,34 +647,79 @@ final class CommandInterpreter: NodeType {
     }
 
     private func removeOne(_ entry: FileWildcardEntry) throws {
-
-        outputMessage("Remove: \(entry.path)")
-
-        guard let child = try inputFileSystem.childPoly(path: entry.path, kind: FolderNode.kind) else { // TODO: we don't even need this kind arg if we don't create it
+        guard let child = try inputFileSystem.childNode(path: entry.path) else {
             outputError("Child not found")
             return
+        }
+
+        try removeOne(child: child)
+    }
+
+    private func removeOne(child: Node) throws {
+        if let staticFile = try child.nodeFunction() as? StaticFile {
+            try removeStaticFile(nodeFunction: staticFile)
+        } else {
+            if let folder = try child.nodeFunction() as? Folder {
+                try removeFolder(node: child, nodeFunction: folder)
+            } else {
+                // TODO
+                assert(false)
+            }
+        }
+    }
+
+    private func removeStaticFile(nodeFunction: StaticFile) throws {
+        outputMessage("Remove file: \(nodeFunction.thisNode.name!)")
+
+        // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
+        // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
+        // the Project file.)
+        _ = try nodeFunction.replaceContent(nil) // turns it into a ghost
+
+        if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
+            // Ghost, no output wires - really delete it.
+            _ = try database.node.delete(nodeID: nodeFunction.thisNode.id!)
+
+            // notify parent
+            if let parentNodeID = nodeFunction.thisNode.parentNodeID {
+                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: nodeFunction.thisNode.id!,
+                                                                                              name: nodeFunction.thisNode.name!,
+                                                                                              thisNode: parentFolderNode)
+            }
         }
 
         // - if the Node is used by the build graph, it must not be user-deleted, as this will invalidate the graph even if the file is re-added.
         // - instead, we "gut" the file, turning it into a ghost. when the user lists files, it will appear as "missing", according to the current build graph.
         // - then, re-adding the file will replace the ghost with a new node, which will be picked up by the build graph and cause the necessary rebuilds.
-        // - however, some input files do not behave this way. project files (formulae) should instead perform a cascading delete. this is because they are not
-        //   part of the build graph.
-        // - the way we tell is by looking at the wires coming from the file; if one or more target nodes do not allow cascading-deleting, we use the ghost-technique.
+    }
 
-        if try child.noOutputWiresPreventCascadeDeletion() {
-            try child.delete()
-        } else {
-            guard let staticFileNode = child as? StaticFileNode else {
-                outputError("Cannot delete; object is in use.")
-                return
+    private func removeFolder(node: Node, nodeFunction: Folder) throws {
+
+        // Delete all children first, which will make child StaticFiles ghosts
+        for child in try node.allChildren {
+            try removeOne(child: child)
+        }
+
+        outputMessage("Remove folder: \(node.name!)")
+
+        if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
+            _ = try database.node.delete(nodeID: node.id!)
+
+            if let parentNodeID = node.parentNodeID {
+                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
+                                                                                              name: node.name!,
+                                                                                              thisNode: parentFolderNode)
             }
-            try staticFileNode.eraseContents() // turns it into a ghost
+        } else {
+            // TODO: If there are no children but there are outputs, mark the folder as a ghost. Parent folder should not include in manifest.
+            outputError("Cannot delete Folder; in use")
         }
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
-        func handle(folder: FolderNode) throws {
+        func handle(folder: Node) throws {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
             try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
@@ -661,17 +735,22 @@ final class CommandInterpreter: NodeType {
         }
     }
 
-    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) throws {
+    private func copyOneFile(folder: Node, entry: FileWildcardEntry, destinationPath: String) throws {
         switch entry.kind {
         case .file:
-            guard let staticFileNode: StaticFileNode = try folder.child(path: entry.path) else {
+            guard let fileNode = try folder.childNode(path: entry.path) else {
                 outputError("File \(entry.path) not found in internal file system")
                 return
             }
 
-            switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).kind {
+            guard let file = try fileNode.nodeFunction() as? FileType else {
+                outputError("Object \(entry.path) is not a FileType")
+                return
+            }
 
-            case .value(let dataObjectHash, _):
+            switch try file.read() {
+
+            case .value(let dataObjectHash):
                 let fileContent = Data(try dataObjectHash.resolve())
                 let finalPath = destinationPath.appending("/").appending((entry.path as NSString).lastPathComponent)
                 try fileContent.write(to: URL(fileURLWithPath: finalPath))
@@ -679,6 +758,9 @@ final class CommandInterpreter: NodeType {
 
             case .noValue(let reason):
                 outputError("File \(entry.path) has no content: \(reason)")
+
+            case nil:
+                outputError("File \(entry.path) has no nil value")
 
             }
 
@@ -689,7 +771,7 @@ final class CommandInterpreter: NodeType {
     }
 
     private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
-        let fileSystem: FolderNode
+        let fileSystem: Node
 
         switch folder {
         case .input:
@@ -704,11 +786,12 @@ final class CommandInterpreter: NodeType {
             if entry.isMissing {
                 outputMessage("\(entry.path) (missing)")
             } else {
-                outputMessage(entry.path)
+                if entry.isUnreferenced {
+                    outputMessage("\(entry.path) (unreferenced)")
+                } else {
+                    outputMessage(entry.path)
+                }
             }
         }
-    }
-
-    func process() throws {
     }
 }

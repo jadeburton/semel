@@ -39,101 +39,86 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
                 t.column("name", .text)
                 t.column("configuration", .text)
                 t.column("scheduled", .integer).indexed().notNull()
-                t.column("searchKey", .text).indexed()
+                t.column("searchKey", .text).unique()
             }
         }
     }
 }
 
-extension DatabaseLayer {
+public struct NodeDataAccess: DataAccessType {
+    public weak var databaseLayer: DatabaseLayer?
 
-    public func selectAllScheduledNodes(limit: Int) throws -> [Node] {
-        try dbQueue.read { db in
-            try Node
-                .filter(Node.Columns.scheduled == true)
-                .fetchAll(db)
+    public init(databaseLayer: DatabaseLayer) {
+        self.databaseLayer = databaseLayer
+    }
+
+    public func selectAllScheduled(limit: Int) throws -> [Node] {
+        try read { db in
+            try Node.filter(Node.Columns.scheduled == true).fetchAll(db)
         }
     }
 
-    public func selectAllNodes() throws -> [Node] {
-        try dbQueue.read { db in
-            try Node.fetchAll(db)
-        }
+    public func selectAll() throws -> [Node] {
+        print("WARNING: expensive selectAllNodes call")
+        return try read { db in try Node.fetchAll(db) }
     }
 
-    public func selectNodeByID(_ nodeID: ObjectID) throws -> Node? {
-        try dbQueue.read { db in
-            try Node.fetchOne(db, id: nodeID)
+    public func select(nodeID: ObjectID) throws -> Node {
+        guard let node = (try read { db in try Node.fetchOne(db, id: nodeID) }) else {
+            throw DatabaseLayer.DatabaseError.nodeNotFound
         }
+        return node
     }
 
-    public func selectNodesInRoot(named name: String) throws -> [Node] {
-        try dbQueue.read { db in
-            try Node.filter(Node.Columns.name == name).fetchAll(db)
-        }
-    }
-
-    public func selectNodesInRoot(kind: UInt, named name: String) throws -> [Node] {
-        try dbQueue.read { db in
-            try Node.filter(Node.Columns.kind == kind &&
-                            Node.Columns.name == name).fetchAll(db)
-        }
-    }
-
-    public func selectNodes(parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
+    public func select(parentNodeID: ObjectID) throws -> [Node] {
+        try read { db in
             try Node.filter(Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
-            try Node.filter(Node.Columns.name == name && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+    public func select(named name: String, parentNodeID: ObjectID?) throws -> [Node] {
+        try read { db in
+            try Node.filter(Node.Columns.name == name &&
+                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func selectNodes(searchKey: String, parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
-            try Node.filter(Node.Columns.searchKey == searchKey && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+    public func select(searchKey: String) throws -> [Node] {
+        try read { db in
+            try Node.filter(Node.Columns.searchKey == searchKey).fetchAll(db)
         }
     }
 
-    public func selectNodes(kind: UInt, named name: String, parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
+    public func select(kind: UInt, named name: String, parentNodeID: ObjectID?) throws -> [Node] {
+        try read { db in
             try Node.filter(Node.Columns.kind == kind &&
                             Node.Columns.name == name &&
                             Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func insertNode(_ node: Node) throws -> ObjectID {
-        try dbQueue.write { db in
+    public func insert(_ node: Node) throws -> ObjectID {
+        try write { db in
             try node.insert(db)
             return db.lastInsertedRowID
         }
     }
 
-    public func insertOrReplaceNode(_ node: Node) throws {
-        try dbQueue.write { db in
-            try node.save(db)
-        }
+    public func insertOrUpdate(_ node: Node) throws {
+        try write { db in try node.save(db) }
     }
 
-    public func updateNode(_ node: Node) throws {
-        try dbQueue.write { db in
-            try node.update(db)
-        }
+    public func update(_ node: Node) throws {
+        try write { db in try node.update(db) }
     }
 
-    public func deleteNode(nodeID: ObjectID) throws -> Bool {
-        try dbQueue.write { db in
-            try Node.deleteOne(db, id: nodeID)
-        }
+    public func delete(nodeID: ObjectID) throws -> Bool {
+        try write { db in try Node.deleteOne(db, id: nodeID) }
     }
 }
 
-public extension Node {
-    func description() -> String {
+extension Node: CustomStringConvertible {
+    public var description: String {
         "Node \(id ?? -1): kind \(kind), name=\(name ?? "nil"), scheduled=\(scheduled)"
     }
 }

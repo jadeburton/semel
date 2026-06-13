@@ -21,35 +21,37 @@ public struct DataObject: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
-extension DatabaseLayer {
-    public func selectAllDataObjects() throws -> [DataObject] {
-        try dbQueue.read { db in
-            try DataObject
-                .fetchAll(db)
-        }
+public struct DataObjectDataAccess: DataAccessType {
+    public weak var databaseLayer: DatabaseLayer?
+
+    public init(databaseLayer: DatabaseLayer) {
+        self.databaseLayer = databaseLayer
     }
 
-    public func selectDataObject(hash: String) throws -> DataObject? {
-        try dbQueue.read { db in
+    public func selectAll() throws -> [DataObject] {
+        print("WARNING: expensive selectAllDataObjects call")
+        return try read { db in try DataObject.fetchAll(db) }
+    }
+
+    public func select(hash: String) throws -> DataObject? {
+        try read { db in
             try DataObject.filter(Column("hash") == hash).fetchOne(db)
         }
     }
 
-    public func insertDataObject(_ dataObject: DataObject) throws {
-        try dbQueue.write { db in
-            try dataObject.insert(db)
-        }
+    public func insert(_ dataObject: DataObject) throws {
+        try write { db in try dataObject.insert(db) }
     }
 
-    public func deleteDataObject(hash: String) throws -> Bool {
-        try dbQueue.write { db in
+    public func delete(hash: String) throws -> Bool {
+        try write { db in
             try DataObject.filter(Column("hash") == hash).deleteAll(db) > 0
         }
     }
 }
 
-public extension DataObject {
-    func description() -> String {
+extension DataObject: CustomStringConvertible {
+    public var description: String {
         "DataObject hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.prefix(16).asHex())\(content.count > 16 ? "..." : "")"
     }
 }

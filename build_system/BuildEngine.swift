@@ -18,6 +18,7 @@ final class BuildEngine {
     // MARK: - State
 
     let database: DatabaseLayer
+    private let commandInterpreter: CommandInterpreter
 
     /// A pending-work flag. Incremented by any caller (any actor/thread) via
     /// `signalWorkAvailable()`. Decremented back to zero at the top of every
@@ -27,15 +28,63 @@ final class BuildEngine {
     /// before sleeping.
     private let workSignal = WorkSignal()
 
+    private static func registerTypes() {
+        PolyFactory.register(types: [
+            FolderManifest.self,
+            OutputFile.self,
+            StaticFile.self,
+            Folder.self,
+            ProjectFinder.self,
+            ProjectBuilder.self,
+            ClangLinkerTool.self,
+            ClangCompilerTool.self,
+            ClangPreprocessorTool.self,
+            Configuration.self,
+            IncludeFinder.self
+        ])
+    }
+
+    var projectFinder: Node {
+        get throws {
+            let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+            return try database.node.select(nodeID: fromNodeID)
+        }
+    }
+
+    var inputFileSystem: Node {
+        get throws {
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+            return try database.node.select(nodeID: fromNodeID)
+        }
+    }
+
+    var outputFileSystem: Node {
+        get throws {
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+            return try database.node.select(nodeID: fromNodeID)
+        }
+    }
+
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database124.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database213.sqlite")) throws {
+        Self.registerTypes()
+
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
+        self.commandInterpreter = .init(database: database)
+
         // Capture the fully-initialised self before starting the task.
         let engine = self
 
         Task {
+            try _ = projectFinder
+            try _ = inputFileSystem
+            try _ = outputFileSystem
+
             do {
                 try await engine.processLoop()
             } catch {
@@ -68,6 +117,15 @@ final class BuildEngine {
         }
     }
 
+    func receiveUserInput(line: String) -> Bool {
+        do {
+            try commandInterpreter.handleCommand(line)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     // MARK: - Signalling
 
     /// Safe to call from any actor or thread. A signal will never be lost:
@@ -79,18 +137,12 @@ final class BuildEngine {
 
     // MARK: - Processing
 
-    func process(_ work: @escaping (_ processingCycle: ProcessingCycle) throws -> Void) throws {
-        let processingCycle = try ProcessingCycle(database: database, buildEngine: self)
-        try work(processingCycle)
-        try processingCycle.endCycle()
-    }
-
     private func processAllNodes() throws {
         while try processSomeNodes() {}
     }
 
     private func processSomeNodes() throws -> Bool {
-        let rawNodes = try database.selectAllScheduledNodes(limit: Self.processingBatchSize)
+        let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
         guard !rawNodes.isEmpty else { return false }
         for rawNode in rawNodes {
             try processOneNode(rawNode)
@@ -98,10 +150,19 @@ final class BuildEngine {
         return true
     }
 
-    private func processOneNode(_ rawNode: Node) throws {
-        try process { processingCycle in
-            try processingCycle.processOneNode(rawNode)
+    func processOneNode(_ node: Node) throws {
+        guard let nodeFunction = try node.nodeFunction() as? NodeFunction else {
+            print("WARNING: attempted to process a non-inputtable Node")
+            var node = node
+            try node.setScheduledAndSave(false)
+            return
         }
+
+        try? nodeFunction.processWithPreCheck()
+
+        // TODO! nodeFunction.thisNode probably should not be modified at all
+        var node = nodeFunction.thisNode
+        try node.setScheduledAndSave(false)
     }
 }
 

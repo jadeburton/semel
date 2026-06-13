@@ -9,8 +9,19 @@
 /* Begin PBXBuildFile section */
 		4C0F1DD42F1C50E400EF3940 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0F1DD32F1C50E400EF3940 /* GRDB */; };
 		4C2018472F36AFCE009A6A19 /* DatabaseModels in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0F1DD62F1C50E400EF3942 /* DatabaseModels */; };
-		4CB110712F36C9A5005E6AE4 /* FileSystem-old.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */; };
+		4CTESTAB2F200000099662B /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 4CTESTAD2F200000099662B /* GRDB */; };
+		4CTESTAC2F200000099662B /* DatabaseModels in Frameworks */ = {isa = PBXBuildFile; productRef = 4CTESTAE2F200000099662B /* DatabaseModels */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4CTESTA92F200000099662B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4C937AE72F1AF44E0099662B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4C937AEE2F1AF44E0099662B;
+			remoteInfo = build_system;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		4C937AED2F1AF44E0099662B /* CopyFiles */ = {
@@ -25,12 +36,37 @@
 
 /* Begin PBXFileReference section */
 		4C937AEF2F1AF44E0099662B /* build_system */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = build_system; sourceTree = BUILT_PRODUCTS_DIR; };
-		4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FileSystem-old.swift"; sourceTree = "<group>"; };
+		4CB1B8732FF0D7A40022086A /* build_system.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = build_system.xctestplan; sourceTree = "<group>"; };
+		4CTESTA52F200000099662B /* build_systemTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = build_systemTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		4CB1B8712FF0D77D0022086A /* Exceptions for "build_system" folder in "build_system" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				build_system_tests/GraphShapeTests.swift,
+				build_system_tests/NodeSupportTests.swift,
+				build_system_tests/NodeValueTests.swift,
+				build_system_tests/PolyFactoryTests.swift,
+			);
+			target = 4C937AEE2F1AF44E0099662B /* build_system */;
+		};
+		4CB1B8722FF0D77D0022086A /* Exceptions for "build_system" folder in "build_systemTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				main.swift,
+			);
+			target = 4CTESTA12F200000099662B /* build_systemTests */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4C937AF12F1AF44E0099662B /* build_system */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4CB1B8712FF0D77D0022086A /* Exceptions for "build_system" folder in "build_system" target */,
+				4CB1B8722FF0D77D0022086A /* Exceptions for "build_system" folder in "build_systemTests" target */,
+			);
 			path = build_system;
 			sourceTree = "<group>";
 		};
@@ -42,6 +78,13 @@
 			files = (
 				4C2018472F36AFCE009A6A19 /* DatabaseModels in Frameworks */,
 				4C0F1DD42F1C50E400EF3940 /* GRDB in Frameworks */,
+			);
+		};
+		4CTESTA72F200000099662B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				4CTESTAB2F200000099662B /* GRDB in Frameworks */,
+				4CTESTAC2F200000099662B /* DatabaseModels in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -57,10 +100,10 @@
 		4C937AE62F1AF44E0099662B = {
 			isa = PBXGroup;
 			children = (
+				4CB1B8732FF0D7A40022086A /* build_system.xctestplan */,
 				4C937AF12F1AF44E0099662B /* build_system */,
 				4C0F1DD72F1C52B400EF3940 /* Frameworks */,
 				4C937AF02F1AF44E0099662B /* Products */,
-				4CB110702F36C9A5005E6AE4 /* FileSystem-old.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -68,6 +111,7 @@
 			isa = PBXGroup;
 			children = (
 				4C937AEF2F1AF44E0099662B /* build_system */,
+				4CTESTA52F200000099662B /* build_systemTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -97,6 +141,30 @@
 			productReference = 4C937AEF2F1AF44E0099662B /* build_system */;
 			productType = "com.apple.product-type.tool";
 		};
+		4CTESTA12F200000099662B /* build_systemTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4CTESTA22F200000099662B /* Build configuration list for PBXNativeTarget "build_systemTests" */;
+			buildPhases = (
+				4CTESTA62F200000099662B /* Sources */,
+				4CTESTA72F200000099662B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4CTESTAA2F200000099662B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4C937AF12F1AF44E0099662B /* build_system */,
+			);
+			name = build_systemTests;
+			packageProductDependencies = (
+				4CTESTAD2F200000099662B /* GRDB */,
+				4CTESTAE2F200000099662B /* DatabaseModels */,
+			);
+			productName = build_systemTests;
+			productReference = 4CTESTA52F200000099662B /* build_systemTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -109,6 +177,10 @@
 				TargetAttributes = {
 					4C937AEE2F1AF44E0099662B = {
 						CreatedOnToolsVersion = 26.2;
+					};
+					4CTESTA12F200000099662B = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = 4C937AEE2F1AF44E0099662B;
 					};
 				};
 			};
@@ -130,6 +202,7 @@
 			projectRoot = "";
 			targets = (
 				4C937AEE2F1AF44E0099662B /* build_system */,
+				4CTESTA12F200000099662B /* build_systemTests */,
 			);
 		};
 /* End PBXProject section */
@@ -138,10 +211,22 @@
 		4C937AEB2F1AF44E0099662B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
-				4CB110712F36C9A5005E6AE4 /* FileSystem-old.swift in Sources */,
+			);
+		};
+		4CTESTA62F200000099662B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
 			);
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4CTESTAA2F200000099662B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4C937AEE2F1AF44E0099662B /* build_system */;
+			targetProxy = 4CTESTA92F200000099662B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		4C937AF42F1AF44E0099662B /* Debug configuration for PBXProject "build_system" */ = {
@@ -290,6 +375,36 @@
 			};
 			name = Release;
 		};
+		4CTESTA32F200000099662B /* Debug configuration for PBXNativeTarget "build_systemTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 4BK48BYJRG;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "jade.build-system-tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "UNIT_TESTING DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		4CTESTA42F200000099662B /* Release configuration for PBXNativeTarget "build_systemTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 4BK48BYJRG;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "jade.build-system-tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "UNIT_TESTING $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -306,6 +421,14 @@
 			buildConfigurations = (
 				4C937AF72F1AF44E0099662B /* Debug configuration for PBXNativeTarget "build_system" */,
 				4C937AF82F1AF44E0099662B /* Release configuration for PBXNativeTarget "build_system" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		4CTESTA22F200000099662B /* Build configuration list for PBXNativeTarget "build_systemTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4CTESTA32F200000099662B /* Debug configuration for PBXNativeTarget "build_systemTests" */,
+				4CTESTA42F200000099662B /* Release configuration for PBXNativeTarget "build_systemTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
@@ -336,6 +459,16 @@
 			productName = GRDB;
 		};
 		4C0F1DD62F1C50E400EF3942 /* DatabaseModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0F1DD52F1C50E400EF3942 /* XCLocalSwiftPackageReference "build_system/DatabaseModels" */;
+			productName = DatabaseModels;
+		};
+		4CTESTAD2F200000099662B /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0F1DD22F1C50E400EF3940 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+		4CTESTAE2F200000099662B /* DatabaseModels */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 4C0F1DD52F1C50E400EF3942 /* XCLocalSwiftPackageReference "build_system/DatabaseModels" */;
 			productName = DatabaseModels;

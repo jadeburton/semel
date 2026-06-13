@@ -39,6 +39,12 @@ struct FileNameAndContent {
     let content: [UInt8]
 }
 
+extension FileNameAndContent {
+    var contentAsString: String {
+        String(decoding: content, as: Unicode.UTF8.self)
+    }
+}
+
 enum ToolExecutionError: Error {
     case toolNotFound(path: String)
     case toolNotExecutable(path: String)
@@ -84,7 +90,7 @@ class DefaultTools {
                               version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: nil),
+                              recursiveHash: ""),
             toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
     }
 }
@@ -136,7 +142,7 @@ class LocalFileSystemTool: ToolExecutor {
             try? fileManager.removeItem(atPath: sandboxPath)
         }
 
-        print("Executing tool in sandbox path: \(sandboxPath)")
+        // print("Executing tool in sandbox path: \(sandboxPath)")
 
         // 2. Write all input files into the sandbox, creating intermediate directories as needed.
         for inputFile in inputFiles {

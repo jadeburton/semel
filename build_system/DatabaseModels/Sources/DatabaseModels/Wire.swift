@@ -1,108 +1,115 @@
 import Foundation
 import GRDB
 
-public struct Wire: Codable, Identifiable, FetchableRecord, PersistableRecord {
+public struct Wire: Codable, FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let fromNodeID = Column(CodingKeys.fromNodeID)
-        public static let fromPort = Column(CodingKeys.fromPort)
+        public static let fromSymbolID = Column(CodingKeys.fromSymbolID)
         public static let toNodeID = Column(CodingKeys.toNodeID)
-        public static let toPort = Column(CodingKeys.toPort)
+        public static let toSymbolID = Column(CodingKeys.toSymbolID)
     }
 
-    public var id: ObjectID?
     public var fromNodeID: ObjectID
-    public var fromPort: UInt8
+    public var fromSymbolID: ObjectID
     public var toNodeID: ObjectID
-    public var toPort: UInt8
+    public var toSymbolID: ObjectID
+    public var name: ObjectID // used by target Node to discern multiple wires going to the same input. Named by the creator of the target Node.
 
-    public init(id: ObjectID? = nil, fromNodeID: ObjectID, fromPort: UInt8, toNodeID: ObjectID, toPort: UInt8) {
-        self.id = id
+    public init(fromNodeID: ObjectID, fromSymbolID: ObjectID, toNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) {
         self.fromNodeID = fromNodeID
-        self.fromPort = fromPort
+        self.fromSymbolID = fromSymbolID
         self.toNodeID = toNodeID
-        self.toPort = toPort
+        self.toSymbolID = toSymbolID
+        self.name = name
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
             try db.create(table: "Wire", options: .ifNotExists) { t in
-                t.autoIncrementedPrimaryKey("id")
-                t.column("fromNodeID", .integer).notNull()
-                t.column("fromPort", .integer).notNull()
-                t.column("toNodeID", .integer).notNull()
-                t.column("toPort", .integer).notNull()
+                t.column("fromNodeID", .integer).notNull().indexed()
+                t.column("fromSymbolID", .integer).notNull()
+                t.column("toNodeID", .integer).notNull().indexed()
+                t.column("toSymbolID", .integer).notNull()
+                t.primaryKey(["fromNodeID", "fromSymbolID", "toNodeID", "toSymbolID"])
+                t.column("name", .integer).notNull()
             }
         }
     }
 }
 
-extension DatabaseLayer {
-    public func selectAllWires() throws -> [Wire] {
-        try dbQueue.read { db in
-            try Wire.fetchAll(db)
-        }
+public struct WireDataAccess: DataAccessType {
+    public weak var databaseLayer: DatabaseLayer?
+
+    public init(databaseLayer: DatabaseLayer) {
+        self.databaseLayer = databaseLayer
     }
 
-    public func selectWires(goingToNodeID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+    public func selectAll() throws -> [Wire] {
+        print("WARNING: expensive selectAllWires call")
+        return try read { db in try Wire.fetchAll(db) }
+    }
+
+    public func select(goingToNodeID: ObjectID) throws -> [Wire] {
+        try read { db in
             try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
         }
     }
 
-    public func selectWires(goingToNodeID: ObjectID, toPort: UInt8) throws -> [Wire] {
-        try dbQueue.read { db in
-            try Wire
-                .filter(Wire.Columns.toNodeID == goingToNodeID && Wire.Columns.toPort == toPort)
-                .fetchAll(db)
+    public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
+        try read { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+    public func select(comingFromNodeID: ObjectID) throws -> [Wire] {
+        try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID, fromPort: UInt8) throws -> [Wire] {
-        try dbQueue.read { db in
-            try Wire
-                .filter(Wire.Columns.fromNodeID == comingFromNodeID && Wire.Columns.fromPort == fromPort)
-                .fetchAll(db)
+    public func select(comingFromNodeID: ObjectID, fromSymbolID: ObjectID) throws -> [Wire] {
+        try read { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                            Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID, goingToNodeID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+    public func select(comingFromNodeID: ObjectID, goingToNodeID: ObjectID) throws -> [Wire] {
+        try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID, fromPort: UInt8, goingToNodeID: ObjectID, toPort: UInt8) throws -> [Wire] {
-        try dbQueue.read { db in
+    public func select(comingFromNodeID: ObjectID, fromSymbolID: ObjectID,
+                       goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
+        try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromPort == fromPort &&
+                            Wire.Columns.fromSymbolID == fromSymbolID &&
                             Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toPort == toPort).fetchAll(db)
+                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
         }
     }
 
-    public func insertWire(_ wire: Wire) throws -> ObjectID {
-        try dbQueue.write { db in
+    public func insert(_ wire: Wire) throws -> ObjectID {
+        try write { db in
             try wire.insert(db)
             return db.lastInsertedRowID
         }
     }
 
-    public func updateWire(_ wire: Wire) throws {
-        try dbQueue.write { db in
-            try wire.update(db)
-        }
+    public func update(_ wire: Wire) throws {
+        try write { db in try wire.update(db) }
     }
 
-    public func deleteWire(wireID: ObjectID) throws -> Bool {
-        try dbQueue.write { db in
-            try Wire.deleteOne(db, id: wireID)
+    public func delete(comingFromNodeID: ObjectID, fromSymbolID: ObjectID,
+                       goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> Bool {
+        try write { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                            Wire.Columns.fromSymbolID == fromSymbolID &&
+                            Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID).deleteAll(db) > 0
         }
     }
 }

@@ -21,35 +21,37 @@ public struct CacheEntry: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
-extension DatabaseLayer {
-    public func selectAllCacheEntries() throws -> [CacheEntry] {
-        try dbQueue.read { db in
-            try CacheEntry
-                .fetchAll(db)
-        }
+public struct CacheEntryDataAccess: DataAccessType {
+    public weak var databaseLayer: DatabaseLayer?
+
+    public init(databaseLayer: DatabaseLayer) {
+        self.databaseLayer = databaseLayer
     }
 
-    public func selectCacheEntry(hash: String) throws -> CacheEntry? {
-        try dbQueue.read { db in
+    public func selectAll() throws -> [CacheEntry] {
+        print("WARNING: expensive selectAllCacheEntries call")
+        return try read { db in try CacheEntry.fetchAll(db) }
+    }
+
+    public func select(hash: String) throws -> CacheEntry? {
+        try read { db in
             try CacheEntry.filter(Column("hash") == hash).fetchOne(db)
         }
     }
 
-    public func insertCacheEntry(_ cacheEntry: CacheEntry) throws {
-        try dbQueue.write { db in
-            try cacheEntry.insert(db)
-        }
+    public func insert(_ cacheEntry: CacheEntry) throws {
+        try write { db in try cacheEntry.insert(db) }
     }
 
-    public func deleteCacheEntry(hash: String) throws -> Bool {
-        try dbQueue.write { db in
+    public func delete(hash: String) throws -> Bool {
+        try write { db in
             try CacheEntry.filter(Column("hash") == hash).deleteAll(db) > 0
         }
     }
 }
 
-public extension CacheEntry {
-    func description() -> String {
+extension CacheEntry: CustomStringConvertible {
+    public var description: String {
         "CacheEntry hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.prefix(16).asHex())\(content.count > 16 ? "..." : "")"
     }
 }
