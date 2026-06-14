@@ -242,7 +242,7 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
     }
 
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
-        let start = try folder.childNode(path: inDirectoryPath, kind: Folder.kind)! // TODO
+        let start = try folder.childNode(path: inDirectoryPath)! // TODO
         return try! start.allChildren.map { node in
             if node.kind == StaticFile.kind {
                 let staticFileNodeFunction = try node.nodeFunctionCast() as StaticFile
@@ -474,7 +474,7 @@ final class CommandInterpreter {
     }
 
     func handleDebug() throws {
-        // TODO! try printAll()
+        try BuildEngine.printAll()
     }
 
     func handleUserCommand(_ userCommand: UserCommand) throws {
@@ -602,7 +602,7 @@ final class CommandInterpreter {
 
         outputMessage("Remove: \(entry.path)")
 
-        guard let child = try inputFileSystem.childNode(path: entry.path, kind: Folder.kind, createIfNotExist: false) else { // TODO: we don't even need this kind arg if we don't create it
+        guard let child = try inputFileSystem.childNode(path: entry.path) else { // TODO: we don't even need this kind arg if we don't create it
             outputError("Child not found")
             return
         }
@@ -648,7 +648,7 @@ final class CommandInterpreter {
     private func copyOneFile(folder: Node, entry: FileWildcardEntry, destinationPath: String) throws {
         switch entry.kind {
         case .file:
-            guard let staticFileNode = try folder.childNode(path: entry.path, kind: Folder.kind, createIfNotExist: false) else {
+            guard let staticFileNode = try folder.childNode(path: entry.path) else {
                 outputError("File \(entry.path) not found in internal file system")
                 return
             }

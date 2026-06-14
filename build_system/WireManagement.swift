@@ -6,8 +6,8 @@
 //
 
 // Wire management
-extension ProcessingCycle {
-    
+extension Wire {
+
     func connectWire(fromNodeID: ObjectID,
                      fromSymbolID: ObjectID,
                      toNodeID: ObjectID,
@@ -32,11 +32,8 @@ extension ProcessingCycle {
         var toNode = try toNodeID.loadNode()
         try toNode.writePendingToAllOutputsOfNode()
 
-        try toNode.scheduleNode()
+        try toNode.setScheduledAndSave(true)
     }
-}
-
-extension Wire {
 /*
     func connectWire(fromNode: NodeFunction,
                      fromPort: String,
@@ -86,7 +83,7 @@ extension Wire {
                                                          toSymbolID: toSymbolID)
 
         var toNode = try toNodeID.loadNode()
-        try toNode.scheduleNode()
+        try toNode.setScheduledAndSave(true)
 
 //        let toNode = try nodePoly(nodeID: wire.toNodeID)!
 

@@ -29,7 +29,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database124.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database127.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
         // Capture the fully-initialised self before starting the task.
@@ -71,9 +71,7 @@ final class BuildEngine {
     private let commandInterpreter = CommandInterpreter()
 
     func receiveUserInput(line: String) {
-        try? process { processingCycle in
-            try self.commandInterpreter.handleCommand(line)
-        }
+        try? commandInterpreter.handleCommand(line)
     }
 
     // MARK: - Signalling
@@ -86,12 +84,6 @@ final class BuildEngine {
     }
 
     // MARK: - Processing
-
-    func process(_ work: @escaping (_ processingCycle: ProcessingCycle) throws -> Void) throws {
-        let processingCycle = try ProcessingCycle(buildEngine: self)
-        try work(processingCycle)
-        try processingCycle.endCycle()
-    }
 
     private func processAllNodes() throws {
         while try processSomeNodes() {}
@@ -106,11 +98,28 @@ final class BuildEngine {
         return true
     }
 
-    private func processOneNode(_ rawNode: Node) throws {
-        try process { processingCycle in
-            try processingCycle.processOneNode(rawNode)
+    func processOneNode(_ node: Node) throws {
+        guard let nodeFunction = try node.nodeFunction() as? NodeFunction else {
+            print("WARNING: attempted to process a non-inputtable Node")
+            var node = node
+            try node.setScheduledAndSave(false)
+            return
         }
+        print("process: nodeFunction \(type(of: nodeFunction)), nodeID \(node.id!)")
+        try nodeFunction.processWithPreCheck(thisNode: node)
+        validatePorts(node: node)
+
+        var node = node
+        try node.setScheduledAndSave(false)
     }
+
+    private func validatePorts(node: Node) {
+        assert(
+            try! DatabaseLayer.shared.selectAllPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty,
+            "Not all Ports were processed for node \(node.description())"
+        )
+    }
+
 }
 
 // MARK: - WorkSignal

@@ -36,7 +36,7 @@ extension Node {
         try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
     }
 
-    mutating func setNodeFunction(_ nodeFunction: NodeFunction) throws {
+    mutating func setNodeFunction(_ nodeFunction: InputlessNodeFunction) throws {
         try configuration = nodeFunction.toJSON()
     }
 
@@ -44,6 +44,26 @@ extension Node {
         get throws {
             try BuildEngine.shared.database.selectNodes(parentNodeID: id!)
         }
+    }
+
+    func childNode(path: String) throws -> Node? {
+        try childNode(path: path, kind: Folder.kind)
+    }
+
+    static func createNode(parentNodeID: ObjectID?, kind: UInt, name: String) throws -> Node {
+        let nodeFunction = try PolyFactory.makeDefault(kind: kind).toJSON()
+
+        var node = Node(parentNodeID: parentNodeID,
+                        kind: kind,
+                        name: name,
+                        configuration: nodeFunction,
+                        scheduled: nodeFunction is NodeFunction, // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+                        searchKey: nil)
+
+        node.id = try DatabaseLayer.shared.insertNode(node)
+
+        try node.writePendingToAllOutputsOfNode()
+        return node
     }
 
     func childNode(path: String, kind: UInt, createIfNotExist: Bool = false) throws -> Node? {
@@ -54,22 +74,14 @@ extension Node {
         var currentNodeID = id!
 
         for (index, name) in components.enumerated() {
-            guard let rawNode = try? BuildEngine.shared.database.selectNodes(named: name, parentNodeID: currentNodeID).first else {
+
+            guard let rawNode = try? DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentNodeID).first else {
+
                 if !createIfNotExist {
                     return nil
                 }
-                // Create
 
-                var node = Node(parentNodeID: currentNodeID,
-                                kind: kind,
-                                name: name,
-                                configuration: try PolyFactory.makeDefault(kind: kind).toJSON(),
-                                scheduled: true,
-                                searchKey: nil)
-
-                node.id = try DatabaseLayer.shared.insertNode(node)
-
-                return node
+                return try Self.createNode(parentNodeID: currentNodeID, kind: kind, name: name)
             }
 
             if index == components.count - 1 {
@@ -101,20 +113,22 @@ extension Node {
 
         print("\(portDeleteCount) Port(s) deleted for node #\(id!)")
 
-        //defer { loadedNodes[nodeID] = nil }
-
         return try DatabaseLayer.shared.deleteNode(nodeID: id!) && portDeleteCount > 0
     }
 
-    static func scheduleNode(nodeID: ObjectID) throws {
-        var thisNode = try nodeID.loadNode()
-        try thisNode.scheduleNode()
-    }
-
-    mutating func scheduleNode() throws {
-        scheduled = true
+    mutating func setScheduledAndSave(_ scheduled: Bool) throws {
+        guard try nodeFunction() is NodeFunction else {
+            // This NodeFunction has no "process" method and so cannot be scheduled.
+            print("Attempted to schedule a Node of kind \(kind) that cannot be scheduled. Ignoring.")
+            self.scheduled = false
+            try DatabaseLayer.shared.updateNode(self)
+            return
+        }
+        self.scheduled = scheduled
         try DatabaseLayer.shared.updateNode(self)
-        BuildEngine.shared.signalWorkAvailable()
+        if scheduled {
+            BuildEngine.shared.signalWorkAvailable()
+        }
     }
 
     static var projectFinder: Node {
@@ -144,18 +158,9 @@ extension Node {
     static var rootNode: Node {
         get throws {
             guard let existing = try DatabaseLayer.shared.selectNodesInRoot(named: "root").first else {
-                var root = Node(parentNodeID: nil,
-                                kind: RootNode.kind,
-                                name: "root",
-                                configuration: try RootNode().toJSON(),
-                                scheduled: true,
-                                searchKey: nil)
-                
-                root.id = try DatabaseLayer.shared.insertNode(root)
-                
-                return root
+                return try Node.createNode(parentNodeID: nil, kind: RootNode.kind, name: "root")
             }
-            
+
             return existing
         }
     }
@@ -210,7 +215,6 @@ extension Node {
     }
 
     @discardableResult func writeToOutputPort(_ outputPort: String, value: NodeValue) throws -> Bool {
-
         try writeToOutputPort(port: try value.mapPort(nodeID: id!, outputSymbolID: outputPort.asSymbolID()))
     }
 
@@ -218,7 +222,7 @@ extension Node {
 
         if let existing = try DatabaseLayer.shared.selectPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {
-                print("No change to Port, ignoring")
+                print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
                 return false
             }
         }
@@ -231,7 +235,7 @@ extension Node {
             try toNode.writePendingToAllOutputsOfNode()
 
             if port.valueKind != .pending {
-                try toNode.scheduleNode()
+                try toNode.setScheduledAndSave(true)
             }
         }
         return true

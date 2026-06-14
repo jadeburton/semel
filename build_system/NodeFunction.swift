@@ -72,9 +72,45 @@ extension NodeFunction {
     }
 
     private func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
+        for (inputPort, wireExpectations) in output.inputWireExpectations {
+            try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
+        }
         for (outputPort, outputValue) in output.outputValues {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
+    }
+
+    private func applyExpectationConfiguration(inputPort: String, wireExpectations: [String: String], thisNode: Node) throws {
+        // 1. remove any wires that exist but are not in the new configuration (by name)
+        // 2. add any wires that are in the new configuration but do not exist yet (by name)
+        // 3. update expectation on wires that exist in both old and new configuration (by name)
+        //    - obtain the current graph shape and compare against the configuration shape
+        //    - if identical, do nothing
+        //    - otherwise, disconnect the wire and treat it like a new connection (2)
+
+        let wiresOnThisInput = try DatabaseLayer.shared.selectWires(goingToNodeID: thisNode.id!, toSymbolID: inputPort.asSymbolID())
+
+        var result = [String: NodeValue]()
+
+        for wire in wiresOnThisInput {
+            let wireName = wire.name.resolveSymbol()
+
+            if wireExpectations[wireName] == nil {
+                // this wire is not in the new configuration; delete it
+                _ = try wire.deleteWire()
+            }
+        }
+
+        // TODO: finish this method
+
+        // NOTE: the representation of the expectation configuration is not yet defined and is still to be done. For now let's
+        // just call a dummy method that returns a fixed configuration that matches the current graph shape, so that we can proceed with testing the rest of the processing cycle.
+        
+        // TODO: add a second dummy method that receives an expectation configuration and locates a Node somewhere on the graph
+        // whose output matches it. We then wire from that Node to our input.
+        
+        return result
+
     }
 
     private func buildErrorOutput(withError error: Error) -> ProcessOutput {
@@ -105,6 +141,7 @@ extension NodeFunction {
         let input = try buildProcessInput(thisNode: thisNode)
 
         guard allInputsAreSatisfied(input: input) else {
+            print("Not all inputs are satisfied. \(thisNode.name!)")
             try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
             return
         }
@@ -112,11 +149,8 @@ extension NodeFunction {
         let cacheKey = try buildCacheKeyFromAllInputs(input: input)
 
         if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
-
             let output = processWithCatch(thisNode: thisNode, input: input)
-
             try writeToOutputs(output: output, thisNode: thisNode)
-
             try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
         }
     }
@@ -151,24 +185,10 @@ protocol MessageType: AnyObject, Codable, PolySerializable {
 
 extension PolyFactory {
     /// Construct a default instance of the type identified by `kind`.
-    static func makeDefault(kind: UInt) throws -> NodeFunction {
-        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! NodeFunction
+    static func makeDefault(kind: UInt) throws -> InputlessNodeFunction {
+        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! InputlessNodeFunction
     }
 }
-
-// MARK: - NodeContext
-
-//struct NodeContext {
-//    let processingCycle: ProcessingCycle
-//    var nodeID: ObjectID?           // nil when created in memory but not yet inserted
-//    var parentNodeID: ObjectID?
-//    var name: String? {
-//        didSet {
-//            assert(name == nil || name!.contains("/") == false)
-//        }
-//    }
-//    var searchKey: String?
-//}
 
 // MARK: - NodeError
 
@@ -197,87 +217,6 @@ extension NodeFunction {
 struct OneNodeValue {
     let dataObjectHash: DataObjectHash
     let originNodeID: ObjectID
-}
-
-extension NodeFunction {
-    /// Reads a PolySerializable configuration object from the given input port.
-    /// Returns nil when no wire is connected or the wire has no value yet.
-//    func readConfiguration<C: PolySerializable>(fromInputPort inputPort: String) throws -> C {
-//        try PolyFactory.decodeAndCast(encodedJSON: readOneValueFromInputPort(inputPort).1.expectValue().resolveAsString())
-//    }
-}
-
-// MARK: - NodeFunction navigation / port helpers
-
-
-extension NodeFunction {
-//    func parent<N: NodeFunction>() throws -> N? {
-//        try parentNode(node: self)
-//    }
-
-//    func save() throws {
-//        try saveNode(self)
-//    }
-
-
-//    func child(named name: String, nodeContext: NodeContext) throws -> (any NodeFunction)? {
-//        try nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
-//    }
-
-//    func delete(nodeContext: NodeContext) throws {
-//        if let nodeID = nodeContext.nodeID {
-//            _ = try deleteNode(nodeID)
-//        }
-//    }
-
-//    func readAllValuesFromInputPort(_ inputPort: String, nodeContext) throws -> [String: NodeValue] {
-//        try readFromInputPort(inputPort, nodeID: nodeID)
-//    }
-//
-//    func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
-//        try readFromOutputPort(outputPort, nodeID: self.nodeID)
-//    }
-//
-//    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws {
-//        try writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
-//    }
-//
-//    func allChildren() throws -> [NodeFunction] {
-//        try allChildNodes(nodeID: self.nodeID)
-//    }
-/*
-    func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> NodeFunction? {
-        if let existingChild = try nodePoly(named: name, parentNodeID: nodeContext.nodeID!) {
-            return existingChild
-        }
-        if !createIfNotExist { return nil }
-        return try makeNodeFunctionPoly(kind: kind, name: name, parentNodeID: nodeContext.nodeID!)
-    }
-
-    /// Creates the child if it does not exist.
-    func child<N: NodeFunction>(named name: String, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> N? {
-        if let existingChild: N = try node(named: name, parentNodeID: nodeContext.nodeID!) {
-            return existingChild
-        }
-        if !createIfNotExist { return nil }
-        return try makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N?
-    }
-
-    /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func child<N: NodeFunction>(path: String, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> N? {
-        try childNode(path: path,
-                                                  rootNodeID: nodeContext.nodeID!,
-                                                  createIfNotExist: createIfNotExist)
-    }
-
-    /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> NodeFunction? {
-        try childNodePoly(path: path,
-                                                      rootNodeID: nodeContext.nodeID!,
-                                                      kind: kind,
-                                                      createIfNotExist: createIfNotExist)
-    }
-*/
 }
 
 // MARK: - PolySerializable helper

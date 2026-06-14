@@ -30,7 +30,7 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
     // Port uses a natural key instead of the usual "id" surrogate key.
     public static func createTable(dbQueue: DatabaseQueue) throws {
         try dbQueue.write { db in
-            try db.create(table: "Port", options: .ifNotExists) { t in
+            try db.create(table: "OutputPort", options: .ifNotExists) { t in
                 t.column("nodeID", .integer).notNull().indexed()
                 t.column("nameSymbolID", .integer).notNull().indexed()
                 t.column("valueKind", .integer).notNull()
@@ -52,7 +52,7 @@ extension DatabaseLayer {
     public func selectPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
         try dbQueue.read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
-                            OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
+                                  OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
         }
     }
 

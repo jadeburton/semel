@@ -61,7 +61,6 @@ struct ClangLinkerTool: NodeFunction {
             let inputValues = input.inputValues[ClangLinkerTool.input]!
             let libraryValues = input.inputValues[ClangLinkerTool.libraries]!
 
-            // Separate .dylib library files from .o object files.
             var libraryFiles: [FileNameAndContent] = []
 
             for (libraryName, nodeValue) in libraryValues {

@@ -31,11 +31,11 @@ struct Folder: InputlessNodeFunction {
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(nodeID: ObjectID, name: String, thisNode: Node) throws {
-        try Node.scheduleNode(nodeID: nodeID)
+        try refreshOutputs(thisNode: thisNode)
     }
 
     func notifyChildContentChanged(nodeID: ObjectID, name: String, thisNode: Node) throws {
-        try Node.scheduleNode(nodeID: nodeID)
+        try refreshOutputs(thisNode: thisNode)
     }
 
     @discardableResult
@@ -62,36 +62,39 @@ struct Folder: InputlessNodeFunction {
     }
 
     func addOrReplaceChild(thisNode: Node, content: DataObjectHash, name: String) throws {
-        fatalError() /*
         assert(!name.contains("\\"))
 
-        if let existingChild = try node(named: name, parentNodeID: thisNode.id!) as StaticFile? {
-            try existingChild.replaceContent(content)
-            // TODO: only if changed
-            try notifyChildContentChanged(nodeID: existingChild.nodeID!, name: existingChild.nodeContext.name!)
+        if let existingChild = try thisNode.childNode(path: name) {
+            if let nodeFunction = try existingChild.nodeFunction() as? StaticFile {
+                if try nodeFunction.replaceContent(thisNode: existingChild, content) {
+                    try notifyChildContentChanged(nodeID: existingChild.id!, name: existingChild.name!, thisNode: thisNode)
+                }
+            } else {
+                // TODO: what if the type is not StaticFileNode
+            }
         } else {
-            // TODO: what if the type is not StaticFileNode
-
-            let staticFile = try makeNode(name: name, parentNodeID: thisNode.id!) as StaticFile
-            try staticFile.replaceContent(content)
-
-            try notifyChildAdded(nodeID: staticFile.nodeContext.nodeID!, name: staticFile.nodeContext.name!)
-        }*/
+            var newChild = try thisNode.childNode(path: name, kind: StaticFile.kind, createIfNotExist: true)!
+            let staticFile = StaticFile()
+            try newChild.setNodeFunction(staticFile)
+            if try staticFile.replaceContent(thisNode: newChild, content) {
+                try DatabaseLayer.shared.updateNode(newChild)
+                try notifyChildAdded(nodeID: newChild.id!, name: newChild.name!, thisNode: thisNode)
+            }
+        }
     }
 
     private func buildManifest(thisNode: Node) throws -> FolderManifest {
-        fatalError()
-/*        var folderManifestEntries = [FolderManifestEntry]()
-        for child in try allChildNodes(nodeID: thisNode.id!) {
-//TODO!            folderManifestEntries.append(.init(name: child.nodeContext.name!))
+        var folderManifestEntries = [FolderManifestEntry]()
+        for child in try thisNode.allChildren {
+            folderManifestEntries.append(.init(name: child.name!))
         }
-        return FolderManifest(entries: folderManifestEntries)*/
+        return FolderManifest(entries: folderManifestEntries)
     }
 
     // Folder works "outside" the cache system and therefore cannot use "process". It is a Node, and has outputs, however.
-    func refreshOutputs() throws {
-        //        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(thisNode: thisNode).toJSON().intern())],
-        //              inputWireExpectations: [:])
+    func refreshOutputs(thisNode: Node) throws {
+        try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
+                                       value: .value(try buildManifest(thisNode: thisNode).toJSON().intern()))
     }
 }
 
@@ -134,4 +137,3 @@ final class FolderEvent: MessageType {
         try container.encode(folderEventKind, forKey: .folderEventKind)
     }
 }
-

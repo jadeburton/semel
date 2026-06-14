@@ -18,8 +18,10 @@ struct ProjectFinder: NodeFunction {
     }
 
     static let folderManifestInputPort = "folderManifest"
+    static let projectBuildersInputPort = "projectBuilders"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [folderManifestInputPort], outputPorts: [], dynamicInputPorts: [])
+    // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
 /*
     private func ensureExtractorExists(folderManifestEntry: FolderManifestEntry, folderNode: Folder) throws {
 
@@ -47,8 +49,11 @@ struct ProjectFinder: NodeFunction {
     }
 */
     func process(input: ProcessInput) throws -> ProcessOutput {
-        return .init(outputValues: [:], inputWireExpectations: [:])
+        return .init(outputValues: [:],
+                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder(path:'/').folderManifest"],
+                                             Self.projectBuildersInputPort: ["/formula.json": "ProjectBuilder(projectFile=StaticFile('/formula.json')).status"]])
 
+        // wire name="mylib.dylib" Product(input=Linker(config: LinkerConfig(kind: library).output, input=[Compiler(input=Preprocessor(input=StaticFile('/hello.c').output).output).output, Compiler().output])).status
         #warning("TODO")
 //        let oneValue = try readOneValueFromInputPort(Self.folderManifestInputPort)
 //        let folderNode: FolderNode = try node(nodeID: oneValue.originNodeID)
@@ -90,13 +95,13 @@ final class ProjectBuilder: NodeFunction {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
 
-    static let formulaFileInputPort = "formulaFile"
-    static let formulaOutputPort = "formula"
+    static let projectFileInputPort = "projectFile"
+    static let statusOutputPort = "status"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaFileInputPort], outputPorts: [formulaOutputPort], dynamicInputPorts: [])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [projectFileInputPort], outputPorts: [statusOutputPort], dynamicInputPorts: [])
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        .init(outputValues: [:], inputWireExpectations: [:])
+        .init(outputValues: [Self.statusOutputPort: .value("OK".intern())], inputWireExpectations: [:])
 //        for formulaFileValue in try readAllValuesFromInputPort(Self.formulaFileInputPort) {
 //            // Pass the formula content through unchanged.
 //            try writeToOutputPort(Self.formulaOutputPort, value: .value(formulaFileValue.expectValue()))

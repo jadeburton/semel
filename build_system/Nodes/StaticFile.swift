@@ -19,13 +19,11 @@ struct StaticFile: InputlessNodeFunction {
         try thisNode.readFromOutputPort(Self.outputPort)
     }
 
-    func replaceContent(thisNode: Node, _ content: DataObjectHash) throws {
-        try thisNode.writeToOutputPort(Self.outputPort,
-                                   value: .value(content))
+    func replaceContent(thisNode: Node, _ content: DataObjectHash) throws -> Bool {
+        try thisNode.writeToOutputPort(Self.outputPort, value: .value(content))
     }
 
-    func eraseContents(thisNode: Node) throws {
-        try thisNode.writeToOutputPort(Self.outputPort,
-                                   value: .noValue(reason: .error(message: "File deleted")))
+    func eraseContents(thisNode: Node) throws -> Bool{
+        try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "File deleted")))
     }
 }
