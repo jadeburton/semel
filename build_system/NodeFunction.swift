@@ -87,7 +87,8 @@ extension NodeFunction {
                 // Instead, just let processOneNode unschedule this node; it will be
                 // rescheduled automatically when upstream nodes produce their output.
                 print("Waiting for inputs: \(thisNode.name ?? "?")")
-                return
+                throw NodeError.missingInputs
+                //return
             }
 
             let cacheKey = try buildCacheKeyFromAllInputs(input: input)
@@ -111,11 +112,11 @@ extension InputlessNodeFunction {
     }
 
     func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
-        for (inputPort, wireExpectations) in output.inputWireExpectations {
-            try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
-        }
         for (outputPort, outputValue) in output.outputValues {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
+        }
+        for (inputPort, wireExpectations) in output.inputWireExpectations {
+            try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
         }
     }
 

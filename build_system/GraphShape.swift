@@ -310,8 +310,11 @@ extension GraphShapeNode {
 
         let args = nodeFunction.graphShapeArgs(node: sourceNode)
 
+        // Only static ports are included in the shape.  Dynamic ports (e.g.
+        // includeFileLists, headerInputFiles) are wired automatically by the
+        // engine after the schema is laid down; including them would make the
+        // searchKey change on every processing cycle, breaking topology matching.
         let allInputPorts = nodeFunction.descriptor.staticInputPorts
-                          + nodeFunction.descriptor.dynamicInputPorts
 
         var inputs: [GraphShapeInputPort] = []
         for portName in allInputPorts {
