@@ -117,22 +117,6 @@
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "F954F475-E72C-469F-AC01-717D7801DD42"
-            shouldBeEnabled = "Yes"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "build_system/NodeFunction.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "116"
-            endingLineNumber = "116"
-            landmarkName = "applyExpectationConfiguration(inputPort:wireExpectations:thisNode:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.ExceptionBreakpoint">
          <BreakpointContent
             uuid = "2A4B4E97-0962-448A-B542-1974EA47ACCB"
@@ -148,29 +132,9 @@
          BreakpointExtensionID = "Xcode.Breakpoint.SwiftErrorBreakpoint">
          <BreakpointContent
             uuid = "8B0EA925-7C41-4796-9100-525D621FF155"
-            shouldBeEnabled = "Yes"
+            shouldBeEnabled = "No"
             ignoreCount = "0"
             continueAfterRunningActions = "No">
-            <Locations>
-               <Location
-                  uuid = "8B0EA925-7C41-4796-9100-525D621FF155 - f030214c10979e26"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "swift_willThrow"
-                  moduleName = "libswiftCore.dylib"
-                  usesParentBreakpointCondition = "Yes">
-               </Location>
-               <Location
-                  uuid = "8B0EA925-7C41-4796-9100-525D621FF155 - 189b4a6baed95649"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "swift_willThrowTypedImpl"
-                  moduleName = "libswiftCore.dylib"
-                  usesParentBreakpointCondition = "Yes">
-               </Location>
-            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -183,25 +147,9 @@
             filePath = "build_system/NodeSupport.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "179"
-            endingLineNumber = "179"
+            startingLineNumber = "182"
+            endingLineNumber = "182"
             landmarkName = "loadNode()"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "DE1928EC-944B-4A98-9FCC-FD54E19C4EFF"
-            shouldBeEnabled = "Yes"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "build_system/Nodes/ProjectFinder.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "24"
-            endingLineNumber = "24"
-            landmarkName = "init()"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
@@ -215,8 +163,8 @@
             filePath = "build_system/NodeSupport.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "140"
-            endingLineNumber = "140"
+            startingLineNumber = "143"
+            endingLineNumber = "143"
             landmarkName = "projectFinder"
             landmarkType = "24">
          </BreakpointContent>
@@ -224,48 +172,48 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "204FDD71-0625-4F46-84ED-D9ACD91E57C3"
-            shouldBeEnabled = "Yes"
+            uuid = "1E8B19FC-7928-41CC-AC2D-506E4530CC6D"
+            shouldBeEnabled = "No"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
-            filePath = "build_system/Nodes/ProjectBuilder.swift"
+            filePath = "build_system/BuildEngine.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "22"
-            endingLineNumber = "22"
-            landmarkName = "convertProjectFileFormatToBuildGraphExpectations(projectFileContent:)"
+            startingLineNumber = "122"
+            endingLineNumber = "122"
+            landmarkName = "validatePorts(node:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "7987EEE3-EA42-4275-ADA2-C936982EA7C5"
+            uuid = "0547CE3D-C44A-4D46-B373-AD100CF8CED8"
             shouldBeEnabled = "Yes"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
-            filePath = "build_system/GraphShape.swift"
+            filePath = "build_system/NodeSupport.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "218"
-            endingLineNumber = "218"
-            landmarkName = "parseIdentifier()"
+            startingLineNumber = "106"
+            endingLineNumber = "106"
+            landmarkName = "insert()"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "DFD3B325-4704-4BAA-8596-7768AE192E1E"
+            uuid = "AC54CB6C-5290-4BF6-A1F5-275261DE788D"
             shouldBeEnabled = "Yes"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
-            filePath = "build_system/NodeFunction.swift"
+            filePath = "build_system/Nodes/StaticFile.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "207"
-            endingLineNumber = "207"
-            landmarkName = "processWithPreCheck(thisNode:)"
+            startingLineNumber = "83"
+            endingLineNumber = "83"
+            landmarkName = "init(properties:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>

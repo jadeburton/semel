@@ -54,7 +54,7 @@ struct Product: NodeFunction {
 
         }
 
-        return ProcessOutput(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
+        return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
     }
 }
 
@@ -64,7 +64,7 @@ protocol WithProperties {
 }
 
 // Like a StaticFile, but it allows you to put configuration directly into the formula.
-struct Configuration: NodeFunction, WithProperties {
+struct Configuration: InputlessNodeFunction, WithProperties {
     static let kind: UInt = 9
 
     let properties: [String: String]
@@ -78,13 +78,14 @@ struct Configuration: NodeFunction, WithProperties {
     init() {
         properties = [String: String]()
     }
+
     init(properties: [String : String] = [String: String]()) {
         self.properties = properties
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort], dynamicInputPorts: [])
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    func didCreate(node: Node) throws -> ProcessOutput {
 
         let standardClang = ToolDescriptor(name: "clang",
                                            version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
@@ -93,7 +94,7 @@ struct Configuration: NodeFunction, WithProperties {
                                            recursiveHash: nil)
 
         // Shared tool configuration nodes (one per tool kind, reused by all source files)
-        let clangPreprocessorConfiguration = BuildGraphNode(
+/*        let clangPreprocessorConfiguration = BuildGraphNode(
             name: "PreprocessorConfiguration",
             kind: .configuration(try ClangPreprocessorToolConfiguration(
                 toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
@@ -102,7 +103,7 @@ struct Configuration: NodeFunction, WithProperties {
             name: "CompilerConfiguration",
             kind: .configuration(try ClangCompilerToolConfiguration(
                 toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
-
+descriptor
         let dynamicLibrary = true
 
         let clangLinkerConfiguration = BuildGraphNode(
@@ -110,8 +111,8 @@ struct Configuration: NodeFunction, WithProperties {
             kind: .configuration(try ClangLinkerToolConfiguration(toolDescriptor: standardClang,
                                                                   arguments: dynamicLibrary ? ["-dynamiclib"] : [],
                                                                   environment: [:]).toJSON()))
-
-        let outputValue = try clangPreprocessorConfiguration.toJSON()
+*/
+        let outputValue = try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()
         return .init(outputValues: [Self.outputPort: .value(outputValue.intern())], inputWireExpectations: [:])
     }
 }

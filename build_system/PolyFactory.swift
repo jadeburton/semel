@@ -26,7 +26,7 @@ enum PolyFactory {
         ProjectBuilder.kind:                     ProjectBuilder.self,
         StaticFile.kind:                         StaticFile.self,
         Folder.kind:                             Folder.self,
-        FolderEvent.kind:                        FolderEvent.self,
+        //FolderEvent.kind:                        FolderEvent.self,
         ClangLinkerTool.kind:                    ClangLinkerTool.self,
         ClangCompilerTool.kind:                  ClangCompilerTool.self,
         ClangPreprocessorTool.kind:              ClangPreprocessorTool.self,
@@ -35,7 +35,8 @@ enum PolyFactory {
         ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
         FolderManifest.kind:                     FolderManifest.self,
         Product.kind:                            Product.self,
-        Configuration.kind:                      Configuration.self
+        Configuration.kind:                      Configuration.self,
+        IncludeFinder.kind:                      IncludeFinder.self
     ]
 
     /// Look up the concrete type for a given kind.

@@ -32,21 +32,16 @@ import Foundation
 // MARK: - Model
 
 /// An initialization-time string argument, e.g. `path='src/hello.c'`.
-struct GraphShapeArg: Equatable {
+struct GraphShapeArg: Equatable, Hashable {
     let key:   String
     let value: String
 }
 
-/// A wired input port.
+/// A wired input port.  `value` holds all nodes wired to this port; one element
+/// is the common case but multiple are fully supported without any special-casing.
 struct GraphShapeInputPort: Equatable {
     let portName: String
-    let value:    GraphShapeInputValue
-}
-
-/// Single or multi-wire value for an input port.
-indirect enum GraphShapeInputValue: Equatable {
-    case single(GraphShapeNode)
-    case multiple([GraphShapeNode])
+    let value:    [GraphShapeNode]
 }
 
 /// A node in the graph-shape tree.
@@ -78,6 +73,7 @@ struct GraphShapeNode: Equatable {
 extension GraphShapeNode {
 
     /// Renders the node to a compact string.
+    /// Input ports are always serialised as `portName=[node, ...]`.
     func asString() -> String {
         let suffix = outputPort.map { ".\($0)" } ?? ""
 
@@ -86,16 +82,46 @@ extension GraphShapeNode {
             params.append("\(arg.key)='\(arg.value)'")
         }
         for input in inputs {
-            switch input.value {
-            case .single(let child):
-                params.append("\(input.portName)=\(child.asString())")
-            case .multiple(let children):
-                let inner = children.map { $0.asString() }.joined(separator: ", ")
-                params.append("\(input.portName)=[\(inner)]")
-            }
+            let inner = input.value.map { $0.asString() }.joined(separator: ", ")
+            params.append("\(input.portName)=[\(inner)]")
         }
 
         return "\(typeName)(\(params.joined(separator: ", ")))\(suffix)"
+    }
+}
+
+// MARK: - Topology comparison (structural, port-order-independent)
+
+extension GraphShapeNode {
+
+    /// Returns true when `self` and `other` describe the same graph topology:
+    ///   • Same `typeName`
+    ///   • Same `args` (as an unordered set — key+value pairs)
+    ///   • Same input ports by name, each with the same ordered list of children
+    ///     (children are compared recursively)
+    ///   • `outputPort` is intentionally *ignored* — it belongs to the wire, not
+    ///     the node's identity, so two shapes that differ only in which output port
+    ///     is consumed are still considered topologically equal.
+    func topologyMatches(_ other: GraphShapeNode) -> Bool {
+        guard typeName == other.typeName                 else { return false }
+        guard Set(args) == Set(other.args)               else { return false }
+
+        // Build port-name → children dictionaries for order-independent comparison.
+        let selfPorts  = Dictionary(inputs.map       { ($0.portName, $0.value) },
+                                    uniquingKeysWith: { first, _ in first })
+        let otherPorts = Dictionary(other.inputs.map { ($0.portName, $0.value) },
+                                    uniquingKeysWith: { first, _ in first })
+
+        guard selfPorts.count == otherPorts.count        else { return false }
+
+        for (portName, selfChildren) in selfPorts {
+            guard let otherChildren = otherPorts[portName]    else { return false }
+            guard selfChildren.count == otherChildren.count   else { return false }
+            for (selfChild, otherChild) in zip(selfChildren, otherChildren) {
+                guard selfChild.topologyMatches(otherChild)   else { return false }
+            }
+        }
+        return true
     }
 }
 
@@ -123,7 +149,9 @@ private struct GraphShapeParser {
     private let chars: [Character]
     private var position: Int = 0
 
-    init(_ string: String) { self.chars = Array(string) }
+    init(_ string: String) {
+        self.chars = Array(string)
+    }
 
     // ── Entry ────────────────────────────────────────────────────────────────
 
@@ -167,14 +195,15 @@ private struct GraphShapeParser {
         try consume("=")
         skipWhitespace()
 
-        if peek() == "'" {
-            // Quoted string → arg
-            advance()   // consume opening '
-            let value = try parseUntil("'")
-            advance()   // consume closing '
+        if peek() == "'" || peek() == "\"" {
+            // Quoted string → arg (accept both ' and " for forward/backward compatibility)
+            let quote = peek()!
+            advance()                           // consume opening quote
+            let value = try parseUntil(quote)
+            advance()                           // consume closing quote
             args.append(GraphShapeArg(key: key, value: value))
         } else if peek() == "[" {
-            // Array of nodes → multi-wire input
+            // Bracketed array → multi-wire input (canonical new format)
             advance()   // consume '['
             skipWhitespace()
             var children: [GraphShapeNode] = []
@@ -189,11 +218,11 @@ private struct GraphShapeParser {
                 }
             }
             try consume("]")
-            inputs.append(GraphShapeInputPort(portName: key, value: .multiple(children)))
+            inputs.append(GraphShapeInputPort(portName: key, value: children))
         } else {
-            // Node reference → single-wire input
+            // Unbracketed single node → input (old format, kept for backward compatibility)
             let child = try parseNode()
-            inputs.append(GraphShapeInputPort(portName: key, value: .single(child)))
+            inputs.append(GraphShapeInputPort(portName: key, value: [child]))
         }
     }
 
@@ -228,10 +257,10 @@ private struct GraphShapeParser {
 
     mutating func consume(_ expected: Character) throws {
         guard let c = peek() else {
-            throw GraphShapeParseError.unexpectedEndOfInput(context: "expected '\(expected)'")
+            throw GraphShapeParseError.unexpectedEndOfInput(context: "expected '\(expected)'. Parsing: \(String(chars))")
         }
         guard c == expected else {
-            throw GraphShapeParseError.unexpectedCharacter(c, context: "expected '\(expected)'")
+            throw GraphShapeParseError.unexpectedCharacter(c, context: "expected '\(expected)'. Parsing: \(String(chars))")
         }
         advance()
     }
@@ -274,16 +303,13 @@ extension GraphShapeNode {
         let nodeFunction = try sourceNode.nodeFunction()
         let typeName     = String(describing: type(of: nodeFunction))
 
-        // Guard against cycles.
         guard !visited.contains(fromNodeID) else {
             return GraphShapeNode(typeName: typeName, outputPort: outputPortName)
         }
         visited.insert(fromNodeID)
 
-        // Extract init-time args from the node function.
         let args = nodeFunction.graphShapeArgs(node: sourceNode)
 
-        // Recurse into every connected input port.
         let allInputPorts = nodeFunction.descriptor.staticInputPorts
                           + nodeFunction.descriptor.dynamicInputPorts
 
@@ -294,24 +320,15 @@ extension GraphShapeNode {
                                                                      toSymbolID: portSymbolID)
             guard !incomingWires.isEmpty else { continue }
 
-            if incomingWires.count == 1 {
-                var visitedCopy = visited
-                let child = try buildFromOrigin(fromNodeID: incomingWires[0].fromNodeID,
-                                                fromSymbolID: incomingWires[0].fromSymbolID,
-                                                includeOutputPort: true,
-                                                visited: &visitedCopy)
-                inputs.append(GraphShapeInputPort(portName: portName, value: .single(child)))
-            } else {
-                var children: [GraphShapeNode] = []
-                for wire in incomingWires {
-                    var branchVisited = visited
-                    children.append(try buildFromOrigin(fromNodeID: wire.fromNodeID,
-                                                        fromSymbolID: wire.fromSymbolID,
-                                                        includeOutputPort: true,
-                                                        visited: &branchVisited))
-                }
-                inputs.append(GraphShapeInputPort(portName: portName, value: .multiple(children)))
+            var children: [GraphShapeNode] = []
+            for wire in incomingWires {
+                var branchVisited = visited
+                children.append(try buildFromOrigin(fromNodeID: wire.fromNodeID,
+                                                    fromSymbolID: wire.fromSymbolID,
+                                                    includeOutputPort: true,
+                                                    visited: &branchVisited))
             }
+            inputs.append(GraphShapeInputPort(portName: portName, value: children))
         }
 
         return GraphShapeNode(typeName: typeName, args: args, inputs: inputs, outputPort: outputPortName)
@@ -321,9 +338,7 @@ extension GraphShapeNode {
 // MARK: - graphShapeArgs — extracting init-time arguments from a live node
 
 extension InputlessNodeFunction {
-    /// Returns the init-time key-value arguments that distinguish this node from
-    /// others of the same type.  Override in concrete types that carry init-time
-    /// state (e.g. `StaticFile` with its `path`).
+    /// Default: no init-time args.  Override in concrete types (e.g. `StaticFile`).
     func graphShapeArgs(node: Node) -> [GraphShapeArg] { [] }
 }
 
@@ -359,37 +374,22 @@ extension GraphShapeNode {
         let nodeFunction = try node.nodeFunction()
         guard String(describing: type(of: nodeFunction)) == typeName else { return false }
 
-        // Match init-time args.
         let actualArgs = nodeFunction.graphShapeArgs(node: node)
         guard actualArgs == args else { return false }
 
-        // Match wired inputs recursively.
         for expectedPort in inputs {
             let portSymbolID = expectedPort.portName.asSymbolID()
             let actualWires  = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID,
                                                                     toSymbolID: portSymbolID)
-            switch expectedPort.value {
-            case .single(let expectedChild):
-                guard actualWires.count == 1 else { return false }
+            guard actualWires.count == expectedPort.value.count else { return false }
+            for (wire, expectedChild) in zip(actualWires, expectedPort.value) {
                 var visited: Set<ObjectID> = []
                 let actualChild = try GraphShapeNode.buildFromOrigin(
-                    fromNodeID: actualWires[0].fromNodeID,
-                    fromSymbolID: actualWires[0].fromSymbolID,
+                    fromNodeID: wire.fromNodeID,
+                    fromSymbolID: wire.fromSymbolID,
                     includeOutputPort: true,
                     visited: &visited)
                 guard actualChild == expectedChild else { return false }
-
-            case .multiple(let expectedChildren):
-                guard actualWires.count == expectedChildren.count else { return false }
-                for (wire, expectedChild) in zip(actualWires, expectedChildren) {
-                    var visited: Set<ObjectID> = []
-                    let actualChild = try GraphShapeNode.buildFromOrigin(
-                        fromNodeID: wire.fromNodeID,
-                        fromSymbolID: wire.fromSymbolID,
-                        includeOutputPort: true,
-                        visited: &visited)
-                    guard actualChild == expectedChild else { return false }
-                }
             }
         }
         return true
@@ -407,7 +407,6 @@ extension GraphShapeNode {
     }
 
     private func createNode() throws -> ObjectID? {
-        // Resolve kind from type name.
         let kind: UInt
         do {
             kind = try PolyFactory.kind(forTypeName: typeName)
@@ -417,7 +416,6 @@ extension GraphShapeNode {
         }
 
         if kind == StaticFile.kind {
-            // Static file: find or create under inputFileSystem using the path arg.
             guard let pathArg = args.first(where: { $0.key == "path" }) else {
                 print("GraphShapeNode.createNode: StaticFile missing 'path' arg")
                 return nil
@@ -429,36 +427,25 @@ extension GraphShapeNode {
             return node.id
         }
 
-        // Tool node: create as child of rootNode and wire up inputs recursively.
         let rootNode  = try Node.rootNode
         var newNode   = try Node.createNode(parentNodeID: rootNode.id!, kind: kind, name: typeName)
         let newNodeID = newNode.id!
 
         for inputPortSpec in inputs {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
-
-            switch inputPortSpec.value {
-            case .single(let childShape):
+            for (index, childShape) in inputPortSpec.value.enumerated() {
                 if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
                     guard let fromSymbolID else { continue }
+                    // Name the wire after the source node (matching the convention used
+                    // everywhere else), falling back to portName[index] only if the
+                    // source node has no name.
+                    let sourceNode = try fromNodeID.loadNode()
+                    let wireName   = (sourceNode.name ?? "\(inputPortSpec.portName)[\(index)]").asSymbolID()
                     try Wire.connectWire(fromNodeID: fromNodeID,
                                          fromSymbolID: fromSymbolID,
                                          toNodeID: newNodeID,
                                          toSymbolID: toSymbolID,
-                                         name: inputPortSpec.portName.asSymbolID())
-                }
-
-            case .multiple(let childShapes):
-                for (index, childShape) in childShapes.enumerated() {
-                    let wireName = "\(inputPortSpec.portName)[\(index)]".asSymbolID()
-                    if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
-                        guard let fromSymbolID else { continue }
-                        try Wire.connectWire(fromNodeID: fromNodeID,
-                                             fromSymbolID: fromSymbolID,
-                                             toNodeID: newNodeID,
-                                             toSymbolID: toSymbolID,
-                                             name: wireName)
-                    }
+                                         name: wireName)
                 }
             }
         }

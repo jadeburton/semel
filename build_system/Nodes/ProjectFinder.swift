@@ -20,18 +20,15 @@ struct ProjectFinder: NodeFunction {
     static let folderManifestInputPort = "folderManifest"
     static let projectBuildersInputPort = "projectBuilders"
 
-    init() {
-        print("hai")
-    }
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
 
     private func buildProjectBuildersExpectationFromFolderManifest(folderManifest: FolderManifest) throws -> [String: String] {
         var result: [String: String] = [:]
-        
+
         for entry in folderManifest.entries {
             if entry.name.hasSuffix(".json") {
-                result[entry.name] = "ProjectBuilder(projectFile=StaticFile(path='\(entry.name)').output).status"
+                result[entry.name] = "ProjectBuilder(projectFile=StaticFile(path=\"\(entry.name)\").output).status".replacingOccurrences(of: "\\'", with: "'")
             }
         }
 

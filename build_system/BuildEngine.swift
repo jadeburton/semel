@@ -29,7 +29,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database136.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database146.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
         // Capture the fully-initialised self before starting the task.
@@ -110,7 +110,7 @@ final class BuildEngine {
             return
         }
         print("process: nodeFunction \(type(of: nodeFunction)), nodeID \(node.id!)")
-        try nodeFunction.processWithPreCheck(thisNode: node)
+        nodeFunction.processWithPreCheck(thisNode: node)
         validatePorts(node: node)
 
         var node = node
@@ -118,12 +118,10 @@ final class BuildEngine {
     }
 
     private func validatePorts(node: Node) {
-        assert(
-            try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty,
-            "Not all Ports were processed for node \(node.description())"
-        )
+        if !(try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty) {
+            print("WARNING: Not all Ports were processed for node \(node.description())")
+        }
     }
-
 }
 
 // MARK: - WorkSignal

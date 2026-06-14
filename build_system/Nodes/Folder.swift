@@ -23,6 +23,11 @@ struct Folder: InputlessNodeFunction {
     enum CodingKeys: CodingKey {
     }
 
+    func didCreate(node: Node) throws -> ProcessOutput {
+        .init(outputValues: [Self.folderManifestOutputPort: .value(try FolderManifest(entries: []).toJSON().intern())],
+              inputWireExpectations: [:])
+    }
+
     static let folderManifestOutputPort = "folderManifest"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [folderManifestOutputPort], dynamicInputPorts: [])
@@ -97,7 +102,7 @@ struct Folder: InputlessNodeFunction {
                                        value: .value(try buildManifest(thisNode: thisNode).toJSON().intern()))
     }
 }
-
+/*
 final class FolderEvent: MessageType {
     enum FolderEventKind: Codable {
         case childAdded(nodeID: ObjectID, name: String)
@@ -132,3 +137,4 @@ final class FolderEvent: MessageType {
         try container.encode(folderEventKind, forKey: .folderEventKind)
     }
 }
+*/

@@ -51,18 +51,21 @@ extension Node {
     }
 
     static func createNode(parentNodeID: ObjectID?, kind: UInt, name: String) throws -> Node {
-        let nodeFunction = try PolyFactory.makeDefault(kind: kind).toJSON()
+        let nodeFunction = try PolyFactory.makeDefault(kind: kind)
 
         var node = Node(parentNodeID: parentNodeID,
                         kind: kind,
                         name: name,
-                        configuration: nodeFunction,
+                        configuration: try nodeFunction.toJSON(),
                         scheduled: false,
                         searchKey: nil)
 
         node.id = try DatabaseLayer.shared.insertNode(node)
 
         try node.writePendingToAllOutputsOfNode()
+
+        let output = try nodeFunction.didCreate(node: node)
+        try nodeFunction.writeToOutputs(output: output, thisNode: node)
 
 //        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
             try node.setScheduledAndSave(true)
@@ -186,6 +189,10 @@ extension ObjectID {
 // MARK: - Port management
 
 extension Node {
+    func hasOneOrMoreErrorOutputs() throws -> Bool {
+        try DatabaseLayer.shared.selectAllOutputPorts(nodeID: id!).contains { $0.valueKind != .value }
+    }
+
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
         let outputSymbolID = outputPort.asSymbolID()
 

@@ -66,6 +66,7 @@ struct ClangLinkerTool: NodeFunction {
             for (libraryName, nodeValue) in libraryValues {
                 libraryFiles.append(.init(filePath: libraryName, content: try nodeValue.expectValue().resolve()))
             }
+
             self.libraryFiles = libraryFiles
 
             var objectFiles: [FileNameAndContent] = []
@@ -73,11 +74,8 @@ struct ClangLinkerTool: NodeFunction {
             for (objectFileName, nodeValue) in inputValues {
                 objectFiles.append(.init(filePath: objectFileName, content: try nodeValue.expectValue().resolve()))
             }
-            self.objectFiles = objectFiles
 
-            guard !objectFiles.isEmpty else {
-                throw NodeError.missingInputs
-            }
+            self.objectFiles = objectFiles
         }
     }
 

@@ -7,7 +7,7 @@
 
 import Foundation
 
-extension NodeFunction {
+extension InputlessNodeFunction {
 
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
         let oneInput = input.inputValues[inputPort]!
@@ -67,7 +67,7 @@ extension NodeFunction {
         
         for outputPort in descriptor.outputPorts {
             if let outputValue = decodedCacheEntry.outputValues[outputPort] {
-                print("Using cached output for node \(self.description()), output port \(outputPort)")
+                print("Using cached output for node \(self), output port \(outputPort)")
                 try thisNode.writeToOutputPort(outputPort, value: outputValue)
             } else {
                 // Invalid cache

@@ -1,4 +1,3 @@
-
 //
 //  NodeProtocol.swift
 //  build_system
@@ -21,33 +20,20 @@ struct ProcessOutput {
     let outputValues: [String: NodeValue]
     let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
 }
-/*
-protocol NodeInputReader {
-    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValue]
+
+protocol WithDefaultInitializer {
+    init() throws
 }
-
-extension NodeInputReader {
-    func readOneValueFromInputPort(_ inputPort: String) throws -> (String, NodeValue) {
-        let values = try readAllValuesFromInputPort(inputPort)
-
-        switch values.count {
-
-        case 0:
-            throw NodeError.missingInputs
-
-        case 1:
-            let first = values.first!
-            return (first.key, first.value)
-
-        default:
-            throw NodeError.onlyOneWireShouldBeConnectedToInput
-        }
-    }
-}
-*/
 
 protocol InputlessNodeFunction: Codable, PolySerializable, WithDefaultInitializer {
+    func didCreate(node: Node) throws -> ProcessOutput
+
     var descriptor: NodeFunctionDescriptor { get }
+    /// Returns the init-time key-value arguments that distinguish this node from
+    /// others of the same type (e.g. `path='src/hello.c'` for StaticFile).
+    /// Declared here so Swift dispatches it dynamically via the protocol witness table,
+    /// not statically via the extension — which would always call the default `[]`.
+    func graphShapeArgs(node: Node) -> [GraphShapeArg]
 }
 
 // A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
@@ -57,21 +43,74 @@ protocol NodeFunction: InputlessNodeFunction {
 }
 
 extension NodeFunction {
+
     private func buildProcessInput(thisNode: Node) throws -> ProcessInput {
-        var inputValues = [String : [String : NodeValue]]()
-
-        for inputPort in descriptor.staticInputPorts {
+        var inputValues = [String: [String: NodeValue]]()
+        for inputPort in descriptor.staticInputPorts + descriptor.dynamicInputPorts {
             inputValues[inputPort] = try thisNode.readFromInputPort(inputPort)
         }
-
-        for inputPort in descriptor.dynamicInputPorts {
-            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort)
-        }
-
         return .init(inputValues: inputValues)
     }
 
-    private func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
+    private func allInputsAreSatisfied(input: ProcessInput) -> Bool {
+        for inputPort in descriptor.staticInputPorts {
+            guard let values = input.inputValues[inputPort], !values.isEmpty else { return false }
+            if values.contains(where: { if case .noValue = $0.value { return true } else { return false } }) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func processWithCatch(thisNode: Node, input: ProcessInput) -> ProcessOutput {
+        do {
+            return try process(input: input)
+        } catch {
+            return buildErrorOutput(withError: error)
+        }
+    }
+    
+    func processWithPreCheck(thisNode: Node) {
+        guard hasInputPorts() else {
+            // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
+            return
+        }
+        do {
+            let input = try buildProcessInput(thisNode: thisNode)
+
+            guard allInputsAreSatisfied(input: input) else {
+                // Don't write error outputs or touch wire configuration when inputs
+                // aren't ready yet.  Writing an error output here would cascade:
+                // downstream nodes would see error values and reschedule, and an
+                // empty inputWireExpectations would delete upstream wires, causing
+                // those nodes to reschedule this one again — an infinite loop.
+                // Instead, just let processOneNode unschedule this node; it will be
+                // rescheduled automatically when upstream nodes produce their output.
+                print("Waiting for inputs: \(thisNode.name ?? "?")")
+                return
+            }
+
+            let cacheKey = try buildCacheKeyFromAllInputs(input: input)
+
+            if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
+                let output = processWithCatch(thisNode: thisNode, input: input)
+                try writeToOutputs(output: output, thisNode: thisNode)
+                try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
+            }
+        } catch {
+            print("Error during processing: \(error)")
+            try? writeToOutputs(output: buildErrorOutput(withError: error), thisNode: thisNode)
+        }
+    }
+}
+
+extension InputlessNodeFunction {
+
+    func didCreate(node: Node) throws -> ProcessOutput {
+        .init(outputValues: [:], inputWireExpectations: [:])
+    }
+
+    func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
         for (inputPort, wireExpectations) in output.inputWireExpectations {
             try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
         }
@@ -133,10 +172,13 @@ extension NodeFunction {
 
             if let existingWire = existingWiresByName[wireName] {
                 // Step 3 — wire already exists; check whether its current graph shape
-                // still satisfies the expectation.  If not, disconnect and reconnect.
-                let currentShape = try buildGraphShapeForInputWire(wire: existingWire)
-                guard currentShape != expectationString else {
-                    continue   // shape unchanged — nothing to do
+                // still satisfies the expectation.  Compare parsed shapes structurally
+                // (port-order-independent, bracket-format-independent) rather than as
+                // raw strings to avoid spurious mismatches.
+                let currentShapeNode   = try GraphShapeNode.buildFromWire(existingWire)
+                let expectedShapeNode  = try GraphShapeNode.parse(expectationString)
+                guard !currentShapeNode.topologyMatches(expectedShapeNode) else {
+                    continue   // topology unchanged — nothing to do
                 }
                 _ = try existingWire.deleteWire()
                 try connectExpected()
@@ -167,86 +209,25 @@ extension NodeFunction {
         try GraphShapeNode.buildFromWire(wire).asString()
     }
 
-    private func buildErrorOutput(withError error: Error) -> ProcessOutput {
+    fileprivate func buildErrorOutput(withError error: Error) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
-        var inputWireExpectations = [String: [String: String]]()
         for outputPort in descriptor.outputPorts {
             outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
         }
-        for dynamicInputPort in descriptor.dynamicInputPorts {
-            inputWireExpectations[dynamicInputPort] = [:] // TODO?
-        }
-        return .init(outputValues: outputValues, inputWireExpectations: inputWireExpectations)
+        // Intentionally omit inputWireExpectations entirely.
+        // Passing an empty dict per dynamic port would cause applyExpectationConfiguration
+        // to delete every existing wire on those ports (step 1: delete wires not in config),
+        // which reschedules upstream nodes, which recreate the wires, scheduling this node
+        // again — an infinite loop.  Leave wire configuration completely untouched on error.
+        return .init(outputValues: outputValues, inputWireExpectations: [:])
     }
 
-    private func processWithCatch(thisNode: Node, input: ProcessInput) -> ProcessOutput {
-        do {
-            return try process(input: input)
-        } catch {
-            return buildErrorOutput(withError: error)
-        }
-    }
-
-    func processWithPreCheck(thisNode: Node) {
-        guard hasInputPorts() else {
-            // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
-            return
-        }
-        do {
-            let input = try buildProcessInput(thisNode: thisNode)
-            
-            guard allInputsAreSatisfied(input: input) else {
-                print("Not all inputs are satisfied. \(thisNode.name!)")
-                try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
-                return
-            }
-            
-            let cacheKey = try buildCacheKeyFromAllInputs(input: input)
-            
-            if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
-                let output = processWithCatch(thisNode: thisNode, input: input)
-                try writeToOutputs(output: output, thisNode: thisNode)
-                try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
-            }
-        } catch {
-            print("Error during processing: \(error)")
-            try? writeToOutputs(output: buildErrorOutput(withError: error), thisNode: thisNode)
-        }
-    }
-
-    private func hasInputPorts() -> Bool {
+    fileprivate func hasInputPorts() -> Bool {
         !descriptor.staticInputPorts.isEmpty || !descriptor.dynamicInputPorts.isEmpty
     }
-
-    private func allInputsAreSatisfied(input: ProcessInput) -> Bool {
-        for inputPort in descriptor.staticInputPorts /*+ descriptor.dynamicInputPorts*/ {
-            guard let values = input.inputValues[inputPort], !values.isEmpty else {
-                return false
-            }
-
-            if values.contains(where: { if case .noValue = $0.value { return true } else { return false } }) {
-                return false
-            }
-        }
-
-        return true
-    }
-}
-
-protocol WithDefaultInitializer {
-    init() throws
 }
 
 protocol MessageType: AnyObject, Codable, PolySerializable {
-}
-
-// MARK: - PolyFactory + NodeFunction
-
-extension PolyFactory {
-    /// Construct a default instance of the type identified by `kind`.
-    static func makeDefault(kind: UInt) throws -> InputlessNodeFunction {
-        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! InputlessNodeFunction
-    }
 }
 
 // MARK: - NodeError
@@ -259,14 +240,6 @@ enum NodeError: Error {
     case other(message: String)
     case processNotSupported
 }
-
-// MARK: - NodeFunction default implementations
-
-extension NodeFunction {
-    func willSave() throws {}
-    func didSave() throws {}
-}
-
 extension NodeFunction {
     func description() -> String {
         "\(String(describing: Self.self)) (kind: \(type(of: self).kind)), staticInputPorts: \(descriptor.staticInputPorts.count), outputPorts: \(descriptor.outputPorts.count), dynamicInputPorts: \(descriptor.dynamicInputPorts.count)"
@@ -276,6 +249,15 @@ extension NodeFunction {
 struct OneNodeValue {
     let dataObjectHash: DataObjectHash
     let originNodeID: ObjectID
+}
+
+// MARK: - PolyFactory + NodeFunction
+
+extension PolyFactory {
+    /// Construct a default instance of the NodeFunction identified by `kind`.
+    static func makeDefault(kind: UInt) throws -> InputlessNodeFunction {
+        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! InputlessNodeFunction
+    }
 }
 
 // MARK: - PolySerializable helper

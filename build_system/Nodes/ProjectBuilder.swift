@@ -19,7 +19,7 @@ struct ProjectBuilder: NodeFunction {
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [projectFileInputPort], outputPorts: [statusOutputPort], dynamicInputPorts: [productInputPort])
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileContent: String) throws -> [String: String] {
-        ["mylib.dylib":"ClangLinkerTool(input=ClangCompilerTool(input=ClangPreprocessorTool(input=StaticFile(path='hello.c').output,configuration=StaticFile(path='hello.c').output).output).output).output"]
+        ["mylib.dylib":"ClangLinkerTool(input=ClangCompilerTool(input=ClangPreprocessorTool(input=StaticFile(path='hello.c').output,configuration=Configuration().output).output).output).output).output"]
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {

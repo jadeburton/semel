@@ -164,13 +164,13 @@ struct ClangPreprocessorTool: NodeFunction {
         var headerInputFilesWireExpectations = [String: String]()
 
         for includePath in inputs.aggregatedIncludePathList {
-            headerInputFilesWireExpectations[includePath] = "StaticFile(path=\(includePath)).output"
+            headerInputFilesWireExpectations[includePath] = "StaticFile(path='\(includePath)').output"
         }
 
         var includeFileListWireExpections = [String: String]()
 
         for sourcePath in (inputs.aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile=StaticFile(path=\(sourcePath))).includePathList"
+            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile=StaticFile(path='\(sourcePath)').output).includePathList"
         }
 
         // do we have input wires for each of the Headers mentioned in the aggregated Include list?

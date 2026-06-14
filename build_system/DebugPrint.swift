@@ -8,8 +8,19 @@ import GRDB
 import DatabaseModels
 
 extension BuildEngine {
+    static func nudge() throws {
+        let database = DatabaseLayer.shared
+        let allNodes = try database.selectAllNodes()
+        for node in allNodes {
+            if try node.hasOneOrMoreErrorOutputs() {
+                var node = node
+                try node.setScheduledAndSave(true)
+            }
+        }
+    }
+
     static func printAll() throws {
-        try? DatabaseLayer.shared.recomputeAllSearchKeys()
+        try DatabaseLayer.shared.recomputeAllSearchKeys()
         var pf = try Node.projectFinder
         try pf.setScheduledAndSave(true)
 

@@ -266,6 +266,7 @@ enum FileSystemForCommand {
 enum UserCommand {
     case base(externalPath: String) // strato base .
     case debug
+    case nudge // schedule all nodes currently in an error state
     case begin           // strato begin
     case commit          // strato commit
     case discard         // strato discard
@@ -337,6 +338,9 @@ final class CommandParser {
 
         case "d", "debug":
             return .debug
+
+        case "n", "nudge":
+            return .nudge
 
         case "begin":
             return .begin
@@ -477,6 +481,10 @@ final class CommandInterpreter {
         try BuildEngine.printAll()
     }
 
+    func handleNudge() throws {
+        try BuildEngine.nudge()
+    }
+
     func handleUserCommand(_ userCommand: UserCommand) throws {
         switch userCommand {
 
@@ -485,6 +493,9 @@ final class CommandInterpreter {
 
         case .debug:
             try handleDebug()
+            
+        case .nudge:
+            try handleNudge()
 
         case .begin:
             handleBegin()

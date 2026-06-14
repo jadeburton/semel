@@ -24,7 +24,11 @@ extension Wire {
             return
         }
 
-        if try wireExistsWithSameName(toNodeID: toNodeID, toSymbolID: toSymbolID, name: name) {
+        if try wireExistsWithSameName(fromNodeID: fromNodeID,
+                                       fromSymbolID: fromSymbolID,
+                                       toNodeID: toNodeID,
+                                       toSymbolID: toSymbolID,
+                                       name: name) {
             throw WireError.attemptToCreateWireWithDuplicateName(name.resolveSymbol())
         }
 
@@ -42,9 +46,17 @@ extension Wire {
         try toNode.setScheduledAndSave(true)
     }
 
-    static func wireExistsWithSameName(toNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) throws -> Bool {
+    /// Returns `true` if a wire going to `(toNodeID, toSymbolID)` already uses
+    /// `name`, but comes from a *different* source than `(fromNodeID, fromSymbolID)`.
+    /// A wire with the same name AND the same source is a harmless duplicate — the
+    /// caller's earlier guard will catch and skip it.
+    static func wireExistsWithSameName(fromNodeID: ObjectID,
+                                       fromSymbolID: ObjectID,
+                                       toNodeID: ObjectID,
+                                       toSymbolID: ObjectID,
+                                       name: ObjectID) throws -> Bool {
         try DatabaseLayer.shared.selectWires(goingToNodeID: toNodeID, toSymbolID: toSymbolID)
-            .contains { $0.name == name }
+            .contains { $0.name == name && ($0.fromNodeID != fromNodeID || $0.fromSymbolID != fromSymbolID) }
     }
 
     func deleteWire(fromNodeID: ObjectID,
@@ -78,7 +90,7 @@ extension Wire {
 
         // is the target Input marked as "holds alive"? if so, then removing this wire should delete the node unless there is another holds-alive Input
 
-        let wireToSymbol = try DatabaseLayer.shared.selectSymbol(symbolID: toSymbolID)!.name
+      //  let wireToSymbol = try DatabaseLayer.shared.selectSymbol(symbolID: toSymbolID)!.name
 
 /* TODO cascading delete: Nodes are held alive by their Output wires, unless they are Input File System Nodes or they have no Output wires.
  if toNode.descriptor.staticInputPorts.first(where: { $0.name == wireToSymbol })?.cascadingDelete ?? false {

@@ -102,10 +102,13 @@ extension DatabaseLayer {
     }
 
     public func deleteWire(comingFromNodeID: ObjectID, fromSymbolID: ObjectID, goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> Bool {
-        #warning("TODO")
-//        try dbQueue.write { db in
-//            try Wire.deleteOne(db, key: K)
-//        }
-        return true
+        try dbQueue.write { db in
+            try Wire
+                .filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                        Wire.Columns.fromSymbolID == fromSymbolID &&
+                        Wire.Columns.toNodeID == goingToNodeID &&
+                        Wire.Columns.toSymbolID == toSymbolID)
+                .deleteAll(db) > 0
+        }
     }
 }
