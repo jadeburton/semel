@@ -2,25 +2,23 @@
 // build_system
 //
 // ProjectFinder monitors a directory for .yml formula files and wires each one
-// up to a FormulaExtractor, which in turn feeds the formula text to BuildGraph.
-// FormulaExtractor reads a formula file and passes its content through to BuildGraph.
+// up to a ProjectBuilder, which in turn feeds the formula text to BuildGraph.
+// ProjectBuilder reads a formula file and passes its content through to BuildGraph.
 
 import Foundation
 
 // MARK: - ProjectFinder
 
-/// Watches an input file-list stream and creates a FormulaExtractor child for
+/// Watches an input file-list stream and creates a ProjectBuilder child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
-final class ProjectFinder: NodeFunction {
+struct ProjectFinder: NodeFunction {
     static let kind: UInt = 5
-
-    var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {}
 
-    required init() {}
+    init() {}
 
-    required init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
@@ -30,34 +28,36 @@ final class ProjectFinder: NodeFunction {
 
     static let folderManifestInputPort = "folderManifest"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [folderManifestInputPort], staticOutputPorts: [])
-
-    private func ensureExtractorExists(folderManifestEntry: FolderManifestEntry, folderNode: FolderNode) throws {
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [folderManifestInputPort], outputPorts: [], dynamicInputPorts: [])
+/*
+    private func ensureExtractorExists(folderManifestEntry: FolderManifestEntry, folderNode: Folder) throws {
 
         guard folderManifestEntry.name.hasSuffix(".json") else {
             return
         } // HACK
 
-        let extractor = try childPoly(path: folderManifestEntry.name, kind: FormulaExtractor.kind, createIfNotExist: true)! as! FormulaExtractor
+        let extractor = try childPoly(path: folderManifestEntry.name, kind: ProjectBuilder.kind, createIfNotExist: true)! as! ProjectBuilder
 
-        let fileNode = try folderNode.childPoly(path: folderManifestEntry.name, kind: StaticFileNode.kind) as! StaticFileNode
+        let fileNode = try folderNode.childPoly(path: folderManifestEntry.name, kind: StaticFile.kind) as! StaticFile
 
         try nodeContext.processingCycle.connectWire(
             fromNodeID: fileNode.nodeID,
-            fromSymbolID: StaticFileNode.outputPort.asSymbolID(),
+            fromSymbolID: StaticFile.outputPort.asSymbolID(),
             toNodeID: extractor.nodeID,
-            toSymbolID: FormulaExtractor.formulaFileInputPort.asSymbolID(),
+            toSymbolID: ProjectBuilder.formulaFileInputPort.asSymbolID(),
             name: folderManifestEntry.name.asSymbolID())
 
         #warning("TODO")
 //        try nodeContext.processingCycle.connectWire(
 //            fromNodeID: extractor.nodeID,
-//            fromSymbolID: FormulaExtractor.formulaOutputPort.asSymbolID(),
+//            fromSymbolID: ProjectBuilder.formulaOutputPort.asSymbolID(),
 //            toNodeID: try nodeContext.processingCycle.rootNode.buildGraph.nodeID,
 //            toSymbolID: BuildGraph.formulaeInputPort.asSymbolID())
     }
+*/
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        return .init(outputValues: [:], inputWireExpectations: [:])
 
-    func process() throws {
         #warning("TODO")
 //        let oneValue = try readOneValueFromInputPort(Self.folderManifestInputPort)
 //        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: oneValue.originNodeID)
@@ -71,7 +71,7 @@ final class ProjectFinder: NodeFunction {
 //            try ensureExtractorExists(folderManifestEntry: entry, folderNode: folderNode)
 //        }
 //
-//        for formulaExtractorChild in try allChildren().filter({ node in node is FormulaExtractor }) {
+//        for formulaExtractorChild in try allChildren().filter({ node in node is ProjectBuilder }) {
 //            if !folderManifest.entries.contains(where: { $0.name == formulaExtractorChild.nodeContext.name }) {
 //                try formulaExtractorChild.delete()
 //            }
@@ -80,14 +80,12 @@ final class ProjectFinder: NodeFunction {
     }
 }
 
-// MARK: - FormulaExtractor
+// MARK: - ProjectBuilder
 
 /// Reads a single formula.json file and passes its text content through to
 /// BuildGraph's formulae input port.
-final class FormulaExtractor: NodeFunction {
+final class ProjectBuilder: NodeFunction {
     static let kind: UInt = 6
-
-    var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {}
 
@@ -104,17 +102,13 @@ final class FormulaExtractor: NodeFunction {
     static let formulaFileInputPort = "formulaFile"
     static let formulaOutputPort = "formula"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaFileInputPort], staticOutputPorts: [formulaOutputPort])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaFileInputPort], outputPorts: [formulaOutputPort], dynamicInputPorts: [])
 
-    func process() throws {
-        for formulaFileValue in try readAllValuesFromInputPort(Self.formulaFileInputPort) {
-            switch formulaFileValue.value {
-            case .noValue:
-                break
-            case .value(let dataObjectHash):
-                // Pass the formula content through unchanged.
-                try writeToOutputPort(Self.formulaOutputPort, value: .value(dataObjectHash))
-            }
-        }
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        .init(outputValues: [:], inputWireExpectations: [:])
+//        for formulaFileValue in try readAllValuesFromInputPort(Self.formulaFileInputPort) {
+//            // Pass the formula content through unchanged.
+//            try writeToOutputPort(Self.formulaOutputPort, value: .value(formulaFileValue.expectValue()))
+//        }
     }
 }

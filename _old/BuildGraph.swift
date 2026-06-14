@@ -30,7 +30,7 @@ final class BuildGraph: NodeFunction {
 
     static let formulaeInputPort = "formulae"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaeInputPort], staticOutputPorts: [])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaeInputPort], outputPorts: [])
 
     // MARK: File-system children
 
@@ -102,7 +102,7 @@ final class BuildGraph: NodeFunction {
                         let rawNode = rawNodes[0]
 
                         // connect to the existing node....
-                        return try nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
+                        return try nodeContext.processingCycle.nodeFunction(nodeRaw: rawNode)
                     }
                 }
 

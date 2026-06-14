@@ -4,19 +4,17 @@
 // Takes a .c or .h source file as input and outputs a newline-separated list
 // of quoted #include paths found in that file (system angle-bracket includes
 // are intentionally ignored).
-/*
+
 import Foundation
 
-final class IncludeFinder: NodeFunction {
+struct IncludeFinder: NodeFunction {
     static let kind: UInt = 15
-
-    var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {}
 
-    required init() {}
+    init() {}
 
-    required init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
@@ -29,11 +27,9 @@ final class IncludeFinder: NodeFunction {
     static let sourceFileInputPort = "sourceFile"
     static let includePathListOutputPort = "includePathList"
 
-    var descriptor: NodeFunctionDescriptor {
-        .init(kind: Self.kind,
-              staticInputPorts: [Self.sourceFileInputPort],
-              staticOutputPorts: [Self.includePathListOutputPort])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [Self.sourceFileInputPort],
+                                            outputPorts: [Self.includePathListOutputPort],
+                                            dynamicInputPorts: [])
 
     // MARK: Include extraction
 
@@ -42,9 +38,9 @@ final class IncludeFinder: NodeFunction {
     private func extractIncludePaths(sourceFileContent: String) -> [String] {
         var text = sourceFileContent
 
-        // Remove block comments*/
-//        if let blockCommentRegex = try? NSRegularExpression(pattern: "/\\*[\\s\\S]*?\\*/") {
-/*            text = blockCommentRegex.stringByReplacingMatches(
+        // Remove block comments
+        if let blockCommentRegex = try? NSRegularExpression(pattern: "/\\*[\\s\\S]*?\\*/") {
+            text = blockCommentRegex.stringByReplacingMatches(
                 in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
         }
 
@@ -74,26 +70,45 @@ final class IncludeFinder: NodeFunction {
 
     // MARK: Processing
 
-    func process() throws {
+    struct IncludeFinderInputs {
+        let inputSourceFiles: [FileNameAndContent]
+
+        init(input: ProcessInput) throws {
+            let sourceFiles = input.inputValues[IncludeFinder.sourceFileInputPort]!
+
+            var inputSourceFiles: [FileNameAndContent] = []
+
+            for (headerFileName, nodeValue) in sourceFiles {
+                inputSourceFiles.append(.init(filePath: headerFileName, content: try nodeValue.expectValue().resolve()))
+            }
+
+            self.inputSourceFiles = inputSourceFiles
+        }
+    }
+
+    struct IncludeFinderOutputs {
+        let includePathList: NodeValue
+
+        func asProcessOutput() throws -> ProcessOutput {
+            .init(outputValues: [IncludeFinder.includePathListOutputPort: includePathList], inputWireExpectations: [:])
+        }
+    }
+
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        let inputs = try IncludeFinderInputs(input: input)
+        return try process(inputs: inputs).asProcessOutput()
+    }
+
+    func process(inputs: IncludeFinderInputs) throws -> IncludeFinderOutputs {
         var aggregatedIncludePathList = ""
 
-        for sourceFileValue in try readAllValuesFromInputPort(Self.sourceFileInputPort) {
-            switch sourceFileValue.kind {
+        for sourceFileValue in inputs.inputSourceFiles {
+            let includePathList = extractIncludePaths(sourceFileContent: String(decoding: sourceFileValue.content, as: Unicode.UTF8.self))
+                .joined(separator: "\n")
 
-            case .value(let dataObjectHash):
-                let sourceText = try dataObjectHash.resolveAsString()
-
-                let includePathList = extractIncludePaths(sourceFileContent: sourceText)
-                    .joined(separator: "\n")
-
-                aggregatedIncludePathList.append(includePathList)
-
-            case .noValue:
-                throw NodeError.missingInputs
-            }
+            aggregatedIncludePathList.append(includePathList)
         }
 
-        try writeToOutputPort(Self.includePathListOutputPort, value: .value(aggregatedIncludePathList.intern()))
+        return .init(includePathList: .value(aggregatedIncludePathList.intern()))
     }
 }
-*/

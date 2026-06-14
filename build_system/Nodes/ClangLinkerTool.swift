@@ -28,8 +28,6 @@ struct ClangLinkerToolConfiguration: PolySerializable {
 struct ClangLinkerTool: NodeFunction {
     static let kind: UInt = 18
 
-    var nodeContext: NodeContext!
-
     enum CodingKeys: CodingKey {}
 
     init() {
@@ -56,38 +54,67 @@ struct ClangLinkerTool: NodeFunction {
     static let infoLog = "infoLog"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input, libraries],
-                                            staticOutputPorts: [output, errorLog, infoLog])
+                                            outputPorts: [output, errorLog, infoLog],
+                                            dynamicInputPorts: [])
 
     // MARK: Processing
 
-    func process() throws {
+    struct ClangLinkerToolInputs {
+        let configuration: ClangLinkerToolConfiguration
+        let libraryFiles: [FileNameAndContent]
+        let objectFiles: [FileNameAndContent]
 
-        let configuration: ClangLinkerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration)
+        init(input: ProcessInput) throws {
+            let configurationString = try input.inputValues[ClangLinkerTool.configuration]!.first!.value.expectValue().resolveAsString()
+            configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
 
-        let inputValues = try readAllValuesFromInputPort(Self.input)
-        let libraryValues = try readAllValuesFromInputPort(Self.libraries)
+            let inputValues = input.inputValues[ClangLinkerTool.input]!
+            let libraryValues = input.inputValues[ClangLinkerTool.libraries]!
 
-        // Separate .dylib library files from .o object files.
-        var libraryFiles: [FileNameAndContent] = []
+            // Separate .dylib library files from .o object files.
+            var libraryFiles: [FileNameAndContent] = []
 
-        for (libraryName, nodeValue) in libraryValues {
-            libraryFiles.append(.init(filePath: libraryName, content: try nodeValue.expectValue().resolve()))
+            for (libraryName, nodeValue) in libraryValues {
+                libraryFiles.append(.init(filePath: libraryName, content: try nodeValue.expectValue().resolve()))
+            }
+            self.libraryFiles = libraryFiles
+
+            var objectFiles: [FileNameAndContent] = []
+
+            for (objectFileName, nodeValue) in inputValues {
+                objectFiles.append(.init(filePath: objectFileName, content: try nodeValue.expectValue().resolve()))
+            }
+            self.objectFiles = objectFiles
+
+            guard !objectFiles.isEmpty else {
+                throw NodeError.missingInputs
+            }
         }
+    }
 
-        var objectFiles: [FileNameAndContent] = []
+    struct ClangLinkerToolOutputs {
+        let output: NodeValue
+        let errorLog: NodeValue
+        let infoLog: NodeValue
 
-        for (objectFileName, nodeValue) in inputValues {
-            objectFiles.append(.init(filePath: objectFileName, content: try nodeValue.expectValue().resolve()))
+        func asProcessOutput() -> ProcessOutput {
+            .init(outputValues: [ClangPreprocessorTool.output: output,
+                                 ClangPreprocessorTool.errorLog: errorLog,
+                                 ClangPreprocessorTool.infoLog: infoLog],
+                  inputWireExpectations: [:])
         }
+    }
 
-        guard !objectFiles.isEmpty else {
-            throw NodeError.missingInputs
-        }
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        let inputs = try ClangLinkerToolInputs(input: input)
+        return try process(inputs: inputs).asProcessOutput()
+    }
 
-        var output: [UInt8] = []
+    func process(inputs: ClangLinkerToolInputs) throws -> ClangLinkerToolOutputs {
+
         var arguments = [String]()
 
-        arguments.append(contentsOf: configuration.arguments)
+        arguments.append(contentsOf: inputs.configuration.arguments)
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
         arguments.append("-L"); arguments.append(".")
         // TODO: lock down SDK version and hash for full hermeticity.
@@ -97,24 +124,30 @@ struct ClangLinkerTool: NodeFunction {
         arguments.append("-lSystem")
         arguments.append("-nostdlib")
 
-        for objectFile in objectFiles   { arguments.append(objectFile.filePath)  }
-        for libraryFile in libraryFiles { arguments.append(libraryFile.filePath) }
+        for objectFile in inputs.objectFiles {
+            arguments.append(objectFile.filePath)
+        }
+
+        for libraryFile in inputs.libraryFiles {
+            arguments.append(libraryFile.filePath)
+        }
 
         arguments.append("-o"); arguments.append("output.dylib")
-        arguments.append(contentsOf: configuration.arguments)
+        arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         var inputFiles: [FileNameAndContent] = []
-        inputFiles.append(contentsOf: libraryFiles)
-        inputFiles.append(contentsOf: objectFiles)
+        inputFiles.append(contentsOf: inputs.libraryFiles)
+        inputFiles.append(contentsOf: inputs.objectFiles)
 
+        var output: [UInt8] = []
         var errorOutput = ""
         var infoOutput = ""
 
         let exitCode = try tool.execute(
             arguments: arguments,
-            environment: configuration.environment,
+            environment: inputs.configuration.environment,
             inputFiles: inputFiles,
             expectedOutputFileNames: ["output.dylib"],
             output: .init(logError: { error in
@@ -131,13 +164,8 @@ struct ClangLinkerTool: NodeFunction {
                               output.append(contentsOf: data)
                           }))
 
-        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern()))
-        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern()))
-
-        if exitCode == 0 {
-            try writeToOutputPort(Self.output, value: .value(output.intern()))
-        } else {
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Linker exited with nonzero status")))
-        }
+        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Linker exited with exitcode \(exitCode)")),
+                     errorLog: .value(errorOutput.intern()),
+                     infoLog: .value(infoOutput.intern()))
     }
 }

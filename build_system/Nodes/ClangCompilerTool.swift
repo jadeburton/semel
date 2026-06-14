@@ -21,20 +21,10 @@ struct ClangCompilerToolConfiguration: PolySerializable {
     }
 }
 
-protocol NodeInputReader {
-    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValue]
-}
-
-protocol NodeOutputWriter {
-    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws
-}
-
 // MARK: - Node
 
 struct ClangCompilerTool: NodeFunction {
     static let kind: UInt = 19
-
-    var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {}
 
@@ -58,22 +48,21 @@ struct ClangCompilerTool: NodeFunction {
     static let infoLog = "infoLog"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
-                                            staticOutputPorts: [output, errorLog, infoLog])
+                                            outputPorts: [output, errorLog, infoLog],
+                                            dynamicInputPorts: [])
 
     // MARK: Processing
 
     struct ClangCompilerToolInputs {
         let configuration: ClangCompilerToolConfiguration
-        let inputSourceFileContent: [UInt8]
-        let inputSourceFileName: String
+        let inputSourceFile: FileNameAndContent
 
-        init(nodeInputReader: NodeInputReader) throws {
-            let configurationString = try nodeInputReader.readAllValuesFromInputPort(ClangCompilerTool.configuration).first!.value.expectValue().resolveAsString()
+        init(input: ProcessInput) throws {
+            let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
 
-            let input = try nodeInputReader.readAllValuesFromInputPort(ClangCompilerTool.input).first!
-            inputSourceFileContent = try input.value.expectValue().resolve()
-            inputSourceFileName = input.key
+            let input = input.inputValues[ClangCompilerTool.input]!.first!
+            inputSourceFile = .init(filePath: input.key, content: try input.value.expectValue().resolve())
         }
     }
 
@@ -82,27 +71,27 @@ struct ClangCompilerTool: NodeFunction {
         let errorLog: NodeValue
         let infoLog: NodeValue
 
-        func write(nodeOutputWriter: NodeOutputWriter) throws {
-            try nodeOutputWriter.writeToOutputPort(ClangCompilerTool.output, value: output)
-            try nodeOutputWriter.writeToOutputPort(ClangCompilerTool.errorLog, value: errorLog)
-            try nodeOutputWriter.writeToOutputPort(ClangCompilerTool.infoLog, value: infoLog)
+        func asProcessOutput() throws -> ProcessOutput {
+            .init(outputValues: [ClangCompilerTool.output: output,
+                                 ClangCompilerTool.errorLog: errorLog,
+                                 ClangCompilerTool.infoLog: infoLog],
+                  inputWireExpectations: [:])
         }
     }
 
-    func process() throws {
-        let inputs = try ClangCompilerToolInputs(nodeInputReader: self)
-        let outputs = try process(inputs: inputs)
-        try outputs.write(nodeOutputWriter: self)
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        let inputs = try ClangCompilerToolInputs(input: input)
+        return try process(inputs: inputs).asProcessOutput()
     }
 
     func process(inputs: ClangCompilerToolInputs) throws -> ClangCompilerToolOutputs {
 
-        let outputFilename = inputs.inputSourceFileName + ".o"
+        let outputFilename = inputs.inputSourceFile.filePath + ".o"
 
         var arguments = [String]()
         arguments.append("-x");      arguments.append("c")
         arguments.append("-c")
-        arguments.append(inputs.inputSourceFileName)
+        arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
         arguments.append(contentsOf: inputs.configuration.arguments)
@@ -116,7 +105,7 @@ struct ClangCompilerTool: NodeFunction {
         let exitCode = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: [.init(filePath: inputs.inputSourceFileName, content: inputs.inputSourceFileContent)],
+            inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, content: inputs.inputSourceFile.content)],
             expectedOutputFileNames: [outputFilename],
             output: .init(logError: { error in
                               errorOutput += error

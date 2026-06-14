@@ -29,8 +29,6 @@ struct ClangPreprocessorToolConfiguration: PolySerializable {
 struct ClangPreprocessorTool: NodeFunction {
     static let kind: UInt = 17
 
-    var nodeContext: NodeContext!
-
     enum CodingKeys: CodingKey {}
 
     init() {}
@@ -47,107 +45,78 @@ struct ClangPreprocessorTool: NodeFunction {
 
     static let configuration = "configuration"
     static let sourceFileInput = "input"
-    static let includeFiles = "includeFiles"
-
-    // ISSUE: if there is a missing header file but it is added, we don't get notified.
-    // we need to monitor for all new header files - but only if we are in an error state
+    static let includeFileLists = "includeFileLists"
     static let headerInputFiles = "headerInputFiles"
-
     static let output = "output"
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    var descriptor: NodeFunctionDescriptor {
-        .init(staticInputPorts: [Self.configuration, Self.sourceFileInput, Self.includeFiles, Self.headerInputFiles],
-              staticOutputPorts: [Self.output, Self.errorLog, Self.infoLog])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, sourceFileInput],
+                                            outputPorts: [output, errorLog, infoLog],
+                                            dynamicInputPorts: [includeFileLists, headerInputFiles])
 
     // MARK: Processing
 
-    func process() throws {
+    struct ClangPreprocessorToolInputs {
+        let configuration: ClangPreprocessorToolConfiguration
+        let inputSourceFile: FileNameAndContent
+        let headerFiles: [FileNameAndContent]
+        let aggregatedIncludePathList: [String]
 
-        let configuration: ClangPreprocessorToolConfiguration = try readConfiguration(fromInputPort: Self.configuration)
-        let primarySourceFile = try readOneValueFromInputPort(Self.sourceFileInput)
+        init(processInput: ProcessInput) throws {
+            let configurationString = try processInput.inputValues[ClangPreprocessorTool.configuration]!.first!.value.expectValue().resolveAsString()
+            configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
 
-        // MARK: Include-finder helpers
-/*
-        func createOrFindIncludeFinderAttachedToNode(sourceNodeID: ObjectID) throws -> IncludeFinder {
-            let db = nodeContext.processingCycle.database
-            let allWiresFromSourceNode = try db.selectWires(comingFromNodeID: sourceNodeID)
+            let input = processInput.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
+            inputSourceFile = .init(filePath: input.key, content: try input.value.expectValue().resolve())
 
-            for wire in allWiresFromSourceNode {
-                let toNode = try nodeContext.processingCycle.wrapRawNodePoly(
-                    nodeRaw: try wire.toNodeID.loadNode(from: db)) as? IncludeFinder
-                if let toNode { return toNode }
+            let headerInputFiles = processInput.inputValues[ClangPreprocessorTool.headerInputFiles]!
+
+            var headerFiles: [FileNameAndContent] = []
+
+            for (headerFileName, nodeValue) in headerInputFiles {
+                headerFiles.append(.init(filePath: headerFileName, content: try nodeValue.expectValue().resolve()))
             }
 
-            return try nodeContext.processingCycle.makeNodePoly(
-                kind: IncludeFinder.kind,
-                name: "includeFinder",
-                parentNodeID: nodeContext.processingCycle.rootNode.nodeID) as! IncludeFinder
-        }*/
+            self.headerFiles = headerFiles
 
-/*        func ensureSourceOrHeaderNodeHasIncludeFinderAttached(_ sourceNodeID: ObjectID) throws {
-            let includeFinder = try createOrFindIncludeFinderAttachedToNode(sourceNodeID: sourceNodeID)
+            let includeFilesValues = processInput.inputValues[ClangPreprocessorTool.includeFileLists]!
 
-            let sourceNode = try nodeContext.processingCycle.node(nodeID: sourceNodeID) as StaticFileNode
-            try nodeContext.processingCycle.connectWire(fromNodeID: sourceNode.nodeID,
-                                                        fromSymbolID: StaticFileNode.outputPort.asSymbolID(),
-                                                        toNodeID: includeFinder.nodeID,
-                                                        toSymbolID: IncludeFinder.sourceFileInputPort.asSymbolID())
-            try nodeContext.processingCycle.connectWire(fromNodeID: includeFinder.nodeID,
-                                                        fromSymbolID: IncludeFinder.includePathListOutputPort.asSymbolID(),
-                                                        toNodeID: self.nodeID,
-                                                        toSymbolID: Self.includeFiles.asSymbolID())
+            let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
+                try includeFilesValue.value.expectValue().resolveAsString().split(separator: "\n").map(String.init)
+            })
+
+            aggregatedIncludePathList = .init(setOfIncludeFiles)
         }
-*/
-        func ensureIncludeFileIsAttached(_ includePath: String) throws {
-            guard let staticFileNode = try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: includePath,
-                                                                                                          kind: StaticFileNode.kind,
-                                                                                                          createIfNotExist: true) as? StaticFileNode else {
+    }
 
-                throw NodeError.other(message: "Could not find a StaticFileNode that corresponds to \(includePath)")
-            }
+    struct ClangPreprocessorToolOutputs {
+        let output: NodeValue
+        let errorLog: NodeValue
+        let infoLog: NodeValue
 
-            try nodeContext.processingCycle.connectWire(fromNodeID: staticFileNode.nodeID,
-                                                        fromSymbolID: StaticFileNode.outputPort.asSymbolID(),
-                                                        toNodeID: self.nodeID,
-                                                        toSymbolID: Self.headerInputFiles.asSymbolID(),
-                                                        name: includePath.asSymbolID())
+        let headerInputFilesWireExpectations: [String: String] // TODO: graph object, starting from the name of the output on the rootmost Node
+        let includeFileListWireExpections: [String: String] // TODO: graph object, starting from the name of the output on the rootmost Node
+
+        func asProcessOutput() -> ProcessOutput {
+            .init(outputValues: [ClangPreprocessorTool.output: output,
+                                 ClangPreprocessorTool.errorLog: errorLog,
+                                 ClangPreprocessorTool.infoLog: infoLog],
+                  inputWireExpectations: [ClangPreprocessorTool.headerInputFiles: headerInputFilesWireExpectations,
+                                          ClangPreprocessorTool.includeFileLists: includeFileListWireExpections])
         }
+    }
 
-        func removeIncludeFileWiresNotInList(_ allowedIncludePaths: Set<String>) throws {
-            let db = nodeContext.processingCycle.database
-            let allWiresToNode = try db.selectWires(goingToNodeID: self.nodeID)
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        let inputs = try ClangPreprocessorToolInputs(processInput: input)
+        return try process(inputs: inputs).asProcessOutput()
+    }
 
-            for wire in allWiresToNode {
-                #warning("TODO")
-/*                guard wire.toPort == Self.headerInputFiles.index else { continue }
+    private func runPreprocessor(inputs: ClangPreprocessorToolInputs,
+                                 headerInputFilesWireExpectations: [String: String],
+                                 includeFileListWireExpections: [String: String]) throws -> ClangPreprocessorToolOutputs {
 
-                let fromRaw = try wire.fromNodeID.loadNode(from: db)
-                let fromNode = try nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: fromRaw)
-
-                if let staticFile = fromNode as? StaticFileNode {
-                    let fullPath = try staticFile.buildFullPathName()
-                    if !allowedIncludePaths.contains(fullPath) {
-                        _ = try nodeContext.processingCycle.deleteWire(fromNode: staticFile,
-                                                                       fromPort: StaticFileNode.outputPort,
-                                                                       toNode: self,
-                                                                       toPort: Self.headerInputFiles)
-                    }
-                }*/
-            }
-        }
-
-        // MARK: Main switch
-
-        //try ensureSourceOrHeaderNodeHasIncludeFinderAttached(primarySourceFile.originNodeID)
-
-        let bytes = try primarySourceFile.1.expectValue().resolve()
-        var output: [UInt8] = []
-
-        let inputFilename  = "input.c"
-        let outputFilename = inputFilename + ".p"
+        let outputFilename = inputs.inputSourceFile.filePath + ".p"
 
         var arguments = [String]()
 
@@ -160,40 +129,22 @@ struct ClangPreprocessorTool: NodeFunction {
         arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
         arguments.append("-nostdinc")
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
-        arguments.append(inputFilename)
+        arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o"); arguments.append(outputFilename)
-        arguments.append(contentsOf: configuration.arguments)
+        arguments.append(contentsOf: inputs.configuration.arguments)
 
-        // Wire up include files discovered by IncludeFinder nodes.
-        let includeFilesValues = try readAllValuesFromInputPort(Self.includeFiles)
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
-        let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
-            try includeFilesValue.value.expectValue().resolveAsString().split(separator: "\n").map(String.init)
-        })
+        var inputFiles: [FileNameAndContent] = [.init(filePath: inputs.inputSourceFile.filePath, content: inputs.inputSourceFile.content)]
 
-        for includeFilePath in setOfIncludeFiles {
-            try ensureIncludeFileIsAttached(includeFilePath)
-        }
-        try removeIncludeFileWiresNotInList(setOfIncludeFiles)
+        inputFiles.append(contentsOf: inputs.headerFiles)
 
-        let headerInputFilesValues = try readAllValuesFromInputPort(Self.headerInputFiles)
-        for headerInputFilesValue in headerInputFilesValues {
-            //try ensureSourceOrHeaderNodeHasIncludeFinderAttached(headerInputFilesValue.originNodeID)
-        }
-
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
-
-        var inputFiles: [FileNameAndContent] = [.init(filePath: inputFilename, content: bytes)]
-
-        inputFiles.append(contentsOf: try headerInputFilesValues.compactMap { nodeValue -> FileNameAndContent? in
-            .init(filePath: nodeValue.key, content: try nodeValue.value.expectValue().resolve())
-        })
-
+        var output: [UInt8] = []
         var errorOutput = ""
         var infoOutput = ""
 
         let exitCode = try tool.execute(arguments: arguments,
-                                        environment: configuration.environment,
+                                        environment: inputs.configuration.environment,
                                         inputFiles: inputFiles,
                                         expectedOutputFileNames: [outputFilename],
                                         output: .init(logError: { error in
@@ -210,13 +161,43 @@ struct ClangPreprocessorTool: NodeFunction {
                                                           output.append(contentsOf: data)
                                                       }))
 
-        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern()))
-        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern()))
+        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Preprocessor exited with exitcode \(exitCode)")),
+                     errorLog: .value(errorOutput.intern()),
+                     infoLog: .value(infoOutput.intern()),
+                     headerInputFilesWireExpectations: headerInputFilesWireExpectations,
+                     includeFileListWireExpections: includeFileListWireExpections)
+    }
 
-        if exitCode == 0 {
-            try writeToOutputPort(Self.output, value: .value(output.intern()))
-        } else {
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Nonzero exit code")))
+    func process(inputs: ClangPreprocessorToolInputs) throws -> ClangPreprocessorToolOutputs {
+
+        var headerInputFilesWireExpectations = [String: String]()
+
+        for includePath in inputs.aggregatedIncludePathList {
+            headerInputFilesWireExpectations[includePath] = "StaticFile(path: \(includePath)).output"
         }
+
+        var includeFileListWireExpections = [String: String]()
+
+        for sourcePath in (inputs.aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
+            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile=StaticFile(\(sourcePath))).includePathList"
+        }
+
+        // do we have input wires for each of the Headers mentioned in the aggregated Include list?
+        //    no -> set our output to Error but set our Expected Header File Wires to equal the Include List, so that new wires will be connected
+        //          that will cause us to be scheduled for processing a second time. and connecting a new wire instantly causes all downstream
+        //          nodes' outputs to go to Pending, including us.
+        //    yes -> proceed to running the preprocessor
+        guard inputs.headerFiles.count == inputs.aggregatedIncludePathList.count else {
+            let error = NodeValue.noValue(reason: .error(message: "Still resolving include files"))
+            return .init(output: error,
+                         errorLog: error,
+                         infoLog: error,
+                         headerInputFilesWireExpectations: headerInputFilesWireExpectations,
+                         includeFileListWireExpections: includeFileListWireExpections)
+        }
+
+        return try runPreprocessor(inputs: inputs,
+                                   headerInputFilesWireExpectations: headerInputFilesWireExpectations,
+                                   includeFileListWireExpections: includeFileListWireExpections)
     }
 }

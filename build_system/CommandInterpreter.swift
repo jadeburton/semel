@@ -235,19 +235,19 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
 
 final class InternalFileSystemLister: FileWildcardMatcherInput {
     let rootDirectoryPath = "/"
-    let folder: FolderNode
+    let folder: Node
 
-    init(folder: FolderNode) {
+    init(folder: Node) {
         self.folder = folder
     }
 
-    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
-        let start = try folder.childPoly(path: inDirectoryPath, kind: FolderNode.kind)! // TODO
+    func allFiles(inDirectoryPath: String, nodeContext: NodeContext) throws -> [FileWildcardEntry] {
+        let start = try folder.childPoly(path: inDirectoryPath, kind: Folder.kind, nodeContext: nodeContext)! // TODO
         return try! start.allChildren().map { node in
-            if let staticFileNode = node as? StaticFileNode {
+            if let staticFileNode = node as? StaticFile {
                 return FileWildcardEntry(path: node.nodeContext.name!,
                                          kind: .file,
-                                         isMissing: try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).isNoValue)
+                                         isMissing: try staticFileNode.read(nodeContext: nodeContext)!.isNoValue)
             } else {
                 return FileWildcardEntry(path: node.nodeContext.name!,
                                          kind: .folder,
@@ -447,31 +447,15 @@ final class ExternalPathSanitizer {
     }
 }
 
-final class CommandInterpreter: PolySerializable {
-    static let kind: UInt = 0
+final class CommandInterpreter {
 
     let commandParser = CommandParser()
-    var nodeContext: NodeContext!
     var baseDirectory: String?
+    private let database: DatabaseLayer
 
-    enum CodingKeys: String, CodingKey {
-        case baseDirectory
+    required init(database: DatabaseLayer) {
+        self.database = database
     }
-
-    required init() {
-    }
-
-    required init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        baseDirectory = try container.decodeIfPresent(String.self, forKey: .baseDirectory)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(baseDirectory, forKey: .baseDirectory)
-    }
-
-    var descriptor = NodeFunctionDescriptor(staticInputPorts: [], staticOutputPorts: [])
 
     func outputMessage(_ message: String) {
         print(message)
@@ -491,7 +475,7 @@ final class CommandInterpreter: PolySerializable {
     }
 
     func handleDebug() throws {
-        try nodeContext.processingCycle.printAll()
+        // TODO! try nodeContext.processingCycle.printAll()
     }
 
     func handleUserCommand(_ userCommand: UserCommand) throws {
@@ -556,13 +540,18 @@ final class CommandInterpreter: PolySerializable {
         // Coming soon
     }
 
-    var inputFileSystem: FolderNode {
+    var inputFileSystem: Folder {
         get throws {
-            try nodeContext.processingCycle.rootNode.inputFileSystem
+            let root = try Node.rootNode(database: database)
+            return try root.childNode(path: "inputFileSystem",
+                                      rootNodeID: root.id!,
+                                      kind: Folder.kind,
+                                      createIfNotExist: true,
+                                      database: database)!.nodeFunctionCast()
         }
     }
 
-    var outputFileSystem: FolderNode {
+    var outputFileSystem: Folder {
         get throws {
             try nodeContext.processingCycle.rootNode.outputFileSystem
         }
@@ -580,17 +569,17 @@ final class CommandInterpreter: PolySerializable {
             let filename = (relativePath as NSString).lastPathComponent
             let containingPath = (relativePath as NSString).deletingLastPathComponent
 
-            let containingFolder: FolderNode
+            let containingFolder: Folder
             if containingPath.isEmpty || containingPath == "." {
                 containingFolder = try! inputFileSystem
             } else {
-                containingFolder = try! inputFileSystem.ensureEntirePathExists(containingPath)
+                containingFolder = try! inputFileSystem.ensureEntirePathExists(containingPath, nodeContext: nodeContext)
             }
 
-            try! containingFolder.addOrReplaceChild(content: fileContent.intern(), name: filename)
+            try! containingFolder.addOrReplaceChild(nodeContext: nodeContext, content: fileContent.intern(), name: filename)
 
         case .folder:
-            try! inputFileSystem.ensureEntirePathExists(relativePath)
+            try! inputFileSystem.ensureEntirePathExists(relativePath, nodeContext: nodeContext)
         }
     }
 
@@ -619,7 +608,7 @@ final class CommandInterpreter: PolySerializable {
 
         outputMessage("Remove: \(entry.path)")
 
-        guard let child = try inputFileSystem.childPoly(path: entry.path, kind: FolderNode.kind) else { // TODO: we don't even need this kind arg if we don't create it
+        guard let child = try inputFileSystem.childPoly(path: entry.path, kind: Folder.kind, nodeContext: nodeContext) else { // TODO: we don't even need this kind arg if we don't create it
             outputError("Child not found")
             return
         }
@@ -632,18 +621,18 @@ final class CommandInterpreter: PolySerializable {
         // - the way we tell is by looking at the wires coming from the file; if one or more target nodes do not allow cascading-deleting, we use the ghost-technique.
 
         if try child.noOutputWiresPreventCascadeDeletion() {
-            try child.delete()
+            try child.delete(nodeContext: nodeContext)
         } else {
-            guard let staticFileNode = child as? StaticFileNode else {
+            guard let staticFileNode = child as? StaticFile else {
                 outputError("Cannot delete; object is in use.")
                 return
             }
-            try staticFileNode.eraseContents() // turns it into a ghost
+            try staticFileNode.eraseContents(nodeContext: nodeContext) // turns it into a ghost
         }
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
-        func handle(folder: FolderNode) throws {
+        func handle(folder: Folder) throws {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
             try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
@@ -659,15 +648,15 @@ final class CommandInterpreter: PolySerializable {
         }
     }
 
-    private func copyOneFile(folder: FolderNode, entry: FileWildcardEntry, destinationPath: String) throws {
+    private func copyOneFile(folder: Folder, entry: FileWildcardEntry, destinationPath: String) throws {
         switch entry.kind {
         case .file:
-            guard let staticFileNode: StaticFileNode = try folder.child(path: entry.path) else {
+            guard let staticFileNode: StaticFile = try folder.child(path: entry.path) else {
                 outputError("File \(entry.path) not found in internal file system")
                 return
             }
 
-            switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort) {
+            switch try staticFileNode.readFromOutputPort(StaticFile.outputPort) {
 
             case .value(let dataObjectHash):
                 let fileContent = Data(try dataObjectHash.resolve())
@@ -687,7 +676,7 @@ final class CommandInterpreter: PolySerializable {
     }
 
     private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
-        let fileSystem: FolderNode
+        let fileSystem: Folder
 
         switch folder {
         case .input:
@@ -705,8 +694,5 @@ final class CommandInterpreter: PolySerializable {
                 outputMessage(entry.path)
             }
         }
-    }
-
-    func process() throws {
     }
 }

@@ -7,19 +7,17 @@
 
 import Foundation
 
-final class RootNode: NodeFunction {
+struct RootNode: NodeFunction {
 
     static let kind: UInt = 10
-
-    var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {
     }
 
-    required init() {
+    init() {
     }
 
-    required init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
@@ -53,43 +51,44 @@ final class RootNode: NodeFunction {
 //
 //    static let descriptor = NodeFunctionDescriptor(kind: kind, inputs: [schemaInputPort], outputs: [schemaOutputPort])
 
-    func didSave() throws {
+//    func didSave() throws {
         // TODO!
 //        try nodeContext.processingCycle.connectWire(fromNode: try inputFileSystem,
 //                                                    fromPort: FolderNode.folderManifestOutputPort,
 //                                                    toNode: try formulaFinder,
 //                                                    toPort: ProjectFinder.folderManifestInputPort)
-    }
+ //   }
 
     func encode(to encoder: Encoder) throws {
         var _ = encoder.container(keyedBy: CodingKeys.self)
     }
-
-    var inputFileSystem: FolderNode {
+/*
+    var inputFileSystem: Node {
         get throws {
             try child(named: "inputFileSystem", createIfNotExist: true)!
         }
     }
 
-    var outputFileSystem: FolderNode {
+    var outputFileSystem: Node {
         get throws {
             try child(named: "outputFileSystem", createIfNotExist: true)!
         }
     }
 
-    var projectFinder: ProjectFinder {
+    var projectFinder: Node {
         get throws {
             try child(named: "projectFinder", createIfNotExist: true)!
         }
     }
+*/
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [])
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], staticOutputPorts: [])
-
-    func process() throws {
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        throw NodeError.processNotSupported
     }
 
     // MARK: Debug
-
+/*
     func debugPrintTree() {
         do {
             let projectFinder = try projectFinder
@@ -125,7 +124,7 @@ final class RootNode: NodeFunction {
                 visitedDependencyNodeIDs.insert(wire.fromNodeID)
 
                 if let rawNode = try? database.selectNodeByID(wire.fromNodeID),
-                   let dependencyNode = try? nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode) {
+                   let dependencyNode = try? nodeContext.processingCycle.nodeFunction(nodeRaw: rawNode) {
                     dependencyNodes.append(dependencyNode)
                 }
             }
@@ -136,5 +135,5 @@ final class RootNode: NodeFunction {
         } catch {
             print("\(indent)  (error loading dependencies: \(error))")
         }
-    }
+    }*/
 }

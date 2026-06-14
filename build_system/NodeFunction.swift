@@ -13,149 +13,119 @@ struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
 }
 
+struct ProcessInput {
+    let inputValues: [String: [String: NodeValue]]
+}
+
+struct ProcessOutput {
+    let outputValues: [String: NodeValue]
+    let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
+}
+/*
+protocol NodeInputReader {
+    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValue]
+}
+
+extension NodeInputReader {
+    func readOneValueFromInputPort(_ inputPort: String) throws -> (String, NodeValue) {
+        let values = try readAllValuesFromInputPort(inputPort)
+
+        switch values.count {
+
+        case 0:
+            throw NodeError.missingInputs
+
+        case 1:
+            let first = values.first!
+            return (first.key, first.value)
+
+        default:
+            throw NodeError.onlyOneWireShouldBeConnectedToInput
+        }
+    }
+}
+*/
+
 // A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
 // Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
-protocol NodeFunction: Codable, PolySerializable, WithDefaultInitializer, NodeInputReader, NodeOutputWriter {
-
+protocol NodeFunction: Codable, PolySerializable, WithDefaultInitializer {
     var descriptor: NodeFunctionDescriptor { get }
-    var nodeContext: NodeContext! { get set }
-
-    /// Updates all output values based on the current input values, and also
-    /// processes and removes all messages that are queued on any message-stream input ports.
-    func process() throws
-
-    func willSave() throws
-    func didSave() throws
+    func process(input: ProcessInput) throws -> ProcessOutput
 }
 
 extension NodeFunction {
-    var nodeID: ObjectID {
-        nodeContext.nodeID!
-    }
+    private func buildProcessInput(thisNode: Node, database: DatabaseLayer) throws -> ProcessInput {
+        var inputValues = [String : [String : NodeValue]]()
 
-    func buildCacheKeyPartFromOneInput(inputPort: String) throws -> String {
-        try readAllValuesFromInputPort(inputPort)
-            .sorted { $0.key < $1.key }
-            .map { $0.value }
-            .toJSON()
-    }
-
-    func buildCacheKeyFromAllInputs() throws -> String? {
-        if descriptor.staticInputPorts.isEmpty {
-            return ""
-        }
-
-        var aggregated = try toJSON()
-
-        for inputPort in descriptor.staticInputPorts.sorted() {
-            aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort))
-            aggregated.append("\n")
-        }
-
-        return Sha256.hash(Array(aggregated.utf8))
-    }
-
-    func loadAndWriteCachedOutputs(cacheKey: String?) throws -> Bool {
-
-        guard let cacheKey else {
-            return false
-        }
-
-        // HACK: StaticFileNode gets inputs from direct calls..
-        if (self is StaticFileNode) {
-            return false
-        }
-
-//        if !((self is ClangCompilerTool) || (self is ClangLinkerTool) || (self is ClangPreprocessorTool)) {
-//            return false
-//        }
-
-        if descriptor.staticInputPorts.isEmpty {
-            return false
-        }
-
-        if descriptor.staticOutputPorts.isEmpty {
-            return false
-        }
-
-        guard let cacheEntry = try nodeContext.processingCycle.database.selectCacheEntry(hash: cacheKey) else {
-            return false
-        }
-
-        guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
-            return false
-        }
-
-        for outputPort in descriptor.staticOutputPorts {
-            if let outputValue = decodedCacheEntry.outputValues[outputPort] {
-                print("Using cached output for node \(self.description()), output port \(outputPort)")
-                try writeToOutputPort(outputPort, value: outputValue)
-            } else {
-                // Invalid cache
-                return false
-            }
-        }
-
-        return true
-    }
-
-    func saveCacheForAllInputsAndOutputs(cacheKey: String?) throws {
-        guard let cacheKey else {
-            return
-        }
-
-        if descriptor.staticInputPorts.isEmpty {
-            return
-        }
-
-        if descriptor.staticOutputPorts.isEmpty {
-            return
-        }
-
-        var outputValues: [String: NodeValue] = [:]
-
-        for outputPort in descriptor.staticOutputPorts {
-            let value = try readFromOutputPort(outputPort)
-            outputValues[outputPort] = value // we do not save NodeIDs
-        }
-
-        let cacheEntry = ProcessCacheEntry(outputValues: outputValues)
-        let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
-        try nodeContext.processingCycle.database.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
-    }
-
-    func processWithPreCheck() throws {
-        guard allInputsAreSatisfied() else {
-            writeToOutputPortsOnError(NodeError.missingInput(name: "processWithPreCheck"))
-            return
-        }
-
-        nodeContext.processingCycle.wiresModified = false
-        let cacheKey = try buildCacheKeyFromAllInputs()
-
-        if try !loadAndWriteCachedOutputs(cacheKey: cacheKey) {
-
-            do {
-                try process()
-            } catch {
-                writeToOutputPortsOnError(error)
-            }
-
-            if !nodeContext.processingCycle.wiresModified {
-                try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey)
-            }
-        }
-    }
-
-    func writeToOutputPortsOnError(_ error: Error) {
-        for outputPort in descriptor.staticOutputPorts {
-            try? writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "\(error)")))
-        }
-    }
-
-    func allInputsAreSatisfied() -> Bool {
         for inputPort in descriptor.staticInputPorts {
-            guard let values = try? readAllValuesFromInputPort(inputPort), !values.isEmpty else {
+            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort, database: database)
+        }
+
+        for inputPort in descriptor.dynamicInputPorts {
+            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort, database: database)
+        }
+
+        return .init(inputValues: inputValues)
+    }
+
+    private func writeToOutputs(output: ProcessOutput, thisNode: Node, database: DatabaseLayer) throws {
+        for (outputPort, outputValue) in output.outputValues {
+            try thisNode.writeToOutputPort(outputPort, value: outputValue, database: database)
+        }
+    }
+
+    private func buildErrorOutput(withError error: Error) -> ProcessOutput {
+        var outputValues = [String: NodeValue]()
+        var inputWireExpectations = [String: [String: String]]()
+        for outputPort in descriptor.outputPorts {
+            outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
+        }
+        for dynamicInputPort in descriptor.dynamicInputPorts {
+            inputWireExpectations[dynamicInputPort] = [:] // TODO?
+        }
+        return .init(outputValues: outputValues, inputWireExpectations: inputWireExpectations)
+    }
+
+    private func processWithCatch(thisNode: Node, input: ProcessInput) -> ProcessOutput {
+        do {
+            return try process(input: input)
+        } catch {
+            return buildErrorOutput(withError: error)
+        }
+    }
+
+    private func processWithPreCheck(thisNode: Node) throws {
+        guard hasInputPorts() else {
+            // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
+            return
+        }
+        let input = try buildProcessInput(thisNode: thisNode)
+
+        guard allInputsAreSatisfied(input: input) else {
+            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), nodeContext: nodeContext)
+            return
+        }
+
+
+        let cacheKey = try buildCacheKeyFromAllInputs(input: input)
+
+        if try !loadAndWriteCachedOutputs(nodeContext: nodeContext, cacheKey: cacheKey) {
+
+            let output = processWithCatch(nodeContext: nodeContext, input: input)
+
+            try writeToOutputs(output: output, nodeContext: nodeContext)
+
+            try? saveCacheForAllInputsAndOutputs(nodeContext: nodeContext, cacheKey: cacheKey, output: output)
+        }
+    }
+
+    private func hasInputPorts() -> Bool {
+        !descriptor.staticInputPorts.isEmpty || !descriptor.dynamicInputPorts.isEmpty
+    }
+
+    private func allInputsAreSatisfied(input: ProcessInput) -> Bool {
+        for inputPort in descriptor.staticInputPorts + descriptor.dynamicInputPorts {
+            guard let values = input.inputValues[inputPort], !values.isEmpty else {
                 return false
             }
 
@@ -186,17 +156,17 @@ extension PolyFactory {
 
 // MARK: - NodeContext
 
-struct NodeContext {
-    let processingCycle: ProcessingCycle
-    var nodeID: ObjectID?           // nil when created in memory but not yet inserted
-    var parentNodeID: ObjectID?
-    var name: String? {
-        didSet {
-            assert(name == nil || name!.contains("/") == false)
-        }
-    }
-    var searchKey: String?
-}
+//struct NodeContext {
+//    let processingCycle: ProcessingCycle
+//    var nodeID: ObjectID?           // nil when created in memory but not yet inserted
+//    var parentNodeID: ObjectID?
+//    var name: String? {
+//        didSet {
+//            assert(name == nil || name!.contains("/") == false)
+//        }
+//    }
+//    var searchKey: String?
+//}
 
 // MARK: - NodeError
 
@@ -206,17 +176,7 @@ enum NodeError: Error {
     case missingInputs
     case missingInput(name: String)
     case other(message: String)
-}
-
-// MARK: - ObjectID helper
-
-extension ObjectID {
-    func loadNode(from database: DatabaseLayer) throws -> Node {
-        guard let node = try database.selectNodeByID(self) else {
-            throw DatabaseLayer.DatabaseError.nodeNotFound
-        }
-        return node
-    }
+    case processNotSupported
 }
 
 // MARK: - NodeFunction default implementations
@@ -228,7 +188,7 @@ extension NodeFunction {
 
 extension NodeFunction {
     func description() -> String {
-        "\(String(describing: Self.self)) (kind: \(type(of: self).kind)), NodeID: \(nodeContext.nodeID ?? -1), name: \(nodeContext.name ?? "nil"), inputs: \(descriptor.staticInputPorts.count), outputs: \(descriptor.staticOutputPorts.count)"
+        "\(String(describing: Self.self)) (kind: \(type(of: self).kind)), staticInputPorts: \(descriptor.staticInputPorts.count), outputPorts: \(descriptor.outputPorts.count), dynamicInputPorts: \(descriptor.dynamicInputPorts.count)"
     }
 }
 
@@ -240,47 +200,33 @@ struct OneNodeValue {
 extension NodeFunction {
     /// Reads a PolySerializable configuration object from the given input port.
     /// Returns nil when no wire is connected or the wire has no value yet.
-    func readConfiguration<C: PolySerializable>(fromInputPort inputPort: String) throws -> C {
-        try PolyFactory.decodeAndCast(encodedJSON: readOneValueFromInputPort(inputPort).1.expectValue().resolveAsString())
-    }
+//    func readConfiguration<C: PolySerializable>(fromInputPort inputPort: String) throws -> C {
+//        try PolyFactory.decodeAndCast(encodedJSON: readOneValueFromInputPort(inputPort).1.expectValue().resolveAsString())
+//    }
 }
 
 // MARK: - NodeFunction navigation / port helpers
 
+
 extension NodeFunction {
-    func parent<N: NodeFunction>() throws -> N? {
-        try nodeContext.processingCycle.parentNode(node: self)
-    }
+//    func parent<N: NodeFunction>() throws -> N? {
+//        try nodeContext.processingCycle.parentNode(node: self)
+//    }
 
-    func save() throws {
-        try nodeContext.processingCycle.saveNode(self)
-    }
+//    func save() throws {
+//        try nodeContext.processingCycle.saveNode(self)
+//    }
 
-    func buildFullPathName(rootName: String = "root") throws -> String {
-        let name = nodeContext.name ?? "<no name>"
 
-        guard let parentNode = try nodeContext.processingCycle.parentNodePoly(node: self) else {
-            return name
-        }
+//    func child(named name: String, nodeContext: NodeContext) throws -> (any NodeFunction)? {
+//        try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
+//    }
 
-        if parentNode.nodeContext.name == rootName {
-            return ""
-        }
-
-        let parentPath = try parentNode.buildFullPathName()
-
-        return parentPath.isEmpty ? name : (parentPath + "/" + name)
-    }
-
-    func child(named name: String) throws -> (any NodeFunction)? {
-        try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: self.nodeID)
-    }
-
-    func delete() throws {
-        if let nodeID = nodeContext.nodeID {
-            _ = try nodeContext.processingCycle.deleteNode(nodeID)
-        }
-    }
+//    func delete(nodeContext: NodeContext) throws {
+//        if let nodeID = nodeContext.nodeID {
+//            _ = try nodeContext.processingCycle.deleteNode(nodeID)
+//        }
+//    }
 
     func noOutputWiresPreventCascadeDeletion() throws -> Bool {
 
@@ -303,74 +249,54 @@ extension NodeFunction {
         return true*/
     }
 
-    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
-        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeID)
-    }
-
-    func readOneValueFromInputPort(_ inputPort: String) throws -> (String, NodeValue) {
-        let values = try readAllValuesFromInputPort(inputPort)
-
-        switch values.count {
-
-        case 0:
-            throw NodeError.missingInputs
-
-        case 1:
-            let first = values.first!
-            return (first.key, first.value)
-
-        default:
-            throw NodeError.onlyOneWireShouldBeConnectedToInput
-        }
-    }
-
-    func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
-        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: self.nodeID)
-    }
-
-    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws {
-        try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
-    }
-
-    func allChildren() throws -> [NodeFunction] {
-        try nodeContext.processingCycle.allChildNodes(nodeID: self.nodeID)
-    }
-
-    func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeFunction? {
-        if let existingChild = try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: self.nodeID) {
+//    func readAllValuesFromInputPort(_ inputPort: String, nodeContext) throws -> [String: NodeValue] {
+//        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeID)
+//    }
+//
+//    func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
+//        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: self.nodeID)
+//    }
+//
+//    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws {
+//        try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
+//    }
+//
+//    func allChildren() throws -> [NodeFunction] {
+//        try nodeContext.processingCycle.allChildNodes(nodeID: self.nodeID)
+//    }
+/*
+    func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> NodeFunction? {
+        if let existingChild = try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!) {
             return existingChild
         }
         if !createIfNotExist { return nil }
-        return try nodeContext.processingCycle.makeNodePoly(kind: kind, name: name, parentNodeID: self.nodeID)
+        return try nodeContext.processingCycle.makeNodeFunctionPoly(kind: kind, name: name, parentNodeID: nodeContext.nodeID!)
     }
 
     /// Creates the child if it does not exist.
-    func child<N: NodeFunction>(named name: String, createIfNotExist: Bool = false) throws -> N? {
-        if let existingChild: N = try nodeContext.processingCycle.node(named: name, parentNodeID: self.nodeID) {
+    func child<N: NodeFunction>(named name: String, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> N? {
+        if let existingChild: N = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) {
             return existingChild
         }
         if !createIfNotExist { return nil }
-        return try nodeContext.processingCycle.makeNodePoly(kind: N.kind, name: name, parentNodeID: self.nodeID) as! N?
+        return try nodeContext.processingCycle.makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N?
     }
 
     /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func child<N: NodeFunction>(path: String, createIfNotExist: Bool = false) throws -> N? {
+    func child<N: NodeFunction>(path: String, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> N? {
         try nodeContext.processingCycle.childNode(path: path,
-                                                  rootNodeID: self.nodeID,
+                                                  rootNodeID: nodeContext.nodeID!,
                                                   createIfNotExist: createIfNotExist)
     }
 
     /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
-    func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false) throws -> NodeFunction? {
+    func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> NodeFunction? {
         try nodeContext.processingCycle.childNodePoly(path: path,
-                                                      rootNodeID: self.nodeID,
+                                                      rootNodeID: nodeContext.nodeID!,
                                                       kind: kind,
                                                       createIfNotExist: createIfNotExist)
     }
-
-    func findNodesConnectedToNodeViaInputWire(toInputSymbold inputSymbol: String) throws -> [any NodeFunction] {
-        try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, toInputSymbold: inputSymbol)
-    }
+*/
 }
 
 // MARK: - PolySerializable helper

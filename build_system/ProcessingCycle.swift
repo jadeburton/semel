@@ -15,9 +15,6 @@ final class ProcessingCycle {
     weak var buildEngine: BuildEngine!
     let database: DatabaseLayer
     var rootNode: RootNode!
-//    private var loadedNodes = [ObjectID: NodeFunction]()
-
-    var wiresModified = false
 
     init(database: DatabaseLayer, buildEngine: BuildEngine?) throws {
         self.database = database
@@ -31,15 +28,12 @@ final class ProcessingCycle {
     }
 
     func endCycle() throws {
-//        for (_, node) in loadedNodes {
-//            try node.save()
-//        }
     }
 
     private func rootObject<N: NodeFunction>() throws -> N {
         let name = "root"
         if let existingNodeRaw = try database.selectNodesInRoot(named: name).first {
-            return try wrapRawNode(nodeRaw: existingNodeRaw)
+            return try existingNodeRaw.nodeFunctionCast()
         } else {
             return try makeNode(name: name, parentNodeID: nil)
         }
@@ -49,26 +43,26 @@ final class ProcessingCycle {
 // MARK: - Node management
 
 extension ProcessingCycle {
+    /*
     func allChildNodes(nodeID: ObjectID) throws -> [NodeFunction] {
         try database.selectNodes(parentNodeID: nodeID).map {
-            try wrapRawNodePoly(nodeRaw: $0)
+            try $0.nodeFunction()
         }
     }
 
-    func parentNode<N: NodeFunction>(node: NodeFunction) throws -> N? {
-        if let parentNodeID = node.nodeContext.parentNodeID {
-            let rawNode = try parentNodeID.loadNode(from: node.nodeContext.processingCycle.database)
-            let node = try node.nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
-            return node as? N
+    func parentNode<N: NodeFunction>(node: NodeFunction, nodeContext: NodeContext) throws -> N? {
+        if let parentNodeID = nodeContext.parentNodeID {
+            let rawNode = try parentNodeID.loadNode(from: nodeContext.processingCycle.database)
+            return try rawNode.nodeFunction() as? N
         } else {
             return nil
         }
     }
 
-    func parentNodePoly(node: NodeFunction) throws -> NodeFunction? {
-        if let parentNodeID = node.nodeContext.parentNodeID {
-            let rawNode = try parentNodeID.loadNode(from: node.nodeContext.processingCycle.database)
-            let node = try node.nodeContext.processingCycle.wrapRawNodePoly(nodeRaw: rawNode)
+    func parentNodePoly(node: NodeFunction, nodeContext: NodeContext) throws -> NodeFunction? {
+        if let parentNodeID = nodeContext.parentNodeID {
+            let rawNode = try parentNodeID.loadNode(from: nodeContext.processingCycle.database)
+            let node = try nodeContext.processingCycle.nodeFunction(nodeRaw: rawNode)
             return node
         } else {
             return nil
@@ -77,7 +71,7 @@ extension ProcessingCycle {
 
     func node<N: NodeFunction>(nodeID: ObjectID) throws -> N {
         if let nodeRaw = try database.selectNodeByID(nodeID) {
-            return try wrapRawNode(nodeRaw: nodeRaw)
+            return try nodeFunctionCast(nodeRaw: nodeRaw)
         } else {
             throw NodeError.nodeNotFound
         }
@@ -85,7 +79,7 @@ extension ProcessingCycle {
 
     func nodePoly(nodeID: ObjectID) throws -> NodeFunction? {
         if let nodeRaw = try database.selectNodeByID(nodeID) {
-            return try wrapRawNodePoly(nodeRaw: nodeRaw)
+            return try nodeFunction(nodeRaw: nodeRaw)
         } else {
             return nil
         }
@@ -93,7 +87,7 @@ extension ProcessingCycle {
 
     func nodePoly(named name: String, parentNodeID: ObjectID) throws -> NodeFunction? {
         if let nodeRaw = try database.selectNodes(named: name, parentNodeID: parentNodeID).first {
-            return try wrapRawNodePoly(nodeRaw: nodeRaw)
+            return try nodeFunction(nodeRaw: nodeRaw)
         } else {
             return nil
         }
@@ -101,7 +95,7 @@ extension ProcessingCycle {
 
     func node<N: NodeFunction>(named name: String, parentNodeID: ObjectID) throws -> N? {
         if let nodeRaw = try database.selectNodes(named: name, parentNodeID: parentNodeID).first {
-            return try wrapRawNode(nodeRaw: nodeRaw)
+            return try nodeFunctionCast(nodeRaw: nodeRaw)
         } else {
             return nil
         }
@@ -111,116 +105,34 @@ extension ProcessingCycle {
         try childNodePoly(path: path, rootNodeID: rootNodeID, kind: N.kind, createIfNotExist: createIfNotExist)! as? N
     }
 
-    func childNodePoly(path: String, rootNodeID: ObjectID, kind: UInt, createIfNotExist: Bool = false) throws -> NodeFunction? {
-        let components = path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        var currentNodeID = rootNodeID
-
-        for (index, name) in components.enumerated() {
-            guard let rawNode = try? database.selectNodes(named: name, parentNodeID: currentNodeID).first else {
-                if !createIfNotExist { return nil }
-                return try makeNodePoly(kind: kind, name: name, parentNodeID: currentNodeID)
-            }
-
-            if index == components.count - 1 {
-                return try? wrapRawNodePoly(nodeRaw: rawNode)
-            } else {
-                currentNodeID = rawNode.id!
-            }
-        }
-
-        return try wrapRawNodePoly(nodeRaw: rootNodeID.loadNode(from: database))
-    }
-
-    func wrapRawNode<N: NodeFunction>(nodeRaw: Node) throws -> N {
-        try wrapRawNodePoly(nodeRaw: nodeRaw) as! N
-    }
-
-    func wrapRawNodePoly(nodeRaw: Node) throws -> NodeFunction {
-        var node = try PolyFactory.decode(encodedJSON: nodeRaw.configuration!) as! NodeFunction
-        node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name, searchKey: nodeRaw.searchKey)
-//        loadedNodes[nodeRaw.id!] = node
-        return node
-    }
+*/
 
     func makeNode<N: NodeFunction>(name: String?, parentNodeID: ObjectID?) throws -> N {
-        try makeNodePoly(kind: N.kind, name: name, parentNodeID: parentNodeID) as! N
+        try makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: parentNodeID) as! N
     }
+/*
+    func makeNodeFunctionPoly(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeFunction {
+        var nodeFunction = try PolyFactory.makeDefault(kind: kind)
+//        newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
 
-    func makeNodePoly(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeFunction {
-        var newObject = try PolyFactory.makeDefault(kind: kind)
-        newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
-
+        var node = Node()
         // Even when a Node is created in memory it is also created on disk. We can always rollback.
-        try saveNode(newObject)
-        //loadedNodes[newObject.nodeID] = newObject
+        try saveNode(nodeFunction)
 
         // Create all Ports for the Node, as these should always exist for all non-stream output ports
-        try writePendingToAllOutputsOfNode(nodeID: newObject.nodeID)
-        return newObject
+        try writePendingToAllOutputsOfNode(nodeID: nodeFunction.nodeID)
+        return nodeFunction
     }
+*/
 
-    func scheduleNode(_ nodeID: ObjectID) throws {
-        var existing = try database.selectNodeByID(nodeID)!
-        existing.scheduled = true
-        try database.updateNode(existing)
-        BuildEngine.shared.signalWorkAvailable()
-    }
 
-    func saveNode(_ node: NodeFunction, scheduled: Bool? = nil) throws {
-        var node = node
-
-        try node.willSave()
-
-        if let nodeID = node.nodeContext.nodeID {
-            let existing = try database.selectNodeByID(nodeID)!
-            try database.updateNode(.init(id: nodeID,
-                                          parentNodeID: node.nodeContext.parentNodeID,
-                                          kind: type(of: node).kind,
-                                          name: node.nodeContext.name,
-                                          configuration: node.toJSON(),
-                                          scheduled: scheduled == nil ? existing.scheduled : scheduled!,
-                                          searchKey: node.nodeContext.searchKey))
-        } else {
-            node.nodeContext.nodeID = try database.insertNode(.init(parentNodeID: node.nodeContext.parentNodeID,
-                                                                    kind: type(of: node).kind,
-                                                                    name: node.nodeContext.name,
-                                                                    configuration: node.toJSON(),
-                                                                    scheduled: true,
-                                                                    searchKey: node.nodeContext.searchKey)) // trigger first "process" iteration to complete init process
-        }
-
-        try node.didSave()
-    }
-
-    func deleteNode(_ nodeID: ObjectID) throws -> Bool {
-        print("delete node #\(nodeID)")
-
-        for wire in try database.selectWires(goingToNodeID: nodeID) {
-            _ = try deleteWire(wire)
-        }
-
-        for wire in try database.selectWires(comingFromNodeID: nodeID) {
-            _ = try deleteWire(wire)
-        }
-
-        let portDeleteCount = try database.deletePorts(nodeID: nodeID)
-
-        print("\(portDeleteCount) Port(s) deleted for node #\(nodeID)")
-
-        //defer { loadedNodes[nodeID] = nil }
-
-        return try database.deleteNode(nodeID: nodeID) && portDeleteCount > 0
-    }
 }
 
 // MARK: - Node processing
 
 extension ProcessingCycle {
     func processOneNode(_ rawNode: Node) throws {
-        let node = try wrapRawNodePoly(nodeRaw: rawNode)
+        let node = try nodeFunction(nodeRaw: rawNode)
         print("process: node \(type(of: node)), nodeID \(rawNode.id!)")
         try node.processWithPreCheck()
         try saveNode(node, scheduled: false)
@@ -232,75 +144,6 @@ extension ProcessingCycle {
             try! database.selectAllPorts(nodeID: node.nodeID).filter { $0.valueKind == .pending }.isEmpty,
             "Not all Ports were processed for node \(node.description())"
         )
-    }
-}
-
-// MARK: - Port management
-
-extension ProcessingCycle {
-    func readFromOutputPort(_ outputPort: String, nodeID: ObjectID) throws -> NodeValue {
-        let outputSymbolID = outputPort.asSymbolID()
-
-        guard let port = try database.selectPort(nodeID: nodeID, nameSymbolID: outputSymbolID) else {
-            return .noValue(reason: .error(message: "No value ever existed"))
-        }
-        return try port.asNodeValue()
-    }
-
-    func readFromInputPort(_ inputPort: String, nodeID: ObjectID) throws -> [String: NodeValue] {
-        let inputSymbolID = inputPort.asSymbolID()
-
-        let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toSymbolID: inputSymbolID)
-
-        var result = [String: NodeValue]()
-
-        for wire in wiresOnThisInput {
-            let wireName = wire.name.resolveSymbol()
-            if let port = try database.selectPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
-                assert(result[wireName] == nil) // all wires must have unique names
-                try result[wireName] = port.asNodeValue()
-            }
-        }
-
-        return result
-    }
-
-    func writePendingToAllOutputsOfNode(nodeID: ObjectID) throws {
-        let node = try nodePoly(nodeID: nodeID)!
-
-        for output in node.descriptor.staticOutputPorts {
-            try node.writeToOutputPort(output, value: .noValue(reason: .pending))
-        }
-    }
-
-    @discardableResult func writeToOutputPort(_ outputPort: String,
-                                              value: NodeValue,
-                                              nodeID: ObjectID) throws -> Bool {
-
-        try writeToOutputPort(port: try value.mapPort(nodeID: nodeID,
-                                                      outputSymbolID: outputPort.asSymbolID()),
-                              nodeID: nodeID)
-    }
-
-    @discardableResult func writeToOutputPort(port: build_system.OutputPort,
-                                              nodeID: ObjectID) throws -> Bool {
-
-        if let existing = try database.selectPort(nodeID: nodeID, nameSymbolID: port.nameSymbolID) {
-            if existing == port {
-                print("No change to Port, ignoring")
-                return false
-            }
-        }
-
-        try database.insertOrUpdatePort(port)
-
-        for wire in try database.selectWires(comingFromNodeID: nodeID, fromSymbolID: port.nameSymbolID) {
-            try writePendingToAllOutputsOfNode(nodeID: wire.toNodeID)
-            if port.valueKind != .pending {
-                try scheduleNode(wire.toNodeID)
-            }
-        }
-        return true
     }
 }
 
@@ -322,7 +165,7 @@ extension ProcessingCycle {
         let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.toNodeID })
 
         func descriptorFor(_ rawNode: Node) -> NodeFunctionDescriptor? {
-            guard let node = try? wrapRawNodePoly(nodeRaw: rawNode) else { return nil }
+            guard let node = try? nodeFunction(nodeRaw: rawNode) else { return nil }
             return node.descriptor
         }
 
@@ -360,8 +203,8 @@ extension ProcessingCycle {
             guard let nodeID = rawNode.id else { continue }
             let label            = labelForNode(rawNode)
             let descriptor       = descriptorFor(rawNode)
-            let inputPorts       = descriptor?.staticInputPorts  ?? []
-            let outputPorts      = descriptor?.staticOutputPorts ?? []
+            let inputPorts       = (descriptor?.staticInputPorts ?? []) + (descriptor?.dynamicInputPorts ?? [])
+            let outputPorts      = descriptor?.outputPorts ?? []
             let incomingWires    = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires    = wiresByFromNodeID[nodeID] ?? []
             let outputValues     = try database.selectAllPorts(nodeID: nodeID)
