@@ -12,6 +12,7 @@ extension BuildEngine {
         try? DatabaseLayer.shared.recomputeAllSearchKeys()
         var pf = try Node.projectFinder
         try pf.setScheduledAndSave(true)
+
         let database = DatabaseLayer.shared
         let allNodes        = try database.selectAllNodes()
         let allWires        = try database.selectAllWires()

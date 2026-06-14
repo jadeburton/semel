@@ -435,6 +435,106 @@ extension GraphShapeNode {
     }
 }
 
+// MARK: - Find or create matching node in the live graph
+
+extension GraphShapeNode {
+
+    /// Searches the live graph for a node matching this shape.
+    /// If no match is found, creates the required nodes and wires bottom-up
+    /// (leaves first, then their parents) so the graph is fully wired on return.
+    ///
+    /// Returns `(fromNodeID, fromSymbolID)` ready for `connectWire`, or `nil`
+    /// if creation failed (e.g. unknown type name).
+    func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+        if let existing = try findMatchingNode() {
+            return existing
+        }
+        // Not found — create it recursively.
+        guard let newNodeID = try createNode() else { return nil }
+        switch self {
+        case .staticFile(_, let outputPort):
+            return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
+        case .tool(_, _, let outputPort):
+            return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
+        }
+    }
+
+    /// Recursively creates the node described by this shape, together with all
+    /// upstream nodes and wires required to satisfy its inputs.
+    /// Returns the new node's `ObjectID`, or `nil` if the type cannot be resolved.
+    private func createNode() throws -> ObjectID? {
+        switch self {
+
+        // ── Static file leaf ────────────────────────────────────────────────
+        case .staticFile(let path, _):
+            // Find or create the StaticFile under inputFileSystem at `path`.
+            let inputFS = try Node.inputFileSystem
+            guard let node = try inputFS.childNode(path: path,
+                                                    kind: StaticFile.kind,
+                                                    createIfNotExist: true) else {
+                return nil
+            }
+            return node.id
+
+        // ── Tool node ───────────────────────────────────────────────────────
+        case .tool(let typeName, let inputs, _):
+            // Resolve the kind from the type name.
+            let kind: UInt
+            do {
+                kind = try PolyFactory.kind(forTypeName: typeName)
+            } catch {
+                print("GraphShapeNode.createNode: unknown type '\(typeName)' — \(error)")
+                return nil
+            }
+
+            // Create the new tool node as a child of rootNode.
+            // The name is the type name; duplicates are accepted (the searchKey
+            // distinguishes nodes of the same type with different input topologies).
+            let rootNode  = try Node.rootNode
+            var newNode   = try Node.createNode(parentNodeID: rootNode.id!, kind: kind, name: typeName)
+            let newNodeID = newNode.id!
+
+            // Recursively find/create each upstream input and wire it.
+            for inputPortSpec in inputs {
+                let toSymbolID     = inputPortSpec.portName.asSymbolID()
+                let wireNameSymbol = inputPortSpec.portName.asSymbolID() // name = port name for now
+
+                switch inputPortSpec.value {
+                case .single(let childShape):
+                    if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
+                        guard let fromSymbolID else { continue }
+                        try Wire.connectWire(fromNodeID: fromNodeID,
+                                             fromSymbolID: fromSymbolID,
+                                             toNodeID: newNodeID,
+                                             toSymbolID: toSymbolID,
+                                             name: wireNameSymbol)
+                    }
+
+                case .multiple(let childShapes):
+                    for (index, childShape) in childShapes.enumerated() {
+                        // Give each wire within a multi-wire port a unique name
+                        // by appending its index.
+                        let namedSymbol = "\(inputPortSpec.portName)[\(index)]".asSymbolID()
+                        if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
+                            guard let fromSymbolID else { continue }
+                            try Wire.connectWire(fromNodeID: fromNodeID,
+                                                 fromSymbolID: fromSymbolID,
+                                                 toNodeID: newNodeID,
+                                                 toSymbolID: toSymbolID,
+                                                 name: namedSymbol)
+                        }
+                    }
+                }
+            }
+
+            // Schedule the new node so it is processed on the next engine cycle.
+            try newNode.setScheduledAndSave(true)
+
+            return newNodeID
+        }
+    }
+}
+
 // MARK: - Recompute searchKey for all nodes
 
 extension DatabaseLayer {

@@ -57,12 +57,17 @@ extension Node {
                         kind: kind,
                         name: name,
                         configuration: nodeFunction,
-                        scheduled: nodeFunction is NodeFunction, // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+                        scheduled: false,
                         searchKey: nil)
 
         node.id = try DatabaseLayer.shared.insertNode(node)
 
         try node.writePendingToAllOutputsOfNode()
+
+//        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+            try node.setScheduledAndSave(true)
+//        }
+
         return node
     }
 

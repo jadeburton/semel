@@ -45,6 +45,15 @@ enum PolyFactory {
         return type
     }
 
+    /// Look up the `kind` discriminator for a type identified by its Swift type name.
+    /// Used when reconstructing a node from a `GraphShapeNode` string.
+    static func kind(forTypeName typeName: String) throws -> UInt {
+        guard let entry = registry.first(where: { String(describing: $0.value) == typeName }) else {
+            throw PolyFactoryError.unknownTypeName(typeName)
+        }
+        return entry.key
+    }
+
     /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
     static func decode(encodedJSON: String) throws -> any PolySerializable {
         try Cassette.fromJSON(encodedJSON).object
@@ -64,6 +73,7 @@ enum PolyFactory {
 
 enum PolyFactoryError: Error {
     case unexpectedType
+    case unknownTypeName(String)
 }
 
 extension PolySerializable {

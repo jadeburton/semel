@@ -624,7 +624,7 @@ final class CommandInterpreter {
                 outputError("Cannot delete; object is in use.")
                 return
             }
-            try staticFileNode.eraseContents(thisNode: child) // turns it into a ghost
+            _ = try staticFileNode.eraseContents(thisNode: child) // turns it into a ghost
         }
     }
 

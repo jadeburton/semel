@@ -29,13 +29,17 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database128.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database133.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
         // Capture the fully-initialised self before starting the task.
         let engine = self
 
         Task {
+            try _ = Node.projectFinder
+            try _ = Node.inputFileSystem
+            try _ = Node.outputFileSystem
+
             do {
                 try await engine.processLoop()
             } catch {

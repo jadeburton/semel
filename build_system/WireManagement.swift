@@ -8,7 +8,7 @@
 // Wire management
 extension Wire {
 
-    func connectWire(fromNodeID: ObjectID,
+    static func connectWire(fromNodeID: ObjectID,
                      fromSymbolID: ObjectID,
                      toNodeID: ObjectID,
                      toSymbolID: ObjectID,

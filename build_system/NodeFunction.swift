@@ -116,12 +116,12 @@ extension NodeFunction {
                         print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
                         return
                     }
-                    var newWire = Wire(fromNodeID: fromNodeID,
-                                      fromSymbolID: fromSymbolID,
-                                      toNodeID: thisNode.id!,
-                                      toSymbolID: toSymbolID,
-                                      name: wireNameSymbolID)
-                    try newWire.connectWire(fromNodeID: fromNodeID,
+//                    var newWire = Wire(fromNodeID: fromNodeID,
+//                                      fromSymbolID: fromSymbolID,
+//                                      toNodeID: thisNode.id!,
+//                                      toSymbolID: toSymbolID,
+//                                      name: wireNameSymbolID)
+                    try Wire.connectWire(fromNodeID: fromNodeID,
                                             fromSymbolID: fromSymbolID,
                                             toNodeID: thisNode.id!,
                                             toSymbolID: toSymbolID,
@@ -148,12 +148,13 @@ extension NodeFunction {
     }
 
     /// Parses `expectationString` into a `GraphShapeNode` and searches the live
-    /// graph for a node whose type and recursive input wiring matches it.
+    /// graph for a node whose type and recursive input wiring matches it,
+    /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
-    /// `nil` if no matching node currently exists in the graph.
+    /// `nil` if the type name in the expectation is not registered in PolyFactory.
     private func findExistingNodeMatchingExpectation(expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let expectedShape = try GraphShapeNode.parse(expectationString)
-        return try expectedShape.findMatchingNode()
+        return try expectedShape.findOrCreateMatchingNode()
     }
 
     /// Traverses the live graph backwards from `wire.fromNodeID / wire.fromSymbolID`
@@ -193,11 +194,11 @@ extension NodeFunction {
         }
         let input = try buildProcessInput(thisNode: thisNode)
 
-//        guard allInputsAreSatisfied(input: input) else {
-//            print("Not all inputs are satisfied. \(thisNode.name!)")
-//            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
-//            return
-//        }
+        guard allInputsAreSatisfied(input: input) else {
+            print("Not all inputs are satisfied. \(thisNode.name!)")
+            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
+            return
+        }
 
         let cacheKey = try buildCacheKeyFromAllInputs(input: input)
 
@@ -213,7 +214,7 @@ extension NodeFunction {
     }
 
     private func allInputsAreSatisfied(input: ProcessInput) -> Bool {
-        for inputPort in descriptor.staticInputPorts + descriptor.dynamicInputPorts {
+        for inputPort in descriptor.staticInputPorts /*+ descriptor.dynamicInputPorts*/ {
             guard let values = input.inputValues[inputPort], !values.isEmpty else {
                 return false
             }

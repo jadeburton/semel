@@ -19,6 +19,7 @@ extension NodeFunction {
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
+        return nil
         if descriptor.staticInputPorts.isEmpty {
             return ""
         }
