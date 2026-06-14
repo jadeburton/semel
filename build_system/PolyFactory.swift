@@ -22,7 +22,6 @@ enum PolyFactory {
     /// All polymorphic types must be registered here.
     private static let registry: [UInt: PolySerializable.Type] = [
         RootNode.kind:           RootNode.self,
-        CommandInterpreter.kind: CommandInterpreter.self,
         ProjectFinder.kind:      ProjectFinder.self,
         ProjectBuilder.kind:   ProjectBuilder.self,
         StaticFile.kind:     StaticFile.self,

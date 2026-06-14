@@ -13,30 +13,45 @@ import DatabaseModels
 final class ProcessingCycle {
 
     weak var buildEngine: BuildEngine!
-    let database: DatabaseLayer
-    var rootNode: RootNode!
 
-    init(database: DatabaseLayer, buildEngine: BuildEngine?) throws {
-        self.database = database
+    init(buildEngine: BuildEngine?) throws {
         self.buildEngine = buildEngine
 
         // This is the first object that is created. It resides inside a plugin library that can
         // be configured by the user. The CommandInterpreter is responsible for interpreting the
         // commands sent to the system, e.g. from a CLI or a UI, and translating them into node
         // creations, wire connections, value assignments, etc.
-        rootNode = try rootObject()
+//        rootNode = try rootObject
     }
 
     func endCycle() throws {
     }
-
+/*
     private func rootObject<N: NodeFunction>() throws -> N {
         let name = "root"
-        if let existingNodeRaw = try database.selectNodesInRoot(named: name).first {
+        if let existingNodeRaw = try BuildEngine.shared.database.selectNodesInRoot(named: name).first {
             return try existingNodeRaw.nodeFunctionCast()
         } else {
             return try makeNode(name: name, parentNodeID: nil)
         }
+    }*/
+
+    func processOneNode(_ node: Node) throws {
+        guard let nodeFunction = try node.nodeFunction() as? NodeFunction else {
+            print("WARNING: attempted to process a non-inputtable Node")
+            return
+        }
+        print("process: nodeFunction \(type(of: nodeFunction)), nodeID \(node.id!)")
+        try nodeFunction.processWithPreCheck(thisNode: node)
+//        try saveNode(node, scheduled: false)
+        validatePorts(node: node)
+    }
+
+    private func validatePorts(node: Node) {
+        assert(
+            try! DatabaseLayer.shared.selectAllPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty,
+            "Not all Ports were processed for node \(node.description())"
+        )
     }
 }
 
@@ -52,7 +67,7 @@ extension ProcessingCycle {
 
     func parentNode<N: NodeFunction>(node: NodeFunction, nodeContext: NodeContext) throws -> N? {
         if let parentNodeID = nodeContext.parentNodeID {
-            let rawNode = try parentNodeID.loadNode(from: nodeContext.processingCycle.database)
+            let rawNode = try parentNodeID.loadNode(from: database)
             return try rawNode.nodeFunction() as? N
         } else {
             return nil
@@ -61,8 +76,8 @@ extension ProcessingCycle {
 
     func parentNodePoly(node: NodeFunction, nodeContext: NodeContext) throws -> NodeFunction? {
         if let parentNodeID = nodeContext.parentNodeID {
-            let rawNode = try parentNodeID.loadNode(from: nodeContext.processingCycle.database)
-            let node = try nodeContext.processingCycle.nodeFunction(nodeRaw: rawNode)
+            let rawNode = try parentNodeID.loadNode(from: database)
+            let node = try nodeFunction(nodeRaw: rawNode)
             return node
         } else {
             return nil
@@ -107,9 +122,9 @@ extension ProcessingCycle {
 
 */
 
-    func makeNode<N: NodeFunction>(name: String?, parentNodeID: ObjectID?) throws -> N {
-        try makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: parentNodeID) as! N
-    }
+//    func makeNode<N: NodeFunction>(name: String?, parentNodeID: ObjectID?) throws -> N {
+//        try makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: parentNodeID) as! N
+//    }
 /*
     func makeNodeFunctionPoly(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeFunction {
         var nodeFunction = try PolyFactory.makeDefault(kind: kind)
@@ -128,29 +143,11 @@ extension ProcessingCycle {
 
 }
 
-// MARK: - Node processing
-
-extension ProcessingCycle {
-    func processOneNode(_ rawNode: Node) throws {
-        let node = try nodeFunction(nodeRaw: rawNode)
-        print("process: node \(type(of: node)), nodeID \(rawNode.id!)")
-        try node.processWithPreCheck()
-        try saveNode(node, scheduled: false)
-        validatePorts(node: node)
-    }
-
-    private func validatePorts(node: NodeFunction) {
-        assert(
-            try! database.selectAllPorts(nodeID: node.nodeID).filter { $0.valueKind == .pending }.isEmpty,
-            "Not all Ports were processed for node \(node.description())"
-        )
-    }
-}
-
 // MARK: - ASCII Art Graph
 
 extension ProcessingCycle {
     func printAll() throws {
+        let database = DatabaseLayer.shared
         let allNodes        = try database.selectAllNodes()
         let allWires        = try database.selectAllWires()
         //let allOutputValues = try database.selectAllPorts(limit: 10_000_000)
@@ -164,9 +161,9 @@ extension ProcessingCycle {
         let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.fromNodeID })
         let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: { $0.toNodeID })
 
-        func descriptorFor(_ rawNode: Node) -> NodeFunctionDescriptor? {
-            guard let node = try? nodeFunction(nodeRaw: rawNode) else { return nil }
-            return node.descriptor
+        func descriptorFor(_ node: Node) -> NodeFunctionDescriptor? {
+            guard let nodeFunction = try? node.nodeFunction() else { return nil }
+            return nodeFunction.descriptor
         }
 
         func labelForNode(_ rawNode: Node) -> String {
@@ -325,7 +322,7 @@ extension ProcessingCycle {
             print()
         }*/
 
-        try rootNode.debugPrintTree()
+      //  try rootNode.debugPrintTree()
     }
 }
 

@@ -58,7 +58,7 @@ final class BuildGraph: NodeFunction {
 
                 // do a database search of all the BuildGraph children using the formula as the searchKey
 
-                let rawNodes = try nodeContext.processingCycle.database.selectNodes(searchKey: searchKey,
+                let rawNodes = try database.selectNodes(searchKey: searchKey,
                                                                                     parentNodeID: self.nodeID)
 
                 func createOrGetNode() throws -> any NodeFunction {
@@ -69,7 +69,7 @@ final class BuildGraph: NodeFunction {
 
                         case .configuration(let configuration):
                             #warning("TODO") // formerly rootNode.buildGraph
-                            let nodeConnectedToInputWire = try nodeContext.processingCycle.rootNode.childPoly(path: inputWire.from.name,
+                            let nodeConnectedToInputWire = try rootNode.childPoly(path: inputWire.from.name,
                                                                                                                          kind: StaticFileNode.kind,
                                                                                                                          createIfNotExist: true)!
 
@@ -79,12 +79,12 @@ final class BuildGraph: NodeFunction {
                             return nodeConnectedToInputWire
 
                         case .tool(let kind, _):
-                            return try nodeContext.processingCycle.rootNode.childPoly(path: inputWire.from.name,
+                            return try rootNode.childPoly(path: inputWire.from.name,
                                                                                                  kind: kind.asPolySerializableKind(),
                                                                                                  createIfNotExist: true)!
 
                         case .inputFile:
-                            return try nodeContext.processingCycle.rootNode.inputFileSystem.childPoly(path: inputWire.from.name,
+                            return try rootNode.inputFileSystem.childPoly(path: inputWire.from.name,
                                                                                                       kind: StaticFileNode.kind,
                                                                                                       createIfNotExist: true)!
 
@@ -102,7 +102,7 @@ final class BuildGraph: NodeFunction {
                         let rawNode = rawNodes[0]
 
                         // connect to the existing node....
-                        return try nodeContext.processingCycle.nodeFunction(nodeRaw: rawNode)
+                        return try nodeFunction(nodeRaw: rawNode)
                     }
                 }
 
@@ -111,7 +111,7 @@ final class BuildGraph: NodeFunction {
                 nodeConnectedToInputWire.nodeContext.searchKey = searchKey
                 try nodeConnectedToInputWire.save()
 
-                try nodeContext.processingCycle.connectWire(fromNodeID: nodeConnectedToInputWire.nodeID,
+                try connectWire(fromNodeID: nodeConnectedToInputWire.nodeID,
                                                             fromSymbolID: inputWire.fromPort.asSymbolID(),
                                                             toNodeID: currentNode.nodeID,
                                                             toSymbolID: inputPort.name.asSymbolID(),
@@ -136,7 +136,7 @@ final class BuildGraph: NodeFunction {
         guard !visited.contains(nodeID) else { return }
         visited.insert(nodeID)
 
-        let database = nodeContext.processingCycle.database
+        let database = database
         let incomingWires = try database.selectWires(goingToNodeID: nodeID)
 
         for wire in incomingWires {
@@ -156,7 +156,7 @@ final class BuildGraph: NodeFunction {
         }
 
         // deleteNode cleans up all incoming and outgoing wires for this node.
-        _ = try nodeContext.processingCycle.deleteNode(nodeID)
+        _ = try deleteNode(nodeID)
     }
 
     // MARK: Process

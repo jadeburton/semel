@@ -88,7 +88,7 @@ final class BuildEngine {
     // MARK: - Processing
 
     func process(_ work: @escaping (_ processingCycle: ProcessingCycle) throws -> Void) throws {
-        let processingCycle = try ProcessingCycle(database: database, buildEngine: self)
+        let processingCycle = try ProcessingCycle(buildEngine: self)
         try work(processingCycle)
         try processingCycle.endCycle()
     }

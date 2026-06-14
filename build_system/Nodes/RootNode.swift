@@ -7,18 +7,11 @@
 
 import Foundation
 
-struct RootNode: NodeFunction {
+struct RootNode: InputlessNodeFunction {
 
     static let kind: UInt = 10
 
     enum CodingKeys: CodingKey {
-    }
-
-    init() {
-    }
-
-    init(from decoder: Decoder) throws {
-        let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
     // MARK: Ports
@@ -53,15 +46,13 @@ struct RootNode: NodeFunction {
 
 //    func didSave() throws {
         // TODO!
-//        try nodeContext.processingCycle.connectWire(fromNode: try inputFileSystem,
+//        try connectWire(fromNode: try inputFileSystem,
 //                                                    fromPort: FolderNode.folderManifestOutputPort,
 //                                                    toNode: try formulaFinder,
 //                                                    toPort: ProjectFinder.folderManifestInputPort)
  //   }
 
-    func encode(to encoder: Encoder) throws {
-        var _ = encoder.container(keyedBy: CodingKeys.self)
-    }
+
 /*
     var inputFileSystem: Node {
         get throws {
@@ -83,16 +74,12 @@ struct RootNode: NodeFunction {
 */
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [])
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
-        throw NodeError.processNotSupported
-    }
-
     // MARK: Debug
 /*
     func debugPrintTree() {
         do {
             let projectFinder = try projectFinder
-            let topLevelOutputNodes = try nodeContext.processingCycle.allChildNodes(nodeID: projectFinder.nodeID)
+            let topLevelOutputNodes = try allChildNodes(nodeID: projectFinder.nodeID)
 
             print("- build tree")
             for outputNode in topLevelOutputNodes {
@@ -110,7 +97,7 @@ struct RootNode: NodeFunction {
         let nodeName = node.nodeContext.name ?? "?"
         print("\(indent)- \(kindName)(\(nodeName))")
 
-        let database = nodeContext.processingCycle.database
+        let database = database
         guard let nodeID = node.nodeContext.nodeID else { return }
 
         do {
@@ -124,7 +111,7 @@ struct RootNode: NodeFunction {
                 visitedDependencyNodeIDs.insert(wire.fromNodeID)
 
                 if let rawNode = try? database.selectNodeByID(wire.fromNodeID),
-                   let dependencyNode = try? nodeContext.processingCycle.nodeFunction(nodeRaw: rawNode) {
+                   let dependencyNode = try? nodeFunction(nodeRaw: rawNode) {
                     dependencyNodes.append(dependencyNode)
                 }
             }

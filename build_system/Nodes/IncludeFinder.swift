@@ -12,16 +12,6 @@ struct IncludeFinder: NodeFunction {
 
     enum CodingKeys: CodingKey {}
 
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let _ = try decoder.container(keyedBy: CodingKeys.self)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var _ = encoder.container(keyedBy: CodingKeys.self)
-    }
-
     // MARK: Ports
 
     static let sourceFileInputPort = "sourceFile"

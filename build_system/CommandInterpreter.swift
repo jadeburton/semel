@@ -241,15 +241,16 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
         self.folder = folder
     }
 
-    func allFiles(inDirectoryPath: String, nodeContext: NodeContext) throws -> [FileWildcardEntry] {
-        let start = try folder.childPoly(path: inDirectoryPath, kind: Folder.kind, nodeContext: nodeContext)! // TODO
-        return try! start.allChildren().map { node in
-            if let staticFileNode = node as? StaticFile {
-                return FileWildcardEntry(path: node.nodeContext.name!,
+    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
+        let start = try folder.childNode(path: inDirectoryPath, kind: Folder.kind)! // TODO
+        return try! start.allChildren.map { node in
+            if node.kind == StaticFile.kind {
+                let staticFileNodeFunction = try node.nodeFunctionCast() as StaticFile
+                return FileWildcardEntry(path: node.name!,
                                          kind: .file,
-                                         isMissing: try staticFileNode.read(nodeContext: nodeContext)!.isNoValue)
+                                         isMissing: try staticFileNodeFunction.read(thisNode: node)!.isNoValue)
             } else {
-                return FileWildcardEntry(path: node.nodeContext.name!,
+                return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
                                          isMissing: false)
             }
@@ -451,10 +452,8 @@ final class CommandInterpreter {
 
     let commandParser = CommandParser()
     var baseDirectory: String?
-    private let database: DatabaseLayer
 
-    required init(database: DatabaseLayer) {
-        self.database = database
+    required init() {
     }
 
     func outputMessage(_ message: String) {
@@ -475,7 +474,7 @@ final class CommandInterpreter {
     }
 
     func handleDebug() throws {
-        // TODO! try nodeContext.processingCycle.printAll()
+        // TODO! try printAll()
     }
 
     func handleUserCommand(_ userCommand: UserCommand) throws {
@@ -540,20 +539,15 @@ final class CommandInterpreter {
         // Coming soon
     }
 
-    var inputFileSystem: Folder {
+    var inputFileSystem: Node {
         get throws {
-            let root = try Node.rootNode(database: database)
-            return try root.childNode(path: "inputFileSystem",
-                                      rootNodeID: root.id!,
-                                      kind: Folder.kind,
-                                      createIfNotExist: true,
-                                      database: database)!.nodeFunctionCast()
+            try Node.inputFileSystem
         }
     }
 
-    var outputFileSystem: Folder {
+    var outputFileSystem: Node {
         get throws {
-            try nodeContext.processingCycle.rootNode.outputFileSystem
+            try Node.outputFileSystem
         }
     }
 
@@ -569,17 +563,17 @@ final class CommandInterpreter {
             let filename = (relativePath as NSString).lastPathComponent
             let containingPath = (relativePath as NSString).deletingLastPathComponent
 
-            let containingFolder: Folder
+            let containingFolder: Node
             if containingPath.isEmpty || containingPath == "." {
                 containingFolder = try! inputFileSystem
             } else {
-                containingFolder = try! inputFileSystem.ensureEntirePathExists(containingPath, nodeContext: nodeContext)
+                containingFolder = try! inputFileSystem.childNode(path: containingPath, kind: Folder.kind, createIfNotExist: true)!
             }
 
-            try! containingFolder.addOrReplaceChild(nodeContext: nodeContext, content: fileContent.intern(), name: filename)
+            try! (containingFolder.nodeFunctionCast() as Folder).addOrReplaceChild(thisNode: containingFolder, content: fileContent.intern(), name: filename)
 
         case .folder:
-            try! inputFileSystem.ensureEntirePathExists(relativePath, nodeContext: nodeContext)
+            _ = try! inputFileSystem.childNode(path: relativePath, kind: Folder.kind, createIfNotExist: true)!
         }
     }
 
@@ -608,7 +602,7 @@ final class CommandInterpreter {
 
         outputMessage("Remove: \(entry.path)")
 
-        guard let child = try inputFileSystem.childPoly(path: entry.path, kind: Folder.kind, nodeContext: nodeContext) else { // TODO: we don't even need this kind arg if we don't create it
+        guard let child = try inputFileSystem.childNode(path: entry.path, kind: Folder.kind, createIfNotExist: false) else { // TODO: we don't even need this kind arg if we don't create it
             outputError("Child not found")
             return
         }
@@ -620,19 +614,22 @@ final class CommandInterpreter {
         //   part of the build graph.
         // - the way we tell is by looking at the wires coming from the file; if one or more target nodes do not allow cascading-deleting, we use the ghost-technique.
 
-        if try child.noOutputWiresPreventCascadeDeletion() {
-            try child.delete(nodeContext: nodeContext)
+        let outputWires = try DatabaseLayer.shared.selectWires(comingFromNodeID: child.id!)
+
+        if outputWires.isEmpty {
+            // No output wires are holding this Node alive
+            _ = try child.delete()
         } else {
-            guard let staticFileNode = child as? StaticFile else {
+            guard let staticFileNode = try child.nodeFunction() as? StaticFile else {
                 outputError("Cannot delete; object is in use.")
                 return
             }
-            try staticFileNode.eraseContents(nodeContext: nodeContext) // turns it into a ghost
+            try staticFileNode.eraseContents(thisNode: child) // turns it into a ghost
         }
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
-        func handle(folder: Folder) throws {
+        func handle(folder: Node) throws {
             let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: folder))
 
             try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
@@ -648,10 +645,10 @@ final class CommandInterpreter {
         }
     }
 
-    private func copyOneFile(folder: Folder, entry: FileWildcardEntry, destinationPath: String) throws {
+    private func copyOneFile(folder: Node, entry: FileWildcardEntry, destinationPath: String) throws {
         switch entry.kind {
         case .file:
-            guard let staticFileNode: StaticFile = try folder.child(path: entry.path) else {
+            guard let staticFileNode = try folder.childNode(path: entry.path, kind: Folder.kind, createIfNotExist: false) else {
                 outputError("File \(entry.path) not found in internal file system")
                 return
             }
@@ -676,7 +673,7 @@ final class CommandInterpreter {
     }
 
     private func handleList(folder: FileSystemForCommand, pathOrWildcard: String) throws {
-        let fileSystem: Folder
+        let fileSystem: Node
 
         switch folder {
         case .input:

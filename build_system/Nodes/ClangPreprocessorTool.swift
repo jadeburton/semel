@@ -29,16 +29,7 @@ struct ClangPreprocessorToolConfiguration: PolySerializable {
 struct ClangPreprocessorTool: NodeFunction {
     static let kind: UInt = 17
 
-    enum CodingKeys: CodingKey {}
-
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let _ = try decoder.container(keyedBy: CodingKeys.self)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var _ = encoder.container(keyedBy: CodingKeys.self)
+    enum CodingKeys: CodingKey {
     }
 
     // MARK: Ports

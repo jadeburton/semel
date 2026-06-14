@@ -38,7 +38,7 @@ extension NodeFunction {
         return Sha256.hash(Array(aggregated.utf8))
     }
 
-    func loadAndWriteCachedOutputs(thisNode: Node, database: DatabaseLayer, cacheKey: String?) throws -> Bool {
+    func loadAndWriteCachedOutputs(thisNode: Node, cacheKey: String?) throws -> Bool {
 
         guard let cacheKey else {
             return false
@@ -56,7 +56,7 @@ extension NodeFunction {
             return false
         }
         
-        guard let cacheEntry = try database.selectCacheEntry(hash: cacheKey) else {
+        guard let cacheEntry = try DatabaseLayer.shared.selectCacheEntry(hash: cacheKey) else {
             return false
         }
         
@@ -67,7 +67,7 @@ extension NodeFunction {
         for outputPort in descriptor.outputPorts {
             if let outputValue = decodedCacheEntry.outputValues[outputPort] {
                 print("Using cached output for node \(self.description()), output port \(outputPort)")
-                try thisNode.writeToOutputPort(outputPort, value: outputValue, database: database)
+                try thisNode.writeToOutputPort(outputPort, value: outputValue)
             } else {
                 // Invalid cache
                 return false
@@ -77,7 +77,7 @@ extension NodeFunction {
         return true
     }
 
-    func saveCacheForAllInputsAndOutputs(database: DatabaseLayer, cacheKey: String?, output: ProcessOutput) throws {
+    func saveCacheForAllInputsAndOutputs(cacheKey: String?, output: ProcessOutput) throws {
         guard let cacheKey else {
             return
         }
@@ -93,6 +93,6 @@ extension NodeFunction {
         // TODO! also the dynamic input expectations
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
-        try database.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
+        try DatabaseLayer.shared.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
     }
 }

@@ -14,16 +14,7 @@ import Foundation
 struct ProjectFinder: NodeFunction {
     static let kind: UInt = 5
 
-    enum CodingKeys: CodingKey {}
-
-    init() {}
-
-    init(from decoder: Decoder) throws {
-        let _ = try decoder.container(keyedBy: CodingKeys.self)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var _ = encoder.container(keyedBy: CodingKeys.self)
+    enum CodingKeys: CodingKey {
     }
 
     static let folderManifestInputPort = "folderManifest"
@@ -40,7 +31,7 @@ struct ProjectFinder: NodeFunction {
 
         let fileNode = try folderNode.childPoly(path: folderManifestEntry.name, kind: StaticFile.kind) as! StaticFile
 
-        try nodeContext.processingCycle.connectWire(
+        try connectWire(
             fromNodeID: fileNode.nodeID,
             fromSymbolID: StaticFile.outputPort.asSymbolID(),
             toNodeID: extractor.nodeID,
@@ -48,10 +39,10 @@ struct ProjectFinder: NodeFunction {
             name: folderManifestEntry.name.asSymbolID())
 
         #warning("TODO")
-//        try nodeContext.processingCycle.connectWire(
+//        try connectWire(
 //            fromNodeID: extractor.nodeID,
 //            fromSymbolID: ProjectBuilder.formulaOutputPort.asSymbolID(),
-//            toNodeID: try nodeContext.processingCycle.rootNode.buildGraph.nodeID,
+//            toNodeID: try rootNode.buildGraph.nodeID,
 //            toSymbolID: BuildGraph.formulaeInputPort.asSymbolID())
     }
 */
@@ -60,7 +51,7 @@ struct ProjectFinder: NodeFunction {
 
         #warning("TODO")
 //        let oneValue = try readOneValueFromInputPort(Self.folderManifestInputPort)
-//        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: oneValue.originNodeID)
+//        let folderNode: FolderNode = try node(nodeID: oneValue.originNodeID)
 //        let object = try PolyFactory.decode(encodedJSON: oneValue.1.expectValue().resolveAsString())
 //
 //        guard let folderManifest = object as? FolderManifest else {

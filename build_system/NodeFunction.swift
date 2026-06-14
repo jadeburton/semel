@@ -46,31 +46,34 @@ extension NodeInputReader {
 }
 */
 
+protocol InputlessNodeFunction: Codable, PolySerializable, WithDefaultInitializer {
+    var descriptor: NodeFunctionDescriptor { get }
+}
+
 // A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
 // Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
-protocol NodeFunction: Codable, PolySerializable, WithDefaultInitializer {
-    var descriptor: NodeFunctionDescriptor { get }
+protocol NodeFunction: InputlessNodeFunction {
     func process(input: ProcessInput) throws -> ProcessOutput
 }
 
 extension NodeFunction {
-    private func buildProcessInput(thisNode: Node, database: DatabaseLayer) throws -> ProcessInput {
+    private func buildProcessInput(thisNode: Node) throws -> ProcessInput {
         var inputValues = [String : [String : NodeValue]]()
 
         for inputPort in descriptor.staticInputPorts {
-            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort, database: database)
+            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort)
         }
 
         for inputPort in descriptor.dynamicInputPorts {
-            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort, database: database)
+            inputValues[inputPort] = try thisNode.readFromInputPort(inputPort)
         }
 
         return .init(inputValues: inputValues)
     }
 
-    private func writeToOutputs(output: ProcessOutput, thisNode: Node, database: DatabaseLayer) throws {
+    private func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
         for (outputPort, outputValue) in output.outputValues {
-            try thisNode.writeToOutputPort(outputPort, value: outputValue, database: database)
+            try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
     }
 
@@ -94,7 +97,7 @@ extension NodeFunction {
         }
     }
 
-    private func processWithPreCheck(thisNode: Node) throws {
+    func processWithPreCheck(thisNode: Node) throws {
         guard hasInputPorts() else {
             // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
             return
@@ -102,20 +105,19 @@ extension NodeFunction {
         let input = try buildProcessInput(thisNode: thisNode)
 
         guard allInputsAreSatisfied(input: input) else {
-            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), nodeContext: nodeContext)
+            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
             return
         }
 
-
         let cacheKey = try buildCacheKeyFromAllInputs(input: input)
 
-        if try !loadAndWriteCachedOutputs(nodeContext: nodeContext, cacheKey: cacheKey) {
+        if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
 
-            let output = processWithCatch(nodeContext: nodeContext, input: input)
+            let output = processWithCatch(thisNode: thisNode, input: input)
 
-            try writeToOutputs(output: output, nodeContext: nodeContext)
+            try writeToOutputs(output: output, thisNode: thisNode)
 
-            try? saveCacheForAllInputsAndOutputs(nodeContext: nodeContext, cacheKey: cacheKey, output: output)
+            try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
         }
     }
 
@@ -210,88 +212,67 @@ extension NodeFunction {
 
 extension NodeFunction {
 //    func parent<N: NodeFunction>() throws -> N? {
-//        try nodeContext.processingCycle.parentNode(node: self)
+//        try parentNode(node: self)
 //    }
 
 //    func save() throws {
-//        try nodeContext.processingCycle.saveNode(self)
+//        try saveNode(self)
 //    }
 
 
 //    func child(named name: String, nodeContext: NodeContext) throws -> (any NodeFunction)? {
-//        try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
+//        try nodePoly(named: name, parentNodeID: nodeContext.nodeID!)
 //    }
 
 //    func delete(nodeContext: NodeContext) throws {
 //        if let nodeID = nodeContext.nodeID {
-//            _ = try nodeContext.processingCycle.deleteNode(nodeID)
+//            _ = try deleteNode(nodeID)
 //        }
 //    }
 
-    func noOutputWiresPreventCascadeDeletion() throws -> Bool {
-
-        #warning("TODO")
-        return true /*
-        guard let wires = try? nodeContext.processingCycle.database.selectWires(comingFromNodeID: self.nodeID), !wires.isEmpty else {
-            return true
-        }
-
-        for wire in wires {
-            let toNode = try nodeContext.processingCycle.nodePoly(nodeID: wire.toNodeID)!
-
-            let toNodeAllowsCascadingDelete = toNode.descriptor.inputs.first(where: { $0.index == wire.toPort })?.cascadingDelete ?? false
-
-            if !toNodeAllowsCascadingDelete {
-                return false
-            }
-        }
-
-        return true*/
-    }
-
 //    func readAllValuesFromInputPort(_ inputPort: String, nodeContext) throws -> [String: NodeValue] {
-//        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeID)
+//        try readFromInputPort(inputPort, nodeID: nodeID)
 //    }
 //
 //    func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
-//        try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: self.nodeID)
+//        try readFromOutputPort(outputPort, nodeID: self.nodeID)
 //    }
 //
 //    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws {
-//        try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
+//        try writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
 //    }
 //
 //    func allChildren() throws -> [NodeFunction] {
-//        try nodeContext.processingCycle.allChildNodes(nodeID: self.nodeID)
+//        try allChildNodes(nodeID: self.nodeID)
 //    }
 /*
     func childPoly(named name: String, kind: UInt, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> NodeFunction? {
-        if let existingChild = try nodeContext.processingCycle.nodePoly(named: name, parentNodeID: nodeContext.nodeID!) {
+        if let existingChild = try nodePoly(named: name, parentNodeID: nodeContext.nodeID!) {
             return existingChild
         }
         if !createIfNotExist { return nil }
-        return try nodeContext.processingCycle.makeNodeFunctionPoly(kind: kind, name: name, parentNodeID: nodeContext.nodeID!)
+        return try makeNodeFunctionPoly(kind: kind, name: name, parentNodeID: nodeContext.nodeID!)
     }
 
     /// Creates the child if it does not exist.
     func child<N: NodeFunction>(named name: String, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> N? {
-        if let existingChild: N = try nodeContext.processingCycle.node(named: name, parentNodeID: nodeContext.nodeID!) {
+        if let existingChild: N = try node(named: name, parentNodeID: nodeContext.nodeID!) {
             return existingChild
         }
         if !createIfNotExist { return nil }
-        return try nodeContext.processingCycle.makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N?
+        return try makeNodeFunctionPoly(kind: N.kind, name: name, parentNodeID: nodeContext.nodeID!) as! N?
     }
 
     /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
     func child<N: NodeFunction>(path: String, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> N? {
-        try nodeContext.processingCycle.childNode(path: path,
+        try childNode(path: path,
                                                   rootNodeID: nodeContext.nodeID!,
                                                   createIfNotExist: createIfNotExist)
     }
 
     /// Returns a child at a path (e.g. "example/src/main.swift"), this IS recursive.
     func childPoly(path: String, kind: UInt, createIfNotExist: Bool = false, nodeContext: NodeContext) throws -> NodeFunction? {
-        try nodeContext.processingCycle.childNodePoly(path: path,
+        try childNodePoly(path: path,
                                                       rootNodeID: nodeContext.nodeID!,
                                                       kind: kind,
                                                       createIfNotExist: createIfNotExist)

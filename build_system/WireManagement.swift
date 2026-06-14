@@ -13,26 +13,26 @@ extension ProcessingCycle {
                      toNodeID: ObjectID,
                      toSymbolID: ObjectID,
                      name: ObjectID) throws {
-        
-        guard try database.selectWires(comingFromNodeID: fromNodeID,
-                                       fromSymbolID: fromSymbolID,
-                                       goingToNodeID: toNodeID,
-                                       toSymbolID: toSymbolID).isEmpty else {
+
+        guard try DatabaseLayer.shared.selectWires(comingFromNodeID: fromNodeID,
+                                                   fromSymbolID: fromSymbolID,
+                                                   goingToNodeID: toNodeID,
+                                                   toSymbolID: toSymbolID).isEmpty else {
             return
         }
         
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
-        _ = try database.insertWire(.init(fromNodeID: fromNodeID,
-                                          fromSymbolID: fromSymbolID,
-                                          toNodeID: toNodeID,
-                                          toSymbolID: toSymbolID,
-                                          name: name))
+        _ = try DatabaseLayer.shared.insertWire(.init(fromNodeID: fromNodeID,
+                                                      fromSymbolID: fromSymbolID,
+                                                      toNodeID: toNodeID,
+                                                      toSymbolID: toSymbolID,
+                                                      name: name))
 
-        try writePendingToAllOutputsOfNode(nodeID: toNodeID)
+        var toNode = try toNodeID.loadNode()
+        try toNode.writePendingToAllOutputsOfNode()
 
-        var toNode = try toNodeID.loadNode(from: database)
-        try toNode.scheduleNode(database: database)
+        try toNode.scheduleNode()
     }
 }
 
@@ -75,24 +75,24 @@ extension Wire {
             return false
         }
 
-        return try deleteWire(database: database)
+        return try deleteWire()
     }
 
-    func deleteWire(database: DatabaseLayer) throws -> Bool {
+    func deleteWire() throws -> Bool {
 
-        let result = try database.deleteWire(comingFromNodeID: fromNodeID,
-                                             fromSymbolID: fromSymbolID,
-                                             goingToNodeID: toNodeID,
-                                             toSymbolID: toSymbolID)
+        let result = try DatabaseLayer.shared.deleteWire(comingFromNodeID: fromNodeID,
+                                                         fromSymbolID: fromSymbolID,
+                                                         goingToNodeID: toNodeID,
+                                                         toSymbolID: toSymbolID)
 
-        var toNode = try toNodeID.loadNode(from: database)
-        try toNode.scheduleNode(database: database)
+        var toNode = try toNodeID.loadNode()
+        try toNode.scheduleNode()
 
 //        let toNode = try nodePoly(nodeID: wire.toNodeID)!
 
         // is the target Input marked as "holds alive"? if so, then removing this wire should delete the node unless there is another holds-alive Input
 
-        let wireToSymbol = try database.selectSymbol(symbolID: toSymbolID)!.name
+        let wireToSymbol = try DatabaseLayer.shared.selectSymbol(symbolID: toSymbolID)!.name
 
 /* TODO cascading delete: Nodes are held alive by their Output wires, unless they are Input File System Nodes or they have no Output wires.
  if toNode.descriptor.staticInputPorts.first(where: { $0.name == wireToSymbol })?.cascadingDelete ?? false {
