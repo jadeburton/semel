@@ -105,38 +105,59 @@ extension NodeFunction {
 
         // Steps 2 & 3 — iterate over the desired configuration.
         for (wireName, expectationString) in wireExpectations {
+
+            // Shared helper: connect a new wire from the node that satisfies the expectation.
+            let connectExpected = { [thisNode] in
+                let wireNameSymbolID = wireName.asSymbolID()
+                if let (fromNodeID, fromSymbolID) = try findExistingNodeMatchingExpectation(expectationString: expectationString) {
+                    var newWire = Wire(fromNodeID: fromNodeID,
+                                      fromSymbolID: fromSymbolID,
+                                      toNodeID: thisNode.id!,
+                                      toSymbolID: toSymbolID,
+                                      name: wireNameSymbolID)
+                    try newWire.connectWire(fromNodeID: fromNodeID,
+                                            fromSymbolID: fromSymbolID,
+                                            toNodeID: thisNode.id!,
+                                            toSymbolID: toSymbolID,
+                                            name: wireNameSymbolID)
+                } else {
+                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
+                }
+            }
+
             if let existingWire = existingWiresByName[wireName] {
-                // Step 3 — wire already exists; check whether the expectation has changed.
-                // TODO: parse expectationString and compare against the current graph shape.
-                // For now we leave the existing wire untouched.
-                _ = existingWire // suppress unused-variable warning until TODO is resolved
+                // Step 3 — wire already exists; check whether its current graph shape
+                // still satisfies the expectation.  If not, disconnect and reconnect.
+                let currentShape = try buildGraphShapeForInputWire(wire: existingWire)
+                guard currentShape != expectationString else {
+                    continue   // shape unchanged — nothing to do
+                }
+                _ = try existingWire.deleteWire()
+                try connectExpected()
             } else {
-                // Step 2 — wire does not exist yet; we need to find the source node that satisfies
-                // the expectation and connect it.
-                // TODO: parse expectationString to locate the correct source node and output port,
-                // then call wire.connectWire(fromNodeID:fromSymbolID:toNodeID:toSymbolID:name:).
-                // For now we log that a connection is required but skip creation.
-                print("applyExpectationConfiguration: wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1) needs to be connected (expectation: '\(expectationString)') — deferred until expectation parsing is implemented")
+                // Step 2 — wire does not exist yet; find and connect the matching source.
+                try connectExpected()
             }
         }
     }
 
+    /// Parses `expectationString` into a `GraphShapeNode` and searches the live
+    /// graph for a node whose type and recursive input wiring matches it.
+    /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
+    /// `nil` if no matching node currently exists in the graph.
     private func findExistingNodeMatchingExpectation(expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID)? {
-        nil
+        let expectedShape = try GraphShapeNode.parse(expectationString)
+        return try expectedShape.findMatchingNode()
     }
 
+    /// Traverses the live graph backwards from `wire.fromNodeID / wire.fromSymbolID`
+    /// and returns a compact string representation of the sub-graph shape, e.g.:
+    ///   "ClangCompilerTool(configuration=StaticFile('config.json').output,
+    ///                      input=ClangPreprocessorTool(...).output).output"
+    /// The returned string can later be fed to `findExistingNodeMatchingExpectation`
+    /// to locate the same (or structurally equivalent) node in the graph.
     private func buildGraphShapeForInputWire(wire: Wire) throws -> String {
-        // TODO
-        // Follow the given wire to its origin Node. At the Node, add a representation in the output graph "shape" string, e.g. "Compiler(input=…)" or "Linker(input=…)".
-        // It may be better to have an intermediate step with a mini object representation (in a separate file), then to call .asString() or whatever on the root item to get
-        // the final String output.
-        // If is important that the mini nodes in this representation are not hard-coded and come from the real-life Nodes, e.g. "ClangCompilerTool" is a valid node type name.
-        // This mechanism shouldn't need to know (be agnostic of) *what* a build graph is used for or the role of each component.
-        
-        // Here is a rough example of what such a graph shape looks like. It is by design that one Node may appear identically in multiple places (i.e. in the leaves). This
-        // was done to keep it simple and not require, for example, pre-declaring constants at the top and then referencing the constants in the graph shape.
-        // The duplication is not an issue because everything is compared by-value.
-        "Product(input=Linker(config: LinkerConfig(kind: library).output, input=[Compiler(input=Preprocessor(input=StaticFile('/hello.c').output).output).output, Compiler().output])).status"
+        try GraphShapeNode.buildFromWire(wire).asString()
     }
 
     private func buildErrorOutput(withError error: Error) -> ProcessOutput {
