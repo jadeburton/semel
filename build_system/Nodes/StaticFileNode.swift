@@ -52,11 +52,11 @@ final class StaticFileNode: NodeFunction {
     func process() throws {
         do {
             let oneValue = try readOneValueFromInputPort(Self.inputPort)
-            try writeToOutputPort(Self.outputPort, value: .value(oneValue.dataObjectHash))
+            try writeToOutputPort(Self.outputPort, value: .value(oneValue.1.expectValue()))
         } catch NodeError.missingInputs {
             // No input wire is connected.
             // Special case: avoid trashing our output if it already has a value set
-            if case .noValue = try readFromOutputPort(Self.outputPort).kind {
+            if case .noValue = try readFromOutputPort(Self.outputPort) {
                 throw NodeError.missingInputs
             }
         }

@@ -1,31 +1,28 @@
 import Foundation
 import GRDB
 
-// A Port is a live instance of an input or output of a Node.
-// Each Node may have a number of Ports associated with it, and these can be added or deleted at any time.
-public struct Port: Codable, FetchableRecord, PersistableRecord, Equatable {
+public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable {
     public enum Columns {
         public static let nodeID = Column(CodingKeys.nodeID)
-        public static let portNameID = Column(CodingKeys.portNameID)
+        public static let nameSymbolID = Column(CodingKeys.nameSymbolID)
         public static let valueKind = Column(CodingKeys.valueKind)
         public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
     }
 
     public enum ValueKind: UInt8, Codable {
-        case notApplicable = 0 // input ports do not have values
         case value = 1
         case pending = 2
         case error = 5
     }
 
     public var nodeID: ObjectID
-    public var portNameID: ObjectID
+    public var nameSymbolID: ObjectID
     public var valueKind: ValueKind
     public var dataObjectHash: DataObjectHash?
 
-    public init(nodeID: ObjectID, portNameID: ObjectID, valueKind: ValueKind, dataObjectHash: DataObjectHash?) {
+    public init(nodeID: ObjectID, nameSymbolID: ObjectID, valueKind: ValueKind, dataObjectHash: DataObjectHash?) {
         self.nodeID = nodeID
-        self.portNameID = portNameID
+        self.nameSymbolID = nameSymbolID
         self.valueKind = valueKind
         self.dataObjectHash = dataObjectHash
     }
@@ -35,10 +32,10 @@ public struct Port: Codable, FetchableRecord, PersistableRecord, Equatable {
         try dbQueue.write { db in
             try db.create(table: "Port", options: .ifNotExists) { t in
                 t.column("nodeID", .integer).notNull().indexed()
-                t.column("portNameID", .integer).notNull().indexed()
+                t.column("nameSymbolID", .integer).notNull().indexed()
                 t.column("valueKind", .integer).notNull()
                 t.column("dataObjectHash", .text) // nullable
-                t.primaryKey(["nodeID", "portNameID"])
+                t.primaryKey(["nodeID", "nameSymbolID"])
             }
         }
     }
@@ -46,45 +43,45 @@ public struct Port: Codable, FetchableRecord, PersistableRecord, Equatable {
 
 extension DatabaseLayer {
 
-    public func selectAllPorts(nodeID: ObjectID) throws -> [Port] {
+    public func selectAllPorts(nodeID: ObjectID) throws -> [OutputPort] {
         try dbQueue.read { db in
-            try Port.filter(Port.Columns.nodeID == nodeID).fetchAll(db)
+            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).fetchAll(db)
         }
     }
 
-    public func selectPort(nodeID: ObjectID, portNameID: ObjectID) throws -> Port? {
+    public func selectPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
         try dbQueue.read { db in
-            try Port.filter(Port.Columns.nodeID == nodeID &&
-                            Port.Columns.portNameID == portNameID).fetchOne(db)
+            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
+                            OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
         }
     }
 
-    public func insertOrUpdatePort(_ port: Port) throws {
+    public func insertOrUpdatePort(_ port: OutputPort) throws {
         try dbQueue.write { db in
             try port.save(db)
         }
     }
 
-    public func deletePort(nodeID: ObjectID, portNameID: ObjectID) throws -> Bool {
+    public func deletePort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> Bool {
         try dbQueue.write { db in
-            try Port
-                .filter(Port.Columns.nodeID == nodeID &&
-                        Port.Columns.portNameID == portNameID)
+            try OutputPort
+                .filter(OutputPort.Columns.nodeID == nodeID &&
+                        OutputPort.Columns.nameSymbolID == nameSymbolID)
                 .deleteAll(db) > 0
         }
     }
 
     public func deletePorts(nodeID: ObjectID) throws -> Int {
         try dbQueue.write { db in
-            try Port
-                .filter(Port.Columns.nodeID == nodeID)
+            try OutputPort
+                .filter(OutputPort.Columns.nodeID == nodeID)
                 .deleteAll(db)
         }
     }
 }
 
-public extension Port {
+public extension OutputPort {
     func description() -> String {
-        "Port: nodeID=\(nodeID), portNameID=\(portNameID), valueKind=\(valueKind), dataObjectHash=\(dataObjectHash ?? "")"
+        "Port: nodeID=\(nodeID), name=\(nameSymbolID.resolveSymbol()), valueKind=\(valueKind), dataObjectHash=\(dataObjectHash ?? "")"
     }
 }

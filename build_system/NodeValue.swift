@@ -11,12 +11,12 @@ enum NoValueReason: Codable {
     case error(message: String)
 }
 
-enum NodeValueKind: Codable {
+enum NodeValue: Codable {
     case noValue(reason: NoValueReason)
     case value(_ value: DataObjectHash)
 }
 
-extension NodeValueKind {
+extension NodeValue {
     func expectValue() throws -> DataObjectHash {
         switch self {
         case .noValue:
@@ -25,30 +25,14 @@ extension NodeValueKind {
             return value
         }
     }
-}
 
-struct NodeValue: Codable {
-    let originNodeID: ObjectID
-    let originOutputPortNameID: ObjectID
-    let kind: NodeValueKind
-}
-
-extension NodeValue {
     var isNoValue: Bool {
-        if case .noValue = kind {
+        if case .noValue = self {
             return true
         } else {
             return false
         }
     }
-}
-
-struct NodeValueAndWire: Codable {
-    let originNodeID: ObjectID
-   // let originNodePath: String
-    let originOutputPortNameID: ObjectID
-    let kind: NodeValueKind
-    let wire: Wire
 }
 
 enum PortError: Error {
@@ -61,28 +45,17 @@ enum ProcessingCycleError: Error {
 
 // MARK: - DatabaseModels.Port → NodeValue
 
-extension DatabaseModels.Port {
-    func asPort(wire: Wire) throws -> NodeValueAndWire {
-        .init(originNodeID: nodeID,
-              originOutputPortNameID: portNameID,
-              kind: try .init(port: self),
-              wire: wire)
-    }
-    func asPort() throws -> NodeValue {
-        .init(originNodeID: nodeID,
-              originOutputPortNameID: portNameID,
-              kind: try .init(port: self))
+extension DatabaseModels.OutputPort {
+    func asNodeValue() throws -> NodeValue {
+        try .init(port: self)
     }
 }
 
-// MARK: - NodeValueKind helpers
+// MARK: - NodeValue helpers
 
-extension NodeValueKind {
-    init(port: DatabaseModels.Port) throws {
+extension NodeValue {
+    init(port: DatabaseModels.OutputPort) throws {
         switch port.valueKind {
-
-        case .notApplicable:
-            self = .noValue(reason: .error(message: "Value not applicable; is input port"))
 
         case .pending:
             self = .noValue(reason: .pending)
@@ -100,30 +73,30 @@ extension NodeValueKind {
         }
     }
 
-    func mapPort(nodeID: ObjectID, outputPortNameID: ObjectID) throws -> build_system.Port {
+    func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> build_system.OutputPort {
         switch self {
 
         case .noValue(let reason):
 
             switch reason {
             case .pending:
-                return Port(nodeID: nodeID,
-                            portNameID: outputPortNameID,
-                            valueKind: .pending,
-                            dataObjectHash: nil)
+                return OutputPort(nodeID: nodeID,
+                                  nameSymbolID: outputSymbolID,
+                                  valueKind: .pending,
+                                  dataObjectHash: nil)
 
             case .error(let message):
-                return Port(nodeID: nodeID,
-                            portNameID: outputPortNameID,
-                            valueKind: .error,
-                            dataObjectHash: message.intern())
+                return OutputPort(nodeID: nodeID,
+                                  nameSymbolID: outputSymbolID,
+                                  valueKind: .error,
+                                  dataObjectHash: message.intern())
             }
 
         case .value(let dataObjectHash):
-            return Port(nodeID: nodeID,
-                        portNameID: outputPortNameID,
-                        valueKind: .value,
-                        dataObjectHash: dataObjectHash)
+            return OutputPort(nodeID: nodeID,
+                              nameSymbolID: outputSymbolID,
+                              valueKind: .value,
+                              dataObjectHash: dataObjectHash)
         }
     }
 }

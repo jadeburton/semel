@@ -44,37 +44,38 @@ final class ProjectFinder: NodeFunction {
 
         try nodeContext.processingCycle.connectWire(
             fromNodeID: fileNode.nodeID,
-            fromPortNameID: StaticFileNode.outputPort.asPortNameID(),
+            fromSymbolID: StaticFileNode.outputPort.asSymbolID(),
             toNodeID: extractor.nodeID,
-            toPortNameID: FormulaExtractor.formulaFileInputPort.asPortNameID(),
-            name: folderManifestEntry.name.asPortNameID())
+            toSymbolID: FormulaExtractor.formulaFileInputPort.asSymbolID(),
+            name: folderManifestEntry.name.asSymbolID())
 
         #warning("TODO")
 //        try nodeContext.processingCycle.connectWire(
 //            fromNodeID: extractor.nodeID,
-//            fromPortNameID: FormulaExtractor.formulaOutputPort.asPortNameID(),
+//            fromSymbolID: FormulaExtractor.formulaOutputPort.asSymbolID(),
 //            toNodeID: try nodeContext.processingCycle.rootNode.buildGraph.nodeID,
-//            toPortNameID: BuildGraph.formulaeInputPort.asPortNameID())
+//            toSymbolID: BuildGraph.formulaeInputPort.asSymbolID())
     }
 
     func process() throws {
-        let oneValue = try readOneValueFromInputPort(Self.folderManifestInputPort)
-        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: oneValue.originNodeID)
-        let object = try PolyFactory.decode(encodedJSON: oneValue.dataObjectHash.resolveAsString())
-
-        guard let folderManifest = object as? FolderManifest else {
-            throw NodeError.other(message: "Could not decode FolderManifest")
-        }
-
-        for entry in folderManifest.entries {
-            try ensureExtractorExists(folderManifestEntry: entry, folderNode: folderNode)
-        }
-
-        for formulaExtractorChild in try allChildren().filter({ node in node is FormulaExtractor }) {
-            if !folderManifest.entries.contains(where: { $0.name == formulaExtractorChild.nodeContext.name }) {
-                try formulaExtractorChild.delete()
-            }
-        }
+        #warning("TODO")
+//        let oneValue = try readOneValueFromInputPort(Self.folderManifestInputPort)
+//        let folderNode: FolderNode = try nodeContext.processingCycle.node(nodeID: oneValue.originNodeID)
+//        let object = try PolyFactory.decode(encodedJSON: oneValue.1.expectValue().resolveAsString())
+//
+//        guard let folderManifest = object as? FolderManifest else {
+//            throw NodeError.other(message: "Could not decode FolderManifest")
+//        }
+//
+//        for entry in folderManifest.entries {
+//            try ensureExtractorExists(folderManifestEntry: entry, folderNode: folderNode)
+//        }
+//
+//        for formulaExtractorChild in try allChildren().filter({ node in node is FormulaExtractor }) {
+//            if !folderManifest.entries.contains(where: { $0.name == formulaExtractorChild.nodeContext.name }) {
+//                try formulaExtractorChild.delete()
+//            }
+//        }
 
     }
 }
@@ -107,7 +108,7 @@ final class FormulaExtractor: NodeFunction {
 
     func process() throws {
         for formulaFileValue in try readAllValuesFromInputPort(Self.formulaFileInputPort) {
-            switch formulaFileValue.value.kind {
+            switch formulaFileValue.value {
             case .noValue:
                 break
             case .value(let dataObjectHash):

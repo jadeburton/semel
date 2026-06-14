@@ -4,7 +4,7 @@
 //
 //  Created by Jade Burton on 22.02.26.
 //
-
+/*
 import Foundation
 
 // MARK: - BuildGraph
@@ -30,9 +30,7 @@ final class BuildGraph: NodeFunction {
 
     static let formulaeInputPort = "formulae"
 
-    var descriptor: NodeFunctionDescriptor {
-        .init(kind: Self.kind, staticInputPorts: [Self.formulaeInputPort], staticOutputPorts: [])
-    }
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [formulaeInputPort], staticOutputPorts: [])
 
     // MARK: File-system children
 
@@ -114,10 +112,10 @@ final class BuildGraph: NodeFunction {
                 try nodeConnectedToInputWire.save()
 
                 try nodeContext.processingCycle.connectWire(fromNodeID: nodeConnectedToInputWire.nodeID,
-                                                            fromPortNameID: inputWire.fromPort.asPortNameID(),
+                                                            fromSymbolID: inputWire.fromPort.asSymbolID(),
                                                             toNodeID: currentNode.nodeID,
-                                                            toPortNameID: inputPort.name.asPortNameID(),
-                                                            name: "default".asPortNameID()) // TODO
+                                                            toSymbolID: inputPort.name.asSymbolID(),
+                                                            name: "default".asSymbolID()) // TODO
 
                 try integrate(buildGraphNode: inputWire.from, currentNode: nodeConnectedToInputWire)
 
@@ -168,7 +166,7 @@ final class BuildGraph: NodeFunction {
         let allFormulae = try readAllValuesFromInputPort(Self.formulaeInputPort)
 
         let decodedFormulae = try allFormulae.map { formulaFileValue in
-            switch formulaFileValue.kind {
+            switch formulaFileValue.value {
             case .noValue:
                 throw NodeError.missingInputs
             case .value(let dataObjectHash):
@@ -293,3 +291,4 @@ extension BuildGraphToolKind {
 enum NodeValueError: Error {
     case nodeValueIsNotDataObjectHash
 }
+*/

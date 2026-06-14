@@ -25,16 +25,17 @@ struct ClangLinkerToolConfiguration: PolySerializable {
 
 // MARK: - Node
 
-final class ClangLinkerTool: NodeFunction {
+struct ClangLinkerTool: NodeFunction {
     static let kind: UInt = 18
 
     var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {}
 
-    required init() {}
+    init() {
+    }
 
-    required init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
@@ -70,13 +71,13 @@ final class ClangLinkerTool: NodeFunction {
         var libraryFiles: [FileNameAndContent] = []
 
         for (libraryName, nodeValue) in libraryValues {
-            libraryFiles.append(.init(filePath: libraryName, content: try nodeValue.kind.expectValue().resolve()))
+            libraryFiles.append(.init(filePath: libraryName, content: try nodeValue.expectValue().resolve()))
         }
 
         var objectFiles: [FileNameAndContent] = []
 
         for (objectFileName, nodeValue) in inputValues {
-            objectFiles.append(.init(filePath: objectFileName, content: try nodeValue.kind.expectValue().resolve()))
+            objectFiles.append(.init(filePath: objectFileName, content: try nodeValue.expectValue().resolve()))
         }
 
         guard !objectFiles.isEmpty else {

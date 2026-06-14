@@ -10,12 +10,12 @@ import DatabaseModels
 // MARK: - Protocols
 
 struct ProcessCacheEntry: Codable {
-    let outputValues: [String: NodeValueKind]
+    let outputValues: [String: NodeValue]
 }
 
 // A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
 // Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
-protocol NodeFunction: AnyObject, Codable, PolySerializable, WithDefaultInitializer {
+protocol NodeFunction: Codable, PolySerializable, WithDefaultInitializer, NodeInputReader, NodeOutputWriter {
 
     var descriptor: NodeFunctionDescriptor { get }
     var nodeContext: NodeContext! { get set }
@@ -34,8 +34,10 @@ extension NodeFunction {
     }
 
     func buildCacheKeyPartFromOneInput(inputPort: String) throws -> String {
-        let sortedKeyValues: [NodeValueAndWire] = try readAllValuesFromInputPort(inputPort).valuesSortedByKey()
-        return try sortedKeyValues.map { $0.kind }.toJSON()
+        try readAllValuesFromInputPort(inputPort)
+            .sorted { $0.key < $1.key }
+            .map { $0.value }
+            .toJSON()
     }
 
     func buildCacheKeyFromAllInputs() throws -> String? {
@@ -110,11 +112,11 @@ extension NodeFunction {
             return
         }
 
-        var outputValues: [String: NodeValueKind] = [:]
+        var outputValues: [String: NodeValue] = [:]
 
         for outputPort in descriptor.staticOutputPorts {
             let value = try readFromOutputPort(outputPort)
-            outputValues[outputPort] = value.kind // we do not save NodeIDs
+            outputValues[outputPort] = value // we do not save NodeIDs
         }
 
         let cacheEntry = ProcessCacheEntry(outputValues: outputValues)
@@ -157,7 +159,7 @@ extension NodeFunction {
                 return false
             }
 
-            if values.contains(where: { if case .noValue = $0.value.kind { return true } else { return false } }) {
+            if values.contains(where: { if case .noValue = $0.value { return true } else { return false } }) {
                 return false
             }
         }
@@ -235,6 +237,14 @@ struct OneNodeValue {
     let originNodeID: ObjectID
 }
 
+extension NodeFunction {
+    /// Reads a PolySerializable configuration object from the given input port.
+    /// Returns nil when no wire is connected or the wire has no value yet.
+    func readConfiguration<C: PolySerializable>(fromInputPort inputPort: String) throws -> C {
+        try PolyFactory.decodeAndCast(encodedJSON: readOneValueFromInputPort(inputPort).1.expectValue().resolveAsString())
+    }
+}
+
 // MARK: - NodeFunction navigation / port helpers
 
 extension NodeFunction {
@@ -293,11 +303,11 @@ extension NodeFunction {
         return true*/
     }
 
-    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValueAndWire] {
-        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: self.nodeID)
+    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
+        try nodeContext.processingCycle.readFromInputPort(inputPort, nodeID: nodeID)
     }
 
-    func readOneValueFromInputPort(_ inputPort: String) throws -> OneNodeValue {
+    func readOneValueFromInputPort(_ inputPort: String) throws -> (String, NodeValue) {
         let values = try readAllValuesFromInputPort(inputPort)
 
         switch values.count {
@@ -306,14 +316,8 @@ extension NodeFunction {
             throw NodeError.missingInputs
 
         case 1:
-            switch values.first!.value.kind {
-
-            case .noValue:
-                throw NodeError.missingInputs
-
-            case .value(let dataObjectHash):
-                return .init(dataObjectHash: dataObjectHash, originNodeID: values.first!.value.originNodeID)
-            }
+            let first = values.first!
+            return (first.key, first.value)
 
         default:
             throw NodeError.onlyOneWireShouldBeConnectedToInput
@@ -324,7 +328,7 @@ extension NodeFunction {
         try nodeContext.processingCycle.readFromOutputPort(outputPort, nodeID: self.nodeID)
     }
 
-    func writeToOutputPort(_ outputPort: String, value: NodeValueKind) throws {
+    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws {
         try nodeContext.processingCycle.writeToOutputPort(outputPort, value: value, nodeID: self.nodeID)
     }
 
@@ -364,8 +368,8 @@ extension NodeFunction {
                                                       createIfNotExist: createIfNotExist)
     }
 
-    func findNodesConnectedToNodeViaInputWire(toInputPortNamed inputPortName: String) throws -> [any NodeFunction] {
-        try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, toInputPortNamed: inputPortName)
+    func findNodesConnectedToNodeViaInputWire(toInputSymbold inputSymbol: String) throws -> [any NodeFunction] {
+        try nodeContext.processingCycle.findNodeConnectedToNodeViaInputWire(self, toInputSymbold: inputSymbol)
     }
 }
 

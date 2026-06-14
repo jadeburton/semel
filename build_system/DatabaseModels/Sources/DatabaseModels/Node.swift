@@ -69,14 +69,16 @@ extension DatabaseLayer {
 
     public func selectNodesInRoot(named name: String) throws -> [Node] {
         try dbQueue.read { db in
-            try Node.filter(Node.Columns.name == name).fetchAll(db)
+            try Node.filter(Node.Columns.name == name &&
+                            Node.Columns.parentNodeID == nil).fetchAll(db)
         }
     }
 
     public func selectNodesInRoot(kind: UInt, named name: String) throws -> [Node] {
         try dbQueue.read { db in
             try Node.filter(Node.Columns.kind == kind &&
-                            Node.Columns.name == name).fetchAll(db)
+                            Node.Columns.name == name &&
+                            Node.Columns.parentNodeID == nil).fetchAll(db)
         }
     }
 
@@ -88,13 +90,15 @@ extension DatabaseLayer {
 
     public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
         try dbQueue.read { db in
-            try Node.filter(Node.Columns.name == name && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try Node.filter(Node.Columns.name == name &&
+                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
     public func selectNodes(searchKey: String, parentNodeID: ObjectID) throws -> [Node] {
         try dbQueue.read { db in
-            try Node.filter(Node.Columns.searchKey == searchKey && Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try Node.filter(Node.Columns.searchKey == searchKey &&
+                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 

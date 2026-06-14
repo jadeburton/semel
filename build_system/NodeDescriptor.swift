@@ -6,28 +6,6 @@
 
 import Foundation
 
-struct ErrorInfo {
-    let nodeID: ObjectID
-    let outputPortNameID: ObjectID
-    let description: String
-}
-
-//struct InputPort: Codable, Hashable {
-//    let name: String
-
-    // Every static input port must have an expectation associated with it. This comes from the creator of the Node, however.
-    // Static input expectations can be thought of as initializer arguments for the Node.
-    // Static input expectations do not change after the NodeFunction's creation.
-    // The expectation describes the exact shape of the graph that feeds into the port.
-    //
-    // Dynamic input ports also have an expectation, though this is not assigned by the Node's creator.
-    // Which dynamic input ports exist, and their exepctations are a function of all inputs and can change during
-    // each processing step.
-    //
-    // When dynamic ports are updated after a processing step, new ports may be created or deleted, and expectations may change, in which case the
-    // upstream connected graph may be disconnected and a new graph connected to satisfy the expectation.
-//}
-
 // The world starts empty. Then the Input File System and Output File Systems are added. These are accessed by their string names when needed.
 // Then the ProjectFinder Node is added. This is created with one static input but will create more dynamic inputs later. It has no outputs.
 // Its responsibility is to observe the entire Input File System, searching for project files, package files, or anything that describes how to build
@@ -53,34 +31,9 @@ struct ErrorInfo {
 // Because the process of connecting an input wire to a Node calls the Flat-Graph-matching function to obtain the Node, the system reuses existing
 // fragments of the graph where it can, instead of creating new branches.
 
-/*
-extension InputPort {
-    func asPortNameID(database: DatabaseLayer, correspondingExpectationOutputPort: Bool = false) throws -> ObjectID {
-        guard let id = try database.selectPortName(name: name, kind: .input)?.id else {
-            throw NodeError.portNameNotFound(name: name, kind: correspondingExpectationOutputPort ? .inputExpectation : .input)
-        }
-        return id
-    }
-}
-
-extension OutputPort {
-    func asPortNameID(database: DatabaseLayer) throws -> ObjectID {
-        guard let id = try database.selectPortName(name: name, kind: .input)?.id else {
-            throw NodeError.portNameNotFound(name: name, kind: .output)
-        }
-        return id
-    }
-}
-
-struct OutputPort: Codable, Hashable {
-    let name: String
-}
-*/
 // Each NodeFunction provides a NodeFunctionDescriptor, which is derived from hard-coded
 // values and values passed to the NodeFunction's initializer such as e.g. a file path.
 struct NodeFunctionDescriptor {
-//    let kind: UInt
-
     // A static port is one that cannot change after the NodeFunction has been created.
     // This is important, because changing static ports would break downstream Nodes that
     // rely on an exact upstream/input graph shape.
@@ -98,14 +51,3 @@ struct NodeFunctionDescriptor {
     let staticInputPorts: [String]
     let staticOutputPorts: [String]
 }
-/*
-extension NodeFunctionDescriptor {
-    func outputPort(named name: String) -> OutputPort? {
-        return staticOutputPorts.first(where: { $0.name == name })
-    }
-
-    func inputPort(named name: String) -> InputPort? {
-        return staticInputPorts.first(where: { $0.name == name })
-    }
-}
-*/

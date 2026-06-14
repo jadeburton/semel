@@ -139,7 +139,7 @@ extension ProcessingCycle {
     }
 
     func wrapRawNodePoly(nodeRaw: Node) throws -> NodeFunction {
-        let node = try PolyFactory.decode(encodedJSON: nodeRaw.configuration!) as! NodeFunction
+        var node = try PolyFactory.decode(encodedJSON: nodeRaw.configuration!) as! NodeFunction
         node.nodeContext = .init(processingCycle: self, nodeID: nodeRaw.id!, parentNodeID: nodeRaw.parentNodeID, name: nodeRaw.name, searchKey: nodeRaw.searchKey)
 //        loadedNodes[nodeRaw.id!] = node
         return node
@@ -150,7 +150,7 @@ extension ProcessingCycle {
     }
 
     func makeNodePoly(kind: UInt, name: String?, parentNodeID: ObjectID?) throws -> NodeFunction {
-        let newObject = try PolyFactory.makeDefault(kind: kind)
+        var newObject = try PolyFactory.makeDefault(kind: kind)
         newObject.nodeContext = .init(processingCycle: self, nodeID: nil, parentNodeID: parentNodeID, name: name)
 
         // Even when a Node is created in memory it is also created on disk. We can always rollback.
@@ -170,6 +170,8 @@ extension ProcessingCycle {
     }
 
     func saveNode(_ node: NodeFunction, scheduled: Bool? = nil) throws {
+        var node = node
+
         try node.willSave()
 
         if let nodeID = node.nodeContext.nodeID {
@@ -237,26 +239,30 @@ extension ProcessingCycle {
 
 extension ProcessingCycle {
     func readFromOutputPort(_ outputPort: String, nodeID: ObjectID) throws -> NodeValue {
-        let outputPortNameID = outputPort.asPortNameID()
+        let outputSymbolID = outputPort.asSymbolID()
 
-        guard let port = try database.selectPort(nodeID: nodeID, portNameID: outputPortNameID) else {
-            return .init(originNodeID: nodeID, originOutputPortNameID: outputPortNameID, kind: .noValue(reason: .error(message: "No value ever existed")))
+        guard let port = try database.selectPort(nodeID: nodeID, nameSymbolID: outputSymbolID) else {
+            return .noValue(reason: .error(message: "No value ever existed"))
         }
-        return try port.asPort()
+        return try port.asNodeValue()
     }
 
-    func readFromInputPort(_ inputPort: String, nodeID: ObjectID) throws -> [String: NodeValueAndWire] {
-        let inputPortNameID = inputPort.asPortNameID()
+    func readFromInputPort(_ inputPort: String, nodeID: ObjectID) throws -> [String: NodeValue] {
+        let inputSymbolID = inputPort.asSymbolID()
 
-        let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toPortNameID: inputPortNameID)
+        let wiresOnThisInput = try database.selectWires(goingToNodeID: nodeID, toSymbolID: inputSymbolID)
 
-        return try wiresOnThisInput.compactMap { wire in
-            if let port = try database.selectPort(nodeID: wire.fromNodeID, portNameID: wire.fromPortNameID) {
-                return (wire.name.resolvePortName(), try port.asPort(wire: wire))
-            } else {
-                return nil
+        var result = [String: NodeValue]()
+
+        for wire in wiresOnThisInput {
+            let wireName = wire.name.resolveSymbol()
+            if let port = try database.selectPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
+                assert(result[wireName] == nil) // all wires must have unique names
+                try result[wireName] = port.asNodeValue()
             }
         }
+
+        return result
     }
 
     func writePendingToAllOutputsOfNode(nodeID: ObjectID) throws {
@@ -268,18 +274,18 @@ extension ProcessingCycle {
     }
 
     @discardableResult func writeToOutputPort(_ outputPort: String,
-                                              value: NodeValueKind,
+                                              value: NodeValue,
                                               nodeID: ObjectID) throws -> Bool {
 
         try writeToOutputPort(port: try value.mapPort(nodeID: nodeID,
-                                                      outputPortNameID: outputPort.asPortNameID()),
+                                                      outputSymbolID: outputPort.asSymbolID()),
                               nodeID: nodeID)
     }
 
-    @discardableResult func writeToOutputPort(port: build_system.Port,
+    @discardableResult func writeToOutputPort(port: build_system.OutputPort,
                                               nodeID: ObjectID) throws -> Bool {
 
-        if let existing = try database.selectPort(nodeID: nodeID, portNameID: port.portNameID) {
+        if let existing = try database.selectPort(nodeID: nodeID, nameSymbolID: port.nameSymbolID) {
             if existing == port {
                 print("No change to Port, ignoring")
                 return false
@@ -288,7 +294,7 @@ extension ProcessingCycle {
 
         try database.insertOrUpdatePort(port)
 
-        for wire in try database.selectWires(comingFromNodeID: nodeID, fromPortNameID: port.portNameID) {
+        for wire in try database.selectWires(comingFromNodeID: nodeID, fromSymbolID: port.nameSymbolID) {
             try writePendingToAllOutputsOfNode(nodeID: wire.toNodeID)
             if port.valueKind != .pending {
                 try scheduleNode(wire.toNodeID)
@@ -327,10 +333,8 @@ extension ProcessingCycle {
             return "\(name) [\(kindName)] #\(rawNode.id ?? -1) scheduled: \(rawNode.scheduled) searchKey: '\(rawNode.searchKey ?? "nil")'"
         }
 
-        func formatOutputValue(_ outputValue: DatabaseModels.Port) -> String {
+        func formatOutputValue(_ outputValue: DatabaseModels.OutputPort) -> String {
             switch outputValue.valueKind {
-            case .notApplicable:
-                return " (not applicable, is input)"
             case .value:
                 let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
@@ -372,13 +376,13 @@ extension ProcessingCycle {
             if !inputPorts.isEmpty {
                 contentLines.append("  ┌─ inputs ─────────────────────")
                 for inputPort in inputPorts {
-                    let connectedWires = incomingWires.filter { $0.toPortNameID == inputPort.asPortNameID() }
+                    let connectedWires = incomingWires.filter { $0.toSymbolID == inputPort.asSymbolID() }
                     if connectedWires.isEmpty {
                         contentLines.append("  │ ▸ \"\(inputPort)\"  (disconnected)")
                     } else {
                         for wire in connectedWires {
                             let sourceNodeName = nodeByID[wire.fromNodeID]?.name ?? "?"
-                            contentLines.append("  │ ▸ \"\(inputPort)\"  ◀── #\(wire.fromNodeID) \"\(sourceNodeName)\" \(try database.selectPortName(portNameID: wire.fromPortNameID)?.name)")
+                            contentLines.append("  │ ▸ \"\(inputPort)\"  ◀── #\(wire.fromNodeID) \"\(sourceNodeName)\" \(try database.selectSymbol(symbolID: wire.fromSymbolID)?.name)")
                         }
                     }
                 }
@@ -388,16 +392,16 @@ extension ProcessingCycle {
             if !outputPorts.isEmpty {
                 contentLines.append("  ┌─ outputs ────────────────────")
                 for outputPort in outputPorts {
-                    let outputPortNameID = outputPort.asPortNameID()
-                    let connectedWires = outgoingWires.filter { $0.fromPortNameID == outputPortNameID }
-                    let outputValue = outputValues.first(where: { $0.portNameID == outputPortNameID }) // ?
+                    let outputSymbolID = outputPort.asSymbolID()
+                    let connectedWires = outgoingWires.filter { $0.fromSymbolID == outputSymbolID }
+                    let outputValue = outputValues.first(where: { $0.nameSymbolID == outputSymbolID }) // ?
                     let valueDescription = outputValue.map { formatOutputValue($0) } ?? "<missing>"
                     if connectedWires.isEmpty {
                         contentLines.append("  │ ▹ \"\(outputPort)\"  [\(valueDescription)]  (no wires)")
                     } else {
                         for wire in connectedWires {
                             let destinationNodeName = nodeByID[wire.toNodeID]?.name ?? "?"
-                            contentLines.append("  │ ▹ \"\(outputPort)\"  [\(valueDescription)]  ──▶ #\(wire.toNodeID) \"\(destinationNodeName)\" :\(try database.selectPortName(portNameID: wire.toPortNameID))")
+                            contentLines.append("  │ ▹ \"\(outputPort)\"  [\(valueDescription)]  ──▶ #\(wire.toNodeID) \"\(destinationNodeName)\" :\(try database.selectSymbol(symbolID: wire.toSymbolID))")
                         }
                     }
                 }
@@ -436,7 +440,7 @@ extension ProcessingCycle {
             for wire in allWires {
                 let fromNodeName = nodeByID[wire.fromNodeID]?.name ?? "?"
                 let toNodeName   = nodeByID[wire.toNodeID]?.name ?? "?"
-                try print("  \"\(fromNodeName)\" \(database.selectPortName(portNameID: wire.fromPortNameID)?.name)  ───▶  \"\(toNodeName)\" :\(database.selectPortName(portNameID: wire.toPortNameID))")
+                try print("  \"\(fromNodeName)\" \(database.selectSymbol(symbolID: wire.fromSymbolID)?.name)  ───▶  \"\(toNodeName)\" :\(database.selectSymbol(symbolID: wire.toSymbolID))")
             }
             print("──────────────────────────────────────────────")
             print()
@@ -468,8 +472,8 @@ extension ProcessingCycle {
                 if let node = nodeByID[outputValue.nodeID] { // BUG: the node should always be found, but if not, we should handle it more gracefully than crashing
                     let nodeDecoded = try! PolyFactory.decode(encodedJSON: node.configuration!) as! NodeFunction
                     let matchingOutputPort = nodeDecoded.descriptor.outputs.first(where: { $0.index == outputValue.port })
-                    let outputPortName = matchingOutputPort?.name ?? ":\(outputValue.port)"
-                    print("  \(type(of: nodeDecoded)) \"\(node.name ?? "?")\" #\(outputValue.nodeID) \(outputPortName) (\(outputValue.port))  → \(formatOutputValue(outputValue))")
+                    let outputSymbol = matchingOutputPort?.name ?? ":\(outputValue.port)"
+                    print("  \(type(of: nodeDecoded)) \"\(node.name ?? "?")\" #\(outputValue.nodeID) \(outputSymbol) (\(outputValue.port))  → \(formatOutputValue(outputValue))")
                 } else {
                     print("  <deleted> nodeID = #\(outputValue.nodeID) port = \(outputValue.port)  → \(formatOutputValue(outputValue))")
                 }

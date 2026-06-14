@@ -9,24 +9,24 @@
 extension ProcessingCycle {
 
     func connectWire(fromNodeID: ObjectID,
-                     fromPortNameID: ObjectID,
+                     fromSymbolID: ObjectID,
                      toNodeID: ObjectID,
-                     toPortNameID: ObjectID,
+                     toSymbolID: ObjectID,
                      name: ObjectID) throws {
 
         guard try database.selectWires(comingFromNodeID: fromNodeID,
-                                       fromPortNameID: fromPortNameID,
+                                       fromSymbolID: fromSymbolID,
                                        goingToNodeID: toNodeID,
-                                       toPortNameID: toPortNameID).isEmpty else {
+                                       toSymbolID: toSymbolID).isEmpty else {
             return
         }
 
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
         _ = try database.insertWire(.init(fromNodeID: fromNodeID,
-                                          fromPortNameID: fromPortNameID,
+                                          fromSymbolID: fromSymbolID,
                                           toNodeID: toNodeID,
-                                          toPortNameID: toPortNameID,
+                                          toSymbolID: toSymbolID,
                                           name: name))
 
         wiresModified = true
@@ -42,38 +42,38 @@ extension ProcessingCycle {
                      toPort: String) throws {
 
         try connectWire(fromNodeID: fromNode.nodeID,
-                        fromPortNameID: PortName. fromPort.asPortNameID(database: database),
+                        fromSymbolID: Symbol. fromPort.asSymbolID(database: database),
                         toNodeID: toNode.nodeID,
-                        toPortNameID: toPort.asPortNameID(database: database))
+                        toSymbolID: toPort.asSymbolID(database: database))
     }
 
     func deleteWire(fromNodeID: ObjectID,
-                    fromPortNameID: ObjectID,
+                    fromSymbolID: ObjectID,
                     toNodeID: ObjectID,
-                    toPortNameID: ObjectID) throws -> Bool {
+                    toSymbolID: ObjectID) throws -> Bool {
 
         try deleteWire(fromNodeID: fromNode.nodeID,
-                       fromPortNameID: fromPort.asPortNameID(database: database),
+                       fromSymbolID: fromPort.asSymbolID(database: database),
                        toNodeID: toNode.nodeID,
-                       toPortNameID: toPort.asPortNameID(database: database))
+                       toSymbolID: toPort.asSymbolID(database: database))
     }
 */
-    func findNodeConnectedToNodeViaInputWire(_ toNode: NodeFunction, toInputPortNamed inputPortName: String) throws -> [any NodeFunction] {
+    func findNodeConnectedToNodeViaInputWire(_ toNode: NodeFunction, toInputSymbold inputSymbol: String) throws -> [any NodeFunction] {
 
         return try database.selectWires(goingToNodeID: toNode.nodeID,
-                                        toPortNameID: inputPortName.asPortNameID()).map { wire in
+                                        toSymbolID: inputSymbol.asSymbolID()).map { wire in
             try nodePoly(nodeID: wire.fromNodeID)!
         }
     }
 
     func deleteWire(fromNodeID: ObjectID,
-                    fromPortNameID: ObjectID,
+                    fromSymbolID: ObjectID,
                     toNodeID: ObjectID,
-                    toPortNameID: ObjectID) throws -> Bool {
+                    toSymbolID: ObjectID) throws -> Bool {
         let wires = try database.selectWires(comingFromNodeID: fromNodeID,
-                                             fromPortNameID: fromPortNameID,
+                                             fromSymbolID: fromSymbolID,
                                              goingToNodeID: toNodeID,
-                                             toPortNameID: toPortNameID)
+                                             toSymbolID: toSymbolID)
         guard let wire = wires.first else {
             return false
         }
@@ -84,9 +84,9 @@ extension ProcessingCycle {
     func deleteWire(_ wire: Wire) throws -> Bool {
 
         let result = try database.deleteWire(comingFromNodeID: wire.fromNodeID,
-                                             fromPortNameID: wire.fromPortNameID,
+                                             fromSymbolID: wire.fromSymbolID,
                                              goingToNodeID: wire.toNodeID,
-                                             toPortNameID: wire.toPortNameID)
+                                             toSymbolID: wire.toSymbolID)
 
         try scheduleNode(wire.toNodeID)
 
@@ -94,11 +94,11 @@ extension ProcessingCycle {
 
         // is the target Input marked as "holds alive"? if so, then removing this wire should delete the node unless there is another holds-alive Input
 
-        let wireToPortName = try database.selectPortName(portNameID: wire.toPortNameID)!.name
+        let wireToSymbol = try database.selectSymbol(symbolID: wire.toSymbolID)!.name
 
 /* TODO cascading delete: Nodes are held alive by their Output wires, unless they are Input File System Nodes or they have no Output wires.
- if toNode.descriptor.staticInputPorts.first(where: { $0.name == wireToPortName })?.cascadingDelete ?? false {
-            let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: wire.toNodeID, toPortNameID: wire.toPortNameID).count
+ if toNode.descriptor.staticInputPorts.first(where: { $0.name == wireToSymbol })?.cascadingDelete ?? false {
+            let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: wire.toNodeID, toSymbolID: wire.toSymbolID).count
 
             if numberOfInboundWiresToTarget == 0 {
                 print("cascading delete of Node: \(toNode.description())")

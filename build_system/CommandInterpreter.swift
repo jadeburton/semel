@@ -471,9 +471,7 @@ final class CommandInterpreter: PolySerializable {
         try container.encode(baseDirectory, forKey: .baseDirectory)
     }
 
-    var descriptor: NodeFunctionDescriptor {
-        .init(kind: Self.kind, staticInputPorts: [], staticOutputPorts: [])
-    }
+    var descriptor = NodeFunctionDescriptor(staticInputPorts: [], staticOutputPorts: [])
 
     func outputMessage(_ message: String) {
         print(message)
@@ -669,7 +667,7 @@ final class CommandInterpreter: PolySerializable {
                 return
             }
 
-            switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort).kind {
+            switch try staticFileNode.readFromOutputPort(StaticFileNode.outputPort) {
 
             case .value(let dataObjectHash):
                 let fileContent = Data(try dataObjectHash.resolve())

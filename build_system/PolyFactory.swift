@@ -25,7 +25,6 @@ enum PolyFactory {
         CommandInterpreter.kind: CommandInterpreter.self,
         ProjectFinder.kind:      ProjectFinder.self,
         FormulaExtractor.kind:   FormulaExtractor.self,
-        BuildGraph.kind:         BuildGraph.self,
         StaticFileNode.kind:     StaticFileNode.self,
         FolderNode.kind:         FolderNode.self,
         FolderEvent.kind:        FolderEvent.self,

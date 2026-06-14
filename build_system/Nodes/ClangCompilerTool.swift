@@ -21,18 +21,27 @@ struct ClangCompilerToolConfiguration: PolySerializable {
     }
 }
 
+protocol NodeInputReader {
+    func readAllValuesFromInputPort(_ inputPort: String) throws -> [String: NodeValue]
+}
+
+protocol NodeOutputWriter {
+    func writeToOutputPort(_ outputPort: String, value: NodeValue) throws
+}
+
 // MARK: - Node
 
-final class ClangCompilerTool: NodeFunction {
+struct ClangCompilerTool: NodeFunction {
     static let kind: UInt = 19
 
     var nodeContext: NodeContext!
 
     enum CodingKeys: CodingKey {}
 
-    required init() {}
+    init() {
+    }
 
-    required init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let _ = try decoder.container(keyedBy: CodingKeys.self)
     }
 
@@ -53,62 +62,61 @@ final class ClangCompilerTool: NodeFunction {
 
     // MARK: Processing
 
-    // The process method cannot access any information outside of what is passed to it. This is because doing so would bypass the caching system.
-    // Also, what is passed to it cannot contain any surrogate identifiers, as we want the cache to be universal and sharable between different
-    // machines and different runs.
-    func process(inputs: [String: [NodeValueKind]]) throws -> [String: NodeValueKind] {
-        [:]
-    }
-
-//    func process<I, O>(inputs: I) throws -> O {
-//    }
-
     struct ClangCompilerToolInputs {
-        private let rawInputs: [String: [NodeValueKind]]
+        let configuration: ClangCompilerToolConfiguration
+        let inputSourceFileContent: [UInt8]
+        let inputSourceFileName: String
 
-        var configuration: String { get throws { try rawInputs[ClangCompilerTool.configuration]!.first!.expectValue().resolveAsString() } }
-        var inputSourceFile: String {  get throws { try rawInputs[ClangCompilerTool.input]!.first!.expectValue().resolveAsString() } }
+        init(nodeInputReader: NodeInputReader) throws {
+            let configurationString = try nodeInputReader.readAllValuesFromInputPort(ClangCompilerTool.configuration).first!.value.expectValue().resolveAsString()
+            configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
 
-        init(rawInputs: [String: [NodeValueKind]]) {
-            self.rawInputs = rawInputs
+            let input = try nodeInputReader.readAllValuesFromInputPort(ClangCompilerTool.input).first!
+            inputSourceFileContent = try input.value.expectValue().resolve()
+            inputSourceFileName = input.key
         }
     }
 
     struct ClangCompilerToolOutputs {
-    }
+        let output: NodeValue
+        let errorLog: NodeValue
+        let infoLog: NodeValue
 
-    func process(inputs: ClangCompilerToolInputs) throws -> ClangCompilerToolOutputs {
-        .init()
+        func write(nodeOutputWriter: NodeOutputWriter) throws {
+            try nodeOutputWriter.writeToOutputPort(ClangCompilerTool.output, value: output)
+            try nodeOutputWriter.writeToOutputPort(ClangCompilerTool.errorLog, value: errorLog)
+            try nodeOutputWriter.writeToOutputPort(ClangCompilerTool.infoLog, value: infoLog)
+        }
     }
 
     func process() throws {
+        let inputs = try ClangCompilerToolInputs(nodeInputReader: self)
+        let outputs = try process(inputs: inputs)
+        try outputs.write(nodeOutputWriter: self)
+    }
 
-        let configuration: ClangCompilerToolConfiguration = try readConfiguration(fromInputPort: Self.configuration)
-        let inputValue = try readOneValueFromInputPort(Self.input)
+    func process(inputs: ClangCompilerToolInputs) throws -> ClangCompilerToolOutputs {
 
-        let bytes = try inputValue.dataObjectHash.resolve()
-        var output: [UInt8] = []
-
-        let inputFilename = "source.pc"
-        let outputFilename = inputFilename + ".o"
+        let outputFilename = inputs.inputSourceFileName + ".o"
 
         var arguments = [String]()
         arguments.append("-x");      arguments.append("c")
         arguments.append("-c")
-        arguments.append(inputFilename)
+        arguments.append(inputs.inputSourceFileName)
         arguments.append("-o");      arguments.append(outputFilename)
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
-        arguments.append(contentsOf: configuration.arguments)
+        arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: configuration.toolDescriptor)
+        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
+        var output: [UInt8] = []
         var errorOutput = ""
         var infoOutput = ""
 
         let exitCode = try tool.execute(
             arguments: arguments,
-            environment: configuration.environment,
-            inputFiles: [.init(filePath: inputFilename, content: bytes)],
+            environment: inputs.configuration.environment,
+            inputFiles: [.init(filePath: inputs.inputSourceFileName, content: inputs.inputSourceFileContent)],
             expectedOutputFileNames: [outputFilename],
             output: .init(logError: { error in
                               errorOutput += error
@@ -124,13 +132,8 @@ final class ClangCompilerTool: NodeFunction {
                               output.append(contentsOf: data)
                           }))
 
-        try writeToOutputPort(Self.errorLog, value: .value(errorOutput.intern()))
-        try writeToOutputPort(Self.infoLog, value: .value(infoOutput.intern()))
-
-        if exitCode == 0 {
-            try writeToOutputPort(Self.output, value: .value(output.intern()))
-        } else {
-            try writeToOutputPort(Self.output, value: .noValue(reason: .error(message: "Compiler exited with nonzero status")))
-        }
+        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Compiler exited with exitcode \(exitCode)")),
+                     errorLog: .value(errorOutput.intern()),
+                     infoLog: .value(infoOutput.intern()))
     }
 }
