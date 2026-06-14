@@ -50,8 +50,8 @@ struct ProjectFinder: NodeFunction {
 */
     func process(input: ProcessInput) throws -> ProcessOutput {
         return .init(outputValues: [:],
-                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder(path:'/').folderManifest"],
-                                             Self.projectBuildersInputPort: ["/formula.json": "ProjectBuilder(projectFile=StaticFile('/formula.json')).status"]])
+                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder().folderManifest"],
+                                             Self.projectBuildersInputPort: ["/formula.json": "ProjectBuilder(projectFile=StaticFile('formula.json').output).status"]])
 
         // wire name="mylib.dylib" Product(input=Linker(config: LinkerConfig(kind: library).output, input=[Compiler(input=Preprocessor(input=StaticFile('/hello.c').output).output).output, Compiler().output])).status
         #warning("TODO")

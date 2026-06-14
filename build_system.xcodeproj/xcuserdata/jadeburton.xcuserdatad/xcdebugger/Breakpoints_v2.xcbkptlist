@@ -135,32 +135,16 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            uuid = "2E3C198C-558B-4CC2-A935-4CBFD0E03228"
+            uuid = "D3B2D7F1-5458-4A58-87D0-D54BC103BCF1"
             shouldBeEnabled = "Yes"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
             filePath = "build_system/NodeFunction.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "160"
-            endingLineNumber = "160"
-            landmarkName = "buildGraphShapeForInputWire(wire:)"
-            landmarkType = "7">
-         </BreakpointContent>
-      </BreakpointProxy>
-      <BreakpointProxy
-         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
-         <BreakpointContent
-            uuid = "BCB25ED3-BFA9-4AB8-A7A7-C2D7273A67E8"
-            shouldBeEnabled = "Yes"
-            ignoreCount = "0"
-            continueAfterRunningActions = "No"
-            filePath = "build_system/NodeFunction.swift"
-            startingColumnNumber = "9223372036854775807"
-            endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "150"
-            endingLineNumber = "150"
-            landmarkName = "findExistingNodeMatchingExpectation(expectationString:)"
+            startingLineNumber = "130"
+            endingLineNumber = "130"
+            landmarkName = "applyExpectationConfiguration(inputPort:wireExpectations:thisNode:)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>

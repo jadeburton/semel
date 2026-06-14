@@ -110,6 +110,12 @@ extension NodeFunction {
             let connectExpected = { [thisNode] in
                 let wireNameSymbolID = wireName.asSymbolID()
                 if let (fromNodeID, fromSymbolID) = try findExistingNodeMatchingExpectation(expectationString: expectationString) {
+                    // fromSymbolID is nil when the expectation string has no .outputPort suffix,
+                    // which is invalid for wiring — expectation strings must include a port.
+                    guard let fromSymbolID else {
+                        print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
+                        return
+                    }
                     var newWire = Wire(fromNodeID: fromNodeID,
                                       fromSymbolID: fromSymbolID,
                                       toNodeID: thisNode.id!,
@@ -145,7 +151,7 @@ extension NodeFunction {
     /// graph for a node whose type and recursive input wiring matches it.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
     /// `nil` if no matching node currently exists in the graph.
-    private func findExistingNodeMatchingExpectation(expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID)? {
+    private func findExistingNodeMatchingExpectation(expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let expectedShape = try GraphShapeNode.parse(expectationString)
         return try expectedShape.findMatchingNode()
     }
@@ -187,11 +193,11 @@ extension NodeFunction {
         }
         let input = try buildProcessInput(thisNode: thisNode)
 
-        guard allInputsAreSatisfied(input: input) else {
-            print("Not all inputs are satisfied. \(thisNode.name!)")
-            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
-            return
-        }
+//        guard allInputsAreSatisfied(input: input) else {
+//            print("Not all inputs are satisfied. \(thisNode.name!)")
+//            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
+//            return
+//        }
 
         let cacheKey = try buildCacheKeyFromAllInputs(input: input)
 
