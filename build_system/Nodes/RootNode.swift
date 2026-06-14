@@ -14,105 +14,43 @@ struct RootNode: InputlessNodeFunction {
     enum CodingKeys: CodingKey {
     }
 
-    // MARK: Ports
-
-    // Receives partial or complete schemas from multiple Nodes, merges them and synchronizes the actual Wires and Nodes with the schemas.
-    // Note that all Nodes with a schemaOutput are automatically wired to RootNode.schemaInput when they are created.
-    /*
-     
-    ClangCompiler rootNode/buildGraph/compiler(src/blah/hello.c)
-     
-    Wire rootNode/buildGraph/compiler(src/blah/hello.c) --> rootNode/buildGraph/inputFileSystem/src/blah/hello.c
-     
-     */
-    
-//    static let schemaInputPort = InputPort(index: 0,
-//                                                              name: "schemaInput",
-//                                                              kind: .value(dataType: .utf8Text),
-//                                                              maximumConnections: nil,
-//                                                              minimumConnections: 0,
-//                                                              cascadingDelete: false)
-
-    /*
-
-    Contains a full merged schema of all Wires and Nodes. There are no NodeIDs or WireIDs.
-
-     */
-//    static let schemaOutputPort = OutputPort(index: 0,
-//                                                                name: "schemaOutput",
-//                                                                kind: .value(dataType: .utf8Text))
-//
-//    static let descriptor = NodeFunctionDescriptor(kind: kind, inputs: [schemaInputPort], outputs: [schemaOutputPort])
-
-//    func didSave() throws {
-        // TODO!
-//        try connectWire(fromNode: try inputFileSystem,
-//                                                    fromPort: FolderNode.folderManifestOutputPort,
-//                                                    toNode: try formulaFinder,
-//                                                    toPort: ProjectFinder.folderManifestInputPort)
- //   }
-
-
-/*
-    var inputFileSystem: Node {
-        get throws {
-            try child(named: "inputFileSystem", createIfNotExist: true)!
-        }
-    }
-
-    var outputFileSystem: Node {
-        get throws {
-            try child(named: "outputFileSystem", createIfNotExist: true)!
-        }
-    }
-
-    var projectFinder: Node {
-        get throws {
-            try child(named: "projectFinder", createIfNotExist: true)!
-        }
-    }
-*/
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [])
 
     // MARK: Debug
-/*
+
     func debugPrintTree() {
         do {
-            let projectFinder = try projectFinder
-            let topLevelOutputNodes = try allChildNodes(nodeID: projectFinder.nodeID)
-
             print("- build tree")
-            for outputNode in topLevelOutputNodes {
-                printDependencyTree(node: outputNode, indentLevel: 1)
-            }
+            printDependencyTree(node: try Node.projectFinder, indentLevel: 1)
         } catch {
             print("- build tree (error: \(error))")
         }
     }
 
-    private func printDependencyTree(node: NodeFunction, indentLevel: Int) {
+    private func printDependencyTree(node: Node, indentLevel: Int) {
         let indent = String(repeating: "  ", count: indentLevel)
-        let kindName = (try? PolyFactory.type(kind: type(of: node).kind))
+        let nodeFunction = try! node.nodeFunction()
+
+        let kindName = (try? PolyFactory.type(kind: type(of: nodeFunction).kind))
             .map { String(describing: $0) } ?? "Node"
-        let nodeName = node.nodeContext.name ?? "?"
+
+        let nodeName = node.name ?? "?"
         print("\(indent)- \(kindName)(\(nodeName))")
 
-        let database = database
-        guard let nodeID = node.nodeContext.nodeID else { return }
+        guard let nodeID = node.id else { return }
 
         do {
-            let incomingWires = try database.selectWires(goingToNodeID: nodeID)
+            let incomingWires = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID)
 
             var visitedDependencyNodeIDs = Set<ObjectID>()
-            var dependencyNodes = [NodeFunction]()
+            var dependencyNodes = [Node]()
 
             for wire in incomingWires {
                 guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
                 visitedDependencyNodeIDs.insert(wire.fromNodeID)
 
-                if let rawNode = try? database.selectNodeByID(wire.fromNodeID),
-                   let dependencyNode = try? nodeFunction(nodeRaw: rawNode) {
-                    dependencyNodes.append(dependencyNode)
+                if let rawNode = try? DatabaseLayer.shared.selectNodeByID(wire.fromNodeID) {
+                    dependencyNodes.append(rawNode)
                 }
             }
 
@@ -122,5 +60,5 @@ struct RootNode: InputlessNodeFunction {
         } catch {
             print("\(indent)  (error loading dependencies: \(error))")
         }
-    }*/
+    }
 }

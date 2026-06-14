@@ -117,6 +117,14 @@ extension Node {
         BuildEngine.shared.signalWorkAvailable()
     }
 
+    static var projectFinder: Node {
+        get throws {
+            try Node.rootNode.childNode(path: "projectFinder",
+                                        kind: ProjectFinder.kind,
+                                        createIfNotExist: true)!
+        }
+    }
+
     static var inputFileSystem: Node {
         get throws {
             try Node.rootNode.childNode(path: "inputFileSystem",
