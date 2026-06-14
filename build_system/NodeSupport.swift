@@ -114,7 +114,7 @@ extension Node {
             _ = try wire.deleteWire()
         }
 
-        let portDeleteCount = try DatabaseLayer.shared.deletePorts(nodeID: id!)
+        let portDeleteCount = try DatabaseLayer.shared.deleteOutputPorts(nodeID: id!)
 
         print("\(portDeleteCount) Port(s) deleted for node #\(id!)")
 
@@ -189,7 +189,7 @@ extension Node {
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
         let outputSymbolID = outputPort.asSymbolID()
 
-        guard let port = try DatabaseLayer.shared.selectPort(nodeID: id!, nameSymbolID: outputSymbolID) else {
+        guard let port = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: outputSymbolID) else {
             return .noValue(reason: .error(message: "No value ever existed"))
         }
         return try port.asNodeValue()
@@ -204,7 +204,7 @@ extension Node {
 
         for wire in wiresOnThisInput {
             let wireName = wire.name.resolveSymbol()
-            if let port = try DatabaseLayer.shared.selectPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
+            if let port = try DatabaseLayer.shared.selectOutputPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
                 assert(result[wireName] == nil) // all wires must have unique names
                 try result[wireName] = port.asNodeValue()
             }
@@ -225,14 +225,14 @@ extension Node {
 
     @discardableResult func writeToOutputPort(port: build_system.OutputPort) throws -> Bool {
 
-        if let existing = try DatabaseLayer.shared.selectPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
+        if let existing = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {
                 print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
                 return false
             }
         }
 
-        try DatabaseLayer.shared.insertOrUpdatePort(port)
+        try DatabaseLayer.shared.insertOrUpdateOutputPort(port)
 
         for wire in try DatabaseLayer.shared.selectWires(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
             var toNode = try wire.toNodeID.loadNode()

@@ -70,7 +70,7 @@ extension BuildEngine {
             let outputPorts      = descriptor?.outputPorts ?? []
             let incomingWires    = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires    = wiresByFromNodeID[nodeID] ?? []
-            let outputValues     = try database.selectAllPorts(nodeID: nodeID)
+            let outputValues     = try database.selectAllOutputPorts(nodeID: nodeID)
 
             var contentLines = [String]()
 

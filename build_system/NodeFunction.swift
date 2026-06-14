@@ -187,25 +187,30 @@ extension NodeFunction {
         }
     }
 
-    func processWithPreCheck(thisNode: Node) throws {
+    func processWithPreCheck(thisNode: Node) {
         guard hasInputPorts() else {
             // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
             return
         }
-        let input = try buildProcessInput(thisNode: thisNode)
-
-        guard allInputsAreSatisfied(input: input) else {
-            print("Not all inputs are satisfied. \(thisNode.name!)")
-            try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
-            return
-        }
-
-        let cacheKey = try buildCacheKeyFromAllInputs(input: input)
-
-        if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
-            let output = processWithCatch(thisNode: thisNode, input: input)
-            try writeToOutputs(output: output, thisNode: thisNode)
-            try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
+        do {
+            let input = try buildProcessInput(thisNode: thisNode)
+            
+            guard allInputsAreSatisfied(input: input) else {
+                print("Not all inputs are satisfied. \(thisNode.name!)")
+                try writeToOutputs(output: buildErrorOutput(withError: NodeError.missingInputs), thisNode: thisNode)
+                return
+            }
+            
+            let cacheKey = try buildCacheKeyFromAllInputs(input: input)
+            
+            if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
+                let output = processWithCatch(thisNode: thisNode, input: input)
+                try writeToOutputs(output: output, thisNode: thisNode)
+                try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
+            }
+        } catch {
+            print("Error during processing: \(error)")
+            try? writeToOutputs(output: buildErrorOutput(withError: error), thisNode: thisNode)
         }
     }
 

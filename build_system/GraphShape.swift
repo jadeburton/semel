@@ -3,97 +3,99 @@
 //  build_system
 //
 //  A lightweight, type-agnostic representation of the shape of a sub-graph
-//  feeding one input wire. Used to compare the desired graph structure expressed
-//  in a ProcessOutput.inputWireExpectation string against the actual wired graph,
-//  and to search the live graph for a node matching a given expectation.
+//  feeding one input wire.
 //
 //  String format
 //  ─────────────
-//  Wire endpoint (outputPort is non-nil) — used in expectation strings:
-//      TypeName(portName=ShapeValue, portName=ShapeValue).outputPort
-//      StaticFile('relative/path').outputPort
+//  A node is serialised as:
+//      TypeName(key='value', key='value', portName=ShapeValue, portName=[ShapeValue, ...]).outputPort
 //
-//  Node identity (outputPort is nil) — used for Node.searchKey:
-//      TypeName(portName=ShapeValue, portName=ShapeValue)
-//      StaticFile('relative/path')
+//  Parameters inside the parentheses are a flat, ordered list. Two kinds:
+//    • Arg   — quoted string value   e.g.  path='src/hello.c'
+//    • Input — node-reference value  e.g.  input=ClangCompilerTool(...).output
 //
-//  The output port is a property of the *wire*, not of the node's upstream
-//  topology.  Node.searchKey therefore stores the suffix-free form so that
-//  the same searchKey is valid regardless of which output port a downstream
-//  consumer wants to connect to.
+//  The trailing `.outputPort` suffix is optional:
+//    • Present  → wire-endpoint form, used in expectation strings
+//    • Absent   → node-identity form, stored in Node.searchKey
 //
-//  Examples (wire-endpoint form):
-//      StaticFile('src/hello.c').output
-//      ClangPreprocessorTool(configuration=StaticFile('config.json').output,
-//                            sourceFile=StaticFile('src/hello.c').output).output
-//      ClangCompilerTool(configuration=StaticFile('config.json').output,
+//  Examples:
+//      StaticFile(path='src/hello.c').output
+//      ClangPreprocessorTool(configuration=StaticFile(path='config.json').output,
+//                            sourceFile=StaticFile(path='src/hello.c').output).output
+//      ClangCompilerTool(configuration=StaticFile(path='config.json').output,
 //                        input=ClangPreprocessorTool(...).output).output
-//      ClangLinkerTool(input=[ClangCompilerTool(...).output,
-//                             ClangCompilerTool(...).output]).output
+//      ClangLinkerTool(input=[ClangCompilerTool(...).output, ClangCompilerTool(...).output]).output
 //
 
 import Foundation
 
 // MARK: - Model
 
-/// A single port entry inside a GraphShapeNode's input list.
+/// An initialization-time string argument, e.g. `path='src/hello.c'`.
+struct GraphShapeArg: Equatable {
+    let key:   String
+    let value: String
+}
+
+/// A wired input port.
 struct GraphShapeInputPort: Equatable {
     let portName: String
     let value:    GraphShapeInputValue
 }
 
-/// The value wired into one input port — either a single upstream node or a
-/// list of upstream nodes (for multi-wire dynamic ports).
+/// Single or multi-wire value for an input port.
 indirect enum GraphShapeInputValue: Equatable {
     case single(GraphShapeNode)
     case multiple([GraphShapeNode])
 }
 
 /// A node in the graph-shape tree.
-indirect enum GraphShapeNode: Equatable {
+/// Represents any NodeFunction — the distinction between "tool" and "static file"
+/// is expressed only through `typeName` and `args`.
+struct GraphShapeNode: Equatable {
+    /// Swift type name of the NodeFunction, e.g. `"StaticFile"`, `"ClangCompilerTool"`.
+    let typeName:   String
+    /// Init-time key-value arguments (e.g. `path='src/hello.c'`).  Ordered.
+    let args:       [GraphShapeArg]
+    /// Wired input ports.  Ordered.
+    let inputs:     [GraphShapeInputPort]
+    /// Output port consumed downstream, or `nil` for the node-identity / searchKey form.
+    let outputPort: String?
 
-    /// Any node with named input ports.
-    /// - typeName:   Swift type name of the NodeFunction (e.g. "ClangCompilerTool")
-    /// - inputs:     ordered list of connected input ports (only ports that have wires)
-    /// - outputPort: which output port of this node is consumed downstream,
-    ///               or `nil` when representing the node as a whole (e.g. searchKey)
-    case tool(typeName: String, inputs: [GraphShapeInputPort], outputPort: String?)
-
-    /// A static-file leaf node — no inputs, identified by its repo-relative path.
-    /// - path:       repo-relative path, e.g. "src/hello.c"
-    /// - outputPort: the output port consumed downstream, or `nil` for searchKey use
-    case staticFile(path: String, outputPort: String?)
+    init(typeName: String,
+         args:       [GraphShapeArg]       = [],
+         inputs:     [GraphShapeInputPort] = [],
+         outputPort: String?               = nil) {
+        self.typeName   = typeName
+        self.args       = args
+        self.inputs     = inputs
+        self.outputPort = outputPort
+    }
 }
 
 // MARK: - Serialisation
 
 extension GraphShapeNode {
 
-    /// Renders the node to a compact, human-readable string.
-    /// When `outputPort` is non-nil the `.portName` suffix is appended (wire form).
-    /// When `outputPort` is nil the suffix is omitted (searchKey / node-identity form).
+    /// Renders the node to a compact string.
     func asString() -> String {
-        switch self {
-        case .staticFile(let path, let outputPort):
-            let suffix = outputPort.map { ".\($0)" } ?? ""
-            return "StaticFile('\(path)')\(suffix)"
+        let suffix = outputPort.map { ".\($0)" } ?? ""
 
-        case .tool(let typeName, let inputs, let outputPort):
-            let suffix = outputPort.map { ".\($0)" } ?? ""
-            if inputs.isEmpty {
-                return "\(typeName)()\(suffix)"
-            }
-            let portStrings = inputs.map { port -> String in
-                switch port.value {
-                case .single(let child):
-                    return "\(port.portName)=\(child.asString())"
-                case .multiple(let children):
-                    let childStrings = children.map { $0.asString() }.joined(separator: ", ")
-                    return "\(port.portName)=[\(childStrings)]"
-                }
-            }
-            return "\(typeName)(\(portStrings.joined(separator: ", ")))\(suffix)"
+        var params: [String] = []
+        for arg in args {
+            params.append("\(arg.key)='\(arg.value)'")
         }
+        for input in inputs {
+            switch input.value {
+            case .single(let child):
+                params.append("\(input.portName)=\(child.asString())")
+            case .multiple(let children):
+                let inner = children.map { $0.asString() }.joined(separator: ", ")
+                params.append("\(input.portName)=[\(inner)]")
+            }
+        }
+
+        return "\(typeName)(\(params.joined(separator: ", ")))\(suffix)"
     }
 }
 
@@ -102,14 +104,12 @@ extension GraphShapeNode {
 enum GraphShapeParseError: Error {
     case unexpectedCharacter(Character?, context: String)
     case unexpectedEndOfInput(context: String)
-    case emptyTypeName
-    case emptyPortName
+    case emptyIdentifier
 }
 
 extension GraphShapeNode {
 
     /// Parses a string produced by `asString()` back into a `GraphShapeNode`.
-    /// The trailing `.outputPort` suffix is optional — its absence sets `outputPort` to `nil`.
     static func parse(_ string: String) throws -> GraphShapeNode {
         var parser = GraphShapeParser(string)
         return try parser.parseNode()
@@ -123,116 +123,106 @@ private struct GraphShapeParser {
     private let chars: [Character]
     private var position: Int = 0
 
-    init(_ string: String) {
-        self.chars = Array(string)
-    }
+    init(_ string: String) { self.chars = Array(string) }
 
-    // ── Public entry point ───────────────────────────────────────────────────
+    // ── Entry ────────────────────────────────────────────────────────────────
 
     mutating func parseNode() throws -> GraphShapeNode {
         skipWhitespace()
         let typeName = try parseIdentifier()
-
-        if typeName == "StaticFile" {
-            // StaticFile('path')[.outputPort]
-            try consume("(")
-            try consume("'")
-            let path = try parseUntil("'")
-            try consume("'")
-            try consume(")")
-            let outputPort = try parseOptionalOutputPort()
-            return .staticFile(path: path, outputPort: outputPort)
-        }
-
-        // General node: TypeName(portList)[.outputPort]
         try consume("(")
         skipWhitespace()
-        var inputs: [GraphShapeInputPort] = []
+
+        var args:   [GraphShapeArg]        = []
+        var inputs: [GraphShapeInputPort]  = []
+
         if peek() != ")" {
-            inputs = try parsePortList()
+            try parseParamList(into: &args, inputs: &inputs)
         }
         skipWhitespace()
         try consume(")")
+
         let outputPort = try parseOptionalOutputPort()
-        return .tool(typeName: typeName, inputs: inputs, outputPort: outputPort)
+        return GraphShapeNode(typeName: typeName, args: args, inputs: inputs, outputPort: outputPort)
     }
 
-    // ── Optional trailing .outputPort ────────────────────────────────────────
+    // ── Parameter list (mixed args and inputs) ────────────────────────────────
 
-    /// Reads `.identifier` if the next character is `.`, otherwise returns nil.
-    mutating func parseOptionalOutputPort() throws -> String? {
-        skipWhitespace()
-        guard peek() == "." else { return nil }
-        advance()   // consume '.'
-        return try parseIdentifier()
-    }
-
-    // ── Port list ─────────────────────────────────────────────────────────────
-
-    mutating func parsePortList() throws -> [GraphShapeInputPort] {
-        var ports: [GraphShapeInputPort] = []
-        ports.append(try parsePortEntry())
+    mutating func parseParamList(into args: inout [GraphShapeArg],
+                                 inputs: inout [GraphShapeInputPort]) throws {
+        try parseOneParam(into: &args, inputs: &inputs)
         while peek() == "," {
-            advance()
+            advance()                // consume ','
             skipWhitespace()
             guard peek() != ")" else { break }
-            ports.append(try parsePortEntry())
+            try parseOneParam(into: &args, inputs: &inputs)
         }
-        return ports
     }
 
-    mutating func parsePortEntry() throws -> GraphShapeInputPort {
+    mutating func parseOneParam(into args: inout [GraphShapeArg],
+                                inputs: inout [GraphShapeInputPort]) throws {
         skipWhitespace()
-        let portName = try parseIdentifier()
+        let key = try parseIdentifier()
         skipWhitespace()
         try consume("=")
         skipWhitespace()
-        let value = try parsePortValue()
-        return GraphShapeInputPort(portName: portName, value: value)
-    }
 
-    mutating func parsePortValue() throws -> GraphShapeInputValue {
-        skipWhitespace()
-        if peek() == "[" {
-            advance()
+        if peek() == "'" {
+            // Quoted string → arg
+            advance()   // consume opening '
+            let value = try parseUntil("'")
+            advance()   // consume closing '
+            args.append(GraphShapeArg(key: key, value: value))
+        } else if peek() == "[" {
+            // Array of nodes → multi-wire input
+            advance()   // consume '['
             skipWhitespace()
-            var nodes: [GraphShapeNode] = []
+            var children: [GraphShapeNode] = []
             if peek() != "]" {
-                nodes.append(try parseNode())
+                children.append(try parseNode())
                 skipWhitespace()
                 while peek() == "," {
                     advance()
                     skipWhitespace()
-                    nodes.append(try parseNode())
+                    children.append(try parseNode())
                     skipWhitespace()
                 }
             }
             try consume("]")
-            return .multiple(nodes)
+            inputs.append(GraphShapeInputPort(portName: key, value: .multiple(children)))
         } else {
-            return .single(try parseNode())
+            // Node reference → single-wire input
+            let child = try parseNode()
+            inputs.append(GraphShapeInputPort(portName: key, value: .single(child)))
         }
     }
 
-    // ── Primitives ─────────────────────────────────────────────────────────────
+    // ── Optional trailing .outputPort ────────────────────────────────────────
+
+    mutating func parseOptionalOutputPort() throws -> String? {
+        skipWhitespace()
+        guard peek() == "." else { return nil }
+        advance()
+        return try parseIdentifier()
+    }
+
+    // ── Primitives ────────────────────────────────────────────────────────────
 
     mutating func parseIdentifier() throws -> String {
         skipWhitespace()
         var result = ""
         while let c = peek(), c.isLetter || c.isNumber || c == "_" {
-            result.append(c)
-            advance()
+            result.append(c); advance()
         }
-        if result.isEmpty { throw GraphShapeParseError.emptyTypeName }
+        if result.isEmpty {
+            throw GraphShapeParseError.emptyIdentifier
+        }
         return result
     }
 
-    mutating func parseUntil(_ stopChar: Character) throws -> String {
+    mutating func parseUntil(_ stop: Character) throws -> String {
         var result = ""
-        while let c = peek(), c != stopChar {
-            result.append(c)
-            advance()
-        }
+        while let c = peek(), c != stop { result.append(c); advance() }
         return result
     }
 
@@ -246,27 +236,15 @@ private struct GraphShapeParser {
         advance()
     }
 
-    mutating func skipWhitespace() {
-        while let c = peek(), c.isWhitespace { advance() }
-    }
-
-    func peek() -> Character? {
-        guard position < chars.count else { return nil }
-        return chars[position]
-    }
-
-    mutating func advance() {
-        position += 1
-    }
+    mutating func skipWhitespace() { while let c = peek(), c.isWhitespace { advance() } }
+    func peek() -> Character? { position < chars.count ? chars[position] : nil }
+    mutating func advance() { position += 1 }
 }
 
 // MARK: - Build shape from the live graph
 
 extension GraphShapeNode {
 
-    /// Walks the graph backwards from `wire.fromNodeID / wire.fromSymbolID` and
-    /// builds a `GraphShapeNode` tree with the wire's output port set.
-    /// Use this form when building expectation strings.
     static func buildFromWire(_ wire: Wire) throws -> GraphShapeNode {
         var visited = Set<ObjectID>()
         return try buildFromOrigin(fromNodeID: wire.fromNodeID,
@@ -275,8 +253,7 @@ extension GraphShapeNode {
                                    visited: &visited)
     }
 
-    /// Builds a `GraphShapeNode` tree rooted at `nodeID` with **no** output-port
-    /// suffix — the node-identity / searchKey form.
+    /// Node-identity form (no output-port suffix) — used for `Node.searchKey`.
     static func buildFromNode(nodeID: ObjectID) throws -> GraphShapeNode {
         var visited = Set<ObjectID>()
         return try buildFromOrigin(fromNodeID: nodeID,
@@ -291,24 +268,20 @@ extension GraphShapeNode {
                                 visited: inout Set<ObjectID>) throws -> GraphShapeNode {
 
         let outputPortName: String? = (includeOutputPort && fromSymbolID != nil)
-            ? fromSymbolID!.resolveSymbol()
-            : nil
+            ? fromSymbolID!.resolveSymbol() : nil
 
         let sourceNode   = try fromNodeID.loadNode()
         let nodeFunction = try sourceNode.nodeFunction()
         let typeName     = String(describing: type(of: nodeFunction))
 
-        // StaticFile leaf — identified by type; no inputs to recurse into.
-        if nodeFunction is StaticFile {
-            let path = try sourceNode.buildFullPathName()
-            return .staticFile(path: path, outputPort: outputPortName)
-        }
-
         // Guard against cycles.
         guard !visited.contains(fromNodeID) else {
-            return .tool(typeName: typeName, inputs: [], outputPort: outputPortName)
+            return GraphShapeNode(typeName: typeName, outputPort: outputPortName)
         }
         visited.insert(fromNodeID)
+
+        // Extract init-time args from the node function.
+        let args = nodeFunction.graphShapeArgs(node: sourceNode)
 
         // Recurse into every connected input port.
         let allInputPorts = nodeFunction.descriptor.staticInputPorts
@@ -323,25 +296,41 @@ extension GraphShapeNode {
 
             if incomingWires.count == 1 {
                 var visitedCopy = visited
-                let childNode = try buildFromOrigin(fromNodeID: incomingWires[0].fromNodeID,
-                                                    fromSymbolID: incomingWires[0].fromSymbolID,
-                                                    includeOutputPort: true,
-                                                    visited: &visitedCopy)
-                inputs.append(GraphShapeInputPort(portName: portName, value: .single(childNode)))
+                let child = try buildFromOrigin(fromNodeID: incomingWires[0].fromNodeID,
+                                                fromSymbolID: incomingWires[0].fromSymbolID,
+                                                includeOutputPort: true,
+                                                visited: &visitedCopy)
+                inputs.append(GraphShapeInputPort(portName: portName, value: .single(child)))
             } else {
-                var childNodes: [GraphShapeNode] = []
-                for incomingWire in incomingWires {
+                var children: [GraphShapeNode] = []
+                for wire in incomingWires {
                     var branchVisited = visited
-                    childNodes.append(try buildFromOrigin(fromNodeID: incomingWire.fromNodeID,
-                                                          fromSymbolID: incomingWire.fromSymbolID,
-                                                          includeOutputPort: true,
-                                                          visited: &branchVisited))
+                    children.append(try buildFromOrigin(fromNodeID: wire.fromNodeID,
+                                                        fromSymbolID: wire.fromSymbolID,
+                                                        includeOutputPort: true,
+                                                        visited: &branchVisited))
                 }
-                inputs.append(GraphShapeInputPort(portName: portName, value: .multiple(childNodes)))
+                inputs.append(GraphShapeInputPort(portName: portName, value: .multiple(children)))
             }
         }
 
-        return .tool(typeName: typeName, inputs: inputs, outputPort: outputPortName)
+        return GraphShapeNode(typeName: typeName, args: args, inputs: inputs, outputPort: outputPortName)
+    }
+}
+
+// MARK: - graphShapeArgs — extracting init-time arguments from a live node
+
+extension InputlessNodeFunction {
+    /// Returns the init-time key-value arguments that distinguish this node from
+    /// others of the same type.  Override in concrete types that carry init-time
+    /// state (e.g. `StaticFile` with its `path`).
+    func graphShapeArgs(node: Node) -> [GraphShapeArg] { [] }
+}
+
+extension StaticFile {
+    func graphShapeArgs(node: Node) -> [GraphShapeArg] {
+        let path = (try? node.buildFullPathName()) ?? ""
+        return [GraphShapeArg(key: "path", value: path)]
     }
 }
 
@@ -349,89 +338,61 @@ extension GraphShapeNode {
 
 extension GraphShapeNode {
 
-    /// Searches the live graph for a node whose type and recursive input wiring
-    /// matches this shape.  Returns `(fromNodeID, fromSymbolID)` ready to pass to
-    /// `connectWire`, or `nil` if no matching node was found.
-    ///
-    /// `fromSymbolID` is derived from `outputPort` when non-nil; when `outputPort`
-    /// is nil (searchKey form) `fromSymbolID` is also nil.
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        switch self {
-
-        case .staticFile(let path, let outputPort):
-            let allNodes = try DatabaseLayer.shared.selectAllNodes()
-            for node in allNodes {
-                guard node.kind == StaticFile.kind, let nodeID = node.id else { continue }
-                let nodePath = (try? node.buildFullPathName()) ?? ""
-                if nodePath == path {
-                    return (fromNodeID: nodeID,
-                            fromSymbolID: outputPort.map { $0.asSymbolID() })
-                }
-            }
-            return nil
-
-        case .tool(let typeName, _, let outputPort):
-            let allNodes = try DatabaseLayer.shared.selectAllNodes()
-            let candidates = allNodes.filter { node in
-                guard let fn = try? node.nodeFunction() else { return false }
-                return String(describing: type(of: fn)) == typeName
-            }
-            for candidate in candidates {
-                guard let nodeID = candidate.id else { continue }
-                if try matchesNode(nodeID: nodeID) {
-                    return (fromNodeID: nodeID,
-                            fromSymbolID: outputPort.map { $0.asSymbolID() })
-                }
-            }
-            return nil
+        let allNodes = try DatabaseLayer.shared.selectAllNodes()
+        let candidates = allNodes.filter { node in
+            guard let fn = try? node.nodeFunction() else { return false }
+            return String(describing: type(of: fn)) == typeName
         }
+        for candidate in candidates {
+            guard let nodeID = candidate.id else { continue }
+            if try matchesNode(nodeID: nodeID) {
+                return (fromNodeID: nodeID,
+                        fromSymbolID: outputPort?.asSymbolID())
+            }
+        }
+        return nil
     }
 
-    /// Returns `true` when the live node at `nodeID` matches this shape recursively.
-    /// Comparison ignores `outputPort` — port is a wire property, not node identity.
     private func matchesNode(nodeID: ObjectID) throws -> Bool {
-        switch self {
+        let node         = try nodeID.loadNode()
+        let nodeFunction = try node.nodeFunction()
+        guard String(describing: type(of: nodeFunction)) == typeName else { return false }
 
-        case .staticFile(let path, _):
-            let node = try nodeID.loadNode()
-            guard node.kind == StaticFile.kind else { return false }
-            return ((try? node.buildFullPathName()) ?? "") == path
+        // Match init-time args.
+        let actualArgs = nodeFunction.graphShapeArgs(node: node)
+        guard actualArgs == args else { return false }
 
-        case .tool(let typeName, let expectedInputs, _):
-            let node         = try nodeID.loadNode()
-            let nodeFunction = try node.nodeFunction()
-            guard String(describing: type(of: nodeFunction)) == typeName else { return false }
+        // Match wired inputs recursively.
+        for expectedPort in inputs {
+            let portSymbolID = expectedPort.portName.asSymbolID()
+            let actualWires  = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID,
+                                                                    toSymbolID: portSymbolID)
+            switch expectedPort.value {
+            case .single(let expectedChild):
+                guard actualWires.count == 1 else { return false }
+                var visited: Set<ObjectID> = []
+                let actualChild = try GraphShapeNode.buildFromOrigin(
+                    fromNodeID: actualWires[0].fromNodeID,
+                    fromSymbolID: actualWires[0].fromSymbolID,
+                    includeOutputPort: true,
+                    visited: &visited)
+                guard actualChild == expectedChild else { return false }
 
-            for expectedPort in expectedInputs {
-                let portSymbolID = expectedPort.portName.asSymbolID()
-                let actualWires  = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID,
-                                                                        toSymbolID: portSymbolID)
-                switch expectedPort.value {
-                case .single(let expectedChild):
-                    guard actualWires.count == 1 else { return false }
+            case .multiple(let expectedChildren):
+                guard actualWires.count == expectedChildren.count else { return false }
+                for (wire, expectedChild) in zip(actualWires, expectedChildren) {
                     var visited: Set<ObjectID> = []
                     let actualChild = try GraphShapeNode.buildFromOrigin(
-                        fromNodeID: actualWires[0].fromNodeID,
-                        fromSymbolID: actualWires[0].fromSymbolID,
+                        fromNodeID: wire.fromNodeID,
+                        fromSymbolID: wire.fromSymbolID,
                         includeOutputPort: true,
                         visited: &visited)
                     guard actualChild == expectedChild else { return false }
-
-                case .multiple(let expectedChildren):
-                    guard actualWires.count == expectedChildren.count else { return false }
-                    for (wire, expectedChild) in zip(actualWires, expectedChildren) {
-                        var visited: Set<ObjectID> = []
-                        let actualChild = try GraphShapeNode.buildFromOrigin(
-                            fromNodeID: wire.fromNodeID,
-                            fromSymbolID: wire.fromSymbolID,
-                            includeOutputPort: true,
-                            visited: &visited)
-                        guard actualChild == expectedChild else { return false }
-                    }
                 }
             }
-            return true
         }
+        return true
     }
 }
 
@@ -439,99 +400,71 @@ extension GraphShapeNode {
 
 extension GraphShapeNode {
 
-    /// Searches the live graph for a node matching this shape.
-    /// If no match is found, creates the required nodes and wires bottom-up
-    /// (leaves first, then their parents) so the graph is fully wired on return.
-    ///
-    /// Returns `(fromNodeID, fromSymbolID)` ready for `connectWire`, or `nil`
-    /// if creation failed (e.g. unknown type name).
     func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        if let existing = try findMatchingNode() {
-            return existing
-        }
-        // Not found — create it recursively.
+        if let existing = try findMatchingNode() { return existing }
         guard let newNodeID = try createNode() else { return nil }
-        switch self {
-        case .staticFile(_, let outputPort):
-            return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
-        case .tool(_, _, let outputPort):
-            return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
-        }
+        return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
     }
 
-    /// Recursively creates the node described by this shape, together with all
-    /// upstream nodes and wires required to satisfy its inputs.
-    /// Returns the new node's `ObjectID`, or `nil` if the type cannot be resolved.
     private func createNode() throws -> ObjectID? {
-        switch self {
+        // Resolve kind from type name.
+        let kind: UInt
+        do {
+            kind = try PolyFactory.kind(forTypeName: typeName)
+        } catch {
+            print("GraphShapeNode.createNode: unknown type '\(typeName)' — \(error)")
+            return nil
+        }
 
-        // ── Static file leaf ────────────────────────────────────────────────
-        case .staticFile(let path, _):
-            // Find or create the StaticFile under inputFileSystem at `path`.
+        if kind == StaticFile.kind {
+            // Static file: find or create under inputFileSystem using the path arg.
+            guard let pathArg = args.first(where: { $0.key == "path" }) else {
+                print("GraphShapeNode.createNode: StaticFile missing 'path' arg")
+                return nil
+            }
             let inputFS = try Node.inputFileSystem
-            guard let node = try inputFS.childNode(path: path,
+            guard let node = try inputFS.childNode(path: pathArg.value,
                                                     kind: StaticFile.kind,
-                                                    createIfNotExist: true) else {
-                return nil
-            }
+                                                    createIfNotExist: true) else { return nil }
             return node.id
+        }
 
-        // ── Tool node ───────────────────────────────────────────────────────
-        case .tool(let typeName, let inputs, _):
-            // Resolve the kind from the type name.
-            let kind: UInt
-            do {
-                kind = try PolyFactory.kind(forTypeName: typeName)
-            } catch {
-                print("GraphShapeNode.createNode: unknown type '\(typeName)' — \(error)")
-                return nil
-            }
+        // Tool node: create as child of rootNode and wire up inputs recursively.
+        let rootNode  = try Node.rootNode
+        var newNode   = try Node.createNode(parentNodeID: rootNode.id!, kind: kind, name: typeName)
+        let newNodeID = newNode.id!
 
-            // Create the new tool node as a child of rootNode.
-            // The name is the type name; duplicates are accepted (the searchKey
-            // distinguishes nodes of the same type with different input topologies).
-            let rootNode  = try Node.rootNode
-            var newNode   = try Node.createNode(parentNodeID: rootNode.id!, kind: kind, name: typeName)
-            let newNodeID = newNode.id!
+        for inputPortSpec in inputs {
+            let toSymbolID = inputPortSpec.portName.asSymbolID()
 
-            // Recursively find/create each upstream input and wire it.
-            for inputPortSpec in inputs {
-                let toSymbolID     = inputPortSpec.portName.asSymbolID()
-                let wireNameSymbol = inputPortSpec.portName.asSymbolID() // name = port name for now
+            switch inputPortSpec.value {
+            case .single(let childShape):
+                if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
+                    guard let fromSymbolID else { continue }
+                    try Wire.connectWire(fromNodeID: fromNodeID,
+                                         fromSymbolID: fromSymbolID,
+                                         toNodeID: newNodeID,
+                                         toSymbolID: toSymbolID,
+                                         name: inputPortSpec.portName.asSymbolID())
+                }
 
-                switch inputPortSpec.value {
-                case .single(let childShape):
+            case .multiple(let childShapes):
+                for (index, childShape) in childShapes.enumerated() {
+                    let wireName = "\(inputPortSpec.portName)[\(index)]".asSymbolID()
                     if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
                         guard let fromSymbolID else { continue }
                         try Wire.connectWire(fromNodeID: fromNodeID,
                                              fromSymbolID: fromSymbolID,
                                              toNodeID: newNodeID,
                                              toSymbolID: toSymbolID,
-                                             name: wireNameSymbol)
-                    }
-
-                case .multiple(let childShapes):
-                    for (index, childShape) in childShapes.enumerated() {
-                        // Give each wire within a multi-wire port a unique name
-                        // by appending its index.
-                        let namedSymbol = "\(inputPortSpec.portName)[\(index)]".asSymbolID()
-                        if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
-                            guard let fromSymbolID else { continue }
-                            try Wire.connectWire(fromNodeID: fromNodeID,
-                                                 fromSymbolID: fromSymbolID,
-                                                 toNodeID: newNodeID,
-                                                 toSymbolID: toSymbolID,
-                                                 name: namedSymbol)
-                        }
+                                             name: wireName)
                     }
                 }
             }
-
-            // Schedule the new node so it is processed on the next engine cycle.
-            try newNode.setScheduledAndSave(true)
-
-            return newNodeID
         }
+
+        try newNode.setScheduledAndSave(true)
+        return newNodeID
     }
 }
 
@@ -539,24 +472,12 @@ extension GraphShapeNode {
 
 extension DatabaseLayer {
 
-    /// Recomputes `Node.searchKey` for every node in the database.
-    ///
-    /// The searchKey is the suffix-free graph-shape string for the node
-    /// (no `.outputPort`), e.g.:
-    ///   - `StaticFile('src/hello.c')`
-    ///   - `ClangCompilerTool(configuration=StaticFile('config.json').output, input=...)`
-    ///
-    /// Skips writing when the value has not changed, so repeated calls are cheap.
-    ///
-    /// - Returns: the number of nodes whose `searchKey` was updated.
     @discardableResult
     public func recomputeAllSearchKeys() throws -> Int {
         let allNodes = try selectAllNodes()
         var updatedCount = 0
-
         for var node in allNodes {
             guard let nodeID = node.id else { continue }
-
             let newSearchKey: String?
             do {
                 newSearchKey = try GraphShapeNode.buildFromNode(nodeID: nodeID).asString()
@@ -564,13 +485,11 @@ extension DatabaseLayer {
                 print("recomputeAllSearchKeys: skipping node #\(nodeID) (\(node.name ?? "?")) — \(error)")
                 newSearchKey = nil
             }
-
             guard node.searchKey != newSearchKey else { continue }
             node.searchKey = newSearchKey
             try updateNode(node)
             updatedCount += 1
         }
-
         return updatedCount
     }
 }

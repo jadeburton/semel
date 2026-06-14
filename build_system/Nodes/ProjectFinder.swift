@@ -31,7 +31,7 @@ struct ProjectFinder: NodeFunction {
         
         for entry in folderManifest.entries {
             if entry.name.hasSuffix(".json") {
-                result[entry.name] = "ProjectBuilder(projectFile=StaticFile('\(entry.name)').output).status"
+                result[entry.name] = "ProjectBuilder(projectFile=StaticFile(path='\(entry.name)').output).status"
             }
         }
 

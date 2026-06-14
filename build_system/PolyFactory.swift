@@ -34,7 +34,8 @@ enum PolyFactory {
         ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
         ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
         FolderManifest.kind:                     FolderManifest.self,
-        Product.kind:                            Product.self
+        Product.kind:                            Product.self,
+        Configuration.kind:                      Configuration.self
     ]
 
     /// Look up the concrete type for a given kind.

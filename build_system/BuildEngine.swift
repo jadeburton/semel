@@ -29,7 +29,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database133.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database136.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
         // Capture the fully-initialised self before starting the task.
@@ -119,7 +119,7 @@ final class BuildEngine {
 
     private func validatePorts(node: Node) {
         assert(
-            try! DatabaseLayer.shared.selectAllPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty,
+            try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty,
             "Not all Ports were processed for node \(node.description())"
         )
     }

@@ -43,26 +43,26 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
 
 extension DatabaseLayer {
 
-    public func selectAllPorts(nodeID: ObjectID) throws -> [OutputPort] {
+    public func selectAllOutputPorts(nodeID: ObjectID) throws -> [OutputPort] {
         try dbQueue.read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).fetchAll(db)
         }
     }
 
-    public func selectPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
+    public func selectOutputPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
         try dbQueue.read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
                                   OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
         }
     }
 
-    public func insertOrUpdatePort(_ port: OutputPort) throws {
+    public func insertOrUpdateOutputPort(_ port: OutputPort) throws {
         try dbQueue.write { db in
             try port.save(db)
         }
     }
 
-    public func deletePort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> Bool {
+    public func deleteOutputPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> Bool {
         try dbQueue.write { db in
             try OutputPort
                 .filter(OutputPort.Columns.nodeID == nodeID &&
@@ -71,7 +71,7 @@ extension DatabaseLayer {
         }
     }
 
-    public func deletePorts(nodeID: ObjectID) throws -> Int {
+    public func deleteOutputPorts(nodeID: ObjectID) throws -> Int {
         try dbQueue.write { db in
             try OutputPort
                 .filter(OutputPort.Columns.nodeID == nodeID)
@@ -82,6 +82,6 @@ extension DatabaseLayer {
 
 public extension OutputPort {
     func description() -> String {
-        "Port: nodeID=\(nodeID), name=\(nameSymbolID.resolveSymbol()), valueKind=\(valueKind), dataObjectHash=\(dataObjectHash ?? "")"
+        "OutputPort: nodeID=\(nodeID), name=\(nameSymbolID.resolveSymbol()), valueKind=\(valueKind), dataObjectHash=\(dataObjectHash ?? "")"
     }
 }

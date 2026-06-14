@@ -5,14 +5,17 @@
 //  Created by Jade Burton on 28.02.26.
 //
 
+enum WireError: Error {
+    case attemptToCreateWireWithDuplicateName(_ name: String)
+}
 // Wire management
 extension Wire {
 
     static func connectWire(fromNodeID: ObjectID,
-                     fromSymbolID: ObjectID,
-                     toNodeID: ObjectID,
-                     toSymbolID: ObjectID,
-                     name: ObjectID) throws {
+                            fromSymbolID: ObjectID,
+                            toNodeID: ObjectID,
+                            toSymbolID: ObjectID,
+                            name: ObjectID) throws {
 
         guard try DatabaseLayer.shared.selectWires(comingFromNodeID: fromNodeID,
                                                    fromSymbolID: fromSymbolID,
@@ -20,7 +23,11 @@ extension Wire {
                                                    toSymbolID: toSymbolID).isEmpty else {
             return
         }
-        
+
+        if try wireExistsWithSameName(toNodeID: toNodeID, toSymbolID: toSymbolID, name: name) {
+            throw WireError.attemptToCreateWireWithDuplicateName(name.resolveSymbol())
+        }
+
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
         _ = try DatabaseLayer.shared.insertWire(.init(fromNodeID: fromNodeID,
@@ -34,29 +41,11 @@ extension Wire {
 
         try toNode.setScheduledAndSave(true)
     }
-/*
-    func connectWire(fromNode: NodeFunction,
-                     fromPort: String,
-                     toNode: NodeFunction,
-                     toPort: String) throws {
 
-        try connectWire(fromNodeID: fromNode.nodeID,
-                        fromSymbolID: Symbol. fromPort.asSymbolID(database: database),
-                        toNodeID: toNode.nodeID,
-                        toSymbolID: toPort.asSymbolID(database: database))
+    static func wireExistsWithSameName(toNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) throws -> Bool {
+        try DatabaseLayer.shared.selectWires(goingToNodeID: toNodeID, toSymbolID: toSymbolID)
+            .contains { $0.name == name }
     }
-
-    func deleteWire(fromNodeID: ObjectID,
-                    fromSymbolID: ObjectID,
-                    toNodeID: ObjectID,
-                    toSymbolID: ObjectID) throws -> Bool {
-
-        try deleteWire(fromNodeID: fromNode.nodeID,
-                       fromSymbolID: fromPort.asSymbolID(database: database),
-                       toNodeID: toNode.nodeID,
-                       toSymbolID: toPort.asSymbolID(database: database))
-    }
-*/
 
     func deleteWire(fromNodeID: ObjectID,
                     fromSymbolID: ObjectID,
