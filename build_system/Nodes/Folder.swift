@@ -98,11 +98,6 @@ struct Folder: InputlessNodeFunction {
     }
 }
 
-struct FileMetadata: PolySerializable {
-    static let kind: UInt = 14
-    let name: String
-}
-
 final class FolderEvent: MessageType {
     enum FolderEventKind: Codable {
         case childAdded(nodeID: ObjectID, name: String)

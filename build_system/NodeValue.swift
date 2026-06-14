@@ -119,7 +119,7 @@ extension NodeValue {
 // Simple values are better for values that flip-flop back and forth. If a mutation-chain value goes from
 // A, B, A, B etc, this creates mutations each time, even if they are de-duplicated.
 
-
+/*
 struct Schema: PolySerializable {
     static let kind: UInt = 7
 
@@ -139,7 +139,7 @@ struct Schema: PolySerializable {
     let wires: [WireSchemaEntry]
     let nodes: [NodeSchemaEntry]
 }
-
+*/
 // Each Node can register a Schema. This defines what other Nodes and Wires should exist and be interconnected.
 // When a Schema is unregistered, if any Nodes/Wires are no longer referenced by any Schemas, they are deleted automatically.
 
@@ -160,11 +160,6 @@ struct Schema: PolySerializable {
 // WireID-SchemaID
 // NodeID-SchemaID
 
-final class SchemaIntegrator {
-    func registerSchema(_ schema: Schema) throws {
-        
-    }
-}
 
 //
 //struct NodeSchema: Codable {

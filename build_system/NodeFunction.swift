@@ -88,29 +88,55 @@ extension NodeFunction {
         //    - if identical, do nothing
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
-        let wiresOnThisInput = try DatabaseLayer.shared.selectWires(goingToNodeID: thisNode.id!, toSymbolID: inputPort.asSymbolID())
+        let toSymbolID   = inputPort.asSymbolID()
+        let existingWires = try DatabaseLayer.shared.selectWires(goingToNodeID: thisNode.id!, toSymbolID: toSymbolID)
 
-        var result = [String: NodeValue]()
+        // Build a lookup from wire name → existing Wire for steps 2 & 3.
+        let existingWiresByName: [String: Wire] = Dictionary(
+            uniqueKeysWithValues: existingWires.map { ($0.name.resolveSymbol(), $0) }
+        )
 
-        for wire in wiresOnThisInput {
-            let wireName = wire.name.resolveSymbol()
-
+        // Step 1 — delete wires whose name is absent from the new configuration.
+        for (wireName, existingWire) in existingWiresByName {
             if wireExpectations[wireName] == nil {
-                // this wire is not in the new configuration; delete it
-                _ = try wire.deleteWire()
+                _ = try existingWire.deleteWire()
             }
         }
 
-        // TODO: finish this method
+        // Steps 2 & 3 — iterate over the desired configuration.
+        for (wireName, expectationString) in wireExpectations {
+            if let existingWire = existingWiresByName[wireName] {
+                // Step 3 — wire already exists; check whether the expectation has changed.
+                // TODO: parse expectationString and compare against the current graph shape.
+                // For now we leave the existing wire untouched.
+                _ = existingWire // suppress unused-variable warning until TODO is resolved
+            } else {
+                // Step 2 — wire does not exist yet; we need to find the source node that satisfies
+                // the expectation and connect it.
+                // TODO: parse expectationString to locate the correct source node and output port,
+                // then call wire.connectWire(fromNodeID:fromSymbolID:toNodeID:toSymbolID:name:).
+                // For now we log that a connection is required but skip creation.
+                print("applyExpectationConfiguration: wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1) needs to be connected (expectation: '\(expectationString)') — deferred until expectation parsing is implemented")
+            }
+        }
+    }
 
-        // NOTE: the representation of the expectation configuration is not yet defined and is still to be done. For now let's
-        // just call a dummy method that returns a fixed configuration that matches the current graph shape, so that we can proceed with testing the rest of the processing cycle.
-        
-        // TODO: add a second dummy method that receives an expectation configuration and locates a Node somewhere on the graph
-        // whose output matches it. We then wire from that Node to our input.
-        
-        return result
+    private func findExistingNodeMatchingExpectation(expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID)? {
+        nil
+    }
 
+    private func buildGraphShapeForInputWire(wire: Wire) throws -> String {
+        // TODO
+        // Follow the given wire to its origin Node. At the Node, add a representation in the output graph "shape" string, e.g. "Compiler(input=…)" or "Linker(input=…)".
+        // It may be better to have an intermediate step with a mini object representation (in a separate file), then to call .asString() or whatever on the root item to get
+        // the final String output.
+        // If is important that the mini nodes in this representation are not hard-coded and come from the real-life Nodes, e.g. "ClangCompilerTool" is a valid node type name.
+        // This mechanism shouldn't need to know (be agnostic of) *what* a build graph is used for or the role of each component.
+        
+        // Here is a rough example of what such a graph shape looks like. It is by design that one Node may appear identically in multiple places (i.e. in the leaves). This
+        // was done to keep it simple and not require, for example, pre-declaring constants at the top and then referencing the constants in the graph shape.
+        // The duplication is not an issue because everything is compared by-value.
+        "Product(input=Linker(config: LinkerConfig(kind: library).output, input=[Compiler(input=Preprocessor(input=StaticFile('/hello.c').output).output).output, Compiler().output])).status"
     }
 
     private func buildErrorOutput(withError error: Error) -> ProcessOutput {

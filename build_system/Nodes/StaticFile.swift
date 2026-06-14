@@ -27,3 +27,33 @@ struct StaticFile: InputlessNodeFunction {
         try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "File deleted")))
     }
 }
+
+struct Product: NodeFunction {
+    static let kind: UInt = 8
+
+    enum CodingKeys: CodingKey {
+    }
+
+    static let inputPort = "input"
+    static let statusOutputPort = "status"
+
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort], dynamicInputPorts: [])
+
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        let inputValue = input.inputValues[Self.inputPort]!.first!
+
+        let outputValue: NodeValue
+
+        switch inputValue.value {
+
+        case .noValue(let reason):
+            outputValue = .noValue(reason: reason)
+
+        case .value:
+            outputValue = .value("Product is up to date".intern())
+
+        }
+
+        return ProcessOutput(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
+    }
+}
