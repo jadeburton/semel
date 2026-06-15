@@ -53,7 +53,7 @@ extension NodeFunction {
     }
 
     private func allInputsAreSatisfied(input: ProcessInput) -> Bool {
-        for inputPort in descriptor.staticInputPorts {
+        for inputPort in descriptor.staticInputPorts.filter({ !descriptor.optionalStaticInputPorts.contains($0) }) {
             guard let values = input.inputValues[inputPort], !values.isEmpty else { return false }
             if values.contains(where: { if case .noValue = $0.value { return true } else { return false } }) {
                 return false
@@ -69,7 +69,7 @@ extension NodeFunction {
             return buildErrorOutput(withError: error)
         }
     }
-    
+
     func processWithPreCheck(thisNode: Node) {
         guard hasInputPorts() else {
             // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
@@ -79,16 +79,7 @@ extension NodeFunction {
             let input = try buildProcessInput(thisNode: thisNode)
 
             guard allInputsAreSatisfied(input: input) else {
-                // Don't write error outputs or touch wire configuration when inputs
-                // aren't ready yet.  Writing an error output here would cascade:
-                // downstream nodes would see error values and reschedule, and an
-                // empty inputWireExpectations would delete upstream wires, causing
-                // those nodes to reschedule this one again — an infinite loop.
-                // Instead, just let processOneNode unschedule this node; it will be
-                // rescheduled automatically when upstream nodes produce their output.
-                print("Waiting for inputs: \(thisNode.name ?? "?")")
                 throw NodeError.missingInputs
-                //return
             }
 
             let cacheKey = try buildCacheKeyFromAllInputs(input: input)
@@ -240,6 +231,7 @@ enum NodeError: Error {
     case missingInput(name: String)
     case other(message: String)
     case processNotSupported
+    case cannotHaveProperties
 }
 extension NodeFunction {
     func description() -> String {
@@ -259,6 +251,12 @@ extension PolyFactory {
     static func makeDefault(kind: UInt) throws -> InputlessNodeFunction {
         try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! InputlessNodeFunction
     }
+
+    static func makeDefault(kind: UInt, properties: [String: String]) throws -> InputlessNodeFunction & WithProperties {
+        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer & WithProperties).Type).init(properties: properties) as! InputlessNodeFunction & WithProperties
+    }
+
+    //WithProperties
 }
 
 // MARK: - PolySerializable helper

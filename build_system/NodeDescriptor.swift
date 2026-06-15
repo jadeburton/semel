@@ -61,4 +61,12 @@ struct NodeFunctionDescriptor {
     let staticInputPorts: [String]
     let outputPorts: [String]
     let dynamicInputPorts: [String]
+    let optionalStaticInputPorts: [String]
+
+    init(staticInputPorts: [String], outputPorts: [String], dynamicInputPorts: [String] = [], optionalStaticInputPorts: [String] = []) {
+        self.staticInputPorts = staticInputPorts
+        self.outputPorts = outputPorts
+        self.dynamicInputPorts = dynamicInputPorts
+        self.optionalStaticInputPorts = optionalStaticInputPorts
+    }
 }

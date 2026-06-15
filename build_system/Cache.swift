@@ -19,7 +19,7 @@ extension InputlessNodeFunction {
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
-        return nil
+
         if descriptor.staticInputPorts.isEmpty {
             return ""
         }
@@ -41,13 +41,12 @@ extension InputlessNodeFunction {
 
     func loadAndWriteCachedOutputs(thisNode: Node, cacheKey: String?) throws -> Bool {
 
+        // TEMP
+        return false
+
         guard let cacheKey else {
             return false
         }
-
-        //        if !((self is ClangCompilerTool) || (self is ClangLinkerTool) || (self is ClangPreprocessorTool)) {
-        //            return false
-        //        }
 
         if descriptor.staticInputPorts.isEmpty && descriptor.dynamicInputPorts.isEmpty {
             return false

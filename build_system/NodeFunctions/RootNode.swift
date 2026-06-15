@@ -14,7 +14,8 @@ struct RootNode: InputlessNodeFunction {
     enum CodingKeys: CodingKey {
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
+                                            outputPorts: [])
 
     // MARK: Debug
 

@@ -55,7 +55,7 @@ extension BuildEngine {
             case .value:
                 let hash = outputValue.dataObjectHash ?? "nil"
                 let shortHash = hash.count > 12 ? String(hash.prefix(12)) + "…" : hash
-                return "✔ '\(shortHash)'"
+                return "✔ '\(shortHash)' = \(try? outputValue.dataObjectHash?.resolveAsString().prefix(20) ?? "" ?? "")"
             case .pending:
                 return "⏳ pending"
             case .error:

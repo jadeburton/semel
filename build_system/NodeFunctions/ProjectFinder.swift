@@ -21,7 +21,9 @@ struct ProjectFinder: NodeFunction {
     static let projectBuildersInputPort = "projectBuilders"
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [], dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
+                                            outputPorts: [],
+                                            dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
 
     private func buildProjectBuildersExpectationFromFolderManifest(folderManifest: FolderManifest) throws -> [String: String] {
         var result: [String: String] = [:]

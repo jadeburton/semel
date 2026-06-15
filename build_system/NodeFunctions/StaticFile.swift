@@ -13,7 +13,8 @@ struct StaticFile: InputlessNodeFunction {
 
     static let outputPort = "output"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort], dynamicInputPorts: [])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
+                                            outputPorts: [outputPort])
 
     func read(thisNode: Node) throws -> NodeValue? {
         try thisNode.readFromOutputPort(Self.outputPort)
@@ -93,26 +94,18 @@ struct Configuration: InputlessNodeFunction, WithProperties {
                                            architecture: "arm64",
                                            recursiveHash: nil)
 
-        // Shared tool configuration nodes (one per tool kind, reused by all source files)
-/*        let clangPreprocessorConfiguration = BuildGraphNode(
-            name: "PreprocessorConfiguration",
-            kind: .configuration(try ClangPreprocessorToolConfiguration(
-                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
-
-        let clangCompilerConfiguration = BuildGraphNode(
-            name: "CompilerConfiguration",
-            kind: .configuration(try ClangCompilerToolConfiguration(
-                toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()))
-descriptor
-        let dynamicLibrary = true
-
-        let clangLinkerConfiguration = BuildGraphNode(
-            name: "LinkerConfiguration",
-            kind: .configuration(try ClangLinkerToolConfiguration(toolDescriptor: standardClang,
-                                                                  arguments: dynamicLibrary ? ["-dynamiclib"] : [],
-                                                                  environment: [:]).toJSON()))
-*/
-        let outputValue = try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:]).toJSON()
-        return .init(outputValues: [Self.outputPort: .value(outputValue.intern())], inputWireExpectations: [:])
+        func outputValue() throws -> PolySerializable {
+            switch properties["tool"] {
+                case "preprocessor":
+                    return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
+                case "linker":
+                    return try ClangLinkerToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
+                case "compiler":
+                    return try ClangCompilerToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
+                default:
+                    return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
+            }
+        }
+        return .init(outputValues: [Self.outputPort: .value(try outputValue().toJSON().intern())], inputWireExpectations: [:])
     }
 }

@@ -38,8 +38,7 @@ struct ClangCompilerTool: NodeFunction {
     static let infoLog = "infoLog"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
-                                            outputPorts: [output, errorLog, infoLog],
-                                            dynamicInputPorts: [])
+                                            outputPorts: [output, errorLog, infoLog])
 
     // MARK: Processing
 

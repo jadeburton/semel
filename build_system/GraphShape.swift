@@ -342,7 +342,9 @@ extension GraphShapeNode {
 
 extension InputlessNodeFunction {
     /// Default: no init-time args.  Override in concrete types (e.g. `StaticFile`).
-    func graphShapeArgs(node: Node) -> [GraphShapeArg] { [] }
+    func graphShapeArgs(node: Node) -> [GraphShapeArg] {
+        (self as? WithProperties)?.properties.map { GraphShapeArg(key: $0.key, value: $0.value) } ?? []
+    }
 }
 
 extension StaticFile {
@@ -426,12 +428,17 @@ extension GraphShapeNode {
             let inputFS = try Node.inputFileSystem
             guard let node = try inputFS.childNode(path: pathArg.value,
                                                     kind: StaticFile.kind,
-                                                    createIfNotExist: true) else { return nil }
+                                                    createIfNotExist: true,
+                                                    properties: nil) else { return nil }
             return node.id
         }
 
         let rootNode  = try Node.rootNode
-        var newNode   = try Node.createNode(parentNodeID: rootNode.id!, kind: kind, name: typeName)
+        let properties = Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
+        var newNode   = try Node.createNode(parentNodeID: rootNode.id!,
+                                            kind: kind,
+                                            name: typeName,
+                                            properties: properties.isEmpty ? nil : properties)
         let newNodeID = newNode.id!
 
         for inputPortSpec in inputs {

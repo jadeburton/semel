@@ -78,7 +78,7 @@ struct Folder: InputlessNodeFunction {
                 // TODO: what if the type is not StaticFileNode
             }
         } else {
-            var newChild = try thisNode.childNode(path: name, kind: StaticFile.kind, createIfNotExist: true)!
+            var newChild = try thisNode.childNode(path: name, kind: StaticFile.kind, createIfNotExist: true, properties: nil)!
             let staticFile = StaticFile()
             try newChild.setNodeFunction(staticFile)
             if try staticFile.replaceContent(thisNode: newChild, content) {

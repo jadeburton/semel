@@ -47,11 +47,29 @@ extension Node {
     }
 
     func childNode(path: String) throws -> Node? {
-        try childNode(path: path, kind: Folder.kind)
+        try childNode(path: path, kind: Folder.kind, createIfNotExist: false, properties: nil)
     }
 
-    static func createNode(parentNodeID: ObjectID?, kind: UInt, name: String) throws -> Node {
-        let nodeFunction = try PolyFactory.makeDefault(kind: kind)
+    static func createNode(parentNodeID: ObjectID?, kind: UInt, name: String, properties: [String: String]?) throws -> Node {
+
+        let type = try PolyFactory.type(kind: kind)
+
+        func make() throws -> InputlessNodeFunction {
+            if type is WithProperties.Type {
+                if let properties {
+                    return try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
+                } else {
+                    return try PolyFactory.makeDefault(kind: kind) 
+                }
+            } else {
+                if properties != nil {
+                    throw NodeError.cannotHaveProperties
+                }
+                return try PolyFactory.makeDefault(kind: kind)
+            }
+        }
+
+        let nodeFunction = try make()
 
         var node = Node(parentNodeID: parentNodeID,
                         kind: kind,
@@ -74,7 +92,7 @@ extension Node {
         return node
     }
 
-    func childNode(path: String, kind: UInt, createIfNotExist: Bool = false) throws -> Node? {
+    func childNode(path: String, kind: UInt, createIfNotExist: Bool = false, properties: [String: String]?) throws -> Node? {
         let components = path
             .split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
@@ -89,7 +107,7 @@ extension Node {
                     return nil
                 }
 
-                return try Self.createNode(parentNodeID: currentNodeID, kind: kind, name: name)
+                return try Self.createNode(parentNodeID: currentNodeID, kind: kind, name: name, properties: properties)
             }
 
             if index == components.count - 1 {
@@ -143,7 +161,8 @@ extension Node {
         get throws {
             try Node.rootNode.childNode(path: "projectFinder",
                                         kind: ProjectFinder.kind,
-                                        createIfNotExist: true)!
+                                        createIfNotExist: true,
+                                        properties: nil)!
         }
     }
 
@@ -151,7 +170,8 @@ extension Node {
         get throws {
             try Node.rootNode.childNode(path: "inputFileSystem",
                                         kind: Folder.kind,
-                                        createIfNotExist: true)!
+                                        createIfNotExist: true,
+                                        properties: nil)!
         }
     }
 
@@ -159,14 +179,15 @@ extension Node {
         get throws {
             try Node.rootNode.childNode(path: "outputFileSystem",
                                         kind: Folder.kind,
-                                        createIfNotExist: true)!
+                                        createIfNotExist: true,
+                                        properties: nil)!
         }
     }
 
     static var rootNode: Node {
         get throws {
             guard let existing = try DatabaseLayer.shared.selectNodesInRoot(named: "root").first else {
-                return try Node.createNode(parentNodeID: nil, kind: RootNode.kind, name: "root")
+                return try Node.createNode(parentNodeID: nil, kind: RootNode.kind, name: "root", properties: nil)
             }
 
             return existing

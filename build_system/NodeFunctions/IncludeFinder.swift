@@ -18,8 +18,7 @@ struct IncludeFinder: NodeFunction {
     static let includePathListOutputPort = "includePathList"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [Self.sourceFileInputPort],
-                                            outputPorts: [Self.includePathListOutputPort],
-                                            dynamicInputPorts: [])
+                                            outputPorts: [Self.includePathListOutputPort])
 
     // MARK: Include extraction
 

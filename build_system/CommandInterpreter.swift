@@ -578,13 +578,13 @@ final class CommandInterpreter {
             if containingPath.isEmpty || containingPath == "." {
                 containingFolder = try! inputFileSystem
             } else {
-                containingFolder = try! inputFileSystem.childNode(path: containingPath, kind: Folder.kind, createIfNotExist: true)!
+                containingFolder = try! inputFileSystem.childNode(path: containingPath, kind: Folder.kind, createIfNotExist: true, properties: nil)!
             }
 
             try! (containingFolder.nodeFunctionCast() as Folder).addOrReplaceChild(thisNode: containingFolder, content: fileContent.intern(), name: filename)
 
         case .folder:
-            _ = try! inputFileSystem.childNode(path: relativePath, kind: Folder.kind, createIfNotExist: true)!
+            _ = try! inputFileSystem.childNode(path: relativePath, kind: Folder.kind, createIfNotExist: true, properties: nil)!
         }
     }
 
