@@ -48,34 +48,28 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
 extension DatabaseLayer {
 
     public func selectAllScheduledNodes(limit: Int) throws -> [Node] {
-        try dbQueue.read { db in
-            try Node
-                .filter(Node.Columns.scheduled == true)
-                .fetchAll(db)
+        try read { db in
+            try Node.filter(Node.Columns.scheduled == true).fetchAll(db)
         }
     }
 
     public func selectAllNodes() throws -> [Node] {
-        try dbQueue.read { db in
-            try Node.fetchAll(db)
-        }
+        try read { db in try Node.fetchAll(db) }
     }
 
     public func selectNodeByID(_ nodeID: ObjectID) throws -> Node? {
-        try dbQueue.read { db in
-            try Node.fetchOne(db, id: nodeID)
-        }
+        try read { db in try Node.fetchOne(db, id: nodeID) }
     }
 
     public func selectNodesInRoot(named name: String) throws -> [Node] {
-        try dbQueue.read { db in
+        try read { db in
             try Node.filter(Node.Columns.name == name &&
                             Node.Columns.parentNodeID == nil).fetchAll(db)
         }
     }
 
     public func selectNodesInRoot(kind: UInt, named name: String) throws -> [Node] {
-        try dbQueue.read { db in
+        try read { db in
             try Node.filter(Node.Columns.kind == kind &&
                             Node.Columns.name == name &&
                             Node.Columns.parentNodeID == nil).fetchAll(db)
@@ -83,27 +77,27 @@ extension DatabaseLayer {
     }
 
     public func selectNodes(parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
+        try read { db in
             try Node.filter(Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
     public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
+        try read { db in
             try Node.filter(Node.Columns.name == name &&
                             Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
     public func selectNodes(searchKey: String, parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
+        try read { db in
             try Node.filter(Node.Columns.searchKey == searchKey &&
                             Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
     public func selectNodes(kind: UInt, named name: String, parentNodeID: ObjectID) throws -> [Node] {
-        try dbQueue.read { db in
+        try read { db in
             try Node.filter(Node.Columns.kind == kind &&
                             Node.Columns.name == name &&
                             Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
@@ -111,28 +105,22 @@ extension DatabaseLayer {
     }
 
     public func insertNode(_ node: Node) throws -> ObjectID {
-        try dbQueue.write { db in
+        try write { db in
             try node.insert(db)
             return db.lastInsertedRowID
         }
     }
 
     public func insertOrReplaceNode(_ node: Node) throws {
-        try dbQueue.write { db in
-            try node.save(db)
-        }
+        try write { db in try node.save(db) }
     }
 
     public func updateNode(_ node: Node) throws {
-        try dbQueue.write { db in
-            try node.update(db)
-        }
+        try write { db in try node.update(db) }
     }
 
     public func deleteNode(nodeID: ObjectID) throws -> Bool {
-        try dbQueue.write { db in
-            try Node.deleteOne(db, id: nodeID)
-        }
+        try write { db in try Node.deleteOne(db, id: nodeID) }
     }
 }
 

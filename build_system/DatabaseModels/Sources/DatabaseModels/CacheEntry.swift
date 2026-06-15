@@ -23,26 +23,21 @@ public struct CacheEntry: Codable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
     public func selectAllCacheEntries() throws -> [CacheEntry] {
-        try dbQueue.read { db in
-            try CacheEntry
-                .fetchAll(db)
-        }
+        try read { db in try CacheEntry.fetchAll(db) }
     }
 
     public func selectCacheEntry(hash: String) throws -> CacheEntry? {
-        try dbQueue.read { db in
+        try read { db in
             try CacheEntry.filter(Column("hash") == hash).fetchOne(db)
         }
     }
 
     public func insertCacheEntry(_ cacheEntry: CacheEntry) throws {
-        try dbQueue.write { db in
-            try cacheEntry.insert(db)
-        }
+        try write { db in try cacheEntry.insert(db) }
     }
 
     public func deleteCacheEntry(hash: String) throws -> Bool {
-        try dbQueue.write { db in
+        try write { db in
             try CacheEntry.filter(Column("hash") == hash).deleteAll(db) > 0
         }
     }

@@ -255,7 +255,7 @@ extension Node {
 
         if let existing = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {
-                print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
+                //print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
                 return false
             }
         }

@@ -39,48 +39,45 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
     public func selectAllWires() throws -> [Wire] {
-        try dbQueue.read { db in
-            try Wire.fetchAll(db)
-        }
+        try read { db in try Wire.fetchAll(db) }
     }
 
     public func selectWires(goingToNodeID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+        try read { db in
             try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
         }
     }
 
     public func selectWires(goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
-            try Wire
-                .filter(Wire.Columns.toNodeID == goingToNodeID && Wire.Columns.toSymbolID == toSymbolID)
-                .fetchAll(db)
+        try read { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
         }
     }
 
     public func selectWires(comingFromNodeID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+        try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
         }
     }
 
     public func selectWires(comingFromNodeID: ObjectID, fromSymbolID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
-            try Wire
-                .filter(Wire.Columns.fromNodeID == comingFromNodeID && Wire.Columns.fromSymbolID == fromSymbolID)
-                .fetchAll(db)
+        try read { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                            Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
         }
     }
 
     public func selectWires(comingFromNodeID: ObjectID, goingToNodeID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+        try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
         }
     }
 
-    public func selectWires(comingFromNodeID: ObjectID, fromSymbolID: ObjectID, goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
-        try dbQueue.read { db in
+    public func selectWires(comingFromNodeID: ObjectID, fromSymbolID: ObjectID,
+                            goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
+        try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.fromSymbolID == fromSymbolID &&
                             Wire.Columns.toNodeID == goingToNodeID &&
@@ -89,26 +86,23 @@ extension DatabaseLayer {
     }
 
     public func insertWire(_ wire: Wire) throws -> ObjectID {
-        try dbQueue.write { db in
+        try write { db in
             try wire.insert(db)
             return db.lastInsertedRowID
         }
     }
 
     public func updateWire(_ wire: Wire) throws {
-        try dbQueue.write { db in
-            try wire.update(db)
-        }
+        try write { db in try wire.update(db) }
     }
 
-    public func deleteWire(comingFromNodeID: ObjectID, fromSymbolID: ObjectID, goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> Bool {
-        try dbQueue.write { db in
-            try Wire
-                .filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                        Wire.Columns.fromSymbolID == fromSymbolID &&
-                        Wire.Columns.toNodeID == goingToNodeID &&
-                        Wire.Columns.toSymbolID == toSymbolID)
-                .deleteAll(db) > 0
+    public func deleteWire(comingFromNodeID: ObjectID, fromSymbolID: ObjectID,
+                           goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> Bool {
+        try write { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                            Wire.Columns.fromSymbolID == fromSymbolID &&
+                            Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID).deleteAll(db) > 0
         }
     }
 }

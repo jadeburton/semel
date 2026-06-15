@@ -5,7 +5,7 @@
 //  Live-graph operations for GraphShapeNode:
 //    • Building a shape from the database (build)
 //    • Searching the database for a matching node (find)
-//    • Creating missing nodes and wires (create)
+//    • Creating missing nodes and wires atomically (create)
 //    • Recomputing Node.searchKey for all nodes
 //
 //  Pure model, serialisation, and parsing live in GraphShape.swift.
@@ -13,10 +13,26 @@
 
 import Foundation
 
+// MARK: - Errors
+
+enum GraphShapeApplierError: Error {
+    /// The type name in the shape string is not registered in PolyFactory.
+    case unknownTypeName(String)
+    /// A StaticFile shape node is missing its required `path` argument.
+    case staticFileMissingPathArg
+    /// A required static input port has no wire connected after node creation.
+    case requiredPortUnwired(typeName: String, portName: String)
+    /// `findOrCreateMatchingNode` was called on a shape that could not be resolved.
+    case couldNotResolveShape(typeName: String)
+    /// A child shape returned a nil fromSymbolID when one was required for wiring.
+    case missingOutputPortInChildShape(typeName: String)
+}
+
 // MARK: - graphShapeArgs — extracting init-time arguments from a live node
 
 extension InputlessNodeFunction {
-    /// Default: no init-time args.  Override in concrete types (e.g. `StaticFile`).
+    /// Default: delegate to `WithProperties` if the type conforms, else no args.
+    /// Declared in the protocol so Swift dispatches dynamically via the witness table.
     func graphShapeArgs(node: Node) -> [GraphShapeArg] {
         (self as? WithProperties)?.properties.map { GraphShapeArg(key: $0.key, value: $0.value) } ?? []
     }
@@ -37,20 +53,20 @@ extension GraphShapeNode {
     /// Used when building expectation strings or comparing wires.
     static func buildFromWire(_ wire: Wire) throws -> GraphShapeNode {
         var visited = Set<ObjectID>()
-        return try buildFromOrigin(fromNodeID:       wire.fromNodeID,
-                                   fromSymbolID:     wire.fromSymbolID,
+        return try buildFromOrigin(fromNodeID:        wire.fromNodeID,
+                                   fromSymbolID:      wire.fromSymbolID,
                                    includeOutputPort: true,
-                                   visited:          &visited)
+                                   visited:           &visited)
     }
 
     /// Node-identity form: no `.outputPort` suffix.
     /// Used when computing `Node.searchKey`.
     static func buildFromNode(nodeID: ObjectID) throws -> GraphShapeNode {
         var visited = Set<ObjectID>()
-        return try buildFromOrigin(fromNodeID:       nodeID,
-                                   fromSymbolID:     nil,
+        return try buildFromOrigin(fromNodeID:        nodeID,
+                                   fromSymbolID:      nil,
                                    includeOutputPort: false,
-                                   visited:          &visited)
+                                   visited:           &visited)
     }
 
     static func buildFromOrigin(fromNodeID:        ObjectID,
@@ -65,7 +81,7 @@ extension GraphShapeNode {
         let nodeFunction = try sourceNode.nodeFunction()
         let typeName     = String(describing: type(of: nodeFunction))
 
-        // Cycle guard — return a stub with no inputs
+        // Cycle guard — return a stub with no inputs to stop infinite recursion.
         guard !visited.contains(fromNodeID) else {
             return GraphShapeNode(typeName: typeName, outputPort: outputPortName)
         }
@@ -88,10 +104,10 @@ extension GraphShapeNode {
             var children: [GraphShapeNode] = []
             for wire in incomingWires {
                 var branchVisited = visited          // each branch gets its own copy
-                children.append(try buildFromOrigin(fromNodeID:       wire.fromNodeID,
-                                                    fromSymbolID:     wire.fromSymbolID,
+                children.append(try buildFromOrigin(fromNodeID:        wire.fromNodeID,
+                                                    fromSymbolID:      wire.fromSymbolID,
                                                     includeOutputPort: true,
-                                                    visited:          &branchVisited))
+                                                    visited:           &branchVisited))
             }
             inputs.append(GraphShapeInputPort(portName: portName, value: children))
         }
@@ -104,6 +120,8 @@ extension GraphShapeNode {
 
 extension GraphShapeNode {
 
+    /// Returns `(fromNodeID, fromSymbolID)` of the first live node whose topology
+    /// matches `self`, or `nil` if no match exists.
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let allNodes   = try DatabaseLayer.shared.selectAllNodes()
         let candidates = allNodes.filter { node in
@@ -135,10 +153,10 @@ extension GraphShapeNode {
             for (wire, expectedChild) in zip(actualWires, expectedPort.value) {
                 var visited: Set<ObjectID> = []
                 let actualChild = try GraphShapeNode.buildFromOrigin(
-                    fromNodeID:       wire.fromNodeID,
-                    fromSymbolID:     wire.fromSymbolID,
+                    fromNodeID:        wire.fromNodeID,
+                    fromSymbolID:      wire.fromSymbolID,
                     includeOutputPort: true,
-                    visited:          &visited)
+                    visited:           &visited)
                 guard actualChild == expectedChild else { return false }
             }
         }
@@ -150,58 +168,91 @@ extension GraphShapeNode {
 
 extension GraphShapeNode {
 
-    /// Returns the `(fromNodeID, fromSymbolID)` of the first matching node,
-    /// creating the node (and any missing upstream nodes and wires) if none is found.
-    func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+    /// Returns `(fromNodeID, fromSymbolID)` of the matching node, creating it
+    /// (and all missing upstream nodes and wires) if none exists.
+    ///
+    /// All writes are wrapped in `DatabaseLayer.withTransaction` so any failure
+    /// causes GRDB to roll back every write atomically — no partially-wired
+    /// nodes are left behind.  Recursive calls re-enter `withTransaction`
+    /// safely: inner calls detect the active transaction and participate in it.
+    ///
+    /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
+    func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?) {
+        // Fast path: node already exists — no writes needed.
         if let existing = try findMatchingNode() { return existing }
-        guard let newNodeID = try createNode() else { return nil }
+
+        // Slow path: create inside a transaction so any error rolls back everything.
+        let newNodeID = try DatabaseLayer.shared.withTransaction { try createNode() }
         return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
     }
 
-    private func createNode() throws -> ObjectID? {
+    // MARK: Private — node + wire creation (runs inside withTransaction)
+
+    private func createNode() throws -> ObjectID {
         let kind: UInt
         do {
             kind = try PolyFactory.kind(forTypeName: typeName)
         } catch {
-            print("GraphShapeNode.createNode: unknown type '\(typeName)' — \(error)")
-            return nil
+            throw GraphShapeApplierError.unknownTypeName(typeName)
         }
 
+        // ── StaticFile: lives under inputFileSystem ───────────────────────────
         if kind == StaticFile.kind {
             guard let pathArg = args.first(where: { $0.key == "path" }) else {
-                print("GraphShapeNode.createNode: StaticFile missing 'path' arg")
-                return nil
+                throw GraphShapeApplierError.staticFileMissingPathArg
             }
             let inputFS = try Node.inputFileSystem
             guard let node = try inputFS.childNode(path: pathArg.value,
                                                     kind: StaticFile.kind,
                                                     createIfNotExist: true,
-                                                    properties: nil) else { return nil }
-            return node.id
+                                                    properties: nil),
+                  let nodeID = node.id else {
+                throw GraphShapeApplierError.couldNotResolveShape(typeName: typeName)
+            }
+            return nodeID
         }
 
+        // ── All other node types ───────────────────────────────────────────────
         let rootNode   = try Node.rootNode
-        let properties = Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
+        let properties = args.isEmpty ? nil
+                       : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
         var newNode    = try Node.createNode(parentNodeID: rootNode.id!,
                                              kind:        kind,
                                              name:        typeName,
-                                             properties:  properties.isEmpty ? nil : properties)
+                                             properties:  properties)
         let newNodeID  = newNode.id!
 
+        // Wire each input port from the shape.
         for inputPortSpec in inputs {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
             for (index, childShape) in inputPortSpec.value.enumerated() {
-                if let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode() {
-                    guard let fromSymbolID else { continue }
-                    // Name the wire after the source node, matching the project convention.
-                    let sourceNode = try fromNodeID.loadNode()
-                    let wireName   = (sourceNode.name ?? "\(inputPortSpec.portName)[\(index)]").asSymbolID()
-                    try Wire.connectWire(fromNodeID:   fromNodeID,
-                                         fromSymbolID: fromSymbolID,
-                                         toNodeID:     newNodeID,
-                                         toSymbolID:   toSymbolID,
-                                         name:         wireName)
+                let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode()
+                guard let fromSymbolID else {
+                    throw GraphShapeApplierError.missingOutputPortInChildShape(typeName: childShape.typeName)
                 }
+                let sourceNode = try fromNodeID.loadNode()
+                let wireName   = (sourceNode.name ?? "\(inputPortSpec.portName)[\(index)]").asSymbolID()
+                try Wire.connectWire(fromNodeID:   fromNodeID,
+                                     fromSymbolID: fromSymbolID,
+                                     toNodeID:     newNodeID,
+                                     toSymbolID:   toSymbolID,
+                                     name:         wireName)
+            }
+        }
+
+        // ── Validate: every required port declared in the shape must be wired ─
+        let nodeFunction  = try newNode.nodeFunction()
+        let descriptor    = nodeFunction.descriptor
+        let optionalPorts = Set(descriptor.optionalStaticInputPorts)
+
+        for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
+            let portSymbolID   = portSpec.portName.asSymbolID()
+            let connectedWires = try DatabaseLayer.shared.selectWires(goingToNodeID: newNodeID,
+                                                                      toSymbolID:    portSymbolID)
+            if connectedWires.isEmpty {
+                // Throwing here causes withTransaction to roll back everything.
+                throw GraphShapeApplierError.requiredPortUnwired(typeName: typeName,
+                                                                 portName: portSpec.portName)
             }
         }
 

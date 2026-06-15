@@ -21,7 +21,6 @@ struct ProjectBuilder: NodeFunction {
                                             dynamicInputPorts: [productInputPort])
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileContent: String) throws -> [String: String] {
-//        ["mylib.dylib":"ClangLinkerTool(configuration=Configuration(tool='linker').output,input=ClangCompilerTool(configuration=Configuration(tool='compiler').output,input=ClangPreprocessorTool(input=StaticFile(path='hello.c').output,configuration=Configuration(tool='preprocessor').output).output).output).output).output"]
         ["mylib.dylib":"ClangLinkerTool(configuration=[Configuration(tool='linker').output], input=[ClangCompilerTool(configuration=[Configuration(tool='compiler').output], input=[ClangPreprocessorTool(configuration=[Configuration(tool='preprocessor').output], input=[StaticFile(path='hello.c').output]).output, ClangPreprocessorTool(configuration=[Configuration(tool='preprocessor').output], input=[StaticFile(path='main.c').output]).output]).output]).output"]
     }
 

@@ -35,30 +35,28 @@ public struct Symbol: Codable, FetchableRecord, PersistableRecord, Equatable {
 
 extension DatabaseLayer {
     public func selectSymbol(symbolID: ObjectID) throws -> Symbol? {
-        try dbQueue.read { db in
+        try read { db in
             try Symbol.filter(Symbol.Columns.id == symbolID).fetchOne(db)
         }
     }
 
     public func selectSymbolID(name: String) throws -> ObjectID? {
-        try dbQueue.read { db in
+        try read { db in
             try Symbol.filter(Symbol.Columns.name == name).fetchOne(db)?.id
         }
     }
 
     public func insertSymbol(name: String) throws -> ObjectID {
-        let portName = Symbol(name: name)
-        return try dbQueue.write { db in
-            try portName.insert(db)
+        let symbol = Symbol(name: name)
+        return try write { db in
+            try symbol.insert(db)
             return db.lastInsertedRowID
         }
     }
 
     public func deleteSymbol(symbolID: ObjectID) throws -> Bool {
-        try dbQueue.write { db in
-            try Symbol
-                .filter(Symbol.Columns.id == symbolID)
-                .deleteAll(db) > 0
+        try write { db in
+            try Symbol.filter(Symbol.Columns.id == symbolID).deleteAll(db) > 0
         }
     }
 }

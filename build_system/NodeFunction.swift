@@ -106,8 +106,14 @@ extension InputlessNodeFunction {
         for (outputPort, outputValue) in output.outputValues {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
-        for (inputPort, wireExpectations) in output.inputWireExpectations {
-            try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
+
+        do {
+            for (inputPort, wireExpectations) in output.inputWireExpectations {
+                try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
+            }
+        } catch {
+            print("❌ ERROR: applyExpectationConfiguration failed: \(error)")
+            throw error
         }
     }
 
@@ -147,11 +153,7 @@ extension InputlessNodeFunction {
                         print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
                         return
                     }
-//                    var newWire = Wire(fromNodeID: fromNodeID,
-//                                      fromSymbolID: fromSymbolID,
-//                                      toNodeID: thisNode.id!,
-//                                      toSymbolID: toSymbolID,
-//                                      name: wireNameSymbolID)
+
                     try Wire.connectWire(fromNodeID: fromNodeID,
                                             fromSymbolID: fromSymbolID,
                                             toNodeID: thisNode.id!,
@@ -173,11 +175,10 @@ extension InputlessNodeFunction {
                     continue   // topology unchanged — nothing to do
                 }
                 _ = try existingWire.deleteWire()
-                try connectExpected()
-            } else {
-                // Step 2 — wire does not exist yet; find and connect the matching source.
-                try connectExpected()
             }
+
+            // Find and connect the matching source.
+            try connectExpected()
         }
     }
 
@@ -197,9 +198,9 @@ extension InputlessNodeFunction {
     ///                      input=ClangPreprocessorTool(...).output).output"
     /// The returned string can later be fed to `findExistingNodeMatchingExpectation`
     /// to locate the same (or structurally equivalent) node in the graph.
-    private func buildGraphShapeForInputWire(wire: Wire) throws -> String {
-        try GraphShapeNode.buildFromWire(wire).asString()
-    }
+//    private func buildGraphShapeForInputWire(wire: Wire) throws -> String {
+//        try GraphShapeNode.buildFromWire(wire).asString()
+//    }
 
     fileprivate func buildErrorOutput(withError error: Error) -> ProcessOutput {
         var outputValues = [String: NodeValue]()

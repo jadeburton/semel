@@ -23,26 +23,21 @@ public struct DataObject: Codable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
     public func selectAllDataObjects() throws -> [DataObject] {
-        try dbQueue.read { db in
-            try DataObject
-                .fetchAll(db)
-        }
+        try read { db in try DataObject.fetchAll(db) }
     }
 
     public func selectDataObject(hash: String) throws -> DataObject? {
-        try dbQueue.read { db in
+        try read { db in
             try DataObject.filter(Column("hash") == hash).fetchOne(db)
         }
     }
 
     public func insertDataObject(_ dataObject: DataObject) throws {
-        try dbQueue.write { db in
-            try dataObject.insert(db)
-        }
+        try write { db in try dataObject.insert(db) }
     }
 
     public func deleteDataObject(hash: String) throws -> Bool {
-        try dbQueue.write { db in
+        try write { db in
             try DataObject.filter(Column("hash") == hash).deleteAll(db) > 0
         }
     }
