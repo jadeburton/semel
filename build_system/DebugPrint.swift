@@ -7,112 +7,123 @@ import Foundation
 import GRDB
 import DatabaseModels
 
+// MARK: - String helpers
+
 extension String {
-    fileprivate func replaceNonprintableChars() -> String {
+    fileprivate func replacingNonprintableCharacters() -> String {
         map { char -> String in
-            if char.isASCII {
-                if char.isNewline {
-                    return "\\n"
-                } else {
-                    return String(char)
-                }
-            } else {
-                return "�"
-            }
+            char.isASCII ? (char.isNewline ? "\\n" : String(char)) : "�"
         }.joined()
     }
 
-    fileprivate func truncate(maxLength: Int = 80) -> String {
-        if count > maxLength {
-            return String(prefix(maxLength)) + "…"
-        } else {
-            return self
-        }
+    fileprivate func truncated(to maxLength: Int = 80) -> String {
+        count > maxLength ? String(prefix(maxLength)) + "…" : self
     }
 }
 
+// MARK: - printAll
+
 extension BuildEngine {
-    private static func formatPossibleString(bytes: [UInt8]?) -> String {
-        guard let bytes else {
-            return "nil"
-        }
+
+    // MARK: Private helpers
+
+    /// Format raw bytes as a quoted UTF-8 string, or hex if not valid UTF-8.
+    private static func formatBytes(_ bytes: [UInt8]?) -> String {
+        guard let bytes else { return "nil" }
         if let string = String(bytes: bytes, encoding: .utf8) {
-            return "\"\(string.replaceNonprintableChars().truncate())\""
-        } else {
-            return bytes.asHex().truncate()
+            return "\"\(string.replacingNonprintableCharacters().truncated())\""
+        }
+        return bytes.asHex().truncated()
+    }
+
+    /// Resolve a DataObjectHash to its content and format it.
+    private static func formatHash(_ hash: DataObjectHash?) -> String {
+        formatBytes(try? hash?.resolve())
+    }
+
+    /// Resolve a symbol ID to its name, falling back to "?".
+    private static func symbolName(symbolID: ObjectID, database: DatabaseLayer) -> String {
+        (try? database.selectSymbol(symbolID: symbolID))?.name ?? "?"
+    }
+
+    /// Format a wire as "fromNode:fromPort ──▶ toNode:toPort".
+    private static func formatWire(_ wire: Wire, nodeByID: [ObjectID: Node], database: DatabaseLayer) -> String {
+        let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
+        let toNode   = nodeByID[wire.toNodeID]?.name   ?? "?"
+        let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
+        let toPort   = symbolName(symbolID: wire.toSymbolID,   database: database)
+        return "\(fromNode):\(fromPort)  ──▶  \(toNode):\(toPort)"
+    }
+
+    /// Format an output port value with an emoji status prefix.
+    private static func formatOutputPort(_ outputPort: DatabaseModels.OutputPort) -> String {
+        switch outputPort.valueKind {
+        case .value:
+            let hash    = outputPort.dataObjectHash ?? "nil"
+            let preview = formatHash(outputPort.dataObjectHash)
+            return ("\(hash.truncated(to: 12))  \(preview.truncated(to: 20))")
+        case .pending:
+            return "(pending)"
+        case .error:
+            let message = (try? outputPort.dataObjectHash?.resolveAsString()) ?? "<no message>"
+            return "(❌ \(message))"
         }
     }
+
+    /// Print a titled section header.
+    private static func printSectionHeader(_ title: String) {
+        print(title)
+        print(String(repeating: "─", count: title.count))
+    }
+
+    // MARK: nudge
 
     static func nudge() throws {
-        let database = DatabaseLayer.shared
-        let allNodes = try database.selectAllNodes()
-        for node in allNodes {
-            if try node.hasOneOrMoreErrorOutputs() {
-                var node = node
-                try node.setScheduledAndSave(true)
-            }
+        for node in try DatabaseLayer.shared.selectAllNodes() where (try? node.hasOneOrMoreErrorOutputs()) == true {
+            var node = node
+            try node.setScheduledAndSave(true)
         }
     }
 
-    static func printAll() throws {
-        try DatabaseLayer.shared.recomputeAllSearchKeys()
-        var pf = try Node.projectFinder
-        try pf.setScheduledAndSave(true)
+    // MARK: printAll
 
+    static func printAll() throws {
         let database = DatabaseLayer.shared
+        try database.recomputeAllSearchKeys()
+
+        var projectFinder = try Node.projectFinder
+        try projectFinder.setScheduledAndSave(true)
+
         let allNodes       = try database.selectAllNodes()
         let allWires       = try database.selectAllWires()
         let allDataObjects = try database.selectAllDataObjects()
 
+        // Indexes built once and reused throughout
         let nodeByID: [ObjectID: Node] = Dictionary(
             uniqueKeysWithValues: allNodes.compactMap { node in node.id.map { ($0, node) } })
-        let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires,  by: { $0.fromNodeID })
-        let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires,  by: { $0.toNodeID   })
+        let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.toNodeID)
+        let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.fromNodeID)
 
-        func descriptorFor(_ node: Node) -> NodeFunctionDescriptor? {
-            (try? node.nodeFunction())?.descriptor
-        }
+        // MARK: Section 1 — Nodes
 
-        func formatOutputValue(_ outputValue: DatabaseModels.OutputPort) -> String {
-            switch outputValue.valueKind {
-            case .value:
-                let hash = outputValue.dataObjectHash ?? "nil"
-                let preview = (try? Self.formatPossibleString(bytes: outputValue.dataObjectHash?.resolve())) ?? ""
-                return "✔ \(hash.truncate()) = \(preview)"
-            case .pending:
-                return "⏳ pending"
-            case .error:
-                let message = (try? outputValue.dataObjectHash?.resolveAsString()) ?? "<no message>"
-                return "❌ \(message)"
-            }
-        }
-
-        // ─────────────────────────────────────────────
-        // Section 1: Nodes
-        // ─────────────────────────────────────────────
-        print("BUILD GRAPH STATE")
-        print("=================")
+        printSectionHeader("BUILD GRAPH STATE (\(allNodes.count) nodes)")
         print()
 
         for rawNode in allNodes {
             guard let nodeID = rawNode.id else { continue }
 
-            let name        = rawNode.name ?? "?"
-            let kindName    = (try? PolyFactory.type(kind: rawNode.kind)).map { String(describing: $0) } ?? "kind:\(rawNode.kind)"
-            let scheduled   = rawNode.scheduled ? "⏱ scheduled" : "idle"
-            let searchKey   = rawNode.searchKey ?? "nil"
-
-            print("⬢ \(name)  [\(kindName)]  #\(nodeID)  \(scheduled)")
-            print("  searchKey: \(searchKey)")
+            let kindName  = (try? PolyFactory.type(kind: rawNode.kind)).map { String(describing: $0) } ?? "kind:\(rawNode.kind)"
+            let scheduled = rawNode.scheduled ? "⏱ scheduled" : "idle"
+            print("⬢ \(rawNode.name ?? "?")  [\(kindName)]  #\(nodeID)  \(scheduled)")
+            print("  searchKey: \(rawNode.searchKey ?? "nil")")
 
             if let parentNodeID = rawNode.parentNodeID {
-                let parentName = nodeByID[parentNodeID]?.name ?? "?"
-                print("  parent: \(parentName) #\(parentNodeID)")
+                print("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
             }
 
-            let descriptor   = descriptorFor(rawNode)
-            let inputPorts   = (descriptor?.staticInputPorts ?? []) + (descriptor?.dynamicInputPorts ?? [])
-            let outputPorts  = descriptor?.outputPorts ?? []
+            let descriptor    = (try? rawNode.nodeFunction())?.descriptor
+            let inputPorts    = (descriptor?.staticInputPorts  ?? []) + (descriptor?.dynamicInputPorts ?? [])
+            let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires = wiresByFromNodeID[nodeID] ?? []
             let outputValues  = (try? database.selectAllOutputPorts(nodeID: nodeID)) ?? []
@@ -121,14 +132,14 @@ extension BuildEngine {
                 print("  inputs:")
                 for inputPort in inputPorts {
                     let dynamic = descriptor?.dynamicInputPorts.contains(inputPort) == true ? " (dynamic)" : ""
-                    let connectedWires = incomingWires.filter { $0.toSymbolID == inputPort.asSymbolID() }
-                    if connectedWires.isEmpty {
+                    let wires   = incomingWires.filter { $0.toSymbolID == inputPort.asSymbolID() }
+                    if wires.isEmpty {
                         print("    · \(inputPort)\(dynamic)  — disconnected")
                     } else {
-                        for wire in connectedWires {
-                            let sourceNodeName = nodeByID[wire.fromNodeID]?.name ?? "?"
-                            let fromSymbolName = (try? database.selectSymbol(symbolID: wire.fromSymbolID))?.name ?? "?"
-                            print("    · \(inputPort)\(dynamic)  ◀── \(sourceNodeName):\(fromSymbolName)")
+                        for wire in wires {
+                            let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
+                            let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
+                            print("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── \(fromNode):\(fromPort)")
                         }
                     }
                 }
@@ -137,17 +148,17 @@ extension BuildEngine {
             if !outputPorts.isEmpty {
                 print("  outputs:")
                 for outputPort in outputPorts {
-                    let outputSymbolID  = outputPort.asSymbolID()
-                    let connectedWires  = outgoingWires.filter { $0.fromSymbolID == outputSymbolID }
-                    let outputValue     = outputValues.first(where: { $0.nameSymbolID == outputSymbolID })
-                    let valueDesc       = outputValue.map { formatOutputValue($0) } ?? "—"
-                    if connectedWires.isEmpty {
-                        print("    · \(outputPort)  [\(valueDesc)]  — no wires")
+                    let symbolID   = outputPort.asSymbolID()
+                    let wires      = outgoingWires.filter { $0.fromSymbolID == symbolID }
+                    let portValue  = outputValues.first { $0.nameSymbolID == symbolID }
+                    let valueDesc  = portValue.map { formatOutputPort($0) } ?? "—"
+                    if wires.isEmpty {
+                        print("    · \(outputPort)  \(valueDesc)  — no wires")
                     } else {
-                        for wire in connectedWires {
-                            let destinationNodeName = nodeByID[wire.toNodeID]?.name ?? "?"
-                            let toSymbolName        = (try? database.selectSymbol(symbolID: wire.toSymbolID))?.name ?? "?"
-                            print("    · \(outputPort)  [\(valueDesc)]  ──▶ \(destinationNodeName):\(toSymbolName)")
+                        for wire in wires {
+                            let toNode = nodeByID[wire.toNodeID]?.name ?? "?"
+                            let toPort = symbolName(symbolID: wire.toSymbolID, database: database)
+                            print("    · \(outputPort)  \(valueDesc)  ────▶ \(toNode):\(toPort)")
                         }
                     }
                 }
@@ -156,30 +167,22 @@ extension BuildEngine {
             print()
         }
 
-        // ─────────────────────────────────────────────
-        // Section 2: Wire list
-        // ─────────────────────────────────────────────
+        // MARK: Section 2 — Wires
+
         if !allWires.isEmpty {
-            print("WIRES (\(allWires.count))")
-            print("=================")
+            printSectionHeader("WIRES (\(allWires.count))")
             for wire in allWires {
-                let fromNodeName   = nodeByID[wire.fromNodeID]?.name ?? "?"
-                let toNodeName     = nodeByID[wire.toNodeID]?.name   ?? "?"
-                let fromSymbolName = (try? database.selectSymbol(symbolID: wire.fromSymbolID))?.name ?? "?"
-                let toSymbolName   = (try? database.selectSymbol(symbolID: wire.toSymbolID))?.name   ?? "?"
-                print("  · \(fromNodeName):\(fromSymbolName)  ──▶  \(toNodeName):\(toSymbolName)")
+                print("  · \(formatWire(wire, nodeByID: nodeByID, database: database))")
             }
             print()
         }
 
-        // ─────────────────────────────────────────────
-        // Section 3: Data objects
-        // ─────────────────────────────────────────────
+        // MARK: Section 3 — Data objects
+
         if !allDataObjects.isEmpty {
-            print("DATA OBJECTS (\(allDataObjects.count))")
-            print("=================")
+            printSectionHeader("DATA OBJECTS (\(allDataObjects.count))")
             for dataObject in allDataObjects {
-                print("  · 🗄 \(dataObject.content.count) byte(s): \(Self.formatPossibleString(bytes: dataObject.content))")
+                print("  · 🗄 \(dataObject.content.count) byte(s): \(formatBytes(dataObject.content))")
             }
             print()
         }
