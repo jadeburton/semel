@@ -1,0 +1,21 @@
+ClangLinkerTool(
+  configuration=['config': Configuration(tool='linker').output],
+  input=[
+    'hello.o': ClangCompilerTool(
+      configuration=['config': Configuration(tool='compiler').output],
+      input=[
+        'hello.c.p': ClangPreprocessorTool(
+          configuration=['config': Configuration(tool='preprocessor').output],
+          input=['hello.c': StaticFile(path='hello.c').output]
+        ).output
+      ]).output
+    'main.o': ClangCompilerTool(
+      configuration=['config': Configuration(tool='compiler').output],
+      input=[
+        'main.c.p': ClangPreprocessorTool(
+          configuration=['config': Configuration(tool='preprocessor').output],
+          input=['main.c': StaticFile(path='main.c').output]
+        ).output
+      ]).output
+  ]
+).output

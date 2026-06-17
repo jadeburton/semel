@@ -101,15 +101,17 @@ extension GraphShapeNode {
                                                                      toSymbolID:    portSymbolID)
             guard !incomingWires.isEmpty else { continue }
 
-            var children: [GraphShapeNode] = []
+            var wires: [GraphShapeWire] = []
             for wire in incomingWires {
                 var branchVisited = visited          // each branch gets its own copy
-                children.append(try buildFromOrigin(fromNodeID:        wire.fromNodeID,
+                let childNode = try buildFromOrigin(fromNodeID:        wire.fromNodeID,
                                                     fromSymbolID:      wire.fromSymbolID,
                                                     includeOutputPort: true,
-                                                    visited:           &branchVisited))
+                                                    visited:           &branchVisited)
+                let wireName  = wire.name.resolveSymbol()
+                wires.append(GraphShapeWire(name: wireName, node: childNode))
             }
-            inputs.append(GraphShapeInputPort(portName: portName, value: children))
+            inputs.append(GraphShapeInputPort(portName: portName, wires: wires))
         }
 
         return GraphShapeNode(typeName: typeName, args: args, inputs: inputs, outputPort: outputPortName)
@@ -149,15 +151,19 @@ extension GraphShapeNode {
             let portSymbolID = expectedPort.portName.asSymbolID()
             let actualWires  = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID,
                                                                     toSymbolID:    portSymbolID)
-            guard actualWires.count == expectedPort.value.count else { return false }
-            for (wire, expectedChild) in zip(actualWires, expectedPort.value) {
+            guard actualWires.count == expectedPort.wires.count else { return false }
+            for (actualWire, expectedWire) in zip(actualWires, expectedPort.wires) {
+                // Compare wire name (unless the expected name is empty — old format).
+                if !expectedWire.name.isEmpty {
+                    guard actualWire.name.resolveSymbol() == expectedWire.name else { return false }
+                }
                 var visited: Set<ObjectID> = []
                 let actualChild = try GraphShapeNode.buildFromOrigin(
-                    fromNodeID:        wire.fromNodeID,
-                    fromSymbolID:      wire.fromSymbolID,
+                    fromNodeID:        actualWire.fromNodeID,
+                    fromSymbolID:      actualWire.fromSymbolID,
                     includeOutputPort: true,
                     visited:           &visited)
-                guard actualChild == expectedChild else { return false }
+                guard actualChild == expectedWire.node else { return false }
             }
         }
         return true
@@ -222,21 +228,25 @@ extension GraphShapeNode {
                                              properties:  properties)
         let newNodeID  = newNode.id!
 
-        // Wire each input port from the shape.
+        // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
-            for (index, childShape) in inputPortSpec.value.enumerated() {
-                let (fromNodeID, fromSymbolID) = try childShape.findOrCreateMatchingNode()
+            for wireSpec in inputPortSpec.wires {
+                let (fromNodeID, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
                 guard let fromSymbolID else {
-                    throw GraphShapeApplierError.missingOutputPortInChildShape(typeName: childShape.typeName)
+                    throw GraphShapeApplierError.missingOutputPortInChildShape(typeName: wireSpec.node.typeName)
                 }
+                // Use the explicit wire name from the shape when available;
+                // fall back to the source node name for old unnamed (empty) entries.
                 let sourceNode = try fromNodeID.loadNode()
-                let wireName   = (sourceNode.name ?? "\(inputPortSpec.portName)[\(index)]").asSymbolID()
+                let wireName   = wireSpec.name.isEmpty
+                    ? (sourceNode.name ?? "\(inputPortSpec.portName)[?]")
+                    : wireSpec.name
                 try Wire.connectWire(fromNodeID:   fromNodeID,
                                      fromSymbolID: fromSymbolID,
                                      toNodeID:     newNodeID,
                                      toSymbolID:   toSymbolID,
-                                     name:         wireName)
+                                     name:         wireName.asSymbolID())
             }
         }
 

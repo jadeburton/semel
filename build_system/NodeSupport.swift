@@ -143,9 +143,11 @@ extension Node {
     }
 
     mutating func setScheduledAndSave(_ scheduled: Bool) throws {
-        guard try nodeFunction() is NodeFunction else {
+        let nodeFunction = try self.nodeFunction()
+
+        guard nodeFunction is NodeFunction else {
             // This NodeFunction has no "process" method and so cannot be scheduled.
-            print("Attempted to schedule a Node of kind \(kind) that cannot be scheduled. Ignoring.")
+            print("Attempted to schedule a \(nodeFunction) that cannot be scheduled. Ignoring.")
             self.scheduled = false
             try DatabaseLayer.shared.updateNode(self)
             return

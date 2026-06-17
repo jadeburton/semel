@@ -20,13 +20,14 @@ struct ProjectBuilder: NodeFunction {
                                             outputPorts: [statusOutputPort],
                                             dynamicInputPorts: [productInputPort])
 
-    func convertProjectFileFormatToBuildGraphExpectations(projectFileContent: String) throws -> [String: String] {
-        ["mylib.dylib":"ClangLinkerTool(configuration=[Configuration(tool='linker').output], input=[ClangCompilerTool(configuration=[Configuration(tool='compiler').output], input=[ClangPreprocessorTool(configuration=[Configuration(tool='preprocessor').output], input=[StaticFile(path='hello.c').output]).output, ClangPreprocessorTool(configuration=[Configuration(tool='preprocessor').output], input=[StaticFile(path='main.c').output]).output]).output]).output"]
+    func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
+        [projectFileName.suffixRemoved(".fmla"):projectFileContent]
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        let projectFileValue = try input.inputValues[Self.projectFileInputPort]!.first!.value.expectValue().resolveAsString()
-        let productInputPortExpectation = try convertProjectFileFormatToBuildGraphExpectations(projectFileContent: projectFileValue)
+        let inputValue = input.inputValues[Self.projectFileInputPort]!.first!
+        let productInputPortExpectation = try convertProjectFileFormatToBuildGraphExpectations(projectFileName: inputValue.key,
+                                                                                               projectFileContent: inputValue.value.expectValue().resolveAsString())
         return .init(outputValues: [Self.statusOutputPort: .value("OK".intern())], inputWireExpectations: [Self.productInputPort: productInputPortExpectation])
     }
 }

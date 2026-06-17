@@ -29,7 +29,7 @@ struct ProjectFinder: NodeFunction {
         var result: [String: String] = [:]
 
         for entry in folderManifest.entries {
-            if entry.name.hasSuffix(".json") {
+            if entry.name.hasSuffix(".fmla") {
                 result[entry.name] = "ProjectBuilder(projectFile=StaticFile(path=\"\(entry.name)\").output).status".replacingOccurrences(of: "\\'", with: "'")
             }
         }

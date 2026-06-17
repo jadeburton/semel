@@ -174,6 +174,9 @@ extension InputlessNodeFunction {
                 guard !currentShapeNode.topologyMatches(expectedShapeNode) else {
                     continue   // topology unchanged — nothing to do
                 }
+                print("NO MATCH:")
+                print("currentShapeNode: \(currentShapeNode.asString())")
+                print("expectedShapeNode: \(expectedShapeNode.asString())")
                 _ = try existingWire.deleteWire()
             }
 
