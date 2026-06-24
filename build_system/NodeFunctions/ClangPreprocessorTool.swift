@@ -170,13 +170,13 @@ struct ClangPreprocessorTool: NodeFunction {
         let aggregatedIncludePathList: [String] = .init(setOfIncludeFiles)
 
         for includePath in aggregatedIncludePathList {
-            headerInputFilesWireExpectations[includePath] = "StaticFile(path='\(includePath)').output"
+            headerInputFilesWireExpectations[includePath] = "StaticFile(path: '\(includePath)').output"
         }
 
         var includeFileListWireExpections = [String: String]()
 
         for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile=StaticFile(path='\(sourcePath)').output).includePathList"
+            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile <- ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
         }
 
         // There must be one IncludeFinder attached to the .c file.
