@@ -56,17 +56,17 @@ extension BuildEngine {
     }
 
     /// Format an output port value with an emoji status prefix.
-    private static func formatOutputPort(_ outputPort: DatabaseModels.OutputPort) -> String {
+    static func formatOutputPort(_ outputPort: DatabaseModels.OutputPort) -> String {
         switch outputPort.valueKind {
         case .value:
             let hash    = outputPort.dataObjectHash ?? "nil"
             let preview = formatHash(outputPort.dataObjectHash)
-            return ("\(hash.truncated(to: 12))  \(preview.truncated(to: 20))")
+            return "[ \(hash.truncated(to: 12))  \(preview.truncated(to: 20)) ]"
         case .pending:
-            return "(pending)"
+            return "[ (pending) ]"
         case .error:
             let message = (try? outputPort.dataObjectHash?.resolveAsString()) ?? "<no message>"
-            return "(❌ \(message))"
+            return "[ ❌ \(message) ]"
         }
     }
 
@@ -92,7 +92,6 @@ extension BuildEngine {
         try database.recomputeAllSearchKeys()
 
         var projectFinder = try Node.projectFinder
-        try projectFinder.setScheduledAndSave(true)
 
         let allNodes       = try database.selectAllNodes()
         let allWires       = try database.selectAllWires()
@@ -139,7 +138,8 @@ extension BuildEngine {
                         for wire in wires {
                             let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
                             let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
-                            print("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── \(fromNode):\(fromPort)")
+                            let outputValue = (try? database.selectOutputPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)).map { formatOutputPort($0) } ?? "—"
+                            print("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── #\(wire.fromNodeID) \(fromNode):\(fromPort)   \(outputValue)")
                         }
                     }
                 }
@@ -158,7 +158,7 @@ extension BuildEngine {
                         for wire in wires {
                             let toNode = nodeByID[wire.toNodeID]?.name ?? "?"
                             let toPort = symbolName(symbolID: wire.toSymbolID, database: database)
-                            print("    · \(outputPort)  \(valueDesc)  ────▶ \(toNode):\(toPort)")
+                            print("    · \(outputPort)  \(valueDesc)  ────▶ #\(wire.toNodeID) \(toNode):\(toPort)")
                         }
                     }
                 }

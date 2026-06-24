@@ -43,8 +43,8 @@ extension DatabaseLayer {
     }
 }
 
-public extension DataObject {
-    func description() -> String {
+extension DataObject: CustomStringConvertible {
+    public var description: String {
         "DataObject hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.prefix(16).asHex())\(content.count > 16 ? "..." : "")"
     }
 }

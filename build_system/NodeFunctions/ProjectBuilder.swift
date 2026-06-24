@@ -21,7 +21,7 @@ struct ProjectBuilder: NodeFunction {
                                             dynamicInputPorts: [productInputPort])
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
-        [projectFileName.suffixRemoved(".fmla"):projectFileContent]
+        [projectFileName.removingSuffix(".fmla"): projectFileContent]
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {

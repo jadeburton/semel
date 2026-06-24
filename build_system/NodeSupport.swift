@@ -5,6 +5,16 @@
 //  Created by Jade Burton on 14.06.26.
 //
 
+// MARK: - String helpers
+
+extension String {
+    /// Returns the string with the given suffix removed, or the original string
+    /// unchanged if it does not end with that suffix.
+    func removingSuffix(_ suffix: String) -> String {
+        hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
+    }
+}
+
 extension DatabaseLayer {
     static var shared: DatabaseLayer {
         BuildEngine.shared.database
@@ -59,7 +69,7 @@ extension Node {
                 if let properties {
                     return try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
                 } else {
-                    return try PolyFactory.makeDefault(kind: kind) 
+                    return try PolyFactory.makeDefault(kind: kind)
                 }
             } else {
                 if properties != nil {
@@ -85,9 +95,9 @@ extension Node {
         let output = try nodeFunction.didCreate(node: node)
         try nodeFunction.writeToOutputs(output: output, thisNode: node)
 
-//        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
             try node.setScheduledAndSave(true)
-//        }
+        }
 
         return node
     }
@@ -147,7 +157,7 @@ extension Node {
 
         guard nodeFunction is NodeFunction else {
             // This NodeFunction has no "process" method and so cannot be scheduled.
-            print("Attempted to schedule a \(nodeFunction) that cannot be scheduled. Ignoring.")
+            print("Attempted to schedule a \(self) / \(type(of: nodeFunction)) that cannot be scheduled because it does not accept inputs. Ignoring.")
             self.scheduled = false
             try DatabaseLayer.shared.updateNode(self)
             return
@@ -261,6 +271,10 @@ extension Node {
                 return false
             }
         }
+
+        let previousPort = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
+
+        print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) (\(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
 
         try DatabaseLayer.shared.insertOrUpdateOutputPort(port)
 

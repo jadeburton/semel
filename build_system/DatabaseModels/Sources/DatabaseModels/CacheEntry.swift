@@ -43,8 +43,8 @@ extension DatabaseLayer {
     }
 }
 
-public extension CacheEntry {
-    func description() -> String {
+extension CacheEntry: CustomStringConvertible {
+    public var description: String {
         "CacheEntry hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.prefix(16).asHex())\(content.count > 16 ? "..." : "")"
     }
 }

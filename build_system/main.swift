@@ -15,8 +15,7 @@ func main() throws {
     FileManager.default.changeCurrentDirectoryPath("/Users/jadeburton/Desktop/C1/C1")
     let buildEngine = BuildEngine.shared
 
-    while let line = readLine() {
-        buildEngine.receiveUserInput(line: line)
+    while let line = readLine(), buildEngine.receiveUserInput(line: line) {
     }
 }
 

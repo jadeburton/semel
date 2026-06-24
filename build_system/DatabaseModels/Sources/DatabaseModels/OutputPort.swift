@@ -74,8 +74,8 @@ extension DatabaseLayer {
     }
 }
 
-public extension OutputPort {
-    func description() -> String {
+extension OutputPort: CustomStringConvertible {
+    public var description: String {
         "OutputPort: nodeID=\(nodeID), name=\(nameSymbolID.resolveSymbol()), valueKind=\(valueKind), dataObjectHash=\(dataObjectHash ?? "")"
     }
 }

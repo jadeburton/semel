@@ -266,7 +266,10 @@ extension GraphShapeNode {
             }
         }
 
-        try newNode.setScheduledAndSave(true)
+        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+            try newNode.setScheduledAndSave(true)
+        }
+
         return newNodeID
     }
 }

@@ -61,8 +61,8 @@ extension DatabaseLayer {
     }
 }
 
-public extension Symbol {
-    func description() -> String {
+extension Symbol: CustomStringConvertible {
+    public var description: String {
         "Symbol: name=\(name), id=\(id ?? -1)"
     }
 }

@@ -40,6 +40,8 @@ struct ProjectFinder: NodeFunction {
     func process(input: ProcessInput) throws -> ProcessOutput {
         var projectBuildersExpectations = [String: String]()
 
+        // TODO: when an input .fmla file goes to "deleted", we need to erase the corresponding ProjectBuilder and its wires. This is not yet implemented.
+
         if let folderManifestInputValue = input.inputValues[Self.folderManifestInputPort]?.first {
             let object = try? PolyFactory.decode(encodedJSON: folderManifestInputValue.value.expectValue().resolveAsString())
 

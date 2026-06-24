@@ -124,8 +124,8 @@ extension DatabaseLayer {
     }
 }
 
-public extension Node {
-    func description() -> String {
+extension Node: CustomStringConvertible {
+    public var description: String {
         "Node \(id ?? -1): kind \(kind), name=\(name ?? "nil"), scheduled=\(scheduled)"
     }
 }

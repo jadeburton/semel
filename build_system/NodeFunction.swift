@@ -87,11 +87,21 @@ extension NodeFunction {
             if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
                 let output = processWithCatch(thisNode: thisNode, input: input)
                 try writeToOutputs(output: output, thisNode: thisNode)
+                validatePorts(node: thisNode)
                 try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
             }
         } catch {
-            print("Error during processing: \(error)")
-            try? writeToOutputs(output: buildErrorOutput(withError: error), thisNode: thisNode)
+//            if case NodeError.missingInputs = error {
+ //           } else {
+//                print("Error during processing (\(thisNode.name!)): \(error)")
+                try? writeToOutputs(output: buildErrorOutput(withError: error), thisNode: thisNode)
+   //         }
+        }
+    }
+
+    private func validatePorts(node: Node) {
+        if !(try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty) {
+            print("WARNING: One or more outputs left Pending for node \(node)")
         }
     }
 }

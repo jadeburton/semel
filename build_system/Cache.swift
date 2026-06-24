@@ -42,7 +42,7 @@ extension InputlessNodeFunction {
     func loadAndWriteCachedOutputs(thisNode: Node, cacheKey: String?) throws -> Bool {
 
         // TEMP
-        return false
+        //return false
 
         guard let cacheKey else {
             return false
@@ -66,7 +66,7 @@ extension InputlessNodeFunction {
         
         for outputPort in descriptor.outputPorts {
             if let outputValue = decodedCacheEntry.outputValues[outputPort] {
-                print("Using cached output for node \(self), output port \(outputPort)")
+                print("Using cached output for node \(thisNode), output port '\(outputPort)'")
                 try thisNode.writeToOutputPort(outputPort, value: outputValue)
             } else {
                 // Invalid cache

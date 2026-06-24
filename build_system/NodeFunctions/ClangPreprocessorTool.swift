@@ -52,7 +52,7 @@ struct ClangPreprocessorTool: NodeFunction {
         let configuration: ClangPreprocessorToolConfiguration
         let inputSourceFile: FileNameAndContent
         let headerFiles: [FileNameAndContent]
-        let aggregatedIncludePathList: [String]
+        let includePathLists: [String: [String]]
 
         init(processInput: ProcessInput) throws {
             let configurationString = try processInput.inputValues[ClangPreprocessorTool.configuration]!.first!.value.expectValue().resolveAsString()
@@ -71,13 +71,15 @@ struct ClangPreprocessorTool: NodeFunction {
 
             self.headerFiles = headerFiles
 
-            let includeFilesValues = processInput.inputValues[ClangPreprocessorTool.includeFileLists]!
-
-            let setOfIncludeFiles: Set<String> = Set(try includeFilesValues.flatMap { includeFilesValue -> [String] in
-                try includeFilesValue.value.expectValue().resolveAsString().split(separator: "\n").map(String.init)
+            includePathLists = try Dictionary(uniqueKeysWithValues: processInput.inputValues[ClangPreprocessorTool.includeFileLists]!.map { includeFilesValue in
+                let wireName = includeFilesValue.key
+                let list = try includeFilesValue.value
+                    .expectValue()
+                    .resolveAsString()
+                    .split(separator: "\n")
+                    .map { String($0) }
+                return (wireName, list)
             })
-
-            aggregatedIncludePathList = .init(setOfIncludeFiles)
         }
     }
 
@@ -163,22 +165,39 @@ struct ClangPreprocessorTool: NodeFunction {
 
         var headerInputFilesWireExpectations = [String: String]()
 
-        for includePath in inputs.aggregatedIncludePathList {
+        let setOfIncludeFiles: Set<String> = Set(inputs.includePathLists.flatMap { (_, list) in list })
+
+        let aggregatedIncludePathList: [String] = .init(setOfIncludeFiles)
+
+        for includePath in aggregatedIncludePathList {
             headerInputFilesWireExpectations[includePath] = "StaticFile(path='\(includePath)').output"
         }
 
         var includeFileListWireExpections = [String: String]()
 
-        for sourcePath in (inputs.aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
+        for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
             includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile=StaticFile(path='\(sourcePath)').output).includePathList"
         }
+
+        // There must be one IncludeFinder attached to the .c file.
+
+        if inputs.includePathLists[inputs.inputSourceFile.filePath] == nil {
+            let error = NodeValue.noValue(reason: .error(message: "Still resolving include files"))
+            return .init(output: error,
+                         errorLog: error,
+                         infoLog: error,
+                         headerInputFilesWireExpectations: headerInputFilesWireExpectations,
+                         includeFileListWireExpections: includeFileListWireExpections)
+        }
+
+        // BUG: this is running the preprocessor before all include files have been wired-in.
 
         // do we have input wires for each of the Headers mentioned in the aggregated Include list?
         //    no -> set our output to Error but set our Expected Header File Wires to equal the Include List, so that new wires will be connected
         //          that will cause us to be scheduled for processing a second time. and connecting a new wire instantly causes all downstream
         //          nodes' outputs to go to Pending, including us.
         //    yes -> proceed to running the preprocessor
-        guard inputs.headerFiles.count == inputs.aggregatedIncludePathList.count else {
+        guard inputs.headerFiles.count == aggregatedIncludePathList.count else {
             let error = NodeValue.noValue(reason: .error(message: "Still resolving include files"))
             return .init(output: error,
                          errorLog: error,

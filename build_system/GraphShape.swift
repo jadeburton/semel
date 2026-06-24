@@ -94,7 +94,7 @@ extension GraphShapeNode {
         let indent     = pretty ? String(repeating: "  ", count: depth + 1) : ""
         let closing    = pretty ? "\n\(String(repeating: "  ", count: depth))" : ""
         let separator  = pretty ? ",\n\(indent)" : ", "
-        let lineBreak  = pretty ? "\n\(indent)" : ""
+        //let lineBreak  = pretty ? "\n\(indent)" : ""
 
         var params: [String] = []
         for arg in args {

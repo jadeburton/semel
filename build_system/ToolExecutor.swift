@@ -136,7 +136,7 @@ class LocalFileSystemTool: ToolExecutor {
             try? fileManager.removeItem(atPath: sandboxPath)
         }
 
-        print("Executing tool in sandbox path: \(sandboxPath)")
+        // print("Executing tool in sandbox path: \(sandboxPath)")
 
         // 2. Write all input files into the sandbox, creating intermediate directories as needed.
         for inputFile in inputFiles {

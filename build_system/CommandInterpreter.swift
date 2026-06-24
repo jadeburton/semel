@@ -267,6 +267,7 @@ enum UserCommand {
     case base(externalPath: String) // strato base .
     case debug
     case nudge // schedule all nodes currently in an error state
+    case quit
     case begin           // strato begin
     case commit          // strato commit
     case discard         // strato discard
@@ -341,6 +342,9 @@ final class CommandParser {
 
         case "n", "nudge":
             return .nudge
+
+        case "q", "quit", "exit":
+            return .quit
 
         case "begin":
             return .begin
@@ -452,6 +456,10 @@ final class ExternalPathSanitizer {
     }
 }
 
+enum  CommandInterpreterError: Error {
+    case quit
+}
+
 final class CommandInterpreter {
 
     let commandParser = CommandParser()
@@ -471,7 +479,9 @@ final class CommandInterpreter {
     func handleCommand(_ command: String) throws {
         do {
             try handleUserCommand(commandParser.parse(command: command))
-          //  try save()
+            //  try save()
+        } catch CommandInterpreterError.quit {
+            throw CommandInterpreterError.quit
         } catch {
             outputError(error.localizedDescription)
         }
@@ -485,6 +495,10 @@ final class CommandInterpreter {
         try BuildEngine.nudge()
     }
 
+    func handleQuit() throws {
+        throw CommandInterpreterError.quit
+    }
+
     func handleUserCommand(_ userCommand: UserCommand) throws {
         switch userCommand {
 
@@ -493,9 +507,12 @@ final class CommandInterpreter {
 
         case .debug:
             try handleDebug()
-            
+
         case .nudge:
             try handleNudge()
+
+        case .quit:
+            try handleQuit()
 
         case .begin:
             handleBegin()
