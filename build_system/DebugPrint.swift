@@ -89,9 +89,9 @@ extension BuildEngine {
 
     static func printAll() throws {
         let database = DatabaseLayer.shared
-        try database.recomputeAllSearchKeys()
+        try database.recomputeAllSearchKeys() // HACK TODO
 
-        var projectFinder = try Node.projectFinder
+        //var projectFinder = try Node.projectFinder
 
         let allNodes       = try database.selectAllNodes()
         let allWires       = try database.selectAllWires()
@@ -187,6 +187,54 @@ extension BuildEngine {
             print()
         }
 
-        (try Node.rootNode.nodeFunction() as! RootNode).debugPrintTree()
+        Node.debugPrintTree()
+    }
+}
+
+extension Node {
+    static func debugPrintTree() {
+        do {
+            print("- build tree")
+            try Node.projectFinder.printDependencyTree(indentLevel: 1)
+        } catch {
+            print("- build tree (error: \(error))")
+        }
+    }
+
+    private func printDependencyTree(indentLevel: Int) {
+        let indent = String(repeating: "  ", count: indentLevel)
+        let nodeFunction = try! nodeFunction()
+
+        let kindName = (try? PolyFactory.type(kind: type(of: nodeFunction).kind))
+            .map { String(describing: $0) } ?? "Node"
+
+        let nodeName = name ?? "?"
+        print("\(indent)- \(kindName)(\(nodeName))")
+
+        guard let nodeID = id else {
+            return
+        }
+
+        do {
+            let incomingWires = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID)
+
+            var visitedDependencyNodeIDs = Set<ObjectID>()
+            var dependencyNodes = [Node]()
+
+            for wire in incomingWires {
+                guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
+                visitedDependencyNodeIDs.insert(wire.fromNodeID)
+
+                if let rawNode = try? DatabaseLayer.shared.selectNodeByID(wire.fromNodeID) {
+                    dependencyNodes.append(rawNode)
+                }
+            }
+
+            for dependencyNode in dependencyNodes {
+                dependencyNode.printDependencyTree(indentLevel: indentLevel + 1)
+            }
+        } catch {
+            print("\(indent)  (error loading dependencies: \(error))")
+        }
     }
 }

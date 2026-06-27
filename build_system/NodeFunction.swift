@@ -28,6 +28,9 @@ protocol WithDefaultInitializer {
 protocol InputlessNodeFunction: Codable, PolySerializable, WithDefaultInitializer {
     func didCreate(node: Node) throws -> ProcessOutput
 
+    // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
+    var initialName: String { get }
+
     var descriptor: NodeFunctionDescriptor { get }
     /// Returns the init-time key-value arguments that distinguish this node from
     /// others of the same type (e.g. `path='src/hello.c'` for StaticFile).
@@ -43,17 +46,18 @@ protocol NodeFunction: InputlessNodeFunction {
 
     // Most Nodes can be immediately deleted as soon as all of their output wires are deleted. Deleting involves deleting all input Wires,
     // which may cause a cascade deletion.
-    // Some Nodes should not be deleted if they have no connected output Wires;
+    // Some Nodes should not be deleted even if they have no connected output Wires;
     // - ProjectFinder (which is the root object, and has no outputs by design)
     // - StaticFile. If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     //   it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted if there are no output Wires.
+    // - Folder. If it has one or more children it must not be deleted.
     func canBeDeleted(thisNode: Node) throws -> Bool
 }
 
 extension NodeFunction {
 
     func canBeDeleted(thisNode: Node) throws -> Bool {
-        true
+        try hasNoOutputWires(thisNode: thisNode)
     }
 
     private func buildProcessInput(thisNode: Node) throws -> ProcessInput {
@@ -119,6 +123,10 @@ extension NodeFunction {
 }
 
 extension InputlessNodeFunction {
+
+    func hasNoOutputWires(thisNode: Node) throws -> Bool {
+        try DatabaseLayer.shared.selectWires(comingFromNodeID: thisNode.id!).isEmpty
+    }
 
     func didCreate(node: Node) throws -> ProcessOutput {
         .init(outputValues: [:], inputWireExpectations: [:])
@@ -258,6 +266,7 @@ enum NodeError: Error {
     case other(message: String)
     case processNotSupported
     case cannotHaveProperties
+    case cannotDeleteNodeWithOutputs
 }
 extension NodeFunction {
     func description() -> String {
@@ -281,8 +290,6 @@ extension PolyFactory {
     static func makeDefault(kind: UInt, properties: [String: String]) throws -> InputlessNodeFunction & WithProperties {
         try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer & WithProperties).Type).init(properties: properties) as! InputlessNodeFunction & WithProperties
     }
-
-    //WithProperties
 }
 
 // MARK: - PolySerializable helper

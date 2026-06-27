@@ -38,12 +38,12 @@ extension InputlessNodeFunction {
     }
 }
 
-extension StaticFile {
-    func graphShapeArgs(node: Node) -> [GraphShapeArg] {
-        let path = (try? node.buildFullPathName()) ?? ""
-        return [GraphShapeArg(key: "path", value: path)]
-    }
-}
+//extension StaticFile {
+//    func graphShapeArgs(node: Node) -> [GraphShapeArg] {
+//        let path = (try? node.buildFullPathName()) ?? ""
+//        return [GraphShapeArg(key: "path", value: path)]
+//    }
+//}
 
 // MARK: - Build shape from the live graph
 
@@ -209,9 +209,9 @@ extension GraphShapeNode {
             }
             let inputFS = try Node.inputFileSystem
             guard let node = try inputFS.childNode(path: pathArg.value,
-                                                    kind: StaticFile.kind,
-                                                    createIfNotExist: true,
-                                                    properties: nil),
+                                                   kind: StaticFile.kind,
+                                                   createIfNotExist: true,
+                                                   properties: nil),
                   let nodeID = node.id else {
                 throw GraphShapeApplierError.couldNotResolveShape(typeName: typeName)
             }
@@ -219,12 +219,11 @@ extension GraphShapeNode {
         }
 
         // ── All other node types ───────────────────────────────────────────────
-        let rootNode   = try Node.rootNode
+        //let rootNode   = try Node.rootNode
         let properties = args.isEmpty ? nil
                        : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
-        var newNode    = try Node.createNode(parentNodeID: rootNode.id!,
-                                             kind:        kind,
-                                             name:        typeName,
+        var newNode    = try Node.createNode(kind:        kind,
+                                             name:        typeName, // TODO BUG: name is not type name..
                                              properties:  properties)
         let newNodeID  = newNode.id!
 

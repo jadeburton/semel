@@ -29,6 +29,10 @@ struct Folder: InputlessNodeFunction {
               inputWireExpectations: [:])
     }
 
+    func canBeDeleted(thisNode: Node) throws -> Bool {
+        try hasNoOutputWires(thisNode: thisNode) && thisNode.allChildren.isEmpty
+    }
+
     // The manifest is a non-recursive list of immediate children
     static let folderManifestOutputPort = "manifest"
 
@@ -46,8 +50,8 @@ struct Folder: InputlessNodeFunction {
     }
 
     @discardableResult
-    func ensureEntirePathExists(_ path: String, thisNode: Node) throws -> Folder {
-        fatalError()/*
+    func ensureEntirePathExists(_ path: String, thisNode: Node) throws -> Node {
+
         // if input is a/b/c, we create a, if it does not already exist, then b, then c, and return the nodeID of c
         let components = path
             .split(separator: "/", omittingEmptySubsequences: true)
@@ -59,13 +63,13 @@ struct Folder: InputlessNodeFunction {
             if let existingChild = try currentFolder.childNode(path: name) {
                 currentFolder = existingChild
             } else {
-                let newFolder: Folder = try currentFolder.child(named: name, createIfNotExist: true)!
-                try currentFolder.notifyChildAdded(nodeID: newFolder.nodeContext.nodeID!, name: name)
+                let newFolder = try currentFolder.childNode(path: name, kind: Folder.kind, createIfNotExist: true, properties: [:])!
+                try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(nodeID: newFolder.id!, name: name, thisNode: currentFolder)
                 currentFolder = newFolder
             }
         }
 
-        return currentFolder*/
+        return currentFolder
     }
 
     func addOrReplaceChild(thisNode: Node, content: DataObjectHash, name: String) throws {

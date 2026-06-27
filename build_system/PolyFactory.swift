@@ -21,12 +21,10 @@ enum PolyFactory {
 
     /// All polymorphic types must be registered here.
     private static let registry: [UInt: PolySerializable.Type] = [
-        RootNode.kind:                           RootNode.self,
         ProjectFinder.kind:                      ProjectFinder.self,
         ProjectBuilder.kind:                     ProjectBuilder.self,
         StaticFile.kind:                         StaticFile.self,
         Folder.kind:                             Folder.self,
-        //FolderEvent.kind:                        FolderEvent.self,
         ClangLinkerTool.kind:                    ClangLinkerTool.self,
         ClangCompilerTool.kind:                  ClangCompilerTool.self,
         ClangPreprocessorTool.kind:              ClangPreprocessorTool.self,

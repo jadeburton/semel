@@ -22,20 +22,15 @@ extension DatabaseLayer {
 }
 
 extension Node {
-    func buildFullPathName(rootName: String = "root") throws -> String {
-        let name = name ?? "<no name>"
-
-        guard let parentNodeID = parentNodeID, let parentNode = try DatabaseLayer.shared.selectNodeByID(parentNodeID) else {
-            return name
+    func buildFullPathName() throws -> String {
+        func parentPath() throws -> String {
+            guard let parentNodeID, let parentNode = try DatabaseLayer.shared.selectNodeByID(parentNodeID) else {
+                return ""
+            }
+            return try parentNode.buildFullPathName() + "/"
         }
 
-        if parentNode.name == rootName {
-            return ""
-        }
-
-        let parentPath = try parentNode.buildFullPathName(rootName: rootName)
-
-        return parentPath.isEmpty ? name : (parentPath + "/" + name)
+        return try parentPath() + (name ?? "<no name>")
     }
 
     func nodeFunctionCast<N: InputlessNodeFunction>() throws -> N {
@@ -60,7 +55,7 @@ extension Node {
         try childNode(path: path, kind: Folder.kind, createIfNotExist: false, properties: nil)
     }
 
-    static func createNode(parentNodeID: ObjectID?, kind: UInt, name: String, properties: [String: String]?) throws -> Node {
+    static func createNode(parentNodeID: ObjectID? = nil, kind: UInt, properties: [String: String]?) throws -> Node {
 
         let type = try PolyFactory.type(kind: kind)
 
@@ -83,7 +78,7 @@ extension Node {
 
         var node = Node(parentNodeID: parentNodeID,
                         kind: kind,
-                        name: name,
+                        name: nodeFunction.initialName,
                         configuration: try nodeFunction.toJSON(),
                         scheduled: false,
                         searchKey: nil)
@@ -130,26 +125,23 @@ extension Node {
         return self
     }
 
-    mutating func insert() throws {
-        id = try DatabaseLayer.shared.insertNode(self)
-    }
-
     func delete() throws -> Bool {
         print("delete node #\(id!)")
 
-        for wire in try DatabaseLayer.shared.selectWires(goingToNodeID: id!) {
-            _ = try wire.deleteWire()
+        if !(try DatabaseLayer.shared.selectWires(comingFromNodeID: id!).isEmpty) {
+            throw NodeError.cannotDeleteNodeWithOutputs
         }
 
-        for wire in try DatabaseLayer.shared.selectWires(comingFromNodeID: id!) {
+        // Delete all inputs
+        for wire in try DatabaseLayer.shared.selectWires(goingToNodeID: id!) {
             _ = try wire.deleteWire()
         }
 
         let portDeleteCount = try DatabaseLayer.shared.deleteOutputPorts(nodeID: id!)
 
-        print("\(portDeleteCount) Port(s) deleted for node #\(id!)")
+        print("\(portDeleteCount) output port(s) deleted for node #\(id!)")
 
-        return try DatabaseLayer.shared.deleteNode(nodeID: id!) && portDeleteCount > 0
+        return try DatabaseLayer.shared.deleteNode(nodeID: id!)
     }
 
     mutating func setScheduledAndSave(_ scheduled: Bool) throws {
@@ -158,51 +150,41 @@ extension Node {
         guard nodeFunction is NodeFunction else {
             // This NodeFunction has no "process" method and so cannot be scheduled.
             print("Attempted to schedule a \(self) / \(type(of: nodeFunction)) that cannot be scheduled because it does not accept inputs. Ignoring.")
-            self.scheduled = false
-            try DatabaseLayer.shared.updateNode(self)
             return
         }
+
         self.scheduled = scheduled
+
         try DatabaseLayer.shared.updateNode(self)
+
         if scheduled {
             BuildEngine.shared.signalWorkAvailable()
         }
     }
 
+    private static func nodeInRoot(named name: String, kind: UInt) throws -> Node {
+        guard let existing = try DatabaseLayer.shared.selectNodesInRoot(named: name).first else {
+            return try Node.createNode(parentNodeID: nil, kind: kind, name: name, properties: nil)
+        }
+
+        return existing
+    }
+
     static var projectFinder: Node {
         get throws {
-            try Node.rootNode.childNode(path: "projectFinder",
-                                        kind: ProjectFinder.kind,
-                                        createIfNotExist: true,
-                                        properties: nil)!
+            try nodeInRoot(named: "projectFinder", kind: ProjectFinder.kind)
         }
     }
 
     static var inputFileSystem: Node {
         get throws {
-            try Node.rootNode.childNode(path: "inputFileSystem",
-                                        kind: Folder.kind,
-                                        createIfNotExist: true,
-                                        properties: nil)!
+            try nodeInRoot(named: "inputFileSystem", kind: Folder.kind)
         }
     }
 
     static var outputFileSystem: Node {
         get throws {
-            try Node.rootNode.childNode(path: "outputFileSystem",
-                                        kind: Folder.kind,
-                                        createIfNotExist: true,
-                                        properties: nil)!
-        }
-    }
-
-    static var rootNode: Node {
-        get throws {
-            guard let existing = try DatabaseLayer.shared.selectNodesInRoot(named: "root").first else {
-                return try Node.createNode(parentNodeID: nil, kind: RootNode.kind, name: "root", properties: nil)
-            }
-
-            return existing
+            try nodeInRoot(named: "outputFileSystem", kind: Folder.kind)
         }
     }
 }

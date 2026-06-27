@@ -5,14 +5,37 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
-struct StaticFile: InputlessNodeFunction {
+struct StaticFile: InputlessNodeFunction, WithProperties {
     static let kind: UInt = 3
 
+    let properties: [String: String]
+
     enum CodingKeys: CodingKey {
+        case properties
+    }
+
+    var initialName: String {
+        properties["path"]?.lastPathComponent ?? "untitled"
     }
 
     static let outputPort = "output"
 
+    init() {
+        properties = [String: String]()
+    }
+
+    init(properties: [String : String] = [String: String]()) {
+        self.properties = properties
+    }
+
+//        func graphShapeArgs(node: Node) -> [GraphShapeArg] {
+//            let path = (try? node.buildFullPathName()) ?? ""
+//            return [GraphShapeArg(key: "path", value: path)]
+//        }
+    
+    // When GraphShapeApplier needs to resolve "StaticFile(path: 'src/hello.c')", we receive properties with the path.
+    // At that point we need to ensure the Folder hierarchy exists above us. Then we turn the path into a local name only.
+    
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
                                             outputPorts: [outputPort])
 
@@ -42,22 +65,43 @@ struct StaticFile: InputlessNodeFunction {
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
-struct OutputFile: NodeFunction {
+struct OutputFile: NodeFunction, WithProperties {
+
     static let kind: UInt = 8
 
+    let properties: [String: String]
+
     enum CodingKeys: CodingKey {
+        case properties
     }
 
     static let inputPort = "input"
     static let statusOutputPort = "status"
+
+    init() {
+        properties = [String: String]()
+    }
+
+    init(properties: [String : String] = [String: String]()) {
+        self.properties = properties
+    }
+
+    var initialName: String {
+        properties["path"]?.lastPathComponent ?? "untitled"
+    }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort], dynamicInputPorts: [])
 
     func didCreate(node: Node) throws -> ProcessOutput {
         // OutputFile needs to be listable as part of a folder hierarchy, so we maintain that.
 
-        let fullPath = node.name
-        // TODO: ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
+        // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
+
+        let path = properties["path"]!
+        let pathWithoutLastComponent = path // TODO
+
+        // /outputFileSystem/bin/mylib.dylib
+        try (Node.outputFileSystem.nodeFunctionCast() as Folder).ensureEntirePathExists(pathWithoutLastComponent, thisNode: Node.outputFileSystem)
 
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .pending)],
                      inputWireExpectations: [:])
@@ -85,50 +129,4 @@ struct OutputFile: NodeFunction {
 protocol WithProperties {
     var properties: [String: String] { get }
     init(properties: [String: String])
-}
-
-// Like a StaticFile, but it allows you to put configuration directly into the formula.
-struct Configuration: InputlessNodeFunction, WithProperties {
-    static let kind: UInt = 9
-
-    let properties: [String: String]
-
-    enum CodingKeys: CodingKey {
-        case properties
-    }
-
-    static let outputPort = "output"
-
-    init() {
-        properties = [String: String]()
-    }
-
-    init(properties: [String : String] = [String: String]()) {
-        self.properties = properties
-    }
-
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort], dynamicInputPorts: [])
-
-    func didCreate(node: Node) throws -> ProcessOutput {
-
-        let standardClang = ToolDescriptor(name: "clang",
-                                           version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                                           platform: "macOS",
-                                           architecture: "arm64",
-                                           recursiveHash: nil)
-
-        func outputValue() throws -> PolySerializable {
-            switch properties["tool"] {
-                case "preprocessor":
-                    return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-                case "linker":
-                    return try ClangLinkerToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-                case "compiler":
-                    return try ClangCompilerToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-                default:
-                    return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-            }
-        }
-        return .init(outputValues: [Self.outputPort: .value(try outputValue().toJSON().intern())], inputWireExpectations: [:])
-    }
 }
