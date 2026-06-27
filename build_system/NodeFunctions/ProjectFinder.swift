@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - ProjectFinder
 
-/// Watches an input file-list stream and creates a ProjectBuilder child for
+/// Watches an input file-list and creates a ProjectBuilder child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
 struct ProjectFinder: NodeFunction {
     static let kind: UInt = 5
@@ -24,6 +24,11 @@ struct ProjectFinder: NodeFunction {
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
                                             outputPorts: [],
                                             dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
+
+    // ProjectFinder is the root object and so must never be deleted.
+    func canBeDeleted(thisNode: Node) throws -> Bool {
+        false
+    }
 
     private func buildProjectBuildersExpectationFromFolderManifest(folderManifest: FolderManifest) throws -> [String: String] {
         var result: [String: String] = [:]
@@ -53,7 +58,7 @@ struct ProjectFinder: NodeFunction {
         }
 
         return .init(outputValues: [:],
-                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder().folderManifest"],
+                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder().manifest"],
                                              Self.projectBuildersInputPort: projectBuildersExpectations])
     }
 }

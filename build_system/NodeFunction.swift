@@ -40,9 +40,21 @@ protocol InputlessNodeFunction: Codable, PolySerializable, WithDefaultInitialize
 // Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
 protocol NodeFunction: InputlessNodeFunction {
     func process(input: ProcessInput) throws -> ProcessOutput
+
+    // Most Nodes can be immediately deleted as soon as all of their output wires are deleted. Deleting involves deleting all input Wires,
+    // which may cause a cascade deletion.
+    // Some Nodes should not be deleted if they have no connected output Wires;
+    // - ProjectFinder (which is the root object, and has no outputs by design)
+    // - StaticFile. If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
+    //   it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted if there are no output Wires.
+    func canBeDeleted(thisNode: Node) throws -> Bool
 }
 
 extension NodeFunction {
+
+    func canBeDeleted(thisNode: Node) throws -> Bool {
+        true
+    }
 
     private func buildProcessInput(thisNode: Node) throws -> ProcessInput {
         var inputValues = [String: [String: NodeValue]]()

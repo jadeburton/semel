@@ -147,8 +147,8 @@
             filePath = "build_system/NodeSupport.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "160"
-            endingLineNumber = "160"
+            startingLineNumber = "134"
+            endingLineNumber = "134"
             landmarkName = "setScheduledAndSave(_:)"
             landmarkType = "7">
          </BreakpointContent>
@@ -163,8 +163,8 @@
             filePath = "build_system/NodeFunction.swift"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "82"
-            endingLineNumber = "82"
+            startingLineNumber = "94"
+            endingLineNumber = "94"
             landmarkName = "processWithPreCheck(thisNode:)"
             landmarkType = "7">
          </BreakpointContent>

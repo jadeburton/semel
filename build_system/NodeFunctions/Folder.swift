@@ -9,6 +9,7 @@ import Foundation
 
 struct FolderManifestEntry: Codable {
     let name: String
+    let isFolder: Bool
 }
 
 struct FolderManifest: PolySerializable {
@@ -28,7 +29,8 @@ struct Folder: InputlessNodeFunction {
               inputWireExpectations: [:])
     }
 
-    static let folderManifestOutputPort = "folderManifest"
+    // The manifest is a non-recursive list of immediate children
+    static let folderManifestOutputPort = "manifest"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [folderManifestOutputPort], dynamicInputPorts: [])
 
@@ -91,50 +93,14 @@ struct Folder: InputlessNodeFunction {
     private func buildManifest(thisNode: Node) throws -> FolderManifest {
         var folderManifestEntries = [FolderManifestEntry]()
         for child in try thisNode.allChildren {
-            folderManifestEntries.append(.init(name: child.name!))
+            folderManifestEntries.append(.init(name: child.name!, isFolder: child.kind == Folder.kind))
         }
         return FolderManifest(entries: folderManifestEntries)
     }
 
-    // Folder works "outside" the cache system and therefore cannot use "process". It is a Node, and has outputs, however.
+    // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.
     func refreshOutputs(thisNode: Node) throws {
         try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
                                        value: .value(try buildManifest(thisNode: thisNode).toJSON().intern()))
     }
 }
-/*
-final class FolderEvent: MessageType {
-    enum FolderEventKind: Codable {
-        case childAdded(nodeID: ObjectID, name: String)
-        case childDeleted(nodeID: ObjectID, name: String)
-        case childRenamed(nodeID: ObjectID, oldName: String, newName: String)
-        case childMoved(nodeID: ObjectID, oldPath: String, newPath: String)
-        case childContentChanged(nodeID: ObjectID, name: String)
-    }
-
-    static let kind: UInt = 100
-
-    var folderEventKind: FolderEventKind?
-
-    enum CodingKeys: CodingKey {
-        case folderEventKind
-    }
-
-    required init() throws {
-    }
-
-    init(folderEventKind: FolderEventKind) {
-        self.folderEventKind = folderEventKind
-    }
-
-    required init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        folderEventKind = try container.decodeIfPresent(FolderEventKind.self, forKey: .folderEventKind)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(folderEventKind, forKey: .folderEventKind)
-    }
-}
-*/

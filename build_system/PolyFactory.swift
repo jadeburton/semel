@@ -34,7 +34,7 @@ enum PolyFactory {
         ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
         ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
         FolderManifest.kind:                     FolderManifest.self,
-        Product.kind:                            Product.self,
+        OutputFile.kind:                         OutputFile.self,
         Configuration.kind:                      Configuration.self,
         IncludeFinder.kind:                      IncludeFinder.self
     ]

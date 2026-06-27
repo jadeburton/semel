@@ -16,6 +16,18 @@ struct StaticFile: InputlessNodeFunction {
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
                                             outputPorts: [outputPort])
 
+    // If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
+    // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted
+    // if there are no output Wires.
+    func canBeDeleted(thisNode: Node) throws -> Bool {
+
+        guard let nodeValue = try read(thisNode: thisNode) else {
+            return true
+        }
+
+        return nodeValue.isNoValue
+    }
+
     func read(thisNode: Node) throws -> NodeValue? {
         try thisNode.readFromOutputPort(Self.outputPort)
     }
@@ -29,7 +41,8 @@ struct StaticFile: InputlessNodeFunction {
     }
 }
 
-struct Product: NodeFunction {
+// OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
+struct OutputFile: NodeFunction {
     static let kind: UInt = 8
 
     enum CodingKeys: CodingKey {
@@ -39,6 +52,16 @@ struct Product: NodeFunction {
     static let statusOutputPort = "status"
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort], dynamicInputPorts: [])
+
+    func didCreate(node: Node) throws -> ProcessOutput {
+        // OutputFile needs to be listable as part of a folder hierarchy, so we maintain that.
+
+        let fullPath = node.name
+        // TODO: ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
+
+        return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .pending)],
+                     inputWireExpectations: [:])
+    }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
         let inputValue = input.inputValues[Self.inputPort]!.first!
