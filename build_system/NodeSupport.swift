@@ -353,7 +353,7 @@ extension Node {
 
         let previousPort = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
 
-        print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) (\(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
+        print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
 
         try DatabaseLayer.shared.insertOrUpdateOutputPort(port)
 

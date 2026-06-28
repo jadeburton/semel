@@ -10,6 +10,7 @@ import DatabaseModels
 
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
+    let inputWireExpectations: [String: [String: String]]
 }
 
 struct ProcessInput {

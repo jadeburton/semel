@@ -244,15 +244,26 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
         let start = try folder.childNode(path: inDirectoryPath)! // TODO
         return try! start.allChildren.map { node in
-            if node.kind == StaticFile.kind {
+            switch node.kind {
+
+            case StaticFile.kind:
                 let staticFileNodeFunction = try node.nodeFunctionCast() as StaticFile
                 return FileWildcardEntry(path: node.name!,
                                          kind: .file,
                                          isMissing: try staticFileNodeFunction.read(thisNode: node)!.isNoValue)
-            } else {
+            case OutputFile.kind:
+                let outputFileNodeFunction = try node.nodeFunctionCast() as OutputFile
+                return FileWildcardEntry(path: node.name!,
+                                         kind: .file,
+                                         isMissing: try outputFileNodeFunction.read(thisNode: node)!.isNoValue)
+
+            case Folder.kind:
                 return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
                                          isMissing: false)
+
+            default:
+                throw NodeError.other(message: "Unexpected object kind")
             }
         }
     }
@@ -671,12 +682,17 @@ final class CommandInterpreter {
     private func copyOneFile(folder: Node, entry: FileWildcardEntry, destinationPath: String) throws {
         switch entry.kind {
         case .file:
-            guard let staticFileNode = try folder.childNode(path: entry.path) else {
+            guard let fileNode = try folder.childNode(path: entry.path) else {
                 outputError("File \(entry.path) not found in internal file system")
                 return
             }
 
-            switch try staticFileNode.readFromOutputPort(StaticFile.outputPort) {
+            guard let file = try fileNode.nodeFunction() as? FileType else {
+                outputError("Object \(entry.path) is not a FileType")
+                return
+            }
+
+            switch try file.read(thisNode: fileNode) {
 
             case .value(let dataObjectHash):
                 let fileContent = Data(try dataObjectHash.resolve())
@@ -686,6 +702,9 @@ final class CommandInterpreter {
 
             case .noValue(let reason):
                 outputError("File \(entry.path) has no content: \(reason)")
+
+            case nil:
+                outputError("File \(entry.path) has no nil value")
 
             }
 

@@ -28,8 +28,8 @@ struct ProjectBuilder: NodeFunction {
     }
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
-        //"OutputFile(path: 'mylib.dylib', input <- ["product": \(projectFileContent)]).status"
-        [projectFileName.removingSuffix(".fmla"): projectFileContent]
+        let graphShape = try GraphShapeNode.parse("OutputFile(path: '\(projectFileName.removingSuffix(".fmla"))', input <- ['product': \(projectFileContent)]).status")
+        return [projectFileName.removingSuffix(".fmla"): graphShape.asString(omitOutputPort: false)]
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {

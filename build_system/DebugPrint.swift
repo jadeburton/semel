@@ -43,7 +43,7 @@ extension BuildEngine {
 
     /// Resolve a symbol ID to its name, falling back to "?".
     private static func symbolName(symbolID: ObjectID, database: DatabaseLayer) -> String {
-        (try? database.selectSymbol(symbolID: symbolID))?.name ?? "?"
+        (try? database.selectSymbol(symbolID: symbolID))?.name ?? "<invalid symbolID>"
     }
 
     /// Format a wire as "fromNode:fromPort ──▶ toNode:toPort".
@@ -108,9 +108,8 @@ extension BuildEngine {
         for rawNode in allNodes {
             guard let nodeID = rawNode.id else { continue }
 
-            let kindName  = (try? PolyFactory.type(kind: rawNode.kind)).map { String(describing: $0) } ?? "kind:\(rawNode.kind)"
             let scheduled = rawNode.scheduled ? "⏱ scheduled" : "idle"
-            print("⬢ \(rawNode.name ?? "?")  [\(kindName)]  #\(nodeID)  \(scheduled)")
+            print("⬢ \(type(of: try rawNode.nodeFunction())) name: \(rawNode.name ?? "<none>") #\(nodeID)  \(scheduled)")
             print("  searchKey: \(rawNode.searchKey ?? "nil")")
 
             if let parentNodeID = rawNode.parentNodeID {

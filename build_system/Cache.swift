@@ -87,8 +87,7 @@ extension InputlessNodeFunction {
             return
         }
 
-        // TODO! also the dynamic input expectations
-        let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues)
+        let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireExpectations: output.inputWireExpectations)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
         try DatabaseLayer.shared.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
     }
