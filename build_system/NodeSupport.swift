@@ -342,7 +342,7 @@ extension Node {
         try writeToOutputPort(port: try value.mapPort(nodeID: id!, outputSymbolID: outputPort.asSymbolID()))
     }
 
-    @discardableResult func writeToOutputPort(port: build_system.OutputPort) throws -> Bool {
+    @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {
 
         if let existing = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {

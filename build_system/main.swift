@@ -19,4 +19,6 @@ func main() throws {
     }
 }
 
+#if !UNIT_TESTING
 try main()
+#endif

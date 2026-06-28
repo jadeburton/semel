@@ -28,6 +28,7 @@ struct ProjectBuilder: NodeFunction {
     }
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
+        //"OutputFile(path: 'mylib.dylib', input <- ["product": \(projectFileContent)]).status"
         [projectFileName.removingSuffix(".fmla"): projectFileContent]
     }
 

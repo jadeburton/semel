@@ -41,9 +41,6 @@ extension InputlessNodeFunction {
 
     func loadAndWriteCachedOutputs(thisNode: Node, cacheKey: String?) throws -> Bool {
 
-        // TEMP
-        //return false
-
         guard let cacheKey else {
             return false
         }

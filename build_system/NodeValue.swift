@@ -73,7 +73,7 @@ extension NodeValue {
         }
     }
 
-    func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> build_system.OutputPort {
+    func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> OutputPort {
         switch self {
 
         case .noValue(let reason):

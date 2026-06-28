@@ -590,7 +590,7 @@ final class CommandInterpreter {
             let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
-            let (fromNodeID, fromSymbolID) = try graphShapeNode.findOrCreateMatchingNode()
+            let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
             let fromNode = try fromNodeID.loadNode()
             _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(thisNode: fromNode, fileContent.intern())
 
