@@ -29,7 +29,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database199.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database204.sqlite")) throws {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
         // Capture the fully-initialised self before starting the task.
@@ -114,8 +114,8 @@ final class BuildEngine {
             try node.setScheduledAndSave(false)
             return
         }
-        print("process: nodeFunction \(type(of: nodeFunction)), nodeID \(node.id!)")
-        nodeFunction.processWithPreCheck(thisNode: node)
+
+        try? nodeFunction.processWithPreCheck(thisNode: node)
 
         var node = node
         try node.setScheduledAndSave(false)

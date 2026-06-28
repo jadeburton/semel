@@ -99,7 +99,7 @@ struct ClangPreprocessorTool: NodeFunction {
         let includeFileListWireExpections: [String: String] // TODO: graph object, starting from the name of the output on the rootmost Node
 
         func asProcessOutput() -> ProcessOutput {
-            .init(outputValues: [ClangPreprocessorTool.output: output,
+            return .init(outputValues: [ClangPreprocessorTool.output: output,
                                  ClangPreprocessorTool.errorLog: errorLog,
                                  ClangPreprocessorTool.infoLog: infoLog],
                   inputWireExpectations: [ClangPreprocessorTool.headerInputFiles: headerInputFilesWireExpectations,

@@ -97,7 +97,8 @@ extension Node {
 
         try node.writePendingToAllOutputsOfNode()
 
-        let output = try nodeFunction.didCreate(node: node)
+        let output = try nodeFunction.didCreate(node: node) ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
+
         try nodeFunction.writeToOutputs(output: output, thisNode: node)
 
         if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
@@ -172,8 +173,8 @@ extension Node {
 
         return currentFolder
     }
-
-    func addOrReplaceStaticFileChild(content: DataObjectHash, name: String) throws {
+/*
+    func addOrReplaceStaticFileChild(content: DataObjectHash?, name: String) throws {
         assert(!name.contains("\\"))
 
         if kind != Folder.kind {
@@ -203,7 +204,7 @@ extension Node {
                 try (self.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newChild, thisNode: self)
             }
         }
-    }
+    }*/
 
     func childNode(path: String) throws -> Node? {
         let components = path
@@ -221,25 +222,6 @@ extension Node {
         }
 
         return currentNode
-    }
-
-    func delete() throws -> Bool {
-        print("delete node #\(id!)")
-
-        if !(try DatabaseLayer.shared.selectWires(comingFromNodeID: id!).isEmpty) {
-            throw NodeError.cannotDeleteNodeWithOutputs
-        }
-
-        // Delete all inputs
-        for wire in try DatabaseLayer.shared.selectWires(goingToNodeID: id!) {
-            _ = try wire.deleteWire()
-        }
-
-        let portDeleteCount = try DatabaseLayer.shared.deleteOutputPorts(nodeID: id!)
-
-        print("\(portDeleteCount) output port(s) deleted for node #\(id!)")
-
-        return try DatabaseLayer.shared.deleteNode(nodeID: id!)
     }
 
     mutating func setScheduledAndSave(_ scheduled: Bool) throws {
@@ -334,7 +316,7 @@ extension Node {
 
     func writePendingToAllOutputsOfNode() throws {
         for outputPort in try nodeFunction().descriptor.outputPorts {
-            try id!.loadNode().writeToOutputPort(outputPort, value: .noValue(reason: .pending))
+            try writeToOutputPort(outputPort, value: .noValue(reason: .pending))
         }
     }
 
@@ -346,14 +328,13 @@ extension Node {
 
         if let existing = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {
-                //print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
+               // print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
                 return false
             }
         }
 
-        let previousPort = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
-
-        print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
+        //let previousPort = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
+        //print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
 
         try DatabaseLayer.shared.insertOrUpdateOutputPort(port)
 

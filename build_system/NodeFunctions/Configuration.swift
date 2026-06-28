@@ -27,7 +27,7 @@ struct Configuration: InputlessNodeFunction {
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort], dynamicInputPorts: [])
 
-    func didCreate(node: Node) throws -> ProcessOutput {
+    func didCreate(node: Node) throws -> ProcessOutput? {
 
         let standardClang = ToolDescriptor(name: "clang",
                                            version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
@@ -47,6 +47,7 @@ struct Configuration: InputlessNodeFunction {
                     return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
             }
         }
+
         return .init(outputValues: [Self.outputPort: .value(try outputValue().toJSON().intern())], inputWireExpectations: [:])
     }
 }

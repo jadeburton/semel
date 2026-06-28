@@ -39,7 +39,8 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
     public func selectAllWires() throws -> [Wire] {
-        try read { db in try Wire.fetchAll(db) }
+        print("WARNING: expensive selectAllWires call")
+        return try read { db in try Wire.fetchAll(db) }
     }
 
     public func selectWires(goingToNodeID: ObjectID) throws -> [Wire] {

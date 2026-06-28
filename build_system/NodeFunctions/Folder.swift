@@ -33,8 +33,6 @@ struct Folder: InputlessNodeFunction {
         name
     }
 
-    static let outputPort = "output"
-
     init(properties: [String : String] = [String: String]()) {
         let path = properties["path"]!
         containingPath = path.deletingLastPathComponent() ?? ""
@@ -57,13 +55,12 @@ struct Folder: InputlessNodeFunction {
 //        }
 //    }
 
-    var path: String {
-        containingPath.appendingPathComponent(name)
+    func didCreate(node: Node) throws -> ProcessOutput? {
+        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(thisNode: node).toJSON().intern())], inputWireExpectations: [:])
     }
 
-    func didCreate(node: Node) throws -> ProcessOutput {
-        .init(outputValues: [Self.folderManifestOutputPort: .value(try FolderManifest(entries: []).toJSON().intern())],
-              inputWireExpectations: [:])
+    var path: String {
+        containingPath.appendingPathComponent(name)
     }
 
     func canBeDeleted(thisNode: Node) throws -> Bool {
@@ -89,6 +86,14 @@ struct Folder: InputlessNodeFunction {
     private func buildManifest(thisNode: Node) throws -> FolderManifest {
         var folderManifestEntries = [FolderManifestEntry]()
         for child in try thisNode.allChildren {
+
+            // Hide ghosts
+            if let staticFile = try child.nodeFunction() as? StaticFile {
+                if try staticFile.isGhost(thisNode: child) {
+                    continue
+                }
+            }
+
             folderManifestEntries.append(.init(name: child.name!, isFolder: child.kind == Folder.kind))
         }
         return FolderManifest(entries: folderManifestEntries)

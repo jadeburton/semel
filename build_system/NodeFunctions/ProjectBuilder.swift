@@ -36,6 +36,7 @@ struct ProjectBuilder: NodeFunction {
         let inputValue = input.inputValues[Self.projectFileInputPort]!.first!
         let productInputPortExpectation = try convertProjectFileFormatToBuildGraphExpectations(projectFileName: inputValue.key,
                                                                                                projectFileContent: inputValue.value.expectValue().resolveAsString())
-        return .init(outputValues: [Self.statusOutputPort: .value("OK".intern())], inputWireExpectations: [Self.productInputPort: productInputPortExpectation])
+        return .init(outputValues: [Self.statusOutputPort: .value("OK".intern())],
+                     inputWireExpectations: [Self.productInputPort: productInputPortExpectation])
     }
 }

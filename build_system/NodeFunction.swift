@@ -31,7 +31,7 @@ protocol InputlessNodeFunction: Codable, PolySerializable {
     var properties: [String: String] { get }
     init(properties: [String: String])
 
-    func didCreate(node: Node) throws -> ProcessOutput
+    func didCreate(node: Node) throws -> ProcessOutput?
 
     // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
     var initialName: String? { get }
@@ -43,12 +43,6 @@ protocol InputlessNodeFunction: Codable, PolySerializable {
     /// Declared here so Swift dispatches it dynamically via the protocol witness table,
     /// not statically via the extension — which would always call the default `[]`.
     func graphShapeArgs(node: Node) -> [GraphShapeArg]
-}
-
-// A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
-// Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
-protocol NodeFunction: InputlessNodeFunction {
-    func process(input: ProcessInput) throws -> ProcessOutput
 
     // Most Nodes can be immediately deleted as soon as all of their output wires are deleted. Deleting involves deleting all input Wires,
     // which may cause a cascade deletion.
@@ -60,11 +54,13 @@ protocol NodeFunction: InputlessNodeFunction {
     func canBeDeleted(thisNode: Node) throws -> Bool
 }
 
-extension NodeFunction {
+// A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
+// Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
+protocol NodeFunction: InputlessNodeFunction {
+    func process(input: ProcessInput) throws -> ProcessOutput
+}
 
-    func canBeDeleted(thisNode: Node) throws -> Bool {
-        try hasNoOutputWires(thisNode: thisNode)
-    }
+extension NodeFunction {
 
     private func buildProcessInput(thisNode: Node) throws -> ProcessInput {
         var inputValues = [String: [String: NodeValue]]()
@@ -86,49 +82,45 @@ extension NodeFunction {
 
     private func processWithCatch(thisNode: Node, input: ProcessInput) -> ProcessOutput {
         do {
+            print("process: \(type(of: self)), nodeID \(thisNode.id!)")
             return try process(input: input)
         } catch {
             return buildErrorOutput(withError: error)
         }
     }
 
-    func processWithPreCheck(thisNode: Node) {
+    func processWithPreCheck(thisNode: Node) throws {
         guard hasInputPorts() else {
             // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
             return
         }
-        do {
-            let input = try buildProcessInput(thisNode: thisNode)
 
-            guard allInputsAreSatisfied(input: input) else {
-                throw NodeError.missingInputs
-            }
+        // Gather all values from input ports
+        let input = try buildProcessInput(thisNode: thisNode)
 
-            let cacheKey = try buildCacheKeyFromAllInputs(input: input)
-
-            if try !loadAndWriteCachedOutputs(thisNode: thisNode, cacheKey: cacheKey) {
-                let output = processWithCatch(thisNode: thisNode, input: input)
-                try writeToOutputs(output: output, thisNode: thisNode)
-                validatePorts(node: thisNode)
-                try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
-            }
-        } catch {
-//            if case NodeError.missingInputs = error {
- //           } else {
-//                print("Error during processing (\(thisNode.name!)): \(error)")
-                try? writeToOutputs(output: buildErrorOutput(withError: error), thisNode: thisNode)
-   //         }
+        guard allInputsAreSatisfied(input: input) else {
+            //print("Not all inputs are satisfied.")
+            return
         }
-    }
 
-    private func validatePorts(node: Node) {
-        if !(try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: node.id!).filter { $0.valueKind == .pending }.isEmpty) {
-            print("WARNING: One or more outputs left Pending for node \(node)")
+        let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+        let cachedOutput = try? loadCachedOutputs(thisNode: thisNode, cacheKey: cacheKey)
+
+        let output = cachedOutput ?? processWithCatch(thisNode: thisNode, input: input)
+
+        try? writeToOutputs(output: output, thisNode: thisNode)
+
+        if cachedOutput == nil {
+            try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
         }
     }
 }
 
 extension InputlessNodeFunction {
+    func canBeDeleted(thisNode: Node) throws -> Bool {
+        true
+    }
+
     var initialName: String? {
         nil
     }
@@ -143,13 +135,31 @@ extension InputlessNodeFunction {
         try DatabaseLayer.shared.selectWires(comingFromNodeID: thisNode.id!).isEmpty
     }
 
-    func didCreate(node: Node) throws -> ProcessOutput {
-        .init(outputValues: [:], inputWireExpectations: [:])
+    func didCreate(node: Node) throws -> ProcessOutput? {
+        nil
     }
 
     func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
+
+        let numberOfOutputPorts = try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: thisNode.id!).count
+
+        if numberOfOutputPorts != output.outputValues.count {
+            print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
+        }
+
+        if numberOfOutputPorts != descriptor.outputPorts.count {
+            print("WARNING: Mismatch between number of outputs defined in the Descriptor (\(descriptor.outputPorts.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
+        }
+
         for (outputPort, outputValue) in output.outputValues {
+            if outputValue.isPending {
+                print("WARNING: Output left Pending for node \(thisNode): outputPort \(outputPort)")
+            }
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
+        }
+
+        if !(try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: thisNode.id!).filter { $0.valueKind == .pending }.isEmpty) {
+            print("WARNING: One or more outputs left Pending for node \(thisNode)")
         }
 
         do {
@@ -191,7 +201,7 @@ extension InputlessNodeFunction {
             // Shared helper: connect a new wire from the node that satisfies the expectation.
             let connectExpected = { [thisNode] in
                 let wireNameSymbolID = wireName.asSymbolID()
-                if let (fromNodeID, fromSymbolID) = try findExistingNodeMatchingExpectation(expectationString: expectationString) {
+                if let (fromNodeID, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) {
                     // fromSymbolID is nil when the expectation string has no .outputPort suffix,
                     // which is invalid for wiring — expectation strings must include a port.
                     guard let fromSymbolID else {
@@ -200,10 +210,10 @@ extension InputlessNodeFunction {
                     }
 
                     try Wire.connectWire(fromNodeID: fromNodeID,
-                                            fromSymbolID: fromSymbolID,
-                                            toNodeID: thisNode.id!,
-                                            toSymbolID: toSymbolID,
-                                            name: wireNameSymbolID)
+                                         fromSymbolID: fromSymbolID,
+                                         toNodeID: thisNode.id!,
+                                         toSymbolID: toSymbolID,
+                                         name: wireNameSymbolID)
                 } else {
                     print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
                 }
@@ -235,7 +245,7 @@ extension InputlessNodeFunction {
     /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
     /// `nil` if the type name in the expectation is not registered in PolyFactory.
-    private func findExistingNodeMatchingExpectation(expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let expectedShape = try GraphShapeNode.parse(expectationString)
         return try expectedShape.findOrCreateMatchingNode()
     }
@@ -250,7 +260,7 @@ extension InputlessNodeFunction {
 //        try GraphShapeNode.buildFromWire(wire).asString()
 //    }
 
-    fileprivate func buildErrorOutput(withError error: Error) -> ProcessOutput {
+    func buildErrorOutput(withError error: Error) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
         for outputPort in descriptor.outputPorts {
             outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
@@ -282,6 +292,7 @@ enum NodeError: Error {
     case processNotSupported
     case cannotHaveProperties
     case cannotDeleteNodeWithOutputs
+    case initializing
 }
 extension NodeFunction {
     func description() -> String {

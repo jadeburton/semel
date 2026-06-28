@@ -33,6 +33,15 @@ extension NodeValue {
             return false
         }
     }
+
+    var isPending: Bool {
+        if case .noValue(let reason) = self {
+            if case .pending = reason {
+                return true
+            }
+        }
+        return false
+    }
 }
 
 enum PortError: Error {

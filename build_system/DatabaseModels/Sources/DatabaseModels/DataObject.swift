@@ -23,7 +23,8 @@ public struct DataObject: Codable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
     public func selectAllDataObjects() throws -> [DataObject] {
-        try read { db in try DataObject.fetchAll(db) }
+        print("WARNING: expensive selectAllDataObjects call")
+        return try read { db in try DataObject.fetchAll(db) }
     }
 
     public func selectDataObject(hash: String) throws -> DataObject? {

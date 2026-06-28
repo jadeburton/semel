@@ -7,7 +7,9 @@
 
 enum WireError: Error {
     case attemptToCreateWireWithDuplicateName(_ name: String)
+    case failedToDeleteWire
 }
+
 // Wire management
 extension Wire {
 
@@ -42,7 +44,6 @@ extension Wire {
 
         var toNode = try toNodeID.loadNode()
         try toNode.writePendingToAllOutputsOfNode()
-
         try toNode.setScheduledAndSave(true)
     }
 
@@ -55,85 +56,41 @@ extension Wire {
                                        toNodeID: ObjectID,
                                        toSymbolID: ObjectID,
                                        name: ObjectID) throws -> Bool {
+
         try DatabaseLayer.shared.selectWires(goingToNodeID: toNodeID, toSymbolID: toSymbolID)
             .contains { $0.name == name && ($0.fromNodeID != fromNodeID || $0.fromSymbolID != fromSymbolID) }
     }
 
-    func deleteWire(fromNodeID: ObjectID,
-                    fromSymbolID: ObjectID,
-                    toNodeID: ObjectID,
-                    toSymbolID: ObjectID,
-                    database: DatabaseLayer) throws -> Bool {
+    func deleteWire() throws {
 
-        let wires = try database.selectWires(comingFromNodeID: fromNodeID,
-                                             fromSymbolID: fromSymbolID,
-                                             goingToNodeID: toNodeID,
-                                             toSymbolID: toSymbolID)
-        guard !wires.isEmpty else {
-            return false
-        }
-
-        return try deleteWire()
-    }
-
-    func deleteWire() throws -> Bool {
-
-        let result = try DatabaseLayer.shared.deleteWire(comingFromNodeID: fromNodeID,
+        guard try DatabaseLayer.shared.deleteWire(comingFromNodeID: fromNodeID,
                                                          fromSymbolID: fromSymbolID,
                                                          goingToNodeID: toNodeID,
-                                                         toSymbolID: toSymbolID)
+                                                  toSymbolID: toSymbolID) else {
+            throw WireError.failedToDeleteWire
+        }
 
+        // We deleted an input to another Node; it should update.
         var toNode = try toNodeID.loadNode()
+        try toNode.writePendingToAllOutputsOfNode()
         try toNode.setScheduledAndSave(true)
 
-//        let toNode = try nodePoly(nodeID: wire.toNodeID)!
+        // After deleting the Wire, check the origin (outputting) Node. If it now has no output wires at all, and if it is deletable,
+        // delete it.
 
-        // is the target Input marked as "holds alive"? if so, then removing this wire should delete the node unless there is another holds-alive Input
+        let fromNode = try fromNodeID.loadNode()
+        let fromNodeFunction = try fromNode.nodeFunction()
 
-      //  let wireToSymbol = try DatabaseLayer.shared.selectSymbol(symbolID: toSymbolID)!.name
+        // Now clean up any input wires to the just-deleted Node.
 
-/* TODO cascading delete: Nodes are held alive by their Output wires, unless they are Input File System Nodes or they have no Output wires.
- if toNode.descriptor.staticInputPorts.first(where: { $0.name == wireToSymbol })?.cascadingDelete ?? false {
-            let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: wire.toNodeID, toSymbolID: wire.toSymbolID).count
-
-            if numberOfInboundWiresToTarget == 0 {
-                print("cascading delete of Node: \(toNode.description())")
-                _ = try deleteNode(wire.toNodeID)
-            }
-        }
-*/
-
-        //        if toNode
-
-
-        // TODO: cascade deletion:
-        // - After deleting the Wire, check the origin Node. If it has no output wires at all, delete it and follow all wires going TO the origin Node. These wires should be deleted using this deleteWire method, e.g. recursive.
-/*
-        let numberOfInboundWiresToOrigin = try database.selectWires(goingToNodeID: wire.fromNodeID).count
-        let numberOfOutboundWiresFromOrigin = try database.selectWires(comingFromNodeID: wire.fromNodeID).count
-
-        if numberOfInboundWiresToOrigin == 0 || numberOfOutboundWiresFromOrigin == 0 {
-            // Delete origin node if it is not Egress/Ingress
-            _ = try deleteNode(fromNodeID)
+        for inputWire in try DatabaseLayer.shared.selectWires(goingToNodeID: fromNodeID) {
+            _ = try inputWire.deleteWire()
         }
 
-        let numberOfInboundWiresToTarget = try database.selectWires(goingToNodeID: wire.toNodeID).count
-        let numberOfOutboundWiresFromTarget = try database.selectWires(comingFromNodeID: wire.toNodeID).count
-
-        if numberOfInboundWiresToTarget == 0 || numberOfOutboundWiresFromTarget == 0 {
-            // Delete target node if it is not Egress/Ingress
-            _ = try deleteNode(toNodeID)
+        if try fromNodeFunction.hasNoOutputWires(thisNode: fromNode) && fromNodeFunction.canBeDeleted(thisNode: fromNode) {
+            // Safe to delete.
+            _ = try DatabaseLayer.shared.deleteNode(nodeID: fromNodeID)
+            // TODO: notify parent Folder, if there is one
         }
-*/
-        // - Do the same for the target Node. Also follow the wires going TO the target Node.
-        // -
-        // 1. if a Node has no inputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
-        // 2. if a Node has no outputs, it shall be deleted, except for Ingress and Egress Nodes, which must always exist
-        // 3. If a Node is deleted, all outbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
-        // 4. If a Node is deleted, all inbound wires shall be deleted, which may in turn cause more Nodes to be deleted according to rules 1 and 2
-
-        // TODO! schedule Node!
-        // TODO: invalidate node bc its input changed
-        return result
     }
 }

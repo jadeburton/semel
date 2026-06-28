@@ -23,7 +23,8 @@ public struct CacheEntry: Codable, FetchableRecord, PersistableRecord {
 
 extension DatabaseLayer {
     public func selectAllCacheEntries() throws -> [CacheEntry] {
-        try read { db in try CacheEntry.fetchAll(db) }
+        print("WARNING: expensive selectAllCacheEntries call")
+        return try read { db in try CacheEntry.fetchAll(db) }
     }
 
     public func selectCacheEntry(hash: String) throws -> CacheEntry? {

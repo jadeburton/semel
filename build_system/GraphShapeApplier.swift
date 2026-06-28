@@ -220,8 +220,7 @@ extension GraphShapeNode {
         }
 
         // ── All other node types ───────────────────────────────────────────────
-        let properties = args.isEmpty ? [:]
-                       : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
+        let properties = args.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
 
         var newNode    = try Node.createNode(kind: kind, properties: properties, searchKey: asString(omitOutputPort: true))
         let newNodeID  = newNode.id!

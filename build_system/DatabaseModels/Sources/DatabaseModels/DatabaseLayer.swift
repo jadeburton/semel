@@ -72,7 +72,15 @@ public final class DatabaseLayer {
     // ── Initialiser ─────────────────────────────────────────────────────────
 
     public init(filePath: String) throws {
-        dbQueue = try DatabaseQueue(path: filePath)
+        var config = Configuration()
+        config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA journal_mode=WAL")
+            try db.execute(sql: "PRAGMA synchronous=NORMAL")
+            try db.execute(sql: "PRAGMA cache_size=-65536")  // 64 MB page cache
+            try db.execute(sql: "PRAGMA temp_store=MEMORY")
+            try db.execute(sql: "PRAGMA foreign_keys=ON")
+        }
+        dbQueue = try DatabaseQueue(path: filePath, configuration: config)
 
         try Node.createTable(dbQueue: dbQueue)
         try Wire.createTable(dbQueue: dbQueue)

@@ -54,7 +54,8 @@ extension DatabaseLayer {
     }
 
     public func selectAllNodes() throws -> [Node] {
-        try read { db in try Node.fetchAll(db) }
+        print("WARNING: expensive selectAllNodes call")
+        return try read { db in try Node.fetchAll(db) }
     }
 
     public func selectNodeByID(_ nodeID: ObjectID) throws -> Node? {

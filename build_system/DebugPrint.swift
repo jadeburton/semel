@@ -110,7 +110,12 @@ extension BuildEngine {
 
             let scheduled = rawNode.scheduled ? "⏱ scheduled" : "idle"
             print("⬢ \(type(of: try rawNode.nodeFunction())) name: \(rawNode.name ?? "<none>") #\(nodeID)  \(scheduled)")
-            print("  searchKey: \(rawNode.searchKey ?? "nil")")
+            if let searchKey = rawNode.searchKey {
+                let graphShapeNode = try GraphShapeNode.parse(searchKey)
+                print("  searchKey:\n\(graphShapeNode.asString(pretty: true, omitOutputPort: true))\n")
+            } else {
+                print("  searchKey: nil")
+            }
 
             if let parentNodeID = rawNode.parentNodeID {
                 print("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
@@ -160,16 +165,6 @@ extension BuildEngine {
                 }
             }
 
-            print()
-        }
-
-        // MARK: Section 2 — Wires
-
-        if !allWires.isEmpty {
-            printSectionHeader("WIRES (\(allWires.count))")
-            for wire in allWires {
-                print("  · \(formatWire(wire, nodeByID: nodeByID, database: database))")
-            }
             print()
         }
 

@@ -243,19 +243,14 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
 
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
         let start = try folder.childNode(path: inDirectoryPath)! // TODO
-        return try! start.allChildren.map { node in
-            switch node.kind {
 
-            case StaticFile.kind:
-                let staticFileNodeFunction = try node.nodeFunctionCast() as StaticFile
-                return FileWildcardEntry(path: node.name!,
-                                         kind: .file,
-                                         isMissing: try staticFileNodeFunction.read(thisNode: node)!.isNoValue)
-            case OutputFile.kind:
-                let outputFileNodeFunction = try node.nodeFunctionCast() as OutputFile
-                return FileWildcardEntry(path: node.name!,
-                                         kind: .file,
-                                         isMissing: try outputFileNodeFunction.read(thisNode: node)!.isNoValue)
+        return try! start.allChildren.map { node in
+
+            guard let file = try node.nodeFunction() as? FileType else {
+                throw NodeError.other(message: "Unexpected object kind")
+            }
+
+            switch node.kind {
 
             case Folder.kind:
                 return FileWildcardEntry(path: node.name!,
@@ -263,7 +258,9 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                                          isMissing: false)
 
             default:
-                throw NodeError.other(message: "Unexpected object kind")
+                return FileWildcardEntry(path: node.name!,
+                                         kind: .file,
+                                         isMissing: try file.read(thisNode: node)!.isNoValue)
             }
         }
     }
@@ -641,25 +638,24 @@ final class CommandInterpreter {
             return
         }
 
+        guard let staticFileNode = try child.nodeFunction() as? StaticFile else {
+            return
+        }
+
+        // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
+        // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
+        // the Project file.)
+        _ = try staticFileNode.replaceContent(thisNode: child, nil) // turns it into a ghost
+
+        if try staticFileNode.hasNoOutputWires(thisNode: child) && staticFileNode.canBeDeleted(thisNode: child) {
+            // Ghost, no output wires - really delete it.
+            _ = try  DatabaseLayer.shared.deleteNode(nodeID: child.id!)
+        }
+
         // - if the Node is used by the build graph, it must not be user-deleted, as this will invalidate the graph even if the file is re-added.
         // - instead, we "gut" the file, turning it into a ghost. when the user lists files, it will appear as "missing", according to the current build graph.
         // - then, re-adding the file will replace the ghost with a new node, which will be picked up by the build graph and cause the necessary rebuilds.
-        // - however, some input files do not behave this way. project files (formulae) should instead perform a cascading delete. this is because they are not
-        //   part of the build graph.
-        // - the way we tell is by looking at the wires coming from the file; if one or more target nodes do not allow cascading-deleting, we use the ghost-technique.
 
-        let outputWires = try DatabaseLayer.shared.selectWires(comingFromNodeID: child.id!)
-
-        if outputWires.isEmpty {
-            // No output wires are holding this Node alive
-            _ = try child.delete()
-        } else {
-            guard let staticFileNode = try child.nodeFunction() as? StaticFile else {
-                outputError("Cannot delete; object is in use.")
-                return
-            }
-            _ = try staticFileNode.eraseContents(thisNode: child) // turns it into a ghost
-        }
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {

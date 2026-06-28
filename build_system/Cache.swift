@@ -11,7 +11,7 @@ extension InputlessNodeFunction {
 
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
         let oneInput = input.inputValues[inputPort]!
-        
+
         return try oneInput
             .sorted { $0.key < $1.key }
             .map { $0.value }
@@ -19,10 +19,6 @@ extension InputlessNodeFunction {
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
-
-        if descriptor.staticInputPorts.isEmpty {
-            return ""
-        }
 
         var aggregated = try toJSON()
 
@@ -39,39 +35,32 @@ extension InputlessNodeFunction {
         return Sha256.hash(Array(aggregated.utf8))
     }
 
-    func loadAndWriteCachedOutputs(thisNode: Node, cacheKey: String?) throws -> Bool {
+    func loadCachedOutputs(thisNode: Node, cacheKey: String?) throws -> ProcessOutput? {
 
         guard let cacheKey else {
-            return false
+            return nil
         }
 
         if descriptor.staticInputPorts.isEmpty && descriptor.dynamicInputPorts.isEmpty {
-            return false
+            return nil
         }
-        
+
         if descriptor.outputPorts.isEmpty {
-            return false
+            return nil
         }
-        
+
         guard let cacheEntry = try DatabaseLayer.shared.selectCacheEntry(hash: cacheKey) else {
-            return false
+            return nil
         }
-        
+
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
-            return false
+            return nil
         }
-        
-        for outputPort in descriptor.outputPorts {
-            if let outputValue = decodedCacheEntry.outputValues[outputPort] {
-                print("Using cached output for node \(thisNode), output port '\(outputPort)'")
-                try thisNode.writeToOutputPort(outputPort, value: outputValue)
-            } else {
-                // Invalid cache
-                return false
-            }
-        }
-        
-        return true
+
+        print("using cache: \(type(of: self)), nodeID \(thisNode.id!)")
+
+        return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
+                             inputWireExpectations: decodedCacheEntry.inputWireExpectations)
     }
 
     func saveCacheForAllInputsAndOutputs(cacheKey: String?, output: ProcessOutput) throws {
