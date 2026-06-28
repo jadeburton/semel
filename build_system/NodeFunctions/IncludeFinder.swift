@@ -20,6 +20,13 @@ struct IncludeFinder: NodeFunction {
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [Self.sourceFileInputPort],
                                             outputPorts: [Self.includePathListOutputPort])
 
+    var properties: [String : String] {
+        [:]
+    }
+
+    init(properties: [String : String]) {
+    }
+
     // MARK: Include extraction
 
     /// Returns a deduplicated, ordered list of quoted #include paths found in

@@ -6,7 +6,7 @@
 //
 
 // Like a StaticFile, but it allows you to put configuration directly into the formula.
-struct Configuration: InputlessNodeFunction, WithProperties {
+struct Configuration: InputlessNodeFunction {
     static let kind: UInt = 9
 
     let properties: [String: String]

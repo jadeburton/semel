@@ -61,42 +61,27 @@ extension DatabaseLayer {
         try read { db in try Node.fetchOne(db, id: nodeID) }
     }
 
-    public func selectNodesInRoot(named name: String) throws -> [Node] {
-        try read { db in
-            try Node.filter(Node.Columns.name == name &&
-                            Node.Columns.parentNodeID == nil).fetchAll(db)
-        }
-    }
-
-    public func selectNodesInRoot(kind: UInt, named name: String) throws -> [Node] {
-        try read { db in
-            try Node.filter(Node.Columns.kind == kind &&
-                            Node.Columns.name == name &&
-                            Node.Columns.parentNodeID == nil).fetchAll(db)
-        }
-    }
-
     public func selectNodes(parentNodeID: ObjectID) throws -> [Node] {
         try read { db in
             try Node.filter(Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func selectNodes(named name: String, parentNodeID: ObjectID) throws -> [Node] {
+    public func selectNodes(named name: String, parentNodeID: ObjectID?) throws -> [Node] {
         try read { db in
             try Node.filter(Node.Columns.name == name &&
                             Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func selectNodes(searchKey: String, parentNodeID: ObjectID) throws -> [Node] {
+    public func selectNodes(searchKey: String, parentNodeID: ObjectID?) throws -> [Node] {
         try read { db in
             try Node.filter(Node.Columns.searchKey == searchKey &&
                             Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func selectNodes(kind: UInt, named name: String, parentNodeID: ObjectID) throws -> [Node] {
+    public func selectNodes(kind: UInt, named name: String, parentNodeID: ObjectID?) throws -> [Node] {
         try read { db in
             try Node.filter(Node.Columns.kind == kind &&
                             Node.Columns.name == name &&

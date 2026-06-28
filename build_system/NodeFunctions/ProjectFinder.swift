@@ -17,6 +17,10 @@ struct ProjectFinder: NodeFunction {
     enum CodingKeys: CodingKey {
     }
 
+    var initialName: String? {
+        "projectFinder"
+    }
+
     static let folderManifestInputPort = "folderManifest"
     static let projectBuildersInputPort = "projectBuilders"
 
@@ -24,6 +28,13 @@ struct ProjectFinder: NodeFunction {
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
                                             outputPorts: [],
                                             dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
+
+    var properties: [String : String] {
+        [:]
+    }
+
+    init(properties: [String: String]) {
+    }
 
     // ProjectFinder is the root object and so must never be deleted.
     func canBeDeleted(thisNode: Node) throws -> Bool {

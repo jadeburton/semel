@@ -20,6 +20,13 @@ struct ProjectBuilder: NodeFunction {
                                             outputPorts: [statusOutputPort],
                                             dynamicInputPorts: [productInputPort])
 
+    var properties: [String : String] {
+        [:]
+    }
+
+    init(properties: [String : String]) {
+    }
+
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
         [projectFileName.removingSuffix(".fmla"): projectFileContent]
     }

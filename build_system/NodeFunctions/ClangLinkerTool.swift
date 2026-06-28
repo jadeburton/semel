@@ -43,6 +43,13 @@ struct ClangLinkerTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
+    var properties: [String : String] {
+        [:]
+    }
+
+    init(properties: [String : String]) {
+    }
+
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input, libraries],
                                             outputPorts: [output, errorLog, infoLog],
                                             optionalStaticInputPorts: [libraries])

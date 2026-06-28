@@ -25,11 +25,15 @@ protocol WithDefaultInitializer {
     init() throws
 }
 
-protocol InputlessNodeFunction: Codable, PolySerializable, WithDefaultInitializer {
+protocol InputlessNodeFunction: Codable, PolySerializable {
+
+    var properties: [String: String] { get }
+    init(properties: [String: String])
+
     func didCreate(node: Node) throws -> ProcessOutput
 
     // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
-    var initialName: String { get }
+    var initialName: String? { get }
 
     var descriptor: NodeFunctionDescriptor { get }
     /// Returns the init-time key-value arguments that distinguish this node from
@@ -123,6 +127,9 @@ extension NodeFunction {
 }
 
 extension InputlessNodeFunction {
+    var initialName: String? {
+        nil
+    }
 
     func hasNoOutputWires(thisNode: Node) throws -> Bool {
         try DatabaseLayer.shared.selectWires(comingFromNodeID: thisNode.id!).isEmpty
@@ -279,16 +286,11 @@ struct OneNodeValue {
     let originNodeID: ObjectID
 }
 
-// MARK: - PolyFactory + NodeFunction
+// MARK: - PolyFactory + InputlessNodeFunction
 
 extension PolyFactory {
-    /// Construct a default instance of the NodeFunction identified by `kind`.
-    static func makeDefault(kind: UInt) throws -> InputlessNodeFunction {
-        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer).Type).init() as! InputlessNodeFunction
-    }
-
-    static func makeDefault(kind: UInt, properties: [String: String]) throws -> InputlessNodeFunction & WithProperties {
-        try (type(kind: kind) as! (PolySerializable & WithDefaultInitializer & WithProperties).Type).init(properties: properties) as! InputlessNodeFunction & WithProperties
+    static func makeDefault(kind: UInt, properties: [String: String]) throws -> InputlessNodeFunction {
+        try (type(kind: kind) as! (PolySerializable & InputlessNodeFunction).Type).init(properties: properties)
     }
 }
 

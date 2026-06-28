@@ -32,6 +32,13 @@ struct ClangPreprocessorTool: NodeFunction {
     enum CodingKeys: CodingKey {
     }
 
+    var properties: [String : String] {
+        [:]
+    }
+
+    init(properties: [String: String]) {
+    }
+
     // MARK: Ports
 
     static let configuration = "configuration"
