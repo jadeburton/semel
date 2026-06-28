@@ -18,8 +18,6 @@ import Foundation
 enum GraphShapeApplierError: Error {
     /// The type name in the shape string is not registered in PolyFactory.
     case unknownTypeName(String)
-    /// A StaticFile shape node is missing its required `path` argument.
-    case staticFileMissingPathArg
     /// A required static input port has no wire connected after node creation.
     case requiredPortUnwired(typeName: String, portName: String)
     /// `findOrCreateMatchingNode` was called on a shape that could not be resolved.
@@ -121,7 +119,6 @@ extension GraphShapeNode {
         for node in try DatabaseLayer.shared.selectAllNodes() {
             let graphShape = try GraphShapeNode.buildFromNode(nodeID: node.id!, fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
 
-            print("$$$$$ findMatchingNodeBruteForce (outputPort: \(outputPort ?? "")) '\(graphShape)' vs '\(asString(omitOutputPort: true))'")
             if graphShape == asString(omitOutputPort: true) {
                 return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
             }
@@ -133,36 +130,15 @@ extension GraphShapeNode {
     func findMatchingNodeUsingSearchKey() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let thisGraphShape = asString(omitOutputPort: true)
 
-        assert(!thisGraphShape.hasSuffix(".manifest"))
-        assert(!thisGraphShape.hasSuffix(".output"))
-        assert(!thisGraphShape.hasSuffix(".status"))
-
         guard let node = try DatabaseLayer.shared.selectNodes(searchKey: thisGraphShape).first else {
             return nil
         }
 
-//            let graphShape = try GraphShapeNode.buildFromNode(nodeID: node.id!, fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
-
-//            print("$$$$$ findMatchingNodeUsingSearchKey (outputPort: \(outputPort ?? "")) '\(graphShape)' vs '\(asString())'")
-
-//            if graphShape == asString() {
-                return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
-//            }
-//        }
-
-        return nil
+        return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
     }
 
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         try findMatchingNodeUsingSearchKey()
-//        if let result = try findMatchingNodeUsingSearchKey() {
-//            return result
-//        }
-//
-////        print("WARNING: performing brute-force scan")
-//
-//        // Fall back to scanning every object
-//        return try findMatchingNodeBruteForce()
     }
 
     private func matchesNode(nodeID: ObjectID) throws -> Bool {
@@ -243,22 +219,6 @@ extension GraphShapeNode {
             throw GraphShapeApplierError.unknownTypeName(typeName)
         }
 
-        // ── StaticFile: lives under inputFileSystem ───────────────────────────
-     /*   if kind == StaticFile.kind {
-            guard let pathArg = args.first(where: { $0.key == "path" }) else {
-                throw GraphShapeApplierError.staticFileMissingPathArg
-            }
-            let inputFS = try Node.inputFileSystem
-            guard let node = try inputFS.childNode(path: pathArg.value,
-                                                   kind: StaticFile.kind,
-                                                   createIfNotExist: true,
-                                                   properties: nil),
-                  let nodeID = node.id else {
-                throw GraphShapeApplierError.couldNotResolveShape(typeName: typeName)
-            }
-            return nodeID
-        }
-*/
         // ── All other node types ───────────────────────────────────────────────
         let properties = args.isEmpty ? [:]
                        : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })

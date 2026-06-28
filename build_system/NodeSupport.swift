@@ -122,6 +122,7 @@ extension Node {
             if parentNode.kind == Folder.kind {
                 try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node, thisNode: parentNode)
             }
+            // TODO: also when deleting Nodes or updating Nodes in any way
         }
 
         return node
@@ -258,21 +259,11 @@ extension Node {
             BuildEngine.shared.signalWorkAvailable()
         }
     }
-/*
-    private static func nodeInRoot(kind: UInt, properties: [String: String]) throws -> Node {
-        let name = try PolyFactory.makeDefault(kind: kind, properties: properties).initialName ?? "untitled"
-
-        guard let existing = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: nil).first else {
-            return try Node.createNode(parentNodeID: nil, kind: kind, properties: properties)
-        }
-
-        return existing
-    }*/
 
     static var projectFinder: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
-            let (fromNodeID, fromSymbolID) = try graphShape.findOrCreateMatchingNode()
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
             return try fromNodeID.loadNode()
         }
     }
@@ -281,7 +272,7 @@ extension Node {
     static var inputFileSystem: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, fromSymbolID) = try graphShape.findOrCreateMatchingNode()
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
             return try fromNodeID.loadNode()
         }
     }
@@ -289,7 +280,7 @@ extension Node {
     static var outputFileSystem: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, fromSymbolID) = try graphShape.findOrCreateMatchingNode()
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
             return try fromNodeID.loadNode()
         }
     }

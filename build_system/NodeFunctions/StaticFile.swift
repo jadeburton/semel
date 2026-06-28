@@ -39,10 +39,7 @@ struct StaticFile: InputlessNodeFunction {
     var initialParentNodeID: ObjectID? {
         get throws {
             // All StaticFiles reside beneath inputFileSystem
-            assert(containingPath != "inputFileSystem/inputFileSystem")
-            var containingPath = containingPath
-//            containingPath = containingPath.removeCommonPrefixPath("inputFileSystem")
-            return try Node.inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+            try Node.inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
         }
     }
 

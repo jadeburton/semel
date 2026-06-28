@@ -589,24 +589,13 @@ final class CommandInterpreter {
             let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath)
             let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
-            let filename = (relativePath as NSString).lastPathComponent
-            let containingPath = (relativePath as NSString).deletingLastPathComponent
-
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
             let (fromNodeID, fromSymbolID) = try graphShapeNode.findOrCreateMatchingNode()
             let fromNode = try fromNodeID.loadNode()
-            try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(thisNode: fromNode, fileContent.intern())
+            _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(thisNode: fromNode, fileContent.intern())
 
-/*            let containingFolder: Node
-            if containingPath.isEmpty || containingPath == "." {
-                containingFolder = try inputFileSystem
-            } else {
-                containingFolder = try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath)
-            }
-
-            try containingFolder.addOrReplaceStaticFileChild(content: fileContent.intern(), name: filename)
-*/
         case .folder:
+            // TODO: each folder should notify its parent of creation
             _ = try inputFileSystem.ensureEntirePathExistsAsFolders(relativePath)
         }
     }

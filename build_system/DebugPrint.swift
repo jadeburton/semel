@@ -89,9 +89,6 @@ extension BuildEngine {
 
     static func printAll() throws {
         let database = DatabaseLayer.shared
-//        try database.recomputeAllSearchKeys() // HACK TODO
-
-        //var projectFinder = try Node.projectFinder
 
         let allNodes       = try database.selectAllNodes()
         let allWires       = try database.selectAllWires()
