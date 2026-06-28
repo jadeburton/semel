@@ -6,7 +6,7 @@
 //
 
 // Like a StaticFile, but it allows you to put configuration directly into the formula.
-struct Configuration: InputlessNodeFunction {
+struct Configuration: NodeFunction {
     static let kind: UInt = 9
 
     let properties: [String: String]
@@ -16,38 +16,62 @@ struct Configuration: InputlessNodeFunction {
     }
 
     static let outputPort = "output"
-
-    init() {
-        properties = [String: String]()
-    }
+    static let inputPort = "input"
 
     init(properties: [String : String] = [String: String]()) {
         self.properties = properties
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort], dynamicInputPorts: [])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
+                                            outputPorts: [outputPort],
+                                            dynamicInputPorts: [],
+                                            optionalStaticInputPorts: [inputPort])
 
-    func didCreate(node: Node) throws -> ProcessOutput? {
+    func process(input: ProcessInput) throws -> ProcessOutput {
+        var aggregatedConfig = [String: String]()
 
-        let standardClang = ToolDescriptor(name: "clang",
-                                           version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                                           platform: "macOS",
-                                           architecture: "arm64",
-                                           recursiveHash: nil)
+        let inputValues = input.inputValues[Self.inputPort] ?? [:]
 
-        func outputValue() throws -> PolySerializable {
-            switch properties["tool"] {
-                case "preprocessor":
-                    return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-                case "linker":
-                    return try ClangLinkerToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-                case "compiler":
-                    return try ClangCompilerToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-                default:
-                    return try ClangPreprocessorToolConfiguration(toolDescriptor: standardClang, arguments: [], environment: [:])
-            }
+        for inputPortWireKey in inputValues.keys.sorted() {
+            let plainText = try inputValues[inputPortWireKey]!.expectValue().resolveAsString()
+            let configuration = [String: String](plainText: plainText)
+            // TODO: issue warning output if there are conflicts
+            aggregatedConfig = aggregatedConfig.mergedWith(configuration)
         }
 
-        return .init(outputValues: [Self.outputPort: .value(try outputValue().toJSON().intern())], inputWireExpectations: [:])
+        return .init(outputValues: [Self.outputPort: .value(aggregatedConfig.mergedWith(properties).asPlainText().intern())],
+                     inputWireExpectations: [:])
+    }
+}
+
+// INPUT FORMAT: a clear text string comprising a series of \n separated lines:
+//
+// key_name=value
+// key name with space=value also with spaces
+extension [String: String] {
+    func mergedWith(_ other: [String: String]) -> [String: String] {
+        var result = self
+        for (key, value) in other {
+            result[key] = value
+        }
+        return result
+    }
+
+    init(plainText: String) {
+        var result: [String: String] = [:]
+        let lines = plainText.split(separator: "\n")
+        for line in lines {
+            let parts = line.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                let key = String(parts[0])
+                let value = String(parts[1])
+                result[key] = value
+            }
+        }
+        self = result
+    }
+
+    func asPlainText() -> String {
+        self.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
     }
 }

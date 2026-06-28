@@ -8,19 +8,27 @@ import Foundation
 
 // MARK: - Configuration
 
-
-
-struct ClangPreprocessorToolConfiguration: PolySerializable {
-    static let kind: UInt = 11
-
+struct ClangPreprocessorToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
 
-    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
-        self.toolDescriptor = toolDescriptor
-        self.arguments = arguments
-        self.environment = environment
+    init(properties: [String: String]) {
+        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
+                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                               platform: properties["toolDescriptor.platform"] ?? "macOS",
+                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
+                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        arguments = []
+        environment = [:]
+    }
+
+    func asDictionary() -> [String: String] {
+        ["toolDescriptor.name": toolDescriptor.name,
+         "toolDescriptor.version": toolDescriptor.version,
+         "toolDescriptor.platform": toolDescriptor.platform,
+         "toolDescriptor.architecture": toolDescriptor.architecture,
+         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
     }
 }
 
@@ -62,8 +70,8 @@ struct ClangPreprocessorTool: NodeFunction {
         let includePathLists: [String: [String]]
 
         init(processInput: ProcessInput) throws {
-            let configurationString = try processInput.inputValues[ClangPreprocessorTool.configuration]!.first!.value.expectValue().resolveAsString()
-            configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
+            let configurationString = try processInput.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
+            configuration = .init(properties: [String: String](plainText: configurationString))
 
             let input = processInput.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
             inputSourceFile = .init(filePath: input.key, content: try input.value.expectValue().resolve())

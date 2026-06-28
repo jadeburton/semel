@@ -27,9 +27,27 @@ final class BuildEngine {
     /// before sleeping.
     private let workSignal = WorkSignal()
 
+    private static func registerTypes() {
+        PolyFactory.register(types: [
+            FolderManifest.self,
+            OutputFile.self,
+            StaticFile.self,
+            Folder.self,
+            ProjectFinder.self,
+            ProjectBuilder.self,
+            ClangLinkerTool.self,
+            ClangCompilerTool.self,
+            ClangPreprocessorTool.self,
+            Configuration.self,
+            IncludeFinder.self
+        ])
+    }
+
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database204.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database207.sqlite")) throws {
+        Self.registerTypes()
+
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
         // Capture the fully-initialised self before starting the task.

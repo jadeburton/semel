@@ -8,18 +8,30 @@ import Foundation
 
 // MARK: - Configuration
 
-// TODO: multiple partial config objects can be bound to an Input port, then they will be merged automatically.
-struct ClangLinkerToolConfiguration: PolySerializable {
-    static let kind: UInt = 12
-
+struct ClangLinkerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    let dynamicLibrary: Bool
 
-    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
-        self.toolDescriptor = toolDescriptor
-        self.arguments = arguments
-        self.environment = environment
+    init(properties: [String: String]) {
+        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
+                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                               platform: properties["toolDescriptor.platform"] ?? "macOS",
+                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
+                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        arguments = []
+        environment = [:]
+        dynamicLibrary = properties["dynamicLibrary"] == "true"
+    }
+
+    func asDictionary() -> [String: String] {
+        ["toolDescriptor.name": toolDescriptor.name,
+         "toolDescriptor.version": toolDescriptor.version,
+         "toolDescriptor.platform": toolDescriptor.platform,
+         "toolDescriptor.architecture": toolDescriptor.architecture,
+         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? "",
+         "dynamicLibrary": dynamicLibrary ? "true" : "false"]
     }
 }
 
@@ -62,8 +74,8 @@ struct ClangLinkerTool: NodeFunction {
         let objectFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangLinkerTool.configuration]!.first!.value.expectValue().resolveAsString()
-            configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
+            let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
+            configuration = .init(properties: [String: String](plainText: configurationString))
 
             let inputValues = input.inputValues[ClangLinkerTool.input]!
             let libraryValues = input.inputValues[ClangLinkerTool.libraries]!
@@ -116,7 +128,10 @@ struct ClangLinkerTool: NodeFunction {
         arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
         arguments.append("-lSystem")
         arguments.append("-nostdlib")
-        arguments.append("-dynamiclib")
+
+        if inputs.configuration.dynamicLibrary {
+            arguments.append("-dynamiclib")
+        }
 
         for objectFile in inputs.objectFiles {
             arguments.append(objectFile.filePath)

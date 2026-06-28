@@ -19,27 +19,18 @@ protocol PolySerializable: Codable {
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
 enum PolyFactory {
 
-    /// All polymorphic types must be registered here.
-    private static let registry: [UInt: PolySerializable.Type] = [
-        ProjectFinder.kind:                      ProjectFinder.self,
-        ProjectBuilder.kind:                     ProjectBuilder.self,
-        StaticFile.kind:                         StaticFile.self,
-        Folder.kind:                             Folder.self,
-        ClangLinkerTool.kind:                    ClangLinkerTool.self,
-        ClangCompilerTool.kind:                  ClangCompilerTool.self,
-        ClangPreprocessorTool.kind:              ClangPreprocessorTool.self,
-        ClangLinkerToolConfiguration.kind:       ClangLinkerToolConfiguration.self,
-        ClangCompilerToolConfiguration.kind:     ClangCompilerToolConfiguration.self,
-        ClangPreprocessorToolConfiguration.kind: ClangPreprocessorToolConfiguration.self,
-        FolderManifest.kind:                     FolderManifest.self,
-        OutputFile.kind:                         OutputFile.self,
-        Configuration.kind:                      Configuration.self,
-        IncludeFinder.kind:                      IncludeFinder.self
-    ]
+    private static var registryCache = [UInt: PolySerializable.Type]()
+
+    /// All polymorphic types must be registered with the factory before they can be serialized/deserialized.
+    static func register(types: [PolySerializable.Type]) {
+        for type in types {
+            registryCache[type.self.kind] = type
+        }
+    }
 
     /// Look up the concrete type for a given kind.
     static func type(kind: UInt) throws -> PolySerializable.Type {
-        guard let type = registry[kind] else {
+        guard let type = registryCache[kind] else {
             fatalError("Unknown object kind: \(kind)")
         }
         return type
@@ -48,7 +39,7 @@ enum PolyFactory {
     /// Look up the `kind` discriminator for a type identified by its Swift type name.
     /// Used when reconstructing a node from a `GraphShapeNode` string.
     static func kind(forTypeName typeName: String) throws -> UInt {
-        guard let entry = registry.first(where: { String(describing: $0.value) == typeName }) else {
+        guard let entry = registryCache.first(where: { String(describing: $0.value) == typeName }) else {
             throw PolyFactoryError.unknownTypeName(typeName)
         }
         return entry.key

@@ -7,17 +7,27 @@ import Foundation
 
 // MARK: - Configuration
 
-struct ClangCompilerToolConfiguration: PolySerializable {
-    static let kind: UInt = 16
-
+struct ClangCompilerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
 
-    init(toolDescriptor: ToolDescriptor, arguments: [String], environment: [String: String]) throws {
-        self.toolDescriptor = toolDescriptor
-        self.arguments = arguments
-        self.environment = environment
+    init(properties: [String: String]) {
+        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
+                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+                               platform: properties["toolDescriptor.platform"] ?? "macOS",
+                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
+                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        arguments = []
+        environment = [:]
+    }
+
+    func asDictionary() -> [String: String] {
+        ["toolDescriptor.name": toolDescriptor.name,
+         "toolDescriptor.version": toolDescriptor.version,
+         "toolDescriptor.platform": toolDescriptor.platform,
+         "toolDescriptor.architecture": toolDescriptor.architecture,
+         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
     }
 }
 
@@ -55,7 +65,7 @@ struct ClangCompilerTool: NodeFunction {
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
-            configuration = try PolyFactory.decodeAndCast(encodedJSON: configurationString)
+            configuration = .init(properties: [String: String](plainText: configurationString))
 
             let input = input.inputValues[ClangCompilerTool.input]!.first!
             inputSourceFile = .init(filePath: input.key, content: try input.value.expectValue().resolve())

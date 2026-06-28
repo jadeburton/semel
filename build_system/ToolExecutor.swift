@@ -84,7 +84,7 @@ class DefaultTools {
                               version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: nil),
+                              recursiveHash: ""),
             toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
     }
 }
