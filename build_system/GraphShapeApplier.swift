@@ -34,16 +34,9 @@ extension InputlessNodeFunction {
     /// Default: delegate to `WithProperties` if the type conforms, else no args.
     /// Declared in the protocol so Swift dispatches dynamically via the witness table.
     func graphShapeArgs(node: Node) -> [GraphShapeArg] {
-        (self as? WithProperties)?.properties.map { GraphShapeArg(key: $0.key, value: $0.value) } ?? []
+        properties.map { GraphShapeArg(key: $0.key, value: $0.value) }
     }
 }
-
-//extension StaticFile {
-//    func graphShapeArgs(node: Node) -> [GraphShapeArg] {
-//        let path = (try? node.buildFullPathName()) ?? ""
-//        return [GraphShapeArg(key: "path", value: path)]
-//    }
-//}
 
 // MARK: - Build shape from the live graph
 
@@ -61,11 +54,11 @@ extension GraphShapeNode {
 
     /// Node-identity form: no `.outputPort` suffix.
     /// Used when computing `Node.searchKey`.
-    static func buildFromNode(nodeID: ObjectID) throws -> GraphShapeNode {
+    static func buildFromNode(nodeID: ObjectID, fromSymbolID: ObjectID? = nil) throws -> GraphShapeNode {
         var visited = Set<ObjectID>()
         return try buildFromOrigin(fromNodeID:        nodeID,
-                                   fromSymbolID:      nil,
-                                   includeOutputPort: false,
+                                   fromSymbolID:      fromSymbolID,
+                                   includeOutputPort: fromSymbolID != nil,
                                    visited:           &visited)
     }
 
@@ -124,34 +117,77 @@ extension GraphShapeNode {
 
     /// Returns `(fromNodeID, fromSymbolID)` of the first live node whose topology
     /// matches `self`, or `nil` if no match exists.
-    func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        let allNodes   = try DatabaseLayer.shared.selectAllNodes()
-        let candidates = allNodes.filter { node in
-            guard let fn = try? node.nodeFunction() else { return false }
-            return String(describing: type(of: fn)) == typeName
-        }
-        for candidate in candidates {
-            guard let nodeID = candidate.id else { continue }
-            if try matchesNode(nodeID: nodeID) {
-                return (fromNodeID: nodeID, fromSymbolID: outputPort?.asSymbolID())
+    func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+        for node in try DatabaseLayer.shared.selectAllNodes() {
+            let graphShape = try GraphShapeNode.buildFromNode(nodeID: node.id!, fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
+
+            print("$$$$$ findMatchingNodeBruteForce (outputPort: \(outputPort ?? "")) '\(graphShape)' vs '\(asString(omitOutputPort: true))'")
+            if graphShape == asString(omitOutputPort: true) {
+                return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
             }
         }
+
         return nil
+    }
+
+    func findMatchingNodeUsingSearchKey() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+        let thisGraphShape = asString(omitOutputPort: true)
+
+        assert(!thisGraphShape.hasSuffix(".manifest"))
+        assert(!thisGraphShape.hasSuffix(".output"))
+        assert(!thisGraphShape.hasSuffix(".status"))
+
+        guard let node = try DatabaseLayer.shared.selectNodes(searchKey: thisGraphShape).first else {
+            return nil
+        }
+
+//            let graphShape = try GraphShapeNode.buildFromNode(nodeID: node.id!, fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
+
+//            print("$$$$$ findMatchingNodeUsingSearchKey (outputPort: \(outputPort ?? "")) '\(graphShape)' vs '\(asString())'")
+
+//            if graphShape == asString() {
+                return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
+//            }
+//        }
+
+        return nil
+    }
+
+    func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+        try findMatchingNodeUsingSearchKey()
+//        if let result = try findMatchingNodeUsingSearchKey() {
+//            return result
+//        }
+//
+////        print("WARNING: performing brute-force scan")
+//
+//        // Fall back to scanning every object
+//        return try findMatchingNodeBruteForce()
     }
 
     private func matchesNode(nodeID: ObjectID) throws -> Bool {
         let node         = try nodeID.loadNode()
         let nodeFunction = try node.nodeFunction()
-        guard String(describing: type(of: nodeFunction)) == typeName else { return false }
+
+        guard String(describing: type(of: nodeFunction)) == typeName else {
+            return false
+        }
 
         let actualArgs = nodeFunction.graphShapeArgs(node: node)
-        guard actualArgs == args else { return false }
+
+        guard actualArgs == args else { // TODO: is this order-insensitive?
+            return false
+        }
 
         for expectedPort in inputs {
             let portSymbolID = expectedPort.portName.asSymbolID()
             let actualWires  = try DatabaseLayer.shared.selectWires(goingToNodeID: nodeID,
                                                                     toSymbolID:    portSymbolID)
-            guard actualWires.count == expectedPort.wires.count else { return false }
+
+            guard actualWires.count == expectedPort.wires.count else {
+                return false
+            }
+
             for (actualWire, expectedWire) in zip(actualWires, expectedPort.wires) {
                 // Compare wire name (unless the expected name is empty — old format).
                 if !expectedWire.name.isEmpty {
@@ -185,10 +221,15 @@ extension GraphShapeNode {
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
     func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?) {
         // Fast path: node already exists — no writes needed.
-        if let existing = try findMatchingNode() { return existing }
+        if let existing = try findMatchingNode() {
+            return existing
+        }
 
         // Slow path: create inside a transaction so any error rolls back everything.
-        let newNodeID = try DatabaseLayer.shared.withTransaction { try createNode() }
+        let newNodeID = try DatabaseLayer.shared.withTransaction {
+            try createNode()
+        }
+
         return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
     }
 
@@ -203,7 +244,7 @@ extension GraphShapeNode {
         }
 
         // ── StaticFile: lives under inputFileSystem ───────────────────────────
-        if kind == StaticFile.kind {
+     /*   if kind == StaticFile.kind {
             guard let pathArg = args.first(where: { $0.key == "path" }) else {
                 throw GraphShapeApplierError.staticFileMissingPathArg
             }
@@ -217,14 +258,12 @@ extension GraphShapeNode {
             }
             return nodeID
         }
-
+*/
         // ── All other node types ───────────────────────────────────────────────
-        //let rootNode   = try Node.rootNode
-        let properties = args.isEmpty ? nil
+        let properties = args.isEmpty ? [:]
                        : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
-        var newNode    = try Node.createNode(kind:        kind,
-                                             name:        typeName, // TODO BUG: name is not type name..
-                                             properties:  properties)
+
+        var newNode    = try Node.createNode(kind: kind, properties: properties, searchKey: asString(omitOutputPort: true))
         let newNodeID  = newNode.id!
 
         // Wire each input port from the shape using the explicit wire name.
@@ -286,7 +325,7 @@ extension DatabaseLayer {
             guard let nodeID = node.id else { continue }
             let newSearchKey: String?
             do {
-                newSearchKey = try GraphShapeNode.buildFromNode(nodeID: nodeID).asString()
+                newSearchKey = try GraphShapeNode.buildFromNode(nodeID: nodeID).asString(omitOutputPort: true)
             } catch {
                 print("recomputeAllSearchKeys: skipping node #\(nodeID) (\(node.name ?? "?")) — \(error)")
                 newSearchKey = nil

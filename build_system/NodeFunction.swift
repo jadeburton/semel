@@ -34,6 +34,7 @@ protocol InputlessNodeFunction: Codable, PolySerializable {
 
     // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
     var initialName: String? { get }
+    var initialParentNodeID: ObjectID? { get throws }
 
     var descriptor: NodeFunctionDescriptor { get }
     /// Returns the init-time key-value arguments that distinguish this node from
@@ -131,6 +132,12 @@ extension InputlessNodeFunction {
         nil
     }
 
+    var initialParentNodeID: ObjectID? {
+        get throws {
+            nil
+        }
+    }
+
     func hasNoOutputWires(thisNode: Node) throws -> Bool {
         try DatabaseLayer.shared.selectWires(comingFromNodeID: thisNode.id!).isEmpty
     }
@@ -212,8 +219,8 @@ extension InputlessNodeFunction {
                     continue   // topology unchanged — nothing to do
                 }
                 print("NO MATCH:")
-                print("currentShapeNode: \(currentShapeNode.asString())")
-                print("expectedShapeNode: \(expectedShapeNode.asString())")
+                print("currentShapeNode: \(currentShapeNode.asString(omitOutputPort: false))")
+                print("expectedShapeNode: \(expectedShapeNode.asString(omitOutputPort: false))")
                 _ = try existingWire.deleteWire()
             }
 

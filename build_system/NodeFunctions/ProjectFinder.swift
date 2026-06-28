@@ -69,7 +69,7 @@ struct ProjectFinder: NodeFunction {
         }
 
         return .init(outputValues: [:],
-                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder().manifest"],
+                     inputWireExpectations: [Self.folderManifestInputPort: ["/": "Folder(path: 'inputFileSystem').manifest"],
                                              Self.projectBuildersInputPort: projectBuildersExpectations])
     }
 }

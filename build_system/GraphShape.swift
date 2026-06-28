@@ -97,12 +97,12 @@ extension GraphShapeNode {
     /// Renders the node to a string.
     /// - Parameter pretty: When `true`, output is indented for human readability.
     ///   When `false` (default), output is compact and suitable for DB storage.
-    func asString(pretty: Bool = false) -> String {
-        asString(pretty: pretty, depth: 0)
+    func asString(pretty: Bool = false, omitOutputPort: Bool) -> String {
+        asString(pretty: pretty, depth: 0, omitOutputPort: omitOutputPort)
     }
 
-    private func asString(pretty: Bool, depth: Int) -> String {
-        let suffix    = outputPort.map { ".\($0)" } ?? ""
+    private func asString(pretty: Bool, depth: Int, omitOutputPort: Bool) -> String {
+        let suffix    = omitOutputPort ? "" : (outputPort.map { ".\($0)" } ?? "")
         let indent    = pretty ? String(repeating: "  ", count: depth + 1) : ""
         let closing   = pretty ? "\n\(String(repeating: "  ", count: depth))" : ""
         let separator = pretty ? ",\n\(indent)" : ", "
@@ -117,7 +117,7 @@ extension GraphShapeNode {
         // Inputs: portName <- ["wireName": Node, ...]
         for input in inputs {
             let wireStrings = input.wires.map { wire in
-                "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1))"
+                "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
             }
             let inner = pretty
                 ? "\n\(indent)\(wireStrings.joined(separator: separator))\n\(String(repeating: "  ", count: depth))"
@@ -128,7 +128,7 @@ extension GraphShapeNode {
         // Outputs: portName -> ["wireName": Node, ...] (future use)
         for output in outputs {
             let wireStrings = output.wires.map { wire in
-                "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1))"
+                "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
             }
             let inner = pretty
                 ? "\n\(indent)\(wireStrings.joined(separator: separator))\n\(String(repeating: "  ", count: depth))"

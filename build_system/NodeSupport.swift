@@ -13,6 +13,30 @@ extension String {
     func removingSuffix(_ suffix: String) -> String {
         hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
     }
+
+    /// The last path component of a slash-separated path string,
+    /// e.g. "src/hello.c" → "hello.c", "hello.c" → "hello.c".
+    var lastPathComponent: String {
+        split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? self
+    }
+
+    /// Returns the path with the last component removed, or nil if there is no directory component.
+    /// e.g. "src/foo/hello.c" → "src/foo", "hello.c" → nil, "src/hello.c" → "src"
+    func deletingLastPathComponent() -> String? {
+        let parts = split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard parts.count > 1 else { return nil }
+        return parts.dropLast().joined(separator: "/")
+    }
+
+    /// Returns the path with the given component appended, joining with "/" as needed.
+    /// e.g. "src".appendingPathComponent("hello.c") → "src/hello.c"
+    /// e.g. "".appendingPathComponent("hello.c")    → "hello.c"
+    func appendingPathComponent(_ component: String) -> String {
+        assert(!component.isEmpty)
+        if isEmpty { return component }
+        if hasSuffix("/") { return self + component }
+        return self + "/" + component
+    }
 }
 
 extension DatabaseLayer {
@@ -22,14 +46,21 @@ extension DatabaseLayer {
 }
 
 extension Node {
-    func buildFullPathName() throws -> String {
+    func buildFullPathName(baseNodeID: ObjectID?) throws -> String {
+        if let baseNodeID {
+            if id == baseNodeID {
+                return ""
+            }
+        }
+
         func parentPath() throws -> String {
             guard let parentNodeID, let parentNode = try DatabaseLayer.shared.selectNodeByID(parentNodeID) else {
                 return ""
             }
-            return try parentNode.buildFullPathName() + "/"
+            return try parentNode.buildFullPathName(baseNodeID: baseNodeID) + "/"
         }
 
+        assert(name == nil || !name!.isEmpty)
         return try parentPath() + (name ?? "<no name>")
     }
 
@@ -51,37 +82,16 @@ extension Node {
         }
     }
 
-    func childNode(path: String) throws -> Node? {
-        try childNode(path: path, kind: Folder.kind, createIfNotExist: false, properties: nil)
-    }
+    static func createNode(kind: UInt, properties: [String: String], searchKey: String?) throws -> Node {
 
-    static func createNode(parentNodeID: ObjectID? = nil, kind: UInt, properties: [String: String]?) throws -> Node {
+        let nodeFunction = try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
 
-        let type = try PolyFactory.type(kind: kind)
-
-        func make() throws -> InputlessNodeFunction {
-            if type is WithProperties.Type {
-                if let properties {
-                    return try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
-                } else {
-                    return try PolyFactory.makeDefault(kind: kind)
-                }
-            } else {
-                if properties != nil {
-                    throw NodeError.cannotHaveProperties
-                }
-                return try PolyFactory.makeDefault(kind: kind)
-            }
-        }
-
-        let nodeFunction = try make()
-
-        var node = Node(parentNodeID: parentNodeID,
+        var node = Node(parentNodeID: try nodeFunction.initialParentNodeID,
                         kind: kind,
                         name: nodeFunction.initialName,
                         configuration: try nodeFunction.toJSON(),
                         scheduled: false,
-                        searchKey: nil)
+                        searchKey: searchKey)
 
         node.id = try DatabaseLayer.shared.insertNode(node)
 
@@ -94,35 +104,122 @@ extension Node {
             try node.setScheduledAndSave(true)
         }
 
+        // Patch in cached search key if one was not supplied
+        if searchKey == nil {
+            do {
+                node.searchKey = try GraphShapeNode.buildFromNode(nodeID: node.id!).asString(omitOutputPort: true)
+                try DatabaseLayer.shared.updateNode(node)
+            } catch {
+                print("WARNING: failed to patch-in searchKey, are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
+            }
+        }
+
+        assert(node.searchKey != nil)
+        
+        // Locate parent node and notify its NodeFunction of this child's creation
+        if let parentNodeID = node.parentNodeID {
+            let parentNode = try parentNodeID.loadNode()
+            if parentNode.kind == Folder.kind {
+                try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node, thisNode: parentNode)
+            }
+        }
+
         return node
     }
 
-    func childNode(path: String, kind: UInt, createIfNotExist: Bool = false, properties: [String: String]?) throws -> Node? {
+    @discardableResult
+    func ensureEntirePathExistsAsFolders(_ path: String) throws -> Node {
+
         let components = path
             .split(separator: "/", omittingEmptySubsequences: true)
             .map(String.init)
 
-        var currentNodeID = id!
+        var currentFolder = self
 
-        for (index, name) in components.enumerated() {
+        guard kind == Folder.kind else {
+            throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
+        }
 
-            guard let rawNode = try? DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentNodeID).first else {
+        let folderNodeFunction = try nodeFunctionCast() as Folder
 
-                if !createIfNotExist {
-                    return nil
-                }
+        var pathSoFar = folderNodeFunction.path
 
-                return try Self.createNode(parentNodeID: currentNodeID, kind: kind, name: name, properties: properties)
+        for name in components {
+
+            assert(!pathSoFar.hasSuffix("/"))
+            pathSoFar += "/" + name
+
+            let existingChildren = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentFolder.id!)
+
+            if existingChildren.count > 1 {
+                throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
             }
 
-            if index == components.count - 1 {
-                return rawNode
+            if let existingChild = existingChildren.first {
+                currentFolder = existingChild
             } else {
-                currentNodeID = rawNode.id!
+
+                let newFolder = try Node.createNode(//parentNodeID: currentFolder.id!,
+                                                    kind: Folder.kind,
+                                                    properties: ["path" : pathSoFar],
+                                                    searchKey: nil)
+
+                try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder, thisNode: currentFolder)
+                currentFolder = newFolder
             }
         }
 
-        return self
+        return currentFolder
+    }
+
+    func addOrReplaceStaticFileChild(content: DataObjectHash, name: String) throws {
+        assert(!name.contains("\\"))
+
+        if kind != Folder.kind {
+            throw NodeError.other(message: "Cannot add/replace StaticFile on a non-folder node")
+        }
+
+        if let existingChild = try childNode(path: name) {
+            guard let existingChildNodeFunction = try existingChild.nodeFunction() as? StaticFile else {
+                throw NodeError.other(message: "Child was not a StaticFile")
+            }
+
+            if try existingChildNodeFunction.replaceContent(thisNode: existingChild, content) {
+                try (self.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: existingChild.id!,
+                                                                                  name: existingChild.name!,
+                                                                                  thisNode: self)
+            }
+        } else {
+            assert(!name.isEmpty)
+            let newChild = try Node.createNode(//parentNodeID: id!,
+                                               kind: StaticFile.kind,
+                                               properties: ["path": buildFullPathName(baseNodeID: Node.inputFileSystem.id!).appendingPathComponent(name)],
+                                               searchKey: nil)
+
+            let newChildNodeFunction = try newChild.nodeFunctionCast() as StaticFile
+
+            if try newChildNodeFunction.replaceContent(thisNode: newChild, content) {
+                try (self.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newChild, thisNode: self)
+            }
+        }
+    }
+
+    func childNode(path: String) throws -> Node? {
+        let components = path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        var currentNode = self
+
+        for (_, name) in components.enumerated() {
+            guard let childNode = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentNode.id!).first else {
+                return nil
+            }
+
+            currentNode = childNode
+        }
+
+        return currentNode
     }
 
     func delete() throws -> Bool {
@@ -161,30 +258,39 @@ extension Node {
             BuildEngine.shared.signalWorkAvailable()
         }
     }
+/*
+    private static func nodeInRoot(kind: UInt, properties: [String: String]) throws -> Node {
+        let name = try PolyFactory.makeDefault(kind: kind, properties: properties).initialName ?? "untitled"
 
-    private static func nodeInRoot(named name: String, kind: UInt) throws -> Node {
-        guard let existing = try DatabaseLayer.shared.selectNodesInRoot(named: name).first else {
-            return try Node.createNode(parentNodeID: nil, kind: kind, name: name, properties: nil)
+        guard let existing = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: nil).first else {
+            return try Node.createNode(parentNodeID: nil, kind: kind, properties: properties)
         }
 
         return existing
-    }
+    }*/
 
     static var projectFinder: Node {
         get throws {
-            try nodeInRoot(named: "projectFinder", kind: ProjectFinder.kind)
+            let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
+            let (fromNodeID, fromSymbolID) = try graphShape.findOrCreateMatchingNode()
+            return try fromNodeID.loadNode()
         }
     }
 
+    // TODO: maybe this recurses forever
     static var inputFileSystem: Node {
         get throws {
-            try nodeInRoot(named: "inputFileSystem", kind: Folder.kind)
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
+            let (fromNodeID, fromSymbolID) = try graphShape.findOrCreateMatchingNode()
+            return try fromNodeID.loadNode()
         }
     }
 
     static var outputFileSystem: Node {
         get throws {
-            try nodeInRoot(named: "outputFileSystem", kind: Folder.kind)
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
+            let (fromNodeID, fromSymbolID) = try graphShape.findOrCreateMatchingNode()
+            return try fromNodeID.loadNode()
         }
     }
 }

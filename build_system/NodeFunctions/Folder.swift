@@ -21,7 +21,44 @@ struct FolderManifest: PolySerializable {
 struct Folder: InputlessNodeFunction {
     static let kind: UInt = 1
 
+    let containingPath: String
+    let name: String
+
     enum CodingKeys: CodingKey {
+        case containingPath
+        case name
+    }
+
+    var initialName: String? {
+        name
+    }
+
+    static let outputPort = "output"
+
+    init(properties: [String : String] = [String: String]()) {
+        let path = properties["path"]!
+        containingPath = path.deletingLastPathComponent() ?? ""
+        name = path.lastPathComponent
+    }
+
+    var properties: [String : String] {
+        ["path": path]
+    }
+
+    // TODO dup
+    //var initialParentNodeID: ObjectID? {
+    //    get throws {
+/*            var containingPath = containingPath
+            // HACK
+            if !containingPath.hasPrefix("inputFileSystem") {
+                containingPath = "inputFileSystem/\(containingPath)"
+            }*/
+//            return try Node.inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+//        }
+//    }
+
+    var path: String {
+        containingPath.appendingPathComponent(name)
     }
 
     func didCreate(node: Node) throws -> ProcessOutput {
@@ -41,57 +78,12 @@ struct Folder: InputlessNodeFunction {
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
-    func notifyChildAdded(nodeID: ObjectID, name: String, thisNode: Node) throws {
+    func notifyChildAdded(newChildNode: Node, thisNode: Node) throws {
         try refreshOutputs(thisNode: thisNode)
     }
 
     func notifyChildContentChanged(nodeID: ObjectID, name: String, thisNode: Node) throws {
         try refreshOutputs(thisNode: thisNode)
-    }
-
-    @discardableResult
-    func ensureEntirePathExists(_ path: String, thisNode: Node) throws -> Node {
-
-        // if input is a/b/c, we create a, if it does not already exist, then b, then c, and return the nodeID of c
-        let components = path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        var currentFolder = thisNode
-
-        for name in components {
-            if let existingChild = try currentFolder.childNode(path: name) {
-                currentFolder = existingChild
-            } else {
-                let newFolder = try currentFolder.childNode(path: name, kind: Folder.kind, createIfNotExist: true, properties: [:])!
-                try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(nodeID: newFolder.id!, name: name, thisNode: currentFolder)
-                currentFolder = newFolder
-            }
-        }
-
-        return currentFolder
-    }
-
-    func addOrReplaceChild(thisNode: Node, content: DataObjectHash, name: String) throws {
-        assert(!name.contains("\\"))
-
-        if let existingChild = try thisNode.childNode(path: name) {
-            if let nodeFunction = try existingChild.nodeFunction() as? StaticFile {
-                if try nodeFunction.replaceContent(thisNode: existingChild, content) {
-                    try notifyChildContentChanged(nodeID: existingChild.id!, name: existingChild.name!, thisNode: thisNode)
-                }
-            } else {
-                // TODO: what if the type is not StaticFileNode
-            }
-        } else {
-            var newChild = try thisNode.childNode(path: name, kind: StaticFile.kind, createIfNotExist: true, properties: nil)!
-            let staticFile = StaticFile()
-            try newChild.setNodeFunction(staticFile)
-            if try staticFile.replaceContent(thisNode: newChild, content) {
-                try DatabaseLayer.shared.updateNode(newChild)
-                try notifyChildAdded(nodeID: newChild.id!, name: newChild.name!, thisNode: thisNode)
-            }
-        }
     }
 
     private func buildManifest(thisNode: Node) throws -> FolderManifest {

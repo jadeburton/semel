@@ -39,7 +39,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
                 t.column("name", .text)
                 t.column("configuration", .text)
                 t.column("scheduled", .integer).indexed().notNull()
-                t.column("searchKey", .text).indexed()
+                t.column("searchKey", .text).unique()
             }
         }
     }
@@ -74,10 +74,9 @@ extension DatabaseLayer {
         }
     }
 
-    public func selectNodes(searchKey: String, parentNodeID: ObjectID?) throws -> [Node] {
+    public func selectNodes(searchKey: String) throws -> [Node] {
         try read { db in
-            try Node.filter(Node.Columns.searchKey == searchKey &&
-                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try Node.filter(Node.Columns.searchKey == searchKey).fetchAll(db)
         }
     }
 

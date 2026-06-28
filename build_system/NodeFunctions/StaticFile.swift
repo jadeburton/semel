@@ -5,39 +5,53 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
-struct StaticFile: InputlessNodeFunction, WithProperties {
+struct StaticFile: InputlessNodeFunction {
     static let kind: UInt = 3
 
-    let properties: [String: String]
+    let containingPath: String
+    let name: String
 
     enum CodingKeys: CodingKey {
-        case properties
+        case containingPath
+        case name
     }
 
-    var initialName: String {
-        properties["path"]?.lastPathComponent ?? "untitled"
+    var initialName: String? {
+        name
     }
 
     static let outputPort = "output"
 
-    init() {
-        properties = [String: String]()
+    var properties: [String : String] {
+        ["path": containingPath.appendingPathComponent(name)]
     }
 
-    init(properties: [String : String] = [String: String]()) {
-        self.properties = properties
-    }
-
-//        func graphShapeArgs(node: Node) -> [GraphShapeArg] {
-//            let path = (try? node.buildFullPathName()) ?? ""
-//            return [GraphShapeArg(key: "path", value: path)]
-//        }
-    
     // When GraphShapeApplier needs to resolve "StaticFile(path: 'src/hello.c')", we receive properties with the path.
-    // At that point we need to ensure the Folder hierarchy exists above us. Then we turn the path into a local name only.
-    
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
-                                            outputPorts: [outputPort])
+    // At that point we need to ensure the Folder hierarchy exists above us.
+    init(properties: [String : String] = [String: String]()) {
+        let path = properties["path"]!
+        containingPath = path.deletingLastPathComponent() ?? ""
+        name = path.lastPathComponent
+    }
+
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
+
+    var initialParentNodeID: ObjectID? {
+        get throws {
+            // All StaticFiles reside beneath inputFileSystem
+            assert(containingPath != "inputFileSystem/inputFileSystem")
+            var containingPath = containingPath
+//            containingPath = containingPath.removeCommonPrefixPath("inputFileSystem")
+            return try Node.inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+        }
+    }
+
+    func didCreate(node: Node) throws -> ProcessOutput {
+
+
+        return .init(outputValues: [Self.outputPort: .noValue(reason:.error(message: "Missing"))],
+                     inputWireExpectations: [:])
+    }
 
     // If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted
@@ -65,7 +79,7 @@ struct StaticFile: InputlessNodeFunction, WithProperties {
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
-struct OutputFile: NodeFunction, WithProperties {
+struct OutputFile: NodeFunction {
 
     static let kind: UInt = 8
 
@@ -86,11 +100,11 @@ struct OutputFile: NodeFunction, WithProperties {
         self.properties = properties
     }
 
-    var initialName: String {
+    var initialName: String? {
         properties["path"]?.lastPathComponent ?? "untitled"
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort], dynamicInputPorts: [])
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])
 
     func didCreate(node: Node) throws -> ProcessOutput {
         // OutputFile needs to be listable as part of a folder hierarchy, so we maintain that.
@@ -98,10 +112,10 @@ struct OutputFile: NodeFunction, WithProperties {
         // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
 
         let path = properties["path"]!
-        let pathWithoutLastComponent = path // TODO
+        let pathWithoutLastComponent = path//.removingLastPathComponent // TODO!
 
         // /outputFileSystem/bin/mylib.dylib
-        try (Node.outputFileSystem.nodeFunctionCast() as Folder).ensureEntirePathExists(pathWithoutLastComponent, thisNode: Node.outputFileSystem)
+        try Node.outputFileSystem.ensureEntirePathExistsAsFolders(pathWithoutLastComponent)
 
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .pending)],
                      inputWireExpectations: [:])
@@ -124,9 +138,4 @@ struct OutputFile: NodeFunction, WithProperties {
 
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
     }
-}
-
-protocol WithProperties {
-    var properties: [String: String] { get }
-    init(properties: [String: String])
 }

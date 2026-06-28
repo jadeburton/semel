@@ -466,6 +466,7 @@ final class CommandInterpreter {
     var baseDirectory: String?
 
     required init() {
+        handleBase(externalPath: "/Users/jadeburton/Desktop/C1/C1")
     }
 
     func outputMessage(_ message: String) {
@@ -579,7 +580,7 @@ final class CommandInterpreter {
         }
     }
 
-    func pushOne(_ entry: FileWildcardEntry, baseDirectory: String) {
+    func pushOne(_ entry: FileWildcardEntry, baseDirectory: String) throws {
         let relativePath = entry.path
         outputMessage("Push: \(relativePath)")
         switch entry.kind {
@@ -591,17 +592,22 @@ final class CommandInterpreter {
             let filename = (relativePath as NSString).lastPathComponent
             let containingPath = (relativePath as NSString).deletingLastPathComponent
 
-            let containingFolder: Node
+            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
+            let (fromNodeID, fromSymbolID) = try graphShapeNode.findOrCreateMatchingNode()
+            let fromNode = try fromNodeID.loadNode()
+            try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(thisNode: fromNode, fileContent.intern())
+
+/*            let containingFolder: Node
             if containingPath.isEmpty || containingPath == "." {
-                containingFolder = try! inputFileSystem
+                containingFolder = try inputFileSystem
             } else {
-                containingFolder = try! inputFileSystem.childNode(path: containingPath, kind: Folder.kind, createIfNotExist: true, properties: nil)!
+                containingFolder = try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath)
             }
 
-            try! (containingFolder.nodeFunctionCast() as Folder).addOrReplaceChild(thisNode: containingFolder, content: fileContent.intern(), name: filename)
-
+            try containingFolder.addOrReplaceStaticFileChild(content: fileContent.intern(), name: filename)
+*/
         case .folder:
-            _ = try! inputFileSystem.childNode(path: relativePath, kind: Folder.kind, createIfNotExist: true, properties: nil)!
+            _ = try inputFileSystem.ensureEntirePathExistsAsFolders(relativePath)
         }
     }
 
@@ -614,7 +620,7 @@ final class CommandInterpreter {
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
 
         try matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
-            pushOne(entry, baseDirectory: baseDirectory)
+            try pushOne(entry, baseDirectory: baseDirectory)
         }
     }
 

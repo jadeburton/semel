@@ -63,7 +63,7 @@ extension BuildEngine {
             let preview = formatHash(outputPort.dataObjectHash)
             return "[ \(hash.truncated(to: 12))  \(preview.truncated(to: 20)) ]"
         case .pending:
-            return "[ (pending) ]"
+            return "[ 🟡 pending ]"
         case .error:
             let message = (try? outputPort.dataObjectHash?.resolveAsString()) ?? "<no message>"
             return "[ ❌ \(message) ]"
@@ -89,7 +89,7 @@ extension BuildEngine {
 
     static func printAll() throws {
         let database = DatabaseLayer.shared
-        try database.recomputeAllSearchKeys() // HACK TODO
+//        try database.recomputeAllSearchKeys() // HACK TODO
 
         //var projectFinder = try Node.projectFinder
 
@@ -133,7 +133,7 @@ extension BuildEngine {
                     let dynamic = descriptor?.dynamicInputPorts.contains(inputPort) == true ? " (dynamic)" : ""
                     let wires   = incomingWires.filter { $0.toSymbolID == inputPort.asSymbolID() }
                     if wires.isEmpty {
-                        print("    · \(inputPort)\(dynamic)  — disconnected")
+                        print("    · \(inputPort)\(dynamic)  — no wires")
                     } else {
                         for wire in wires {
                             let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
