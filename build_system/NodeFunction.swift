@@ -31,7 +31,7 @@ protocol InputlessNodeFunction: Codable, PolySerializable {
     var properties: [String: String] { get }
     init(properties: [String: String])
 
-    func didCreate(node: Node) throws -> ProcessOutput?
+    func didCreate(thisNode: Node) throws -> ProcessOutput?
 
     // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
     var initialName: String? { get }
@@ -70,10 +70,21 @@ extension NodeFunction {
         return .init(inputValues: inputValues)
     }
 
-    private func allInputsAreSatisfied(input: ProcessInput) -> Bool {
+    private func allInputsAreSatisfied(input: ProcessInput) throws -> Bool {
         for inputPort in descriptor.staticInputPorts.filter({ !descriptor.optionalStaticInputPorts.contains($0) }) {
-            guard let values = input.inputValues[inputPort], !values.isEmpty else { return false }
-            if values.contains(where: { if case .noValue = $0.value { return true } else { return false } }) {
+
+            guard let values = input.inputValues[inputPort] else {
+                throw NodeError.other(message: "inputValues is missing an entry for input port")
+            }
+
+            guard !values.isEmpty else {
+                // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
+                // TODO: self-healing
+                print("WARNING: non-optional input port has no connected wires")
+                return false
+            }
+
+            if values.contains(where: { $0.value.isPending }) {
                 return false
             }
         }
@@ -98,7 +109,7 @@ extension NodeFunction {
         // Gather all values from input ports
         let input = try buildProcessInput(thisNode: thisNode)
 
-        guard allInputsAreSatisfied(input: input) else {
+        guard try allInputsAreSatisfied(input: input) else {
             //print("Not all inputs are satisfied.")
             return
         }
@@ -117,6 +128,10 @@ extension NodeFunction {
 }
 
 extension InputlessNodeFunction {
+    var database: DatabaseLayer {
+        DatabaseLayer.shared
+    }
+
     func canBeDeleted(thisNode: Node) throws -> Bool {
         true
     }
@@ -132,16 +147,16 @@ extension InputlessNodeFunction {
     }
 
     func hasNoOutputWires(thisNode: Node) throws -> Bool {
-        try DatabaseLayer.shared.selectWires(comingFromNodeID: thisNode.id!).isEmpty
+        try database.selectWires(comingFromNodeID: thisNode.id!).isEmpty
     }
 
-    func didCreate(node: Node) throws -> ProcessOutput? {
+    func didCreate(thisNode: Node) throws -> ProcessOutput? {
         nil
     }
 
     func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
 
-        let numberOfOutputPorts = try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: thisNode.id!).count
+        let numberOfOutputPorts = try! database.selectAllOutputPorts(nodeID: thisNode.id!).count
 
         if numberOfOutputPorts != output.outputValues.count {
             print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
@@ -158,7 +173,7 @@ extension InputlessNodeFunction {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
 
-        if !(try! DatabaseLayer.shared.selectAllOutputPorts(nodeID: thisNode.id!).filter { $0.valueKind == .pending }.isEmpty) {
+        if !(try! database.selectAllOutputPorts(nodeID: thisNode.id!).filter { $0.valueKind == .pending }.isEmpty) {
             print("WARNING: One or more outputs left Pending for node \(thisNode)")
         }
 
@@ -181,7 +196,7 @@ extension InputlessNodeFunction {
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
-        let existingWires = try DatabaseLayer.shared.selectWires(goingToNodeID: thisNode.id!, toSymbolID: toSymbolID)
+        let existingWires = try database.selectWires(goingToNodeID: thisNode.id!, toSymbolID: toSymbolID)
 
         // Build a lookup from wire name → existing Wire for steps 2 & 3.
         let existingWiresByName: [String: Wire] = Dictionary(
@@ -191,7 +206,7 @@ extension InputlessNodeFunction {
         // Step 1 — delete wires whose name is absent from the new configuration.
         for (wireName, existingWire) in existingWiresByName {
             if wireExpectations[wireName] == nil {
-                _ = try existingWire.deleteWire()
+                _ = try existingWire.deleteWire(database: database)
             }
         }
 
@@ -209,7 +224,8 @@ extension InputlessNodeFunction {
                         return
                     }
 
-                    try Wire.connectWire(fromNodeID: fromNodeID,
+                    try Wire.connectWire(database: database,
+                                         fromNodeID: fromNodeID,
                                          fromSymbolID: fromSymbolID,
                                          toNodeID: thisNode.id!,
                                          toSymbolID: toSymbolID,
@@ -224,7 +240,7 @@ extension InputlessNodeFunction {
                 // still satisfies the expectation.  Compare parsed shapes structurally
                 // (port-order-independent, bracket-format-independent) rather than as
                 // raw strings to avoid spurious mismatches.
-                let currentShapeNode   = try GraphShapeNode.buildFromWire(existingWire)
+                let currentShapeNode   = try GraphShapeNode.buildFromWire(existingWire, database: database)
                 let expectedShapeNode  = try GraphShapeNode.parse(expectationString)
                 guard !currentShapeNode.topologyMatches(expectedShapeNode) else {
                     continue   // topology unchanged — nothing to do
@@ -232,7 +248,7 @@ extension InputlessNodeFunction {
                 print("NO MATCH:")
                 print("currentShapeNode: \(currentShapeNode.asString(omitOutputPort: false))")
                 print("expectedShapeNode: \(expectedShapeNode.asString(omitOutputPort: false))")
-                _ = try existingWire.deleteWire()
+                _ = try existingWire.deleteWire(database: database)
             }
 
             // Find and connect the matching source.

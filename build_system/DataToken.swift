@@ -41,13 +41,14 @@ enum DataObjectError: Error {
 
 extension DataToken {
     func resolve() throws -> [UInt8] {
-        if self.isEmpty {
+        if isEmpty {
             return []
         }
 
         guard let dataObject = try DatabaseLayer.shared.selectDataObject(hash: self) else {
             throw DataObjectError.dataObjectNotFoundByHash
         }
+
         return dataObject.content
     }
 

@@ -47,10 +47,16 @@ struct StaticFile: InputlessNodeFunction, FileType {
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
 
+    var inputFileSystem: Node {
+        get throws {
+            try BuildEngine.shared.inputFileSystem
+        }
+    }
+
     var initialParentNodeID: ObjectID? {
         get throws {
             // All StaticFiles reside beneath inputFileSystem
-            try Node.inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+            try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
         }
     }
 
@@ -74,7 +80,8 @@ struct StaticFile: InputlessNodeFunction, FileType {
             changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "File deleted")))
         }
 
-        if let parentFolderNode = try thisNode.parentNodeID?.loadNode() {
+        if let parentNodeID = thisNode.parentNodeID {
+            let parentFolderNode = try database.node.select(nodeID: parentNodeID)
             try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: thisNode.id!,
                                                                                           name: name,
                                                                                           thisNode: parentFolderNode)

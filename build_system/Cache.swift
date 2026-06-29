@@ -7,7 +7,7 @@
 
 import Foundation
 
-extension InputlessNodeFunction {
+extension NodeFunction {
 
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
         let oneInput = input.inputValues[inputPort]!
@@ -49,7 +49,7 @@ extension InputlessNodeFunction {
             return nil
         }
 
-        guard let cacheEntry = try DatabaseLayer.shared.selectCacheEntry(hash: cacheKey) else {
+        guard let cacheEntry = try database.selectCacheEntry(hash: cacheKey) else {
             return nil
         }
 
@@ -78,6 +78,6 @@ extension InputlessNodeFunction {
 
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireExpectations: output.inputWireExpectations)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
-        try DatabaseLayer.shared.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
+        try database.insertCacheEntry(.init(hash: cacheKey, content: [UInt8](cacheEntryData)))
     }
 }

@@ -46,6 +46,10 @@ extension DatabaseLayer {
 }
 
 extension Node {
+    var database: DatabaseLayer {
+        DatabaseLayer.shared
+    }
+
     func buildFullPathName(baseNodeID: ObjectID?) throws -> String {
         if let baseNodeID {
             if id == baseNodeID {
@@ -54,10 +58,10 @@ extension Node {
         }
 
         func parentPath() throws -> String {
-            guard let parentNodeID, let parentNode = try DatabaseLayer.shared.selectNodeByID(parentNodeID) else {
+            guard let parentNodeID else {
                 return ""
             }
-            return try parentNode.buildFullPathName(baseNodeID: baseNodeID) + "/"
+            return try database.node.select(nodeID: parentNodeID).buildFullPathName(baseNodeID: baseNodeID) + "/"
         }
 
         assert(name == nil || !name!.isEmpty)
@@ -69,7 +73,14 @@ extension Node {
     }
 
     func nodeFunction() throws -> InputlessNodeFunction {
-        try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
+        let nodeFunction = try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
+
+        if var hasNodeEmbedded = nodeFunction as? HasNodeEmbedded {
+            // copy
+            hasNodeEmbedded.embeddedNode = self
+        }
+
+        return nodeFunction
     }
 
     mutating func setNodeFunction(_ nodeFunction: InputlessNodeFunction) throws {
@@ -78,11 +89,11 @@ extension Node {
 
     var allChildren: [Node] {
         get throws {
-            try BuildEngine.shared.database.selectNodes(parentNodeID: id!)
+            try BuildEngine.shared.database.node.select(parentNodeID: id!)
         }
     }
 
-    static func createNode(kind: UInt, properties: [String: String], searchKey: String?) throws -> Node {
+    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> Node {
 
         let nodeFunction = try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
 
@@ -93,11 +104,11 @@ extension Node {
                         scheduled: false,
                         searchKey: searchKey)
 
-        node.id = try DatabaseLayer.shared.insertNode(node)
+        node.id = try database.node.insert(node)
 
         try node.writePendingToAllOutputsOfNode()
 
-        let output = try nodeFunction.didCreate(node: node) ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
+        let output = try nodeFunction.didCreate(thisNode: node) ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
 
         try nodeFunction.writeToOutputs(output: output, thisNode: node)
 
@@ -108,8 +119,8 @@ extension Node {
         // Patch in cached search key if one was not supplied
         if searchKey == nil {
             do {
-                node.searchKey = try GraphShapeNode.buildFromNode(nodeID: node.id!).asString(omitOutputPort: true)
-                try DatabaseLayer.shared.updateNode(node)
+                node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: node.id!).asString(omitOutputPort: true)
+                try database.node.update(node)
             } catch {
                 print("WARNING: failed to patch-in searchKey (\(error)), are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
                 throw error
@@ -120,7 +131,7 @@ extension Node {
         
         // Locate parent node and notify its NodeFunction of this child's creation
         if let parentNodeID = node.parentNodeID {
-            let parentNode = try parentNodeID.loadNode()
+            let parentNode = try database.node.select(nodeID: parentNodeID)
             if parentNode.kind == Folder.kind {
                 try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node, thisNode: parentNode)
             }
@@ -153,7 +164,7 @@ extension Node {
                 pathSoFar += "/" + name
             }
 
-            let existingChildren = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentFolder.id!)
+            let existingChildren = try database.node.select(named: name, parentNodeID: currentFolder.id!)
 
             if existingChildren.count > 1 {
                 throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
@@ -168,9 +179,9 @@ extension Node {
 
                 let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar)')")
                 let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-                var newFolder = try fromNodeID.loadNode()
+                var newFolder = try database.node.select(nodeID: fromNodeID)
                 newFolder.parentNodeID = currentFolder.id!
-                try DatabaseLayer.shared.updateNode(newFolder)
+                try database.node.update(newFolder)
 
                 try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder, thisNode: currentFolder)
                 currentFolder = newFolder
@@ -188,7 +199,7 @@ extension Node {
         var currentNode = self
 
         for (_, name) in components.enumerated() {
-            guard let childNode = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentNode.id!).first else {
+            guard let childNode = try database.node.select(named: name, parentNodeID: currentNode.id!).first else {
                 return nil
             }
 
@@ -209,62 +220,37 @@ extension Node {
 
         self.scheduled = scheduled
 
-        try DatabaseLayer.shared.updateNode(self)
+        try database.node.update(self)
 
         if scheduled {
             BuildEngine.shared.signalWorkAvailable()
-        }
-    }
-
-    static var projectFinder: Node {
-        get throws {
-            let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try fromNodeID.loadNode()
-        }
-    }
-
-    // TODO: maybe this recurses forever
-    static var inputFileSystem: Node {
-        get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try fromNodeID.loadNode()
-        }
-    }
-
-    static var outputFileSystem: Node {
-        get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try fromNodeID.loadNode()
         }
     }
 }
 
 // MARK: - ObjectID helper
 
-extension ObjectID {
-    func loadNode() throws -> Node {
-        guard let node = try DatabaseLayer.shared.selectNodeByID(self) else {
-            throw DatabaseLayer.DatabaseError.nodeNotFound
-        }
-        return node
-    }
-}
+//extension ObjectID {
+//    func loadNode() throws -> Node {
+//        guard let node = try database.node.selectByID(self) else {
+//            throw DatabaseLayer.DatabaseError.nodeNotFound
+//        }
+//        return node
+//    }
+//}
 
 
 // MARK: - Port management
 
 extension Node {
-    func hasOneOrMoreErrorOutputs() throws -> Bool {
-        try DatabaseLayer.shared.selectAllOutputPorts(nodeID: id!).contains { $0.valueKind != .value }
+    func hasOneOrMoreErrorOrPendingOutputs() throws -> Bool {
+        try database.selectAllOutputPorts(nodeID: id!).contains { $0.valueKind != .value }
     }
 
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
         let outputSymbolID = outputPort.asSymbolID()
 
-        guard let port = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: outputSymbolID) else {
+        guard let port = try database.selectOutputPort(nodeID: id!, nameSymbolID: outputSymbolID) else {
             return .noValue(reason: .error(message: "No value ever existed"))
         }
         return try port.asNodeValue()
@@ -273,13 +259,13 @@ extension Node {
     func readFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
         let inputSymbolID = inputPort.asSymbolID()
 
-        let wiresOnThisInput = try DatabaseLayer.shared.selectWires(goingToNodeID: id!, toSymbolID: inputSymbolID)
+        let wiresOnThisInput = try database.selectWires(goingToNodeID: id!, toSymbolID: inputSymbolID)
 
         var result = [String: NodeValue]()
 
         for wire in wiresOnThisInput {
             let wireName = wire.name.resolveSymbol()
-            if let port = try DatabaseLayer.shared.selectOutputPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
+            if let port = try database.selectOutputPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
                 assert(result[wireName] == nil) // all wires must have unique names
                 try result[wireName] = port.asNodeValue()
             }
@@ -300,20 +286,20 @@ extension Node {
 
     @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {
 
-        if let existing = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
+        if let existing = try database.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {
                // print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
                 return false
             }
         }
 
-        //let previousPort = try DatabaseLayer.shared.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
+        //let previousPort = try database.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
         //print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
 
-        try DatabaseLayer.shared.insertOrUpdateOutputPort(port)
+        try database.insertOrUpdateOutputPort(port)
 
-        for wire in try DatabaseLayer.shared.selectWires(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
-            var toNode = try wire.toNodeID.loadNode()
+        for wire in try database.selectWires(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
+            var toNode = try database.node.select(nodeID: wire.toNodeID)
 
             try toNode.writePendingToAllOutputsOfNode()
 

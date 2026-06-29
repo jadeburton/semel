@@ -483,8 +483,10 @@ final class CommandInterpreter {
 
     let commandParser = CommandParser()
     var baseDirectory: String?
+    let database: DatabaseLayer
 
-    required init() {
+    required init(database: DatabaseLayer) {
+        self.database = database
         handleBase(externalPath: "/Users/jadeburton/Desktop/C1/C1")
     }
 
@@ -507,12 +509,16 @@ final class CommandInterpreter {
         }
     }
 
+    var buildEngine: BuildEngine {
+        BuildEngine.shared
+    }
+
     func handleDebug() throws {
-        try BuildEngine.printAll()
+        try buildEngine.printAll()
     }
 
     func handleNudge() throws {
-        try BuildEngine.nudge()
+        try buildEngine.nudge()
     }
 
     func handleQuit() throws {
@@ -589,13 +595,13 @@ final class CommandInterpreter {
 
     var inputFileSystem: Node {
         get throws {
-            try Node.inputFileSystem
+            try buildEngine.inputFileSystem
         }
     }
 
     var outputFileSystem: Node {
         get throws {
-            try Node.outputFileSystem
+            try buildEngine.outputFileSystem
         }
     }
 
@@ -610,7 +616,7 @@ final class CommandInterpreter {
 
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
             let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
-            let fromNode = try fromNodeID.loadNode()
+            let fromNode = try database.node.select(nodeID: fromNodeID)
             _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(thisNode: fromNode, fileContent.intern())
 
         case .folder:
@@ -641,14 +647,15 @@ final class CommandInterpreter {
     }
 
     private func removeOne(_ entry: FileWildcardEntry) throws {
-
-        outputMessage("Remove: \(entry.path)")
-
         guard let child = try inputFileSystem.childNode(path: entry.path) else {
             outputError("Child not found")
             return
         }
 
+        try removeOne(child: child)
+    }
+
+    private func removeOne(child: Node) throws {
         if let staticFile = try child.nodeFunction() as? StaticFile {
             try removeStaticFile(node: child, nodeFunction: staticFile)
         } else {
@@ -662,6 +669,8 @@ final class CommandInterpreter {
     }
 
     private func removeStaticFile(node: Node, nodeFunction: StaticFile) throws {
+        outputMessage("Remove file: \(node.name!)")
+
         // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
         // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
         // the Project file.)
@@ -669,9 +678,11 @@ final class CommandInterpreter {
 
         if try nodeFunction.hasNoOutputWires(thisNode: node) && nodeFunction.canBeDeleted(thisNode: node) {
             // Ghost, no output wires - really delete it.
-            _ = try  DatabaseLayer.shared.deleteNode(nodeID: node.id!)
+            _ = try database.node.delete(nodeID: node.id!)
+
             // notify parent
-            if let parentFolderNode = try node.parentNodeID?.loadNode() {
+            if let parentNodeID = node.parentNodeID {
+                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
                 try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
                                                                                               name: node.name!,
                                                                                               thisNode: parentFolderNode)
@@ -684,17 +695,25 @@ final class CommandInterpreter {
     }
 
     private func removeFolder(node: Node, nodeFunction: Folder) throws {
+
+        // Delete all children first, which will make child StaticFiles ghosts
+        for child in try node.allChildren {
+            try removeOne(child: child)
+        }
+
+        outputMessage("Remove folder: \(node.name!)")
+
         if try nodeFunction.hasNoOutputWires(thisNode: node) && nodeFunction.canBeDeleted(thisNode: node) {
-            _ = try  DatabaseLayer.shared.deleteNode(nodeID: node.id!)
-            // notify parent
-            if let parentFolderNode = try node.parentNodeID?.loadNode() {
+            _ = try database.node.delete(nodeID: node.id!)
+
+            if let parentNodeID = node.parentNodeID {
+                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
                 try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
                                                                                               name: node.name!,
                                                                                               thisNode: parentFolderNode)
             }
         } else {
-            // TODO: If there are no children but there are outputs, this is inconsistent with the way we treat StaticFiles.
-            // Maybe we need a flag on Folder that indicates it is a ghost?
+            // TODO: If there are no children but there are outputs, mark the folder as a ghost. Parent folder should not include in manifest.
             outputError("Cannot delete Folder; in use")
         }
     }

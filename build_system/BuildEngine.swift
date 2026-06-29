@@ -18,6 +18,7 @@ final class BuildEngine {
     // MARK: - State
 
     let database: DatabaseLayer
+    private let commandInterpreter: CommandInterpreter
 
     /// A pending-work flag. Incremented by any caller (any actor/thread) via
     /// `signalWorkAvailable()`. Decremented back to zero at the top of every
@@ -43,20 +44,46 @@ final class BuildEngine {
         ])
     }
 
+    var projectFinder: Node {
+        get throws {
+            let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+            return try database.node.select(nodeID: fromNodeID)
+        }
+    }
+
+    var inputFileSystem: Node {
+        get throws {
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+            return try database.node.select(nodeID: fromNodeID)
+        }
+    }
+
+    var outputFileSystem: Node {
+        get throws {
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
+            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+            return try database.node.select(nodeID: fromNodeID)
+        }
+    }
+
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database212.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database213.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
+        self.commandInterpreter = .init(database: database)
+
         // Capture the fully-initialised self before starting the task.
         let engine = self
 
         Task {
-            try _ = Node.projectFinder
-            try _ = Node.inputFileSystem
-            try _ = Node.outputFileSystem
+            try _ = projectFinder
+            try _ = inputFileSystem
+            try _ = outputFileSystem
 
             do {
                 try await engine.processLoop()
@@ -90,8 +117,6 @@ final class BuildEngine {
         }
     }
 
-    private let commandInterpreter = CommandInterpreter()
-
     func receiveUserInput(line: String) -> Bool {
         do {
             try commandInterpreter.handleCommand(line)
@@ -117,7 +142,7 @@ final class BuildEngine {
     }
 
     private func processSomeNodes() throws -> Bool {
-        let rawNodes = try database.selectAllScheduledNodes(limit: Self.processingBatchSize)
+        let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
         guard !rawNodes.isEmpty else { return false }
         for rawNode in rawNodes {
             try processOneNode(rawNode)

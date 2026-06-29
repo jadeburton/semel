@@ -7,7 +7,24 @@
 
 import GRDB
 
+public protocol DataAccessType {
+    init(databaseLayer: DatabaseLayer)
+    var databaseLayer: DatabaseLayer? { get }
+}
+
+public extension DataAccessType {
+    func read<T>(_ block: (Database) throws -> T) throws -> T {
+        try databaseLayer!.read(block)
+    }
+
+    func write<T>(_ block: (Database) throws -> T) throws -> T {
+        try databaseLayer!.write(block)
+    }
+}
+
 public final class DatabaseLayer {
+    public lazy var node = NodeDataAccess(databaseLayer: self)
+
     public static var shared: DatabaseLayer!
 
     public let dbQueue: DatabaseQueue

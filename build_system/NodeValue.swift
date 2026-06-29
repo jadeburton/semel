@@ -109,22 +109,3 @@ extension NodeValue {
         }
     }
 }
-
-// There are two kinds of values. Values with a mutation chain and simple values.
-// A simple value replaces the last and must be parsed entirely as one object.
-// This means it is not suited for very complex data structures such as a file system tree.
-// A value with mutation chain is a series of deltas linked together to make a complete final value.
-// Each delta is a custom format that is specific to the type of the value. For example, a list of
-// files will have add-file, delete-file, replace-file delta objects.
-// The first "link" in the mutation chain should not be special; all aspects of the value should
-// be changeable just with mutations.
-// With a simple value the SHA256 hash is the hash. With mutation chains the hash is a hash of the most
-// recent mutation, which is computed as a SHA256 over the mutation itself plus a hash of the previous mutation.
-// In this way it is possible to compare two mutation-chain values for equality, and also to look up cache values.
-// The cache can itself contain mutation-chain values.
-// When a Node detects an Input value has changed, it can keep track of the last mutation link (hash and index?)
-// and then process just the new mutations since it last checked. This is much more scaleable than parsing
-// the entire simple value.
-// Simple values are better for values that flip-flop back and forth. If a mutation-chain value goes from
-// A, B, A, B etc, this creates mutations each time, even if they are de-duplicated.
-

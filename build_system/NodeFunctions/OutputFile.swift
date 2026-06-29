@@ -38,16 +38,22 @@ struct OutputFile: NodeFunction, FileType {
         name = path.lastPathComponent
     }
 
+    var outputFileSystem: Node {
+        get throws {
+            try BuildEngine.shared.outputFileSystem
+        }
+    }
+
     var initialParentNodeID: ObjectID? {
         get throws {
             // All OutputFiles reside beneath outputFileSystem
-            try Node.outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+            try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
         }
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])
 
-    func didCreate(node: Node) throws -> ProcessOutput? {
+    func didCreate(thisNode: Node) throws -> ProcessOutput? {
         // OutputFile needs to be listable as part of a folder hierarchy, so we maintain that.
 
         // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
@@ -55,8 +61,7 @@ struct OutputFile: NodeFunction, FileType {
         let path = properties["path"]!
         let pathWithoutLastComponent = path.deletingLastPathComponent() ?? "" // TODO!
 
-        // /outputFileSystem/bin/mylib.dylib
-        try Node.outputFileSystem.ensureEntirePathExistsAsFolders(pathWithoutLastComponent)
+        try outputFileSystem.ensureEntirePathExistsAsFolders(pathWithoutLastComponent)
 
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(message: "Missing"))],
                      inputWireExpectations: [:])

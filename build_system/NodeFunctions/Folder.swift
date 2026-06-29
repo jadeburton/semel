@@ -46,20 +46,9 @@ struct Folder: InputlessNodeFunction {
         ["path": path]
     }
 
-    // TODO dup
-    //var initialParentNodeID: ObjectID? {
-    //    get throws {
-/*            var containingPath = containingPath
-            // HACK
-            if !containingPath.hasPrefix("inputFileSystem") {
-                containingPath = "inputFileSystem/\(containingPath)"
-            }*/
-//            return try Node.inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
-//        }
-//    }
-
-    func didCreate(node: Node) throws -> ProcessOutput? {
-        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(thisNode: node).toJSON().intern())], inputWireExpectations: [:])
+    func didCreate(thisNode: Node) throws -> ProcessOutput? {
+        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(thisNode: thisNode).toJSON().intern())],
+              inputWireExpectations: [:])
     }
 
     var path: String {
@@ -88,6 +77,7 @@ struct Folder: InputlessNodeFunction {
 
     private func buildManifest(thisNode: Node) throws -> FolderManifest {
         var folderManifestEntries = [FolderManifestEntry]()
+
         for child in try thisNode.allChildren {
 
             // Hide ghosts
@@ -99,7 +89,8 @@ struct Folder: InputlessNodeFunction {
 
             folderManifestEntries.append(.init(name: child.name!, isFolder: child.kind == Folder.kind))
         }
-        return FolderManifest(entries: folderManifestEntries)
+
+        return .init(entries: folderManifestEntries)
     }
 
     // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.

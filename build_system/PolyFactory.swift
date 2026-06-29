@@ -47,7 +47,7 @@ enum PolyFactory {
 
     /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
     static func decode(encodedJSON: String) throws -> any PolySerializable {
-        try Cassette.fromJSON(encodedJSON).object
+        try Caddy.fromJSON(encodedJSON).object
     }
 
     static func decodeAndCast<P: PolySerializable>(encodedJSON: String) throws -> P {
@@ -70,14 +70,14 @@ enum PolyFactoryError: Error {
 extension PolySerializable {
     /// Encode a `PolySerializable` to a JSON string, embedding its `kind`.
     func toJSON() throws -> String {
-        try Cassette(object: self).toJSON()
+        try Caddy(object: self).toJSON()
     }
 }
 
-// MARK: - Cassette (private wrapper that pairs kind + object for serialization)
+// MARK: - Caddy (private wrapper that pairs kind + object for serialization)
 
 /// Internal use. Wraps a `PolySerializable` during serialization to add a `kind` discriminator.
-private struct Cassette: Codable {
+private struct Caddy: Codable {
 
     let object: PolySerializable
 
