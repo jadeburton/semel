@@ -20,7 +20,7 @@ extension Wire {
                             toSymbolID: ObjectID,
                             name: ObjectID) throws {
 
-        guard try database.selectWires(comingFromNodeID: fromNodeID,
+        guard try database.wire.select(comingFromNodeID: fromNodeID,
                                        fromSymbolID: fromSymbolID,
                                        goingToNodeID: toNodeID,
                                        toSymbolID: toSymbolID).isEmpty else {
@@ -38,7 +38,7 @@ extension Wire {
 
         // TODO: transactional
         // TODO: if there is a circular reference, block the creation of the Wire
-        _ = try database.insertWire(.init(fromNodeID: fromNodeID,
+        _ = try database.wire.insert(.init(fromNodeID: fromNodeID,
                                           fromSymbolID: fromSymbolID,
                                           toNodeID: toNodeID,
                                           toSymbolID: toSymbolID,
@@ -60,14 +60,14 @@ extension Wire {
                                        toSymbolID: ObjectID,
                                        name: ObjectID) throws -> Bool {
 
-        try database.selectWires(goingToNodeID: toNodeID, toSymbolID: toSymbolID)
+        try database.wire.select(goingToNodeID: toNodeID, toSymbolID: toSymbolID)
             .contains { $0.name == name && ($0.fromNodeID != fromNodeID || $0.fromSymbolID != fromSymbolID) }
     }
 
     // TODO: find home
     func deleteWire(database: DatabaseLayer) throws {
 
-        guard try database.deleteWire(comingFromNodeID: fromNodeID,
+        guard try database.wire.delete(comingFromNodeID: fromNodeID,
                                       fromSymbolID: fromSymbolID,
                                       goingToNodeID: toNodeID,
                                       toSymbolID: toSymbolID) else {
@@ -87,7 +87,7 @@ extension Wire {
 
         // Now clean up any input wires to the just-deleted Node.
 
-        for inputWire in try database.selectWires(goingToNodeID: fromNodeID) {
+        for inputWire in try database.wire.select(goingToNodeID: fromNodeID) {
             _ = try inputWire.deleteWire(database: database)
         }
 

@@ -43,7 +43,7 @@ extension BuildEngine {
 
     /// Resolve a symbol ID to its name, falling back to "?".
     private func symbolName(symbolID: ObjectID, database: DatabaseLayer) -> String {
-        (try? database.selectSymbol(symbolID: symbolID))?.name ?? "<invalid symbolID>"
+        (try? database.symbol.select(symbolID: symbolID))?.name ?? "<invalid symbolID>"
     }
     
     /// Format a wire as "fromNode:fromPort ──▶ toNode:toPort".
@@ -89,8 +89,8 @@ extension BuildEngine {
 
     func printAll() throws {
         let allNodes       = try database.node.selectAll()
-        let allWires       = try database.selectAllWires()
-        let allDataObjects = try database.selectAllDataObjects()
+        let allWires       = try database.wire.selectAll()
+        let allDataObjects = try database.dataObject.selectAll()
 
         // Indexes built once and reused throughout
         let nodeByID: [ObjectID: Node] = Dictionary(
@@ -124,7 +124,7 @@ extension BuildEngine {
             let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires = wiresByFromNodeID[nodeID] ?? []
-            let outputValues  = (try? database.selectAllOutputPorts(nodeID: nodeID)) ?? []
+            let outputValues  = (try? database.outputPort.selectAll(nodeID: nodeID)) ?? []
             
             if !inputPorts.isEmpty {
                 print("  inputs:")
@@ -137,7 +137,7 @@ extension BuildEngine {
                         for wire in wires {
                             let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
                             let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
-                            let outputValue = (try? database.selectOutputPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)).map { formatOutputPort($0) } ?? "—"
+                            let outputValue = (try? database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)).map { formatOutputPort($0) } ?? "—"
                             print("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── #\(wire.fromNodeID) \(fromNode):\(fromPort)   \(outputValue)")
                         }
                     }
@@ -206,7 +206,7 @@ extension Node {
         }
 
         do {
-            let incomingWires = try database.selectWires(goingToNodeID: nodeID)
+            let incomingWires = try database.wire.select(goingToNodeID: nodeID)
 
             var visitedDependencyNodeIDs = Set<ObjectID>()
             var dependencyNodes = [Node]()

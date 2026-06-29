@@ -21,23 +21,29 @@ public struct DataObject: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
-extension DatabaseLayer {
-    public func selectAllDataObjects() throws -> [DataObject] {
+public struct DataObjectDataAccess: DataAccessType {
+    public weak var databaseLayer: DatabaseLayer?
+
+    public init(databaseLayer: DatabaseLayer) {
+        self.databaseLayer = databaseLayer
+    }
+
+    public func selectAll() throws -> [DataObject] {
         print("WARNING: expensive selectAllDataObjects call")
         return try read { db in try DataObject.fetchAll(db) }
     }
 
-    public func selectDataObject(hash: String) throws -> DataObject? {
+    public func select(hash: String) throws -> DataObject? {
         try read { db in
             try DataObject.filter(Column("hash") == hash).fetchOne(db)
         }
     }
 
-    public func insertDataObject(_ dataObject: DataObject) throws {
+    public func insert(_ dataObject: DataObject) throws {
         try write { db in try dataObject.insert(db) }
     }
 
-    public func deleteDataObject(hash: String) throws -> Bool {
+    public func delete(hash: String) throws -> Bool {
         try write { db in
             try DataObject.filter(Column("hash") == hash).deleteAll(db) > 0
         }

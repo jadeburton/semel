@@ -95,7 +95,7 @@ extension GraphShapeNode {
         var inputs: [GraphShapeInputPort] = []
         for portName in staticInputPorts {
             let portSymbolID  = portName.asSymbolID()
-            let incomingWires = try database.selectWires(goingToNodeID: fromNodeID,
+            let incomingWires = try database.wire.select(goingToNodeID: fromNodeID,
                                                                      toSymbolID:    portSymbolID)
             guard !incomingWires.isEmpty else { continue }
 
@@ -171,7 +171,7 @@ extension GraphShapeNode {
 
         for expectedPort in inputs {
             let portSymbolID = expectedPort.portName.asSymbolID()
-            let actualWires  = try database.selectWires(goingToNodeID: nodeID,
+            let actualWires  = try database.wire.select(goingToNodeID: nodeID,
                                                                     toSymbolID:    portSymbolID)
 
             guard actualWires.count == expectedPort.wires.count else {
@@ -281,7 +281,7 @@ extension GraphShapeNode {
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
             let portSymbolID   = portSpec.portName.asSymbolID()
-            let connectedWires = try database.selectWires(goingToNodeID: newNodeID,
+            let connectedWires = try database.wire.select(goingToNodeID: newNodeID,
                                                                       toSymbolID:    portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.

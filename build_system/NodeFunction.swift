@@ -154,7 +154,7 @@ extension InputlessNodeFunction {
     }
 
     func hasNoOutputWires() throws -> Bool {
-        try database.selectWires(comingFromNodeID: thisNode.id!).isEmpty
+        try database.wire.select(comingFromNodeID: thisNode.id!).isEmpty
     }
 
     func didCreate() throws -> ProcessOutput? {
@@ -163,7 +163,7 @@ extension InputlessNodeFunction {
 
     func writeToOutputs(output: ProcessOutput) throws {
 
-        let numberOfOutputPorts = try! database.selectAllOutputPorts(nodeID: thisNode.id!).count
+        let numberOfOutputPorts = try! database.outputPort.selectAll(nodeID: thisNode.id!).count
 
         if numberOfOutputPorts != output.outputValues.count {
             print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
@@ -180,7 +180,7 @@ extension InputlessNodeFunction {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
 
-        if !(try! database.selectAllOutputPorts(nodeID: thisNode.id!).filter { $0.valueKind == .pending }.isEmpty) {
+        if !(try! database.outputPort.selectAll(nodeID: thisNode.id!).filter { $0.valueKind == .pending }.isEmpty) {
             print("WARNING: One or more outputs left Pending for node \(thisNode)")
         }
 
@@ -203,7 +203,7 @@ extension InputlessNodeFunction {
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
-        let existingWires = try database.selectWires(goingToNodeID: thisNode.id!, toSymbolID: toSymbolID)
+        let existingWires = try database.wire.select(goingToNodeID: thisNode.id!, toSymbolID: toSymbolID)
 
         // Build a lookup from wire name → existing Wire for steps 2 & 3.
         let existingWiresByName: [String: Wire] = Dictionary(

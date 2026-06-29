@@ -23,7 +23,12 @@ public extension DataAccessType {
 }
 
 public final class DatabaseLayer {
-    public lazy var node = NodeDataAccess(databaseLayer: self)
+    public lazy var node       = NodeDataAccess(databaseLayer: self)
+    public lazy var wire       = WireDataAccess(databaseLayer: self)
+    public lazy var dataObject = DataObjectDataAccess(databaseLayer: self)
+    public lazy var symbol     = SymbolDataAccess(databaseLayer: self)
+    public lazy var outputPort = OutputPortDataAccess(databaseLayer: self)
+    public lazy var cacheEntry = CacheEntryDataAccess(databaseLayer: self)
 
     public static var shared: DatabaseLayer!
 

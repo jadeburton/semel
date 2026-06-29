@@ -244,13 +244,13 @@ extension Node {
 
 extension Node {
     func hasOneOrMoreErrorOrPendingOutputs() throws -> Bool {
-        try database.selectAllOutputPorts(nodeID: id!).contains { $0.valueKind != .value }
+        try database.outputPort.selectAll(nodeID: id!).contains { $0.valueKind != .value }
     }
 
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
         let outputSymbolID = outputPort.asSymbolID()
 
-        guard let port = try database.selectOutputPort(nodeID: id!, nameSymbolID: outputSymbolID) else {
+        guard let port = try database.outputPort.select(nodeID: id!, nameSymbolID: outputSymbolID) else {
             return .noValue(reason: .error(message: "No value ever existed"))
         }
         return try port.asNodeValue()
@@ -259,13 +259,13 @@ extension Node {
     func readFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
         let inputSymbolID = inputPort.asSymbolID()
 
-        let wiresOnThisInput = try database.selectWires(goingToNodeID: id!, toSymbolID: inputSymbolID)
+        let wiresOnThisInput = try database.wire.select(goingToNodeID: id!, toSymbolID: inputSymbolID)
 
         var result = [String: NodeValue]()
 
         for wire in wiresOnThisInput {
             let wireName = wire.name.resolveSymbol()
-            if let port = try database.selectOutputPort(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
+            if let port = try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
                 assert(result[wireName] == nil) // all wires must have unique names
                 try result[wireName] = port.asNodeValue()
             }
@@ -286,19 +286,19 @@ extension Node {
 
     @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {
 
-        if let existing = try database.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID) {
+        if let existing = try database.outputPort.select(nodeID: id!, nameSymbolID: port.nameSymbolID) {
             if existing == port {
                // print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
                 return false
             }
         }
 
-        //let previousPort = try database.selectOutputPort(nodeID: id!, nameSymbolID: port.nameSymbolID)
+        //let previousPort = try database.outputPort.select(nodeID: id!, nameSymbolID: port.nameSymbolID)
         //print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
 
-        try database.insertOrUpdateOutputPort(port)
+        try database.outputPort.insertOrUpdate(port)
 
-        for wire in try database.selectWires(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
+        for wire in try database.wire.select(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
             var toNode = try database.node.select(nodeID: wire.toNodeID)
 
             try toNode.writePendingToAllOutputsOfNode()

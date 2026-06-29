@@ -41,33 +41,38 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
     }
 }
 
-extension DatabaseLayer {
+public struct OutputPortDataAccess: DataAccessType {
+    public weak var databaseLayer: DatabaseLayer?
 
-    public func selectAllOutputPorts(nodeID: ObjectID) throws -> [OutputPort] {
+    public init(databaseLayer: DatabaseLayer) {
+        self.databaseLayer = databaseLayer
+    }
+
+    public func selectAll(nodeID: ObjectID) throws -> [OutputPort] {
         try read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).fetchAll(db)
         }
     }
 
-    public func selectOutputPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
+    public func select(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
         try read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
                                   OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
         }
     }
 
-    public func insertOrUpdateOutputPort(_ port: OutputPort) throws {
+    public func insertOrUpdate(_ port: OutputPort) throws {
         try write { db in try port.save(db) }
     }
 
-    public func deleteOutputPort(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> Bool {
+    public func delete(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> Bool {
         try write { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
                                   OutputPort.Columns.nameSymbolID == nameSymbolID).deleteAll(db) > 0
         }
     }
 
-    public func deleteOutputPorts(nodeID: ObjectID) throws -> Int {
+    public func deleteAll(nodeID: ObjectID) throws -> Int {
         try write { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).deleteAll(db)
         }

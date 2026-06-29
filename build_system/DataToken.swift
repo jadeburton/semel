@@ -1,4 +1,3 @@
-
 //
 //  DataToken.swift
 //  build_system
@@ -18,10 +17,10 @@ extension [UInt8] {
         }
 
         let hash = Sha256.hash(self)
-        if let _ = try! DatabaseLayer.shared.selectDataObject(hash: hash) {
+        if let _ = try! DatabaseLayer.shared.dataObject.select(hash: hash) {
             return hash
         } else {
-            try! DatabaseLayer.shared.insertDataObject(DataObject(hash: hash, content: self))
+            try! DatabaseLayer.shared.dataObject.insert(DataObject(hash: hash, content: self))
             return hash
         }
     }
@@ -45,7 +44,7 @@ extension DataToken {
             return []
         }
 
-        guard let dataObject = try DatabaseLayer.shared.selectDataObject(hash: self) else {
+        guard let dataObject = try DatabaseLayer.shared.dataObject.select(hash: self) else {
             throw DataObjectError.dataObjectNotFoundByHash
         }
 
