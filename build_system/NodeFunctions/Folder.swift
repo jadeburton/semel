@@ -35,8 +35,11 @@ struct Folder: InputlessNodeFunction {
 
     init(properties: [String : String] = [String: String]()) {
         let path = properties["path"]!
+        assert(!path.hasPrefix("/"))
+        assert(!path.hasSuffix("/"))
         containingPath = path.deletingLastPathComponent() ?? ""
         name = path.lastPathComponent
+        assert(self.path == path)
     }
 
     var properties: [String : String] {
@@ -64,7 +67,7 @@ struct Folder: InputlessNodeFunction {
     }
 
     func canBeDeleted(thisNode: Node) throws -> Bool {
-        try hasNoOutputWires(thisNode: thisNode) && thisNode.allChildren.isEmpty
+        try thisNode.allChildren.isEmpty
     }
 
     // The manifest is a non-recursive list of immediate children

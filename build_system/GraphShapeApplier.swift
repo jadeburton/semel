@@ -24,6 +24,8 @@ enum GraphShapeApplierError: Error {
     case couldNotResolveShape(typeName: String)
     /// A child shape returned a nil fromSymbolID when one was required for wiring.
     case missingOutputPortInChildShape(typeName: String)
+
+    case emtpyStringWireName
 }
 
 // MARK: - graphShapeArgs — extracting init-time arguments from a live node
@@ -115,7 +117,7 @@ extension GraphShapeNode {
 
     /// Returns `(fromNodeID, fromSymbolID)` of the first live node whose topology
     /// matches `self`, or `nil` if no match exists.
-    func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+    private func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         for node in try DatabaseLayer.shared.selectAllNodes() {
             let graphShape = try GraphShapeNode.buildFromNode(nodeID: node.id!, fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
 
@@ -127,7 +129,7 @@ extension GraphShapeNode {
         return nil
     }
 
-    func findMatchingNodeUsingSearchKey() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+    private func findMatchingNodeUsingSearchKey() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let thisGraphShape = asString(omitOutputPort: true)
 
         guard let node = try DatabaseLayer.shared.selectNodes(searchKey: thisGraphShape).first else {
@@ -236,14 +238,16 @@ extension GraphShapeNode {
                 // Use the explicit wire name from the shape when available;
                 // fall back to the source node name for old unnamed (empty) entries.
                 let sourceNode = try fromNodeID.loadNode()
-                let wireName   = wireSpec.name.isEmpty
-                    ? (sourceNode.name ?? "\(inputPortSpec.portName)[?]")
-                    : wireSpec.name
+
+                if wireSpec.name.isEmpty {
+                    throw GraphShapeApplierError.emtpyStringWireName
+                }
+
                 try Wire.connectWire(fromNodeID:   fromNodeID,
                                      fromSymbolID: fromSymbolID,
                                      toNodeID:     newNodeID,
                                      toSymbolID:   toSymbolID,
-                                     name:         wireName.asSymbolID())
+                                     name:         wireSpec.name.asSymbolID())
             }
         }
 

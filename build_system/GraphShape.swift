@@ -48,7 +48,7 @@ struct GraphShapeArg: Equatable, Hashable {
 
 /// A single named wire feeding an input port.
 struct GraphShapeWire: Equatable {
-    let name: String          // wire name, e.g. "hello.c"
+    let name: String          // wire name, e.g. "src/hello.c"
     let node: GraphShapeNode  // the upstream node
 }
 

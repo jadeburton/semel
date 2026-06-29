@@ -205,8 +205,6 @@ struct ClangPreprocessorTool: NodeFunction {
                          includeFileListWireExpections: includeFileListWireExpections)
         }
 
-        // BUG: this is running the preprocessor before all include files have been wired-in.
-
         // do we have input wires for each of the Headers mentioned in the aggregated Include list?
         //    no -> set our output to Error but set our Expected Header File Wires to equal the Include List, so that new wires will be connected
         //          that will cause us to be scheduled for processing a second time. and connecting a new wire instantly causes all downstream

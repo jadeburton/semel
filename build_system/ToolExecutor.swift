@@ -39,6 +39,12 @@ struct FileNameAndContent {
     let content: [UInt8]
 }
 
+extension FileNameAndContent {
+    var contentAsString: String {
+        String(decoding: content, as: Unicode.UTF8.self)
+    }
+}
+
 enum ToolExecutionError: Error {
     case toolNotFound(path: String)
     case toolNotExecutable(path: String)

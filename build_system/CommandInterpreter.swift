@@ -28,6 +28,7 @@ struct FileWildcardEntry {
     let path: String
     let kind: FileWildcardEntryKind
     let isMissing: Bool // the file is missing from the internal file system (e.g. it was deleted by the user but is still referenced by the build graph)
+    let isUnreferenced: Bool
 }
 
 protocol FileWildcardMatcherInput {
@@ -138,7 +139,11 @@ final class FileWildcardMatcher {
 
             if isLastSegment {
                 // Final segment — emit the match.
-                results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind, isMissing: child.isMissing))
+                results.append(FileWildcardEntry(path: childLogicalPath,
+                                                 kind: child.kind,
+                                                 isMissing: child.isMissing,
+                                                 isUnreferenced: child.isUnreferenced))
+
             } else if child.kind == .folder {
                 // More segments remain — descend into matching folder.
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
@@ -227,7 +232,8 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
             return FileWildcardEntry(
                 path: name,
                 kind: isDir.boolValue ? .folder : .file,
-                isMissing: false
+                isMissing: false,
+                isUnreferenced: false
             )
         }.sorted { $0.path < $1.path }
     }
@@ -246,21 +252,26 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
 
         return try! start.allChildren.map { node in
 
-            guard let file = try node.nodeFunction() as? FileType else {
-                throw NodeError.other(message: "Unexpected object kind")
-            }
-
             switch node.kind {
 
             case Folder.kind:
+                guard let folder = try node.nodeFunction() as? Folder else {
+                    throw NodeError.other(message: "Unexpected object kind")
+                }
                 return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
-                                         isMissing: false)
+                                         isMissing: false,
+                                         isUnreferenced: try folder.hasNoOutputWires(thisNode: node) && node.allChildren.isEmpty)
 
             default:
+                let nodeFunction = try node.nodeFunction()
+                guard let file = nodeFunction as? FileType else {
+                    throw NodeError.other(message: "Unexpected object kind")
+                }
                 return FileWildcardEntry(path: node.name!,
                                          kind: .file,
-                                         isMissing: try file.read(thisNode: node)!.isNoValue)
+                                         isMissing: try file.read(thisNode: node)!.isNoValue,
+                                         isUnreferenced: try nodeFunction.hasNoOutputWires(thisNode: node))
             }
         }
     }
@@ -633,29 +644,59 @@ final class CommandInterpreter {
 
         outputMessage("Remove: \(entry.path)")
 
-        guard let child = try inputFileSystem.childNode(path: entry.path) else { // TODO: we don't even need this kind arg if we don't create it
+        guard let child = try inputFileSystem.childNode(path: entry.path) else {
             outputError("Child not found")
             return
         }
 
-        guard let staticFileNode = try child.nodeFunction() as? StaticFile else {
-            return
+        if let staticFile = try child.nodeFunction() as? StaticFile {
+            try removeStaticFile(node: child, nodeFunction: staticFile)
+        } else {
+            if let folder = try child.nodeFunction() as? Folder {
+                try removeFolder(node: child, nodeFunction: folder)
+            } else {
+                // TODO
+                assert(false)
+            }
         }
+    }
 
+    private func removeStaticFile(node: Node, nodeFunction: StaticFile) throws {
         // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
         // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
         // the Project file.)
-        _ = try staticFileNode.replaceContent(thisNode: child, nil) // turns it into a ghost
+        _ = try nodeFunction.replaceContent(thisNode: node, nil) // turns it into a ghost
 
-        if try staticFileNode.hasNoOutputWires(thisNode: child) && staticFileNode.canBeDeleted(thisNode: child) {
+        if try nodeFunction.hasNoOutputWires(thisNode: node) && nodeFunction.canBeDeleted(thisNode: node) {
             // Ghost, no output wires - really delete it.
-            _ = try  DatabaseLayer.shared.deleteNode(nodeID: child.id!)
+            _ = try  DatabaseLayer.shared.deleteNode(nodeID: node.id!)
+            // notify parent
+            if let parentFolderNode = try node.parentNodeID?.loadNode() {
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
+                                                                                              name: node.name!,
+                                                                                              thisNode: parentFolderNode)
+            }
         }
 
         // - if the Node is used by the build graph, it must not be user-deleted, as this will invalidate the graph even if the file is re-added.
         // - instead, we "gut" the file, turning it into a ghost. when the user lists files, it will appear as "missing", according to the current build graph.
         // - then, re-adding the file will replace the ghost with a new node, which will be picked up by the build graph and cause the necessary rebuilds.
+    }
 
+    private func removeFolder(node: Node, nodeFunction: Folder) throws {
+        if try nodeFunction.hasNoOutputWires(thisNode: node) && nodeFunction.canBeDeleted(thisNode: node) {
+            _ = try  DatabaseLayer.shared.deleteNode(nodeID: node.id!)
+            // notify parent
+            if let parentFolderNode = try node.parentNodeID?.loadNode() {
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
+                                                                                              name: node.name!,
+                                                                                              thisNode: parentFolderNode)
+            }
+        } else {
+            // TODO: If there are no children but there are outputs, this is inconsistent with the way we treat StaticFiles.
+            // Maybe we need a flag on Folder that indicates it is a ghost?
+            outputError("Cannot delete Folder; in use")
+        }
     }
 
     private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?) throws {
@@ -726,7 +767,11 @@ final class CommandInterpreter {
             if entry.isMissing {
                 outputMessage("\(entry.path) (missing)")
             } else {
-                outputMessage(entry.path)
+                if entry.isUnreferenced {
+                    outputMessage("\(entry.path) (unreferenced)")
+                } else {
+                    outputMessage(entry.path)
+                }
             }
         }
     }

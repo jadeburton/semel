@@ -111,7 +111,8 @@ extension Node {
                 node.searchKey = try GraphShapeNode.buildFromNode(nodeID: node.id!).asString(omitOutputPort: true)
                 try DatabaseLayer.shared.updateNode(node)
             } catch {
-                print("WARNING: failed to patch-in searchKey, are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
+                print("WARNING: failed to patch-in searchKey (\(error)), are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
+                throw error
             }
         }
 
@@ -142,14 +143,15 @@ extension Node {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
 
-        let folderNodeFunction = try nodeFunctionCast() as Folder
-
-        var pathSoFar = folderNodeFunction.path
+        var pathSoFar = ""
 
         for name in components {
 
-            assert(!pathSoFar.hasSuffix("/"))
-            pathSoFar += "/" + name
+            if pathSoFar.isEmpty {
+                pathSoFar += name
+            } else {
+                pathSoFar += "/" + name
+            }
 
             let existingChildren = try DatabaseLayer.shared.selectNodes(named: name, parentNodeID: currentFolder.id!)
 
@@ -161,10 +163,14 @@ extension Node {
                 currentFolder = existingChild
             } else {
 
-                let newFolder = try Node.createNode(//parentNodeID: currentFolder.id!,
-                                                    kind: Folder.kind,
-                                                    properties: ["path" : pathSoFar],
-                                                    searchKey: nil)
+                assert(!pathSoFar.hasSuffix("/"))
+                assert(!pathSoFar.hasPrefix("/"))
+
+                let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar)')")
+                let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
+                var newFolder = try fromNodeID.loadNode()
+                newFolder.parentNodeID = currentFolder.id!
+                try DatabaseLayer.shared.updateNode(newFolder)
 
                 try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder, thisNode: currentFolder)
                 currentFolder = newFolder
@@ -173,38 +179,6 @@ extension Node {
 
         return currentFolder
     }
-/*
-    func addOrReplaceStaticFileChild(content: DataObjectHash?, name: String) throws {
-        assert(!name.contains("\\"))
-
-        if kind != Folder.kind {
-            throw NodeError.other(message: "Cannot add/replace StaticFile on a non-folder node")
-        }
-
-        if let existingChild = try childNode(path: name) {
-            guard let existingChildNodeFunction = try existingChild.nodeFunction() as? StaticFile else {
-                throw NodeError.other(message: "Child was not a StaticFile")
-            }
-
-            if try existingChildNodeFunction.replaceContent(thisNode: existingChild, content) {
-                try (self.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: existingChild.id!,
-                                                                                  name: existingChild.name!,
-                                                                                  thisNode: self)
-            }
-        } else {
-            assert(!name.isEmpty)
-            let newChild = try Node.createNode(//parentNodeID: id!,
-                                               kind: StaticFile.kind,
-                                               properties: ["path": buildFullPathName(baseNodeID: Node.inputFileSystem.id!).appendingPathComponent(name)],
-                                               searchKey: nil)
-
-            let newChildNodeFunction = try newChild.nodeFunctionCast() as StaticFile
-
-            if try newChildNodeFunction.replaceContent(thisNode: newChild, content) {
-                try (self.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newChild, thisNode: self)
-            }
-        }
-    }*/
 
     func childNode(path: String) throws -> Node? {
         let components = path
