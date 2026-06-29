@@ -29,6 +29,8 @@ struct ProjectFinder: NodeFunction {
                                             outputPorts: [],
                                             dynamicInputPorts: [folderManifestInputPort, projectBuildersInputPort])
 
+    var embeddedNode: Node?
+
     var properties: [String : String] {
         [:]
     }
@@ -37,7 +39,7 @@ struct ProjectFinder: NodeFunction {
     }
 
     // ProjectFinder is the root object and so must never be deleted.
-    func canBeDeleted(thisNode: Node) throws -> Bool {
+    func canBeDeleted() throws -> Bool {
         false
     }
 

@@ -40,6 +40,8 @@ struct ClangPreprocessorTool: NodeFunction {
     enum CodingKeys: CodingKey {
     }
 
+    var embeddedNode: Node?
+
     var properties: [String : String] {
         [:]
     }

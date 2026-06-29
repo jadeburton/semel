@@ -11,6 +11,8 @@ struct Configuration: NodeFunction {
 
     let properties: [String: String]
 
+    var embeddedNode: Node?
+
     enum CodingKeys: CodingKey {
         case properties
     }

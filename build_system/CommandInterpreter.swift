@@ -261,7 +261,7 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                 return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
                                          isMissing: false,
-                                         isUnreferenced: try folder.hasNoOutputWires(thisNode: node) && node.allChildren.isEmpty)
+                                         isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
 
             default:
                 let nodeFunction = try node.nodeFunction()
@@ -270,8 +270,8 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                 }
                 return FileWildcardEntry(path: node.name!,
                                          kind: .file,
-                                         isMissing: try file.read(thisNode: node)!.isNoValue,
-                                         isUnreferenced: try nodeFunction.hasNoOutputWires(thisNode: node))
+                                         isMissing: try file.read()!.isNoValue,
+                                         isUnreferenced: try nodeFunction.hasNoOutputWires())
             }
         }
     }
@@ -617,7 +617,7 @@ final class CommandInterpreter {
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
             let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
             let fromNode = try database.node.select(nodeID: fromNodeID)
-            _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(thisNode: fromNode, fileContent.intern())
+            _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(fileContent.intern())
 
         case .folder:
             // TODO: each folder should notify its parent of creation
@@ -657,7 +657,7 @@ final class CommandInterpreter {
 
     private func removeOne(child: Node) throws {
         if let staticFile = try child.nodeFunction() as? StaticFile {
-            try removeStaticFile(node: child, nodeFunction: staticFile)
+            try removeStaticFile(nodeFunction: staticFile)
         } else {
             if let folder = try child.nodeFunction() as? Folder {
                 try removeFolder(node: child, nodeFunction: folder)
@@ -668,23 +668,23 @@ final class CommandInterpreter {
         }
     }
 
-    private func removeStaticFile(node: Node, nodeFunction: StaticFile) throws {
-        outputMessage("Remove file: \(node.name!)")
+    private func removeStaticFile(nodeFunction: StaticFile) throws {
+        outputMessage("Remove file: \(nodeFunction.thisNode.name!)")
 
         // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
         // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
         // the Project file.)
-        _ = try nodeFunction.replaceContent(thisNode: node, nil) // turns it into a ghost
+        _ = try nodeFunction.replaceContent(nil) // turns it into a ghost
 
-        if try nodeFunction.hasNoOutputWires(thisNode: node) && nodeFunction.canBeDeleted(thisNode: node) {
+        if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
             // Ghost, no output wires - really delete it.
-            _ = try database.node.delete(nodeID: node.id!)
+            _ = try database.node.delete(nodeID: nodeFunction.thisNode.id!)
 
             // notify parent
-            if let parentNodeID = node.parentNodeID {
+            if let parentNodeID = nodeFunction.thisNode.parentNodeID {
                 let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
-                                                                                              name: node.name!,
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: nodeFunction.thisNode.id!,
+                                                                                              name: nodeFunction.thisNode.name!,
                                                                                               thisNode: parentFolderNode)
             }
         }
@@ -703,7 +703,7 @@ final class CommandInterpreter {
 
         outputMessage("Remove folder: \(node.name!)")
 
-        if try nodeFunction.hasNoOutputWires(thisNode: node) && nodeFunction.canBeDeleted(thisNode: node) {
+        if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
             _ = try database.node.delete(nodeID: node.id!)
 
             if let parentNodeID = node.parentNodeID {
@@ -748,7 +748,7 @@ final class CommandInterpreter {
                 return
             }
 
-            switch try file.read(thisNode: fileNode) {
+            switch try file.read() {
 
             case .value(let dataObjectHash):
                 let fileContent = Data(try dataObjectHash.resolve())

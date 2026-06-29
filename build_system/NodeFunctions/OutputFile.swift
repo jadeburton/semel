@@ -26,6 +26,8 @@ struct OutputFile: NodeFunction, FileType {
     static let inputPort = "input"
     static let statusOutputPort = "status"
 
+    var embeddedNode: Node?
+
     var properties: [String : String] {
         ["path": containingPath.appendingPathComponent(name)]
     }
@@ -53,7 +55,7 @@ struct OutputFile: NodeFunction, FileType {
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])
 
-    func didCreate(thisNode: Node) throws -> ProcessOutput? {
+    func didCreate() throws -> ProcessOutput? {
         // OutputFile needs to be listable as part of a folder hierarchy, so we maintain that.
 
         // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
@@ -85,7 +87,7 @@ struct OutputFile: NodeFunction, FileType {
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
     }
 
-    func read(thisNode: Node) throws -> NodeValue? {
+    func read() throws -> NodeValue? {
         let inputs = try thisNode.readFromInputPort(Self.inputPort)
         return inputs.first!.value
     }

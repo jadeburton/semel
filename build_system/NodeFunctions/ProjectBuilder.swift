@@ -20,6 +20,8 @@ struct ProjectBuilder: NodeFunction {
                                             outputPorts: [statusOutputPort],
                                             dynamicInputPorts: [productInputPort])
 
+    var embeddedNode: Node?
+
     var properties: [String : String] {
         [:]
     }

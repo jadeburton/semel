@@ -26,12 +26,19 @@ protocol WithDefaultInitializer {
     init() throws
 }
 
+extension InputlessNodeFunction {
+    var thisNode: Node {
+        embeddedNode!
+    }
+}
+
 protocol InputlessNodeFunction: Codable, PolySerializable {
+    var embeddedNode: Node? { get set }
 
     var properties: [String: String] { get }
     init(properties: [String: String])
 
-    func didCreate(thisNode: Node) throws -> ProcessOutput?
+    func didCreate() throws -> ProcessOutput?
 
     // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
     var initialName: String? { get }
@@ -51,7 +58,7 @@ protocol InputlessNodeFunction: Codable, PolySerializable {
     // - StaticFile. If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     //   it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted if there are no output Wires.
     // - Folder. If it has one or more children it must not be deleted.
-    func canBeDeleted(thisNode: Node) throws -> Bool
+    func canBeDeleted() throws -> Bool
 }
 
 // A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
@@ -62,7 +69,7 @@ protocol NodeFunction: InputlessNodeFunction {
 
 extension NodeFunction {
 
-    private func buildProcessInput(thisNode: Node) throws -> ProcessInput {
+    private func buildProcessInput() throws -> ProcessInput {
         var inputValues = [String: [String: NodeValue]]()
         for inputPort in descriptor.staticInputPorts + descriptor.dynamicInputPorts {
             inputValues[inputPort] = try thisNode.readFromInputPort(inputPort)
@@ -91,7 +98,7 @@ extension NodeFunction {
         return true
     }
 
-    private func processWithCatch(thisNode: Node, input: ProcessInput) -> ProcessOutput {
+    private func processWithCatch(input: ProcessInput) -> ProcessOutput {
         do {
             print("process: \(type(of: self)), nodeID \(thisNode.id!)")
             return try process(input: input)
@@ -100,14 +107,14 @@ extension NodeFunction {
         }
     }
 
-    func processWithPreCheck(thisNode: Node) throws {
+    func processWithPreCheck() throws {
         guard hasInputPorts() else {
             // Nodes without any input ports (not wires) cannot perform processing. This applies to StaticFiles.
             return
         }
 
         // Gather all values from input ports
-        let input = try buildProcessInput(thisNode: thisNode)
+        let input = try buildProcessInput()
 
         guard try allInputsAreSatisfied(input: input) else {
             //print("Not all inputs are satisfied.")
@@ -115,11 +122,11 @@ extension NodeFunction {
         }
 
         let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
-        let cachedOutput = try? loadCachedOutputs(thisNode: thisNode, cacheKey: cacheKey)
+        let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey)
 
-        let output = cachedOutput ?? processWithCatch(thisNode: thisNode, input: input)
+        let output = cachedOutput ?? processWithCatch(input: input)
 
-        try? writeToOutputs(output: output, thisNode: thisNode)
+        try? writeToOutputs(output: output)
 
         if cachedOutput == nil {
             try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
@@ -132,7 +139,7 @@ extension InputlessNodeFunction {
         DatabaseLayer.shared
     }
 
-    func canBeDeleted(thisNode: Node) throws -> Bool {
+    func canBeDeleted() throws -> Bool {
         true
     }
 
@@ -146,15 +153,15 @@ extension InputlessNodeFunction {
         }
     }
 
-    func hasNoOutputWires(thisNode: Node) throws -> Bool {
+    func hasNoOutputWires() throws -> Bool {
         try database.selectWires(comingFromNodeID: thisNode.id!).isEmpty
     }
 
-    func didCreate(thisNode: Node) throws -> ProcessOutput? {
+    func didCreate() throws -> ProcessOutput? {
         nil
     }
 
-    func writeToOutputs(output: ProcessOutput, thisNode: Node) throws {
+    func writeToOutputs(output: ProcessOutput) throws {
 
         let numberOfOutputPorts = try! database.selectAllOutputPorts(nodeID: thisNode.id!).count
 

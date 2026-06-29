@@ -91,7 +91,7 @@ extension Wire {
             _ = try inputWire.deleteWire(database: database)
         }
 
-        if try fromNodeFunction.hasNoOutputWires(thisNode: fromNode) && fromNodeFunction.canBeDeleted(thisNode: fromNode) {
+        if try fromNodeFunction.hasNoOutputWires() && fromNodeFunction.canBeDeleted() {
             // Safe to delete.
             _ = try database.node.delete(nodeID: fromNodeID)
             // TODO: notify parent Folder, if there is one

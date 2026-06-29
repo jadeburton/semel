@@ -35,7 +35,7 @@ extension NodeFunction {
         return Sha256.hash(Array(aggregated.utf8))
     }
 
-    func loadCachedOutputs(thisNode: Node, cacheKey: String?) throws -> ProcessOutput? {
+    func loadCachedOutputs(cacheKey: String?) throws -> ProcessOutput? {
 
         guard let cacheKey else {
             return nil

@@ -23,8 +23,8 @@ struct StaticFile: InputlessNodeFunction, FileType {
         name
     }
 
-    func isGhost(thisNode: Node) throws -> Bool {
-        guard let nodeValue = try read(thisNode: thisNode) else {
+    func isGhost() throws -> Bool {
+        guard let nodeValue = try read() else {
             return true
         }
 
@@ -32,6 +32,8 @@ struct StaticFile: InputlessNodeFunction, FileType {
     }
 
     static let outputPort = "output"
+
+    var embeddedNode: Node?
 
     var properties: [String : String] {
         ["path": containingPath.appendingPathComponent(name)]
@@ -63,15 +65,15 @@ struct StaticFile: InputlessNodeFunction, FileType {
     // If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted
     // if there are no output Wires.
-    func canBeDeleted(thisNode: Node) throws -> Bool {
-        try isGhost(thisNode: thisNode)
+    func canBeDeleted() throws -> Bool {
+        try isGhost()
     }
 
-    func read(thisNode: Node) throws -> NodeValue? {
+    func read() throws -> NodeValue? {
         try thisNode.readFromOutputPort(Self.outputPort)
     }
 
-    func replaceContent(thisNode: Node, _ content: DataObjectHash?) throws -> Bool {
+    func replaceContent(_ content: DataObjectHash?) throws -> Bool {
         let changed: Bool
 
         if let content {
@@ -92,5 +94,5 @@ struct StaticFile: InputlessNodeFunction, FileType {
 }
 
 protocol FileType {
-    func read(thisNode: Node) throws -> NodeValue?
+    func read() throws -> NodeValue?
 }

@@ -21,6 +21,7 @@ struct FolderManifest: PolySerializable {
 struct Folder: InputlessNodeFunction {
     static let kind: UInt = 1
 
+    var embeddedNode: Node?
     let containingPath: String
     let name: String
 
@@ -46,8 +47,8 @@ struct Folder: InputlessNodeFunction {
         ["path": path]
     }
 
-    func didCreate(thisNode: Node) throws -> ProcessOutput? {
-        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest(thisNode: thisNode).toJSON().intern())],
+    func didCreate() throws -> ProcessOutput? {
+        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern())],
               inputWireExpectations: [:])
     }
 
@@ -55,7 +56,7 @@ struct Folder: InputlessNodeFunction {
         containingPath.appendingPathComponent(name)
     }
 
-    func canBeDeleted(thisNode: Node) throws -> Bool {
+    func canBeDeleted() throws -> Bool {
         try thisNode.allChildren.isEmpty
     }
 
@@ -68,21 +69,21 @@ struct Folder: InputlessNodeFunction {
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
     func notifyChildAdded(newChildNode: Node, thisNode: Node) throws {
-        try refreshOutputs(thisNode: thisNode)
+        try refreshOutputs()
     }
 
     func notifyChildContentChanged(nodeID: ObjectID, name: String, thisNode: Node) throws {
-        try refreshOutputs(thisNode: thisNode)
+        try refreshOutputs()
     }
 
-    private func buildManifest(thisNode: Node) throws -> FolderManifest {
+    private func buildManifest() throws -> FolderManifest {
         var folderManifestEntries = [FolderManifestEntry]()
 
         for child in try thisNode.allChildren {
 
             // Hide ghosts
             if let staticFile = try child.nodeFunction() as? StaticFile {
-                if try staticFile.isGhost(thisNode: child) {
+                if try staticFile.isGhost() {
                     continue
                 }
             }
@@ -94,8 +95,8 @@ struct Folder: InputlessNodeFunction {
     }
 
     // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.
-    func refreshOutputs(thisNode: Node) throws {
+    func refreshOutputs() throws {
         try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
-                                       value: .value(try buildManifest(thisNode: thisNode).toJSON().intern()))
+                                       value: .value(try buildManifest().toJSON().intern()))
     }
 }

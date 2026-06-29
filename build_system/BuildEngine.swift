@@ -158,9 +158,10 @@ final class BuildEngine {
             return
         }
 
-        try? nodeFunction.processWithPreCheck(thisNode: node)
+        try? nodeFunction.processWithPreCheck()
 
-        var node = node
+        // TODO! nodeFunction.thisNode probably should not be modified at all
+        var node = nodeFunction.thisNode
         try node.setScheduledAndSave(false)
     }
 }

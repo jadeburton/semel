@@ -47,6 +47,8 @@ struct ClangCompilerTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
+    var embeddedNode: Node?
+
     var properties: [String : String] {
         [:]
     }

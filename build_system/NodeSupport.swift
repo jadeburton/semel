@@ -73,12 +73,10 @@ extension Node {
     }
 
     func nodeFunction() throws -> InputlessNodeFunction {
-        let nodeFunction = try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
+        var nodeFunction = try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
 
-        if var hasNodeEmbedded = nodeFunction as? HasNodeEmbedded {
-            // copy
-            hasNodeEmbedded.embeddedNode = self
-        }
+        // copy
+        nodeFunction.embeddedNode = self
 
         return nodeFunction
     }
@@ -95,7 +93,7 @@ extension Node {
 
     static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> Node {
 
-        let nodeFunction = try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
+        var nodeFunction = try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
 
         var node = Node(parentNodeID: try nodeFunction.initialParentNodeID,
                         kind: kind,
@@ -106,11 +104,13 @@ extension Node {
 
         node.id = try database.node.insert(node)
 
+        nodeFunction.embeddedNode = node
+
         try node.writePendingToAllOutputsOfNode()
 
-        let output = try nodeFunction.didCreate(thisNode: node) ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
+        let output = try nodeFunction.didCreate() ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
 
-        try nodeFunction.writeToOutputs(output: output, thisNode: node)
+        try nodeFunction.writeToOutputs(output: output)
 
         if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
             try node.setScheduledAndSave(true)
