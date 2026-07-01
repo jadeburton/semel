@@ -24,6 +24,11 @@ struct Configuration: NodeFunction {
         self.properties = properties
     }
 
+    init(thisNode: Node) {
+        embeddedNode = thisNode
+        properties = .init(plainText: thisNode.encodedProperties ?? "")
+    }
+
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
                                             outputPorts: [outputPort],
                                             dynamicInputPorts: [],

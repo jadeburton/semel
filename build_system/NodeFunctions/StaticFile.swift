@@ -39,6 +39,14 @@ struct StaticFile: InputlessNodeFunction, FileType {
         ["path": containingPath.appendingPathComponent(name)]
     }
 
+    init(thisNode: Node) {
+        embeddedNode = thisNode
+        let properties = [String: String](plainText: thisNode.encodedProperties ?? "")
+        let path = properties["path"]!
+        containingPath = path.deletingLastPathComponent() ?? ""
+        name = path.lastPathComponent
+    }
+
     // When GraphShapeApplier needs to resolve "StaticFile(path: 'src/hello.c')", we receive properties with the path.
     // At that point we need to ensure the Folder hierarchy exists above us.
     init(properties: [String : String] = [String: String]()) {
@@ -82,11 +90,9 @@ struct StaticFile: InputlessNodeFunction, FileType {
             changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "File deleted")))
         }
 
-        if let parentNodeID = thisNode.parentNodeID {
+        if let parentNodeID {
             let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-            try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: thisNode.id!,
-                                                                                          name: name,
-                                                                                          thisNode: parentFolderNode)
+            try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: id!, name: name)
         }
 
         return changed

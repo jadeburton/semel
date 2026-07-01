@@ -30,6 +30,22 @@ extension InputlessNodeFunction {
     var thisNode: Node {
         embeddedNode!
     }
+
+    var id: ObjectID? {
+        thisNode.id
+    }
+
+    var parentNodeID: ObjectID? {
+        thisNode.parentNodeID
+    }
+
+    var scheduled: Bool {
+        thisNode.scheduled
+    }
+
+    var searchKey: String? {
+        thisNode.searchKey
+    }
 }
 
 protocol InputlessNodeFunction: Codable, PolySerializable {
@@ -37,6 +53,8 @@ protocol InputlessNodeFunction: Codable, PolySerializable {
 
     var properties: [String: String] { get }
     init(properties: [String: String])
+
+    init(thisNode: Node)
 
     func didCreate() throws -> ProcessOutput?
 
@@ -100,7 +118,7 @@ extension NodeFunction {
 
     private func processWithCatch(input: ProcessInput) -> ProcessOutput {
         do {
-            print("process: \(type(of: self)), nodeID \(thisNode.id!)")
+            print("process: \(type(of: self)), nodeID \(id!)")
             return try process(input: input)
         } catch {
             return buildErrorOutput(withError: error)
@@ -154,7 +172,7 @@ extension InputlessNodeFunction {
     }
 
     func hasNoOutputWires() throws -> Bool {
-        try database.wire.select(comingFromNodeID: thisNode.id!).isEmpty
+        try database.wire.select(comingFromNodeID: id!).isEmpty
     }
 
     func didCreate() throws -> ProcessOutput? {
@@ -163,7 +181,7 @@ extension InputlessNodeFunction {
 
     func writeToOutputs(output: ProcessOutput) throws {
 
-        let numberOfOutputPorts = try! database.outputPort.selectAll(nodeID: thisNode.id!).count
+        let numberOfOutputPorts = try! database.outputPort.selectAll(nodeID: id!).count
 
         if numberOfOutputPorts != output.outputValues.count {
             print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
@@ -180,13 +198,13 @@ extension InputlessNodeFunction {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
 
-        if !(try! database.outputPort.selectAll(nodeID: thisNode.id!).filter { $0.valueKind == .pending }.isEmpty) {
+        if !(try! database.outputPort.selectAll(nodeID: id!).filter { $0.valueKind == .pending }.isEmpty) {
             print("WARNING: One or more outputs left Pending for node \(thisNode)")
         }
 
         do {
             for (inputPort, wireExpectations) in output.inputWireExpectations {
-                try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations, thisNode: thisNode)
+                try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations)
             }
         } catch {
             print("❌ ERROR: applyExpectationConfiguration failed: \(error)")
@@ -194,7 +212,7 @@ extension InputlessNodeFunction {
         }
     }
 
-    private func applyExpectationConfiguration(inputPort: String, wireExpectations: [String: String], thisNode: Node) throws {
+    private func applyExpectationConfiguration(inputPort: String, wireExpectations: [String: String]) throws {
         // 1. remove any wires that exist but are not in the new configuration (by name)
         // 2. add any wires that are in the new configuration but do not exist yet (by name)
         // 3. update expectation on wires that exist in both old and new configuration (by name)
@@ -203,7 +221,7 @@ extension InputlessNodeFunction {
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
-        let existingWires = try database.wire.select(goingToNodeID: thisNode.id!, toSymbolID: toSymbolID)
+        let existingWires = try database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID)
 
         // Build a lookup from wire name → existing Wire for steps 2 & 3.
         let existingWiresByName: [String: Wire] = Dictionary(
@@ -221,7 +239,7 @@ extension InputlessNodeFunction {
         for (wireName, expectationString) in wireExpectations {
 
             // Shared helper: connect a new wire from the node that satisfies the expectation.
-            let connectExpected = { [thisNode] in
+            let connectExpected = {
                 let wireNameSymbolID = wireName.asSymbolID()
                 if let (fromNodeID, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) {
                     // fromSymbolID is nil when the expectation string has no .outputPort suffix,
@@ -234,11 +252,11 @@ extension InputlessNodeFunction {
                     try Wire.connectWire(database: database,
                                          fromNodeID: fromNodeID,
                                          fromSymbolID: fromSymbolID,
-                                         toNodeID: thisNode.id!,
+                                         toNodeID: id!,
                                          toSymbolID: toSymbolID,
                                          name: wireNameSymbolID)
                 } else {
-                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
+                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(id ?? -1)")
                 }
             }
 
@@ -333,6 +351,10 @@ struct OneNodeValue {
 extension PolyFactory {
     static func makeDefault(kind: UInt, properties: [String: String]) throws -> InputlessNodeFunction {
         try (type(kind: kind) as! (PolySerializable & InputlessNodeFunction).Type).init(properties: properties)
+    }
+
+    static func makeDefault(kind: UInt, thisNode: Node) throws -> InputlessNodeFunction {
+        try (type(kind: kind) as! (PolySerializable & InputlessNodeFunction).Type).init(thisNode: thisNode)
     }
 }
 

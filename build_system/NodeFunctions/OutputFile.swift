@@ -32,6 +32,14 @@ struct OutputFile: NodeFunction, FileType {
         ["path": containingPath.appendingPathComponent(name)]
     }
 
+    init(thisNode: Node) {
+        embeddedNode = thisNode
+        let properties = [String: String](plainText: thisNode.encodedProperties ?? "")
+        let path = properties["path"]!
+        containingPath = path.deletingLastPathComponent() ?? ""
+        name = path.lastPathComponent
+    }
+
     // When GraphShapeApplier needs to resolve "StaticFile(path: 'src/hello.c')", we receive properties with the path.
     // At that point we need to ensure the Folder hierarchy exists above us.
     init(properties: [String : String] = [String: String]()) {

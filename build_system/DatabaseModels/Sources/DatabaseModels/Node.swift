@@ -6,7 +6,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let kind = Column(CodingKeys.kind)
         public static let name = Column(CodingKeys.name)
-        public static let configuration = Column(CodingKeys.configuration)
+        public static let encodedProperties = Column(CodingKeys.encodedProperties)
         public static let parentNodeID = Column(CodingKeys.parentNodeID)
         public static let scheduled = Column(CodingKeys.scheduled)
         public static let searchKey = Column(CodingKeys.searchKey)
@@ -16,16 +16,16 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
     public var parentNodeID: ObjectID?
     public var kind: UInt
     public var name: String?
-    public var configuration: String? // JSON
+    public var encodedProperties: String?
     public var scheduled: Bool
     public var searchKey: String?
 
-    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, configuration: String? = nil, scheduled: Bool = false, searchKey: String?) {
+    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, encodedProperties: String? = nil, scheduled: Bool = false, searchKey: String?) {
         self.id = id
         self.parentNodeID = parentNodeID
         self.kind = kind
         self.name = name
-        self.configuration = configuration
+        self.encodedProperties = encodedProperties
         self.scheduled = scheduled
         self.searchKey = searchKey
     }
@@ -37,7 +37,7 @@ public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
                 t.column("parentNodeID", .integer)
                 t.column("kind", .integer).notNull()
                 t.column("name", .text)
-                t.column("configuration", .text)
+                t.column("encodedProperties", .text)
                 t.column("scheduled", .integer).indexed().notNull()
                 t.column("searchKey", .text).unique()
             }

@@ -35,6 +35,11 @@ struct ProjectFinder: NodeFunction {
         [:]
     }
 
+    
+    init(thisNode: Node) {
+        embeddedNode = thisNode
+    }
+
     init(properties: [String: String]) {
     }
 

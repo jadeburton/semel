@@ -34,6 +34,16 @@ struct Folder: InputlessNodeFunction {
         name
     }
 
+    init(thisNode: Node) {
+        embeddedNode = thisNode
+        let properties = [String: String](plainText: thisNode.encodedProperties ?? "")
+        let path = properties["path"]!
+        assert(!path.hasPrefix("/"))
+        assert(!path.hasSuffix("/"))
+        containingPath = path.deletingLastPathComponent() ?? ""
+        name = path.lastPathComponent
+    }
+
     init(properties: [String : String] = [String: String]()) {
         let path = properties["path"]!
         assert(!path.hasPrefix("/"))
@@ -68,11 +78,11 @@ struct Folder: InputlessNodeFunction {
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     //
-    func notifyChildAdded(newChildNode: Node, thisNode: Node) throws {
+    func notifyChildAdded(newChildNode: Node) throws {
         try refreshOutputs()
     }
 
-    func notifyChildContentChanged(nodeID: ObjectID, name: String, thisNode: Node) throws {
+    func notifyChildContentChanged(nodeID: ObjectID, name: String) throws {
         try refreshOutputs()
     }
 

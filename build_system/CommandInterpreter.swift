@@ -669,7 +669,7 @@ final class CommandInterpreter {
     }
 
     private func removeStaticFile(nodeFunction: StaticFile) throws {
-        outputMessage("Remove file: \(nodeFunction.thisNode.name!)")
+        outputMessage("Remove file: \(nodeFunction.name)")
 
         // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
         // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
@@ -678,14 +678,13 @@ final class CommandInterpreter {
 
         if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
             // Ghost, no output wires - really delete it.
-            _ = try database.node.delete(nodeID: nodeFunction.thisNode.id!)
+            _ = try database.node.delete(nodeID: nodeFunction.id!)
 
             // notify parent
-            if let parentNodeID = nodeFunction.thisNode.parentNodeID {
+            if let parentNodeID = nodeFunction.parentNodeID {
                 let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: nodeFunction.thisNode.id!,
-                                                                                              name: nodeFunction.thisNode.name!,
-                                                                                              thisNode: parentFolderNode)
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: nodeFunction.id!,
+                                                                                              name: nodeFunction.name)
             }
         }
 
@@ -709,8 +708,7 @@ final class CommandInterpreter {
             if let parentNodeID = node.parentNodeID {
                 let parentFolderNode = try database.node.select(nodeID: parentNodeID)
                 try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
-                                                                                              name: node.name!,
-                                                                                              thisNode: parentFolderNode)
+                                                                                              name: node.name!)
             }
         } else {
             // TODO: If there are no children but there are outputs, mark the folder as a ghost. Parent folder should not include in manifest.

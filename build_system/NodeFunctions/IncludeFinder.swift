@@ -22,6 +22,10 @@ struct IncludeFinder: NodeFunction {
 
     var embeddedNode: Node?
 
+    init(thisNode: Node) {
+        embeddedNode = thisNode
+    }
+
     var properties: [String : String] {
         [:]
     }

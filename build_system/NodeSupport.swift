@@ -73,16 +73,15 @@ extension Node {
     }
 
     func nodeFunction() throws -> InputlessNodeFunction {
-        var nodeFunction = try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
+        let properties = [String: String](plainText: encodedProperties ?? "")
+
+        var nodeFunction = try! PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
+//        var nodeFunction = try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
 
         // copy
         nodeFunction.embeddedNode = self
 
         return nodeFunction
-    }
-
-    mutating func setNodeFunction(_ nodeFunction: InputlessNodeFunction) throws {
-        try configuration = nodeFunction.toJSON()
     }
 
     var allChildren: [Node] {
@@ -98,11 +97,13 @@ extension Node {
         var node = Node(parentNodeID: try nodeFunction.initialParentNodeID,
                         kind: kind,
                         name: nodeFunction.initialName,
-                        configuration: try nodeFunction.toJSON(),
+                        encodedProperties: nodeFunction.properties.asPlainText(),
                         scheduled: false,
                         searchKey: searchKey)
 
         node.id = try database.node.insert(node)
+
+        // TODO: have one source of truth for node instead of multiple copies inside this func
 
         nodeFunction.embeddedNode = node
 
@@ -128,12 +129,12 @@ extension Node {
         }
 
         assert(node.searchKey != nil)
-        
+
         // Locate parent node and notify its NodeFunction of this child's creation
         if let parentNodeID = node.parentNodeID {
             let parentNode = try database.node.select(nodeID: parentNodeID)
             if parentNode.kind == Folder.kind {
-                try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node, thisNode: parentNode)
+                try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node)
             }
             // TODO: also when deleting Nodes or updating Nodes in any way
         }
@@ -183,7 +184,7 @@ extension Node {
                 newFolder.parentNodeID = currentFolder.id!
                 try database.node.update(newFolder)
 
-                try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder, thisNode: currentFolder)
+                try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder)
                 currentFolder = newFolder
             }
         }
@@ -227,18 +228,6 @@ extension Node {
         }
     }
 }
-
-// MARK: - ObjectID helper
-
-//extension ObjectID {
-//    func loadNode() throws -> Node {
-//        guard let node = try database.node.selectByID(self) else {
-//            throw DatabaseLayer.DatabaseError.nodeNotFound
-//        }
-//        return node
-//    }
-//}
-
 
 // MARK: - Port management
 
