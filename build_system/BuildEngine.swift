@@ -70,7 +70,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database217.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database218.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
@@ -102,7 +102,7 @@ final class BuildEngine {
             // Keep looping as long as processing produces new scheduled nodes.
             await workSignal.clear()
             do {
-                try processAllNodes()
+                try await processAllNodes()
             } catch {
                 // Surface DB / processing errors instead of swallowing them.
                 print("BuildEngine: error during processAllNodes: \(error)")
@@ -137,15 +137,35 @@ final class BuildEngine {
 
     // MARK: - Processing
 
-    private func processAllNodes() throws {
-        while try processSomeNodes() {}
+    private func processAllNodes() async throws {
+        while try await processSomeNodes() {}
     }
 
-    private func processSomeNodes() throws -> Bool {
+    /// Fetches a batch of scheduled nodes and processes them **in parallel**.
+    ///
+    /// All nodes in a batch are independent work items, so they are dispatched
+    /// concurrently via a `TaskGroup`. Database access remains safe because
+    /// `DatabaseLayer` serialises all reads/writes through a single GRDB
+    /// `DatabaseQueue`, and each task runs in its own task context so the
+    /// `@TaskLocal` transaction connection is correctly isolated per node.
+    ///
+    /// Errors are caught per-node and logged so that one failing node does not
+    /// cancel the processing of its siblings.
+    private func processSomeNodes() async throws -> Bool {
         let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
         guard !rawNodes.isEmpty else { return false }
-        for rawNode in rawNodes {
-            try processOneNode(rawNode)
+
+        await withTaskGroup(of: Void.self) { group in
+            for rawNode in rawNodes {
+                group.addTask {
+                    do {
+                        try self.processOneNode(rawNode)
+                    } catch {
+                        print("BuildEngine: error processing node \(rawNode.id ?? -1): \(error)")
+                    }
+                }
+            }
+            await group.waitForAll()
         }
         return true
     }
