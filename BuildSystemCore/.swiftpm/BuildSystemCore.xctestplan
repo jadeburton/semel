@@ -1,0 +1,24 @@
+{
+  "configurations" : [
+    {
+      "id" : "ED284109-419B-4DE5-B66F-57A5BAF805DE",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "BuildSystemCoreTests",
+        "name" : "BuildSystemCoreTests"
+      }
+    }
+  ],
+  "version" : 1
+}

@@ -6,8 +6,7 @@
 //
 
 import Foundation
-import GRDB
-import DatabaseModels
+import BuildSystemCore
 
 func main() throws {
     print("Build System 1.0 (C) 2026 Jade Burton. All rights reserved.")
