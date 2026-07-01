@@ -195,10 +195,10 @@ extension Node {
         let indent = String(repeating: "  ", count: indentLevel)
         let nodeFunction = try! nodeFunction()
 
-        let kindName = (try? PolyFactory.type(kind: type(of: nodeFunction).kind))
-            .map { String(describing: $0) } ?? "Node"
+        let kindName = String(describing: type(of: nodeFunction))
 
         let nodeName = name ?? "?"
+
         print("\(indent)- \(kindName)(\(nodeName))")
 
         guard let nodeID = id else {

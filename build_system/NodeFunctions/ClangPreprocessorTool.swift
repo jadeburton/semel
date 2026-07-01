@@ -37,20 +37,10 @@ struct ClangPreprocessorToolConfiguration {
 struct ClangPreprocessorTool: NodeFunction {
     static let kind: UInt = 17
 
-    enum CodingKeys: CodingKey {
-    }
-
     var embeddedNode: Node?
 
-    var properties: [String : String] {
-        [:]
-    }
-
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-    }
-
-    init(properties: [String: String]) {
     }
 
     // MARK: Ports

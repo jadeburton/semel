@@ -8,20 +8,8 @@
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-struct StaticFile: InputlessNodeFunction, FileType {
+struct StaticFile: InputlessNodeFunction, FileType, HasPath {
     static let kind: UInt = 3
-
-    let containingPath: String
-    let name: String
-
-    enum CodingKeys: CodingKey {
-        case containingPath
-        case name
-    }
-
-    var initialName: String? {
-        name
-    }
 
     func isGhost() throws -> Bool {
         guard let nodeValue = try read() else {
@@ -35,24 +23,14 @@ struct StaticFile: InputlessNodeFunction, FileType {
 
     var embeddedNode: Node?
 
-    var properties: [String : String] {
-        ["path": containingPath.appendingPathComponent(name)]
+    var path: String {
+        thisNode.properties["path"]!
     }
 
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-        let properties = [String: String](plainText: thisNode.encodedProperties ?? "")
-        let path = properties["path"]!
-        containingPath = path.deletingLastPathComponent() ?? ""
-        name = path.lastPathComponent
-    }
-
-    // When GraphShapeApplier needs to resolve "StaticFile(path: 'src/hello.c')", we receive properties with the path.
-    // At that point we need to ensure the Folder hierarchy exists above us.
-    init(properties: [String : String] = [String: String]()) {
-        let path = properties["path"]!
-        containingPath = path.deletingLastPathComponent() ?? ""
-        name = path.lastPathComponent
+        embeddedNode!.name = name
+        embeddedNode!.parentNodeID = try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
@@ -60,13 +38,6 @@ struct StaticFile: InputlessNodeFunction, FileType {
     var inputFileSystem: Node {
         get throws {
             try BuildEngine.shared.inputFileSystem
-        }
-    }
-
-    var initialParentNodeID: ObjectID? {
-        get throws {
-            // All StaticFiles reside beneath inputFileSystem
-            try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
         }
     }
 

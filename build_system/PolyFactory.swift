@@ -9,9 +9,12 @@ import Foundation
 
 // MARK: - Protocol
 
-/// A type that can be serialized/deserialized polymorphically via a `kind` discriminator.
-protocol PolySerializable: Codable {
+protocol WithKind {
     static var kind: UInt { get }
+}
+
+/// A type that can be serialized/deserialized polymorphically via a `kind` discriminator.
+protocol PolySerializable: Codable, WithKind {
 }
 
 // MARK: - Factory
@@ -19,19 +22,26 @@ protocol PolySerializable: Codable {
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
 enum PolyFactory {
 
-    private static var registryCache = [UInt: PolySerializable.Type]()
+    private static var registryCache = [UInt: WithKind.Type]()
 
     /// All polymorphic types must be registered with the factory before they can be serialized/deserialized.
-    static func register(types: [PolySerializable.Type]) {
+    static func register(types: [WithKind.Type]) {
         for type in types {
             registryCache[type.self.kind] = type
         }
     }
 
     /// Look up the concrete type for a given kind.
-    static func type(kind: UInt) throws -> PolySerializable.Type {
+    static func type(kind: UInt) throws -> WithKind.Type {
         guard let type = registryCache[kind] else {
             fatalError("Unknown object kind: \(kind)")
+        }
+        return type
+    }
+
+    static func decodableType(kind: UInt) throws -> PolySerializable.Type {
+        guard let type = registryCache[kind] as? PolySerializable.Type else {
+            fatalError("Unknown object kind, or not PolySerializable: \(kind)")
         }
         return type
     }
@@ -95,7 +105,7 @@ private struct Caddy: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decode(UInt.self, forKey: .kind)
-        let concreteType = try PolyFactory.type(kind: kind)
+        let concreteType = try PolyFactory.decodableType(kind: kind)
         object = try container.decode(concreteType, forKey: .object)
     }
 

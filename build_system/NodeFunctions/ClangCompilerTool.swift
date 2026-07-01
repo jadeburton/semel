@@ -36,9 +36,6 @@ struct ClangCompilerToolConfiguration {
 struct ClangCompilerTool: NodeFunction {
     static let kind: UInt = 19
 
-    enum CodingKeys: CodingKey {
-    }
-
     // MARK: Ports
 
     static let configuration = "configuration"
@@ -49,15 +46,8 @@ struct ClangCompilerTool: NodeFunction {
 
     var embeddedNode: Node?
 
-    var properties: [String : String] {
-        [:]
-    }
-
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-    }
-
-    init(properties: [String: String]) {
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],

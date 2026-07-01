@@ -18,43 +18,21 @@ struct FolderManifest: PolySerializable {
     let entries: [FolderManifestEntry]
 }
 
-struct Folder: InputlessNodeFunction {
+struct Folder: InputlessNodeFunction, HasPath {
     static let kind: UInt = 1
 
     var embeddedNode: Node?
-    let containingPath: String
-    let name: String
 
-    enum CodingKeys: CodingKey {
-        case containingPath
-        case name
-    }
-
-    var initialName: String? {
-        name
-    }
-
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-        let properties = [String: String](plainText: thisNode.encodedProperties ?? "")
-        let path = properties["path"]!
-        assert(!path.hasPrefix("/"))
-        assert(!path.hasSuffix("/"))
-        containingPath = path.deletingLastPathComponent() ?? ""
-        name = path.lastPathComponent
+        embeddedNode!.name = name
+        embeddedNode!.parentNodeID = try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
     }
 
-    init(properties: [String : String] = [String: String]()) {
-        let path = properties["path"]!
-        assert(!path.hasPrefix("/"))
-        assert(!path.hasSuffix("/"))
-        containingPath = path.deletingLastPathComponent() ?? ""
-        name = path.lastPathComponent
-        assert(self.path == path)
-    }
-
-    var properties: [String : String] {
-        ["path": path]
+    var inputFileSystem: Node {
+        get throws {
+            try BuildEngine.shared.inputFileSystem
+        }
     }
 
     func didCreate() throws -> ProcessOutput? {
@@ -63,7 +41,7 @@ struct Folder: InputlessNodeFunction {
     }
 
     var path: String {
-        containingPath.appendingPathComponent(name)
+        thisNode.properties["path"]!
     }
 
     func canBeDeleted() throws -> Bool {

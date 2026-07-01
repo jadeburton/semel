@@ -10,8 +10,6 @@ import Foundation
 struct IncludeFinder: NodeFunction {
     static let kind: UInt = 15
 
-    enum CodingKeys: CodingKey {}
-
     // MARK: Ports
 
     static let sourceFileInputPort = "sourceFile"
@@ -22,15 +20,8 @@ struct IncludeFinder: NodeFunction {
 
     var embeddedNode: Node?
 
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-    }
-
-    var properties: [String : String] {
-        [:]
-    }
-
-    init(properties: [String : String]) {
     }
 
     // MARK: Include extraction

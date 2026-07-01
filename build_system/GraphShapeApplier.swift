@@ -34,7 +34,7 @@ extension InputlessNodeFunction {
     /// Default: delegate to `WithProperties` if the type conforms, else no args.
     /// Declared in the protocol so Swift dispatches dynamically via the witness table.
     func graphShapeArgs(node: Node) -> [GraphShapeArg] {
-        properties.map { GraphShapeArg(key: $0.key, value: $0.value) }
+        thisNode.properties.map { GraphShapeArg(key: $0.key, value: $0.value) }
     }
 }
 

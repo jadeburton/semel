@@ -73,15 +73,7 @@ extension Node {
     }
 
     func nodeFunction() throws -> InputlessNodeFunction {
-        let properties = [String: String](plainText: encodedProperties ?? "")
-
-        var nodeFunction = try! PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
-//        var nodeFunction = try PolyFactory.decode(encodedJSON: configuration!) as! InputlessNodeFunction
-
-        // copy
-        nodeFunction.embeddedNode = self
-
-        return nodeFunction
+        try (PolyFactory.type(kind: kind) as! InputlessNodeFunction.Type).init(thisNode: self)
     }
 
     var allChildren: [Node] {
@@ -92,20 +84,20 @@ extension Node {
 
     static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> Node {
 
-        var nodeFunction = try PolyFactory.makeDefault(kind: kind, properties: properties) as InputlessNodeFunction
-
-        var node = Node(parentNodeID: try nodeFunction.initialParentNodeID,
+        var node = Node(parentNodeID: nil,
                         kind: kind,
-                        name: nodeFunction.initialName,
-                        encodedProperties: nodeFunction.properties.asPlainText(),
+                        name: nil,
+                        properties: properties,
                         scheduled: false,
                         searchKey: searchKey)
 
         node.id = try database.node.insert(node)
 
-        // TODO: have one source of truth for node instead of multiple copies inside this func
+        let nodeFunction = try node.nodeFunction()
 
-        nodeFunction.embeddedNode = node
+        // Special case: we store some properties directly in the Node table itself, so we need to patch them in here
+        node.name = nodeFunction.thisNode.name
+        node.parentNodeID = nodeFunction.thisNode.parentNodeID
 
         try node.writePendingToAllOutputsOfNode()
 
@@ -121,12 +113,13 @@ extension Node {
         if searchKey == nil {
             do {
                 node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: node.id!).asString(omitOutputPort: true)
-                try database.node.update(node)
             } catch {
                 print("WARNING: failed to patch-in searchKey (\(error)), are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
                 throw error
             }
         }
+
+        try database.node.update(node)
 
         assert(node.searchKey != nil)
 

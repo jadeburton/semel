@@ -18,9 +18,13 @@ extension NodeFunction {
             .toJSON()
     }
 
+    private var nodeFunctionCacheKey: String {
+        "\(String(describing: type(of: self)))\n\(thisNode.properties.asPlainText())"
+    }
+
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
 
-        var aggregated = try toJSON()
+        var aggregated = nodeFunctionCacheKey
 
         for inputPort in descriptor.staticInputPorts.sorted() {
             aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort, input: input))

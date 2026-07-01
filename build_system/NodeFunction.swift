@@ -48,21 +48,15 @@ extension InputlessNodeFunction {
     }
 }
 
-protocol InputlessNodeFunction: Codable, PolySerializable {
+protocol InputlessNodeFunction: WithKind {
     var embeddedNode: Node? { get set }
 
-    var properties: [String: String] { get }
-    init(properties: [String: String])
-
-    init(thisNode: Node)
+    init(thisNode: Node) throws
 
     func didCreate() throws -> ProcessOutput?
 
-    // When the Node is created, the InputlessNodeFunction is asked what "name" should be set to in the database.
-    var initialName: String? { get }
-    var initialParentNodeID: ObjectID? { get throws }
-
     var descriptor: NodeFunctionDescriptor { get }
+
     /// Returns the init-time key-value arguments that distinguish this node from
     /// others of the same type (e.g. `path='src/hello.c'` for StaticFile).
     /// Declared here so Swift dispatches it dynamically via the protocol witness table,
@@ -159,16 +153,6 @@ extension InputlessNodeFunction {
 
     func canBeDeleted() throws -> Bool {
         true
-    }
-
-    var initialName: String? {
-        nil
-    }
-
-    var initialParentNodeID: ObjectID? {
-        get throws {
-            nil
-        }
     }
 
     func hasNoOutputWires() throws -> Bool {
@@ -337,25 +321,13 @@ enum NodeError: Error {
 }
 extension NodeFunction {
     func description() -> String {
-        "\(String(describing: Self.self)) (kind: \(type(of: self).kind)), staticInputPorts: \(descriptor.staticInputPorts.count), outputPorts: \(descriptor.outputPorts.count), dynamicInputPorts: \(descriptor.dynamicInputPorts.count)"
+        "\(String(describing: Self.self)) (\(type(of: self))), staticInputPorts: \(descriptor.staticInputPorts.count), outputPorts: \(descriptor.outputPorts.count), dynamicInputPorts: \(descriptor.dynamicInputPorts.count)"
     }
 }
 
 struct OneNodeValue {
     let dataObjectHash: DataObjectHash
     let originNodeID: ObjectID
-}
-
-// MARK: - PolyFactory + InputlessNodeFunction
-
-extension PolyFactory {
-    static func makeDefault(kind: UInt, properties: [String: String]) throws -> InputlessNodeFunction {
-        try (type(kind: kind) as! (PolySerializable & InputlessNodeFunction).Type).init(properties: properties)
-    }
-
-    static func makeDefault(kind: UInt, thisNode: Node) throws -> InputlessNodeFunction {
-        try (type(kind: kind) as! (PolySerializable & InputlessNodeFunction).Type).init(thisNode: thisNode)
-    }
 }
 
 // MARK: - PolySerializable helper

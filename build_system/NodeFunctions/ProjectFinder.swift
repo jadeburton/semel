@@ -14,13 +14,6 @@ import Foundation
 struct ProjectFinder: NodeFunction {
     static let kind: UInt = 5
 
-    enum CodingKeys: CodingKey {
-    }
-
-    var initialName: String? {
-        "projectFinder"
-    }
-
     static let folderManifestInputPort = "folderManifest"
     static let projectBuildersInputPort = "projectBuilders"
 
@@ -31,16 +24,9 @@ struct ProjectFinder: NodeFunction {
 
     var embeddedNode: Node?
 
-    var properties: [String : String] {
-        [:]
-    }
-
-    
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-    }
-
-    init(properties: [String: String]) {
+        embeddedNode!.name = "projectFinder"
     }
 
     // ProjectFinder is the root object and so must never be deleted.

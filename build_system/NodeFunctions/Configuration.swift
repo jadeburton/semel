@@ -9,24 +9,13 @@
 struct Configuration: NodeFunction {
     static let kind: UInt = 9
 
-    let properties: [String: String]
-
     var embeddedNode: Node?
-
-    enum CodingKeys: CodingKey {
-        case properties
-    }
 
     static let outputPort = "output"
     static let inputPort = "input"
 
-    init(properties: [String : String] = [String: String]()) {
-        self.properties = properties
-    }
-
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-        properties = .init(plainText: thisNode.encodedProperties ?? "")
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
@@ -46,7 +35,7 @@ struct Configuration: NodeFunction {
             aggregatedConfig = aggregatedConfig.mergedWith(configuration)
         }
 
-        return .init(outputValues: [Self.outputPort: .value(aggregatedConfig.mergedWith(properties).asPlainText().intern())],
+        return .init(outputValues: [Self.outputPort: .value(aggregatedConfig.mergedWith(thisNode.properties).asPlainText().intern())],
                      inputWireExpectations: [:])
     }
 }

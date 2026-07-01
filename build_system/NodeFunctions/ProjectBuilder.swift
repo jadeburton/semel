@@ -10,8 +10,6 @@
 struct ProjectBuilder: NodeFunction {
     static let kind: UInt = 6
 
-    enum CodingKeys: CodingKey {}
-
     static let projectFileInputPort = "projectFile"
     static let productInputPort = "input"
     static let statusOutputPort = "status"
@@ -22,15 +20,8 @@ struct ProjectBuilder: NodeFunction {
 
     var embeddedNode: Node?
 
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-    }
-
-    var properties: [String : String] {
-        [:]
-    }
-
-    init(properties: [String : String]) {
     }
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {

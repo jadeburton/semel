@@ -2,32 +2,86 @@
 
 import GRDB
 
-public struct Node: Codable, Identifiable, FetchableRecord, PersistableRecord {
+public struct Node: Identifiable, FetchableRecord, PersistableRecord {
     public enum Columns {
-        public static let kind = Column(CodingKeys.kind)
-        public static let name = Column(CodingKeys.name)
-        public static let encodedProperties = Column(CodingKeys.encodedProperties)
-        public static let parentNodeID = Column(CodingKeys.parentNodeID)
-        public static let scheduled = Column(CodingKeys.scheduled)
-        public static let searchKey = Column(CodingKeys.searchKey)
+        public static let kind = Column("kind")
+        public static let name = Column("name")
+        public static let parentNodeID = Column("parentNodeID")
+        public static let scheduled = Column("scheduled")
+        public static let searchKey = Column("searchKey")
+        public static let encodedProperties = Column("encodedProperties")
     }
 
     public var id: ObjectID?
     public var parentNodeID: ObjectID?
     public var kind: UInt
     public var name: String?
-    public var encodedProperties: String?
+    public var properties: [String: String]
     public var scheduled: Bool
     public var searchKey: String?
 
-    public init(id: ObjectID? = nil, parentNodeID: ObjectID? = nil, kind: UInt, name: String? = nil, encodedProperties: String? = nil, scheduled: Bool = false, searchKey: String?) {
+    public init(id: ObjectID? = nil,
+                parentNodeID: ObjectID? = nil,
+                kind: UInt,
+                name: String? = nil,
+                properties: [String: String] = [:],
+                scheduled: Bool = false,
+                searchKey: String? = nil) {
         self.id = id
         self.parentNodeID = parentNodeID
         self.kind = kind
         self.name = name
-        self.encodedProperties = encodedProperties
+        self.properties = properties
         self.scheduled = scheduled
         self.searchKey = searchKey
+    }
+
+    // MARK: - Serialisation helpers (key=value\n format, stored in "encodedProperties" column)
+
+    private static func encodeProperties(_ dict: [String: String]) -> String? {
+        guard !dict.isEmpty else { return nil }
+        return dict.sorted { $0.key < $1.key }
+                   .map { "\($0.key)=\($0.value)" }
+                   .joined(separator: "\n")
+    }
+
+    private static func decodeProperties(_ string: String?) -> [String: String] {
+        guard let string, !string.isEmpty else {
+            return [:]
+        }
+        var result: [String: String] = [:]
+        for line in string.split(separator: "\n", omittingEmptySubsequences: true) {
+            if let eq = line.firstIndex(of: "=") {
+                let key   = String(line[line.startIndex ..< eq])
+                let value = String(line[line.index(after: eq)...])
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    // MARK: - FetchableRecord
+
+    public init(row: Row) throws {
+        id = row["id"]
+        parentNodeID = row["parentNodeID"]
+        kind = row["kind"]
+        name = row["name"]
+        scheduled = row["scheduled"] ?? false
+        searchKey = row["searchKey"]
+        properties = Self.decodeProperties(row["encodedProperties"])
+    }
+
+    // MARK: - PersistableRecord
+
+    public func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = id
+        container["parentNodeID"] = parentNodeID
+        container["kind"] = kind
+        container["name"] = name
+        container["encodedProperties"] = Self.encodeProperties(properties)
+        container["scheduled"] = scheduled
+        container["searchKey"] = searchKey
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {

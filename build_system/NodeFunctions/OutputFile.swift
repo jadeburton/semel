@@ -5,47 +5,38 @@
 //  Created by Jade Burton on 28.06.26.
 //
 
+protocol HasPath {
+    var path: String { get }
+}
+
+extension HasPath {
+    var name: String {
+        path.lastPathComponent
+    }
+
+    var containingPath: String {
+        path.deletingLastPathComponent() ?? ""
+    }
+}
+
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
-struct OutputFile: NodeFunction, FileType {
+struct OutputFile: NodeFunction, FileType, HasPath {
 
     static let kind: UInt = 8
-
-
-    let containingPath: String
-    let name: String
-
-    enum CodingKeys: CodingKey {
-        case containingPath
-        case name
-    }
-
-    var initialName: String? {
-        name
-    }
 
     static let inputPort = "input"
     static let statusOutputPort = "status"
 
     var embeddedNode: Node?
 
-    var properties: [String : String] {
-        ["path": containingPath.appendingPathComponent(name)]
+    var path: String {
+        thisNode.properties["path"]!
     }
 
-    init(thisNode: Node) {
+    init(thisNode: Node) throws {
         embeddedNode = thisNode
-        let properties = [String: String](plainText: thisNode.encodedProperties ?? "")
-        let path = properties["path"]!
-        containingPath = path.deletingLastPathComponent() ?? ""
-        name = path.lastPathComponent
-    }
-
-    // When GraphShapeApplier needs to resolve "StaticFile(path: 'src/hello.c')", we receive properties with the path.
-    // At that point we need to ensure the Folder hierarchy exists above us.
-    init(properties: [String : String] = [String: String]()) {
-        let path = properties["path"]!
-        containingPath = path.deletingLastPathComponent() ?? ""
-        name = path.lastPathComponent
+        embeddedNode!.name = name
+        embeddedNode!.parentNodeID = try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
     }
 
     var outputFileSystem: Node {
@@ -68,10 +59,7 @@ struct OutputFile: NodeFunction, FileType {
 
         // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
 
-        let path = properties["path"]!
-        let pathWithoutLastComponent = path.deletingLastPathComponent() ?? "" // TODO!
-
-        try outputFileSystem.ensureEntirePathExistsAsFolders(pathWithoutLastComponent)
+        try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath)
 
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(message: "Missing"))],
                      inputWireExpectations: [:])
