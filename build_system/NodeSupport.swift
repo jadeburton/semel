@@ -99,6 +99,8 @@ extension Node {
         node.name = nodeFunction.thisNode.name
         node.parentNodeID = nodeFunction.thisNode.parentNodeID
 
+        assert(node.parentNodeID != node.id!)
+
         try node.writePendingToAllOutputsOfNode()
 
         let output = try nodeFunction.didCreate() ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
@@ -148,7 +150,7 @@ extension Node {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
 
-        var pathSoFar = ""
+        var pathSoFar = try buildFullPathName(baseNodeID: nil)
 
         for name in components {
 
