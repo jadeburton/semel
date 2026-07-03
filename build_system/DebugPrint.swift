@@ -171,7 +171,7 @@ extension BuildEngine {
         if !allDataObjects.isEmpty {
             printSectionHeader("DATA OBJECTS (\(allDataObjects.count))")
             for dataObject in allDataObjects {
-                print("  · 🗄 \(dataObject.content.count) byte(s): \(formatBytes(dataObject.content))")
+                print("  · 🗄 \(dataObject.content.count) byte(s): \(formatBytes([UInt8](dataObject.content)))")
             }
             print()
         }

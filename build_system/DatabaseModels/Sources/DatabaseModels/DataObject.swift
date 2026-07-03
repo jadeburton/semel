@@ -4,9 +4,9 @@ import GRDB
 
 public struct DataObject: Codable, FetchableRecord, PersistableRecord {
     public var hash: String
-    public var content: [UInt8]
+    public var content: Data
 
-    public init(hash: String, content: [UInt8]) {
+    public init(hash: String, content: Data) {
         self.hash = hash
         self.content = content
     }
@@ -41,6 +41,18 @@ public struct DataObjectDataAccess: DataAccessType {
 
     public func insert(_ dataObject: DataObject) throws {
         try write { db in try dataObject.insert(db) }
+    }
+
+    /// Atomically inserts the DataObject if its hash doesn't already exist,
+    /// then returns the hash. Uses INSERT OR IGNORE so concurrent callers
+    /// interning identical content never race on the UNIQUE primary key.
+    public func insertOrIgnore(_ dataObject: DataObject) throws {
+        try write { db in
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO DataObject (hash, content) VALUES (?, ?)",
+                arguments: [dataObject.hash, dataObject.content]
+            )
+        }
     }
 
     public func delete(hash: String) throws -> Bool {

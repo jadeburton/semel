@@ -17,6 +17,43 @@ extension HasPath {
     var containingPath: String {
         path.deletingLastPathComponent() ?? ""
     }
+
+    func resolveFolderID(path: String) throws -> ObjectID? {
+        guard !path.isEmpty else {
+            // "" -> nil because it is the root folder, which has no parent.
+            return nil
+        }
+
+        let components = path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        // The first component must be "inputFileSystem" or "outputFileSystem"
+        guard let rootName = components.first else {
+            throw NodeError.other(message: "Path '\(path)' has no components")
+        }
+
+        let rootNode: Node
+        switch rootName {
+        case "inputFileSystem":
+            rootNode = try BuildEngine.shared.inputFileSystem
+        case "outputFileSystem":
+            rootNode = try BuildEngine.shared.outputFileSystem
+        default:
+            throw NodeError.other(message: "Path '\(path)' must begin with 'inputFileSystem' or 'outputFileSystem', got '\(rootName)'")
+        }
+
+        // If the path is just the root (e.g. "inputFileSystem"), return the root folder's ID
+        let subPath = components.dropFirst().joined(separator: "/")
+        guard !subPath.isEmpty else {
+            return rootNode.id!
+        }
+
+        // Walk (creating as needed) the remaining components beneath the root folder
+        let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath)
+        return resolvedFolder.id!
+    }
+
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
@@ -35,22 +72,17 @@ struct OutputFile: NodeFunction, FileType, HasPath {
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
+        assert(!path.contains("inputFileSystem"))
         embeddedNode!.name = name
-        embeddedNode!.parentNodeID = try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+//        embeddedNode!.parentNodeID = try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
+        embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
     }
 
-    var outputFileSystem: Node {
-        get throws {
-            try BuildEngine.shared.outputFileSystem
-        }
-    }
-
-    var initialParentNodeID: ObjectID? {
-        get throws {
-            // All OutputFiles reside beneath outputFileSystem
-            try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
-        }
-    }
+//    var outputFileSystem: Node {
+//        get throws {
+//            try BuildEngine.shared.outputFileSystem
+//        }
+//    }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])
 
@@ -59,7 +91,7 @@ struct OutputFile: NodeFunction, FileType, HasPath {
 
         // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
 
-        try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath)
+      //  try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath)
 
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(message: "Missing"))],
                      inputWireExpectations: [:])

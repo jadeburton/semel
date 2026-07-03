@@ -39,7 +39,8 @@ struct ProjectFinder: NodeFunction {
 
         for entry in folderManifest.entries {
             if entry.name.hasSuffix(".fmla") {
-                result[entry.name] = "ProjectBuilder(projectFile <- [\"\(entry.name)\": StaticFile(path: \"\(entry.name)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
+                let fullPath = "inputFileSystem/\(entry.name)"
+                result[entry.name] = "ProjectBuilder(projectFile <- [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
             }
         }
 

@@ -60,6 +60,20 @@ public struct SymbolDataAccess: DataAccessType {
         }
     }
 
+    /// Atomically inserts the symbol if it doesn't exist, then returns its ID.
+    /// Uses INSERT OR IGNORE so concurrent callers inserting the same name never
+    /// race: the second writer simply gets back the ID that the first one created.
+    public func insertOrGetID(name: String) throws -> ObjectID {
+        try write { db in
+            // INSERT OR IGNORE is a no-op when the name already exists (UNIQUE constraint),
+            // so the subsequent SELECT always finds exactly one row.
+            try db.execute(sql: "INSERT OR IGNORE INTO Symbol (name) VALUES (?)",
+                           arguments: [name])
+            return try Int64.fetchOne(db, sql: "SELECT id FROM Symbol WHERE name = ?",
+                                      arguments: [name])!
+        }
+    }
+
     public func delete(symbolID: ObjectID) throws -> Bool {
         try write { db in
             try Symbol.filter(Symbol.Columns.id == symbolID).deleteAll(db) > 0
@@ -81,11 +95,7 @@ enum SymbolError: Error {
 
 extension String {
     public func asSymbolID() -> ObjectID {
-        if let objectID = try! DatabaseLayer.shared.symbol.selectID(name: self) {
-            return objectID
-        } else {
-            return try! DatabaseLayer.shared.symbol.insert(name: self)
-        }
+        try! DatabaseLayer.shared.symbol.insertOrGetID(name: self)
     }
 }
 

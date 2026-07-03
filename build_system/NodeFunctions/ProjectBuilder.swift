@@ -25,7 +25,7 @@ struct ProjectBuilder: NodeFunction {
     }
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
-        let graphShape = try GraphShapeNode.parse("OutputFile(path: '\(projectFileName.removingSuffix(".fmla"))', input <- ['product': \(projectFileContent)]).status")
+        let graphShape = try GraphShapeNode.parse("OutputFile(path: 'outputFileSystem/\((projectFileName.deletingFirstPathComponent() ?? "").removingSuffix(".fmla"))', input <- ['product': \(projectFileContent)]).status")
         return [projectFileName.removingSuffix(".fmla"): graphShape.asString(omitOutputPort: false)]
     }
 

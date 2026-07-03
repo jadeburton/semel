@@ -29,9 +29,10 @@ struct StaticFile: InputlessNodeFunction, FileType, HasPath {
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
+        assert(!path.contains("outputFileSystem"))
         embeddedNode!.name = name
-        embeddedNode!.parentNodeID = try inputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
-    }
+        embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
 

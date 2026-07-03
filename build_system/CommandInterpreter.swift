@@ -614,7 +614,7 @@ final class CommandInterpreter {
             let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath)
             let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
-            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(relativePath)')")
+            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: 'inputFileSystem/\(relativePath)')")
             let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
             let fromNode = try database.node.select(nodeID: fromNodeID)
             _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(fileContent.intern())

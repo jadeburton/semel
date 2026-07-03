@@ -17,12 +17,11 @@ extension [UInt8] {
         }
 
         let hash = Sha256.hash(self)
-        if let _ = try! DatabaseLayer.shared.dataObject.select(hash: hash) {
-            return hash
-        } else {
-            try! DatabaseLayer.shared.dataObject.insert(DataObject(hash: hash, content: self))
-            return hash
-        }
+        // INSERT OR IGNORE is atomic: concurrent tasks interning identical bytes
+        // will not race — the second writer silently does nothing and both get
+        // back the same hash that was committed by the first.
+        try! DatabaseLayer.shared.dataObject.insertOrIgnore(DataObject(hash: hash, content: Data(self)))
+        return hash
     }
 }
 
@@ -48,7 +47,7 @@ extension DataToken {
             throw DataObjectError.dataObjectNotFoundByHash
         }
 
-        return dataObject.content
+        return [UInt8](dataObject.content)
     }
 
     func resolveAsString() throws -> String {

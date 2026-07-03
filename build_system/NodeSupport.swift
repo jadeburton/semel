@@ -28,6 +28,12 @@ extension String {
         return parts.dropLast().joined(separator: "/")
     }
 
+    func deletingFirstPathComponent() -> String? {
+        let parts = split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard parts.count > 1 else { return nil }
+        return parts.dropFirst().joined(separator: "/")
+    }
+
     /// Returns the path with the given component appended, joining with "/" as needed.
     /// e.g. "src".appendingPathComponent("hello.c") → "src/hello.c"
     /// e.g. "".appendingPathComponent("hello.c")    → "hello.c"
