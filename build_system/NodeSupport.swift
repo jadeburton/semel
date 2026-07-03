@@ -222,7 +222,10 @@ extension Node {
 
         self.scheduled = scheduled
 
-        try database.node.update(self)
+        // Use the targeted single-column update so we never accidentally
+        // overwrite other columns (or another task's scheduling decision)
+        // with a stale full-node snapshot.
+        try database.node.updateScheduled(nodeID: id!, scheduled: scheduled)
 
         if scheduled {
             BuildEngine.shared.signalWorkAvailable()

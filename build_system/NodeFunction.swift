@@ -182,8 +182,11 @@ extension InputlessNodeFunction {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
 
-        if !(try! database.outputPort.selectAll(nodeID: id!).filter { $0.valueKind == .pending }.isEmpty) {
-            print("WARNING: One or more outputs left Pending for node \(thisNode)")
+        let stillPendingOutputs = try! database.outputPort.selectAll(nodeID: id!).filter { $0.valueKind == .pending }
+
+        if !stillPendingOutputs.isEmpty {
+            let description = stillPendingOutputs.reduce(into: "") { $0 += " \($1.nameSymbolID.resolveSymbol())" }
+            print("WARNING: One or more outputs left Pending for node \(thisNode). \(description)")
         }
 
         do {

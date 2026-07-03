@@ -38,7 +38,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
 
     // MARK: - Serialisation helpers (key=value\n format, stored in "encodedProperties" column)
 
-    private static func encodeProperties(_ dict: [String: String]) -> String? {
+    static func encodeProperties(_ dict: [String: String]) -> String? {
         guard !dict.isEmpty else { return nil }
         return dict.sorted { $0.key < $1.key }
                    .map { "\($0.key)=\($0.value)" }
@@ -162,8 +162,43 @@ public struct NodeDataAccess: DataAccessType {
         try write { db in try node.save(db) }
     }
 
+    /// Updates only the `scheduled` column for the given node.
+    /// Use this instead of `update(_:)` whenever changing the scheduled flag,
+    /// so that concurrent tasks cannot accidentally overwrite each other's
+    /// scheduling decisions by saving a stale full-node snapshot.
+    public func updateScheduled(nodeID: ObjectID, scheduled: Bool) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE Node SET scheduled = ? WHERE id = ?",
+                arguments: [scheduled, nodeID]
+            )
+        }
+    }
+
+    /// Updates all columns of the node **except** `scheduled`.
+    /// Never use this to change the scheduled flag — use `updateScheduled(nodeID:scheduled:)` instead.
     public func update(_ node: Node) throws {
-        try write { db in try node.update(db) }
+        try write { db in
+            try db.execute(
+                sql: """
+                     UPDATE Node
+                        SET parentNodeID      = ?,
+                            kind              = ?,
+                            name              = ?,
+                            encodedProperties = ?,
+                            searchKey         = ?
+                      WHERE id = ?
+                     """,
+                arguments: [
+                    node.parentNodeID,
+                    node.kind,
+                    node.name,
+                    Node.encodeProperties(node.properties),
+                    node.searchKey,
+                    node.id
+                ]
+            )
+        }
     }
 
     public func delete(nodeID: ObjectID) throws -> Bool {
