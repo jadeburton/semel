@@ -26,7 +26,6 @@ struct ProjectFinder: NodeFunction {
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
-        embeddedNode!.name = "projectFinder"
     }
 
     // ProjectFinder is the root object and so must never be deleted.

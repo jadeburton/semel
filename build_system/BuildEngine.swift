@@ -13,7 +13,7 @@ final class BuildEngine {
 
     // MARK: - Constants
 
-    private static let processingBatchSize = 10
+    private static let processingBatchSize = 8
 
     // MARK: - State
 
@@ -70,7 +70,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database236.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database237.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)

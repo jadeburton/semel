@@ -287,7 +287,7 @@ extension Node {
         }
 
         //let previousPort = try database.outputPort.select(nodeID: id!, nameSymbolID: port.nameSymbolID)
-        //print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.formatOutputPort(previousPort!)) to \(BuildEngine.formatOutputPort(port))")
+        //print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.shared.formatOutputPort(previousPort!)) to \(BuildEngine.shared.formatOutputPort(port))")
 
         try database.outputPort.insertOrUpdate(port)
 

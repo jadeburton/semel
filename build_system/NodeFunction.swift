@@ -182,13 +182,6 @@ extension InputlessNodeFunction {
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
 
-        let stillPendingOutputs = try! database.outputPort.selectAll(nodeID: id!).filter { $0.valueKind == .pending }
-
-        if !stillPendingOutputs.isEmpty {
-            let description = stillPendingOutputs.reduce(into: "") { $0 += " \($1.nameSymbolID.resolveSymbol())" }
-            print("WARNING: One or more outputs left Pending for node \(thisNode). \(description)")
-        }
-
         do {
             for (inputPort, wireExpectations) in output.inputWireExpectations {
                 try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations)

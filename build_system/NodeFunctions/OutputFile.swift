@@ -74,25 +74,12 @@ struct OutputFile: NodeFunction, FileType, HasPath {
         embeddedNode = thisNode
         assert(!path.contains("inputFileSystem"))
         embeddedNode!.name = name
-//        embeddedNode!.parentNodeID = try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath).id!
         embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
     }
-
-//    var outputFileSystem: Node {
-//        get throws {
-//            try BuildEngine.shared.outputFileSystem
-//        }
-//    }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])
 
     func didCreate() throws -> ProcessOutput? {
-        // OutputFile needs to be listable as part of a folder hierarchy, so we maintain that.
-
-        // ensure a chain of Folders exist above us, all the way to "outputFileSystem" root Folder.
-
-      //  try outputFileSystem.ensureEntirePathExistsAsFolders(containingPath)
-
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(message: "Missing"))],
                      inputWireExpectations: [:])
     }

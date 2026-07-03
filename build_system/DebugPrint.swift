@@ -107,7 +107,12 @@ extension BuildEngine {
             guard let nodeID = rawNode.id else { continue }
             
             let scheduled = rawNode.scheduled ? "⏱ scheduled" : "idle"
-            print("⬢ \(type(of: try rawNode.nodeFunction())) name: \(rawNode.name ?? "<none>") #\(nodeID)  \(scheduled)")
+            print("⬢ \(type(of: try rawNode.nodeFunction())) #\(nodeID)  \(scheduled)")
+
+            if let name = rawNode.name {
+                print("  name: '\(name)'")
+            }
+
             if let searchKey = rawNode.searchKey {
                 let graphShapeNode = try GraphShapeNode.parse(searchKey)
                 print("  searchKey:\n\(graphShapeNode.asString(pretty: true, omitOutputPort: true))\n")
@@ -197,7 +202,7 @@ extension Node {
 
         let kindName = String(describing: type(of: nodeFunction))
 
-        let nodeName = name ?? "?"
+        let nodeName = name ?? ""
 
         print("\(indent)- \(kindName)(\(nodeName))")
 

@@ -211,21 +211,25 @@ extension GraphShapeNode {
     /// Returns `(fromNodeID, fromSymbolID)` of the matching node, creating it
     /// (and all missing upstream nodes and wires) if none exists.
     ///
-    /// All writes are wrapped in `DatabaseLayer.withTransaction` so any failure
-    /// causes GRDB to roll back every write atomically — no partially-wired
-    /// nodes are left behind.  Recursive calls re-enter `withTransaction`
-    /// safely: inner calls detect the active transaction and participate in it.
+    /// The find and create are wrapped in a **single** `withTransaction` so there
+    /// is no TOCTOU gap between them.  When two concurrent tasks race to create the
+    /// same node:
+    ///   • Task A's transaction: find → nil  → insert → commit
+    ///   • Task B's transaction: find → hit! → return Task A's node (no insert)
+    ///
+    /// This eliminates the `UNIQUE constraint failed: Node.searchKey` crash that
+    /// occurred when both tasks ran the find outside a transaction, both saw nil,
+    /// and then both tried to insert the same searchKey.
     ///
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
     func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?) {
-        // Fast path: node already exists — no writes needed.
-        if let existing = try findMatchingNode() {
-            return existing
-        }
-
-        // Slow path: create inside a transaction so any error rolls back everything.
-        let newNodeID = try database.withTransaction {
-            try createNode()
+        let newNodeID: ObjectID = try database.withTransaction {
+            // Inside the transaction the find is serialized with the create, so
+            // a concurrent task that committed its insert first will be visible here.
+            if let existing = try findMatchingNode() {
+                return existing.fromNodeID
+            }
+            return try createNode()
         }
 
         return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())

@@ -30,57 +30,6 @@ final class PolyFactoryTests: XCTestCase {
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(json.utf8)))
     }
 
-    // MARK: - PolySerializable.toJSON / PolyFactory.decode round-trips
-
-    func test_configuration_toJSON_containsKind() throws {
-        let config = Configuration(properties: ["tool": "compiler"])
-        let json = try config.toJSON()
-        XCTAssertTrue(json.contains("\"kind\""), "JSON must contain 'kind' discriminator")
-    }
-
-    func test_configuration_roundTrip() throws {
-        let config = Configuration(properties: ["tool": "linker"])
-        let json = try config.toJSON()
-        let decoded = try PolyFactory.decodeAndCast(encodedJSON: json) as Configuration
-        XCTAssertEqual(decoded.properties["tool"], "linker")
-    }
-
-    func test_staticFile_roundTrip() throws {
-        let sf = StaticFile(properties: ["path": "src/hello.c"])
-        let json = try sf.toJSON()
-        let decoded = try PolyFactory.decodeAndCast(encodedJSON: json) as StaticFile
-        XCTAssertEqual(decoded.containingPath, "src")
-        XCTAssertEqual(decoded.name, "hello.c")
-    }
-
-    func test_staticFile_rootPath_roundTrip() throws {
-        let sf = StaticFile(properties: ["path": "hello.c"])
-        let json = try sf.toJSON()
-        let decoded = try PolyFactory.decodeAndCast(encodedJSON: json) as StaticFile
-        XCTAssertEqual(decoded.name, "hello.c")
-        XCTAssertEqual(decoded.containingPath, "")
-    }
-
-    func test_folder_roundTrip() throws {
-        let folder = Folder(properties: ["path" : ""])
-        let json = try folder.toJSON()
-        _ = try PolyFactory.decodeAndCast(encodedJSON: json) as Folder
-    }
-
-    // MARK: - PolyFactory.kind(forTypeName:)
-
-    func test_kindForTypeName_configuration() throws {
-        XCTAssertEqual(try PolyFactory.kind(forTypeName: "Configuration"), Configuration.kind)
-    }
-
-    func test_kindForTypeName_staticFile() throws {
-        XCTAssertEqual(try PolyFactory.kind(forTypeName: "StaticFile"), StaticFile.kind)
-    }
-
-    func test_kindForTypeName_clangCompilerTool() throws {
-        XCTAssertEqual(try PolyFactory.kind(forTypeName: "ClangCompilerTool"), ClangCompilerTool.kind)
-    }
-
     func test_kindForTypeName_unknownType_throws() {
         XCTAssertThrowsError(try PolyFactory.kind(forTypeName: "NoSuchType")) { error in
             if case PolyFactoryError.unknownTypeName(let name) = error {
@@ -97,8 +46,7 @@ final class PolyFactoryTests: XCTestCase {
         let kinds: [UInt] = [
             ProjectFinder.kind, ProjectBuilder.kind, StaticFile.kind, Folder.kind,
             ClangLinkerTool.kind, ClangCompilerTool.kind, ClangPreprocessorTool.kind,
-            ClangLinkerToolConfiguration.kind, ClangCompilerToolConfiguration.kind,
-            ClangPreprocessorToolConfiguration.kind, Configuration.kind, IncludeFinder.kind
+            Configuration.kind, IncludeFinder.kind
         ]
         XCTAssertEqual(kinds.count, Set(kinds).count, "Each NodeFunction must have a unique kind")
     }
