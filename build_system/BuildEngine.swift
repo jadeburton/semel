@@ -70,7 +70,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database235.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database236.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
@@ -178,11 +178,28 @@ final class BuildEngine {
             return
         }
 
-        try? nodeFunction.processWithPreCheck()
+        // Clear the scheduled flag BEFORE reading inputs or processing.
+        //
+        // Why before, not after?
+        // In the parallel world, two nodes can run concurrently. If upstream
+        // NodeA finishes while downstream NodeB is still processing, NodeA calls
+        // setScheduledAndSave(NodeB, true). If we cleared the flag AFTER
+        // processWithPreCheck (old behaviour), NodeB's final `setScheduledAndSave(false)`
+        // would overwrite NodeA's `true`, leaving NodeB permanently unscheduled
+        // even though it has fresh input waiting — the race that required "nudge"
+        // to recover from.
+        //
+        // By clearing BEFORE we read inputs:
+        //   - If NodeA writes its output BEFORE we read inputs → we see fresh data
+        //     and process correctly in this pass.
+        //   - If NodeA writes its output AFTER we read inputs → our flag is already
+        //     false, so NodeA's setScheduledAndSave(NodeB, true) sticks uncontested,
+        //     and the next drain pass picks NodeB up.
+        // Either way the flag is never silently lost.
+        var nodeToUnschedule = node
+        try nodeToUnschedule.setScheduledAndSave(false)
 
-        // TODO! nodeFunction.thisNode probably should not be modified at all
-        var node = nodeFunction.thisNode
-        try node.setScheduledAndSave(false)
+        try? nodeFunction.processWithPreCheck()
     }
 }
 
