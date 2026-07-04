@@ -26,11 +26,6 @@ struct Folder: InputlessNodeFunction, HasPath {
     init(thisNode: Node) throws {
         embeddedNode = thisNode
         embeddedNode!.name = name
-
-        // input: thisNode.properties["path"] = "inputFileSystem/src" name = "src", containingPath = "inputFileSystem"
-        // parentNodeID = the folder that corresponds to containingPath, creating it if necessary.
-        // root folder ID is always either outputFileSystem or inputFileSystem, depending on which one the containingPath starts with.
-
         embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
     }
 

@@ -44,9 +44,9 @@ extension Wire {
                                           toSymbolID: toSymbolID,
                                           name: name))
 
-        var toNode = try database.node.select(nodeID: toNodeID)
+        let toNode = try database.node.select(nodeID: toNodeID)
         try toNode.writePendingToAllOutputsOfNode()
-        try toNode.setScheduledAndSave(true)
+        try toNode.setScheduled(true)
     }
 
     /// Returns `true` if a wire going to `(toNodeID, toSymbolID)` already uses
@@ -75,9 +75,9 @@ extension Wire {
         }
 
         // We deleted an input to another Node; it should update.
-        var toNode = try database.node.select(nodeID: toNodeID)
+        let toNode = try database.node.select(nodeID: toNodeID)
         try toNode.writePendingToAllOutputsOfNode()
-        try toNode.setScheduledAndSave(true)
+        try toNode.setScheduled(true)
 
         // After deleting the Wire, check the origin (outputting) Node. If it now has no output wires at all, and if it is deletable,
         // delete it.

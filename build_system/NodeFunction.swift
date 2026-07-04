@@ -134,14 +134,18 @@ extension NodeFunction {
         }
 
         let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
-        let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey)
 
-        let output = cachedOutput ?? processWithCatch(input: input)
+        if let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey) {
+            try? writeToOutputs(output: cachedOutput)
+        } else {
 
-        try? writeToOutputs(output: output)
+            let startTime = Date.now
+            let output = processWithCatch(input: input)
+            try? writeToOutputs(output: output)
 
-        if cachedOutput == nil {
-            try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey, output: output)
+            try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey,
+                                                 processingDuration: Date.now.timeIntervalSince(startTime),
+                                                 output: output)
         }
     }
 }

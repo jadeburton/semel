@@ -108,8 +108,7 @@ struct ClangLinkerTool: NodeFunction {
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputs = try ClangLinkerToolInputs(input: input)
-        return try process(inputs: inputs).asProcessOutput()
+        try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
     func process(inputs: ClangLinkerToolInputs) throws -> ClangLinkerToolOutputs {

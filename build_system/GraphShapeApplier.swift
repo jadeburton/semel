@@ -248,11 +248,11 @@ extension GraphShapeNode {
         // ── All other node types ───────────────────────────────────────────────
         let properties = args.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
 
-        var newNode    = try Node.createNode(database: database,
-                                             kind: kind,
-                                             properties: properties,
-                                             searchKey: asString(omitOutputPort: true))
-        let newNodeID  = newNode.id!
+        let newNode = try Node.createNode(database: database,
+                                          kind: kind,
+                                          properties: properties,
+                                          searchKey: asString(omitOutputPort: true))
+//        let newNodeID  = newNode.id!
 
         // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
@@ -272,7 +272,7 @@ extension GraphShapeNode {
                 try Wire.connectWire(database: database,
                                      fromNodeID: fromNodeID,
                                      fromSymbolID: fromSymbolID,
-                                     toNodeID: newNodeID,
+                                     toNodeID: newNode.id!,
                                      toSymbolID: toSymbolID,
                                      name: wireSpec.name.asSymbolID())
             }
@@ -285,8 +285,8 @@ extension GraphShapeNode {
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
             let portSymbolID   = portSpec.portName.asSymbolID()
-            let connectedWires = try database.wire.select(goingToNodeID: newNodeID,
-                                                                      toSymbolID:    portSymbolID)
+            let connectedWires = try database.wire.select(goingToNodeID: newNode.id!,
+                                                          toSymbolID: portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.
                 throw GraphShapeApplierError.requiredPortUnwired(typeName: typeName,
@@ -295,10 +295,10 @@ extension GraphShapeNode {
         }
 
         if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
-            try newNode.setScheduledAndSave(true)
+            try newNode.setScheduled(true)
         }
 
-        return newNodeID
+        return newNode.id!
     }
 }
 

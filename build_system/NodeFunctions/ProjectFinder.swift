@@ -7,8 +7,6 @@
 
 import Foundation
 
-// MARK: - ProjectFinder
-
 /// Watches an input file-list and creates a ProjectBuilder child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
 struct ProjectFinder: NodeFunction {
@@ -48,8 +46,6 @@ struct ProjectFinder: NodeFunction {
 
     func process(input: ProcessInput) throws -> ProcessOutput {
         var projectBuildersExpectations = [String: String]()
-
-        // TODO: when an input .fmla file goes to "deleted", we need to erase the corresponding ProjectBuilder and its wires. This is not yet implemented.
 
         if let folderManifestInputValue = input.inputValues[Self.folderManifestInputPort]?.first {
             let object = try? PolyFactory.decode(encodedJSON: folderManifestInputValue.value.expectValue().resolveAsString())

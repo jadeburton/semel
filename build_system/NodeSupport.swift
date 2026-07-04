@@ -114,7 +114,7 @@ extension Node {
         try nodeFunction.writeToOutputs(output: output)
 
         if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
-            try node.setScheduledAndSave(true)
+            try node.setScheduled(true)
         }
 
         // Patch in cached search key if one was not supplied
@@ -211,7 +211,7 @@ extension Node {
         return currentNode
     }
 
-    mutating func setScheduledAndSave(_ scheduled: Bool) throws {
+    func setScheduled(_ scheduled: Bool) throws {
         let nodeFunction = try self.nodeFunction()
 
         guard nodeFunction is NodeFunction else {
@@ -219,8 +219,6 @@ extension Node {
             print("Attempted to schedule a \(self) / \(type(of: nodeFunction)) that cannot be scheduled because it does not accept inputs. Ignoring.")
             return
         }
-
-        self.scheduled = scheduled
 
         // Use the targeted single-column update so we never accidentally
         // overwrite other columns (or another task's scheduling decision)
@@ -292,12 +290,12 @@ extension Node {
         try database.outputPort.insertOrUpdate(port)
 
         for wire in try database.wire.select(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
-            var toNode = try database.node.select(nodeID: wire.toNodeID)
+            let toNode = try database.node.select(nodeID: wire.toNodeID)
 
             try toNode.writePendingToAllOutputsOfNode()
 
             if port.valueKind != .pending {
-                try toNode.setScheduledAndSave(true)
+                try toNode.setScheduled(true)
             }
         }
         return true

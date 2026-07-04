@@ -65,14 +65,14 @@ struct ClangPreprocessorTool: NodeFunction {
         let headerFiles: [FileNameAndContent]
         let includePathLists: [String: [String]]
 
-        init(processInput: ProcessInput) throws {
-            let configurationString = try processInput.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
+        init(input: ProcessInput) throws {
+            let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = .init(properties: [String: String](plainText: configurationString))
 
-            let input = processInput.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
-            inputSourceFile = .init(filePath: input.key, content: try input.value.expectValue().resolve())
+            let sourceFileInput = input.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
+            inputSourceFile = .init(filePath: sourceFileInput.key, content: try sourceFileInput.value.expectValue().resolve())
 
-            let headerInputFiles = processInput.inputValues[ClangPreprocessorTool.headerInputFiles]!
+            let headerInputFiles = input.inputValues[ClangPreprocessorTool.headerInputFiles]!
 
             var headerFiles: [FileNameAndContent] = []
 
@@ -82,7 +82,7 @@ struct ClangPreprocessorTool: NodeFunction {
 
             self.headerFiles = headerFiles
 
-            includePathLists = try Dictionary(uniqueKeysWithValues: processInput.inputValues[ClangPreprocessorTool.includeFileLists]!.map { includeFilesValue in
+            includePathLists = try Dictionary(uniqueKeysWithValues: input.inputValues[ClangPreprocessorTool.includeFileLists]!.map { includeFilesValue in
                 let wireName = includeFilesValue.key
                 let list = try includeFilesValue.value
                     .expectValue()
@@ -112,8 +112,7 @@ struct ClangPreprocessorTool: NodeFunction {
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputs = try ClangPreprocessorToolInputs(processInput: input)
-        return try process(inputs: inputs).asProcessOutput()
+        try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
     private func runPreprocessor(inputs: ClangPreprocessorToolInputs,

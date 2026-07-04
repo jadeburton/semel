@@ -5,7 +5,7 @@
 //  Created by Jade Burton on 06.02.26.
 //
 
-import GRDB
+@preconcurrency import GRDB
 
 public protocol DataAccessType {
     init(databaseLayer: DatabaseLayer)
@@ -43,21 +43,28 @@ public final class DatabaseLayer {
     // @TaskLocal propagates through synchronous call stacks within the scope of
     // `withValue`, so all helpers called from inside `withTransaction` see it
     // automatically — no parameter threading required.
-    @TaskLocal static var currentDB: Database? = nil
+    //
+    // `Database` is not `Sendable` (GRDB intentionally prevents it from crossing
+    // task boundaries), so we wrap it in a thin `@unchecked Sendable` box.
+    // Safety is upheld because the wrapped connection is only ever read within the
+    // same `withValue` scope on the originating task — it never actually crosses
+    // a concurrency boundary.
+
+    struct TaskLocalDatabase: @unchecked Sendable {
+        let db: Database
+    }
+
+    @TaskLocal static var currentDB: TaskLocalDatabase? = nil
 
     // ── Internal helpers used by every extension method ──────────────────────
-    //
-    // Use the active transaction connection when available, otherwise acquire a
-    // new one from the queue.  All extension methods in Node.swift, Wire.swift,
-    // etc. call these instead of dbQueue.read/write directly.
 
     func read<T>(_ block: (Database) throws -> T) throws -> T {
-        if let db = DatabaseLayer.currentDB { return try block(db) }
+        if let wrapper = DatabaseLayer.currentDB { return try block(wrapper.db) }
         return try dbQueue.read { db in try block(db) }
     }
 
     func write<T>(_ block: (Database) throws -> T) throws -> T {
-        if let db = DatabaseLayer.currentDB { return try block(db) }
+        if let wrapper = DatabaseLayer.currentDB { return try block(wrapper.db) }
         return try dbQueue.write { db in try block(db) }
     }
 
@@ -85,7 +92,7 @@ public final class DatabaseLayer {
         if DatabaseLayer.currentDB != nil { return try work() }
 
         return try dbQueue.write { db in
-            try DatabaseLayer.$currentDB.withValue(db) {
+            try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
                 try work()
             }
         }

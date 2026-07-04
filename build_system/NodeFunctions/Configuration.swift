@@ -40,10 +40,6 @@ struct Configuration: NodeFunction {
     }
 }
 
-// INPUT FORMAT: a clear text string comprising a series of \n separated lines:
-//
-// key_name=value
-// key name with space=value also with spaces
 extension [String: String] {
     func mergedWith(_ other: [String: String]) -> [String: String] {
         var result = self

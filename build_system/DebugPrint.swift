@@ -29,7 +29,12 @@ extension BuildEngine {
 
     /// Format raw bytes as a quoted UTF-8 string, or hex if not valid UTF-8.
     private func formatBytes(_ bytes: [UInt8]?) -> String {
-        guard let bytes else { return "nil" }
+        guard let bytesUnlimited = bytes else {
+            return "nil"
+        }
+
+        let bytes = bytesUnlimited.prefix(128)
+
         if let string = String(bytes: bytes, encoding: .utf8) {
             return "\"\(string.replacingNonprintableCharacters().truncated())\""
         }
@@ -45,7 +50,7 @@ extension BuildEngine {
     private func symbolName(symbolID: ObjectID, database: DatabaseLayer) -> String {
         (try? database.symbol.select(symbolID: symbolID))?.name ?? "<invalid symbolID>"
     }
-    
+
     /// Format a wire as "fromNode:fromPort ──▶ toNode:toPort".
     private func formatWire(_ wire: Wire, nodeByID: [ObjectID: Node], database: DatabaseLayer) -> String {
         let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
@@ -80,8 +85,7 @@ extension BuildEngine {
 
     func nudge() throws {
         for node in try database.node.selectAll() where (try? node.hasOneOrMoreErrorOrPendingOutputs()) == true {
-            var node = node
-            try node.setScheduledAndSave(true)
+            try node.setScheduled(true)
         }
     }
 

@@ -82,8 +82,7 @@ struct ClangCompilerTool: NodeFunction {
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputs = try ClangCompilerToolInputs(input: input)
-        return try process(inputs: inputs).asProcessOutput()
+        try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
     func process(inputs: ClangCompilerToolInputs) throws -> ClangCompilerToolOutputs {

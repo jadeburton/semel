@@ -62,9 +62,11 @@ struct StaticFile: InputlessNodeFunction, FileType, HasPath {
             changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "File deleted")))
         }
 
-        if let parentNodeID {
-            let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-            try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: id!, name: name)
+        if changed {
+            if let parentNodeID {
+                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
+                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: id!, name: name)
+            }
         }
 
         return changed

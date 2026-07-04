@@ -70,7 +70,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database237.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database238.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
@@ -153,7 +153,10 @@ final class BuildEngine {
     /// cancel the processing of its siblings.
     private func processSomeNodes() async throws -> Bool {
         let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
-        guard !rawNodes.isEmpty else { return false }
+
+        guard !rawNodes.isEmpty else {
+            return false
+        }
 
         await withTaskGroup(of: Void.self) { group in
             for rawNode in rawNodes {
@@ -167,37 +170,17 @@ final class BuildEngine {
             }
             await group.waitForAll()
         }
+
         return true
     }
 
     func processOneNode(_ node: Node) throws {
+        try node.setScheduled(false)
+
         guard let nodeFunction = try node.nodeFunction() as? NodeFunction else {
             print("WARNING: attempted to process a non-inputtable Node")
-            var node = node
-            try node.setScheduledAndSave(false)
             return
         }
-
-        // Clear the scheduled flag BEFORE reading inputs or processing.
-        //
-        // Why before, not after?
-        // In the parallel world, two nodes can run concurrently. If upstream
-        // NodeA finishes while downstream NodeB is still processing, NodeA calls
-        // setScheduledAndSave(NodeB, true). If we cleared the flag AFTER
-        // processWithPreCheck (old behaviour), NodeB's final `setScheduledAndSave(false)`
-        // would overwrite NodeA's `true`, leaving NodeB permanently unscheduled
-        // even though it has fresh input waiting — the race that required "nudge"
-        // to recover from.
-        //
-        // By clearing BEFORE we read inputs:
-        //   - If NodeA writes its output BEFORE we read inputs → we see fresh data
-        //     and process correctly in this pass.
-        //   - If NodeA writes its output AFTER we read inputs → our flag is already
-        //     false, so NodeA's setScheduledAndSave(NodeB, true) sticks uncontested,
-        //     and the next drain pass picks NodeB up.
-        // Either way the flag is never silently lost.
-        var nodeToUnschedule = node
-        try nodeToUnschedule.setScheduledAndSave(false)
 
         try? nodeFunction.processWithPreCheck()
     }
