@@ -25,7 +25,6 @@ public extension DataAccessType {
 public final class DatabaseLayer {
     public lazy var node       = NodeDataAccess(databaseLayer: self)
     public lazy var wire       = WireDataAccess(databaseLayer: self)
-    public lazy var dataObject = DataObjectDataAccess(databaseLayer: self)
     public lazy var symbol     = SymbolDataAccess(databaseLayer: self)
     public lazy var outputPort = OutputPortDataAccess(databaseLayer: self)
     public lazy var cacheEntry = CacheEntryDataAccess(databaseLayer: self)
@@ -74,7 +73,6 @@ public final class DatabaseLayer {
         case nodeNotFound
         case nodePortNotFound
         case wireNotFound
-        case dataObjectNotFound
     }
 
     /// Execute `work` inside a single GRDB write transaction.
@@ -113,7 +111,6 @@ public final class DatabaseLayer {
 
         try Node.createTable(dbQueue: dbQueue)
         try Wire.createTable(dbQueue: dbQueue)
-        try DataObject.createTable(dbQueue: dbQueue)
         try CacheEntry.createTable(dbQueue: dbQueue)
         try Symbol.createTable(dbQueue: dbQueue)
         try OutputPort.createTable(dbQueue: dbQueue)

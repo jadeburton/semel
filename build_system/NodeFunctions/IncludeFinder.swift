@@ -72,7 +72,7 @@ struct IncludeFinder: NodeFunction {
             var inputSourceFiles: [FileNameAndContent] = []
 
             for (headerFileName, nodeValue) in sourceFiles {
-                inputSourceFiles.append(.init(filePath: headerFileName, content: try nodeValue.expectValue().resolve()))
+                inputSourceFiles.append(.init(filePath: headerFileName, hash: try nodeValue.expectValue()))
             }
 
             self.inputSourceFiles = inputSourceFiles
@@ -97,7 +97,8 @@ struct IncludeFinder: NodeFunction {
 
         for sourceFileValue in inputs.inputSourceFiles {
             let containingFolderOfSourceFile = sourceFileValue.filePath.deletingLastPathComponent() ?? ""
-            let includePathList = extractIncludePaths(sourceFileContent: sourceFileValue.contentAsString).map { containingFolderOfSourceFile.appendingPathComponent($0) }
+            let sourceContent = (try? sourceFileValue.contentAsString) ?? ""
+            let includePathList = extractIncludePaths(sourceFileContent: sourceContent).map { containingFolderOfSourceFile.appendingPathComponent($0) }
 
             aggregatedIncludePathList.append(includePathList.joined(separator: "\n"))
         }

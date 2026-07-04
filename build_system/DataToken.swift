@@ -17,10 +17,8 @@ extension [UInt8] {
         }
 
         let hash = Sha256.hash(self)
-        // INSERT OR IGNORE is atomic: concurrent tasks interning identical bytes
-        // will not race — the second writer silently does nothing and both get
-        // back the same hash that was committed by the first.
-        try! DatabaseLayer.shared.dataObject.insertOrIgnore(DataObject(hash: hash, content: Data(self)))
+        // Write bytes to the filesystem store (idempotent).
+        try! DataObjectStore.shared.store(hash: hash, content: self)
         return hash
     }
 }
@@ -38,16 +36,18 @@ enum DataObjectError: Error {
 }
 
 extension DataToken {
+    /// Reads the bytes for this token directly from the filesystem store —
+    /// no database round-trip required.
     func resolve() throws -> [UInt8] {
         if isEmpty {
             return []
         }
 
-        guard let dataObject = try DatabaseLayer.shared.dataObject.select(hash: self) else {
+        guard let bytes = DataObjectStore.shared.read(hash: self) else {
             throw DataObjectError.dataObjectNotFoundByHash
         }
 
-        return [UInt8](dataObject.content)
+        return bytes
     }
 
     func resolveAsString() throws -> String {

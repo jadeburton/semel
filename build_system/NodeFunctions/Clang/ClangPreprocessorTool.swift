@@ -70,14 +70,14 @@ struct ClangPreprocessorTool: NodeFunction {
             configuration = .init(properties: [String: String](plainText: configurationString))
 
             let sourceFileInput = input.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
-            inputSourceFile = .init(filePath: sourceFileInput.key, content: try sourceFileInput.value.expectValue().resolve())
+            inputSourceFile = .init(filePath: sourceFileInput.key, hash: try sourceFileInput.value.expectValue())
 
             let headerInputFiles = input.inputValues[ClangPreprocessorTool.headerInputFiles]!
 
             var headerFiles: [FileNameAndContent] = []
 
             for (headerFileName, nodeValue) in headerInputFiles {
-                headerFiles.append(.init(filePath: headerFileName, content: try nodeValue.expectValue().resolve()))
+                headerFiles.append(.init(filePath: headerFileName, hash: try nodeValue.expectValue()))
             }
 
             self.headerFiles = headerFiles
@@ -138,7 +138,7 @@ struct ClangPreprocessorTool: NodeFunction {
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
-        var inputFiles: [FileNameAndContent] = [.init(filePath: inputs.inputSourceFile.filePath, content: inputs.inputSourceFile.content)]
+        var inputFiles: [FileNameAndContent] = [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)]
 
         inputFiles.append(contentsOf: inputs.headerFiles)
 

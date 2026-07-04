@@ -34,14 +34,25 @@ struct ToolOutput {
     let write: (_ filePath: String, _ data: [UInt8]) -> Void
 }
 
+/// A file entry passed to a `ToolExecutor`.
+///
+/// The content is never held in memory here — it must already be stored in
+/// `DataObjectStore` before the tool is invoked.  `LocalFileSystemTool`
+/// projects the file into the sandbox via an APFS copy-on-write clone using
+/// the SHA-256 `hash` as the lookup key.
 struct FileNameAndContent {
     let filePath: String
-    let content: [UInt8]
+    /// SHA-256 hex digest that identifies the content in `DataObjectStore`.
+    let hash: String
 }
 
 extension FileNameAndContent {
+    /// Reads the content from `DataObjectStore` and decodes it as UTF-8.
     var contentAsString: String {
-        String(decoding: content, as: Unicode.UTF8.self)
+        get throws {
+            guard let bytes = DataObjectStore.shared.read(hash: hash) else { return "" }
+            return String(decoding: bytes, as: Unicode.UTF8.self)
+        }
     }
 }
 
@@ -82,8 +93,6 @@ class ToolExecutorRegistry {
 
 class DefaultTools {
     /// Registers all known tools with the given registry.
-    /// In the future this would discover tools from the filesystem or a container,
-    /// but for now clang is hardcoded as the sole example.
     static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
         try toolExecutorRegistry.registerTool(
             descriptor: .init(name: "clang",
@@ -100,6 +109,11 @@ class DefaultTools {
 /// Runs a tool that lives in the local filesystem (e.g. /usr/bin/clang) inside a
 /// temporary sandbox directory so that the tool cannot accidentally read files
 /// that were not explicitly passed in as inputs.
+///
+/// Input files are populated via `DataObjectStore.project(hash:to:)`, which uses
+/// an APFS copy-on-write clone (essentially free) when available.
+/// All input bytes must already be stored in `DataObjectStore` before calling
+/// `execute` — `FileNameAndContent` carries only the path and the hash.
 class LocalFileSystemTool: ToolExecutor {
     private let localPath: String
 
@@ -137,28 +151,26 @@ class LocalFileSystemTool: ToolExecutor {
             throw ToolExecutionError.failedToCreateSandbox(underlying: error)
         }
 
-        // Ensure the sandbox is always cleaned up, even if we throw partway through.
-        defer {
-            try? fileManager.removeItem(atPath: sandboxPath)
-        }
+        defer { try? fileManager.removeItem(atPath: sandboxPath) }
 
-        // print("Executing tool in sandbox path: \(sandboxPath)")
-
-        // 2. Write all input files into the sandbox, creating intermediate directories as needed.
+        // 2. Populate input files in the sandbox via DataObjectStore (APFS clone).
         for inputFile in inputFiles {
-            let inputFileURL = Foundation.URL(fileURLWithPath: sandboxPath)
-                .appendingPathComponent(inputFile.filePath)
-            let containingDirectory = inputFileURL.deletingLastPathComponent().path
+
+            let destinationURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(inputFile.filePath)
+            let containingDirectory = destinationURL.deletingLastPathComponent().path
 
             do {
                 if !fileManager.fileExists(atPath: containingDirectory) {
                     try fileManager.createDirectory(atPath: containingDirectory,
                                                     withIntermediateDirectories: true)
                 }
-                try Foundation.Data(inputFile.content).write(to: inputFileURL)
+
+                // Throws if not found.
+                try DataObjectStore.shared.project(hash: inputFile.hash, to: destinationURL)
+
             } catch {
                 throw ToolExecutionError.failedToWriteInputFile(fileName: inputFile.filePath,
-                                                                underlying: error)
+                                                               underlying: error)
             }
         }
 
@@ -168,16 +180,16 @@ class LocalFileSystemTool: ToolExecutor {
         process.arguments = arguments
         process.currentDirectoryURL = Foundation.URL(fileURLWithPath: sandboxPath)
 
-        // Merge the caller-supplied environment on top of a minimal base.
-        // We intentionally do NOT inherit the host's full environment to maintain hermeticity.
         var processEnvironment: [String: String] = [
             "PATH":   "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME":   sandboxPath,
             "TMPDIR": sandboxPath,
         ]
+
         for (key, value) in environment {
             processEnvironment[key] = value
         }
+
         process.environment = processEnvironment
 
         let stdoutPipe = Foundation.Pipe()
@@ -185,42 +197,56 @@ class LocalFileSystemTool: ToolExecutor {
         process.standardOutput = stdoutPipe
         process.standardError  = stderrPipe
 
-        do {
-            try process.run()
-        } catch {
+        do { try process.run() } catch {
             throw ToolExecutionError.processLaunchFailed(underlying: error)
         }
 
-        // 4. Wait for the process to finish and collect stdout/stderr.
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // 4. Drain stdout and stderr on background threads WHILE the process runs.
+        //    Reading after waitUntilExit() risks deadlock if the tool writes more
+        //    than the OS pipe buffer (~64 KB) before the process exits.
+        var stdoutData = Foundation.Data()
+        var stderrData = Foundation.Data()
+        let ioGroup = DispatchGroup()
+
+        ioGroup.enter()
+
+        DispatchQueue.global(qos: .utility).async {
+            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            ioGroup.leave()
+        }
+
+        ioGroup.enter()
+
+        DispatchQueue.global(qos: .utility).async {
+            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            ioGroup.leave()
+        }
+
         process.waitUntilExit()
+        ioGroup.wait()
 
         let exitCode = process.terminationStatus
 
         // 5. Forward stdout and stderr to ToolOutput.
-        if let stdoutString = String(data: stdoutData, encoding: .utf8), !stdoutString.isEmpty {
-            output.logMessage(stdoutString)
-        }
-        if let stderrString = String(data: stderrData, encoding: .utf8), !stderrString.isEmpty {
-            output.logError(stderrString)
+        if let text = String(data: stdoutData, encoding: .utf8), !text.isEmpty {
+            output.logMessage(text)
         }
 
-        // 6. Read back each expected output file and forward it via ToolOutput.
-        //    Missing files are logged as errors so the caller gets maximum information.
+        if let text = String(data: stderrData, encoding: .utf8), !text.isEmpty {
+            output.logError(text)
+        }
+
+        // 6. Read back expected output files and forward via ToolOutput.
         for expectedOutputFileName in expectedOutputFileNames {
             let outputFileURL = Foundation.URL(fileURLWithPath: sandboxPath)
                 .appendingPathComponent(expectedOutputFileName)
-            if let outputFileData = fileManager.contents(atPath: outputFileURL.path) {
-                output.write(expectedOutputFileName, [UInt8](outputFileData))
+            if let data = fileManager.contents(atPath: outputFileURL.path) {
+                output.write(expectedOutputFileName, [UInt8](data))
             } else {
                 output.logError("Expected output file not found: \(expectedOutputFileName)")
             }
         }
 
-        // 7. Notify the caller that the tool has terminated.
         return exitCode
-
-        // The defer block above cleans up the sandbox directory.
     }
 }

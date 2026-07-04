@@ -61,6 +61,12 @@ public struct CacheEntryDataAccess: DataAccessType {
     // the oldest ones based on the timestamp column.
 }
 
+private extension Sequence<UInt8> {
+    func asHex() -> String {
+        map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 extension CacheEntry: CustomStringConvertible {
     public var description: String {
         "CacheEntry hash=0x\(hash), size=\(content.count) byte(s), content=0x\(content.prefix(16).asHex())\(content.count > 16 ? "..." : "")"

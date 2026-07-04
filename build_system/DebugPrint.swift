@@ -94,7 +94,7 @@ extension BuildEngine {
     func printAll() throws {
         let allNodes       = try database.node.selectAll()
         let allWires       = try database.wire.selectAll()
-        let allDataObjects = try database.dataObject.selectAll()
+        let allDataHashes  = DataObjectStore.shared.allHashes()
 
         // Indexes built once and reused throughout
         let nodeByID: [ObjectID: Node] = Dictionary(
@@ -177,10 +177,12 @@ extension BuildEngine {
         
         // MARK: Section 3 — Data objects
         
-        if !allDataObjects.isEmpty {
-            printSectionHeader("DATA OBJECTS (\(allDataObjects.count))")
-            for dataObject in allDataObjects {
-                print("  · 🗄 \(dataObject.content.count) byte(s): \(formatBytes([UInt8](dataObject.content)))")
+        if !allDataHashes.isEmpty {
+            printSectionHeader("DATA OBJECTS (\(allDataHashes.count))")
+            for hash in allDataHashes {
+                let byteCount = DataObjectStore.shared.size(hash: hash) ?? 0
+                let preview   = formatBytes(DataObjectStore.shared.read(hash: hash))
+                print("  · 🗄 \(byteCount) byte(s): \(preview)")
             }
             print()
         }

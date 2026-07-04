@@ -64,7 +64,7 @@ struct ClangCompilerTool: NodeFunction {
             configuration = .init(properties: [String: String](plainText: configurationString))
 
             let input = input.inputValues[ClangCompilerTool.input]!.first!
-            inputSourceFile = .init(filePath: input.key, content: try input.value.expectValue().resolve())
+            inputSourceFile = .init(filePath: input.key, hash: try input.value.expectValue())
         }
     }
 
@@ -106,7 +106,7 @@ struct ClangCompilerTool: NodeFunction {
         let exitCode = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, content: inputs.inputSourceFile.content)],
+            inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)],
             expectedOutputFileNames: [outputFilename],
             output: .init(logError: { error in
                               errorOutput += error
