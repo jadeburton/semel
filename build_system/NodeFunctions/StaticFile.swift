@@ -5,18 +5,24 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
+protocol Pinnable {
+    var isPinned: Bool { get throws }
+}
+
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-struct StaticFile: InputlessNodeFunction, FileType, HasPath {
+struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable {
     static let kind: UInt = 3
 
-    func isGhost() throws -> Bool {
-        guard let nodeValue = try read() else {
-            return true
-        }
+    var isPinned: Bool {
+        get throws {
+            guard let nodeValue = try read() else {
+                return false
+            }
 
-        return nodeValue.isNoValue
+            return !nodeValue.isNoValue
+        }
     }
 
     static let outputPort = "output"
@@ -46,7 +52,7 @@ struct StaticFile: InputlessNodeFunction, FileType, HasPath {
     // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted
     // if there are no output Wires.
     func canBeDeleted() throws -> Bool {
-        try isGhost()
+        try !isPinned
     }
 
     func read() throws -> NodeValue? {
@@ -59,7 +65,7 @@ struct StaticFile: InputlessNodeFunction, FileType, HasPath {
         if let content {
             changed = try thisNode.writeToOutputPort(Self.outputPort, value: .value(content))
         } else {
-            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "File deleted")))
+            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "Deleted")))
         }
 
         if changed {

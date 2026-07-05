@@ -10,6 +10,7 @@ import Foundation
 struct FolderManifestEntry: Codable {
     let name: String
     let isFolder: Bool
+    let isPinned: Bool
 }
 
 struct FolderManifest: PolySerializable {
@@ -18,7 +19,7 @@ struct FolderManifest: PolySerializable {
     let entries: [FolderManifestEntry]
 }
 
-struct Folder: InputlessNodeFunction, HasPath {
+struct Folder: InputlessNodeFunction, HasPath, Pinnable {
     static let kind: UInt = 1
 
     var embeddedNode: Node?
@@ -36,7 +37,8 @@ struct Folder: InputlessNodeFunction, HasPath {
     }
 
     func didCreate() throws -> ProcessOutput? {
-        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern())],
+        .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
+                             Self.pinnedOutputPort: .noValue(reason: .error(message: "Deleted"))],
               inputWireExpectations: [:])
     }
 
@@ -45,17 +47,22 @@ struct Folder: InputlessNodeFunction, HasPath {
     }
 
     func canBeDeleted() throws -> Bool {
-        try thisNode.allChildren.isEmpty
+        try thisNode.allChildren.isEmpty && !isPinned
     }
 
     // The manifest is a non-recursive list of immediate children
     static let folderManifestOutputPort = "manifest"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [folderManifestOutputPort], dynamicInputPorts: [])
+    // Nodes are not normally allowed to store state. A Folder in the input file system, however, needs to know if the user deleted it
+    // (or never pushed it) but it has references from the graph -- called a ghost or "not pinned". StaticFiles represent this ghost
+    // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
+    static let pinnedOutputPort = "pinned"
+
+    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
+                                            outputPorts: [folderManifestOutputPort, pinnedOutputPort])
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
-    //
     func notifyChildAdded(newChildNode: Node) throws {
         try refreshOutputs()
     }
@@ -64,19 +71,26 @@ struct Folder: InputlessNodeFunction, HasPath {
         try refreshOutputs()
     }
 
+    var isPinned: Bool {
+        get throws {
+            try !thisNode.readFromOutputPort(Self.pinnedOutputPort).isNoValue
+        }
+    }
+
+    func setPinned(_ pinned: Bool) throws {
+        try thisNode.writeToOutputPort(Self.pinnedOutputPort,
+                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted")))
+    }
+
     private func buildManifest() throws -> FolderManifest {
         var folderManifestEntries = [FolderManifestEntry]()
 
         for child in try thisNode.allChildren {
+            let pinnable = try child.nodeFunction() as? Pinnable
 
-            // Hide ghosts
-            if let staticFile = try child.nodeFunction() as? StaticFile {
-                if try staticFile.isGhost() {
-                    continue
-                }
-            }
-
-            folderManifestEntries.append(.init(name: child.name!, isFolder: child.kind == Folder.kind))
+            folderManifestEntries.append(.init(name: child.name!,
+                                               isFolder: child.kind == Folder.kind,
+                                               isPinned: (pinnable != nil) ? try pinnable!.isPinned : false))
         }
 
         return .init(entries: folderManifestEntries)

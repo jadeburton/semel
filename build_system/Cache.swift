@@ -73,7 +73,7 @@ extension NodeFunction {
             return
         }
 
-        print("Cache cost: \(processingDuration)")
+        print("Cache cost: \(Int(processingDuration * 1000.0)) ms")
 
         if descriptor.staticInputPorts.isEmpty {
             return

@@ -40,7 +40,9 @@ final class BuildEngine {
             ClangCompilerTool.self,
             ClangPreprocessorTool.self,
             Configuration.self,
-            IncludeFinder.self
+            IncludeFinder.self,
+            SwiftCompilerTool.self,
+            SwiftLinkerTool.self
         ])
     }
 
@@ -70,7 +72,7 @@ final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database239.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database250.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)

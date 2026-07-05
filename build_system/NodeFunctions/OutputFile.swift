@@ -50,14 +50,14 @@ extension HasPath {
         }
 
         // Walk (creating as needed) the remaining components beneath the root folder
-        let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath)
+        let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath, pinned: false)
         return resolvedFolder.id!
     }
 
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
-struct OutputFile: NodeFunction, FileType, HasPath {
+struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
 
     static let kind: UInt = 8
 
@@ -84,6 +84,16 @@ struct OutputFile: NodeFunction, FileType, HasPath {
                      inputWireExpectations: [:])
     }
 
+    var isPinned: Bool {
+        get throws {
+            guard let nodeValue = try read() else {
+                return false
+            }
+
+            return !nodeValue.isNoValue
+        }
+    }
+
     func process(input: ProcessInput) throws -> ProcessOutput {
         let inputValue = input.inputValues[Self.inputPort]!.first!
 
@@ -103,7 +113,6 @@ struct OutputFile: NodeFunction, FileType, HasPath {
     }
 
     func read() throws -> NodeValue? {
-        let inputs = try thisNode.readFromInputPort(Self.inputPort)
-        return inputs.first!.value
+        try thisNode.readFromInputPort(Self.inputPort).first!.value
     }
 }

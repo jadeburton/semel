@@ -256,21 +256,23 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
 
             case Folder.kind:
                 guard let folder = try node.nodeFunction() as? Folder else {
+                    assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
                 return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
-                                         isMissing: false,
+                                         isMissing: try !folder.isPinned,
                                          isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
 
             default:
                 let nodeFunction = try node.nodeFunction()
-                guard let file = nodeFunction as? FileType else {
+                guard let pinnable = nodeFunction as? Pinnable else {
+                    assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
                 return FileWildcardEntry(path: node.name!,
                                          kind: .file,
-                                         isMissing: try file.read()!.isNoValue,
+                                         isMissing: try !pinnable.isPinned,
                                          isUnreferenced: try nodeFunction.hasNoOutputWires())
             }
         }
@@ -614,14 +616,18 @@ final class CommandInterpreter {
             let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath)
             let fileContent = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
-            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: 'inputFileSystem/\(relativePath)')")
+            // Any pushed file implicitly pins all Folders underneath
+            _ = try inputFileSystem.ensureEntirePathExistsAsFolders(relativePath.deletingLastPathComponent() ?? "", pinned: true)
+
+            let pathIncludingInputFileSystem = "inputFileSystem".appendingPathComponent(relativePath)
+
+            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(pathIncludingInputFileSystem)')")
             let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
             let fromNode = try database.node.select(nodeID: fromNodeID)
             _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(fileContent.intern())
 
         case .folder:
-            // TODO: each folder should notify its parent of creation
-            _ = try inputFileSystem.ensureEntirePathExistsAsFolders(relativePath)
+            _ = try inputFileSystem.ensureEntirePathExistsAsFolders(relativePath, pinned: true)
         }
     }
 
@@ -669,7 +675,6 @@ final class CommandInterpreter {
     }
 
     private func removeStaticFile(nodeFunction: StaticFile) throws {
-        outputMessage("Remove file: \(nodeFunction.name)")
 
         // This automatically notifies the parent Folder, which is important, as it should no longer include the ghost in its manifest.
         // (The ProjectFinder needs to know when a Project becomes a ghost - so it can remove the corresponding ProjectBuilder and release
@@ -686,6 +691,8 @@ final class CommandInterpreter {
                 try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: nodeFunction.id!,
                                                                                               name: nodeFunction.name)
             }
+        } else {
+            outputMessage("Cannot delete; file in use: \(nodeFunction.name)")
         }
 
         // - if the Node is used by the build graph, it must not be user-deleted, as this will invalidate the graph even if the file is re-added.
@@ -704,15 +711,15 @@ final class CommandInterpreter {
 
         if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
             _ = try database.node.delete(nodeID: node.id!)
-
-            if let parentNodeID = node.parentNodeID {
-                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
-                                                                                              name: node.name!)
-            }
         } else {
-            // TODO: If there are no children but there are outputs, mark the folder as a ghost. Parent folder should not include in manifest.
-            outputError("Cannot delete Folder; in use")
+            // If there are no children but there are outputs, mark the folder as a ghost / not-pinned.
+            try nodeFunction.setPinned(false)
+        }
+
+        if let parentNodeID = node.parentNodeID {
+            let parentFolderNode = try database.node.select(nodeID: parentNodeID)
+            try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: node.id!,
+                                                                                          name: node.name!)
         }
     }
 

@@ -101,6 +101,13 @@ class DefaultTools {
                               architecture: "arm64",
                               recursiveHash: ""),
             toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
+        try toolExecutorRegistry.registerTool(
+            descriptor: .init(name: "swiftc",
+                              version: "Apple Swift version 6.2.3",
+                              platform: "macOS",
+                              architecture: "arm64",
+                              recursiveHash: ""),
+            toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"))
     }
 }
 

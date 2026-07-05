@@ -144,7 +144,7 @@ extension Node {
     }
 
     @discardableResult
-    func ensureEntirePathExistsAsFolders(_ path: String) throws -> Node {
+    func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
 
         let components = path
             .split(separator: "/", omittingEmptySubsequences: true)
@@ -169,10 +169,15 @@ extension Node {
             let existingChildren = try database.node.select(named: name, parentNodeID: currentFolder.id!)
 
             if existingChildren.count > 1 {
+                assert(false)
                 throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
             }
 
             if let existingChild = existingChildren.first {
+                if !(try existingChild.nodeFunction() is Folder) {
+                    break
+                }
+
                 currentFolder = existingChild
             } else {
 
@@ -187,6 +192,10 @@ extension Node {
 
                 try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder)
                 currentFolder = newFolder
+            }
+
+            if pinned {
+                try (currentFolder.nodeFunctionCast() as Folder).setPinned(true)
             }
         }
 

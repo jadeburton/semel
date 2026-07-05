@@ -110,7 +110,7 @@ extension BuildEngine {
         for rawNode in allNodes {
             guard let nodeID = rawNode.id else { continue }
             
-            let scheduled = rawNode.scheduled ? "⏱ scheduled" : "idle"
+            let scheduled = rawNode.scheduled ? "⏱ scheduled" : ""
             print("⬢ \(type(of: try rawNode.nodeFunction())) #\(nodeID)  \(scheduled)")
 
             if let name = rawNode.name {
@@ -171,12 +171,12 @@ extension BuildEngine {
                     }
                 }
             }
-            
+
             print()
         }
-        
+
         // MARK: Section 3 — Data objects
-        
+/*
         if !allDataHashes.isEmpty {
             printSectionHeader("DATA OBJECTS (\(allDataHashes.count))")
             for hash in allDataHashes {
@@ -186,7 +186,7 @@ extension BuildEngine {
             }
             print()
         }
-
+*/
         debugPrintTree()
     }
 
