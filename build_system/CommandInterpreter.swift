@@ -290,13 +290,31 @@ final class CommandInterpreter {
         }
 
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
-        try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+
+        // If the path has no wildcards and resolves to a single folder, list its
+        // immediate children (like `ls folderName` in a shell) rather than echoing
+        // the folder name back.
+        let hasWildcards = pathOrWildcard.contains("*") || pathOrWildcard.contains("?")
+        var results = try matcher.findAllMatching(pathOrWildcard: pathOrWildcard)
+
+        if !hasWildcards, results.count == 1, results[0].kind == .folder {
+            results = try matcher.findAllMatching(
+                pathOrWildcard: results[0].path.appendingPathComponent("*"))
+        }
+
+        if results.isEmpty {
+            outputMessage("(empty)")
+            return
+        }
+
+        for entry in results {
+            let suffix = entry.kind == .folder ? "/" : ""
             if entry.isMissing {
-                outputMessage("\(entry.path) (missing)")
+                outputMessage("\(entry.path)\(suffix) (missing)")
             } else if entry.isUnreferenced {
-                outputMessage("\(entry.path) (unreferenced)")
+                outputMessage("\(entry.path)\(suffix) (unreferenced)")
             } else {
-                outputMessage(entry.path)
+                outputMessage("\(entry.path)\(suffix)")
             }
         }
     }
