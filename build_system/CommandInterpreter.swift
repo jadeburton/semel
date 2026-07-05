@@ -259,9 +259,10 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
+                let isOutputFileSystem = try folder.thisNode.buildFullPathName(baseNodeID: nil).hasPrefix("outputFileSystem") // HACK TODO
                 return FileWildcardEntry(path: node.name!,
                                          kind: .folder,
-                                         isMissing: try !folder.isPinned,
+                                         isMissing: isOutputFileSystem ? false : try !folder.isPinned,
                                          isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
 
             default:

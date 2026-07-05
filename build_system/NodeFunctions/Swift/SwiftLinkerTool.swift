@@ -108,10 +108,16 @@ struct SwiftLinkerTool: NodeFunction {
         let outputName = inputs.configuration.outputName
 
         var arguments = [String]()
-        //arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
 
         if inputs.configuration.dynamicLibrary {
             arguments.append("-emit-library")
+        }
+
+        // Pass the SDK path so swiftc's linker driver can find libSystem and
+        // other system libraries when invoked directly (outside of xcodebuild).
+        if let sdkPath = resolveSDKPath() {
+            arguments.append("-sdk")
+            arguments.append(sdkPath)
         }
 
         for objectFile in inputs.objectFiles {
