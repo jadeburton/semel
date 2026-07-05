@@ -47,6 +47,7 @@ struct SwiftCompilerTool: NodeFunction {
     static let input = "input"
     static let output = "output"
     static let infoLog = "infoLog"
+    static let swiftmodule   = "swiftmodule"   // output of SwiftModuleTool for this module
 
     var embeddedNode: Node?
 
@@ -54,14 +55,19 @@ struct SwiftCompilerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
-                                            outputPorts: [output, infoLog])
+    let descriptor = NodeFunctionDescriptor(
+        staticInputPorts:         [configuration, input, swiftmodule],
+        outputPorts:              [output, infoLog],
+        optionalStaticInputPorts: [swiftmodule])
 
     // MARK: Processing
 
     struct SwiftCompilerToolInputs {
         let configuration: SwiftCompilerToolConfiguration
         let inputSourceFile: FileNameAndContent
+        /// Optional .swiftmodule from SwiftModuleTool. When present it is written
+        /// into the sandbox so swiftc can resolve cross-file type references via -I .
+        let swiftmoduleFile: FileNameAndContent?
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[SwiftCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
@@ -69,6 +75,14 @@ struct SwiftCompilerTool: NodeFunction {
 
             let sourceFile = input.inputValues[SwiftCompilerTool.input]!.first!
             inputSourceFile = .init(filePath: sourceFile.key, hash: try sourceFile.value.expectValue())
+
+            // swiftmodule is optional — single-file modules don't need it
+            if let moduleEntry = input.inputValues[SwiftCompilerTool.swiftmodule]?.first {
+                swiftmoduleFile = .init(filePath: moduleEntry.key,
+                                        hash: try moduleEntry.value.expectValue())
+            } else {
+                swiftmoduleFile = nil
+            }
         }
     }
 
@@ -104,9 +118,22 @@ struct SwiftCompilerTool: NodeFunction {
             arguments.append(sdkPath)
         }
 
+        // If a .swiftmodule was provided, tell swiftc to search the sandbox
+        // working directory for it so cross-file type references resolve.
+        if inputs.swiftmoduleFile != nil {
+            arguments.append("-I")
+            arguments.append(".")
+        }
+
         arguments.append(contentsOf: inputs.configuration.arguments)
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+
+        // Include the .swiftmodule in the sandbox so swiftc can find it via -I .
+        var inputFiles: [FileNameAndContent] = [inputs.inputSourceFile]
+        if let moduleFile = inputs.swiftmoduleFile {
+            inputFiles.append(moduleFile)
+        }
 
         var output: [UInt8] = []
         var errorOutput = ""
@@ -115,8 +142,7 @@ struct SwiftCompilerTool: NodeFunction {
         let exitCode = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: [.init(filePath: inputs.inputSourceFile.filePath,
-                               hash: inputs.inputSourceFile.hash)],
+            inputFiles: inputFiles,
             expectedOutputFileNames: [outputFilename],
             output: .init(
                 logError: { error in
