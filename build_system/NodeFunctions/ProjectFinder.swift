@@ -37,7 +37,7 @@ struct ProjectFinder: NodeFunction {
 
         for folderManifest in folderManifests {
             for entry in folderManifest.1.entries {
-                if entry.name.hasSuffix(".fmla") {
+                if entry.isPinned && entry.name.hasSuffix(".fmla") {
                     let fullPath = folderManifest.0.appendingPathComponent(entry.name)
                     result[fullPath] = "ProjectBuilder(projectFile <- [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
                 }
@@ -66,7 +66,7 @@ struct ProjectFinder: NodeFunction {
             allFolderManifests.append((watchedFolderManifestInputKey, folderManifest))
 
             for entry in folderManifest.entries {
-                if entry.isFolder {
+                if entry.isFolder && entry.isPinned {
                     watchedPaths.insert(watchedFolderManifestInputKey.appendingPathComponent(entry.name))
                 }
             }
@@ -82,7 +82,7 @@ struct ProjectFinder: NodeFunction {
             allFolderManifests.append(("inputFileSystem", folderManifest))
 
             for entry in folderManifest.entries {
-                if entry.isFolder {
+                if entry.isFolder && entry.isPinned {
                     watchedPaths.insert("inputFileSystem".appendingPathComponent(entry.name))
                 }
             }
@@ -95,6 +95,8 @@ struct ProjectFinder: NodeFunction {
         for watchedPath in watchedPaths {
             watchedFolderExpectations[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
         }
+        
+        print("ProjectFinder: watchedPaths = \(watchedPaths.joined(separator: ", "))")
 
         return .init(outputValues: [:],
                      inputWireExpectations: [Self.rootFolderManifestInputPort: ["inputFileSystem": "Folder(path: 'inputFileSystem').manifest"],

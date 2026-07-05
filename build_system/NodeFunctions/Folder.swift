@@ -80,6 +80,11 @@ struct Folder: InputlessNodeFunction, HasPath, Pinnable {
     func setPinned(_ pinned: Bool) throws {
         try thisNode.writeToOutputPort(Self.pinnedOutputPort,
                                        value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted")))
+
+        if let parentNodeID = thisNode.parentNodeID {
+            let parentNode = try DatabaseLayer.shared.node.select(nodeID: parentNodeID)
+            try (parentNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: thisNode.id!, name: name)
+        }
     }
 
     private func buildManifest() throws -> FolderManifest {
