@@ -113,6 +113,6 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     }
 
     func read() throws -> NodeValue? {
-        try thisNode.readFromInputPort(Self.inputPort).first!.value
+        try thisNode.readFromInputPort(Self.inputPort).first?.value
     }
 }

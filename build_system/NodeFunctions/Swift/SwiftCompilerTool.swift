@@ -46,7 +46,6 @@ struct SwiftCompilerTool: NodeFunction {
     static let configuration = "configuration"
     static let input = "input"
     static let output = "output"
-    static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
     var embeddedNode: Node?
@@ -56,7 +55,7 @@ struct SwiftCompilerTool: NodeFunction {
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
-                                            outputPorts: [output, errorLog, infoLog])
+                                            outputPorts: [output, infoLog])
 
     // MARK: Processing
 
@@ -75,12 +74,10 @@ struct SwiftCompilerTool: NodeFunction {
 
     struct SwiftCompilerToolOutputs {
         let output: NodeValue
-        let errorLog: NodeValue
         let infoLog: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftCompilerTool.output: output,
-                                 SwiftCompilerTool.errorLog: errorLog,
                                  SwiftCompilerTool.infoLog: infoLog],
                   inputWireExpectations: [:])
         }
@@ -132,8 +129,7 @@ struct SwiftCompilerTool: NodeFunction {
         return .init(
             output: (exitCode == 0)
                 ? .value(output.intern())
-                : .noValue(reason: .error(message: "Swift compiler exited with exitcode \(exitCode)")),
-            errorLog: .value(errorOutput.intern()),
+                : .noValue(reason: .error(message: errorOutput)),
             infoLog: .value(infoOutput.intern()))
     }
 }

@@ -77,6 +77,15 @@ public struct OutputPortDataAccess: DataAccessType {
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).deleteAll(db)
         }
     }
+
+    /// Returns all output ports that are currently in an error state, across all nodes.
+    public func selectAllErrors() throws -> [OutputPort] {
+        try read { db in
+            try OutputPort
+                .filter(OutputPort.Columns.valueKind == OutputPort.ValueKind.error.rawValue)
+                .fetchAll(db)
+        }
+    }
 }
 
 extension OutputPort: CustomStringConvertible {

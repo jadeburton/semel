@@ -296,6 +296,7 @@ enum UserCommand {
     case remove(pathOrWildcard: String) // strato rm /**/*.*
     case copy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?)   // strato cp [-i] /Example/src/myfile.c .
     case list(folder: FileSystemForCommand, pathOrWildcard: String) // strato ls [-i] /Example/**/*.c
+    case errors                                                     // strato errors
 }
 
 enum CommandParserError: Error, LocalizedError {
@@ -399,6 +400,9 @@ final class CommandParser {
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
             let path = remaining.first ?? "*"
             return .list(folder: folder, pathOrWildcard: path)
+
+        case "errors":
+            return .errors
 
         default:
             throw CommandParserError.unknownCommand(verb)
@@ -562,6 +566,9 @@ final class CommandInterpreter {
 
         case .list(let folder, let pathOrWildcard):
             try handleList(folder: folder, pathOrWildcard: pathOrWildcard)
+
+        case .errors:
+            try handleErrors()
 
         }
     }
@@ -772,6 +779,72 @@ final class CommandInterpreter {
         case .folder:
             break
             // TODO
+        }
+    }
+
+    private func handleErrors() throws {
+        let errorPorts = try database.outputPort.selectAllErrors()
+
+        if errorPorts.isEmpty {
+            outputMessage("No errors.")
+            return
+        }
+
+        // Group error ports by nodeID so each node appears once.
+        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
+
+        // Sort nodes by name for a stable, readable listing.
+        let sortedNodeIDs = byNode.keys.sorted { nodeIDa, nodeIDb in
+            let nameA = (try? database.node.select(nodeID: nodeIDa))?.name ?? ""
+            let nameB = (try? database.node.select(nodeID: nodeIDb))?.name ?? ""
+            return nameA < nameB
+        }
+
+        let errorCount = errorPorts.count
+        let nodeCount  = byNode.count
+        outputMessage("\(errorCount) error\(errorCount == 1 ? "" : "s") across \(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
+
+        for nodeID in sortedNodeIDs {
+            let node     = try? database.node.select(nodeID: nodeID)
+            let nodeName = node?.name ?? "Node \(nodeID)"
+
+            // Show the node's type name if it differs from its display name.
+            let kindLabel: String
+            if let node, let nodeFunction = try? node.nodeFunction() {
+                let typeName = String(describing: type(of: nodeFunction))
+                kindLabel = typeName == nodeName ? nodeName : "\(nodeName)  [\(typeName)]"
+            } else {
+                kindLabel = nodeName
+            }
+
+            outputMessage("⚠  \(kindLabel)")
+
+            for port in byNode[nodeID]! {
+                let portName     = port.nameSymbolID.resolveSymbol()
+                let errorMessage = (try? port.dataObjectHash?.resolveAsString()) ?? ""
+
+                if errorMessage.isEmpty {
+                    outputMessage("   · \(portName): (no details)")
+                } else {
+                    // Print first line of the error inline; subsequent lines indented.
+                    let lines = errorMessage
+                        .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                        .components(separatedBy: "\n")
+                        .map    { $0.trimmingCharacters(in: CharacterSet.whitespaces) }
+                        .filter { !$0.isEmpty }
+
+                    if lines.count == 1 {
+                        outputMessage("   · \(portName): \(lines[0])")
+                    } else {
+                        outputMessage("   · \(portName):")
+                        for line in lines {
+                            outputMessage("     \(line)")
+                        }
+                    }
+                }
+            }
+
+            outputMessage("")   // blank line between nodes
         }
     }
 
