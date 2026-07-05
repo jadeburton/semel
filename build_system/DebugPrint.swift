@@ -94,7 +94,7 @@ extension BuildEngine {
     func printAll() throws {
         let allNodes       = try database.node.selectAll()
         let allWires       = try database.wire.selectAll()
-        let allDataHashes  = DataObjectStore.shared.allHashes()
+        //let allDataHashes  = DataObjectStore.shared.allHashes()
 
         // Indexes built once and reused throughout
         let nodeByID: [ObjectID: Node] = Dictionary(

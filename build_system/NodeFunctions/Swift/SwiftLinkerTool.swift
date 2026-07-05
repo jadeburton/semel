@@ -50,7 +50,6 @@ struct SwiftLinkerTool: NodeFunction {
     static let input = "input"
     static let libraries = "libraries"
     static let output = "output"
-    static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
     var embeddedNode: Node?
@@ -61,7 +60,7 @@ struct SwiftLinkerTool: NodeFunction {
 
     let descriptor = NodeFunctionDescriptor(
         staticInputPorts: [configuration, input, libraries],
-        outputPorts: [output, errorLog, infoLog],
+        outputPorts: [output, infoLog],
         optionalStaticInputPorts: [libraries])
 
     // MARK: Processing
@@ -91,12 +90,10 @@ struct SwiftLinkerTool: NodeFunction {
 
     struct SwiftLinkerToolOutputs {
         let output: NodeValue
-        let errorLog: NodeValue
         let infoLog: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftLinkerTool.output: output,
-                                 SwiftLinkerTool.errorLog: errorLog,
                                  SwiftLinkerTool.infoLog: infoLog],
                   inputWireExpectations: [:])
         }
@@ -161,8 +158,7 @@ struct SwiftLinkerTool: NodeFunction {
         return .init(
             output: (exitCode == 0)
                 ? .value(output.intern())
-                : .noValue(reason: .error(message: "Swift linker exited with exitcode \(exitCode)")),
-            errorLog: .value(errorOutput.intern()),
+                : .noValue(reason: .error(message: errorOutput)),
             infoLog: .value(infoOutput.intern()))
     }
 }

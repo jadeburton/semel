@@ -49,7 +49,6 @@ struct ClangLinkerTool: NodeFunction {
 
     static let libraries = "libraries"
     static let output = "output"
-    static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
     var embeddedNode: Node?
@@ -59,7 +58,7 @@ struct ClangLinkerTool: NodeFunction {
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input, libraries],
-                                            outputPorts: [output, errorLog, infoLog],
+                                            outputPorts: [output, infoLog],
                                             optionalStaticInputPorts: [libraries])
 
     // MARK: Processing
@@ -96,12 +95,10 @@ struct ClangLinkerTool: NodeFunction {
 
     struct ClangLinkerToolOutputs {
         let output: NodeValue
-        let errorLog: NodeValue
         let infoLog: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [ClangPreprocessorTool.output: output,
-                                 ClangPreprocessorTool.errorLog: errorLog,
                                  ClangPreprocessorTool.infoLog: infoLog],
                   inputWireExpectations: [:])
         }
@@ -168,8 +165,7 @@ struct ClangLinkerTool: NodeFunction {
                               output.append(contentsOf: data)
                           }))
 
-        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Linker exited with exitcode \(exitCode)")),
-                     errorLog: .value(errorOutput.intern()),
+        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: errorOutput)),
                      infoLog: .value(infoOutput.intern()))
     }
 }

@@ -36,6 +36,30 @@ struct SwiftCompilerToolConfiguration {
     }
 }
 
+// MARK: - SDK path helper
+
+/// Resolves the current macOS SDK path by running `xcrun --show-sdk-path --sdk macosx`.
+/// This is needed when invoking swiftc directly (outside xcodebuild) so it can
+/// locate the Swift standard library.
+private func resolveSDKPath() -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    process.arguments = ["--show-sdk-path", "--sdk", "macosx"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()   // suppress xcrun warnings
+    do {
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let raw = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: raw, encoding: .utf8)?
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+    } catch {
+        return nil
+    }
+}
+
 // MARK: - Node
 
 struct SwiftCompilerTool: NodeFunction {
@@ -94,9 +118,16 @@ struct SwiftCompilerTool: NodeFunction {
         var arguments = [String]()
         arguments.append("-c")
         arguments.append(inputs.inputSourceFile.filePath)
-        arguments.append("-o");         arguments.append(outputFilename)
-        //arguments.append("-target");    arguments.append("arm64-apple-macos14.0")
+        arguments.append("-o");           arguments.append(outputFilename)
         arguments.append("-module-name"); arguments.append(inputs.configuration.moduleName)
+
+        // Pass the SDK path so swiftc can locate the Swift standard library when
+        // invoked directly (i.e. outside of xcodebuild / Xcode's build system).
+        if let sdkPath = resolveSDKPath(), !sdkPath.isEmpty {
+            arguments.append("-sdk")
+            arguments.append(sdkPath)
+        }
+
         arguments.append(contentsOf: inputs.configuration.arguments)
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
