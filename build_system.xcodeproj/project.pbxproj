@@ -35,19 +35,11 @@
 /* Begin PBXFileReference section */
 		4C937AEF2F1AF44E0099662B /* build_system */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = build_system; sourceTree = BUILT_PRODUCTS_DIR; };
 		4CB1B8732FF0D7A40022086A /* build_system.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = build_system.xctestplan; sourceTree = "<group>"; };
+		4CB53B532FFC59D0000D83B3 /* GRDB.swift */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = GRDB.swift; path = ../GRDB.swift; sourceTree = SOURCE_ROOT; };
 		4CTESTA52F200000099662B /* build_systemTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = build_systemTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		4CB1B8712FF0D77D0022086A /* Exceptions for "build_system" folder in "build_system" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				build_system_tests/GraphShapeTests.swift,
-				build_system_tests/NodeValueTests.swift,
-				build_system_tests/PolyFactoryTests.swift,
-			);
-			target = 4C937AEE2F1AF44E0099662B /* build_system */;
-		};
 		4CB1B8722FF0D77D0022086A /* Exceptions for "build_system" folder in "build_systemTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -61,7 +53,6 @@
 		4C937AF12F1AF44E0099662B /* build_system */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				4CB1B8712FF0D77D0022086A /* Exceptions for "build_system" folder in "build_system" target */,
 				4CB1B8722FF0D77D0022086A /* Exceptions for "build_system" folder in "build_systemTests" target */,
 			);
 			path = build_system;
@@ -88,6 +79,7 @@
 		4C0F1DD72F1C52B400EF3940 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				4CB53B532FFC59D0000D83B3 /* GRDB.swift */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
