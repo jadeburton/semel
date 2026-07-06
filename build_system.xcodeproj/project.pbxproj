@@ -45,7 +45,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				build_system_tests/GraphShapeTests.swift,
-				build_system_tests/NodeSupportTests.swift,
 				build_system_tests/NodeValueTests.swift,
 				build_system_tests/PolyFactoryTests.swift,
 			);
