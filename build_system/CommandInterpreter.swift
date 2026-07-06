@@ -168,10 +168,10 @@ final class CommandInterpreter {
         for child in try node.allChildren { try removeOne(child: child) }
         outputMessage("Remove folder: \(node.name!)")
 
+        try nodeFunction.setPinned(false)
+
         if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
             _ = try database.node.delete(nodeID: node.id!)
-        } else {
-            try nodeFunction.setPinned(false)
         }
 
         if let parentNodeID = node.parentNodeID {
