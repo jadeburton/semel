@@ -34,8 +34,8 @@ struct ClangPreprocessorToolConfiguration {
 
 // MARK: - Node
 
-struct ClangPreprocessorTool: NodeFunction {
-    static let kind: UInt = 17
+public struct ClangPreprocessorTool: NodeFunction {
+    public static let kind: UInt = 17
 
     var embeddedNode: Node?
 

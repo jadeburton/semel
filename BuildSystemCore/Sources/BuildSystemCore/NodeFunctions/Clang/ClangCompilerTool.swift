@@ -33,8 +33,8 @@ struct ClangCompilerToolConfiguration {
 
 // MARK: - Node
 
-struct ClangCompilerTool: NodeFunction {
-    static let kind: UInt = 19
+public struct ClangCompilerTool: NodeFunction {
+    public static let kind: UInt = 19
 
     // MARK: Ports
 

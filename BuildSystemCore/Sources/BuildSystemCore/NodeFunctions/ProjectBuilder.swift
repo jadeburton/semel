@@ -7,8 +7,8 @@
 
 /// Reads a single formula.json file and passes its text content through to
 /// BuildGraph's formulae input port.
-struct ProjectBuilder: NodeFunction {
-    static let kind: UInt = 6
+public struct ProjectBuilder: NodeFunction {
+    public static let kind: UInt = 6
 
     static let projectFileInputPort = "projectFile"
     static let productInputPort = "input"

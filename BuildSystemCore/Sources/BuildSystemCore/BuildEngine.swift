@@ -7,9 +7,9 @@ import Foundation
 import GRDB
 import DatabaseModels
 
-final class BuildEngine {
+public final class BuildEngine {
 
-    static let shared = try! BuildEngine()
+    public static let shared = try! BuildEngine()
 
     // MARK: - Constants
 
@@ -120,7 +120,7 @@ final class BuildEngine {
         }
     }
 
-    func receiveUserInput(line: String) -> Bool {
+    public func receiveUserInput(line: String) -> Bool {
         do {
             try commandInterpreter.handleCommand(line)
             return true

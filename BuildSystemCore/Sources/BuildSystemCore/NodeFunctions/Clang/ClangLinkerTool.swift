@@ -37,8 +37,8 @@ struct ClangLinkerToolConfiguration {
 
 // MARK: - Node
 
-struct ClangLinkerTool: NodeFunction {
-    static let kind: UInt = 18
+public struct ClangLinkerTool: NodeFunction {
+    public static let kind: UInt = 18
 
     // MARK: Ports
 

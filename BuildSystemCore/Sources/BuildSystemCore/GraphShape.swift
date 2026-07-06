@@ -65,7 +65,7 @@ struct GraphShapeOutputPort: Equatable {
 }
 
 /// A node in the graph-shape tree.
-struct GraphShapeNode: Equatable {
+public struct GraphShapeNode: Equatable {
     /// Swift type name of the NodeFunction, e.g. `"StaticFile"`, `"ClangCompilerTool"`.
     let typeName:   String
     /// Init-time key-value arguments (e.g. `path: 'src/hello.c'`).  Ordered.
@@ -187,7 +187,7 @@ enum GraphShapeParseError: Error {
 extension GraphShapeNode {
 
     /// Parses a string produced by `asString()` back into a `GraphShapeNode`.
-    static func parse(_ string: String) throws -> GraphShapeNode {
+    public static func parse(_ string: String) throws -> GraphShapeNode {
         var parser = GraphShapeParser(string)
         return try parser.parseNode()
     }

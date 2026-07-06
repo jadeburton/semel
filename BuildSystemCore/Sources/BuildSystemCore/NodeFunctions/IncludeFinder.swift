@@ -7,8 +7,8 @@
 
 import Foundation
 
-struct IncludeFinder: NodeFunction {
-    static let kind: UInt = 15
+public struct IncludeFinder: NodeFunction {
+    public static let kind: UInt = 15
 
     // MARK: Ports
 

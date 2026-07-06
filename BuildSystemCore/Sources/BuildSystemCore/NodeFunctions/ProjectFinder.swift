@@ -9,8 +9,8 @@ import Foundation
 
 /// Watches an input file-list and creates a ProjectBuilder child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
-struct ProjectFinder: NodeFunction {
-    static let kind: UInt = 5
+public struct ProjectFinder: NodeFunction {
+    public static let kind: UInt = 5
 
     static let rootFolderManifestInputPort = "folderManifest"
     static let watchedFolderManifestInputPort = "watchedFolders"

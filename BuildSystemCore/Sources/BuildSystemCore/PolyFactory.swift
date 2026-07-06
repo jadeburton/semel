@@ -9,37 +9,37 @@ import Foundation
 
 // MARK: - Protocol
 
-protocol WithKind {
+public protocol WithKind {
     static var kind: UInt { get }
 }
 
 /// A type that can be serialized/deserialized polymorphically via a `kind` discriminator.
-protocol PolySerializable: Codable, WithKind {
+public protocol PolySerializable: Codable, WithKind {
 }
 
 // MARK: - Factory
 
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
-enum PolyFactory {
+public enum PolyFactory {
 
     private static var registryCache = [UInt: WithKind.Type]()
 
     /// All polymorphic types must be registered with the factory before they can be serialized/deserialized.
-    static func register(types: [WithKind.Type]) {
+    public static func register(types: [WithKind.Type]) {
         for type in types {
             registryCache[type.self.kind] = type
         }
     }
 
     /// Look up the concrete type for a given kind.
-    static func type(kind: UInt) throws -> WithKind.Type {
+    public static func type(kind: UInt) throws -> WithKind.Type {
         guard let type = registryCache[kind] else {
             fatalError("Unknown object kind: \(kind)")
         }
         return type
     }
 
-    static func decodableType(kind: UInt) throws -> PolySerializable.Type {
+    public static func decodableType(kind: UInt) throws -> PolySerializable.Type {
         guard let type = registryCache[kind] as? PolySerializable.Type else {
             fatalError("Unknown object kind, or not PolySerializable: \(kind)")
         }
@@ -48,7 +48,7 @@ enum PolyFactory {
 
     /// Look up the `kind` discriminator for a type identified by its Swift type name.
     /// Used when reconstructing a node from a `GraphShapeNode` string.
-    static func kind(forTypeName typeName: String) throws -> UInt {
+    public static func kind(forTypeName typeName: String) throws -> UInt {
         guard let entry = registryCache.first(where: { String(describing: $0.value) == typeName }) else {
             throw PolyFactoryError.unknownTypeName(typeName)
         }
@@ -56,11 +56,11 @@ enum PolyFactory {
     }
 
     /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.
-    static func decode(encodedJSON: String) throws -> any PolySerializable {
+    public static func decode(encodedJSON: String) throws -> any PolySerializable {
         try Caddy.fromJSON(encodedJSON).object
     }
 
-    static func decodeAndCast<P: PolySerializable>(encodedJSON: String) throws -> P {
+    public static func decodeAndCast<P: PolySerializable>(encodedJSON: String) throws -> P {
         let decoded = try decode(encodedJSON: encodedJSON)
 
         if let object = decoded as? P {
@@ -72,7 +72,7 @@ enum PolyFactory {
     }
 }
 
-enum PolyFactoryError: Error {
+public enum PolyFactoryError: Error {
     case unexpectedType
     case unknownTypeName(String)
 }
@@ -119,13 +119,13 @@ private struct Caddy: Codable {
 // MARK: JSON helpers
 
 extension Decodable {
-    static func fromJSON(_ string: String) throws -> Self {
+    public static func fromJSON(_ string: String) throws -> Self {
         try JSONDecoder().decode(Self.self, from: Data(string.utf8))
     }
 }
 
 extension Encodable {
-    func toJSON() throws -> String {
+    public func toJSON() throws -> String {
         String(data: try JSONEncoder().withSortedKeys().encode(self), encoding: .utf8)!
     }
 }

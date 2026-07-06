@@ -6,8 +6,8 @@
 //
 
 // Like a StaticFile, but it allows you to put configuration directly into the formula.
-struct Configuration: NodeFunction {
-    static let kind: UInt = 9
+public struct Configuration: NodeFunction {
+    public static let kind: UInt = 9
 
     var embeddedNode: Node?
 

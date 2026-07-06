@@ -165,13 +165,18 @@ final class CommandInterpreter {
     }
 
     private func removeFolder(node: Node, nodeFunction: Folder) throws {
-        for child in try node.allChildren { try removeOne(child: child) }
+
+        for child in try node.allChildren {
+            try removeOne(child: child)
+        }
+
         outputMessage("Remove folder: \(node.name!)")
 
         try nodeFunction.setPinned(false)
 
         if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
             _ = try database.node.delete(nodeID: node.id!)
+            // TODO: delete parent recursively
         }
 
         if let parentNodeID = node.parentNodeID {

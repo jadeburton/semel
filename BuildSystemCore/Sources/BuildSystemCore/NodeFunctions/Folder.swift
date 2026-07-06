@@ -19,8 +19,8 @@ struct FolderManifest: PolySerializable {
     let entries: [FolderManifestEntry]
 }
 
-struct Folder: InputlessNodeFunction, HasPath, Pinnable {
-    static let kind: UInt = 1
+public struct Folder: InputlessNodeFunction, HasPath, Pinnable {
+    public static let kind: UInt = 1
 
     var embeddedNode: Node?
 

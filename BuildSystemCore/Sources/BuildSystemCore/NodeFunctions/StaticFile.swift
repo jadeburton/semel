@@ -12,8 +12,8 @@ protocol Pinnable {
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable {
-    static let kind: UInt = 3
+public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable {
+    public static let kind: UInt = 3
 
     var isPinned: Bool {
         get throws {

@@ -6,12 +6,12 @@
 import Foundation
 import DatabaseModels
 
-enum NoValueReason: Codable {
+public enum NoValueReason: Codable {
     case pending
     case error(message: String)
 }
 
-enum NodeValue: Codable {
+public enum NodeValue: Codable {
     case noValue(reason: NoValueReason)
     case value(_ value: DataObjectHash)
 }
