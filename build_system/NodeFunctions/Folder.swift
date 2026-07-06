@@ -42,8 +42,8 @@ struct Folder: InputlessNodeFunction, HasPath, Pinnable {
               inputWireExpectations: [:])
     }
 
-    var path: String {
-        thisNode.properties["path"]!
+    var path: Path {
+        .init(thisNode.properties["path"]!)
     }
 
     func canBeDeleted() throws -> Bool {
@@ -68,6 +68,10 @@ struct Folder: InputlessNodeFunction, HasPath, Pinnable {
     }
 
     func notifyChildContentChanged(nodeID: ObjectID, name: String) throws {
+        try refreshOutputs()
+    }
+
+    func notifyChildDeleted(nodeID: ObjectID) throws {
         try refreshOutputs()
     }
 

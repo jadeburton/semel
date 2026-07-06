@@ -29,16 +29,16 @@ struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable {
 
     var embeddedNode: Node?
 
-    var path: String {
-        thisNode.properties["path"]!
+    var path: Path {
+        Path(thisNode.properties["path"]!)
     }
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
-        assert(!path.contains("outputFileSystem"))
+        assert(!path.string.contains("outputFileSystem"))
         embeddedNode!.name = name
         embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
-     }
+    }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
 

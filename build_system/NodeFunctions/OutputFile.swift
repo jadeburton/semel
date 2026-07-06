@@ -6,30 +6,26 @@
 //
 
 protocol HasPath {
-    var path: String { get }
+    var path: Path { get }
 }
 
 extension HasPath {
     var name: String {
-        path.lastPathComponent
+        path.lastComponent ?? ""
     }
 
-    var containingPath: String {
-        path.deletingLastPathComponent() ?? ""
+    /// The parent path (everything except the last component), or `.empty` if at root.
+    var containingPath: Path {
+        path.deletingLastComponent ?? .empty
     }
 
-    func resolveFolderID(path: String) throws -> ObjectID? {
+    func resolveFolderID(path: Path) throws -> ObjectID? {
         guard !path.isEmpty else {
-            // "" -> nil because it is the root folder, which has no parent.
+            // Empty path → root folder, which has no parent ID.
             return nil
         }
 
-        let components = path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        // The first component must be "inputFileSystem" or "outputFileSystem"
-        guard let rootName = components.first else {
+        guard let rootName = path.firstComponent else {
             throw NodeError.other(message: "Path '\(path)' has no components")
         }
 
@@ -43,17 +39,14 @@ extension HasPath {
             throw NodeError.other(message: "Path '\(path)' must begin with 'inputFileSystem' or 'outputFileSystem', got '\(rootName)'")
         }
 
-        // If the path is just the root (e.g. "inputFileSystem"), return the root folder's ID
-        let subPath = components.dropFirst().joined(separator: "/")
-        guard !subPath.isEmpty else {
+        // If the path is just the root (e.g. Path("inputFileSystem")), return the root ID.
+        guard let subPath = path.deletingFirstComponent else {
             return rootNode.id!
         }
 
-        // Walk (creating as needed) the remaining components beneath the root folder
         let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath, pinned: false)
         return resolvedFolder.id!
     }
-
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
@@ -66,13 +59,13 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
 
     var embeddedNode: Node?
 
-    var path: String {
-        thisNode.properties["path"]!
+    var path: Path {
+        Path(thisNode.properties["path"]!)
     }
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
-        assert(!path.contains("inputFileSystem"))
+        assert(!path.string.contains("inputFileSystem"))
         embeddedNode!.name = name
         embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
     }

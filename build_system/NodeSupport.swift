@@ -13,36 +13,6 @@ extension String {
     func removingSuffix(_ suffix: String) -> String {
         hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
     }
-
-    /// The last path component of a slash-separated path string,
-    /// e.g. "src/hello.c" → "hello.c", "hello.c" → "hello.c".
-    var lastPathComponent: String {
-        split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? self
-    }
-
-    /// Returns the path with the last component removed, or nil if there is no directory component.
-    /// e.g. "src/foo/hello.c" → "src/foo", "hello.c" → nil, "src/hello.c" → "src"
-    func deletingLastPathComponent() -> String? {
-        let parts = split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard parts.count > 1 else { return nil }
-        return parts.dropLast().joined(separator: "/")
-    }
-
-    func deletingFirstPathComponent() -> String? {
-        let parts = split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard parts.count > 1 else { return nil }
-        return parts.dropFirst().joined(separator: "/")
-    }
-
-    /// Returns the path with the given component appended, joining with "/" as needed.
-    /// e.g. "src".appendingPathComponent("hello.c") → "src/hello.c"
-    /// e.g. "".appendingPathComponent("hello.c")    → "hello.c"
-    func appendingPathComponent(_ component: String) -> String {
-        assert(!component.isEmpty)
-        if isEmpty { return component }
-        if hasSuffix("/") { return self + component }
-        return self + "/" + component
-    }
 }
 
 extension DatabaseLayer {
@@ -56,22 +26,30 @@ extension Node {
         DatabaseLayer.shared
     }
 
-    func buildFullPathName(baseNodeID: ObjectID?) throws -> String {
-        if let baseNodeID {
-            if id == baseNodeID {
-                return ""
-            }
+    /// Returns the full logical path of this node from the root, e.g. `inputFileSystem/src/hello.c`.
+    /// Returns `.empty` when the node is the specified `baseNodeID` (so callers can do relative paths).
+    func buildFullPathName(baseNodeID: ObjectID?) throws -> Path {
+
+        if let baseNodeID, id == baseNodeID {
+            return .empty
         }
 
-        func parentPath() throws -> String {
+        func parentPath() throws -> Path {
+
             guard let parentNodeID else {
-                return ""
+                return .empty
             }
-            return try database.node.select(nodeID: parentNodeID).buildFullPathName(baseNodeID: baseNodeID) + "/"
+
+            return try database.node.select(nodeID: parentNodeID).buildFullPathName(baseNodeID: baseNodeID)
         }
 
-        assert(name == nil || !name!.isEmpty)
-        return try parentPath() + (name ?? "<no name>")
+        guard let name, !name.isEmpty else {
+            throw NodeError.other(message: "Node \(id!) in \(try parentPath()) has no name or it is empty; cannot build full path")
+        }
+
+        let parent = try parentPath()
+
+        return parent.isEmpty ? Path(name) : parent / name
     }
 
     func nodeFunctionCast<N: InputlessNodeFunction>() throws -> N {
@@ -101,7 +79,6 @@ extension Node {
 
         let nodeFunction = try node.nodeFunction()
 
-        // Special case: we store some properties directly in the Node table itself, so we need to patch them in here
         node.name = nodeFunction.thisNode.name
         node.parentNodeID = nodeFunction.thisNode.parentNodeID
 
@@ -113,11 +90,10 @@ extension Node {
 
         try nodeFunction.writeToOutputs(output: output)
 
-        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+        if nodeFunction is NodeFunction {
             try node.setScheduled(true)
         }
 
-        // Patch in cached search key if one was not supplied
         if searchKey == nil {
             do {
                 node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: node.id!).asString(omitOutputPort: true)
@@ -131,40 +107,29 @@ extension Node {
 
         assert(node.searchKey != nil)
 
-        // Locate parent node and notify its NodeFunction of this child's creation
         if let parentNodeID = node.parentNodeID {
             let parentNode = try database.node.select(nodeID: parentNodeID)
             if parentNode.kind == Folder.kind {
                 try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node)
             }
-            // TODO: also when deleting Nodes or updating Nodes in any way
         }
 
         return node
     }
 
+    /// Walk (creating as needed) the given path of folder nodes beneath `self`.
+    /// Returns the deepest folder node.
     @discardableResult
-    func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
-
-        let components = path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
-        var currentFolder = self
-
+    func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> Node {
         guard kind == Folder.kind else {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
 
+        var currentFolder = self
         var pathSoFar = try buildFullPathName(baseNodeID: nil)
 
-        for name in components {
-
-            if pathSoFar.isEmpty {
-                pathSoFar += name
-            } else {
-                pathSoFar += "/" + name
-            }
+        for name in path.segments {
+            pathSoFar = pathSoFar.isEmpty ? Path(name) : pathSoFar / name
 
             let existingChildren = try database.node.select(named: name, parentNodeID: currentFolder.id!)
 
@@ -174,17 +139,13 @@ extension Node {
             }
 
             if let existingChild = existingChildren.first {
-                if !(try existingChild.nodeFunction() is Folder) {
-                    break
-                }
-
+                if !(try existingChild.nodeFunction() is Folder) { break }
                 currentFolder = existingChild
             } else {
+                assert(!pathSoFar.string.hasSuffix("/"))
+                assert(!pathSoFar.string.hasPrefix("/"))
 
-                assert(!pathSoFar.hasSuffix("/"))
-                assert(!pathSoFar.hasPrefix("/"))
-
-                let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar)')")
+                let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar.string)')")
                 let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
                 var newFolder = try database.node.select(nodeID: fromNodeID)
                 newFolder.parentNodeID = currentFolder.id!
@@ -196,42 +157,48 @@ extension Node {
 
             if pinned {
                 try (currentFolder.nodeFunctionCast() as Folder).setPinned(true)
+                if let parentNodeID = currentFolder.parentNodeID {
+                    let parentNode = try DatabaseLayer.shared.node.select(nodeID: parentNodeID)
+                    try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: currentFolder)
+                }
             }
         }
 
         return currentFolder
     }
 
-    func childNode(path: String) throws -> Node? {
-        let components = path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
+    /// Convenience overload accepting a String path.
+    @discardableResult
+    func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
+        try ensureEntirePathExistsAsFolders(Path(path), pinned: pinned)
+    }
 
+    /// Walk the node tree by path segments, returning the node at the given path or `nil` if not found.
+    func childNode(path: Path) throws -> Node? {
+        guard !path.isEmpty else { return self }
         var currentNode = self
-
-        for (_, name) in components.enumerated() {
-            guard let childNode = try database.node.select(named: name, parentNodeID: currentNode.id!).first else {
+        for name in path.segments {
+            guard let child = try database.node.select(named: name, parentNodeID: currentNode.id!).first else {
                 return nil
             }
-
-            currentNode = childNode
+            currentNode = child
         }
-
         return currentNode
+    }
+
+    /// Convenience overload accepting a String path.
+    func childNode(path: String) throws -> Node? {
+        try childNode(path: Path(path))
     }
 
     func setScheduled(_ scheduled: Bool) throws {
         let nodeFunction = try self.nodeFunction()
 
         guard nodeFunction is NodeFunction else {
-            // This NodeFunction has no "process" method and so cannot be scheduled.
             print("Attempted to schedule a \(self) / \(type(of: nodeFunction)) that cannot be scheduled because it does not accept inputs. Ignoring.")
             return
         }
 
-        // Use the targeted single-column update so we never accidentally
-        // overwrite other columns (or another task's scheduling decision)
-        // with a stale full-node snapshot.
         try database.node.updateScheduled(nodeID: id!, scheduled: scheduled)
 
         if scheduled {
@@ -266,7 +233,7 @@ extension Node {
         for wire in wiresOnThisInput {
             let wireName = wire.name.resolveSymbol()
             if let port = try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
-                assert(result[wireName] == nil) // all wires must have unique names
+                assert(result[wireName] == nil)
                 try result[wireName] = port.asNodeValue()
             }
         }
@@ -287,14 +254,8 @@ extension Node {
     @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {
 
         if let existing = try database.outputPort.select(nodeID: id!, nameSymbolID: port.nameSymbolID) {
-            if existing == port {
-               // print("No change to Port, ignoring (\(port.nameSymbolID.resolveSymbol()))")
-                return false
-            }
+            if existing == port { return false }
         }
-
-        //let previousPort = try database.outputPort.select(nodeID: id!, nameSymbolID: port.nameSymbolID)
-        //print("Output port '\(port.nameSymbolID.resolveSymbol())' of Node #\(id!) \(type(of: try nodeFunction())) (name: \(name ?? "?")) changes from \(previousPort == nil ? "" : BuildEngine.shared.formatOutputPort(previousPort!)) to \(BuildEngine.shared.formatOutputPort(port))")
 
         try database.outputPort.insertOrUpdate(port)
 

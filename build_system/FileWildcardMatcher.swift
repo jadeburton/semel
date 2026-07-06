@@ -9,14 +9,14 @@ enum FileWildcardEntryKind {
 }
 
 struct FileWildcardEntry {
-    let path: String
+    let path: Path                // logical path relative to the file-system root
     let kind: FileWildcardEntryKind
-    let isMissing: Bool       // file is missing from the internal file system
+    let isMissing: Bool
     let isUnreferenced: Bool
 }
 
 protocol FileWildcardMatcherInput {
-    var rootDirectoryPath: String { get }
+    var rootDirectoryPath: String { get }   // real filesystem path (String for Foundation APIs)
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry]
 }
 
@@ -35,37 +35,30 @@ final class FileWildcardMatcher {
     /// - `?`  — matches any single character
     /// - `*`  — matches zero or more characters within a single path segment
     /// - `**` — matches zero or more directory levels (recursive)
-    func findAllMatching(pathOrWildcard: String) throws -> [FileWildcardEntry] {
-        let normalised = pathOrWildcard.hasPrefix("/")
-            ? pathOrWildcard
-            : "/" + pathOrWildcard
-
-        let segments = normalised
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-
+    func findAllMatching(pathOrWildcard: Path) throws -> [FileWildcardEntry] {
         var results: [FileWildcardEntry] = []
         try matchSegments(
-            segments: segments,
+            segments: pathOrWildcard.segments,
             segmentIndex: 0,
             currentDirectory: input.rootDirectoryPath,
-            currentLogicalPath: "",
+            currentLogicalPath: .empty,
             results: &results
         )
         return results
     }
 
-    // MARK: - Private recursive matcher
-
-    private func joinLogicalPath(_ base: String, _ child: String) -> String {
-        base.isEmpty ? child : base + "/" + child
+    /// Convenience overload accepting a String pattern.
+    func findAllMatching(pathOrWildcard: String) throws -> [FileWildcardEntry] {
+        try findAllMatching(pathOrWildcard: Path(pathOrWildcard))
     }
+
+    // MARK: - Private recursive matcher
 
     private func matchSegments(
         segments: [String],
         segmentIndex: Int,
         currentDirectory: String,
-        currentLogicalPath: String,
+        currentLogicalPath: Path,
         results: inout [FileWildcardEntry]
     ) throws {
         guard segmentIndex < segments.count else { return }
@@ -83,8 +76,8 @@ final class FileWildcardMatcher {
             // … or one-or-more directories (recurse into each child dir).
             let children = try input.allFiles(inDirectoryPath: currentDirectory)
             for child in children where child.kind == .folder {
-                let childLogicalPath  = joinLogicalPath(currentLogicalPath, child.path)
-                let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
+                let childLogicalPath  = currentLogicalPath / child.path
+                let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path.string)
                 try matchSegments(segments: segments, segmentIndex: segmentIndex,
                                   currentDirectory: childPhysicalPath,
                                   currentLogicalPath: childLogicalPath, results: &results)
@@ -95,16 +88,16 @@ final class FileWildcardMatcher {
         // ── Normal or single-star segment ─────────────────────────
         let children = try input.allFiles(inDirectoryPath: currentDirectory)
         for child in children {
-            guard segmentMatches(pattern: segment, name: child.path) else { continue }
+            guard segmentMatches(pattern: segment, name: child.path.string) else { continue }
 
-            let childLogicalPath = joinLogicalPath(currentLogicalPath, child.path)
+            let childLogicalPath = currentLogicalPath / child.path
 
             if isLastSegment {
                 results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind,
                                                  isMissing: child.isMissing,
                                                  isUnreferenced: child.isUnreferenced))
             } else if child.kind == .folder {
-                let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path)
+                let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path.string)
                 try matchSegments(segments: segments, segmentIndex: segmentIndex + 1,
                                   currentDirectory: childPhysicalPath,
                                   currentLogicalPath: childLogicalPath, results: &results)
@@ -157,10 +150,10 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
             let fullPath = (path as NSString).appendingPathComponent(name)
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { return nil }
-            return FileWildcardEntry(path: name,
+            return FileWildcardEntry(path: Path(name),
                                      kind: isDir.boolValue ? .folder : .file,
                                      isMissing: false, isUnreferenced: false)
-        }.sorted { $0.path < $1.path }
+        }.sorted { $0.path.string < $1.path.string }
     }
 }
 
@@ -187,8 +180,8 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                 }
                 let isOutputFileSystem = try folder.thisNode
                     .buildFullPathName(baseNodeID: nil)
-                    .hasPrefix("outputFileSystem")
-                return FileWildcardEntry(path: node.name!,
+                    .firstComponent == "outputFileSystem"
+                return FileWildcardEntry(path: Path(node.name!),
                                          kind: .folder,
                                          isMissing: isOutputFileSystem ? false : try !folder.isPinned,
                                          isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
@@ -199,7 +192,7 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
-                return FileWildcardEntry(path: node.name!,
+                return FileWildcardEntry(path: Path(node.name!),
                                          kind: .file,
                                          isMissing: try !pinnable.isPinned,
                                          isUnreferenced: try nodeFunction.hasNoOutputWires())

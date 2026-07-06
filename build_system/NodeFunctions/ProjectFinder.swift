@@ -38,7 +38,7 @@ struct ProjectFinder: NodeFunction {
         for folderManifest in folderManifests {
             for entry in folderManifest.1.entries {
                 if entry.isPinned && entry.name.hasSuffix(".fmla") {
-                    let fullPath = folderManifest.0.appendingPathComponent(entry.name)
+                    let fullPath = (Path(folderManifest.0) / entry.name).string
                     result[fullPath] = "ProjectBuilder(projectFile <- [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
                 }
             }
@@ -67,7 +67,7 @@ struct ProjectFinder: NodeFunction {
 
             for entry in folderManifest.entries {
                 if entry.isFolder && entry.isPinned {
-                    watchedPaths.insert(watchedFolderManifestInputKey.appendingPathComponent(entry.name))
+                    watchedPaths.insert((Path(watchedFolderManifestInputKey) / entry.name).string)
                 }
             }
         }
@@ -83,7 +83,7 @@ struct ProjectFinder: NodeFunction {
 
             for entry in folderManifest.entries {
                 if entry.isFolder && entry.isPinned {
-                    watchedPaths.insert("inputFileSystem".appendingPathComponent(entry.name))
+                    watchedPaths.insert((Path("inputFileSystem") / entry.name).string)
                 }
             }
         }

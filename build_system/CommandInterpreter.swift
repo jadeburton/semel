@@ -95,14 +95,15 @@ final class CommandInterpreter {
 
         switch entry.kind {
         case .file:
-            let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath)
+            let absolutePath = (baseDirectory as NSString)
+                .appendingPathComponent(relativePath.string)
             let fileContent  = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
 
             _ = try inputFileSystem.ensureEntirePathExistsAsFolders(
-                    relativePath.deletingLastPathComponent() ?? "", pinned: true)
+                    relativePath.deletingLastComponent ?? .empty, pinned: true)
 
-            let pathIncludingInputFileSystem = "inputFileSystem".appendingPathComponent(relativePath)
-            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(pathIncludingInputFileSystem)')")
+            let pathIncludingInputFileSystem = Path("inputFileSystem") / relativePath
+            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(pathIncludingInputFileSystem.string)')")
             let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
             let fromNode = try database.node.select(nodeID: fromNodeID)
             _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(fileContent.intern())
@@ -211,7 +212,7 @@ final class CommandInterpreter {
         switch try file.read() {
         case .value(let dataObjectHash):
             let fileContent = Data(try dataObjectHash.resolve())
-            let finalPath   = destinationPath + "/" + (entry.path as NSString).lastPathComponent
+            let finalPath   = destinationPath + "/" + (entry.path.lastComponent ?? entry.path.string)
             try fileContent.write(to: URL(fileURLWithPath: finalPath))
             outputMessage("File written: \(finalPath)")
         case .noValue(let reason):
@@ -289,23 +290,18 @@ final class CommandInterpreter {
         case .output: fileSystem = try outputFileSystem
         }
 
-        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
+        let matcher  = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
+        let pattern  = Path(pathOrWildcard)
 
-        // If the path has no wildcards and resolves to a single folder, list its
-        // immediate children (like `ls folderName` in a shell) rather than echoing
-        // the folder name back.
-        let hasWildcards = pathOrWildcard.contains("*") || pathOrWildcard.contains("?")
-        var results = try matcher.findAllMatching(pathOrWildcard: pathOrWildcard)
+        // If the pattern has no wildcards and resolves to a single folder, list its
+        // immediate children (like `ls folderName` in a shell).
+        var results = try matcher.findAllMatching(pathOrWildcard: pattern)
 
-        if !hasWildcards, results.count == 1, results[0].kind == .folder {
-            results = try matcher.findAllMatching(
-                pathOrWildcard: results[0].path.appendingPathComponent("*"))
+        if !pattern.containsWildcard, results.count == 1, results[0].kind == .folder {
+            results = try matcher.findAllMatching(pathOrWildcard: results[0].path / "*")
         }
 
-        if results.isEmpty {
-            outputMessage("(empty)")
-            return
-        }
+        if results.isEmpty { outputMessage("(empty)"); return }
 
         for entry in results {
             let suffix = entry.kind == .folder ? "/" : ""

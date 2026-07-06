@@ -96,9 +96,9 @@ struct IncludeFinder: NodeFunction {
         var aggregatedIncludePathList = ""
 
         for sourceFileValue in inputs.inputSourceFiles {
-            let containingFolderOfSourceFile = sourceFileValue.filePath.deletingLastPathComponent() ?? ""
+            let containingFolderOfSourceFile = Path(sourceFileValue.filePath).deletingLastComponent ?? .empty
             let sourceContent = (try? sourceFileValue.contentAsString) ?? ""
-            let includePathList = extractIncludePaths(sourceFileContent: sourceContent).map { containingFolderOfSourceFile.appendingPathComponent($0) }
+            let includePathList = extractIncludePaths(sourceFileContent: sourceContent).map { (containingFolderOfSourceFile / $0).string }
 
             aggregatedIncludePathList.append(includePathList.joined(separator: "\n"))
         }

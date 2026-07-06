@@ -202,7 +202,11 @@ public struct NodeDataAccess: DataAccessType {
     }
 
     public func delete(nodeID: ObjectID) throws -> Bool {
-        try write { db in try Node.deleteOne(db, id: nodeID) }
+        try write { db in
+            let result = try Node.deleteOne(db, id: nodeID)
+            try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).deleteAll(db)
+            return result
+        }
     }
 }
 

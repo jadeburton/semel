@@ -94,7 +94,12 @@ extension Wire {
         if try fromNodeFunction.hasNoOutputWires() && fromNodeFunction.canBeDeleted() {
             // Safe to delete.
             _ = try database.node.delete(nodeID: fromNodeID)
-            // TODO: notify parent Folder, if there is one
+
+            if let parentNodeID = fromNodeFunction.parentNodeID {
+                // notify parent Folder, if there is one
+                let parentOfFromNode = try database.node.select(nodeID: parentNodeID)
+                try (parentOfFromNode.nodeFunction() as? Folder)?.notifyChildDeleted(nodeID: fromNodeID)
+            }
         }
     }
 }
