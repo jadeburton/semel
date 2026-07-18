@@ -35,6 +35,8 @@ final class CommandInterpreter {
             try handleUserCommand(commandParser.parse(command: command))
         } catch CommandInterpreterError.quit {
             throw CommandInterpreterError.quit
+        } catch let error as NodeError {
+            outputError("\(error)") // HACK
         } catch {
             outputError(error.localizedDescription)
         }
@@ -134,56 +136,16 @@ final class CommandInterpreter {
 
     private func removeOne(_ entry: FileWildcardEntry) throws {
         guard let child = try inputFileSystem.childNode(path: entry.path) else {
-            outputError("Child not found"); return
-        }
-        try removeOne(child: child)
-    }
-
-    private func removeOne(child: Node) throws {
-        if let staticFile = try child.nodeFunction() as? StaticFile {
-            try removeStaticFile(nodeFunction: staticFile)
-        } else if let folder = try child.nodeFunction() as? Folder {
-            try removeFolder(node: child, nodeFunction: folder)
-        } else {
-            assert(false)
-        }
-    }
-
-    private func removeStaticFile(nodeFunction: StaticFile) throws {
-        _ = try nodeFunction.replaceContent(nil)
-
-        if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
-            _ = try database.node.delete(nodeID: nodeFunction.id!)
-            if let parentNodeID = nodeFunction.parentNodeID {
-                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-                try (parentFolderNode.nodeFunctionCast() as Folder)
-                    .notifyChildContentChanged(nodeID: nodeFunction.id!, name: nodeFunction.name)
-            }
-        } else {
-            outputMessage("Cannot delete; file in use: \(nodeFunction.name)")
-        }
-    }
-
-    private func removeFolder(node: Node, nodeFunction: Folder) throws {
-
-        for child in try node.allChildren {
-            try removeOne(child: child)
+            outputError("Child not found: \(entry.path)");
+            return
         }
 
-        outputMessage("Remove folder: \(node.name!)")
-
-        try nodeFunction.setPinned(false)
-
-        if try nodeFunction.hasNoOutputWires() && nodeFunction.canBeDeleted() {
-            _ = try database.node.delete(nodeID: node.id!)
-            // TODO: delete parent recursively
+        guard let userDeletableChild = try child.nodeFunction() as? UserDeletable else {
+            outputError("Child not deletable: \(entry.path)");
+            return
         }
 
-        if let parentNodeID = node.parentNodeID {
-            let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-            try (parentFolderNode.nodeFunctionCast() as Folder)
-                .notifyChildContentChanged(nodeID: node.id!, name: node.name!)
-        }
+        try userDeletableChild.deleteInInputFileSystem()
     }
 
     // MARK: - Copy

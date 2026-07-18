@@ -68,9 +68,9 @@ extension Wire {
     func deleteWire(database: DatabaseLayer) throws {
 
         guard try database.wire.delete(comingFromNodeID: fromNodeID,
-                                      fromSymbolID: fromSymbolID,
-                                      goingToNodeID: toNodeID,
-                                      toSymbolID: toSymbolID) else {
+                                       fromSymbolID: fromSymbolID,
+                                       goingToNodeID: toNodeID,
+                                       toSymbolID: toSymbolID) else {
             throw WireError.failedToDeleteWire
         }
 
@@ -93,13 +93,7 @@ extension Wire {
 
         if try fromNodeFunction.hasNoOutputWires() && fromNodeFunction.canBeDeleted() {
             // Safe to delete.
-            _ = try database.node.delete(nodeID: fromNodeID)
-
-            if let parentNodeID = fromNodeFunction.parentNodeID {
-                // notify parent Folder, if there is one
-                let parentOfFromNode = try database.node.select(nodeID: parentNodeID)
-                try (parentOfFromNode.nodeFunction() as? Folder)?.notifyChildDeleted(nodeID: fromNodeID)
-            }
+            try fromNodeFunction.delete()
         }
     }
 }

@@ -19,7 +19,7 @@ struct FolderManifest: PolySerializable {
     let entries: [FolderManifestEntry]
 }
 
-public struct Folder: InputlessNodeFunction, HasPath, Pinnable {
+public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
     var embeddedNode: Node?
@@ -46,6 +46,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable {
         .init(thisNode.properties["path"]!)
     }
 
+    // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
     func canBeDeleted() throws -> Bool {
         try thisNode.allChildren.isEmpty && !isPinned
     }
@@ -63,16 +64,20 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable {
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
-    func notifyChildAdded(newChildNode: Node) throws {
+    func onChildAdded(nodeID: ObjectID) throws {
         try refreshOutputs()
     }
 
-    func notifyChildContentChanged(nodeID: ObjectID, name: String) throws {
+    func onChildContentChanged(nodeID: ObjectID, name: String) throws {
         try refreshOutputs()
     }
 
-    func notifyChildDeleted(nodeID: ObjectID) throws {
+    func onChildDeleted(nodeID: ObjectID) throws {
         try refreshOutputs()
+
+        if try canBeDeleted() && hasNoOutputWires() && hasNoInputWires() {
+            try delete()
+        }
     }
 
     var isPinned: Bool {
@@ -85,10 +90,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable {
         try thisNode.writeToOutputPort(Self.pinnedOutputPort,
                                        value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted")))
 
-        if let parentNodeID = thisNode.parentNodeID {
-            let parentNode = try DatabaseLayer.shared.node.select(nodeID: parentNodeID)
-            try (parentNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: thisNode.id!, name: name)
-        }
+        try notifyParentOfChildContentChange()
     }
 
     private func buildManifest() throws -> FolderManifest {
@@ -109,5 +111,23 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable {
     func refreshOutputs() throws {
         try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
                                        value: .value(try buildManifest().toJSON().intern()))
+    }
+
+    func deleteInInputFileSystem() throws {
+
+        // Delete children or unpin them
+        for child in try thisNode.allChildren {
+            if let userDeletableChild = try child.nodeFunction() as? UserDeletable {
+                try userDeletableChild.deleteInInputFileSystem()
+            } else {
+                throw NodeError.other(message: "Cannot delete Folder because one or more children are not deletable")
+            }
+        }
+
+        try setPinned(false)
+
+        if try hasNoOutputWires() && canBeDeleted() {
+            try delete()
+        }
     }
 }

@@ -9,10 +9,14 @@ protocol Pinnable {
     var isPinned: Bool { get throws }
 }
 
+protocol UserDeletable {
+    func deleteInInputFileSystem() throws
+}
+
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable {
+public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 3
 
     var isPinned: Bool {
@@ -69,13 +73,18 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable {
         }
 
         if changed {
-            if let parentNodeID {
-                let parentFolderNode = try database.node.select(nodeID: parentNodeID)
-                try (parentFolderNode.nodeFunctionCast() as Folder).notifyChildContentChanged(nodeID: id!, name: name)
-            }
+            try notifyParentOfChildContentChange()
         }
 
         return changed
+    }
+
+    func deleteInInputFileSystem() throws {
+        _ = try replaceContent(nil)
+
+        if try hasNoOutputWires() && canBeDeleted() {
+            try delete()
+        }
     }
 }
 

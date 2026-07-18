@@ -69,12 +69,14 @@ protocol InputlessNodeFunction: WithKind {
     // - ProjectFinder (which is the root object, and has no outputs by design)
     // - StaticFile. If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     //   it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted if there are no output Wires.
-    // - Folder. If it has one or more children it must not be deleted.
+    // - If the Node (usually a Folder) has one or more children it must not be deleted. (If a Node is deleted, we must check if it's parent can be deleted.)
     func canBeDeleted() throws -> Bool
+
+    func onChildAdded(nodeID: ObjectID) throws
+    func onChildContentChanged(nodeID: ObjectID, name: String) throws
+    func onChildDeleted(nodeID: ObjectID) throws
 }
 
-// A NodeFunction is the "brain" of a Node. Every Node has a read-only NodeFunction object serialized into it.
-// Its state never changes after initial creation. This is intended to encourage state to be persisted entirely via Ports.
 protocol NodeFunction: InputlessNodeFunction {
     func process(input: ProcessInput) throws -> ProcessOutput
 }
@@ -151,6 +153,43 @@ extension NodeFunction {
 }
 
 extension InputlessNodeFunction {
+    func onChildAdded(nodeID: ObjectID) throws {
+    }
+
+    func onChildDeleted(nodeID: ObjectID) throws {
+    }
+
+    func onChildContentChanged(nodeID: ObjectID, name: String) throws {
+    }
+
+    var parentNodeFunction: InputlessNodeFunction? {
+        get throws {
+            if let parentNodeID = thisNode.parentNodeID {
+                return try database.node.select(nodeID: parentNodeID).nodeFunction()
+            }
+            return nil
+        }
+    }
+
+    func notifyParentThisChildAdded() throws {
+        try parentNodeFunction?.onChildAdded(nodeID: thisNode.id!)
+    }
+
+    func notifyParentOfChildContentChange() throws {
+        try parentNodeFunction?.onChildContentChanged(nodeID: thisNode.id!, name: thisNode.name!)
+    }
+
+    func notifyParentOfChildDeletion() throws {
+        try parentNodeFunction?.onChildDeleted(nodeID: thisNode.id!)
+    }
+
+    func delete() throws {
+        let safeToDelete = try hasNoOutputWires() && hasNoInputWires()
+        assert(safeToDelete)
+        _ = try database.node.delete(nodeID: id!)
+        try notifyParentOfChildDeletion()
+    }
+
     var database: DatabaseLayer {
         DatabaseLayer.shared
     }
@@ -161,6 +200,10 @@ extension InputlessNodeFunction {
 
     func hasNoOutputWires() throws -> Bool {
         try database.wire.select(comingFromNodeID: id!).isEmpty
+    }
+
+    func hasNoInputWires() throws -> Bool {
+        try database.wire.select(goingToNodeID: id!).isEmpty
     }
 
     func didCreate() throws -> ProcessOutput? {

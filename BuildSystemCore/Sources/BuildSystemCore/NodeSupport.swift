@@ -107,12 +107,7 @@ extension Node {
 
         assert(node.searchKey != nil)
 
-        if let parentNodeID = node.parentNodeID {
-            let parentNode = try database.node.select(nodeID: parentNodeID)
-            if parentNode.kind == Folder.kind {
-                try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: node)
-            }
-        }
+        try nodeFunction.notifyParentThisChildAdded()
 
         return node
     }
@@ -151,16 +146,14 @@ extension Node {
                 newFolder.parentNodeID = currentFolder.id!
                 try database.node.update(newFolder)
 
-                try (currentFolder.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: newFolder)
+                try newFolder.nodeFunction().notifyParentThisChildAdded()
                 currentFolder = newFolder
             }
 
             if pinned {
-                try (currentFolder.nodeFunctionCast() as Folder).setPinned(true)
-                if let parentNodeID = currentFolder.parentNodeID {
-                    let parentNode = try DatabaseLayer.shared.node.select(nodeID: parentNodeID)
-                    try (parentNode.nodeFunctionCast() as Folder).notifyChildAdded(newChildNode: currentFolder)
-                }
+                let currentFolderNodeFunction = try currentFolder.nodeFunction()
+                try (currentFolderNodeFunction as? Folder)?.setPinned(true)
+                try currentFolderNodeFunction.notifyParentThisChildAdded()
             }
         }
 
