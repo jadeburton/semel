@@ -129,7 +129,7 @@ public struct ClangPreprocessorTool: NodeFunction {
         arguments.append("-I"); arguments.append(".")
         // TODO: standard includes should come from a versioned, hashed SDK snapshot.
         arguments.append("-I")
-        arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
+        arguments.append("/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
         arguments.append("-nostdinc")
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
         arguments.append(inputs.inputSourceFile.filePath)

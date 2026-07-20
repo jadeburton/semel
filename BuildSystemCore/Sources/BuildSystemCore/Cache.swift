@@ -83,6 +83,14 @@ extension NodeFunction {
             return
         }
 
+        let thresholdDuration = 0.025 // 25ms
+
+        if processingDuration < thresholdDuration {
+            return
+        }
+
+        print("Saving cache entry..")
+
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireExpectations: output.inputWireExpectations)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
 

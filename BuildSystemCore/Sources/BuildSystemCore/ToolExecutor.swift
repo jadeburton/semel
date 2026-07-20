@@ -107,7 +107,7 @@ class DefaultTools {
                               platform: "macOS",
                               architecture: "arm64",
                               recursiveHash: ""),
-            toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_2.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"))
+            toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"))
     }
 }
 

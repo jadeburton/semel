@@ -298,7 +298,7 @@ extension InputlessNodeFunction {
                     continue   // topology unchanged — nothing to do
                 }
                 print("NO MATCH:")
-                print("currentShapeNode: \(currentShapeNode.asString(omitOutputPort: false))")
+                print("currentShapeNode:  \(currentShapeNode.asString(omitOutputPort: false))")
                 print("expectedShapeNode: \(expectedShapeNode.asString(omitOutputPort: false))")
                 _ = try existingWire.deleteWire(database: database)
             }

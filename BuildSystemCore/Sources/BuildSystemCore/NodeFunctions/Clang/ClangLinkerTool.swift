@@ -117,7 +117,7 @@ public struct ClangLinkerTool: NodeFunction {
         arguments.append("-L"); arguments.append(".")
         // TODO: lock down SDK version and hash for full hermeticity.
         arguments.append("-L")
-        arguments.append("/Applications/Xcode_26_2.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+        arguments.append("/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
         arguments.append("-lSystem")
         arguments.append("-nostdlib")
 
