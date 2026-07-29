@@ -42,8 +42,7 @@ public final class BuildEngine {
             Configuration.self,
             IncludeFinder.self,
             SwiftCompilerTool.self,
-            SwiftLinkerTool.self,
-            SwiftModuleTool.self
+            SwiftLinkerTool.self
         ])
     }
 
