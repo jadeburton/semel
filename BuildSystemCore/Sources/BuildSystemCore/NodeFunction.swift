@@ -17,9 +17,9 @@ struct ProcessInput {
     let inputValues: [String: [String: NodeValue]]
 }
 
-struct ProcessOutput {
-    let outputValues: [String: NodeValue]
-    let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
+public struct ProcessOutput {
+    public let outputValues: [String: NodeValue]
+    public let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
 }
 
 protocol WithDefaultInitializer {
@@ -55,7 +55,7 @@ protocol InputlessNodeFunction: WithKind {
 
     func didCreate() throws -> ProcessOutput?
 
-    var descriptor: NodeFunctionDescriptor { get }
+    static var descriptor: NodeFunctionDescriptor { get }
 
     /// Returns the init-time key-value arguments that distinguish this node from
     /// others of the same type (e.g. `path='src/hello.c'` for StaticFile).
@@ -77,8 +77,19 @@ protocol InputlessNodeFunction: WithKind {
     func onChildDeleted(nodeID: ObjectID) throws
 }
 
+extension InputlessNodeFunction {
+    var descriptor: NodeFunctionDescriptor { Self.descriptor }
+}
+
 protocol NodeFunction: InputlessNodeFunction {
+    /// Increment this to invalidate cached outputs when processing logic changes.
+    /// Defaults to 0; override in any NodeFunction whose output format changes.
+    static var codeVersion: Int { get }
     func process(input: ProcessInput) throws -> ProcessOutput
+}
+
+extension NodeFunction {
+    static var codeVersion: Int { 0 }
 }
 
 extension NodeFunction {
@@ -95,20 +106,39 @@ extension NodeFunction {
         for inputPort in descriptor.staticInputPorts.filter({ !descriptor.optionalStaticInputPorts.contains($0) }) {
 
             guard let values = input.inputValues[inputPort] else {
-                throw NodeError.other(message: "inputValues is missing an entry for input port")
+                throw NodeError.other(message: "inputValues is missing an entry for input port \(inputPort)")
             }
 
             guard !values.isEmpty else {
-                // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
-                // TODO: self-healing
-                print("WARNING: non-optional input port has no connected wires")
-                return false
+                // GraphShapeApplier.createNode() validates this at creation time (requiredPortUnwired),
+                // so reaching here means a wire was removed after the node was built — a real integrity error.
+                throw NodeError.other(message: "Non-optional input port '\(inputPort)' has no connected wires for \(self)")
             }
 
             if values.contains(where: { $0.value.isPending }) {
                 return false
             }
         }
+
+        // Optional ports with no wires are fine to skip, but if wires ARE connected
+        // and any carry a pending value the node must wait — the optional port's data
+        // is required for correct processing once it exists.
+        for inputPort in descriptor.optionalStaticInputPorts {
+            guard let values = input.inputValues[inputPort], !values.isEmpty else { continue }
+            if values.contains(where: { $0.value.isPending }) {
+                return false
+            }
+        }
+
+        // Dynamic ports (e.g. source files) with pending values also block processing —
+        // a file mid-upload would give the compiler an incomplete input set.
+        for inputPort in descriptor.dynamicInputPorts {
+            guard let values = input.inputValues[inputPort], !values.isEmpty else { continue }
+            if values.contains(where: { $0.value.isPending }) {
+                return false
+            }
+        }
+
         return true
     }
 
@@ -136,19 +166,46 @@ extension NodeFunction {
         }
 
         let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+        var didWriteCachedOutput = false
 
         if let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey) {
-            try? writeToOutputs(output: cachedOutput)
-        } else {
+            do {
+                try writeToOutputs(output: cachedOutput)
+                didWriteCachedOutput = true
+            } catch {
+                // Cached output is stale or the graph topology changed — fall
+                // through and reprocess so the node does not stay stuck.
+                print("WARNING: writeToOutputs failed for cached output, reprocessing: \(error)")
+            }
+        }
 
+        if !didWriteCachedOutput {
             let startTime = Date.now
             let output = processWithCatch(input: input)
-            try? writeToOutputs(output: output)
-
+            try writeToOutputs(output: output)
             try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey,
                                                  processingDuration: Date.now.timeIntervalSince(startTime),
                                                  output: output)
         }
+    }
+
+    /// Phase 1 of two-phase parallel processing: reads inputs and computes the
+    /// output without making any graph mutations.  Safe to call concurrently with
+    /// other nodes.  Returns nil if this node is not ready to process (no input
+    /// ports, inputs pending, required wires missing, etc.).
+    func tryComputeOutput() -> (output: ProcessOutput, cacheKey: String?, fromCache: Bool, computeStart: Date)? {
+        guard hasInputPorts() else { return nil }
+        guard let input = try? buildProcessInput() else { return nil }
+        guard (try? allInputsAreSatisfied(input: input)) == true else { return nil }
+
+        let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+
+        if let cached = try? loadCachedOutputs(cacheKey: cacheKey) {
+            return (cached, cacheKey, true, .now)
+        }
+
+        let computeStart = Date.now
+        return (processWithCatch(input: input), cacheKey, false, computeStart)
     }
 }
 
@@ -234,7 +291,12 @@ extension InputlessNodeFunction {
                 try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations)
             }
         } catch {
-            print("❌ ERROR: applyExpectationConfiguration failed: \(error)")
+            #if DEBUG
+            print("applyExpectationConfiguration failed: \(error)")
+            #endif
+            for outputPort in try descriptor.outputPorts {
+                try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "\(error)")))
+            }
             throw error
         }
     }
@@ -244,7 +306,7 @@ extension InputlessNodeFunction {
         // 2. add any wires that are in the new configuration but do not exist yet (by name)
         // 3. update expectation on wires that exist in both old and new configuration (by name)
         //    - obtain the current graph shape and compare against the configuration shape
-        //    - if identical, do nothing
+        //    - if identical, skip — the wire is already correct
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
@@ -264,47 +326,54 @@ extension InputlessNodeFunction {
 
         // Steps 2 & 3 — iterate over the desired configuration.
         for (wireName, expectationString) in wireExpectations {
-
-            // Shared helper: connect a new wire from the node that satisfies the expectation.
-            let connectExpected = {
-                let wireNameSymbolID = wireName.asSymbolID()
-                if let (fromNodeID, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) {
-                    // fromSymbolID is nil when the expectation string has no .outputPort suffix,
-                    // which is invalid for wiring — expectation strings must include a port.
-                    guard let fromSymbolID else {
-                        print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
-                        return
-                    }
-
-                    try Wire.connectWire(database: database,
-                                         fromNodeID: fromNodeID,
-                                         fromSymbolID: fromSymbolID,
-                                         toNodeID: id!,
-                                         toSymbolID: toSymbolID,
-                                         name: wireNameSymbolID)
-                } else {
-                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(id ?? -1)")
-                }
-            }
+            var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
                 // Step 3 — wire already exists; check whether its current graph shape
                 // still satisfies the expectation.  Compare parsed shapes structurally
                 // (port-order-independent, bracket-format-independent) rather than as
                 // raw strings to avoid spurious mismatches.
-                let currentShapeNode   = try GraphShapeNode.buildFromWire(existingWire, database: database)
-                let expectedShapeNode  = try GraphShapeNode.parse(expectationString)
-                guard !currentShapeNode.topologyMatches(expectedShapeNode) else {
-                    continue   // topology unchanged — nothing to do
+                let currentShapeNode  = try GraphShapeNode.buildFromWire(existingWire, database: database)
+                let expectedShapeNode = try GraphShapeNode.parse(expectationString)
+
+                do {
+                    try currentShapeNode.expectTopologyMatch(expectedShapeNode)
+                    // Topology matches — the existing wire already connects the correct
+                    // node. Skip reconnection entirely: calling findOrCreate here risks
+                    // picking up a zombie node that shares the same searchKey and then
+                    // failing with attemptToCreateWireWithDuplicateName.
+                    needsReconnection = false
+                } catch {
+                    // Topology changed (e.g. a formula was updated to add/remove a dependency).
+                    // Delete the stale wire so we can reconnect below with the correct node.
+                    _ = try existingWire.deleteWire(database: database)
                 }
-                print("NO MATCH:")
-                print("currentShapeNode:  \(currentShapeNode.asString(omitOutputPort: false))")
-                print("expectedShapeNode: \(expectedShapeNode.asString(omitOutputPort: false))")
-                _ = try existingWire.deleteWire(database: database)
             }
 
-            // Find and connect the matching source.
-            try connectExpected()
+            guard needsReconnection else { continue }
+
+            // Wrap find-or-create and connectWire in a single transaction so that if
+            // connectWire fails the newly-created upstream node is rolled back, preventing
+            // it from being left as an orphaned zombie in the database.
+            let wireNameSymbolID = wireName.asSymbolID()
+            try database.withTransaction {
+                guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) else {
+                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(id ?? -1)")
+                    return
+                }
+                // fromSymbolID is nil when the expectation string has no .outputPort suffix,
+                // which is invalid for wiring — expectation strings must include a port.
+                guard let fromSymbolID else {
+                    print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
+                    return
+                }
+                try Wire.connectWire(database: database,
+                                     fromNodeID: fromNode.id!,
+                                     fromSymbolID: fromSymbolID,
+                                     toNodeID: id!,
+                                     toSymbolID: toSymbolID,
+                                     name: wireNameSymbolID)
+            }
         }
     }
 
@@ -313,32 +382,37 @@ extension InputlessNodeFunction {
     /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
     /// `nil` if the type name in the expectation is not registered in PolyFactory.
-    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: Node, fromSymbolID: ObjectID?)? {
         let expectedShape = try GraphShapeNode.parse(expectationString)
         return try expectedShape.findOrCreateMatchingNode()
     }
-
-    /// Traverses the live graph backwards from `wire.fromNodeID / wire.fromSymbolID`
-    /// and returns a compact string representation of the sub-graph shape, e.g.:
-    ///   "ClangCompilerTool(configuration=StaticFile('config.json').output,
-    ///                      input=ClangPreprocessorTool(...).output).output"
-    /// The returned string can later be fed to `findExistingNodeMatchingExpectation`
-    /// to locate the same (or structurally equivalent) node in the graph.
-//    private func buildGraphShapeForInputWire(wire: Wire) throws -> String {
-//        try GraphShapeNode.buildFromWire(wire).asString()
-//    }
 
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
         for outputPort in descriptor.outputPorts {
             outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
         }
-        // Intentionally omit inputWireExpectations entirely.
-        // Passing an empty dict per dynamic port would cause applyExpectationConfiguration
-        // to delete every existing wire on those ports (step 1: delete wires not in config),
-        // which reschedules upstream nodes, which recreate the wires, scheduling this node
-        // again — an infinite loop.  Leave wire configuration completely untouched on error.
-        return .init(outputValues: outputValues, inputWireExpectations: [:])
+        // Reconstruct existing dynamic wire expectations from the live graph so
+        // applyExpectationConfiguration's step 1 doesn't delete them on error.
+        // A brand-new node that errors on first run has no wires yet, so the
+        // dict is empty for it — which is also correct (nothing to preserve).
+        var wireExpectations = [String: [String: String]]()
+        for port in descriptor.dynamicInputPorts {
+            let toSymbolID = port.asSymbolID()
+            guard let wires = try? database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID),
+                  !wires.isEmpty else { continue }
+            var portExpectations = [String: String]()
+            for wire in wires {
+                let wireName = wire.name.resolveSymbol()
+                if let shapeNode = try? GraphShapeNode.buildFromWire(wire, database: database) {
+                    portExpectations[wireName] = shapeNode.asString(omitOutputPort: false)
+                }
+            }
+            if !portExpectations.isEmpty {
+                wireExpectations[port] = portExpectations
+            }
+        }
+        return .init(outputValues: outputValues, inputWireExpectations: wireExpectations)
     }
 
     fileprivate func hasInputPorts() -> Bool {
@@ -351,7 +425,7 @@ protocol MessageType: AnyObject, Codable, PolySerializable {
 
 // MARK: - NodeError
 
-enum NodeError: Error {
+public enum NodeError: Error {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
     case missingInputs
@@ -361,6 +435,8 @@ enum NodeError: Error {
     case cannotHaveProperties
     case cannotDeleteNodeWithOutputs
     case initializing
+    case searchKeyBadIntegrity(currentShapeNode: String, expectedShapeNode: String, log: String)
+
 }
 extension NodeFunction {
     func description() -> String {
@@ -372,6 +448,7 @@ struct OneNodeValue {
     let dataObjectHash: DataObjectHash
     let originNodeID: ObjectID
 }
+
 
 // MARK: - PolySerializable helper
 

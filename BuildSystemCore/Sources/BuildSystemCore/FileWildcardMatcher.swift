@@ -3,29 +3,29 @@
 
 import Foundation
 
-enum FileWildcardEntryKind {
+public enum FileWildcardEntryKind {
     case file
     case folder
 }
 
-struct FileWildcardEntry {
-    let path: Path                // logical path relative to the file-system root
-    let kind: FileWildcardEntryKind
-    let isMissing: Bool
-    let isUnreferenced: Bool
+public struct FileWildcardEntry {
+    public let path: Path                // logical path relative to the file-system root
+    public let kind: FileWildcardEntryKind
+    public let isMissing: Bool
+    public let isUnreferenced: Bool
 }
 
-protocol FileWildcardMatcherInput {
+public protocol FileWildcardMatcherInput {
     var rootDirectoryPath: String { get }   // real filesystem path (String for Foundation APIs)
     func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry]
 }
 
 // MARK: - FileWildcardMatcher
 
-final class FileWildcardMatcher {
-    private let input: FileWildcardMatcherInput
+public final class FileWildcardMatcher {
+    private let input: any FileWildcardMatcherInput
 
-    init(input: FileWildcardMatcherInput) {
+    public init(input: some FileWildcardMatcherInput) {
         self.input = input
     }
 
@@ -35,7 +35,7 @@ final class FileWildcardMatcher {
     /// - `?`  — matches any single character
     /// - `*`  — matches zero or more characters within a single path segment
     /// - `**` — matches zero or more directory levels (recursive)
-    func findAllMatching(pathOrWildcard: Path) throws -> [FileWildcardEntry] {
+    public func findAllMatching(pathOrWildcard: Path) throws -> [FileWildcardEntry] {
         var results: [FileWildcardEntry] = []
         try matchSegments(
             segments: pathOrWildcard.segments,
@@ -48,7 +48,7 @@ final class FileWildcardMatcher {
     }
 
     /// Convenience overload accepting a String pattern.
-    func findAllMatching(pathOrWildcard: String) throws -> [FileWildcardEntry] {
+    public func findAllMatching(pathOrWildcard: String) throws -> [FileWildcardEntry] {
         try findAllMatching(pathOrWildcard: Path(pathOrWildcard))
     }
 
@@ -135,14 +135,14 @@ final class FileWildcardMatcher {
 
 // MARK: - ExternalFileSystemLister
 
-final class ExternalFileSystemLister: FileWildcardMatcherInput {
-    let rootDirectoryPath: String
+public final class ExternalFileSystemLister: FileWildcardMatcherInput {
+    public let rootDirectoryPath: String
 
-    init(rootDirectoryPath: String) {
+    public init(rootDirectoryPath: String) {
         self.rootDirectoryPath = rootDirectoryPath
     }
 
-    func allFiles(inDirectoryPath path: String) -> [FileWildcardEntry] {
+    public func allFiles(inDirectoryPath path: String) -> [FileWildcardEntry] {
         let fm = FileManager.default
         guard let children = try? fm.contentsOfDirectory(atPath: path) else { return [] }
         return children.compactMap { name -> FileWildcardEntry? in
@@ -159,15 +159,15 @@ final class ExternalFileSystemLister: FileWildcardMatcherInput {
 
 // MARK: - InternalFileSystemLister
 
-final class InternalFileSystemLister: FileWildcardMatcherInput {
-    let rootDirectoryPath = "/"
+public final class InternalFileSystemLister: FileWildcardMatcherInput {
+    public let rootDirectoryPath = "/"
     let folder: Node
 
-    init(folder: Node) {
+    public init(folder: Node) {
         self.folder = folder
     }
 
-    func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
+    public func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
         let start = try folder.childNode(path: inDirectoryPath)!
 
         return try! start.allChildren.map { node in
@@ -180,7 +180,7 @@ final class InternalFileSystemLister: FileWildcardMatcherInput {
                 }
                 let isOutputFileSystem = try folder.thisNode
                     .buildFullPathName(baseNodeID: nil)
-                    .firstComponent == "outputFileSystem"
+                    .firstComponent == Folder.outputFileSystemName
                 return FileWildcardEntry(path: Path(node.name!),
                                          kind: .folder,
                                          isMissing: isOutputFileSystem ? false : try !folder.isPinned,

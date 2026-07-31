@@ -15,18 +15,12 @@ extension String {
     }
 }
 
-extension DatabaseLayer {
-    static var shared: DatabaseLayer {
-        BuildEngine.shared.database
-    }
-}
-
 extension Node {
     var database: DatabaseLayer {
         DatabaseLayer.shared
     }
 
-    /// Returns the full logical path of this node from the root, e.g. `inputFileSystem/src/hello.c`.
+    /// Returns the full logical path of this node from the root, e.g. `input:/src/hello.c`.
     /// Returns `.empty` when the node is the specified `baseNodeID` (so callers can do relative paths).
     func buildFullPathName(baseNodeID: ObjectID?) throws -> Path {
 
@@ -56,13 +50,19 @@ extension Node {
         try nodeFunction() as! N
     }
 
-    func nodeFunction() throws -> InputlessNodeFunction {
+    func nodeFunction() throws -> any InputlessNodeFunction {
         try (PolyFactory.type(kind: kind) as! InputlessNodeFunction.Type).init(thisNode: self)
+    }
+
+    /// Returns the node function as `Any` so app-layer callers can pattern-match
+    /// against concrete public types (e.g. `as? UserDeletable`, `as? FileType`).
+    public func nodeAsAny() throws -> Any {
+        try nodeFunction()
     }
 
     var allChildren: [Node] {
         get throws {
-            try BuildEngine.shared.database.node.select(parentNodeID: id!)
+            try DatabaseLayer.shared.node.select(parentNodeID: id!)
         }
     }
 
@@ -115,7 +115,7 @@ extension Node {
     /// Walk (creating as needed) the given path of folder nodes beneath `self`.
     /// Returns the deepest folder node.
     @discardableResult
-    func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> Node {
+    public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> Node {
         guard kind == Folder.kind else {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
@@ -129,20 +129,22 @@ extension Node {
             let existingChildren = try database.node.select(named: name, parentNodeID: currentFolder.id!)
 
             if existingChildren.count > 1 {
-                assert(false)
+                // Can happen when folder and file have same name
                 throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
             }
 
             if let existingChild = existingChildren.first {
-                if !(try existingChild.nodeFunction() is Folder) { break }
+                if existingChild.kind != Folder.kind {
+                    break
+                }
                 currentFolder = existingChild
             } else {
                 assert(!pathSoFar.string.hasSuffix("/"))
                 assert(!pathSoFar.string.hasPrefix("/"))
 
                 let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar.string)')")
-                let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-                var newFolder = try database.node.select(nodeID: fromNodeID)
+                let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+                var newFolder = fromNode
                 newFolder.parentNodeID = currentFolder.id!
                 try database.node.update(newFolder)
 
@@ -152,8 +154,14 @@ extension Node {
 
             if pinned {
                 let currentFolderNodeFunction = try currentFolder.nodeFunction()
-                try (currentFolderNodeFunction as? Folder)?.setPinned(true)
-                try currentFolderNodeFunction.notifyParentThisChildAdded()
+                if let folder = currentFolderNodeFunction as? Folder {
+                    if try !folder.isPinned {
+                        try folder.setPinned(true)
+
+                        // BUG TODO: this is very slow.
+                        try currentFolderNodeFunction.notifyParentThisChildAdded()
+                    }
+                }
             }
         }
 
@@ -162,12 +170,12 @@ extension Node {
 
     /// Convenience overload accepting a String path.
     @discardableResult
-    func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
+    public func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
         try ensureEntirePathExistsAsFolders(Path(path), pinned: pinned)
     }
 
     /// Walk the node tree by path segments, returning the node at the given path or `nil` if not found.
-    func childNode(path: Path) throws -> Node? {
+    public func childNode(path: Path) throws -> Node? {
         guard !path.isEmpty else { return self }
         var currentNode = self
         for name in path.segments {
@@ -180,7 +188,7 @@ extension Node {
     }
 
     /// Convenience overload accepting a String path.
-    func childNode(path: String) throws -> Node? {
+    public func childNode(path: String) throws -> Node? {
         try childNode(path: Path(path))
     }
 
@@ -195,7 +203,7 @@ extension Node {
         try database.node.updateScheduled(nodeID: id!, scheduled: scheduled)
 
         if scheduled {
-            BuildEngine.shared.signalWorkAvailable()
+            BuildEngine.shared?.signalWorkAvailable()
         }
     }
 }

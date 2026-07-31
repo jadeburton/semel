@@ -13,21 +13,9 @@ struct ClangCompilerToolConfiguration {
     let environment: [String: String]
 
     init(properties: [String: String]) {
-        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
-                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                               platform: properties["toolDescriptor.platform"] ?? "macOS",
-                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
-                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
-    }
-
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name": toolDescriptor.name,
-         "toolDescriptor.version": toolDescriptor.version,
-         "toolDescriptor.platform": toolDescriptor.platform,
-         "toolDescriptor.architecture": toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
     }
 }
 
@@ -50,8 +38,10 @@ public struct ClangCompilerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
-                                            outputPorts: [output, errorLog, infoLog])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [.required(configuration), .required(input)],
+        outputPorts: [output, errorLog, infoLog]
+    )
 
     // MARK: Processing
 
@@ -120,7 +110,7 @@ public struct ClangCompilerTool: NodeFunction {
                           },
                           write: { _, data in
                               output.append(contentsOf: data)
-                          }))
+                          })).exitCode
 
         return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Compiler exited with exitcode \(exitCode)")),
                      errorLog: .value(errorOutput.intern()),

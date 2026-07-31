@@ -165,7 +165,7 @@ extension GraphShapeNode {
 
         let actualArgs = nodeFunction.graphShapeArgs(node: node)
 
-        guard actualArgs == args else { // TODO: is this order-insensitive?
+        guard Set(actualArgs) == Set(args) else {
             return false
         }
 
@@ -222,22 +222,21 @@ extension GraphShapeNode {
     /// and then both tried to insert the same searchKey.
     ///
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
-    func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?) {
-        let newNodeID: ObjectID = try database.withTransaction {
+    public func findOrCreateMatchingNode() throws -> (fromNode: Node, fromSymbolID: ObjectID?) {
+        let newNode: Node = try database.withTransaction {
             // Inside the transaction the find is serialized with the create, so
             // a concurrent task that committed its insert first will be visible here.
             if let existing = try findMatchingNode() {
-                return existing.fromNodeID
+                return try database.node.select(nodeID: existing.fromNodeID)
             }
             return try createNode()
         }
-
-        return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
+        return (fromNode: newNode, fromSymbolID: outputPort?.asSymbolID())
     }
 
     // MARK: Private — node + wire creation (runs inside withTransaction)
 
-    private func createNode() throws -> ObjectID {
+    private func createNode() throws -> Node {
         let kind: UInt
         do {
             kind = try PolyFactory.kind(forTypeName: typeName)
@@ -248,18 +247,26 @@ extension GraphShapeNode {
         // ── All other node types ───────────────────────────────────────────────
         let properties = args.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
 
+//        let startTime = Date.now
+
         let newNode = try Node.createNode(database: database,
                                           kind: kind,
                                           properties: properties,
                                           searchKey: asString(omitOutputPort: true))
-//        let newNodeID  = newNode.id!
+
+//        print("createNode time elapsed: \(Date.now.timeIntervalSince(startTime))")
 
         // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
 
             for wireSpec in inputPortSpec.wires {
-                let (fromNodeID, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
+                let newNodeNodeFunction = try newNode.nodeFunction()
+                if try !newNodeNodeFunction.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
+                    throw NodeError.other(message: "The formula refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
+                }
+
+                let (fromNode, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
 
                 guard let fromSymbolID else {
                     throw GraphShapeApplierError.missingOutputPortInChildShape(typeName: wireSpec.node.typeName)
@@ -270,7 +277,7 @@ extension GraphShapeNode {
                 }
 
                 try Wire.connectWire(database: database,
-                                     fromNodeID: fromNodeID,
+                                     fromNodeID: fromNode.id!,
                                      fromSymbolID: fromSymbolID,
                                      toNodeID: newNode.id!,
                                      toSymbolID: toSymbolID,
@@ -285,8 +292,7 @@ extension GraphShapeNode {
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
             let portSymbolID   = portSpec.portName.asSymbolID()
-            let connectedWires = try database.wire.select(goingToNodeID: newNode.id!,
-                                                          toSymbolID: portSymbolID)
+            let connectedWires = try database.wire.select(goingToNodeID: newNode.id!, toSymbolID: portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.
                 throw GraphShapeApplierError.requiredPortUnwired(typeName: typeName,
@@ -298,34 +304,6 @@ extension GraphShapeNode {
             try newNode.setScheduled(true)
         }
 
-        return newNode.id!
+        return newNode
     }
 }
-
-// MARK: - Recompute Node.searchKey for all nodes
-/*
-extension NodeDataAccess {
-
-    /// Recomputes `Node.searchKey` for every node and persists any changed values.
-    /// Returns the number of rows actually updated.
-    @discardableResult
-    public func recomputeAllSearchKeys() throws -> Int {
-        var updatedCount = 0
-        for var node in try selectAll() {
-            guard let nodeID = node.id else { continue }
-            let newSearchKey: String?
-            do {
-                newSearchKey = try GraphShapeNode.buildFromNode(database: databaseLayer!, nodeID: nodeID).asString(omitOutputPort: true)
-            } catch {
-                print("recomputeAllSearchKeys: skipping node #\(nodeID) (\(node.name ?? "?")) — \(error)")
-                newSearchKey = nil
-            }
-            guard node.searchKey != newSearchKey else { continue }
-            node.searchKey = newSearchKey
-            try update(node)
-            updatedCount += 1
-        }
-        return updatedCount
-    }
-}
-*/

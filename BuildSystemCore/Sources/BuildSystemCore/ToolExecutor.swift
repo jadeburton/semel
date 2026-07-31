@@ -14,6 +14,33 @@ struct ToolDescriptor: Hashable, Codable {
     let platform: String
     let architecture: String
     let recursiveHash: String?
+
+    init(name: String,
+         version: String,
+         platform: String,
+         architecture: String,
+         recursiveHash: String?) {
+
+        self.name = name
+        self.version = version
+        self.platform = platform
+        self.architecture = architecture
+        self.recursiveHash = recursiveHash
+    }
+
+    init(properties: [String: String]) {
+        name = properties["toolDescriptor.name"] ?? ""
+        version = properties["toolDescriptor.version"] ?? ""
+        platform = properties["toolDescriptor.platform"] ?? ""
+        architecture = properties["toolDescriptor.architecture"] ?? ""
+        recursiveHash = properties["toolDescriptor.recursiveHash"]
+    }
+}
+
+struct ToolExecuteResult {
+    let exitCode: Int32
+    // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
+    let sandboxPathUsed: String
 }
 
 /// A build tool that can be executed with a set of arguments and input files,
@@ -23,7 +50,7 @@ protocol ToolExecutor {
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
-                 output: ToolOutput) throws -> Int32
+                 output: ToolOutput) throws -> ToolExecuteResult
 }
 
 // MARK: - Supporting types
@@ -32,6 +59,7 @@ struct ToolOutput {
     let logError: (_ error: String) -> Void
     let logMessage: (_ message: String) -> Void
     let write: (_ filePath: String, _ data: [UInt8]) -> Void
+    // ISSUE: the JSON file has abs paths to the temp directory. we need to remove these but we need the ToolExecutor to tell us what dir it used
 }
 
 /// A file entry passed to a `ToolExecutor`.
@@ -99,15 +127,22 @@ class DefaultTools {
                               version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: ""),
+                              recursiveHash: nil),
             toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
         try toolExecutorRegistry.registerTool(
             descriptor: .init(name: "swiftc",
                               version: "Apple Swift version 6.2.3",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: ""),
+                              recursiveHash: nil),
             toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"))
+        try toolExecutorRegistry.registerTool(
+            descriptor: .init(name: "swift",
+                              version: "Apple Swift version 6.2.3",
+                              platform: "macOS",
+                              architecture: "arm64",
+                              recursiveHash: nil),
+            toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"))
     }
 }
 
@@ -142,18 +177,24 @@ class LocalFileSystemTool: ToolExecutor {
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
-                 output: ToolOutput) throws -> Int32 {
+                 output: ToolOutput) throws -> ToolExecuteResult {
 
         let fileManager = FileManager.default
 
         // 1. Create a temporary sandbox directory.
         let sandboxPath: String
+        let canonicalSandboxPath: String
         do {
             let sandboxURL = try fileManager.url(for: .itemReplacementDirectory,
                                                  in: .userDomainMask,
                                                  appropriateFor: fileManager.temporaryDirectory,
                                                  create: true)
             sandboxPath = sandboxURL.path
+            // On macOS, /var is a symlink to /private/var. Tools like SPM call
+            // realpath() internally and write /private/var/... in their output
+            // even when the process ran in /var/.... Normalise the path here so
+            // callers can match against those output paths.
+            canonicalSandboxPath = sandboxPath.hasPrefix("/var/") ? "/private" + sandboxPath : sandboxPath
         } catch {
             throw ToolExecutionError.failedToCreateSandbox(underlying: error)
         }
@@ -254,6 +295,6 @@ class LocalFileSystemTool: ToolExecutor {
             }
         }
 
-        return exitCode
+        return .init(exitCode: exitCode, sandboxPathUsed: canonicalSandboxPath)
     }
 }

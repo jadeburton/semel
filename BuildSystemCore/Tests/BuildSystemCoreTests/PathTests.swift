@@ -65,7 +65,7 @@ final class PathTests: XCTestCase {
     }
 
     func testLastComponent_multiSegment() {
-        XCTAssertEqual(Path("inputFileSystem/src/hello.c").lastComponent, "hello.c")
+        XCTAssertEqual(Path("input:/src/hello.c").lastComponent, "hello.c")
     }
 
     func testLastComponent_singleSegment() {
@@ -77,7 +77,7 @@ final class PathTests: XCTestCase {
     }
 
     func testFirstComponent_multiSegment() {
-        XCTAssertEqual(Path("inputFileSystem/src/hello.c").firstComponent, "inputFileSystem")
+        XCTAssertEqual(Path("input:/src/hello.c").firstComponent, "input:")
     }
 
     func testFirstComponent_singleSegment() {
@@ -109,7 +109,7 @@ final class PathTests: XCTestCase {
     // MARK: - deletingFirstComponent
 
     func testDeletingFirstComponent_multiSegment() {
-        XCTAssertEqual(Path("inputFileSystem/src/hello.c").deletingFirstComponent, Path("src/hello.c"))
+        XCTAssertEqual(Path("input:/src/hello.c").deletingFirstComponent, Path("src/hello.c"))
     }
 
     func testDeletingFirstComponent_twoSegments() {
@@ -161,7 +161,7 @@ final class PathTests: XCTestCase {
     }
 
     func testStringRoundTrip() {
-        let original = "inputFileSystem/src/hello.c"
+        let original = "input:/src/hello.c"
         XCTAssertEqual(Path(original).string, original)
     }
 
@@ -195,8 +195,8 @@ final class PathTests: XCTestCase {
     }
 
     func testSlashOperator_chain() {
-        let p = Path("inputFileSystem") / "src" / "hello.c"
-        XCTAssertEqual(p, Path("inputFileSystem/src/hello.c"))
+        let p = Path("input:") / "src" / "hello.c"
+        XCTAssertEqual(p, Path("input:/src/hello.c"))
     }
 
     // MARK: - hasPrefix
@@ -222,14 +222,14 @@ final class PathTests: XCTestCase {
     }
 
     func testHasPrefix_partialSegmentNotMatched() {
-        // "inputFileSystem2" must not match prefix "inputFileSystem"
-        XCTAssertFalse(Path("inputFileSystem2/src").hasPrefix(Path("inputFileSystem")))
+        // "inputFileSystem2" must not match prefix "input:"
+        XCTAssertFalse(Path("inputFileSystem2/src").hasPrefix(Path("input:")))
     }
 
     // MARK: - relative(to:)
 
     func testRelativeTo_normal() {
-        let p = Path("inputFileSystem/src/hello.c").relative(to: Path("inputFileSystem"))
+        let p = Path("input:/src/hello.c").relative(to: Path("input:"))
         XCTAssertEqual(p, Path("src/hello.c"))
     }
 
@@ -254,8 +254,8 @@ final class PathTests: XCTestCase {
     // MARK: - subscript
 
     func testSubscript() {
-        let p = Path("inputFileSystem/src/hello.c")
-        XCTAssertEqual(p[0], "inputFileSystem")
+        let p = Path("input:/src/hello.c")
+        XCTAssertEqual(p[0], "input:")
         XCTAssertEqual(p[1], "src")
         XCTAssertEqual(p[2], "hello.c")
     }
@@ -309,7 +309,7 @@ final class PathTests: XCTestCase {
     // MARK: - Codable
 
     func testCodableRoundTrip() throws {
-        let original = Path("inputFileSystem/src/hello.c")
+        let original = Path("input:/src/hello.c")
         let data     = try JSONEncoder().encode(original)
         let decoded  = try JSONDecoder().decode(Path.self, from: data)
         XCTAssertEqual(decoded, original)

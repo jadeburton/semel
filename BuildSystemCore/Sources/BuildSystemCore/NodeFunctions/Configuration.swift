@@ -12,16 +12,16 @@ public struct Configuration: NodeFunction {
     var embeddedNode: Node?
 
     static let outputPort = "output"
-    static let inputPort = "input"
+    static let inputPort = "inherit"
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
-                                            outputPorts: [outputPort],
-                                            dynamicInputPorts: [],
-                                            optionalStaticInputPorts: [inputPort])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [.optional(inputPort)],
+        outputPorts: [outputPort]
+    )
 
     func process(input: ProcessInput) throws -> ProcessOutput {
         var aggregatedConfig = [String: String]()
@@ -31,7 +31,6 @@ public struct Configuration: NodeFunction {
         for inputPortWireKey in inputValues.keys.sorted() {
             let plainText = try inputValues[inputPortWireKey]!.expectValue().resolveAsString()
             let configuration = [String: String](plainText: plainText)
-            // TODO: issue warning output if there are conflicts
             aggregatedConfig = aggregatedConfig.mergedWith(configuration)
         }
 
@@ -64,6 +63,6 @@ extension [String: String] {
     }
 
     func asPlainText() -> String {
-        self.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+        self.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
     }
 }

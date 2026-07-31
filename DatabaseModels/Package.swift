@@ -10,8 +10,7 @@ let package = Package(
         .library(name: "DatabaseModels", targets: ["DatabaseModels"]),
     ],
     dependencies: [
-        // Use the local GRDB package available in the parent project
-        .package(path: "../../GRDB.swift"),
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
     ],
     targets: [
         .target(

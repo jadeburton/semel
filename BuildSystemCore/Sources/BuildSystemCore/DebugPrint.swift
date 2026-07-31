@@ -83,15 +83,22 @@ extension BuildEngine {
 
     // MARK: nudge
 
-    func nudge() throws {
-        for node in try database.node.selectAll() where (try? node.hasOneOrMoreErrorOrPendingOutputs()) == true {
+    public func nudge() throws {
+        try database.cacheEntry.deleteAll()
+        // Reset all NodeFunction outputs to pending so downstream nodes block on
+        // stale values and wait for fresh upstream results (correct ordering).
+        for node in try database.node.selectAll() {
+            guard (try? node.nodeFunction()) is NodeFunction else { continue }
+            try node.writePendingToAllOutputsOfNode()
+        }
+        for node in try database.node.selectAll() {
             try node.setScheduled(true)
         }
     }
 
     // MARK: printAll
 
-    func printAll() throws {
+    public func printAll() throws {
         let allNodes       = try database.node.selectAll()
         let allWires       = try database.wire.selectAll()
         //let allDataHashes  = DataObjectStore.shared.allHashes()
@@ -210,7 +217,7 @@ extension Node {
 
         let nodeName = name ?? ""
 
-        print("\(indent)- \(kindName)(\(nodeName))")
+        print("\(indent)- \(kindName)(\(nodeName)) \(id!)")
 
         guard let nodeID = id else {
             return

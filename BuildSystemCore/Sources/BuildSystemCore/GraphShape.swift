@@ -8,11 +8,11 @@
 //  String format
 //  ─────────────
 //  A node is serialised as:
-//      TypeName(key: 'value', portName <- ["wireName": ShapeNode, ...]).outputPort
+//      TypeName(key: 'value', portName: ["wireName": ShapeNode, ...]).outputPort
 //
 //  Parameters inside the parentheses are a flat, ordered list.  Three kinds:
 //    • Arg    — init-time quoted value    e.g.  path: 'src/hello.c'
-//    • Input  — named-wire array         e.g.  input <- ["hello.c": StaticFile(...).output]
+//    • Input  — named-wire array         e.g.  input: ["hello.c": StaticFile(...).output]
 //    • Output — output expectation       e.g.  output -> ["result": StaticFile(...)]
 //               (parsed and stored; not yet used in topology matching)
 //
@@ -29,11 +29,11 @@
 //  Examples:
 //      StaticFile(path: 'src/hello.c').output
 //      ClangPreprocessorTool(
-//          configuration <- ["config": Configuration(tool: 'preprocessor').output],
-//          input <- ["hello.c": StaticFile(path: 'hello.c').output]).output
+//          configuration: ["config": Configuration(tool: 'preprocessor').output],
+//          input: ["hello.c": StaticFile(path: 'hello.c').output]).output
 //      ClangLinkerTool(
-//          input <- ["compiler_hello": ClangCompilerTool(...).output,
-//                    "compiler_main":  ClangCompilerTool(...).output]).output
+//          objectFiles: ["compiler_hello": ClangCompilerTool(...).output,
+//                        "compiler_main":  ClangCompilerTool(...).output]).output
 //
 
 import Foundation
@@ -41,9 +41,9 @@ import Foundation
 // MARK: - Model
 
 /// An initialization-time string argument, e.g. `path: 'src/hello.c'`.
-struct GraphShapeArg: Equatable, Hashable {
-    let key:   String
-    let value: String
+public struct GraphShapeArg: Equatable, Hashable {
+    public let key:   String
+    public let value: String
 }
 
 /// A single named wire feeding an input port.
@@ -114,7 +114,7 @@ extension GraphShapeNode {
             params.append("\(arg.key): '\(arg.value)'")
         }
 
-        // Inputs: portName <- ["wireName": Node, ...]
+        // Inputs: portName: ["wireName": Node, ...]
         for input in inputs {
             let wireStrings = input.wires.map { wire in
                 "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
@@ -122,7 +122,7 @@ extension GraphShapeNode {
             let inner = pretty
                 ? "\n\(indent)\(wireStrings.joined(separator: separator))\n\(String(repeating: "  ", count: depth))"
                 : wireStrings.joined(separator: separator)
-            params.append("\(input.portName) <- [\(inner)]")
+            params.append("\(input.portName): [\(inner)]")
         }
 
         // Outputs: portName -> ["wireName": Node, ...] (future use)
@@ -150,29 +150,57 @@ extension GraphShapeNode {
 
 extension GraphShapeNode {
 
-    /// Returns `true` when `self` and `other` describe the same graph topology,
-    /// including wire names.  `outputPort` and `outputs` are intentionally ignored —
-    /// output expectations are not yet matched.
-    func topologyMatches(_ other: GraphShapeNode) -> Bool {
-        guard typeName == other.typeName   else { return false }
-        guard Set(args) == Set(other.args) else { return false }
+    enum TopologyMatchError: Error {
+        case noMatch(reason: String)
+    }
+
+    func expectTopologyMatch(_ other: GraphShapeNode) throws {
+        guard typeName == other.typeName else {
+            throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
+        }
+        guard Set(args) == Set(other.args) else {
+            throw TopologyMatchError.noMatch(reason: "Args mismatch: \(args) != \(other.args)")
+        }
 
         let selfPorts  = Dictionary(inputs.map       { ($0.portName, $0.wires) },
                                     uniquingKeysWith: { first, _ in first })
+
         let otherPorts = Dictionary(other.inputs.map { ($0.portName, $0.wires) },
                                     uniquingKeysWith: { first, _ in first })
 
-        guard selfPorts.count == otherPorts.count else { return false }
-
-        for (portName, selfWires) in selfPorts {
-            guard let otherWires = otherPorts[portName]  else { return false }
-            guard selfWires.count == otherWires.count    else { return false }
-            for (selfWire, otherWire) in zip(selfWires, otherWires) {
-                guard selfWire.name == otherWire.name              else { return false }
-                guard selfWire.node.topologyMatches(otherWire.node) else { return false }
+        // Ports that are ONLY in `self` (current) are allowed to be extra — they are
+        // dynamic ports added by the engine after node creation (e.g.
+        // ClangPreprocessorTool's `includeFileLists` / `headerInputFiles`).
+        //
+        // For ports that appear in BOTH `self` and `other` (i.e. ports the formula
+        // explicitly specifies), the wire sets must match exactly: same count and
+        // same named wires.  A current port with MORE wires than expected means a
+        // source file was removed and the node must be rewired, not reused.
+        //
+        // Within each port, wires are matched by name (not by position).
+        // `database.wire.select` returns wires in insertion order, which can
+        // differ from the order the formula string enumerates them, so a
+        // positional zip would produce false mismatches.
+        for (portName, otherWires) in otherPorts {
+            guard let selfWires = selfPorts[portName] else {
+                throw TopologyMatchError.noMatch(reason: "Expected port '\(portName)' is absent in the current graph shape")
+            }
+            guard selfWires.count == otherWires.count else {
+                throw TopologyMatchError.noMatch(reason: "Wire count mismatch on port '\(portName)': current=\(selfWires.count), expected=\(otherWires.count)")
+            }
+            let selfWiresByName = Dictionary(selfWires.map { ($0.name, $0.node) },
+                                             uniquingKeysWith: { first, _ in first })
+            for otherWire in otherWires {
+                guard let selfWireNode = selfWiresByName[otherWire.name] else {
+                    throw TopologyMatchError.noMatch(reason: "Expected wire '\(otherWire.name)' on port '\(portName)' is absent in the current graph shape")
+                }
+                do {
+                    try selfWireNode.expectTopologyMatch(otherWire.node)
+                } catch let error as TopologyMatchError {
+                    throw TopologyMatchError.noMatch(reason: "Child topology of wire '\(otherWire.name)' does not match for a \(selfWireNode.typeName): \(error)")
+                }
             }
         }
-        return true
     }
 }
 
@@ -242,32 +270,31 @@ private struct GraphShapeParser {
         }
     }
 
-    /// Parse one parameter.  Operator determines kind:
+    /// Parse one parameter.  Operator and value type determine kind:
     ///
-    ///   `key: 'value'`   → arg
-    ///   `key <- [...]`   → input
-    ///   `key -> [...]`   → output (future use)
+    ///   `key: 'value'`              → arg (quoted string after `:`)
+    ///   `key.dotted: 'value'`       → arg (dotted property key, e.g. toolDescriptor.name)
+    ///   `key: [...]`                → input (wire array after `:`)
+    ///   `key -> [...]`              → output (future use)
     mutating func parseOneParam(args:    inout [GraphShapeArg],
                                 inputs:  inout [GraphShapeInputPort],
                                 outputs: inout [GraphShapeOutputPort]) throws {
         skipWhitespace()
-        let key = try parseIdentifier()
+        let key = try parseDottedKey()
         skipWhitespace()
 
         if peek() == ":" {
-            // arg:  key: 'value'
             advance()
             skipWhitespace()
-            let value = try parseQuotedString()
-            args.append(GraphShapeArg(key: key, value: value))
-
-        } else if peek() == "<" {
-            // input:  key <- [...]
-            advance()           // consume '<'
-            try consume("-")   // consume '-'
-            skipWhitespace()
-            let wires = try parseWireArray()
-            inputs.append(GraphShapeInputPort(portName: key, wires: wires))
+            if peek() == "[" {
+                // input wire port:  key: [...]
+                let wires = try parseWireArray()
+                inputs.append(GraphShapeInputPort(portName: key, wires: wires))
+            } else {
+                // arg:  key: 'value'
+                let value = try parseQuotedString()
+                args.append(GraphShapeArg(key: key, value: value))
+            }
 
         } else if peek() == "-" {
             // output:  key -> [...]
@@ -279,7 +306,7 @@ private struct GraphShapeParser {
 
         } else {
             throw GraphShapeParseError.unexpectedCharacter(
-                peek(), context: "expected ':', '<-', or '->' after key '\(key)'. Parsing: \(String(chars))")
+                peek(), context: "expected ':' or '->' after key '\(key)'. Parsing: \(String(chars))")
         }
     }
 
@@ -349,6 +376,25 @@ private struct GraphShapeParser {
             throw GraphShapeParseError.emptyIdentifier
         }
         return result
+    }
+
+    /// Like `parseIdentifier()` but also consumes `.`-separated segments,
+    /// producing a dotted key such as `toolDescriptor.name`.  Used only for
+    /// parameter keys, where a `.` is a key separator rather than an output-port
+    /// suffix.
+    mutating func parseDottedKey() throws -> String {
+        var key = try parseIdentifier()
+        while peek() == "." {
+            let savedPos = position
+            advance()   // consume '.'
+            if let c = peek(), c.isLetter || c == "_" {
+                key += "." + (try parseIdentifier())
+            } else {
+                position = savedPos   // not a dotted key — leave '.' for caller
+                break
+            }
+        }
+        return key
     }
 
     mutating func parseUntil(_ stop: Character) throws -> String {

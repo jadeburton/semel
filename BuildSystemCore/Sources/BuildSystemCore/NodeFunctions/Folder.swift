@@ -16,18 +16,24 @@ struct FolderManifestEntry: Codable {
 struct FolderManifest: PolySerializable {
     static let kind: UInt = 4
 
+    let baseFolderPath: String
     let entries: [FolderManifestEntry]
 }
 
 public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
+    public static let inputFileSystemName = "input:"
+    public static let outputFileSystemName = "output:"
+
     var embeddedNode: Node?
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
         embeddedNode!.name = name
-        embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        if embeddedNode!.parentNodeID == nil {
+            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        }
     }
 
     var inputFileSystem: Node {
@@ -36,9 +42,15 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
         }
     }
 
+    func canBePinned() -> Bool {
+        // HACK
+        containingPath.hasPrefix(.init(Folder.inputFileSystemName))
+//        self.parentNodeFunction?.canBePin
+    }
+
     func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
-                             Self.pinnedOutputPort: .noValue(reason: .error(message: "Deleted"))],
+                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(message: "Deleted")) : .value("")], // HACK
               inputWireExpectations: [:])
     }
 
@@ -48,7 +60,8 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 
     // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
     func canBeDeleted() throws -> Bool {
-        try thisNode.allChildren.isEmpty && !isPinned
+        // TODO: slow
+        try (thisNode.allChildren.filter { try !$0.nodeFunction().canBeDeleted() }).isEmpty && !(canBePinned() && isPinned)
     }
 
     // The manifest is a non-recursive list of immediate children
@@ -59,8 +72,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
     static let pinnedOutputPort = "pinned"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
-                                            outputPorts: [folderManifestOutputPort, pinnedOutputPort])
+    static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
@@ -75,20 +87,28 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     func onChildDeleted(nodeID: ObjectID) throws {
         try refreshOutputs()
 
-        if try canBeDeleted() && hasNoOutputWires() && hasNoInputWires() {
+        // Only self-delete when the folder is truly empty. Using canBeDeleted() here is wrong:
+        // it returns true whenever all *remaining* children are individually deletable, which
+        // causes premature self-deletion while other children still exist in the DB. When the
+        // second child's cascade later calls notifyParentOfChildDeletion(), the parent is gone
+        // and the lookup throws nodeNotFound, aborting the cascade and leaving orphaned nodes.
+        if try thisNode.allChildren.isEmpty && !(canBePinned() && isPinned) && hasNoOutputWires() && hasNoInputWires() {
             try delete()
         }
     }
 
-    var isPinned: Bool {
+    public var isPinned: Bool {
         get throws {
             try !thisNode.readFromOutputPort(Self.pinnedOutputPort).isNoValue
         }
     }
 
     func setPinned(_ pinned: Bool) throws {
+        if !canBePinned() && pinned {
+            return
+        }
         try thisNode.writeToOutputPort(Self.pinnedOutputPort,
-                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted")))
+                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted/Nonexistent")))
 
         try notifyParentOfChildContentChange()
     }
@@ -104,7 +124,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
                                                isPinned: (pinnable != nil) ? try pinnable!.isPinned : false))
         }
 
-        return .init(entries: folderManifestEntries)
+        return .init(baseFolderPath: path.string, entries: folderManifestEntries)
     }
 
     // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.
@@ -113,7 +133,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
                                        value: .value(try buildManifest().toJSON().intern()))
     }
 
-    func deleteInInputFileSystem() throws {
+    public func deleteInInputFileSystem() throws {
 
         // Delete children or unpin them
         for child in try thisNode.allChildren {

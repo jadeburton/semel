@@ -13,25 +13,16 @@ struct ClangLinkerToolConfiguration {
     let arguments: [String]
     let environment: [String: String]
     let dynamicLibrary: Bool
+    let target: String?     // "arm64-apple-macos14.0"
+    let usrLibPath: String? // /Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib
 
     init(properties: [String: String]) {
-        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
-                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                               platform: properties["toolDescriptor.platform"] ?? "macOS",
-                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
-                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
-    }
-
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name": toolDescriptor.name,
-         "toolDescriptor.version": toolDescriptor.version,
-         "toolDescriptor.platform": toolDescriptor.platform,
-         "toolDescriptor.architecture": toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? "",
-         "dynamicLibrary": dynamicLibrary ? "true" : "false"]
+        target = properties["target"]
+        usrLibPath = properties["usrLibPath"]
     }
 }
 
@@ -43,10 +34,7 @@ public struct ClangLinkerTool: NodeFunction {
     // MARK: Ports
 
     static let configuration = "configuration"
-
-    // TODO: rename to "objectFiles"
-    static let input = "input"
-
+    static let input = "objectFiles"
     static let libraries = "libraries"
     static let output = "output"
     static let infoLog = "infoLog"
@@ -57,9 +45,14 @@ public struct ClangLinkerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input, libraries],
-                                            outputPorts: [output, infoLog],
-                                            optionalStaticInputPorts: [libraries])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [
+            .required(configuration),
+            .required(input),
+            .optional(libraries),
+        ],
+        outputPorts: [output, infoLog]
+    )
 
     // MARK: Processing
 
@@ -113,12 +106,19 @@ public struct ClangLinkerTool: NodeFunction {
         var arguments = [String]()
 
         arguments.append(contentsOf: inputs.configuration.arguments)
-        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        
+        arguments.append("-target");
+        arguments.append(inputs.configuration.target ?? "arm64-apple-macos14.0") // TODO: no fallback hard coded value, ensure all configs have it
+
         arguments.append("-L"); arguments.append(".")
-        // TODO: lock down SDK version and hash for full hermeticity.
+
         arguments.append("-L")
-        arguments.append("/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+        // TODO: is there a thing we can ask/run to resolve this path, given a desired Xcode version?
+        // TODO: no fallback hard coded value
+        arguments.append(inputs.configuration.usrLibPath ?? "/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+
         arguments.append("-lSystem")
+
         arguments.append("-nostdlib")
 
         if inputs.configuration.dynamicLibrary {
@@ -163,7 +163,7 @@ public struct ClangLinkerTool: NodeFunction {
                           },
                           write: { _, data in
                               output.append(contentsOf: data)
-                          }))
+                          })).exitCode
 
         return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: errorOutput)),
                      infoLog: .value(infoOutput.intern()))

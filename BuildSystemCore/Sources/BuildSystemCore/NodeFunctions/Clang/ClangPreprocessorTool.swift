@@ -12,23 +12,16 @@ struct ClangPreprocessorToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    /// Path to the SDK root (e.g. `/path/to/MacOSX.sdk`).
+    /// When set, `-I <sdkPath>/usr/include -nostdinc` is passed to the preprocessor.
+    /// Supply via `Configuration(sdkPath: '/path/to/MacOSX.sdk')` in the formula.
+    let sdkPath: String?
 
     init(properties: [String: String]) {
-        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
-                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                               platform: properties["toolDescriptor.platform"] ?? "macOS",
-                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
-                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
-    }
-
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name": toolDescriptor.name,
-         "toolDescriptor.version": toolDescriptor.version,
-         "toolDescriptor.platform": toolDescriptor.platform,
-         "toolDescriptor.architecture": toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
+        sdkPath = properties["sdkPath"]
     }
 }
 
@@ -53,9 +46,15 @@ public struct ClangPreprocessorTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, sourceFileInput],
-                                            outputPorts: [output, errorLog, infoLog],
-                                            dynamicInputPorts: [includeFileLists, headerInputFiles])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [
+            .required(configuration),
+            .required(sourceFileInput),
+            .dynamic(includeFileLists),
+            .dynamic(headerInputFiles),
+        ],
+        outputPorts: [output, errorLog, infoLog]
+    )
 
     // MARK: Processing
 
@@ -99,8 +98,8 @@ public struct ClangPreprocessorTool: NodeFunction {
         let errorLog: NodeValue
         let infoLog: NodeValue
 
-        let headerInputFilesWireExpectations: [String: String] // TODO: graph object, starting from the name of the output on the rootmost Node
-        let includeFileListWireExpections: [String: String] // TODO: graph object, starting from the name of the output on the rootmost Node
+        let headerInputFilesWireExpectations: [String: String]
+        let includeFileListWireExpections: [String: String]
 
         func asProcessOutput() -> ProcessOutput {
             return .init(outputValues: [ClangPreprocessorTool.output: output,
@@ -127,10 +126,10 @@ public struct ClangPreprocessorTool: NodeFunction {
         arguments.append("-E")
         arguments.append("-x"); arguments.append("c")
         arguments.append("-I"); arguments.append(".")
-        // TODO: standard includes should come from a versioned, hashed SDK snapshot.
-        arguments.append("-I")
-        arguments.append("/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include")
-        arguments.append("-nostdinc")
+        if let sdkPath = inputs.configuration.sdkPath {
+            arguments.append("-I"); arguments.append("\(sdkPath)/usr/include")
+            arguments.append("-nostdinc")
+        }
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o"); arguments.append(outputFilename)
@@ -162,7 +161,7 @@ public struct ClangPreprocessorTool: NodeFunction {
                                                       },
                                                       write: { _, data in
                                                           output.append(contentsOf: data)
-                                                      }))
+        })).exitCode
 
         return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Preprocessor exited with exitcode \(exitCode)")),
                      errorLog: .value(errorOutput.intern()),
@@ -186,7 +185,7 @@ public struct ClangPreprocessorTool: NodeFunction {
         var includeFileListWireExpections = [String: String]()
 
         for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile <- ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
+            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
         }
 
         // There must be one IncludeFinder attached to the .c file.

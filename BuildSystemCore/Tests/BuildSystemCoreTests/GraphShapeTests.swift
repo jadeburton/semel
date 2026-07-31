@@ -53,7 +53,7 @@ final class GraphShapeTests: XCTestCase {
 
     func test_inputPort_parsesPortName() throws {
         let node = try GraphShapeNode.parse(
-            "ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(node.inputs.count, 1)
         XCTAssertEqual(node.inputs[0].portName, "input")
@@ -61,20 +61,20 @@ final class GraphShapeTests: XCTestCase {
 
     func test_inputPort_parsesWireName() throws {
         let node = try GraphShapeNode.parse(
-            "ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires[0].name, "hello.c")
     }
 
     func test_inputPort_parsesUpstreamNode() throws {
         let node = try GraphShapeNode.parse(
-            "ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires[0].node.typeName, "StaticFile")
     }
 
     func test_inputPort_roundTrip() throws {
-        let input = "ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+        let input = "ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         let node = try GraphShapeNode.parse(input)
         XCTAssertEqual(node.asString(omitOutputPort: false), input)
     }
@@ -83,27 +83,27 @@ final class GraphShapeTests: XCTestCase {
 
     func test_multipleWires_parsesCount() throws {
         let node = try GraphShapeNode.parse(
-            "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires.count, 2)
     }
 
     func test_multipleWires_parsesFirstWireName() throws {
         let node = try GraphShapeNode.parse(
-            "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires[0].name, "a")
     }
 
     func test_multipleWires_parsesSecondWireName() throws {
         let node = try GraphShapeNode.parse(
-            "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires[1].name, "b")
     }
 
     func test_multipleWires_roundTrip() throws {
-        let input = "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+        let input = "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         XCTAssertEqual(try GraphShapeNode.parse(input).asString(omitOutputPort: false), input)
     }
 
@@ -111,14 +111,14 @@ final class GraphShapeTests: XCTestCase {
 
     func test_multipleInputPorts_parsesCount() throws {
         let node = try GraphShapeNode.parse(
-            "ClangCompilerTool(configuration <- [\"config\": Configuration(tool: 'compiler').output], input <- [\"hello.c.p\": ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+            "ClangCompilerTool(configuration: [\"config\": Configuration(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         )
         XCTAssertEqual(node.inputs.count, 2)
     }
 
     func test_multipleInputPorts_portNames() throws {
         let node = try GraphShapeNode.parse(
-            "ClangCompilerTool(configuration <- [\"config\": Configuration(tool: 'compiler').output], input <- [\"hello.c.p\": ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+            "ClangCompilerTool(configuration: [\"config\": Configuration(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         )
         let portNames = node.inputs.map(\.portName)
         XCTAssertTrue(portNames.contains("configuration"))
@@ -126,7 +126,7 @@ final class GraphShapeTests: XCTestCase {
     }
 
     func test_multipleInputPorts_roundTrip() throws {
-        let input = "ClangCompilerTool(configuration <- [\"config\": Configuration(tool: 'compiler').output], input <- [\"hello.c.p\": ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+        let input = "ClangCompilerTool(configuration: [\"config\": Configuration(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         XCTAssertEqual(try GraphShapeNode.parse(input).asString(omitOutputPort: false), input)
     }
 
@@ -141,24 +141,24 @@ final class GraphShapeTests: XCTestCase {
 
     func test_asString_pretty_containsNewlines() throws {
         let node = try GraphShapeNode.parse(
-            "ClangCompilerTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangCompilerTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertTrue(node.asString(pretty: true, omitOutputPort: false).contains("\n"))
     }
 
     func test_asString_compact_noNewlines() throws {
         let node = try GraphShapeNode.parse(
-            "ClangCompilerTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangCompilerTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertFalse(node.asString(pretty: false, omitOutputPort: false).contains("\n"))
     }
 
     func test_asString_pretty_parsesBackToSameTopology() throws {
-        let input = "ClangCompilerTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+        let input = "ClangCompilerTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         let original = try GraphShapeNode.parse(input)
         let prettyString = original.asString(pretty: true, omitOutputPort: false)
         let reparsed = try GraphShapeNode.parse(prettyString)
-        XCTAssertTrue(original.topologyMatches(reparsed))
+        XCTAssertNoThrow(try original.expectTopologyMatch(reparsed))
     }
 
     // MARK: - topologyMatches
@@ -166,25 +166,25 @@ final class GraphShapeTests: XCTestCase {
     func test_topologyMatches_identicalNodes() throws {
         let a = try GraphShapeNode.parse("StaticFile(path: 'hello.c').output")
         let b = try GraphShapeNode.parse("StaticFile(path: 'hello.c').output")
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_outputPortIgnored() throws {
         let a = try GraphShapeNode.parse("StaticFile(path: 'hello.c').output")
         let b = try GraphShapeNode.parse("StaticFile(path: 'hello.c').otherPort")
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentArg_doesNotMatch() throws {
         let a = try GraphShapeNode.parse("StaticFile(path: 'hello.c')")
         let b = try GraphShapeNode.parse("StaticFile(path: 'main.c')")
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentTypeName_doesNotMatch() throws {
         let a = try GraphShapeNode.parse("ClangCompilerTool()")
         let b = try GraphShapeNode.parse("ClangLinkerTool()")
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_portOrderIndependent() throws {
@@ -220,34 +220,34 @@ final class GraphShapeTests: XCTestCase {
             ],
             outputPort: "output"
         )
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentWireName_doesNotMatch() throws {
         let a = try GraphShapeNode.parse(
-            "ClangCompilerTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangCompilerTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         let b = try GraphShapeNode.parse(
-            "ClangCompilerTool(input <- [\"main.c\": StaticFile(path: 'hello.c').output]).output"
+            "ClangCompilerTool(input: [\"main.c\": StaticFile(path: 'hello.c').output]).output"
         )
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentWireCount_doesNotMatch() throws {
         let a = try GraphShapeNode.parse(
-            "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output]).output"
         )
         let b = try GraphShapeNode.parse(
-            "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_nestedNodesMatch() throws {
-        let input = "ClangCompilerTool(input <- [\"hello.c.p\": ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+        let input = "ClangCompilerTool(input: [\"hello.c.p\": ClangPreprocessorTool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         let a = try GraphShapeNode.parse(input)
         let b = try GraphShapeNode.parse(input)
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     // MARK: - Parse errors

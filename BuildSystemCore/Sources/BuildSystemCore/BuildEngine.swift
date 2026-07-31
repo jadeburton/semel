@@ -9,16 +9,21 @@ import DatabaseModels
 
 public final class BuildEngine {
 
-    public static let shared = try! BuildEngine()
+    /// Nil until `start()` is called. Tests leave this nil and set `DatabaseLayer.shared` directly.
+    public static var shared: BuildEngine! = nil
+
+    /// Creates and starts the engine. Must be called once before using `shared`.
+    public static func start() throws {
+        shared = try BuildEngine()
+    }
 
     // MARK: - Constants
 
-    private static let processingBatchSize = 8
+    private static let processingBatchSize = 16
 
     // MARK: - State
 
     let database: DatabaseLayer
-    private let commandInterpreter: CommandInterpreter
 
     /// A pending-work flag. Incremented by any caller (any actor/thread) via
     /// `signalWorkAvailable()`. Decremented back to zero at the top of every
@@ -42,42 +47,45 @@ public final class BuildEngine {
             Configuration.self,
             IncludeFinder.self,
             SwiftCompilerTool.self,
-            SwiftLinkerTool.self
+            SwiftLinkerTool.self,
+            SwiftPackageReaderTool.self,
+            SwiftFormulaConverter.self
         ])
     }
 
     var projectFinder: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try database.node.select(nodeID: fromNodeID)
+            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            return fromNode
         }
     }
 
-    var inputFileSystem: Node {
+    // BUG: this is extremely slow. TODO cache
+    public var inputFileSystem: Node {
         get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try database.node.select(nodeID: fromNodeID)
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: Folder.inputFileSystemName)], inputs: [], outputs: [])
+            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            return fromNode
         }
     }
 
-    var outputFileSystem: Node {
+    // BUG: this is extremely slow. TODO cache
+    public var outputFileSystem: Node {
         get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try database.node.select(nodeID: fromNodeID)
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: Folder.outputFileSystemName)], inputs: [], outputs: [])
+            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            return fromNode
         }
     }
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database261.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database341.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
-        self.commandInterpreter = .init(database: database)
 
         // Capture the fully-initialised self before starting the task.
         let engine = self
@@ -100,9 +108,9 @@ public final class BuildEngine {
 
     private func processLoop() async throws {
         while true {
-            // Drain all available work before sleeping.
-            // Keep looping as long as processing produces new scheduled nodes.
+
             await workSignal.clear()
+
             do {
                 try await processAllNodes()
             } catch {
@@ -110,21 +118,125 @@ public final class BuildEngine {
                 print("BuildEngine: error during processAllNodes: \(error)")
             }
 
+            try cleanUpAllPendingDeletions()
+
             // If a signal arrived while we were processing, drain again immediately
-            // instead of sleeping — this is the fix for the "double signal" race.
-            guard await workSignal.isPending else {
-                await workSignal.wait()
+            if await workSignal.isPending {
                 continue
             }
+
+            reportIdleTimeErrors()
+
+            await workSignal.wait()
         }
     }
 
-    public func receiveUserInput(line: String) -> Bool {
-        do {
-            try commandInterpreter.handleCommand(line)
+    private func cleanUpAllPendingDeletions() throws {
+        // Clean up all pending deletions, which are not safe to delete while Nodes are being processed
+        while ((try? processPendingDeletions()) ?? 0) > 0 {
+        }
+    }
+
+    // MARK: - Idle-time error reporting
+
+    /// Tracks the last set of error messages reported per node so repeated identical
+    /// errors are not printed on every processing cycle.
+    private var lastReportedErrors: [ObjectID: Set<String>] = [:]
+
+    /// Called once the engine is fully idle (no more scheduled nodes, no pending signals).
+    /// Compares current error state against the last-reported state and prints only
+    /// newly-appearing errors, using the same format as the `errors` command.
+    private func reportIdleTimeErrors() {
+        guard let errorPorts = try? database.outputPort.selectAllErrors() else { return }
+
+        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
+
+        // Build the new "current" error map, filtering out transient "initializing" noise.
+        var current: [ObjectID: Set<String>] = [:]
+        for (nodeID, ports) in byNode {
+            let msgs = Set(ports.compactMap { port -> String? in
+                let msg = (try? port.dataObjectHash?.resolveAsString()) ?? ""
+                return msg.isEmpty || msg == "initializing" ? nil : msg
+            })
+            if !msgs.isEmpty { current[nodeID] = msgs }
+        }
+
+        // Print only nodes with at least one newly-appearing error message.
+        for (nodeID, msgs) in current {
+            let newMsgs = msgs.subtracting(lastReportedErrors[nodeID] ?? [])
+            guard !newMsgs.isEmpty else { continue }
+
+            let node = try? database.node.select(nodeID: nodeID)
+            let kindLabel: String
+            if let node, let nf = try? node.nodeAsAny() {
+                let typeName = String(describing: type(of: nf))
+                if let path = node.properties["path"] {
+                    kindLabel = "\(typeName)  '\(path)'"
+                } else if let wires = try? database.wire.select(goingToNodeID: nodeID,
+                                                                 toSymbolID: "projectFile".asSymbolID()),
+                          let wireName = wires.first?.name {
+                    kindLabel = "\(typeName)  '\(wireName.resolveSymbol())'"
+                } else {
+                    kindLabel = typeName
+                }
+            } else {
+                kindLabel = "Node \(nodeID)"
+            }
+
+            print("❌ \(kindLabel)")
+
+            let portsForNode = byNode[nodeID] ?? []
+            for msg in newMsgs.sorted() {
+                let portsForMsg = portsForNode.filter {
+                    ((try? $0.dataObjectHash?.resolveAsString()) ?? "") == msg
+                }
+                let portNames = portsForMsg
+                    .map { $0.nameSymbolID.resolveSymbol() }
+                    .sorted()
+                    .joined(separator: ", ")
+
+                let lines = msg
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .components(separatedBy: "\n")
+                    .map    { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+
+                if lines.count == 1 {
+                    print("   · \(portNames): \(lines[0])")
+                } else {
+                    print("   · \(portNames):")
+                    lines.forEach { print("     \($0)") }
+                }
+            }
+            print("")
+        }
+
+        lastReportedErrors = current
+    }
+
+    // MARK: - Batch mode
+
+    /// Guards `batchDepth` and `signalPendingInBatch` from concurrent access.
+    private let batchLock = NSLock()
+    private var batchDepth = 0
+    private var signalPendingInBatch = false
+
+    /// Suppress work signals for the duration of a batch write (e.g. a multi-file push).
+    /// Nest calls freely; the engine is unblocked only when the outermost `endBatch()` runs.
+    public func beginBatch() {
+        batchLock.withLock { batchDepth += 1 }
+    }
+
+    /// End a batch. Sends a single coalesced signal if any were suppressed inside.
+    public func endBatch() {
+        let shouldSignal = batchLock.withLock { () -> Bool in
+            batchDepth -= 1
+            guard batchDepth == 0, signalPendingInBatch else { return false }
+            signalPendingInBatch = false
             return true
-        } catch {
-            return false
+        }
+        if shouldSignal {
+            Task { await workSignal.signal() }
         }
     }
 
@@ -133,7 +245,14 @@ public final class BuildEngine {
     /// Safe to call from any actor or thread. A signal will never be lost:
     /// if the engine is currently draining, the pending count is incremented
     /// and the next iteration of processLoop will drain again immediately.
+    /// When a batch is active, the signal is deferred until `endBatch()`.
     func signalWorkAvailable() {
+        let inBatch = batchLock.withLock { () -> Bool in
+            guard batchDepth > 0 else { return false }
+            signalPendingInBatch = true
+            return true
+        }
+        guard !inBatch else { return }
         Task { await workSignal.signal() }
     }
 
@@ -143,34 +262,121 @@ public final class BuildEngine {
         while try await processSomeNodes() {}
     }
 
-    /// Fetches a batch of scheduled nodes and processes them **in parallel**.
+    private struct BatchComputeResult {
+        let node: Node
+        let output: ProcessOutput
+        let cacheKey: String?
+        let computeStart: Date
+        let fromCache: Bool
+    }
+
+    /// Fetches a batch of scheduled nodes and processes them in two phases.
     ///
-    /// All nodes in a batch are independent work items, so they are dispatched
-    /// concurrently via a `TaskGroup`. Database access remains safe because
-    /// `DatabaseLayer` serialises all reads/writes through a single GRDB
-    /// `DatabaseQueue`, and each task runs in its own task context so the
-    /// `@TaskLocal` transaction connection is correctly isolated per node.
+    /// **Phase 1 (concurrent):** Each node reads its inputs and runs `process()`
+    /// in parallel.  No graph mutations occur, so concurrent execution is safe
+    /// regardless of shared upstream connections.
     ///
-    /// Errors are caught per-node and logged so that one failing node does not
-    /// cancel the processing of its siblings.
+    /// **Phase 2 (sequential):** Computed outputs are written to the graph one
+    /// at a time.  All wire writes and cascade deletions happen here — serialised,
+    /// so no wire-deletion races can occur.
+    ///
+    /// Nodes in the same batch that share providers compute from a consistent
+    /// snapshot of the graph (the state at the start of phase 1).  If a stale
+    /// result is written in phase 2, the normal cascade mechanism reschedules any
+    /// affected consumers for re-evaluation on the next pass.
     private func processSomeNodes() async throws -> Bool {
         let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
-
         guard !rawNodes.isEmpty else {
             return false
         }
 
-        await withTaskGroup(of: Void.self) { group in
+        // Phase 1: read inputs and compute outputs concurrently.
+        // Only DB reads and CPU work happen here — no graph mutations, no cascades.
+        let computedResults: [BatchComputeResult] = await withTaskGroup(of: BatchComputeResult?.self) { group in
+
             for rawNode in rawNodes {
                 group.addTask {
-                    do {
-                        try self.processOneNode(rawNode)
-                    } catch {
-                        print("BuildEngine: error processing node \(rawNode.id ?? -1): \(error)")
+
+                    guard let nodeFunction = try? rawNode.nodeFunction() as? NodeFunction else {
+                        return nil
                     }
+
+                    guard let result = nodeFunction.tryComputeOutput() else {
+                        return nil
+                    }
+
+                    return BatchComputeResult(node: rawNode,
+                                              output: result.output,
+                                              cacheKey: result.cacheKey,
+                                              computeStart: result.computeStart,
+                                              fromCache: result.fromCache)
                 }
             }
-            await group.waitForAll()
+
+            var results: [BatchComputeResult] = []
+
+            for await result in group {
+                if let result {
+                    results.append(result)
+                }
+            }
+
+            return results
+        }
+
+        // Unschedule every fetched node BEFORE any writes so that cascade
+        // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
+        // by a later unschedule in the loop below.
+        for rawNode in rawNodes {
+            try rawNode.setScheduled(false)
+        }
+
+        // Phase 2: apply outputs sequentially (all graph mutations happen here).
+        //
+        // If no node was ready (all returned nil from tryComputeOutput), unschedule
+        // the batch and report no work done so the caller re-enters wait() and
+        // stays reactive to future signals from push commands or cascades.
+        guard !computedResults.isEmpty else {
+            return false
+        }
+
+        for result in computedResults {
+            do {
+                // Skip nodes that were cascade-deleted by an earlier phase-2 step.
+                // nodeFunction() constructs from the in-memory Node struct and does not
+                // re-query the DB, so this explicit existence check is required.
+                guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
+                    print("WARNING: node \(result.node.id!) deleted during processing")
+                    continue
+                }
+
+                guard let nodeFunction = try result.node.nodeFunction() as? NodeFunction else {
+                    continue
+                }
+
+                do {
+                    try nodeFunction.writeToOutputs(output: result.output)
+
+                    if !result.fromCache {
+                        try? nodeFunction.saveCacheForAllInputsAndOutputs(
+                            cacheKey: result.cacheKey,
+                            processingDuration: Date.now.timeIntervalSince(result.computeStart),
+                            output: result.output
+                        )
+                    }
+                } catch {
+                    if result.fromCache {
+                        // Cached output is stale — fall back to a full sequential reprocess
+                        // using the current (post-phase-2) graph state.
+                        print("WARNING: writeToOutputs failed for cached output, reprocessing: \(error)")
+                        try nodeFunction.processWithPreCheck()
+                    } else {
+                        throw error
+                    }
+                }
+            } catch {
+                print("BuildEngine: error processing node \(result.node.id ?? -1): \(error)")
+            }
         }
 
         return true
@@ -184,7 +390,78 @@ public final class BuildEngine {
             return
         }
 
-        try? nodeFunction.processWithPreCheck()
+        try nodeFunction.processWithPreCheck()
+    }
+}
+
+// MARK: - Deferred deletion
+
+extension BuildEngine {
+
+    /// Processes all nodes marked `pendingDeletion = true`.
+    ///
+    /// Called at idle time (between drain passes) when no concurrent processing is
+    /// running, so structural graph mutations are safe.  Each pass may mark upstream
+    /// nodes for deletion (via `deleteWire`), so the caller loops until this returns 0.
+    ///
+    /// This replaces the old brute-force BFS over all nodes: only the explicitly
+    /// marked set is visited, giving O(pending deletions) work instead of O(all nodes).
+    @discardableResult
+    func processPendingDeletions() throws -> Int {
+        let pendingNodes = try database.node.selectAllPendingDeletion()
+
+        guard !pendingNodes.isEmpty else {
+            return 0
+        }
+
+        var deletedCount = 0
+
+        for node in pendingNodes {
+
+            guard let nodeID = node.id else {
+                continue
+            }
+
+            // Skip if already cascade-deleted by an earlier step in this pass.
+            guard (try? database.node.select(nodeID: nodeID)) != nil else {
+                continue
+            }
+
+            guard let nodeFunction = try? node.nodeFunction() else {
+                continue
+            }
+
+            // If the node has been re-wired since being marked, clear the flag and skip.
+            guard (try? nodeFunction.hasNoOutputWires()) == true else {
+                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+                continue
+            }
+
+            guard (try? nodeFunction.canBeDeleted()) == true else {
+                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+                continue
+            }
+
+            // Delete each input wire; deleteWire will mark upstream nodes that lose
+            // their last consumer, so they'll be caught in the next pass.
+            for inputWire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
+                try? inputWire.deleteWire(database: database)
+            }
+
+            if (try? nodeFunction.hasNoOutputWires()) == true &&
+               (try? nodeFunction.hasNoInputWires()) == true {
+                try? nodeFunction.delete()
+                deletedCount += 1
+            }
+        }
+
+        #if DEBUG
+        if deletedCount > 0 {
+            print("Removed \(deletedCount) node(s)")
+        }
+        #endif
+
+        return deletedCount
     }
 }
 

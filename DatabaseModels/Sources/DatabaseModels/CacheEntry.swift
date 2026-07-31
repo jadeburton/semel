@@ -55,10 +55,43 @@ public struct CacheEntryDataAccess: DataAccessType {
         }
     }
 
-    // TODO: method to update the timestamp and cost of an existing row
-    // TODO: method to get number of rows
-    // TODO: method to delete rows until the total number of rows reaches a certain limit. The rows deleted should be
-    // the oldest ones based on the timestamp column.
+    public func deleteAll() throws -> Bool {
+        try write { db in
+            try CacheEntry.deleteAll(db) > 0
+        }
+    }
+
+    public func updateTimestampAndCost(hash: String, cost: Int, timestamp: Date) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE CacheEntry SET cost = ?, timestamp = ? WHERE hash = ?",
+                arguments: [cost, timestamp, hash])
+        }
+    }
+
+    public func count() throws -> Int {
+        try read { db in try CacheEntry.fetchCount(db) }
+    }
+
+    /// Deletes the oldest rows (by timestamp) until the total count is at or below `limit`.
+    /// Returns the number of rows deleted.
+    @discardableResult
+    public func trimToLimit(_ limit: Int) throws -> Int {
+        try write { db in
+            let total = try CacheEntry.fetchCount(db)
+            let excess = total - limit
+            guard excess > 0 else { return 0 }
+            try db.execute(
+                sql: """
+                     DELETE FROM CacheEntry
+                     WHERE hash IN (
+                         SELECT hash FROM CacheEntry ORDER BY timestamp ASC LIMIT ?
+                     )
+                     """,
+                arguments: [excess])
+            return excess
+        }
+    }
 }
 
 private extension Sequence<UInt8> {
