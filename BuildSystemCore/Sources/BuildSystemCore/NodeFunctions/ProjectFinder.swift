@@ -1,9 +1,6 @@
 // ProjectFinder.swift
 // build_system
 //
-// ProjectFinder monitors a directory for .yml formula files and wires each one
-// up to a ProjectBuilder, which in turn feeds the formula text to BuildGraph.
-// ProjectBuilder reads a formula file and passes its content through to BuildGraph.
 
 import Foundation
 

@@ -5,8 +5,6 @@
 //  Created by Jade Burton on 14.06.26.
 //
 
-/// Reads a single formula.json file and passes its text content through to
-/// BuildGraph's formulae input port.
 public struct ProjectBuilder: NodeFunction {
     public static let kind: UInt = 6
 
@@ -30,7 +28,7 @@ public struct ProjectBuilder: NodeFunction {
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputValue = input.inputValues[Self.projectFileInputPort]!.first!
+        let inputValue = input.inputValues[Self.projectFileInputPort]!.first! // TODO: multiple fmla files and multiple products
         let productInputPortExpectation = try convertProjectFileFormatToBuildGraphExpectations(projectFileName: inputValue.key,
                                                                                                projectFileContent: inputValue.value.expectValue().resolveAsString())
         return .init(outputValues: [Self.statusOutputPort: .value("OK".intern())],
