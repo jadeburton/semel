@@ -154,9 +154,9 @@ struct SwiftPackageReaderTool: NodeFunction {
 
         replace("/" + sandboxPath + "/", with: "")
         replace(sandboxPath + "\"", with: "\"")
-        replace("/" + Path(sandboxPath).deletingLastComponent!.string + "/", with: "")
-        replace(Path(sandboxPath).deletingLastComponent!.string + "/", with: "")
-        replace(Path(sandboxPath).deletingLastComponent!.string + "\"", with: "\"")
+        replace("/" + Path(sandboxPath).deletingLastComponent!.string + "/", with: "../")
+        replace(Path(sandboxPath).deletingLastComponent!.string + "/", with: "../")
+        replace(Path(sandboxPath).deletingLastComponent!.string + "\"", with: "..\"")
 
         return result
     }

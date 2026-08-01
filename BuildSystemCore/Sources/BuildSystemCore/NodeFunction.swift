@@ -102,13 +102,26 @@ extension NodeFunction {
                 // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
                 // TODO: self-healing
                 print("WARNING: non-optional input port \(inputPort) has no connected wires for \(self)")
-                return false
+              //  return false
+                // TODO when the node is first created and wired up, we should check then, early, to verify everything is connected.
+                throw NodeError.other(message: "Non-optional input port \(inputPort) has no connected wires for \(self)")
             }
 
             if values.contains(where: { $0.value.isPending }) {
                 return false
             }
         }
+
+        // Optional ports with no wires are fine to skip, but if wires ARE connected
+        // and any carry a pending value the node must wait — the optional port's data
+        // is required for correct processing once it exists.
+        for inputPort in descriptor.optionalStaticInputPorts {
+            guard let values = input.inputValues[inputPort], !values.isEmpty else { continue }
+            if values.contains(where: { $0.value.isPending }) {
+                return false
+            }
+        }
+
         return true
     }
 
@@ -296,13 +309,17 @@ extension InputlessNodeFunction {
                 // still satisfies the expectation.  Compare parsed shapes structurally
                 // (port-order-independent, bracket-format-independent) rather than as
                 // raw strings to avoid spurious mismatches.
-                let currentShapeNode   = try GraphShapeNode.buildFromWire(existingWire, database: database)
-                let expectedShapeNode  = try GraphShapeNode.parse(expectationString)
-                var log: String? = ""
+                let currentShapeNode  = try GraphShapeNode.buildFromWire(existingWire, database: database)
+                let expectedShapeNode = try GraphShapeNode.parse(expectationString)
 
-                // Throws if there is a mismatch. If that happens, it means there is an integrity problem; the searchKey does
-                // not match what we actually created, probably because we failed to exactly create the graph shape.
-                try currentShapeNode.expectTopologyMatch(expectedShapeNode)
+                do {
+                    try currentShapeNode.expectTopologyMatch(expectedShapeNode)
+                    // Topology matches — connectExpected() below will confirm the wire exists and be a no-op.
+                } catch {
+                    // Topology changed (e.g. a formula was updated to add/remove a dependency).
+                    // Delete the stale wire so connectExpected() re-creates it from the correct node.
+                    _ = try existingWire.deleteWire(database: database)
+                }
             }
 
             // Find and connect the matching source.

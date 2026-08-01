@@ -129,7 +129,7 @@ extension Node {
             let existingChildren = try database.node.select(named: name, parentNodeID: currentFolder.id!)
 
             if existingChildren.count > 1 {
-                assert(false)
+                // Can happen when folder and file have same name
                 throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
             }
 

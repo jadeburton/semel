@@ -13,16 +13,24 @@
 // property so the node re-runs whenever files are added to or removed from the
 // package root (e.g. a new Sources/NewTarget directory appears). The package
 // path is read from FolderManifest.baseFolderPath at process time.
+//
+// External package dependencies are resolved iteratively via the dynamic
+// `externalPackageJSONs` port.  After parsing the root Package.swift the node
+// returns SwiftPackageReaderTool wire expectations for each fileSystem dep it
+// finds; when those manifests arrive the process repeats for their own deps,
+// and so on until the full transitive closure is wired.  Packages no longer
+// referenced are automatically unwired by applyExpectationConfiguration.
 
 import Foundation
 
 struct SwiftFormulaConverter: NodeFunction {
     static let kind: UInt = 24
 
-    static let packageFolder = "packageFolder"
-    static let packageJSON   = "packageJSON"
-    static let formulaOutput = "formula"
-    static let infoLog       = "infoLog"
+    static let packageFolder        = "packageFolder"
+    static let packageJSON          = "packageJSON"
+    static let formulaOutput        = "formula"
+    static let infoLog              = "infoLog"
+    static let externalPackageJSONs = "externalPackageJSONs"
 
     var embeddedNode: Node?
 
@@ -31,53 +39,100 @@ struct SwiftFormulaConverter: NodeFunction {
     }
 
     let descriptor = NodeFunctionDescriptor(
-        staticInputPorts: [packageFolder, packageJSON],
-        outputPorts:      [formulaOutput, infoLog])
+        staticInputPorts:  [packageFolder, packageJSON],
+        outputPorts:       [formulaOutput, infoLog],
+        dynamicInputPorts: [externalPackageJSONs])
 
     // MARK: - Processing
 
     func process(input: ProcessInput) throws -> ProcessOutput {
 
-        // Decode the FolderManifest from the packageFolder port to get the
-        // package root path and react to filesystem changes.
-        guard let packageFolderInputValue = input.inputValues[Self.packageFolder]?.values.first else {
+        // ── packageFolder ─────────────────────────────────────────────────────
+        guard let folderEntry = input.inputValues[Self.packageFolder]?.values.first else {
             throw NodeError.missingInput(name: Self.packageFolder)
         }
-
-        let manifestJSON = try packageFolderInputValue.expectValue().resolveAsString()
-
+        let manifestJSON = try folderEntry.expectValue().resolveAsString()
         guard let folderManifest = try? PolyFactory.decode(encodedJSON: manifestJSON) as? FolderManifest else {
-            return .init(
-                outputValues: [
-                    Self.formulaOutput: .noValue(reason: .error(message: "SwiftFormulaConverter: could not decode FolderManifest from packageFolder input")),
-                    Self.infoLog:       .value("".intern())],
-                inputWireExpectations: [:])
+            return pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
+                                 externalExpectations: [:])
         }
+        let rootPackageFolder = folderManifest.baseFolderPath
 
-        let packageFolder = folderManifest.baseFolderPath
-
+        // ── root packageJSON ──────────────────────────────────────────────────
         guard let jsonEntry = input.inputValues[Self.packageJSON]?.values.first else {
             throw NodeError.missingInput(name: Self.packageJSON)
         }
-
-        let jsonString = try jsonEntry.expectValue().resolveAsString()
-
+        let rootManifest: SPMManifest
         do {
-            let manifest = try SPMManifest.decode(jsonString)
-            let formula  = generateFormula(manifest: manifest, packageFolder: packageFolder)
-
-            return .init(
-                outputValues: [Self.formulaOutput: .value(formula.intern()),
-                               Self.infoLog:       .value("".intern())],
-                inputWireExpectations: [:])
-
+            rootManifest = try SPMManifest.decode(try jsonEntry.expectValue().resolveAsString())
         } catch {
-            return .init(
-                outputValues: [
-                    Self.formulaOutput: .noValue(reason: .error(message: "SwiftFormulaConverter: \(error)")),
-                    Self.infoLog:       .value("JSON parse error: \(error)".intern())],
-                inputWireExpectations: [:])
+            return pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalExpectations: [:])
         }
+
+        // ── already-received external manifests ───────────────────────────────
+        // Wire key = resolved input-filesystem path of the external package root.
+        var availableManifests: [String: SPMManifest] = [:]
+        for (extPath, nodeValue) in input.inputValues[Self.externalPackageJSONs] ?? [:] {
+            guard let jsonStr  = try? nodeValue.expectValue().resolveAsString(),
+                  let manifest = try? SPMManifest.decode(jsonStr) else { continue }
+            availableManifests[extPath] = manifest
+        }
+
+        // ── BFS: discover all transitively needed external packages ───────────
+        // Each run reaches one more nesting level; missing manifests are requested
+        // via wire expectations and the node is re-scheduled when they arrive.
+        var bfsQueue: [(path: String, manifest: SPMManifest)] = [(rootPackageFolder, rootManifest)]
+        var visitedPaths = Set<String>([rootPackageFolder])
+        var expectations: [String: String] = [:]
+        var bfsIndex = 0
+
+        while bfsIndex < bfsQueue.count {
+            let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
+            for dep in manifest.packageDependencies {
+                let extPath = resolveRelativePath(dep.path, from: manifestPath)
+                guard !visitedPaths.contains(extPath) else { continue }
+                visitedPaths.insert(extPath)
+                expectations[extPath] = packageReaderExpectation(for: extPath)
+                if let extManifest = availableManifests[extPath] {
+                    bfsQueue.append((extPath, extManifest))
+                }
+            }
+        }
+
+        // ── wait until every expected manifest has been received ──────────────
+        let missing = expectations.keys.filter { availableManifests[$0] == nil }
+        guard missing.isEmpty else {
+            return pendingOutput(
+                reason: "SwiftFormulaConverter: awaiting external packages: \(missing.sorted().joined(separator: ", "))",
+                externalExpectations: expectations)
+        }
+
+        // ── all manifests present — generate formula ──────────────────────────
+        let formula = generateFormula(rootManifest: rootManifest,
+                                      externalManifests: availableManifests,
+                                      rootPackageFolder: rootPackageFolder)
+        return .init(
+            outputValues: [Self.formulaOutput: .value(formula.intern()),
+                           Self.infoLog:       .value("".intern())],
+            inputWireExpectations: [Self.externalPackageJSONs: expectations])
+    }
+
+    // Returns a noValue output that still carries the current expectations,
+    // so applyExpectationConfiguration keeps (or creates) the needed wires.
+    private func pendingOutput(reason: String, externalExpectations: [String: String]) -> ProcessOutput {
+        .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(message: reason)),
+                             Self.infoLog:       .value("".intern())],
+              inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
+    }
+
+    // Graph-shape expectation string for a SwiftPackageReaderTool that reads
+    // the Package.swift at `extPath` in the input filesystem.
+    private func packageReaderExpectation(for extPath: String) -> String {
+        let pkgFilePath = "\(extPath)/Package.swift"
+        return "SwiftPackageReaderTool(" +
+               "configuration <- ['config': Configuration().output], " +
+               "packageFile <- ['\(pkgFilePath)': StaticFile(path: '\(pkgFilePath)').output]" +
+               ").packageJSON"
     }
 
     // MARK: - SPM JSON model
@@ -86,10 +141,43 @@ struct SwiftFormulaConverter: NodeFunction {
         let name: String
         let targets: [SPMTarget]
         let products: [SPMProduct]
+        /// fileSystem-based package dependencies (local paths only).
+        let packageDependencies: [SPMFileSystemDependency]
+
+        enum CodingKeys: String, CodingKey {
+            case name, targets, products, dependencies
+        }
+
+        init(from decoder: Decoder) throws {
+            let c        = try decoder.container(keyedBy: CodingKeys.self)
+            name         = try c.decode(String.self,      forKey: .name)
+            targets      = try c.decode([SPMTarget].self,  forKey: .targets)
+            products     = try c.decode([SPMProduct].self, forKey: .products)
+            let rawDeps  = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
+            packageDependencies = rawDeps.compactMap { $0.fileSystem }.flatMap { $0 }
+        }
 
         static func decode(_ json: String) throws -> SPMManifest {
             try JSONDecoder().decode(SPMManifest.self, from: Data(json.utf8))
         }
+    }
+
+    // Decodes one element of the top-level "dependencies" array, extracting only
+    // fileSystem (local-path) entries and ignoring sourceControl / registry.
+    private struct AnySPMDependency: Decodable {
+        let fileSystem: [SPMFileSystemDependency]?
+
+        enum CodingKeys: String, CodingKey { case fileSystem }
+
+        init(from decoder: Decoder) throws {
+            let c      = try decoder.container(keyedBy: CodingKeys.self)
+            fileSystem = try? c.decodeIfPresent([SPMFileSystemDependency].self, forKey: .fileSystem)
+        }
+    }
+
+    private struct SPMFileSystemDependency: Decodable {
+        let identity: String
+        let path: String
     }
 
     private struct SPMTarget: Decodable {
@@ -97,6 +185,21 @@ struct SwiftFormulaConverter: NodeFunction {
         let type: String?
         let path: String?
         let dependencies: [SPMTargetDependency]
+        /// Non-decoded. Set only on synthetic targets created for external packages.
+        var overridePackageFolder: String?
+
+        enum CodingKeys: String, CodingKey {
+            case name, type, path, dependencies
+        }
+
+        init(from decoder: Decoder) throws {
+            let c        = try decoder.container(keyedBy: CodingKeys.self)
+            name         = try c.decode(String.self, forKey: .name)
+            type         = try? c.decode(String.self, forKey: .type)
+            path         = try? c.decode(String.self, forKey: .path)
+            dependencies = (try? c.decode([SPMTargetDependency].self, forKey: .dependencies)) ?? []
+            overridePackageFolder = nil
+        }
 
         // SPM default: Sources/<TargetName> relative to the package root.
         var sourcesRelativePath: String { path ?? "Sources/\(name)" }
@@ -105,8 +208,8 @@ struct SwiftFormulaConverter: NodeFunction {
     // Handles the two dependency shapes emitted by different Swift versions:
     //   array form  – {"byName": ["Name", null]}
     //   object form – {"byName": {"name": "Name", "condition": null}}
-    // Only in-package target dependencies (byName / target keys) are extracted;
-    // external product dependencies are ignored for formula generation.
+    // Both local target names and external product names are extracted; the
+    // distinction is resolved at formula-generation time via allTargetsByName.
     private struct SPMTargetDependency: Decodable {
         let targetName: String?
 
@@ -122,7 +225,7 @@ struct SwiftFormulaConverter: NodeFunction {
             let c = try decoder.container(keyedBy: AnyKey.self)
             var found: String? = nil
 
-            for key in ["byName", "target"] {
+            for key in ["byName", "target", "product"] {
                 guard found == nil, c.contains(AnyKey(key)) else { continue }
                 if let arr = try? c.decode([String?].self, forKey: AnyKey(key)) {
                     found = arr.compactMap { $0 }.first
@@ -165,75 +268,157 @@ struct SwiftFormulaConverter: NodeFunction {
 
     // MARK: - Formula generation
 
-    private func generateFormula(manifest: SPMManifest, packageFolder: String) -> String {
-        let targetsByName = Dictionary(uniqueKeysWithValues: manifest.targets.map { ($0.name, $0) })
-        var lines: [String] = []
+    private func generateFormula(rootManifest: SPMManifest,
+                                 externalManifests: [String: SPMManifest],
+                                 rootPackageFolder: String) -> String {
+        // Build combined target name → SPMTarget map.
+        // External targets carry overridePackageFolder so buildFuncDef uses the
+        // correct source root.  Root targets take precedence on any name conflict.
+        var allTargetsByName: [String: SPMTarget] = [:]
+        for (extFolder, extManifest) in externalManifests {
+            for var target in extManifest.targets {
+                target.overridePackageFolder = extFolder
+                allTargetsByName[target.name] = target
+            }
+        }
+        for target in rootManifest.targets {
+            allTargetsByName[target.name] = target  // root wins
+        }
 
-        for product in manifest.products {
+        // Resolves a dependency name to all SPMTargets it represents.
+        // A direct target name returns one element; a product name returns every
+        // target listed in that product so multi-target products are fully covered.
+        func allTargetsNamed(_ name: String) -> [SPMTarget] {
+            if let t = allTargetsByName[name] { return [t] }
+            for (extFolder, extManifest) in externalManifests {
+                guard let product = extManifest.products.first(where: { $0.name == name }) else { continue }
+                return product.targets.compactMap { targetName in
+                    var t = extManifest.targets.first(where: { $0.name == targetName })
+                    t?.overridePackageFolder = extFolder
+                    return t
+                }
+            }
+            return []
+        }
+
+        var blocks: [String] = []
+        var emittedFuncs = Set<String>()
+
+        for product in rootManifest.products {
             guard product.productType != .other,
                   let primaryTargetName = product.targets.first,
-                  let primaryTarget = targetsByName[primaryTargetName] else { continue }
+                  let primaryTarget = allTargetsByName[primaryTargetName] else { continue }
 
+            // All transitively reachable targets in dependency-first order so
+            // each func is defined before any func that references it.
+            let allTargets = collectTransitiveTargets(root: primaryTarget, lookupAll: allTargetsNamed)
+
+            // Emit one func definition per unique target (shared across products).
+            for target in allTargets {
+                let fn = compilerFuncName(for: target.name)
+                guard !emittedFuncs.contains(fn) else { continue }
+                blocks.append(buildFuncDef(target: target,
+                                           packageFolder: rootPackageFolder,
+                                           lookupAll: allTargetsNamed))
+                emittedFuncs.insert(fn)
+            }
+
+            // Linker configuration.
             let isLibrary    = (product.productType == .library)
-            let compilerExpr = buildCompilerExpr(for: primaryTarget,
-                                                 targetsByName: targetsByName,
-                                                 packageFolder: packageFolder,
-                                                 visited: [])
-
             let outputName   = isLibrary ? "lib\(product.name).dylib" : product.name
-            let dynLib       = isLibrary ? ", dynamicLibrary: 'true'" : ""
-            let linkerConfig = "Configuration(outputName: '\(outputName)'\(dynLib)).output"
+            let linkerConfig = "Configuration(dynamicLibrary: '\(isLibrary ? "true" : "false")', outputName: '\(outputName)').output"
 
-            // The wire key for the linker's object input is the filename swiftc
-            // receives on the command line; "<module>.o" matches the file
-            // SwiftCompilerTool emits in the sandbox.
-            let objectWireKey = "\(primaryTarget.name).o"
+            // One object-file wire per compiled target (all transitive deps included).
+            let objectWires = allTargets.map { t in
+                "        '\(t.name).o': \(compilerFuncName(for: t.name))().object"
+            }
 
-            let line =
-                "product '\(product.name)' = " +
-                "SwiftLinkerTool(" +
-                "configuration <- ['config': \(linkerConfig)], " +
-                "input <- ['\(objectWireKey)': \(compilerExpr).object]" +
-                ").output"
-
-            lines.append(line)
+            let block =
+                "product '\(product.name)' =\n" +
+                "    SwiftLinkerTool(\n" +
+                "        configuration <- ['config': \(linkerConfig)],\n" +
+                "        input <- [\n" +
+                objectWires.joined(separator: ",\n") + "\n" +
+                "        ]\n" +
+                "    ).output"
+            blocks.append(block)
         }
 
-        return lines.joined(separator: "\n")
+        return blocks.joined(separator: "\n\n")
     }
 
-    // Returns a SwiftCompilerTool(...) expression (without a trailing port)
-    // so the caller can append .object or .swiftmodule as needed.
-    private func buildCompilerExpr(for target: SPMTarget,
-                                   targetsByName: [String: SPMTarget],
-                                   packageFolder: String,
-                                   visited: Set<String>) -> String {
-        let sourcesPath = "\(packageFolder)/\(target.sourcesRelativePath)"
-        let configExpr  = "Configuration(moduleName: '\(target.name)').output"
+    // Returns all targets reachable from `root` in dependency-first topological
+    // order (leaves first, root last). `lookupAll` resolves a dependency name to
+    // every target it covers (one for a named target, several for a product).
+    private func collectTransitiveTargets(root: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [SPMTarget] {
+        var ordered: [SPMTarget] = []
+        var visited  = Set<String>()
+
+        func visit(_ target: SPMTarget) {
+            guard !visited.contains(target.name) else { return }
+            visited.insert(target.name)
+            for dep in target.dependencies {
+                if let depName = dep.targetName {
+                    for depTarget in lookupAll(depName) {
+                        visit(depTarget)
+                    }
+                }
+            }
+            ordered.append(target)
+        }
+
+        visit(root)
+        return ordered
+    }
+
+    // "MyTarget-A" → "compilerMyTarget_A"  (must be a valid formula identifier)
+    private func compilerFuncName(for targetName: String) -> String {
+        let sanitized = String(targetName.map { $0.isLetter || $0.isNumber ? $0 : Character("_") })
+        return "compiler\(sanitized)"
+    }
+
+    // Emits a zero-parameter func definition for one compiler node.
+    // For external targets, `overridePackageFolder` replaces `packageFolder` as
+    // the root from which `sourcesRelativePath` is resolved.
+    private func buildFuncDef(target: SPMTarget,
+                              packageFolder: String,
+                              lookupAll: (String) -> [SPMTarget]) -> String {
+        let pkgRoot     = target.overridePackageFolder ?? packageFolder
+        let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
+        let configExpr  = target.type == "executable"
+            ? "Configuration(moduleName: '\(target.name)', parseAsLibrary: 'false').output"
+            : "Configuration(moduleName: '\(target.name)').output"
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 
-        // Collect in-package target dependencies, guarding against cycles.
         var moduleWires: [String] = []
-        var nextVisited = visited
-        nextVisited.insert(target.name)
-
         for dep in target.dependencies {
-            guard let depName   = dep.targetName,
-                  let depTarget = targetsByName[depName],
-                  !nextVisited.contains(depName) else { continue }
-            let depExpr = buildCompilerExpr(for: depTarget,
-                                            targetsByName: targetsByName,
-                                            packageFolder: packageFolder,
-                                            visited: nextVisited)
-            // Wire key is the module name; SwiftCompilerTool appends ".swiftmodule"
-            // to produce the filename placed in the sandbox.
-            moduleWires.append("'\(depName)': \(depExpr).swiftmodule")
+            guard let depName = dep.targetName else { continue }
+            for depTarget in lookupAll(depName) {
+                let fn = compilerFuncName(for: depTarget.name)
+                moduleWires.append("            '\(depTarget.name)': \(fn)().swiftmodule")
+            }
         }
 
-        var args = "configuration <- ['config': \(configExpr)], inputFolder <- ['sources': \(folderExpr)]"
+        var args =
+            "    configuration <- ['config': \(configExpr)],\n" +
+            "    inputFolder   <- ['folder0': \(folderExpr)]"
         if !moduleWires.isEmpty {
-            args += ", inputModules <- [\(moduleWires.joined(separator: ", "))]"
+            args += ",\n    inputModules  <- [\n" + moduleWires.joined(separator: ",\n") + "\n    ]"
         }
-        return "SwiftCompilerTool(\(args))"
+        return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompilerTool(\n\(args)\n    )"
+    }
+
+    // Resolves a relative path (which may contain "..") against a base path.
+    // Both paths are virtual input-filesystem paths, not real filesystem paths.
+    private func resolveRelativePath(_ relative: String, from base: String) -> String {
+        var components = base.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        for part in relative.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
+            switch part {
+            case ".":  break
+            case "..": if !components.isEmpty { components.removeLast() }
+            default:   components.append(part)
+            }
+        }
+        return components.joined(separator: "/")
     }
 }

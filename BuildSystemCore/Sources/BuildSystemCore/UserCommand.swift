@@ -99,6 +99,7 @@ final class CommandParser {
             }
             return .remove(pathOrWildcard: path)
 
+            // TODO: introduce "get" command that goes to output
         case "cp", "copy":
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
             guard remaining.count >= 1 else {

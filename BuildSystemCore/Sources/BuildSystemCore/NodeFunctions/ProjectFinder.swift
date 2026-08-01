@@ -16,7 +16,9 @@ public struct ProjectFinder: NodeFunction {
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
                                             outputPorts: [],
-                                            dynamicInputPorts: [rootFolderManifestInputPort, watchedFolderManifestInputPort, projectBuildersInputPort])
+                                            dynamicInputPorts: [rootFolderManifestInputPort,
+                                                                watchedFolderManifestInputPort,
+                                                                projectBuildersInputPort])
 
     var embeddedNode: Node?
 
@@ -34,9 +36,32 @@ public struct ProjectFinder: NodeFunction {
 
         for folderManifest in folderManifests {
             for entry in folderManifest.1.entries {
-                if entry.isPinned && entry.name.hasSuffix(".fmla") {
-                    let fullPath = (Path(folderManifest.0) / entry.name).string
-                    result[fullPath] = "ProjectBuilder(projectFile <- [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
+                // TODO: clean this up. also make plugin-based. -- FOR LATER, NOT NOW
+                if entry.isPinned {
+                    if entry.name.hasSuffix(".fmla") {
+                        let fullPath = (Path(folderManifest.0) / entry.name).string
+                        result[fullPath] = "ProjectBuilder(projectFile <- [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
+                    } else if entry.name == "Package.swift" {
+                        let fullPath      = (Path(folderManifest.0) / entry.name).string
+                        let packageFolder = Path(fullPath).deletingLastComponent!.string
+
+                        let pkgReaderExpr =
+                            "SwiftPackageReaderTool(" +
+                            "configuration <- ['config': Configuration().output], " +
+                            "packageFile <- ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
+                            ").packageJSON"
+
+                        let converterExpr =
+                            "SwiftFormulaConverter(" +
+                            "packageFolder <- ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
+                            "packageJSON <- ['\(fullPath)': \(pkgReaderExpr)]" +
+                            ").formula"
+
+                        result[fullPath] =
+                            "ProjectBuilder(" +
+                            "projectFile <- ['\(packageFolder)': \(converterExpr)]" +
+                            ").status"
+                    }
                 }
             }
         }

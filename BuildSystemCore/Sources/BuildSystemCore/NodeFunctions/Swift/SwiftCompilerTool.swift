@@ -11,6 +11,7 @@ struct SwiftCompilerToolConfiguration {
     let arguments: [String]
     let environment: [String: String]
     let moduleName: String
+    let parseAsLibrary: Bool
 
     init(properties: [String: String]) {
         // TODO: remove these defaults and come up with easier way to avoid duplication
@@ -23,6 +24,7 @@ struct SwiftCompilerToolConfiguration {
         arguments   = []
         environment = [:]
         moduleName  = properties["moduleName"] ?? "Module"
+        parseAsLibrary = properties["parseAsLibrary"] != "false"
     }
 
     func asDictionary() -> [String: String] {
@@ -31,7 +33,8 @@ struct SwiftCompilerToolConfiguration {
          "toolDescriptor.platform":      toolDescriptor.platform,
          "toolDescriptor.architecture":  toolDescriptor.architecture,
          "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? "",
-         "moduleName":                   moduleName]
+         "moduleName":                   moduleName,
+         "parseAsLibrary":               parseAsLibrary ? "true" : "false"]
     }
 }
 
@@ -166,9 +169,11 @@ struct SwiftCompilerTool: NodeFunction {
         }
 
         arguments.append("-module-name");                    arguments.append(moduleName)
-        if moduleName != "MainTarget" { // HACK
+
+        if inputs.configuration.parseAsLibrary {
             arguments.append("-parse-as-library")
         }
+
         arguments.append("-c")
         arguments.append("-whole-module-optimization")
         arguments.append("-o");                              arguments.append(objectOutput)
