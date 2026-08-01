@@ -185,7 +185,7 @@ final class CommandInterpreter {
         case .noValue(let reason):
             outputError("File \(entry.path) has no content: \(reason)")
         case nil:
-            outputError("File \(entry.path) has no nil value")
+            outputError("File \(entry.path) has a nil value") // TODO this happens
         }
     }
 

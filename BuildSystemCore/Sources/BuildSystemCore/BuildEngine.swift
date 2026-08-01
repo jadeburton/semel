@@ -43,7 +43,8 @@ public final class BuildEngine {
             IncludeFinder.self,
             SwiftCompilerTool.self,
             SwiftLinkerTool.self,
-            SwiftPackageReaderTool.self
+            SwiftPackageReaderTool.self,
+            SwiftFormulaConverter.self
         ])
     }
 
@@ -73,7 +74,7 @@ public final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database297.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database300.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)

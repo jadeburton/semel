@@ -159,7 +159,7 @@ struct SwiftLinkerTool: NodeFunction {
                 },
                 write: { _, data in
                     output.append(contentsOf: data)
-                }))
+                })).exitCode
 
         return .init(
             output: (exitCode == 0)

@@ -211,7 +211,7 @@ struct SwiftCompilerTool: NodeFunction {
                     } else if filename == interfaceOutput {
                         interfaceBytes.append(contentsOf: data)
                     }
-                }))
+                })).exitCode
 
         guard exitCode == 0 else {
             let error = NodeValue.noValue(reason: .error(message: errorOutput))

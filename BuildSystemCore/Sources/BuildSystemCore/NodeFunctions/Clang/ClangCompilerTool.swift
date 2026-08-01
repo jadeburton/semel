@@ -120,7 +120,7 @@ public struct ClangCompilerTool: NodeFunction {
                           },
                           write: { _, data in
                               output.append(contentsOf: data)
-                          }))
+                          })).exitCode
 
         return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Compiler exited with exitcode \(exitCode)")),
                      errorLog: .value(errorOutput.intern()),

@@ -162,7 +162,7 @@ public struct ClangPreprocessorTool: NodeFunction {
                                                       },
                                                       write: { _, data in
                                                           output.append(contentsOf: data)
-                                                      }))
+        })).exitCode
 
         return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Preprocessor exited with exitcode \(exitCode)")),
                      errorLog: .value(errorOutput.intern()),

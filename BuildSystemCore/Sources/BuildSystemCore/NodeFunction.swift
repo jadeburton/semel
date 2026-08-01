@@ -101,7 +101,7 @@ extension NodeFunction {
             guard !values.isEmpty else {
                 // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
                 // TODO: self-healing
-                print("WARNING: non-optional input port \(inputPort) has no connected wires")
+                print("WARNING: non-optional input port \(inputPort) has no connected wires for \(self)")
                 return false
             }
 

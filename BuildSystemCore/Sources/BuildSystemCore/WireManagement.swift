@@ -6,7 +6,7 @@
 //
 
 enum WireError: Error {
-    case attemptToCreateWireWithDuplicateName(_ name: String)
+    case attemptToCreateWireWithDuplicateName(_ name: String) // TODO: the label of a wire is unique only on the target node input port, is that what we are checking here?
     case failedToDeleteWire
 }
 

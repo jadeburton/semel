@@ -16,6 +16,12 @@ struct ToolDescriptor: Hashable, Codable {
     let recursiveHash: String?
 }
 
+struct ToolExecuteResult {
+    let exitCode: Int32
+    // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
+    let sandboxPathUsed: String
+}
+
 /// A build tool that can be executed with a set of arguments and input files,
 /// producing output files and log messages via a ToolOutput callback object.
 protocol ToolExecutor {
@@ -23,7 +29,7 @@ protocol ToolExecutor {
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
-                 output: ToolOutput) throws -> Int32
+                 output: ToolOutput) throws -> ToolExecuteResult
 }
 
 // MARK: - Supporting types
@@ -32,6 +38,7 @@ struct ToolOutput {
     let logError: (_ error: String) -> Void
     let logMessage: (_ message: String) -> Void
     let write: (_ filePath: String, _ data: [UInt8]) -> Void
+    // ISSUE: the JSON file has abs paths to the temp directory. we need to remove these but we need the ToolExecutor to tell us what dir it used
 }
 
 /// A file entry passed to a `ToolExecutor`.
@@ -149,7 +156,7 @@ class LocalFileSystemTool: ToolExecutor {
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
-                 output: ToolOutput) throws -> Int32 {
+                 output: ToolOutput) throws -> ToolExecuteResult {
 
         let fileManager = FileManager.default
 
@@ -261,6 +268,6 @@ class LocalFileSystemTool: ToolExecutor {
             }
         }
 
-        return exitCode
+        return .init(exitCode: exitCode, sandboxPathUsed: sandboxPath)
     }
 }

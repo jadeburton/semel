@@ -109,7 +109,7 @@ struct SwiftPackageReaderTool: NodeFunction {
         var jsonOutput   = ""
         var stderrOutput = ""
 
-        let exitCode = try tool.execute(
+        let result = try tool.execute(
             arguments: ["package", "dump-package"],
             environment: [
                 // Allow swift to access its normal caches and toolchain resources
@@ -124,7 +124,7 @@ struct SwiftPackageReaderTool: NodeFunction {
                 logMessage: { message in jsonOutput   += message },  // stdout → JSON
                 write:      { _, _ in }))
 
-        guard exitCode == 0 else {
+        guard result.exitCode == 0 else {
             return .init(
                 packageJSON: .noValue(reason: .error(message: "swift package dump-package failed:\n\(stderrOutput)")),
                 infoLog: .value(stderrOutput.intern()))
@@ -136,8 +136,28 @@ struct SwiftPackageReaderTool: NodeFunction {
                 infoLog: .value(stderrOutput.intern()))
         }
 
+        // Unfortunately the tool embeds the sandbox directory everywhere. Correct that.
+        jsonOutput = stripOutSandboxPaths(sandboxPath: "/private" + result.sandboxPathUsed, jsonOutput: jsonOutput)
+
         return .init(
             packageJSON: .value(jsonOutput.intern()),
             infoLog:     .value(stderrOutput.intern()))
+    }
+
+    private func stripOutSandboxPaths(sandboxPath: String, jsonOutput: String) -> String {
+
+        var result = jsonOutput
+
+        func replace(_ string: String, with replacement: String) {
+            result = result.replacingOccurrences(of: string, with: replacement)
+        }
+
+        replace("/" + sandboxPath + "/", with: "")
+        replace(sandboxPath + "\"", with: "\"")
+        replace("/" + Path(sandboxPath).deletingLastComponent!.string + "/", with: "")
+        replace(Path(sandboxPath).deletingLastComponent!.string + "/", with: "")
+        replace(Path(sandboxPath).deletingLastComponent!.string + "\"", with: "\"")
+
+        return result
     }
 }
