@@ -23,9 +23,9 @@ public struct ProjectBuilder: NodeFunction {
     }
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
-        let projectFileProducts: [String: GraphShapeNode] = try FormulaFile.parse(projectFileContent)
-
         let parentFolderOfFormulaFile = (Path(projectFileName).deletingLastComponent) ?? Path(".")
+
+        let projectFileProducts: [String: GraphShapeNode] = try FormulaFile.parse(projectFileContent, basePath: parentFolderOfFormulaFile)
 
         var result = [String: String]()
 

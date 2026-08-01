@@ -33,7 +33,7 @@ extension FormulaFile {
     /// Parse `source` (the text of a .fmla file) and resolve every `product`
     /// declaration to a `GraphShapeNode`.
     /// Returns a mapping of product name → node, ready for `GraphShapeApplier`.
-    static func parse(_ source: String) throws -> [String: GraphShapeNode] {
+    static func parse(_ source: String, basePath: Path) throws -> [String: GraphShapeNode] {
         let tokens = try FormulaLexer.tokenize(source)
         var parser = FormulaParser(tokens)
         let file   = try parser.parseFile()

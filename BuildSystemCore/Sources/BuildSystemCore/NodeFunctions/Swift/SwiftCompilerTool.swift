@@ -134,7 +134,7 @@ struct SwiftCompilerTool: NodeFunction {
         for folderManifest in folderManifests {
             for entry in folderManifest.1.entries {
                 if entry.isPinned && entry.name.hasSuffix(".swift") {
-                    let fullPath = (Path(folderManifest.0) / entry.name).string
+                    let fullPath = (Path(folderManifest.1.baseFolderPath) / entry.name).string
                     result[fullPath] = "StaticFile(path: \"\(fullPath)\").output".replacingOccurrences(of: "\\'", with: "'")
                 }
             }

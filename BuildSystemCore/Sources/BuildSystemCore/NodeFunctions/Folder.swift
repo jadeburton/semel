@@ -16,6 +16,7 @@ struct FolderManifestEntry: Codable {
 struct FolderManifest: PolySerializable {
     static let kind: UInt = 4
 
+    let baseFolderPath: String
     let entries: [FolderManifestEntry]
 }
 
@@ -104,7 +105,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
                                                isPinned: (pinnable != nil) ? try pinnable!.isPinned : false))
         }
 
-        return .init(entries: folderManifestEntries)
+        return .init(baseFolderPath: path.string, entries: folderManifestEntries)
     }
 
     // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.
