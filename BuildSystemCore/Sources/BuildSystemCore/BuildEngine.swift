@@ -186,7 +186,7 @@ public final class BuildEngine {
             return
         }
 
-        try? nodeFunction.processWithPreCheck()
+        try nodeFunction.processWithPreCheck()
     }
 }
 

@@ -122,6 +122,15 @@ extension NodeFunction {
             }
         }
 
+        // Dynamic ports (e.g. source files) with pending values also block processing —
+        // a file mid-upload would give the compiler an incomplete input set.
+        for inputPort in descriptor.dynamicInputPorts {
+            guard let values = input.inputValues[inputPort], !values.isEmpty else { continue }
+            if values.contains(where: { $0.value.isPending }) {
+                return false
+            }
+        }
+
         return true
     }
 
@@ -149,16 +158,23 @@ extension NodeFunction {
         }
 
         let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+        var didWriteCachedOutput = false
 
         if let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey) {
-            // BUG: this fails and then the Node keeps being processed forever.
-            try? writeToOutputs(output: cachedOutput)
-        } else {
+            do {
+                try writeToOutputs(output: cachedOutput)
+                didWriteCachedOutput = true
+            } catch {
+                // Cached output is stale or the graph topology changed — fall
+                // through and reprocess so the node does not stay stuck.
+                print("WARNING: writeToOutputs failed for cached output, reprocessing: \(error)")
+            }
+        }
 
+        if !didWriteCachedOutput {
             let startTime = Date.now
             let output = processWithCatch(input: input)
-            try? writeToOutputs(output: output)
-
+            try writeToOutputs(output: output)
             try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey,
                                                  processingDuration: Date.now.timeIntervalSince(startTime),
                                                  output: output)
@@ -352,12 +368,27 @@ extension InputlessNodeFunction {
         for outputPort in descriptor.outputPorts {
             outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
         }
-        // Intentionally omit inputWireExpectations entirely.
-        // Passing an empty dict per dynamic port would cause applyExpectationConfiguration
-        // to delete every existing wire on those ports (step 1: delete wires not in config),
-        // which reschedules upstream nodes, which recreate the wires, scheduling this node
-        // again — an infinite loop.  Leave wire configuration completely untouched on error.
-        return .init(outputValues: outputValues, inputWireExpectations: [:])
+        // Reconstruct existing dynamic wire expectations from the live graph so
+        // applyExpectationConfiguration's step 1 doesn't delete them on error.
+        // A brand-new node that errors on first run has no wires yet, so the
+        // dict is empty for it — which is also correct (nothing to preserve).
+        var wireExpectations = [String: [String: String]]()
+        for port in descriptor.dynamicInputPorts {
+            let toSymbolID = port.asSymbolID()
+            guard let wires = try? database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID),
+                  !wires.isEmpty else { continue }
+            var portExpectations = [String: String]()
+            for wire in wires {
+                let wireName = wire.name.resolveSymbol()
+                if let shapeNode = try? GraphShapeNode.buildFromWire(wire, database: database) {
+                    portExpectations[wireName] = shapeNode.asString(omitOutputPort: false)
+                }
+            }
+            if !portExpectations.isEmpty {
+                wireExpectations[port] = portExpectations
+            }
+        }
+        return .init(outputValues: outputValues, inputWireExpectations: wireExpectations)
     }
 
     fileprivate func hasInputPorts() -> Bool {

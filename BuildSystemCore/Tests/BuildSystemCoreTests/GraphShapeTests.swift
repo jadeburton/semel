@@ -158,7 +158,7 @@ final class GraphShapeTests: XCTestCase {
         let original = try GraphShapeNode.parse(input)
         let prettyString = original.asString(pretty: true, omitOutputPort: false)
         let reparsed = try GraphShapeNode.parse(prettyString)
-        XCTAssertTrue(original.topologyMatches(reparsed))
+        XCTAssertNoThrow(try original.expectTopologyMatch(reparsed))
     }
 
     // MARK: - topologyMatches
@@ -166,25 +166,25 @@ final class GraphShapeTests: XCTestCase {
     func test_topologyMatches_identicalNodes() throws {
         let a = try GraphShapeNode.parse("StaticFile(path: 'hello.c').output")
         let b = try GraphShapeNode.parse("StaticFile(path: 'hello.c').output")
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_outputPortIgnored() throws {
         let a = try GraphShapeNode.parse("StaticFile(path: 'hello.c').output")
         let b = try GraphShapeNode.parse("StaticFile(path: 'hello.c').otherPort")
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentArg_doesNotMatch() throws {
         let a = try GraphShapeNode.parse("StaticFile(path: 'hello.c')")
         let b = try GraphShapeNode.parse("StaticFile(path: 'main.c')")
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentTypeName_doesNotMatch() throws {
         let a = try GraphShapeNode.parse("ClangCompilerTool()")
         let b = try GraphShapeNode.parse("ClangLinkerTool()")
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_portOrderIndependent() throws {
@@ -220,7 +220,7 @@ final class GraphShapeTests: XCTestCase {
             ],
             outputPort: "output"
         )
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentWireName_doesNotMatch() throws {
@@ -230,7 +230,7 @@ final class GraphShapeTests: XCTestCase {
         let b = try GraphShapeNode.parse(
             "ClangCompilerTool(input <- [\"main.c\": StaticFile(path: 'hello.c').output]).output"
         )
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_differentWireCount_doesNotMatch() throws {
@@ -240,14 +240,14 @@ final class GraphShapeTests: XCTestCase {
         let b = try GraphShapeNode.parse(
             "ClangLinkerTool(input <- [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
-        XCTAssertFalse(a.topologyMatches(b))
+        XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }
 
     func test_topologyMatches_nestedNodesMatch() throws {
         let input = "ClangCompilerTool(input <- [\"hello.c.p\": ClangPreprocessorTool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         let a = try GraphShapeNode.parse(input)
         let b = try GraphShapeNode.parse(input)
-        XCTAssertTrue(a.topologyMatches(b))
+        XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
     // MARK: - Parse errors
