@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "2620"
+   LastUpgradeVersion = "2660"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -30,8 +30,11 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:.swiftpm/BuildSystemCore.xctestplan"
+            reference = "container:BuildSystemCore.xctestplan"
             default = "YES">
+         </TestPlanReference>
+         <TestPlanReference
+            reference = "container:../build_system.xctestplan">
          </TestPlanReference>
       </TestPlans>
       <Testables>

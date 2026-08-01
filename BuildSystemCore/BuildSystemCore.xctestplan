@@ -1,0 +1,24 @@
+{
+  "configurations" : [
+    {
+      "id" : "90A1219C-81AC-44C1-B945-F6618E0CC6A1",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "BuildSystemCoreTests",
+        "name" : "BuildSystemCoreTests"
+      }
+    }
+  ],
+  "version" : 1
+}

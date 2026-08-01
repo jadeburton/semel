@@ -12,13 +12,7 @@
     "performanceAntipatternCheckerEnabled" : true
   },
   "testTargets" : [
-    {
-      "target" : {
-        "containerPath" : "container:",
-        "identifier" : "BuildSystemCoreTests",
-        "name" : "BuildSystemCoreTests"
-      }
-    }
+
   ],
   "version" : 1
 }

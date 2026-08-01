@@ -84,6 +84,7 @@ extension BuildEngine {
     // MARK: nudge
 
     func nudge() throws {
+        try database.cacheEntry.deleteAll()
         for node in try database.node.selectAll() where (try? node.hasOneOrMoreErrorOrPendingOutputs()) == true {
             try node.setScheduled(true)
         }

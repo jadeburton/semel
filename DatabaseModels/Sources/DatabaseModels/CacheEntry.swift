@@ -55,6 +55,12 @@ public struct CacheEntryDataAccess: DataAccessType {
         }
     }
 
+    public func deleteAll() throws -> Bool {
+        try write { db in
+            try CacheEntry.deleteAll(db) > 0
+        }
+    }
+
     // TODO: method to update the timestamp and cost of an existing row
     // TODO: method to get number of rows
     // TODO: method to delete rows until the total number of rows reaches a certain limit. The rows deleted should be

@@ -23,8 +23,19 @@ public struct ProjectBuilder: NodeFunction {
     }
 
     func convertProjectFileFormatToBuildGraphExpectations(projectFileName: String, projectFileContent: String) throws -> [String: String] {
-        let graphShape = try GraphShapeNode.parse("OutputFile(path: 'outputFileSystem/\((Path(projectFileName).deletingFirstComponent ?? .empty).string.removingSuffix(".fmla"))', input <- ['product': \(projectFileContent)]).status")
-        return [projectFileName.removingSuffix(".fmla"): graphShape.asString(omitOutputPort: false)]
+        let projectFileProducts: [String: GraphShapeNode] = try FormulaFile.parse(projectFileContent)
+
+        let parentFolderOfFormulaFile = (Path(projectFileName).deletingLastComponent) ?? Path(".")
+
+        var result = [String: String]()
+
+        for (productName, graphShapeNode) in projectFileProducts {
+            let fullPath = Path("outputFileSystem") / (parentFolderOfFormulaFile.deletingFirstComponent ?? Path("")) / Path(productName)
+            let graphShape = try GraphShapeNode.parse("OutputFile(path: '\(fullPath)', input <- ['product': \(graphShapeNode.asString(omitOutputPort: false))]).status")
+            result[fullPath.string] = graphShape.asString(omitOutputPort: false)
+        }
+
+        return result
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {

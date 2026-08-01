@@ -45,6 +45,7 @@ struct SwiftCompilerTool: NodeFunction {
     static let configuration    = "configuration"
     static let inputSourceFiles = "sourceFiles"   // dynamic: one wire per .swift file in the module, self-wired
     static let inputFolder      = "inputFolder"   // manifest to monitor for input swift files and self-wire or unwire
+    static let inputModules     = "inputModules"  // one wire per upstream SwiftCompilerTool.outputModule
     static let outputObject     = "object"        // compiled .o
     static let outputModule     = "swiftmodule"
     static let outputInterface  = "swiftinterface"
@@ -57,15 +58,18 @@ struct SwiftCompilerTool: NodeFunction {
     }
 
     let descriptor = NodeFunctionDescriptor(
-        staticInputPorts: [configuration, inputFolder],
+        staticInputPorts: [configuration, inputFolder, inputModules],
         outputPorts:      [outputObject, outputModule, outputInterface, infoLog],
-        dynamicInputPorts: [inputSourceFiles])
+        dynamicInputPorts: [inputSourceFiles],
+        optionalStaticInputPorts: [inputModules]
+    )
 
     // MARK: - Inputs / Outputs
 
     struct SwiftCompilerToolInputs {
         let configuration: SwiftCompilerToolConfiguration
         let sourceFiles: [FileNameAndContent]
+        let moduleFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
 
         init(input: ProcessInput) throws {
@@ -77,6 +81,12 @@ struct SwiftCompilerTool: NodeFunction {
             sourceFiles = try (input.inputValues[SwiftCompilerTool.inputSourceFiles] ?? [:])
                 .map { fileName, nodeValue in
                     FileNameAndContent(filePath: fileName, hash: try nodeValue.expectValue())
+                }
+                .sorted { $0.filePath < $1.filePath }
+
+            moduleFiles = try (input.inputValues[SwiftCompilerTool.inputModules] ?? [:])
+                .map { fileName, nodeValue in
+                    FileNameAndContent(filePath: fileName + ".swiftmodule", hash: try nodeValue.expectValue())
                 }
                 .sorted { $0.filePath < $1.filePath }
 
@@ -156,7 +166,9 @@ struct SwiftCompilerTool: NodeFunction {
         }
 
         arguments.append("-module-name");                    arguments.append(moduleName)
-        arguments.append("-parse-as-library")
+        if moduleName != "MainTarget" { // HACK
+            arguments.append("-parse-as-library")
+        }
         arguments.append("-c")
         arguments.append("-whole-module-optimization")
         arguments.append("-o");                              arguments.append(objectOutput)
@@ -164,6 +176,10 @@ struct SwiftCompilerTool: NodeFunction {
         arguments.append("-emit-module-path");               arguments.append(moduleOutput)
         arguments.append("-emit-module-interface")
         arguments.append("-emit-module-interface-path");     arguments.append(interfaceOutput)
+
+        if !inputs.moduleFiles.isEmpty {
+            arguments.append("-I"); arguments.append(".")
+        }
 
         for sourceFile in inputs.sourceFiles {
             arguments.append(sourceFile.filePath)
@@ -182,7 +198,7 @@ struct SwiftCompilerTool: NodeFunction {
         let exitCode = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: inputs.sourceFiles,
+            inputFiles: inputs.sourceFiles + inputs.moduleFiles,
             expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput],
             output: .init(
                 logError:   { message in errorOutput += message + "\n"; },
