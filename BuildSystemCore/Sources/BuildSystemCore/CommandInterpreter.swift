@@ -221,7 +221,7 @@ final class CommandInterpreter {
                 kindLabel = nodeName
             }
 
-            outputMessage("⚠  \(kindLabel)")
+            outputMessage("❌ \(kindLabel)")
 
             for port in byNode[nodeID]! {
                 let portName     = port.nameSymbolID.resolveSymbol()

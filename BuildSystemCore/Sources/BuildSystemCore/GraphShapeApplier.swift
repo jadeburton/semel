@@ -252,13 +252,17 @@ extension GraphShapeNode {
                                           kind: kind,
                                           properties: properties,
                                           searchKey: asString(omitOutputPort: true))
-//        let newNodeID  = newNode.id!
 
         // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
 
             for wireSpec in inputPortSpec.wires {
+                let newNodeNodeFunction = try newNode.nodeFunction()
+                if try !newNodeNodeFunction.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
+                    throw NodeError.other(message: "The configuration refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
+                }
+
                 let (fromNodeID, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
 
                 guard let fromSymbolID else {
@@ -285,8 +289,7 @@ extension GraphShapeNode {
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
             let portSymbolID   = portSpec.portName.asSymbolID()
-            let connectedWires = try database.wire.select(goingToNodeID: newNode.id!,
-                                                          toSymbolID: portSymbolID)
+            let connectedWires = try database.wire.select(goingToNodeID: newNode.id!, toSymbolID: portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.
                 throw GraphShapeApplierError.requiredPortUnwired(typeName: typeName,

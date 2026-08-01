@@ -37,9 +37,15 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
         }
     }
 
+    func canBePinned() -> Bool {
+        // HACK
+        containingPath.hasPrefix("inputFileSystem")
+//        self.parentNodeFunction?.canBePin
+    }
+
     func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
-                             Self.pinnedOutputPort: .noValue(reason: .error(message: "Deleted"))],
+                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(message: "Deleted")) : .value("")], // HACK
               inputWireExpectations: [:])
     }
 
@@ -49,7 +55,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 
     // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
     func canBeDeleted() throws -> Bool {
-        try thisNode.allChildren.isEmpty && !isPinned
+        try thisNode.allChildren.isEmpty && !(canBePinned() && isPinned)
     }
 
     // The manifest is a non-recursive list of immediate children
@@ -88,8 +94,11 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     }
 
     func setPinned(_ pinned: Bool) throws {
+        if !canBePinned() && pinned {
+            return
+        }
         try thisNode.writeToOutputPort(Self.pinnedOutputPort,
-                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted")))
+                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted/Nonexistent")))
 
         try notifyParentOfChildContentChange()
     }

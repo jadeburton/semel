@@ -10,15 +10,20 @@
 //   formula     = topLevel*
 //   topLevel    = funcDef | productDef
 //   funcDef     = 'func' IDENT '(' paramList? ')' '=' expr
-//   productDef  = 'product' STRING '=' expr
+//   productDef  = 'product' (STRING | PATH) '=' expr
 //   paramList   = IDENT (',' IDENT)*
-//   expr        = STRING
+//   expr        = STRING | PATH
 //               | IDENT                                   -- parameter reference
 //               | IDENT '(' argList? ')' ('.' IDENT)?    -- call or node construct
 //   arg         = IDENT '<-' '[' wireEntry* ']'           -- input-wire port
 //               | IDENT ':' expr                          -- labeled / property
 //               | expr                                    -- positional
-//   wireEntry   = STRING ':' expr (',' wireEntry)*
+//   wireEntry   = (STRING | PATH) ':' expr (',' wireEntry)*
+//   PATH        = '<' relativePath '>'
+//
+// PATH is resolved by the lexer: <rel/path> → basePath/rel/path, with '.' and
+// '..' normalised.  It is an error for a PATH to escape basePath via '..'.
+// The parser sees only STRING tokens, so PATH is valid everywhere STRING is.
 //
 // Disambiguation:  a call 'name(...)' resolves to a user-function call when
 // 'name' appears in a 'func' definition; otherwise it is treated as a node
@@ -34,7 +39,7 @@ extension FormulaFile {
     /// declaration to a `GraphShapeNode`.
     /// Returns a mapping of product name → node, ready for `GraphShapeApplier`.
     static func parse(_ source: String, basePath: Path) throws -> [String: GraphShapeNode] {
-        let tokens = try FormulaLexer.tokenize(source)
+        let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
         let file   = try parser.parseFile()
         return try FormulaResolver(file).resolve()
@@ -79,6 +84,7 @@ enum FormulaParseError: Error, LocalizedError {
     case typeMismatch(expected: String, got: String, context: String)
     case wrongArgumentCount(function: String, expected: Int, got: Int)
     case positionalArgInNodeConstruction(typeName: String)
+    case pathEscapesBasePath(path: String)
 
     var errorDescription: String? {
         switch self {
@@ -92,6 +98,8 @@ enum FormulaParseError: Error, LocalizedError {
             return "Wrong argument count for '\(f)': expected \(exp), got \(got)"
         case .positionalArgInNodeConstruction(let t):
             return "Positional argument in node construction '\(t)': use 'key: value' or 'port <- [...]'"
+        case .pathEscapesBasePath(let p):
+            return "Path literal '<\(p)>' escapes the formula base path"
         }
     }
 }
@@ -131,7 +139,7 @@ enum FormulaToken: Equatable, CustomStringConvertible {
 // MARK: - Lexer
 
 enum FormulaLexer {
-    static func tokenize(_ source: String) throws -> [FormulaToken] {
+    static func tokenize(_ source: String, basePath: Path) throws -> [FormulaToken] {
         var tokens: [FormulaToken] = []
         let chars = Array(source)
         var i = 0
@@ -161,9 +169,22 @@ enum FormulaLexer {
                 continue
             }
 
-            // <- arrow (must check before any single-char handling of '<')
+            // <- arrow (must check before path literal handling of '<')
             if c == "<" && i + 1 < chars.count && chars[i + 1] == "-" {
                 i += 2; tokens.append(.arrow); continue
+            }
+
+            // Angle-bracket path literal  <rel/path>  — resolved against basePath
+            if c == "<" {
+                i += 1   // consume '<'
+                var raw = ""
+                while i < chars.count && chars[i] != ">" { raw.append(chars[i]); i += 1 }
+                guard i < chars.count else {
+                    throw FormulaParseError.unexpectedToken(nil, context: "unterminated path literal '<\(raw)'")
+                }
+                i += 1   // consume '>'
+                tokens.append(.string(try resolvePathLiteral(raw, relativeTo: basePath)))
+                continue
             }
 
             // Single-character tokens
@@ -195,6 +216,39 @@ enum FormulaLexer {
 
         tokens.append(.eof)
         return tokens
+    }
+
+    // Resolves a relative path against basePath, normalising '.' and '..',
+    // and errors if the result would escape basePath.
+    private static func resolvePathLiteral(_ raw: String, relativeTo basePath: Path) throws -> String {
+        // Normalise basePath into components.
+        var baseComponents: [String] = []
+        for part in basePath.string.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
+            switch part {
+            case ".":  break
+            case "..": if !baseComponents.isEmpty { baseComponents.removeLast() }
+            default:   baseComponents.append(part)
+            }
+        }
+
+        // Walk the relative path starting from basePath, never going above it.
+        var components = baseComponents
+        let baseDepth  = baseComponents.count
+
+        for part in raw.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
+            switch part {
+            case ".":  break
+            case "..":
+                guard components.count > baseDepth else {
+                    throw FormulaParseError.pathEscapesBasePath(path: raw)
+                }
+                components.removeLast()
+            default:
+                components.append(part)
+            }
+        }
+
+        return components.joined(separator: "/")
     }
 }
 

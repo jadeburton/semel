@@ -150,29 +150,46 @@ extension GraphShapeNode {
 
 extension GraphShapeNode {
 
-    /// Returns `true` when `self` and `other` describe the same graph topology,
-    /// including wire names.  `outputPort` and `outputs` are intentionally ignored —
-    /// output expectations are not yet matched.
-    func topologyMatches(_ other: GraphShapeNode) -> Bool {
-        guard typeName == other.typeName   else { return false }
-        guard Set(args) == Set(other.args) else { return false }
+    enum TopologyMatchError: Error {
+        case noMatch(reason: String)
+    }
+
+    func expectTopologyMatch(_ other: GraphShapeNode) throws {
+        guard typeName == other.typeName else {
+            throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
+        }
+        guard Set(args) == Set(other.args) else {
+            throw TopologyMatchError.noMatch(reason: "Args mismatch: \(args) != \(other.args)")
+        }
 
         let selfPorts  = Dictionary(inputs.map       { ($0.portName, $0.wires) },
                                     uniquingKeysWith: { first, _ in first })
+
         let otherPorts = Dictionary(other.inputs.map { ($0.portName, $0.wires) },
                                     uniquingKeysWith: { first, _ in first })
 
-        guard selfPorts.count == otherPorts.count else { return false }
+        guard selfPorts.count == otherPorts.count else {
+            throw TopologyMatchError.noMatch(reason: "Port count mismatch: \(selfPorts.count) != \(otherPorts.count)")
+        }
 
         for (portName, selfWires) in selfPorts {
-            guard let otherWires = otherPorts[portName]  else { return false }
-            guard selfWires.count == otherWires.count    else { return false }
+            guard let otherWires = otherPorts[portName]  else {
+                throw TopologyMatchError.noMatch(reason: "Wires missing on one side for port \(portName)")
+            }
+            guard selfWires.count == otherWires.count else {
+                throw TopologyMatchError.noMatch(reason: "Wire count mismatch: \(selfWires.count) != \(otherWires.count)")
+            }
             for (selfWire, otherWire) in zip(selfWires, otherWires) {
-                guard selfWire.name == otherWire.name              else { return false }
-                guard selfWire.node.topologyMatches(otherWire.node) else { return false }
+                guard selfWire.name == otherWire.name else {
+                    throw TopologyMatchError.noMatch(reason: "Wire name mismatch: \(selfWire.name) != \(otherWire.name)")
+                }
+                do {
+                    try selfWire.node.expectTopologyMatch(otherWire.node)
+                } catch let error as TopologyMatchError {
+                    throw TopologyMatchError.noMatch(reason: "Child topology of wire does not match for a \(selfWire.node.typeName): \(error)")
+                }
             }
         }
-        return true
     }
 }
 

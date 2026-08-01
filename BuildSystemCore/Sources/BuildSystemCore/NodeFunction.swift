@@ -101,7 +101,7 @@ extension NodeFunction {
             guard !values.isEmpty else {
                 // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
                 // TODO: self-healing
-                print("WARNING: non-optional input port has no connected wires")
+                print("WARNING: non-optional input port \(inputPort) has no connected wires")
                 return false
             }
 
@@ -138,6 +138,7 @@ extension NodeFunction {
         let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
 
         if let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey) {
+            // BUG: this fails and then the Node keeps being processed forever.
             try? writeToOutputs(output: cachedOutput)
         } else {
 
@@ -235,6 +236,9 @@ extension InputlessNodeFunction {
             }
         } catch {
             print("❌ ERROR: applyExpectationConfiguration failed: \(error)")
+            for outputPort in try descriptor.outputPorts {
+                try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "applyExpectationConfiguration failed")))
+            }
             throw error
         }
     }
@@ -294,13 +298,11 @@ extension InputlessNodeFunction {
                 // raw strings to avoid spurious mismatches.
                 let currentShapeNode   = try GraphShapeNode.buildFromWire(existingWire, database: database)
                 let expectedShapeNode  = try GraphShapeNode.parse(expectationString)
-                guard !currentShapeNode.topologyMatches(expectedShapeNode) else {
-                    continue   // topology unchanged — nothing to do
-                }
-                print("NO MATCH:")
-                print("currentShapeNode:  \(currentShapeNode.asString(omitOutputPort: false))")
-                print("expectedShapeNode: \(expectedShapeNode.asString(omitOutputPort: false))")
-                _ = try existingWire.deleteWire(database: database)
+                var log: String? = ""
+
+                // Throws if there is a mismatch. If that happens, it means there is an integrity problem; the searchKey does
+                // not match what we actually created, probably because we failed to exactly create the graph shape.
+                try currentShapeNode.expectTopologyMatch(expectedShapeNode)
             }
 
             // Find and connect the matching source.
@@ -361,6 +363,8 @@ enum NodeError: Error {
     case cannotHaveProperties
     case cannotDeleteNodeWithOutputs
     case initializing
+    case searchKeyBadIntegrity(currentShapeNode: String, expectedShapeNode: String, log: String)
+
 }
 extension NodeFunction {
     func description() -> String {
