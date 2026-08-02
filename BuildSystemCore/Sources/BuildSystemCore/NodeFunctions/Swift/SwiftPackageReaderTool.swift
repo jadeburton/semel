@@ -45,7 +45,7 @@ struct SwiftPackageReaderToolConfiguration {
 struct SwiftPackageReaderTool: NodeFunction {
     static let kind: UInt = 23
     // Bump to invalidate caches whenever stripping logic changes.
-    static let codeVersion: Int = 2
+    static let codeVersion: Int = 4
 
     // MARK: Ports
 
@@ -138,51 +138,54 @@ struct SwiftPackageReaderTool: NodeFunction {
                 infoLog: .value(stderrOutput.intern()))
         }
 
-        // Unfortunately the tool embeds the sandbox directory everywhere. Correct that.
-        // Use the symlink-resolved canonical path so the replacements match what SPM writes
-        // into the JSON (SPM always outputs /private/var/... even when the sandbox URL.path
-        // returns /var/...).  Without this, prepending "/private" to an already-canonical
-        // path would produce "/private/private/var/..." and nothing would match.
         // sandboxPathUsed is already symlink-resolved (captured before the sandbox
         // directory was deleted, so /var -> /private/var is followed correctly).
-        let canonicalSandboxPath = result.sandboxPathUsed
-        jsonOutput = stripOutSandboxPaths(sandboxPath: canonicalSandboxPath, jsonOutput: jsonOutput)
+        jsonOutput = stripOutSandboxPaths(sandboxPath: result.sandboxPathUsed, jsonOutput: jsonOutput)
 
         return .init(
             packageJSON: .value(jsonOutput.intern()),
             infoLog:     .value(stderrOutput.intern()))
     }
 
+    /// Parses `jsonOutput`, replaces every string value that starts with a
+    /// sandbox-rooted absolute path with its relative equivalent, then
+    /// re-encodes to JSON. Uses `JSONSerialization` so all escape sequences
+    /// are handled correctly by the standard library.
     private func stripOutSandboxPaths(sandboxPath: String, jsonOutput: String) -> String {
-        var result = jsonOutput
-
-        func replace(_ string: String, with replacement: String) {
-            result = result.replacingOccurrences(of: string, with: replacement)
-        }
-
-        // Strip paths of files placed directly inside the sandbox.
-        replace(sandboxPath + "/",  with: "")
-        replace(sandboxPath + "\"", with: "\"")
-
-        // Walk up ancestor directories of the sandbox, replacing each ancestor
-        // prefix with the correct relative prefix ("../", "../../", etc.).
-        // This handles dependencies declared at any depth above the sandbox:
-        //   - iteration 1: parent      → ../   (e.g. ../DatabaseModels)
-        //   - iteration 2: grandparent → ../../  (e.g. ../../GRDB.swift)
+        // Build priority-ordered ancestor table (longest / most-specific first).
+        var ancestors: [(abs: String, rel: String)] = [(sandboxPath, "")]
         var current = sandboxPath
-        var prefix  = "../"
+        var upPrefix = "../"
         for _ in 0..<6 {
             guard let parent = Path(current).deletingLastComponent else { break }
-            let parentStr = parent.string  // no leading slash (Path strips them)
-
-            replace("/" + parentStr + "/", with: prefix)
-            replace(parentStr + "/",       with: prefix)
-            replace(parentStr + "\"",      with: String(prefix.dropLast()) + "\"")
-
-            current = "/" + parentStr
-            prefix  = "../" + prefix
+            current = "/" + parent.string
+            ancestors.append((current, upPrefix))
+            upPrefix = "../" + upPrefix
         }
 
+        func mapPath(_ string: String) -> String {
+            for (abs, rel) in ancestors where string.hasPrefix(abs + "/") {
+                return rel + string.dropFirst(abs.count + 1)
+            }
+            return string
+        }
+
+        func transformValue(_ value: Any) -> Any {
+            switch value {
+            case let string as String:       return mapPath(string)
+            case let array as [Any]:         return array.map { transformValue($0) }
+            case let dict as [String: Any]:  return dict.mapValues { transformValue($0) }
+            default:                         return value
+            }
+        }
+
+        guard let inputData = jsonOutput.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: inputData),
+              let outputData = try? JSONSerialization.data(withJSONObject: transformValue(parsed),
+                                                          options: [.sortedKeys]),
+              let result = String(data: outputData, encoding: .utf8) else {
+            return jsonOutput
+        }
         return result
     }
 }

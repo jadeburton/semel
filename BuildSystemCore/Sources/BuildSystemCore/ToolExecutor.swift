@@ -169,11 +169,11 @@ class LocalFileSystemTool: ToolExecutor {
                                                  appropriateFor: fileManager.temporaryDirectory,
                                                  create: true)
             sandboxPath = sandboxURL.path
-            // Resolve symlinks while the directory still exists so callers get
-            // the /private/var/... form that tools (e.g. SPM) write into output.
-            // After the defer removes the sandbox this call would return the
-            // unresolved /var/... path, causing stripping to fail.
-            canonicalSandboxPath = URL(fileURLWithPath: sandboxPath).resolvingSymlinksInPath().path
+            // On macOS, /var is a symlink to /private/var. Tools like SPM call
+            // realpath() internally and write /private/var/... in their output
+            // even when the process ran in /var/.... Normalise the path here so
+            // callers can match against those output paths.
+            canonicalSandboxPath = sandboxPath.hasPrefix("/var/") ? "/private" + sandboxPath : sandboxPath
         } catch {
             throw ToolExecutionError.failedToCreateSandbox(underlying: error)
         }
