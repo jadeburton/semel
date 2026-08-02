@@ -90,6 +90,14 @@ struct SwiftFormulaConverter: NodeFunction {
             let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
             for dep in manifest.packageDependencies {
                 let extPath = resolveRelativePath(dep.path, from: manifestPath)
+                print("DEBUG SwiftFormulaConverter: dep.path='\(dep.path)' from='\(manifestPath)' → extPath='\(extPath)'")
+                // Skip dependencies whose resolved path falls outside the virtual
+                // inputFileSystem — they are system-level or truly external packages
+                // that cannot be read through the build graph.
+                guard extPath.hasPrefix("inputFileSystem/") else {
+                    print("DEBUG SwiftFormulaConverter: SKIPPED (outside inputFileSystem)")
+                    continue
+                }
                 guard !visitedPaths.contains(extPath) else { continue }
                 visitedPaths.insert(extPath)
                 expectations[extPath] = packageReaderExpectation(for: extPath)

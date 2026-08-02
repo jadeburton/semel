@@ -78,7 +78,14 @@ protocol InputlessNodeFunction: WithKind {
 }
 
 protocol NodeFunction: InputlessNodeFunction {
+    /// Increment this to invalidate cached outputs when processing logic changes.
+    /// Defaults to 0; override in any NodeFunction whose output format changes.
+    static var codeVersion: Int { get }
     func process(input: ProcessInput) throws -> ProcessOutput
+}
+
+extension NodeFunction {
+    static var codeVersion: Int { 0 }
 }
 
 extension NodeFunction {

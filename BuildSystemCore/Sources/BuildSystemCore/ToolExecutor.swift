@@ -162,12 +162,18 @@ class LocalFileSystemTool: ToolExecutor {
 
         // 1. Create a temporary sandbox directory.
         let sandboxPath: String
+        let canonicalSandboxPath: String
         do {
             let sandboxURL = try fileManager.url(for: .itemReplacementDirectory,
                                                  in: .userDomainMask,
                                                  appropriateFor: fileManager.temporaryDirectory,
                                                  create: true)
             sandboxPath = sandboxURL.path
+            // Resolve symlinks while the directory still exists so callers get
+            // the /private/var/... form that tools (e.g. SPM) write into output.
+            // After the defer removes the sandbox this call would return the
+            // unresolved /var/... path, causing stripping to fail.
+            canonicalSandboxPath = URL(fileURLWithPath: sandboxPath).resolvingSymlinksInPath().path
         } catch {
             throw ToolExecutionError.failedToCreateSandbox(underlying: error)
         }
@@ -268,6 +274,6 @@ class LocalFileSystemTool: ToolExecutor {
             }
         }
 
-        return .init(exitCode: exitCode, sandboxPathUsed: sandboxPath)
+        return .init(exitCode: exitCode, sandboxPathUsed: canonicalSandboxPath)
     }
 }

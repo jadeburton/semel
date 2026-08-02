@@ -19,7 +19,7 @@ extension NodeFunction {
     }
 
     private var nodeFunctionCacheKey: String {
-        "\(String(describing: type(of: self)))\n\(thisNode.properties.asPlainText())"
+        "\(String(describing: type(of: self)))\nv\(Self.codeVersion)\n\(thisNode.properties.asPlainText())"
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {

@@ -44,6 +44,8 @@ struct SwiftPackageReaderToolConfiguration {
 
 struct SwiftPackageReaderTool: NodeFunction {
     static let kind: UInt = 23
+    // Bump to invalidate caches whenever stripping logic changes.
+    static let codeVersion: Int = 2
 
     // MARK: Ports
 
@@ -137,7 +139,14 @@ struct SwiftPackageReaderTool: NodeFunction {
         }
 
         // Unfortunately the tool embeds the sandbox directory everywhere. Correct that.
-        jsonOutput = stripOutSandboxPaths(sandboxPath: "/private" + result.sandboxPathUsed, jsonOutput: jsonOutput)
+        // Use the symlink-resolved canonical path so the replacements match what SPM writes
+        // into the JSON (SPM always outputs /private/var/... even when the sandbox URL.path
+        // returns /var/...).  Without this, prepending "/private" to an already-canonical
+        // path would produce "/private/private/var/..." and nothing would match.
+        // sandboxPathUsed is already symlink-resolved (captured before the sandbox
+        // directory was deleted, so /var -> /private/var is followed correctly).
+        let canonicalSandboxPath = result.sandboxPathUsed
+        jsonOutput = stripOutSandboxPaths(sandboxPath: canonicalSandboxPath, jsonOutput: jsonOutput)
 
         return .init(
             packageJSON: .value(jsonOutput.intern()),
@@ -145,18 +154,34 @@ struct SwiftPackageReaderTool: NodeFunction {
     }
 
     private func stripOutSandboxPaths(sandboxPath: String, jsonOutput: String) -> String {
-
         var result = jsonOutput
 
         func replace(_ string: String, with replacement: String) {
             result = result.replacingOccurrences(of: string, with: replacement)
         }
 
-        replace("/" + sandboxPath + "/", with: "")
+        // Strip paths of files placed directly inside the sandbox.
+        replace(sandboxPath + "/",  with: "")
         replace(sandboxPath + "\"", with: "\"")
-        replace("/" + Path(sandboxPath).deletingLastComponent!.string + "/", with: "../")
-        replace(Path(sandboxPath).deletingLastComponent!.string + "/", with: "../")
-        replace(Path(sandboxPath).deletingLastComponent!.string + "\"", with: "..\"")
+
+        // Walk up ancestor directories of the sandbox, replacing each ancestor
+        // prefix with the correct relative prefix ("../", "../../", etc.).
+        // This handles dependencies declared at any depth above the sandbox:
+        //   - iteration 1: parent      → ../   (e.g. ../DatabaseModels)
+        //   - iteration 2: grandparent → ../../  (e.g. ../../GRDB.swift)
+        var current = sandboxPath
+        var prefix  = "../"
+        for _ in 0..<6 {
+            guard let parent = Path(current).deletingLastComponent else { break }
+            let parentStr = parent.string  // no leading slash (Path strips them)
+
+            replace("/" + parentStr + "/", with: prefix)
+            replace(parentStr + "/",       with: prefix)
+            replace(parentStr + "\"",      with: String(prefix.dropLast()) + "\"")
+
+            current = "/" + parentStr
+            prefix  = "../" + prefix
+        }
 
         return result
     }

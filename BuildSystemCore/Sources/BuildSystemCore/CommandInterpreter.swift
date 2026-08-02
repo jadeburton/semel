@@ -24,7 +24,7 @@ final class CommandInterpreter {
 
     required init(database: DatabaseLayer) {
         self.database = database
-        handleBase(externalPath: "/Users/jadeburton/Desktop/C1/C1")
+        handleBase(externalPath: "/Users/jadeburton/build_system")
     }
 
     func outputMessage(_ message: String) { print(message) }
