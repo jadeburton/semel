@@ -42,17 +42,24 @@ struct SwiftCompilerToolConfiguration {
 
 struct SwiftCompilerTool: NodeFunction {
     static let kind: UInt = 20
+    static let codeVersion: Int = 1
 
     // MARK: Ports
 
-    static let configuration    = "configuration"
-    static let inputSourceFiles = "sourceFiles"   // dynamic: one wire per .swift file in the module, self-wired
-    static let inputFolder      = "inputFolder"   // manifest to monitor for input swift files and self-wire or unwire
-    static let inputModules     = "inputModules"  // one wire per upstream SwiftCompilerTool.outputModule
-    static let outputObject     = "object"        // compiled .o
-    static let outputModule     = "swiftmodule"
-    static let outputInterface  = "swiftinterface"
-    static let infoLog          = "infoLog"
+    static let configuration         = "configuration"
+    static let inputSourceFiles      = "sourceFiles"          // dynamic: one wire per .swift file
+    static let inputFolder           = "inputFolder"          // manifest to watch for swift files
+    static let inputModules          = "inputModules"         // one wire per upstream swiftmodule
+    /// Folder manifests for system-library targets (e.g. GRDBSQLite).
+    /// Each entry key becomes the subdirectory name placed in the sandbox.
+    static let inputModuleMapFolders = "inputModuleMapFolders"
+    /// Dynamic port — actual file content wired from StaticFile nodes discovered
+    /// via inputModuleMapFolders.  Wire key format: "<dirName>/<filename>".
+    static let inputModuleMapFiles   = "inputModuleMapFiles"
+    static let outputObject          = "object"
+    static let outputModule          = "swiftmodule"
+    static let outputInterface       = "swiftinterface"
+    static let infoLog               = "infoLog"
 
     var embeddedNode: Node?
 
@@ -61,10 +68,10 @@ struct SwiftCompilerTool: NodeFunction {
     }
 
     let descriptor = NodeFunctionDescriptor(
-        staticInputPorts: [configuration, inputFolder, inputModules],
-        outputPorts:      [outputObject, outputModule, outputInterface, infoLog],
-        dynamicInputPorts: [inputSourceFiles],
-        optionalStaticInputPorts: [inputModules]
+        staticInputPorts:         [configuration, inputFolder, inputModules, inputModuleMapFolders],
+        outputPorts:              [outputObject, outputModule, outputInterface, infoLog],
+        dynamicInputPorts:        [inputSourceFiles, inputModuleMapFiles],
+        optionalStaticInputPorts: [inputModules, inputModuleMapFolders]
     )
 
     // MARK: - Inputs / Outputs
@@ -73,7 +80,9 @@ struct SwiftCompilerTool: NodeFunction {
         let configuration: SwiftCompilerToolConfiguration
         let sourceFiles: [FileNameAndContent]
         let moduleFiles: [FileNameAndContent]
+        let moduleMapFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
+        let moduleMapFolderManifests: [(String, FolderManifest)]
 
         init(input: ProcessInput) throws {
             let configString = try input.inputValues[SwiftCompilerTool.configuration]!
@@ -93,19 +102,31 @@ struct SwiftCompilerTool: NodeFunction {
                 }
                 .sorted { $0.filePath < $1.filePath }
 
+            // Module map files: wire key is already "<dirName>/<filename>".
+            moduleMapFiles = try (input.inputValues[SwiftCompilerTool.inputModuleMapFiles] ?? [:])
+                .map { wireKey, nodeValue in
+                    FileNameAndContent(filePath: wireKey, hash: try nodeValue.expectValue())
+                }
+                .sorted { $0.filePath < $1.filePath }
+
             var allFolderManifests = [(String, FolderManifest)]()
-
-            for (watchedFolderManifestInputKey, watchedFolderManifestInputValue) in input.inputValues[SwiftCompilerTool.inputFolder] ?? [:] {
-                let object = try? PolyFactory.decode(encodedJSON: watchedFolderManifestInputValue.expectValue().resolveAsString())
-
+            for (key, value) in input.inputValues[SwiftCompilerTool.inputFolder] ?? [:] {
+                let object = try? PolyFactory.decode(encodedJSON: value.expectValue().resolveAsString())
                 guard let folderManifest = object as? FolderManifest else {
                     throw NodeError.other(message: "Could not decode FolderManifest")
                 }
-
-                allFolderManifests.append((watchedFolderManifestInputKey, folderManifest))
+                allFolderManifests.append((key, folderManifest))
             }
-
             inputFolderManifests = allFolderManifests
+
+            var allModuleMapFolders = [(String, FolderManifest)]()
+            for (key, value) in input.inputValues[SwiftCompilerTool.inputModuleMapFolders] ?? [:] {
+                guard let jsonStr = try? value.expectValue().resolveAsString(),
+                      let manifest = try? PolyFactory.decode(encodedJSON: jsonStr) as? FolderManifest
+                else { continue }
+                allModuleMapFolders.append((key, manifest))
+            }
+            moduleMapFolderManifests = allModuleMapFolders
         }
     }
 
@@ -114,14 +135,18 @@ struct SwiftCompilerTool: NodeFunction {
         let outputModule:    NodeValue
         let outputInterface: NodeValue
         let infoLog:         NodeValue
-        let inputSourceFilesExpectations: [String: String]
+        let inputSourceFilesExpectations:    [String: String]
+        let inputModuleMapFilesExpectations: [String: String]
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftCompilerTool.outputObject:    outputObject,
                                  SwiftCompilerTool.outputModule:    outputModule,
                                  SwiftCompilerTool.outputInterface: outputInterface,
                                  SwiftCompilerTool.infoLog:         infoLog],
-                  inputWireExpectations: [SwiftCompilerTool.inputSourceFiles: inputSourceFilesExpectations])
+                  inputWireExpectations: [
+                      SwiftCompilerTool.inputSourceFiles:    inputSourceFilesExpectations,
+                      SwiftCompilerTool.inputModuleMapFiles: inputModuleMapFilesExpectations
+                  ])
         }
     }
 
@@ -133,20 +158,31 @@ struct SwiftCompilerTool: NodeFunction {
 
     private func buildInputSourceFilesExpectations(folderManifests: [(String, FolderManifest)]) -> [String: String] {
         var result: [String: String] = [:]
-
         for folderManifest in folderManifests {
-            for entry in folderManifest.1.entries {
-                if entry.isPinned && entry.name.hasSuffix(".swift") {
-                    let fullPath = (Path(folderManifest.1.baseFolderPath) / entry.name).string
-                    result[fullPath] = "StaticFile(path: \"\(fullPath)\").output".replacingOccurrences(of: "\\'", with: "'")
-                }
+            for entry in folderManifest.1.entries where entry.isPinned && entry.name.hasSuffix(".swift") && !entry.isFolder {
+                let fullPath = (Path(folderManifest.1.baseFolderPath) / entry.name).string
+                result[fullPath] = "StaticFile(path: \"\(fullPath)\").output".replacingOccurrences(of: "\\'", with: "'")
             }
         }
-
         return result
     }
 
-    private func compile(inputs: SwiftCompilerToolInputs, inputSourceFilesExpectations: [String: String]) throws -> SwiftCompilerToolOutputs {
+    /// Generates dynamic wire expectations for all files inside each system-library
+    /// folder manifest.  Wire key format: "<sandboxDirName>/<filename>".
+    private func buildInputModuleMapFilesExpectations(moduleMapFolderManifests: [(String, FolderManifest)]) -> [String: String] {
+        var result: [String: String] = [:]
+        for (dirName, manifest) in moduleMapFolderManifests {
+            for entry in manifest.entries where entry.isPinned && !entry.isFolder {
+                let wireKey = Path(dirName) / entry.name
+                result[wireKey.string] = "StaticFile(path: \"\(Path(manifest.baseFolderPath) / entry.name)\").output"
+            }
+        }
+        return result
+    }
+
+    private func compile(inputs: SwiftCompilerToolInputs,
+                         inputSourceFilesExpectations: [String: String],
+                         inputModuleMapFilesExpectations: [String: String]) throws -> SwiftCompilerToolOutputs {
 
         guard !inputs.sourceFiles.isEmpty else {
             let error = NodeValue.noValue(reason: .error(message: "SwiftCompilerTool: no source files"))
@@ -154,7 +190,8 @@ struct SwiftCompilerTool: NodeFunction {
                          outputModule: error,
                          outputInterface: error,
                          infoLog: .value("".intern()),
-                         inputSourceFilesExpectations: inputSourceFilesExpectations)
+                         inputSourceFilesExpectations: inputSourceFilesExpectations,
+                         inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
 
         let moduleName      = inputs.configuration.moduleName
@@ -186,6 +223,16 @@ struct SwiftCompilerTool: NodeFunction {
             arguments.append("-I"); arguments.append(".")
         }
 
+        // Add -I flags for each system-library module map directory.
+        var moduleMapDirs = Set<String>()
+        for file in inputs.moduleMapFiles {
+            let dir = (file.filePath as NSString).deletingLastPathComponent
+            if !dir.isEmpty { moduleMapDirs.insert(dir) }
+        }
+        for dir in moduleMapDirs.sorted() {
+            arguments.append("-I"); arguments.append(dir)
+        }
+
         for sourceFile in inputs.sourceFiles {
             arguments.append(sourceFile.filePath)
         }
@@ -203,7 +250,7 @@ struct SwiftCompilerTool: NodeFunction {
         let exitCode = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: inputs.sourceFiles + inputs.moduleFiles,
+            inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleMapFiles,
             expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput],
             output: .init(
                 logError:   { message in errorOutput += message + "\n"; },
@@ -224,27 +271,33 @@ struct SwiftCompilerTool: NodeFunction {
                          outputModule: error,
                          outputInterface: error,
                          infoLog: .value(infoOutput.intern()),
-                         inputSourceFilesExpectations: inputSourceFilesExpectations)
+                         inputSourceFilesExpectations: inputSourceFilesExpectations,
+                         inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
 
         return .init(outputObject:    .value(objectBytes.intern()),
                      outputModule:    .value(moduleBytes.intern()),
                      outputInterface: .value(interfaceBytes.intern()),
                      infoLog:         .value(infoOutput.intern()),
-                     inputSourceFilesExpectations: inputSourceFilesExpectations)
+                     inputSourceFilesExpectations: inputSourceFilesExpectations,
+                     inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
     }
 
     private func process(inputs: SwiftCompilerToolInputs) -> SwiftCompilerToolOutputs {
-        let inputSourceFilesExpectations = buildInputSourceFilesExpectations(folderManifests: inputs.inputFolderManifests)
+        let inputSourceFilesExpectations    = buildInputSourceFilesExpectations(folderManifests: inputs.inputFolderManifests)
+        let inputModuleMapFilesExpectations = buildInputModuleMapFilesExpectations(moduleMapFolderManifests: inputs.moduleMapFolderManifests)
         do {
-            return try compile(inputs: inputs, inputSourceFilesExpectations: inputSourceFilesExpectations)
+            return try compile(inputs: inputs,
+                               inputSourceFilesExpectations: inputSourceFilesExpectations,
+                               inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         } catch {
             let errorNodeValue = NodeValue.noValue(reason: .error(message: error.localizedDescription))
             return .init(outputObject: errorNodeValue,
                          outputModule: errorNodeValue,
                          outputInterface: errorNodeValue,
                          infoLog: .value("".intern()),
-                         inputSourceFilesExpectations: inputSourceFilesExpectations)
+                         inputSourceFilesExpectations: inputSourceFilesExpectations,
+                         inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
     }
 }

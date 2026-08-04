@@ -207,6 +207,11 @@ struct SwiftFormulaConverter: NodeFunction {
 
         // SPM default: Sources/<TargetName> relative to the package root.
         var sourcesRelativePath: String { path ?? "Sources/\(name)" }
+
+        // systemLibrary targets (type == "system-target") wrap C system libraries
+        // via a module.modulemap.  They have no Swift sources and cannot be compiled
+        // with SwiftCompilerTool.
+        var isSystemLibrary: Bool { type == "system-target" || type == "system" }
     }
 
     // Handles the two dependency shapes emitted by different Swift versions:
@@ -360,6 +365,10 @@ struct SwiftFormulaConverter: NodeFunction {
 
         func visit(_ target: SPMTarget) {
             guard !visited.contains(target.name) else { return }
+            // System-library targets (module.modulemap wrappers) have no Swift
+            // sources.  Skip them here; buildFuncDef handles them separately via
+            // inputModuleMapFolders when they appear as a dependency.
+            guard !target.isSystemLibrary else { return }
             visited.insert(target.name)
             for dep in target.dependencies {
                 if let depName = dep.targetName {
@@ -395,11 +404,20 @@ struct SwiftFormulaConverter: NodeFunction {
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 
         var moduleWires: [String] = []
+        var moduleMapFolderWires: [String] = []
         for dep in target.dependencies {
             guard let depName = dep.targetName else { continue }
             for depTarget in lookupAll(depName) {
-                let fn = compilerFuncName(for: depTarget.name)
-                moduleWires.append("            '\(depTarget.name)': \(fn)().swiftmodule")
+                if depTarget.isSystemLibrary {
+                    // Place the module.modulemap directory into the sandbox so
+                    // swiftc can resolve the system module (e.g. GRDBSQLite).
+                    let depPkgRoot    = depTarget.overridePackageFolder ?? packageFolder
+                    let mapFolderPath = "\(depPkgRoot)/\(depTarget.sourcesRelativePath)"
+                    moduleMapFolderWires.append("            '\(depTarget.name)': Folder(path: '\(mapFolderPath)').manifest")
+                } else {
+                    let fn = compilerFuncName(for: depTarget.name)
+                    moduleWires.append("            '\(depTarget.name)': \(fn)().swiftmodule")
+                }
             }
         }
 
@@ -408,6 +426,9 @@ struct SwiftFormulaConverter: NodeFunction {
             "    inputFolder   <- ['folder0': \(folderExpr)]"
         if !moduleWires.isEmpty {
             args += ",\n    inputModules  <- [\n" + moduleWires.joined(separator: ",\n") + "\n    ]"
+        }
+        if !moduleMapFolderWires.isEmpty {
+            args += ",\n    inputModuleMapFolders <- [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
         }
         return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompilerTool(\n\(args)\n    )"
     }
