@@ -10,14 +10,14 @@ let package = Package(
         .library(name: "BuildSystemCore", targets: ["BuildSystemCore"]),
     ],
     dependencies: [
-        .package(path: "../../GRDB.swift"),
+        .package(path: "../GRDB"),
         .package(path: "../DatabaseModels"),
     ],
     targets: [
         .target(
             name: "BuildSystemCore",
             dependencies: [
-                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "GRDB", package: "GRDB"),
                 .product(name: "DatabaseModels", package: "DatabaseModels"),
             ],
             path: "Sources/BuildSystemCore"
