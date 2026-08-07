@@ -308,7 +308,7 @@ extension InputlessNodeFunction {
             // Shared helper: connect a new wire from the node that satisfies the expectation.
             let connectExpected = {
                 let wireNameSymbolID = wireName.asSymbolID()
-                if let (fromNodeID, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) {
+                if let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) {
                     // fromSymbolID is nil when the expectation string has no .outputPort suffix,
                     // which is invalid for wiring — expectation strings must include a port.
                     guard let fromSymbolID else {
@@ -317,7 +317,7 @@ extension InputlessNodeFunction {
                     }
 
                     try Wire.connectWire(database: database,
-                                         fromNodeID: fromNodeID,
+                                         fromNodeID: fromNode.id!,
                                          fromSymbolID: fromSymbolID,
                                          toNodeID: id!,
                                          toSymbolID: toSymbolID,
@@ -355,7 +355,7 @@ extension InputlessNodeFunction {
     /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
     /// `nil` if the type name in the expectation is not registered in PolyFactory.
-    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: Node, fromSymbolID: ObjectID?)? {
         let expectedShape = try GraphShapeNode.parse(expectationString)
         return try expectedShape.findOrCreateMatchingNode()
     }

@@ -28,7 +28,9 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     init(thisNode: Node) throws {
         embeddedNode = thisNode
         embeddedNode!.name = name
-        embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        if embeddedNode!.parentNodeID == nil {
+            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        }
     }
 
     var inputFileSystem: Node {

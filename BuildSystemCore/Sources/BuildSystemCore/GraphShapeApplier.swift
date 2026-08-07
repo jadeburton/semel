@@ -222,22 +222,22 @@ extension GraphShapeNode {
     /// and then both tried to insert the same searchKey.
     ///
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
-    func findOrCreateMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?) {
-        let newNodeID: ObjectID = try database.withTransaction {
+    func findOrCreateMatchingNode() throws -> (fromNode: Node, fromSymbolID: ObjectID?) {
+        let newNode: Node = try database.withTransaction {
             // Inside the transaction the find is serialized with the create, so
             // a concurrent task that committed its insert first will be visible here.
             if let existing = try findMatchingNode() {
-                return existing.fromNodeID
+                return try database.node.select(nodeID: existing.fromNodeID)
             }
             return try createNode()
         }
 
-        return (fromNodeID: newNodeID, fromSymbolID: outputPort?.asSymbolID())
+        return (fromNode: newNode, fromSymbolID: outputPort?.asSymbolID())
     }
 
     // MARK: Private — node + wire creation (runs inside withTransaction)
 
-    private func createNode() throws -> ObjectID {
+    private func createNode() throws -> Node {
         let kind: UInt
         do {
             kind = try PolyFactory.kind(forTypeName: typeName)
@@ -248,10 +248,14 @@ extension GraphShapeNode {
         // ── All other node types ───────────────────────────────────────────────
         let properties = args.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
 
+        let startTime = Date.now
+
         let newNode = try Node.createNode(database: database,
                                           kind: kind,
                                           properties: properties,
                                           searchKey: asString(omitOutputPort: true))
+
+        print("createNode time elapsed: \(Date.now.timeIntervalSince(startTime))")
 
         // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
@@ -263,7 +267,7 @@ extension GraphShapeNode {
                     throw NodeError.other(message: "The configuration refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
                 }
 
-                let (fromNodeID, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
+                let (fromNode, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
 
                 guard let fromSymbolID else {
                     throw GraphShapeApplierError.missingOutputPortInChildShape(typeName: wireSpec.node.typeName)
@@ -274,7 +278,7 @@ extension GraphShapeNode {
                 }
 
                 try Wire.connectWire(database: database,
-                                     fromNodeID: fromNodeID,
+                                     fromNodeID: fromNode.id!,
                                      fromSymbolID: fromSymbolID,
                                      toNodeID: newNode.id!,
                                      toSymbolID: toSymbolID,
@@ -301,7 +305,7 @@ extension GraphShapeNode {
             try newNode.setScheduled(true)
         }
 
-        return newNode.id!
+        return newNode
     }
 }
 

@@ -41,7 +41,9 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
         embeddedNode = thisNode
         assert(!path.string.contains("outputFileSystem"))
         embeddedNode!.name = name
-        embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        if embeddedNode!.parentNodeID == nil {
+            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        }
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])

@@ -87,6 +87,31 @@ extension Symbol: CustomStringConvertible {
     }
 }
 
+// MARK: - Symbol cache
+
+private final class SymbolCache: @unchecked Sendable {
+    private let lock  = NSLock()
+    private var nameToID: [String: ObjectID] = [:]
+    private var idToName: [ObjectID: String] = [:]
+
+    func id(for name: String) -> ObjectID? {
+        lock.withLock { nameToID[name] }
+    }
+
+    func name(for id: ObjectID) -> String? {
+        lock.withLock { idToName[id] }
+    }
+
+    func store(name: String, id: ObjectID) {
+        lock.withLock {
+            nameToID[name] = id
+            idToName[id]   = name
+        }
+    }
+}
+
+private let symbolCache = SymbolCache()
+
 // MARK: - Resolving a DataToken back to bytes
 
 enum SymbolError: Error {
@@ -95,19 +120,26 @@ enum SymbolError: Error {
 
 extension String {
     public func asSymbolID() -> ObjectID {
-        try! DatabaseLayer.shared.symbol.insertOrGetID(name: self)
+        if let id = symbolCache.id(for: self) { return id }
+        let id = try! DatabaseLayer.shared.symbol.insertOrGetID(name: self)
+        symbolCache.store(name: self, id: id)
+        return id
     }
 }
 
 extension ObjectID {
     public func resolveSymbolAsObject() -> Symbol {
+        if let name = symbolCache.name(for: self) {
+            return Symbol(id: self, name: name)
+        }
         guard let symbol = try? DatabaseLayer.shared.symbol.select(symbolID: self) else {
             fatalError("Invalid SymbolID / failed to load Symbol")
         }
+        symbolCache.store(name: symbol.name, id: self)
         return symbol
     }
 
     public func resolveSymbol() -> String {
-        resolveSymbolAsObject().name
+        symbolCache.name(for: self) ?? resolveSymbolAsObject().name
     }
 }

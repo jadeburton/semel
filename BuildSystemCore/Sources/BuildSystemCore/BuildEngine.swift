@@ -51,30 +51,32 @@ public final class BuildEngine {
     var projectFinder: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try database.node.select(nodeID: fromNodeID)
+            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            return fromNode
         }
     }
 
+    // BUG: this is extremely slow. TODO cache
     var inputFileSystem: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try database.node.select(nodeID: fromNodeID)
+            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            return fromNode
         }
     }
 
+    // BUG: this is extremely slow. TODO cache
     var outputFileSystem: Node {
         get throws {
             let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
-            let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-            return try database.node.select(nodeID: fromNodeID)
+            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            return fromNode
         }
     }
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database318.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "../database319.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)

@@ -106,8 +106,7 @@ final class CommandInterpreter {
 
             let pathIncludingInputFileSystem = Path("inputFileSystem") / relativePath
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(pathIncludingInputFileSystem.string)')")
-            let (fromNodeID, _) = try graphShapeNode.findOrCreateMatchingNode()
-            let fromNode = try database.node.select(nodeID: fromNodeID)
+            let (fromNode, _) = try graphShapeNode.findOrCreateMatchingNode()
             _ = try (fromNode.nodeFunctionCast() as StaticFile).replaceContent(fileContent.intern())
 
         case .folder:

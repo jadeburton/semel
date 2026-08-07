@@ -67,7 +67,9 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
         embeddedNode = thisNode
         assert(!path.string.contains("inputFileSystem"))
         embeddedNode!.name = name
-        embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        if embeddedNode!.parentNodeID == nil {
+            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        }
     }
 
     let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])

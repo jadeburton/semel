@@ -134,15 +134,17 @@ extension Node {
             }
 
             if let existingChild = existingChildren.first {
-                if !(try existingChild.nodeFunction() is Folder) { break }
+                if existingChild.kind != Folder.kind {
+                    break
+                }
                 currentFolder = existingChild
             } else {
                 assert(!pathSoFar.string.hasSuffix("/"))
                 assert(!pathSoFar.string.hasPrefix("/"))
 
                 let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar.string)')")
-                let (fromNodeID, _) = try graphShape.findOrCreateMatchingNode()
-                var newFolder = try database.node.select(nodeID: fromNodeID)
+                let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+                var newFolder = fromNode
                 newFolder.parentNodeID = currentFolder.id!
                 try database.node.update(newFolder)
 
@@ -152,8 +154,14 @@ extension Node {
 
             if pinned {
                 let currentFolderNodeFunction = try currentFolder.nodeFunction()
-                try (currentFolderNodeFunction as? Folder)?.setPinned(true)
-                try currentFolderNodeFunction.notifyParentThisChildAdded()
+                if let folder = currentFolderNodeFunction as? Folder {
+                    if try !folder.isPinned {
+                        try folder.setPinned(true)
+
+                        // BUG TODO: this is very slow.
+                        try currentFolderNodeFunction.notifyParentThisChildAdded()
+                    }
+                }
             }
         }
 
