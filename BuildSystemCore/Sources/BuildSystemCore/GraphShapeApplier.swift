@@ -22,6 +22,8 @@ enum GraphShapeApplierError: Error {
     case requiredPortUnwired(typeName: String, portName: String)
     /// `findOrCreateMatchingNode` was called on a shape that could not be resolved.
     case couldNotResolveShape(typeName: String)
+    /// `_default` was used but the node has multiple output ports and none is named "output".
+    case ambiguousDefaultOutputPort(typeName: String, ports: [String])
     /// A child shape returned a nil fromSymbolID when one was required for wiring.
     case missingOutputPortInChildShape(typeName: String)
 
@@ -232,7 +234,20 @@ extension GraphShapeNode {
             return try createNode()
         }
 
-        return (fromNode: newNode, fromSymbolID: outputPort?.asSymbolID())
+        let resolvedPort: String?
+        if outputPort == "_default" {
+            let ports = try newNode.nodeFunction().descriptor.outputPorts
+            if ports.count == 1 {
+                resolvedPort = ports[0]
+            } else if ports.contains("output") {
+                resolvedPort = "output"
+            } else {
+                throw GraphShapeApplierError.ambiguousDefaultOutputPort(typeName: typeName, ports: ports)
+            }
+        } else {
+            resolvedPort = outputPort
+        }
+        return (fromNode: newNode, fromSymbolID: resolvedPort?.asSymbolID())
     }
 
     // MARK: Private — node + wire creation (runs inside withTransaction)

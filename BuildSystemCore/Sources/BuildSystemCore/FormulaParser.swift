@@ -457,24 +457,35 @@ private struct FormulaResolver {
             return value
 
         case .call(let name, let args, let port):
-            let base: FormulaValue
             if let funcDef = functions[name] {
-                base = try evalFuncCall(funcDef, args: args, env: env)
+                // User-defined function: no .port suffix → preserve the function's own return port.
+                let base = try evalFuncCall(funcDef, args: args, env: env)
+                guard let port else { return base }
+                guard case .node(let node) = base else {
+                    throw FormulaParseError.typeMismatch(
+                        expected: "node (for port access '.\(port)')", got: base.typeName,
+                        context: "cannot access an output port on a string value")
+                }
+                return .node(GraphShapeNode(typeName: node.typeName,
+                                             args:    node.args,
+                                             inputs:  node.inputs,
+                                             outputs: node.outputs,
+                                             outputPort: port))
             } else {
-                base = try evalNodeConstruct(typeName: name, args: args, env: env)
+                // Node constructor: no .port suffix → "_default", resolved to the single
+                // output port by GraphShapeApplier at apply time.
+                let base = try evalNodeConstruct(typeName: name, args: args, env: env)
+                guard case .node(let node) = base else {
+                    throw FormulaParseError.typeMismatch(
+                        expected: "node", got: base.typeName,
+                        context: "node constructor '\(name)' did not return a node")
+                }
+                return .node(GraphShapeNode(typeName: node.typeName,
+                                             args:    node.args,
+                                             inputs:  node.inputs,
+                                             outputs: node.outputs,
+                                             outputPort: port ?? "_default"))
             }
-            guard let port else { return base }
-            // Apply trailing .portName
-            guard case .node(let node) = base else {
-                throw FormulaParseError.typeMismatch(
-                    expected: "node (for port access '.\(port)')", got: base.typeName,
-                    context: "cannot access an output port on a string value")
-            }
-            return .node(GraphShapeNode(typeName: node.typeName,
-                                         args:    node.args,
-                                         inputs:  node.inputs,
-                                         outputs: node.outputs,
-                                         outputPort: port))
         }
     }
 
