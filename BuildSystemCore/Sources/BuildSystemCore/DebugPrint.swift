@@ -217,7 +217,7 @@ extension Node {
 
         let nodeName = name ?? ""
 
-        print("\(indent)- \(kindName)(\(nodeName))")
+        print("\(indent)- \(kindName)(\(nodeName)) \(id!)")
 
         guard let nodeID = id else {
             return
