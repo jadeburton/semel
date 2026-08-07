@@ -18,12 +18,27 @@
 //   arg         = IDENT '<-' '[' wireEntry* ']'           -- input-wire port
 //               | IDENT ':' expr                          -- labeled / property
 //               | expr                                    -- positional
-//   wireEntry   = (STRING | PATH) ':' expr (',' wireEntry)*
+//   wireEntry   = forEachPrefix? (STRING | PATH) ':' expr (',' wireEntry)*
+//   forEachPrefix = '{' IDENT ':' forEachItem (',' forEachItem)* '}'
+//   forEachItem = STRING | PATH                           -- literal or glob pattern
 //   PATH        = '<' relativePath '>'
 //
 // PATH is resolved by the lexer: <rel/path> → basePath/rel/path, with '.' and
 // '..' normalised.  It is an error for a PATH to escape basePath via '..'.
+// EXCEPTION: if the path content contains '%%', it is a template expression —
+// path resolution is skipped and the raw content is emitted as-is so that
+// %%var%% substitution can occur at evaluation time.
 // The parser sees only STRING tokens, so PATH is valid everywhere STRING is.
+//
+// For-each expansion:
+//   {var: 'a', 'b'} "%%var%%": NodeType(param: "%%var%%")
+// expands to two wire entries with var='a' and var='b' substituted.
+// Glob patterns in for-each items (e.g. <src/*.c>) are expanded via the
+// globber callback passed to FormulaFile.parse.
+//
+// %%var%%    — full value of var
+// %%var.N%%  — Nth wildcard capture group (0-based) from a glob pattern
+// %%var.folder%% — containing directory path with trailing slash
 //
 // Disambiguation:  a call 'name(...)' resolves to a user-function call when
 // 'name' appears in a 'func' definition; otherwise it is treated as a node
@@ -37,12 +52,18 @@ extension FormulaFile {
 
     /// Parse `source` (the text of a .fmla file) and resolve every `product`
     /// declaration to a `GraphShapeNode`.
+    /// `globber` is called for any for-each items that contain glob wildcards
+    /// ('*' or '?'); it should return the sorted list of matching logical paths.
     /// Returns a mapping of product name → node, ready for `GraphShapeApplier`.
-    static func parse(_ source: String, basePath: Path) throws -> [String: GraphShapeNode] {
+    static func parse(
+        _ source: String,
+        basePath: Path,
+        globber: @escaping (String) throws -> [String]
+    ) throws -> [String: GraphShapeNode] {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
         let file   = try parser.parseFile()
-        return try FormulaResolver(file).resolve()
+        return try FormulaResolver(file, globber: globber).resolve()
     }
 }
 
@@ -72,8 +93,21 @@ indirect enum FormulaExpr {
 
 enum FormulaCallArg {
     case positional(FormulaExpr)
-    case labeled(key: String, value: FormulaExpr)   // func named-arg OR node property
-    case inputWire(portName: String, wires: [(name: String, value: FormulaExpr)])
+    case labeled(key: String, value: FormulaExpr)    // func named-arg OR node property
+    case inputWire(portName: String, wires: [WireDictEntry])
+}
+
+/// A single entry in an input-wire dictionary.
+///
+/// A `simple` entry contributes exactly one wire. A `forEach` entry contributes
+/// one wire per item (after glob expansion), with `%%variable%%` substituted into
+/// the key template and into every string literal in the value expression.
+enum WireDictEntry {
+    case simple(key: FormulaExpr, value: FormulaExpr)
+    case forEach(variable: String, items: [String], key: String, value: FormulaExpr)
+    // simple.key: any expression that resolves to a String (literal, identifier, or template)
+    // forEach.key: template string — may contain %%variable%%
+    // items: literal strings or glob patterns (already path-resolved if angle-bracketed)
 }
 
 // MARK: - Errors
@@ -85,6 +119,7 @@ enum FormulaParseError: Error, LocalizedError {
     case wrongArgumentCount(function: String, expected: Int, got: Int)
     case positionalArgInNodeConstruction(typeName: String)
     case pathEscapesBasePath(path: String)
+    case forEachRequiresAtLeastOneItem
 
     var errorDescription: String? {
         switch self {
@@ -100,6 +135,8 @@ enum FormulaParseError: Error, LocalizedError {
             return "Positional argument in node construction '\(t)': use 'key: value' or 'port <- [...]'"
         case .pathEscapesBasePath(let p):
             return "Path literal '<\(p)>' escapes the formula base path"
+        case .forEachRequiresAtLeastOneItem:
+            return "for-each '{...}' requires at least one item"
         }
     }
 }
@@ -110,6 +147,7 @@ enum FormulaToken: Equatable, CustomStringConvertible {
     case kwFunc, kwProduct
     case lparen, rparen
     case lbracket, rbracket
+    case lbrace, rbrace
     case comma, colon, equals, dot
     case arrow           // <-
     case ident(String)
@@ -124,6 +162,8 @@ enum FormulaToken: Equatable, CustomStringConvertible {
         case .rparen:        return "')'"
         case .lbracket:      return "'['"
         case .rbracket:      return "']'"
+        case .lbrace:        return "'{'"
+        case .rbrace:        return "'}'"
         case .comma:         return "','"
         case .colon:         return "':'"
         case .equals:        return "'='"
@@ -174,7 +214,10 @@ enum FormulaLexer {
                 i += 2; tokens.append(.arrow); continue
             }
 
-            // Angle-bracket path literal  <rel/path>  — resolved against basePath
+            // Angle-bracket path literal  <rel/path>  — resolved against basePath.
+            // Exception: if the content contains '%%', it is a template expression
+            // and is emitted raw (without path resolution) so that %%var%% markers
+            // survive to evaluation time.
             if c == "<" {
                 i += 1   // consume '<'
                 var raw = ""
@@ -183,7 +226,12 @@ enum FormulaLexer {
                     throw FormulaParseError.unexpectedToken(nil, context: "unterminated path literal '<\(raw)'")
                 }
                 i += 1   // consume '>'
-                tokens.append(.string(try resolvePathLiteral(raw, relativeTo: basePath)))
+                if raw.contains("%%") {
+                    // Template — skip path resolution; %%var%% will be substituted at eval time.
+                    tokens.append(.string(raw))
+                } else {
+                    tokens.append(.string(try resolvePathLiteral(raw, relativeTo: basePath)))
+                }
                 continue
             }
 
@@ -193,6 +241,8 @@ enum FormulaLexer {
             case ")": tokens.append(.rparen);   i += 1
             case "[": tokens.append(.lbracket); i += 1
             case "]": tokens.append(.rbracket); i += 1
+            case "{": tokens.append(.lbrace);   i += 1
+            case "}": tokens.append(.rbrace);   i += 1
             case ",": tokens.append(.comma);    i += 1
             case ":": tokens.append(.colon);    i += 1
             case "=": tokens.append(.equals);   i += 1
@@ -379,21 +429,68 @@ private struct FormulaParser {
         return .positional(try parseExpr())
     }
 
-    // '[' (STRING ':' expr (',' STRING ':' expr)*)? ']'
-    private mutating func parseWireDict() throws -> [(name: String, value: FormulaExpr)] {
+    // '[' (wireEntry (',' wireEntry)*)? ']'
+    // wireEntry = forEachPrefix? (STRING | PATH) ':' expr
+    // forEachPrefix = '{' IDENT ':' item (',' item)* '}'
+    private mutating func parseWireDict() throws -> [WireDictEntry] {
         try expect(.lbracket)
-        var wires: [(String, FormulaExpr)] = []
+        var entries: [WireDictEntry] = []
         while current != .rbracket {
-            guard case .string(let name) = current else {
-                throw FormulaParseError.unexpectedToken(current, context: "expected wire name string in wire dict")
+            if current == .lbrace {
+                entries.append(try parseForEachEntry())
+            } else {
+                // Wire key: string literal "foo" or path <rel/path> (both tokenized as .string),
+                // or an identifier referencing a parameter (e.g. `path`).
+                let keyExpr: FormulaExpr
+                switch current {
+                case .string(let s): advance(); keyExpr = .string(s)
+                case .ident(let n):  advance(); keyExpr = .identifier(n)
+                default:
+                    throw FormulaParseError.unexpectedToken(current,
+                        context: "expected wire key (string, path, or identifier) in wire dict")
+                }
+                try expect(.colon)
+                entries.append(.simple(key: keyExpr, value: try parseExpr()))
             }
-            advance()
-            try expect(.colon)
-            wires.append((name, try parseExpr()))
             if current == .comma { advance() }
         }
         try expect(.rbracket)
-        return wires
+        return entries
+    }
+
+    // '{' IDENT ':' item (',' item)* '}' (STRING | PATH) ':' expr
+    private mutating func parseForEachEntry() throws -> WireDictEntry {
+        try expect(.lbrace)
+        guard case .ident(let variable) = current else {
+            throw FormulaParseError.unexpectedToken(current, context: "expected variable name in for-each '{var: ...}'")
+        }
+        advance()
+        try expect(.colon)
+
+        // Parse one or more items separated by commas, until '}'.
+        var items: [String] = []
+        repeat {
+            guard case .string(let item) = current else {
+                throw FormulaParseError.unexpectedToken(current, context: "expected for-each item (string or path) after '\(variable):'")
+            }
+            items.append(item)
+            advance()
+            if current == .comma { advance() }
+        } while current != .rbrace
+        try expect(.rbrace)
+
+        guard !items.isEmpty else {
+            throw FormulaParseError.forEachRequiresAtLeastOneItem
+        }
+
+        // Key template: the wire dict key, may contain %%variable%%.
+        guard case .string(let key) = current else {
+            throw FormulaParseError.unexpectedToken(current, context: "expected wire key template after for-each '{...}'")
+        }
+        advance()
+        try expect(.colon)
+
+        return .forEach(variable: variable, items: items, key: key, value: try parseExpr())
     }
 
     // ('.' IDENT)?
@@ -417,19 +514,118 @@ private enum FormulaValue {
     var typeName: String { switch self { case .node: return "node"; case .string: return "string" } }
 }
 
+// MARK: - For-each template expansion
+
+/// Captures the expansion of a single for-each variable binding.
+private struct ForEachBinding {
+    let variable: String
+    let full:     String       // %%variable%%
+    let groups:   [String]     // %%variable.0%%, %%variable.1%%, ...
+
+    /// Containing directory path with a trailing slash, derived from `full`.
+    /// e.g.  "src/hello.c" → "src/"
+    ///        "hello.c"    → ""
+    var folder: String {
+        guard let slash = full.lastIndex(of: "/") else { return "" }
+        return String(full[...slash])
+    }
+}
+
+/// Expand all `%%var%%`, `%%var.N%%`, and `%%var.folder%%` markers in `s`.
+private func expandTemplate(_ s: String, templateEnv: [String: ForEachBinding]) -> String {
+    guard s.contains("%%") else { return s }
+    var result = s
+    for (_, binding) in templateEnv {
+        let v = binding.variable
+        result = result.replacingOccurrences(of: "%%\(v)%%",        with: binding.full)
+        result = result.replacingOccurrences(of: "%%\(v).folder%%", with: binding.folder)
+        for (i, group) in binding.groups.enumerated() {
+            result = result.replacingOccurrences(of: "%%\(v).\(i)%%", with: group)
+        }
+    }
+    return result
+}
+
+// MARK: - Glob capture-group extraction
+
+/// Given a glob `pattern` and a confirmed `match`, extract the text captured by
+/// each `*` wildcard in the pattern (left-to-right), excluding `**` globstars.
+/// Use `%%var.folder%%` to access the directory depth captured by `**` instead.
+private func extractCaptureGroups(pattern: String, match: String) -> [String] {
+    let patSegs   = pattern.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+    let matchSegs = match.split(separator:   "/", omittingEmptySubsequences: false).map(String.init)
+
+    var groups: [String] = []
+    var matchIdx = 0
+
+    for patSeg in patSegs {
+        guard matchIdx < matchSegs.count else { break }
+        if patSeg == "**" {
+            // Globstar contributes no capture group; use %%var.folder%% for directory depth.
+            continue
+        }
+        if patSeg.contains("*") || patSeg.contains("?") {
+            groups.append(contentsOf: extractSegmentCaptures(pattern: patSeg,
+                                                             text: matchSegs[matchIdx]))
+        }
+        matchIdx += 1
+    }
+    return groups
+}
+
+/// Extract wildcard captures from a single path-segment pattern vs a matching segment text.
+/// Each `*` contributes one capture group (greedy, stopped by the next literal character).
+/// `?` matches one character without contributing a group.
+private func extractSegmentCaptures(pattern: String, text: String) -> [String] {
+    var groups: [String] = []
+    let patChars  = Array(pattern)
+    let textChars = Array(text)
+    var pi = 0, ti = 0
+
+    while pi < patChars.count {
+        switch patChars[pi] {
+        case "*":
+            pi += 1
+            // Determine the next literal in the pattern (skip consecutive wildcards).
+            var nextLit: Character? = nil
+            var look = pi
+            while look < patChars.count && (patChars[look] == "*" || patChars[look] == "?") { look += 1 }
+            nextLit = look < patChars.count ? patChars[look] : nil
+            // Greedily consume text until nextLit (or end of text).
+            var captured = ""
+            while ti < textChars.count {
+                if let nl = nextLit, textChars[ti] == nl { break }
+                captured.append(textChars[ti]); ti += 1
+            }
+            groups.append(captured)
+        case "?":
+            pi += 1; ti += 1
+        default:
+            guard pi < patChars.count && ti < textChars.count,
+                  patChars[pi] == textChars[ti] else { return groups }
+            pi += 1; ti += 1
+        }
+    }
+    return groups
+}
+
+// MARK: - Resolver
+
 private struct FormulaResolver {
     let functions: [String: FuncDef]
     let products:  [ProductDef]
+    let globber:   (String) throws -> [String]
 
-    init(_ file: FormulaFile) {
-        functions = Dictionary(uniqueKeysWithValues: file.functions.map { ($0.name, $0) })
-        products  = file.products
+    init(_ file: FormulaFile, globber: @escaping (String) throws -> [String]) {
+        functions    = Dictionary(uniqueKeysWithValues: file.functions.map { ($0.name, $0) })
+        products     = file.products
+        self.globber = globber
     }
 
     func resolve() throws -> [String: GraphShapeNode] {
         var result: [String: GraphShapeNode] = [:]
         for product in products {
-            let value = try eval(product.body, env: [:])
+            let value = try eval(product.body, env: [:], templateEnv: [:])
             guard case .node(let node) = value else {
                 throw FormulaParseError.typeMismatch(
                     expected: "node", got: value.typeName,
@@ -442,15 +638,19 @@ private struct FormulaResolver {
 
     // MARK: Evaluation
 
-    func eval(_ expr: FormulaExpr, env: [String: FormulaValue]) throws -> FormulaValue {
+    func eval(
+        _ expr: FormulaExpr,
+        env: [String: FormulaValue],
+        templateEnv: [String: ForEachBinding]
+    ) throws -> FormulaValue {
         switch expr {
 
         case .string(let s):
-            return .string(s)
+            // Apply %%var%% template substitution when a for-each binding is in scope.
+            return .string(expandTemplate(s, templateEnv: templateEnv))
 
         case .identifier(let name):
             // Parameter reference — must be bound in the current environment.
-            // (Note: the global function 'name' is shadowed by a same-named parameter.)
             guard let value = env[name] else {
                 throw FormulaParseError.undefinedIdentifier(name)
             }
@@ -459,7 +659,7 @@ private struct FormulaResolver {
         case .call(let name, let args, let port):
             if let funcDef = functions[name] {
                 // User-defined function: no .port suffix → preserve the function's own return port.
-                let base = try evalFuncCall(funcDef, args: args, env: env)
+                let base = try evalFuncCall(funcDef, args: args, env: env, templateEnv: templateEnv)
                 guard let port else { return base }
                 guard case .node(let node) = base else {
                     throw FormulaParseError.typeMismatch(
@@ -474,7 +674,7 @@ private struct FormulaResolver {
             } else {
                 // Node constructor: no .port suffix → "_default", resolved to the single
                 // output port by GraphShapeApplier at apply time.
-                let base = try evalNodeConstruct(typeName: name, args: args, env: env)
+                let base = try evalNodeConstruct(typeName: name, args: args, env: env, templateEnv: templateEnv)
                 guard case .node(let node) = base else {
                     throw FormulaParseError.typeMismatch(
                         expected: "node", got: base.typeName,
@@ -490,7 +690,12 @@ private struct FormulaResolver {
     }
 
     // User-defined function call: bind args to params then evaluate body.
-    func evalFuncCall(_ funcDef: FuncDef, args: [FormulaCallArg], env: [String: FormulaValue]) throws -> FormulaValue {
+    func evalFuncCall(
+        _ funcDef: FuncDef,
+        args: [FormulaCallArg],
+        env: [String: FormulaValue],
+        templateEnv: [String: ForEachBinding]
+    ) throws -> FormulaValue {
         var newEnv = env
         var positionalIdx = 0
 
@@ -501,7 +706,7 @@ private struct FormulaResolver {
                     throw FormulaParseError.wrongArgumentCount(
                         function: funcDef.name, expected: funcDef.params.count, got: positionalIdx + 1)
                 }
-                newEnv[funcDef.params[positionalIdx]] = try eval(expr, env: env)
+                newEnv[funcDef.params[positionalIdx]] = try eval(expr, env: env, templateEnv: templateEnv)
                 positionalIdx += 1
 
             case .labeled(let key, let expr):
@@ -509,7 +714,7 @@ private struct FormulaResolver {
                     throw FormulaParseError.undefinedIdentifier(
                         "parameter '\(key)' in function '\(funcDef.name)'")
                 }
-                newEnv[key] = try eval(expr, env: env)
+                newEnv[key] = try eval(expr, env: env, templateEnv: templateEnv)
 
             case .inputWire:
                 throw FormulaParseError.typeMismatch(
@@ -518,18 +723,23 @@ private struct FormulaResolver {
             }
         }
 
-        return try eval(funcDef.body, env: newEnv)
+        return try eval(funcDef.body, env: newEnv, templateEnv: templateEnv)
     }
 
     // Node construction: map labeled args → GraphShapeArg, wires → GraphShapeInputPort.
-    func evalNodeConstruct(typeName: String, args: [FormulaCallArg], env: [String: FormulaValue]) throws -> FormulaValue {
+    func evalNodeConstruct(
+        typeName: String,
+        args: [FormulaCallArg],
+        env: [String: FormulaValue],
+        templateEnv: [String: ForEachBinding]
+    ) throws -> FormulaValue {
         var nodeArgs:   [GraphShapeArg]       = []
         var inputPorts: [GraphShapeInputPort] = []
 
         for arg in args {
             switch arg {
             case .labeled(let key, let expr):
-                let value = try eval(expr, env: env)
+                let value = try eval(expr, env: env, templateEnv: templateEnv)
                 guard case .string(let s) = value else {
                     throw FormulaParseError.typeMismatch(
                         expected: "string (property '\(key)' of '\(typeName)')",
@@ -538,17 +748,45 @@ private struct FormulaResolver {
                 }
                 nodeArgs.append(GraphShapeArg(key: key, value: s))
 
-            case .inputWire(let portName, let wires):
+            case .inputWire(let portName, let entries):
                 var graphWires: [GraphShapeWire] = []
-                for (wireName, wireExpr) in wires {
-                    let value = try eval(wireExpr, env: env)
-                    guard case .node(let node) = value else {
-                        throw FormulaParseError.typeMismatch(
-                            expected: "node (wire '\(wireName)' on port '\(portName)' of '\(typeName)')",
-                            got: value.typeName,
-                            context: "wire values must be node expressions")
+                for entry in entries {
+                    switch entry {
+                    case .simple(let keyExpr, let expr):
+                        let keyValue = try eval(keyExpr, env: env, templateEnv: templateEnv)
+                        guard case .string(let key) = keyValue else {
+                            throw FormulaParseError.typeMismatch(
+                                expected: "string (wire key on port '\(portName)' of '\(typeName)')",
+                                got: keyValue.typeName,
+                                context: "wire key must resolve to a string")
+                        }
+                        let value = try eval(expr, env: env, templateEnv: templateEnv)
+                        guard case .node(let node) = value else {
+                            throw FormulaParseError.typeMismatch(
+                                expected: "node (wire '\(key)' on port '\(portName)' of '\(typeName)')",
+                                got: value.typeName,
+                                context: "wire values must be node expressions")
+                        }
+                        graphWires.append(GraphShapeWire(name: key, node: node))
+
+                    case .forEach(let variable, let items, let key, let expr):
+                        let bindings = try expandForEachItems(variable: variable, items: items)
+                        for binding in bindings {
+                            var newTemplateEnv = templateEnv
+                            newTemplateEnv[variable] = binding
+                            var newEnv = env
+                            newEnv[variable] = .string(binding.full)
+                            let expandedKey = expandTemplate(key, templateEnv: newTemplateEnv)
+                            let value = try eval(expr, env: newEnv, templateEnv: newTemplateEnv)
+                            guard case .node(let node) = value else {
+                                throw FormulaParseError.typeMismatch(
+                                    expected: "node (for-each wire '\(expandedKey)' on port '\(portName)' of '\(typeName)')",
+                                    got: value.typeName,
+                                    context: "wire values must be node expressions")
+                            }
+                            graphWires.append(GraphShapeWire(name: expandedKey, node: node))
+                        }
                     }
-                    graphWires.append(GraphShapeWire(name: wireName, node: node))
                 }
                 inputPorts.append(GraphShapeInputPort(portName: portName, wires: graphWires))
 
@@ -558,5 +796,26 @@ private struct FormulaResolver {
         }
 
         return .node(GraphShapeNode(typeName: typeName, args: nodeArgs, inputs: inputPorts))
+    }
+
+    // MARK: For-each item expansion
+
+    private func expandForEachItems(variable: String, items: [String]) throws -> [ForEachBinding] {
+        var bindings: [ForEachBinding] = []
+        for item in items {
+            if item.contains("*") || item.contains("?") {
+                let matches = try globber(item)
+                for match in matches {
+                    bindings.append(ForEachBinding(
+                        variable: variable,
+                        full:     match,
+                        groups:   extractCaptureGroups(pattern: item, match: match)
+                    ))
+                }
+            } else {
+                bindings.append(ForEachBinding(variable: variable, full: item, groups: []))
+            }
+        }
+        return bindings
     }
 }

@@ -29,9 +29,11 @@ final class FormulaParserTests: XCTestCase {
         XCTAssertEqual(result["X"]?.outputPort, "output")
     }
 
-    func test_leafNode_noOutputPort() throws {
+    func test_leafNode_noOutputPort_usesDefault() throws {
+        // Node constructors without an explicit .port get "_default", which
+        // GraphShapeApplier resolves to the node's single output port at apply time.
         let result = try parse("product \"X\" = StaticFile(path: 'src/hello.c')")
-        XCTAssertNil(result["X"]?.outputPort)
+        XCTAssertEqual(result["X"]?.outputPort, "_default")
     }
 
     func test_leafNode_multipleArgs() throws {
