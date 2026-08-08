@@ -46,7 +46,7 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
         }
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
+    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [], outputPorts: [outputPort])
 
     var inputFileSystem: Node {
         get throws {

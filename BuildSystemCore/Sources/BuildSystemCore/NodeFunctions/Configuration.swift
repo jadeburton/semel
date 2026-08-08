@@ -18,7 +18,7 @@ public struct Configuration: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
+    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
                                             outputPorts: [outputPort],
                                             dynamicInputPorts: [],
                                             optionalStaticInputPorts: [inputPort])

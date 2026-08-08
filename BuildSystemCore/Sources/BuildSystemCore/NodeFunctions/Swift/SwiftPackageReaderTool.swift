@@ -63,7 +63,7 @@ struct SwiftPackageReaderTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(
+    static let descriptor = NodeFunctionDescriptor(
         staticInputPorts: [configuration, packageFile],
         outputPorts:      [packageJSON, infoLog])
 

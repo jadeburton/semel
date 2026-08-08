@@ -11,7 +11,7 @@ public struct ProjectBuilder: NodeFunction {
     static let statusOutputPort     = "status"
     static let foldersInputPort     = "folders"
 
-    let descriptor = NodeFunctionDescriptor(
+    static let descriptor = NodeFunctionDescriptor(
         staticInputPorts:  [projectFileInputPort],
         outputPorts:       [statusOutputPort],
         dynamicInputPorts: [productInputPort, foldersInputPort]

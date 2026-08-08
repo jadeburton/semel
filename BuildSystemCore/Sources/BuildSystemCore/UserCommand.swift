@@ -114,7 +114,7 @@ final class CommandParser {
             let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
             return .list(folder: folder, pathOrWildcard: remaining.first ?? "*")
 
-        case "errors":
+        case "e", "errors":
             return .errors
 
         default:

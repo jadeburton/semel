@@ -67,7 +67,7 @@ struct SwiftCompilerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(
+    static let descriptor = NodeFunctionDescriptor(
         staticInputPorts:         [configuration, inputFolder, inputModules, inputModuleMapFolders],
         outputPorts:              [outputObject, outputModule, outputInterface, infoLog],
         dynamicInputPorts:        [inputSourceFiles, inputModuleMapFiles],

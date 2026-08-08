@@ -38,7 +38,7 @@ struct SwiftFormulaConverter: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(
+    static let descriptor = NodeFunctionDescriptor(
         staticInputPorts:  [packageFolder, packageJSON],
         outputPorts:       [formulaOutput, infoLog],
         dynamicInputPorts: [externalPackageJSONs])

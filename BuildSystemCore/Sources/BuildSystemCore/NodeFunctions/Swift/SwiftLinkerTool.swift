@@ -58,7 +58,7 @@ struct SwiftLinkerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    let descriptor = NodeFunctionDescriptor(
+    static let descriptor = NodeFunctionDescriptor(
         staticInputPorts: [configuration, input, libraries],
         outputPorts: [output, infoLog],
         optionalStaticInputPorts: [libraries])

@@ -15,7 +15,7 @@ public struct IncludeFinder: NodeFunction {
     static let sourceFileInputPort = "sourceFile"
     static let includePathListOutputPort = "includePathList"
 
-    let descriptor = NodeFunctionDescriptor(staticInputPorts: [Self.sourceFileInputPort],
+    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [Self.sourceFileInputPort],
                                             outputPorts: [Self.includePathListOutputPort])
 
     var embeddedNode: Node?

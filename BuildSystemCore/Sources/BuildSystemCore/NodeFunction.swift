@@ -55,7 +55,7 @@ protocol InputlessNodeFunction: WithKind {
 
     func didCreate() throws -> ProcessOutput?
 
-    var descriptor: NodeFunctionDescriptor { get }
+    static var descriptor: NodeFunctionDescriptor { get }
 
     /// Returns the init-time key-value arguments that distinguish this node from
     /// others of the same type (e.g. `path='src/hello.c'` for StaticFile).
@@ -75,6 +75,10 @@ protocol InputlessNodeFunction: WithKind {
     func onChildAdded(nodeID: ObjectID) throws
     func onChildContentChanged(nodeID: ObjectID, name: String) throws
     func onChildDeleted(nodeID: ObjectID) throws
+}
+
+extension InputlessNodeFunction {
+    var descriptor: NodeFunctionDescriptor { Self.descriptor }
 }
 
 protocol NodeFunction: InputlessNodeFunction {
@@ -108,8 +112,6 @@ extension NodeFunction {
             guard !values.isEmpty else {
                 // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
                 // TODO: self-healing
-                print("WARNING: non-optional input port \(inputPort) has no connected wires for \(self)")
-              //  return false
                 // TODO when the node is first created and wired up, we should check then, early, to verify everything is connected.
                 throw NodeError.other(message: "Non-optional input port \(inputPort) has no connected wires for \(self)")
             }
@@ -186,6 +188,25 @@ extension NodeFunction {
                                                  processingDuration: Date.now.timeIntervalSince(startTime),
                                                  output: output)
         }
+    }
+
+    /// Phase 1 of two-phase parallel processing: reads inputs and computes the
+    /// output without making any graph mutations.  Safe to call concurrently with
+    /// other nodes.  Returns nil if this node is not ready to process (no input
+    /// ports, inputs pending, required wires missing, etc.).
+    func tryComputeOutput() -> (output: ProcessOutput, cacheKey: String?, fromCache: Bool, computeStart: Date)? {
+        guard hasInputPorts() else { return nil }
+        guard let input = try? buildProcessInput() else { return nil }
+        guard (try? allInputsAreSatisfied(input: input)) == true else { return nil }
+
+        let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+
+        if let cached = try? loadCachedOutputs(cacheKey: cacheKey) {
+            return (cached, cacheKey, true, .now)
+        }
+
+        let computeStart = Date.now
+        return (processWithCatch(input: input), cacheKey, false, computeStart)
     }
 }
 
@@ -271,7 +292,9 @@ extension InputlessNodeFunction {
                 try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations)
             }
         } catch {
-            print("❌ ERROR: applyExpectationConfiguration failed: \(error)")
+            #if DEBUG
+            print("applyExpectationConfiguration failed: \(error)")
+            #endif
             for outputPort in try descriptor.outputPorts {
                 try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "applyExpectationConfiguration failed")))
             }
@@ -284,7 +307,7 @@ extension InputlessNodeFunction {
         // 2. add any wires that are in the new configuration but do not exist yet (by name)
         // 3. update expectation on wires that exist in both old and new configuration (by name)
         //    - obtain the current graph shape and compare against the configuration shape
-        //    - if identical, do nothing
+        //    - if identical, skip — the wire is already correct
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
@@ -304,28 +327,7 @@ extension InputlessNodeFunction {
 
         // Steps 2 & 3 — iterate over the desired configuration.
         for (wireName, expectationString) in wireExpectations {
-
-            // Shared helper: connect a new wire from the node that satisfies the expectation.
-            let connectExpected = {
-                let wireNameSymbolID = wireName.asSymbolID()
-                if let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) {
-                    // fromSymbolID is nil when the expectation string has no .outputPort suffix,
-                    // which is invalid for wiring — expectation strings must include a port.
-                    guard let fromSymbolID else {
-                        print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
-                        return
-                    }
-
-                    try Wire.connectWire(database: database,
-                                         fromNodeID: fromNode.id!,
-                                         fromSymbolID: fromSymbolID,
-                                         toNodeID: id!,
-                                         toSymbolID: toSymbolID,
-                                         name: wireNameSymbolID)
-                } else {
-                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(id ?? -1)")
-                }
-            }
+            var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
                 // Step 3 — wire already exists; check whether its current graph shape
@@ -337,16 +339,42 @@ extension InputlessNodeFunction {
 
                 do {
                     try currentShapeNode.expectTopologyMatch(expectedShapeNode)
-                    // Topology matches — connectExpected() below will confirm the wire exists and be a no-op.
+                    // Topology matches — the existing wire already connects the correct
+                    // node. Skip reconnection entirely: calling findOrCreate here risks
+                    // picking up a zombie node that shares the same searchKey and then
+                    // failing with attemptToCreateWireWithDuplicateName.
+                    needsReconnection = false
                 } catch {
                     // Topology changed (e.g. a formula was updated to add/remove a dependency).
-                    // Delete the stale wire so connectExpected() re-creates it from the correct node.
+                    // Delete the stale wire so we can reconnect below with the correct node.
                     _ = try existingWire.deleteWire(database: database)
                 }
             }
 
-            // Find and connect the matching source.
-            try connectExpected()
+            guard needsReconnection else { continue }
+
+            // Wrap find-or-create and connectWire in a single transaction so that if
+            // connectWire fails the newly-created upstream node is rolled back, preventing
+            // it from being left as an orphaned zombie in the database.
+            let wireNameSymbolID = wireName.asSymbolID()
+            try database.withTransaction {
+                guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) else {
+                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(id ?? -1)")
+                    return
+                }
+                // fromSymbolID is nil when the expectation string has no .outputPort suffix,
+                // which is invalid for wiring — expectation strings must include a port.
+                guard let fromSymbolID else {
+                    print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
+                    return
+                }
+                try Wire.connectWire(database: database,
+                                     fromNodeID: fromNode.id!,
+                                     fromSymbolID: fromSymbolID,
+                                     toNodeID: id!,
+                                     toSymbolID: toSymbolID,
+                                     name: wireNameSymbolID)
+            }
         }
     }
 
