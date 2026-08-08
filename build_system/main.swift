@@ -8,16 +8,28 @@
 import Foundation
 import BuildSystemCore
 
+var commandInterpreter: CommandInterpreter?
+
 func main() throws {
     print("Build System 1.0 (C) 2026 Jade Burton. All rights reserved.")
 
-    FileManager.default.changeCurrentDirectoryPath("/Users/jadeburton/build_system")
     try BuildEngine.start()
-    let buildEngine = BuildEngine.shared!
 
-    while let line = readLine(), buildEngine.receiveUserInput(line: line) {
+    commandInterpreter = CommandInterpreter(database: DatabaseLayer.shared)
+    while let line = readLine(), receiveUserInput(line: line) {
     }
 }
+
+func receiveUserInput(line: String) -> Bool {
+    do {
+        try commandInterpreter?.handleCommand(line)
+        return true
+    } catch {
+        return false
+    }
+}
+
+
 
 #if !UNIT_TESTING
 try main()

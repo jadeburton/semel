@@ -69,7 +69,7 @@ public struct ProjectBuilder: NodeFunction {
 
             for (productName, shapeNode) in products {
 
-                let fullPath = Path("outputFileSystem")
+                let fullPath = Path(Folder.outputFileSystemName)
                     / (parentFolder.deletingFirstComponent ?? Path(""))
                     / Path(productName)
 
@@ -102,8 +102,8 @@ public struct ProjectBuilder: NodeFunction {
 
     /// Extracts the base folder path from a glob pattern — everything before the
     /// first wildcard character, trimmed to the last '/'.
-    /// e.g.  "inputFileSystem/src/*.c"  →  "inputFileSystem/src"
-    ///        "inputFileSystem/**/*.c"  →  "inputFileSystem"
+    /// e.g.  "input:/src/*.c"  →  "input:/src"
+    ///        "input:/**/*.c"  →  "input:"
     private func extractFolderPath(fromGlobPattern pattern: String) -> String {
         guard let wildcardIdx = pattern.firstIndex(where: { $0 == "*" || $0 == "?" }) else {
             return ""

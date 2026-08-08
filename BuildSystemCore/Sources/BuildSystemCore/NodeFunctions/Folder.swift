@@ -23,6 +23,9 @@ struct FolderManifest: PolySerializable {
 public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
+    public static let inputFileSystemName = "input:"
+    public static let outputFileSystemName = "output:"
+
     var embeddedNode: Node?
 
     init(thisNode: Node) throws {
@@ -41,7 +44,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 
     func canBePinned() -> Bool {
         // HACK
-        containingPath.hasPrefix("inputFileSystem")
+        containingPath.hasPrefix(.init(Folder.inputFileSystemName))
 //        self.parentNodeFunction?.canBePin
     }
 
@@ -94,7 +97,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
         }
     }
 
-    var isPinned: Bool {
+    public var isPinned: Bool {
         get throws {
             try !thisNode.readFromOutputPort(Self.pinnedOutputPort).isNoValue
         }
@@ -130,7 +133,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
                                        value: .value(try buildManifest().toJSON().intern()))
     }
 
-    func deleteInInputFileSystem() throws {
+    public func deleteInInputFileSystem() throws {
 
         // Delete children or unpin them
         for child in try thisNode.allChildren {

@@ -83,7 +83,7 @@ extension BuildEngine {
 
     // MARK: nudge
 
-    func nudge() throws {
+    public func nudge() throws {
         try database.cacheEntry.deleteAll()
         // Reset all NodeFunction outputs to pending so downstream nodes block on
         // stale values and wait for fresh upstream results (correct ordering).
@@ -98,7 +98,7 @@ extension BuildEngine {
 
     // MARK: printAll
 
-    func printAll() throws {
+    public func printAll() throws {
         let allNodes       = try database.node.selectAll()
         let allWires       = try database.wire.selectAll()
         //let allDataHashes  = DataObjectStore.shared.allHashes()

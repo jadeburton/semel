@@ -6,12 +6,12 @@
 import Foundation
 import DatabaseModels
 
-typealias DataToken = DataObjectHash
+public typealias DataToken = DataObjectHash
 
 // MARK: - Interning bytes / strings as DataObjects
 
 extension [UInt8] {
-    func intern() -> DataToken {
+    public func intern() -> DataToken {
         if self.isEmpty {
             return ""
         }
@@ -24,7 +24,7 @@ extension [UInt8] {
 }
 
 extension String {
-    func intern() -> DataToken {
+    public func intern() -> DataToken {
         [UInt8](data(using: .utf8)!).intern()
     }
 }
@@ -38,7 +38,7 @@ enum DataObjectError: Error {
 extension DataToken {
     /// Reads the bytes for this token directly from the filesystem store —
     /// no database round-trip required.
-    func resolve() throws -> [UInt8] {
+    public func resolve() throws -> [UInt8] {
         if isEmpty {
             return []
         }
@@ -50,7 +50,7 @@ extension DataToken {
         return bytes
     }
 
-    func resolveAsString() throws -> String {
+    public func resolveAsString() throws -> String {
         String(decoding: try resolve(), as: Unicode.UTF8.self)
     }
 }

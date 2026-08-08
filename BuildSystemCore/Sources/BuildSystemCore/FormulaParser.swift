@@ -229,7 +229,7 @@ enum FormulaLexer {
                 i += 1   // consume '>'
                 if raw.contains("%%") {
                     // Template path: resolve the static prefix (before the first %%) against
-                    // basePath so the result has the right inputFileSystem/... root.
+                    // basePath so the result has the right input:/... root.
                     // The %%marker%% portion is left intact for eval-time substitution.
                     let templateRange = raw.range(of: "%%")!
                     let staticPrefix  = String(raw[..<templateRange.lowerBound])

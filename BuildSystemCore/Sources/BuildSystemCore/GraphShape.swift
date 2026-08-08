@@ -41,9 +41,9 @@ import Foundation
 // MARK: - Model
 
 /// An initialization-time string argument, e.g. `path: 'src/hello.c'`.
-struct GraphShapeArg: Equatable, Hashable {
-    let key:   String
-    let value: String
+public struct GraphShapeArg: Equatable, Hashable {
+    public let key:   String
+    public let value: String
 }
 
 /// A single named wire feeding an input port.

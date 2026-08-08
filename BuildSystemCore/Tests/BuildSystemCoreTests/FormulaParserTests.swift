@@ -279,7 +279,7 @@ final class FormulaParserTests: XCTestCase {
     private let specExample = """
         // code comments allowed
 
-        func path() = 'inputFileSystem/swift/Package.swift'
+        func path() = 'input:/swift/Package.swift'
 
         // note: the "path" symbol resolves to the parameter, not the global function.
         func file(path) = StaticFile(path: path).output
@@ -290,7 +290,7 @@ final class FormulaParserTests: XCTestCase {
         ).packageJSON
 
         product "Package.json" = result(path())
-        product "Extra.json" = result(path: 'inputFileSystem/swift/Extra/Package.swift')
+        product "Extra.json" = result(path: 'input:/swift/Extra/Package.swift')
         """
 
     func test_specExample_packageJson_typeName() throws {
@@ -348,7 +348,7 @@ final class FormulaParserTests: XCTestCase {
         let node = try XCTUnwrap(result["Package.json"])
         let port = try XCTUnwrap(node.inputs.first(where: { $0.portName == "packageFile" }))
         let staticFile = try XCTUnwrap(port.wires.first?.node)
-        XCTAssertEqual(staticFile.args.first?.value, "inputFileSystem/swift/Package.swift")
+        XCTAssertEqual(staticFile.args.first?.value, "input:/swift/Package.swift")
     }
 
     func test_specExample_extraJson_differentPath() throws {
@@ -356,7 +356,7 @@ final class FormulaParserTests: XCTestCase {
         let node = try XCTUnwrap(result["Extra.json"])
         let port = try XCTUnwrap(node.inputs.first(where: { $0.portName == "packageFile" }))
         let staticFile = try XCTUnwrap(port.wires.first?.node)
-        XCTAssertEqual(staticFile.args.first?.value, "inputFileSystem/swift/Extra/Package.swift")
+        XCTAssertEqual(staticFile.args.first?.value, "input:/swift/Extra/Package.swift")
     }
 
     func test_specExample_extraJson_sameStructureAsPackageJson() throws {

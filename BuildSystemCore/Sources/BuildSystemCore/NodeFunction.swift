@@ -17,9 +17,9 @@ struct ProcessInput {
     let inputValues: [String: [String: NodeValue]]
 }
 
-struct ProcessOutput {
-    let outputValues: [String: NodeValue]
-    let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
+public struct ProcessOutput {
+    public let outputValues: [String: NodeValue]
+    public let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
 }
 
 protocol WithDefaultInitializer {
@@ -388,16 +388,6 @@ extension InputlessNodeFunction {
         return try expectedShape.findOrCreateMatchingNode()
     }
 
-    /// Traverses the live graph backwards from `wire.fromNodeID / wire.fromSymbolID`
-    /// and returns a compact string representation of the sub-graph shape, e.g.:
-    ///   "ClangCompilerTool(configuration=StaticFile('config.json').output,
-    ///                      input=ClangPreprocessorTool(...).output).output"
-    /// The returned string can later be fed to `findExistingNodeMatchingExpectation`
-    /// to locate the same (or structurally equivalent) node in the graph.
-//    private func buildGraphShapeForInputWire(wire: Wire) throws -> String {
-//        try GraphShapeNode.buildFromWire(wire).asString()
-//    }
-
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
         for outputPort in descriptor.outputPorts {
@@ -436,7 +426,7 @@ protocol MessageType: AnyObject, Codable, PolySerializable {
 
 // MARK: - NodeError
 
-enum NodeError: Error {
+public enum NodeError: Error {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
     case missingInputs

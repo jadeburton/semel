@@ -5,7 +5,7 @@
 // string that ProjectBuilder can consume as its projectFile input.
 //
 // Wire topology:
-//   Folder(path: 'inputFileSystem/.../MyPkg').manifest -> SwiftFormulaConverter.packageFolder
+//   Folder(path: 'input:/.../MyPkg').manifest -> SwiftFormulaConverter.packageFolder
 //   SwiftPackageReaderTool.packageJSON                 -> SwiftFormulaConverter.packageJSON
 //   SwiftFormulaConverter.formula                      -> ProjectBuilder.projectFile
 //
@@ -97,7 +97,7 @@ struct SwiftFormulaConverter: NodeFunction {
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
                 // that cannot be read through the build graph.
-                guard extPath.hasPrefix("inputFileSystem/") else { continue }
+                guard extPath.hasPrefix(Folder.inputFileSystemName + "/") else { continue }
                 guard !visitedPaths.contains(extPath) else { continue }
                 visitedPaths.insert(extPath)
                 expectations[extPath] = packageReaderExpectation(for: extPath)

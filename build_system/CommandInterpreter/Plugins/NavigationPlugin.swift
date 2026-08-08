@@ -1,25 +1,34 @@
 // NavigationPlugin.swift
 // build_system
 //
-// Handles: cd, pwd, ls
+// Handles: cd, pwd, ls / list
 
+import BuildSystemCore
 import Foundation
 
 final class NavigationPlugin: CommandPlugin {
 
-    func handle(_ command: UserCommand, context: any CommandContext) throws -> Bool {
-        switch command {
-        case .cd(let folder, let path):   try handleCd(folder: folder, path: path, context: context)
-        case .pwd:                        context.outputMessage(context.currentLocation)
-        case .list(let folder, let path): try handleList(folder: folder, pathOrWildcard: path, context: context)
-        default: return false
+    let verbs: Set<String> = ["cd", "pwd", "ls", "list"]
+
+    func handle(verb: String, tokens: [String], context: any CommandContext) throws {
+        switch verb {
+        case "cd":
+            let (folder, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+            try handleCd(folder: folder, path: remaining.first, context: context)
+        case "pwd":
+            context.outputMessage(context.currentLocation)
+        case "ls", "list":
+            let (folder, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+            try handleList(folder: folder, pathOrWildcard: remaining.first, context: context)
+        default:
+            break
         }
-        return true
     }
 
     // MARK: - cd
 
-    private func handleCd(folder: FileSystemForCommand?, path: String?, context: any CommandContext) throws {
+    private func handleCd(folder: FileSystemForCommand?, path: String?,
+                           context: any CommandContext) throws {
         if let folder {
             context.currentFileSystem = folder
             context.currentDirectoryPath = .empty
@@ -44,8 +53,6 @@ final class NavigationPlugin: CommandPlugin {
     private func handleList(folder: FileSystemForCommand?, pathOrWildcard: String?,
                              context: any CommandContext) throws {
         let targetFS = folder ?? context.currentFileSystem
-        // With an explicit -i/-o flag, list from that FS's root; otherwise treat
-        // the path as relative to the current working directory.
         let base: Path = folder != nil ? .empty : context.currentDirectoryPath
 
         let fileSystem = try context.fileSystem(for: targetFS)

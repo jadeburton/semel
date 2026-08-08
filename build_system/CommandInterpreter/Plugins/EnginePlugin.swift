@@ -1,20 +1,22 @@
 // EnginePlugin.swift
 // build_system
 //
-// Handles: debug, nudge, errors
+// Handles: d / debug, n / nudge, e / errors
 
+import BuildSystemCore
 import Foundation
 
 final class EnginePlugin: CommandPlugin {
 
-    func handle(_ command: UserCommand, context: any CommandContext) throws -> Bool {
-        switch command {
-        case .debug:  try context.buildEngine.printAll()
-        case .nudge:  try context.buildEngine.nudge()
-        case .errors: try handleErrors(context: context)
-        default: return false
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors"]
+
+    func handle(verb: String, tokens: [String], context: any CommandContext) throws {
+        switch verb {
+        case "d", "debug":  try context.buildEngine.printAll()
+        case "n", "nudge":  try context.buildEngine.nudge()
+        case "e", "errors": try handleErrors(context: context)
+        default:            break
         }
-        return true
     }
 
     // MARK: - errors
@@ -42,7 +44,7 @@ final class EnginePlugin: CommandPlugin {
             let nodeName = node?.name ?? "Node \(nodeID)"
 
             let kindLabel: String
-            if let node, let nf = try? node.nodeFunction() {
+            if let node, let nf = try? node.nodeAsAny() {
                 let typeName = String(describing: type(of: nf))
                 kindLabel = typeName == nodeName ? nodeName : "\(nodeName)  [\(typeName)]"
             } else {

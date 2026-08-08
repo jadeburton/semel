@@ -104,11 +104,11 @@ public struct ProjectFinder: NodeFunction {
                 throw NodeError.other(message: "Could not decode FolderManifest")
             }
 
-            allFolderManifests.append(("inputFileSystem", folderManifest))
+            allFolderManifests.append((Folder.inputFileSystemName, folderManifest))
 
             for entry in folderManifest.entries {
                 if entry.isFolder && entry.isPinned {
-                    watchedPaths.insert((Path("inputFileSystem") / entry.name).string)
+                    watchedPaths.insert((Path(Folder.inputFileSystemName) / entry.name).string)
                 }
             }
         }
@@ -121,10 +121,10 @@ public struct ProjectFinder: NodeFunction {
             watchedFolderExpectations[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
         }
 
-        //print("ProjectFinder: watchedPaths = \(watchedPaths.joined(separator: ", "))")
+        print("ProjectFinder: watchedPaths = \(watchedPaths.joined(separator: ", "))")
 
         return .init(outputValues: [:],
-                     inputWireExpectations: [Self.rootFolderManifestInputPort: ["inputFileSystem": "Folder(path: 'inputFileSystem').manifest"],
+                     inputWireExpectations: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: "Folder(path: 'input:').manifest"],
                                              Self.watchedFolderManifestInputPort: watchedFolderExpectations,
                                              Self.projectBuildersInputPort: projectBuildersExpectations])
     }

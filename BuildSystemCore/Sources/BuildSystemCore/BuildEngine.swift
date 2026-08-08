@@ -19,12 +19,11 @@ public final class BuildEngine {
 
     // MARK: - Constants
 
-    private static let processingBatchSize = 8
+    private static let processingBatchSize = 16
 
     // MARK: - State
 
     let database: DatabaseLayer
-    private let commandInterpreter: CommandInterpreter
 
     /// A pending-work flag. Incremented by any caller (any actor/thread) via
     /// `signalWorkAvailable()`. Decremented back to zero at the top of every
@@ -63,18 +62,18 @@ public final class BuildEngine {
     }
 
     // BUG: this is extremely slow. TODO cache
-    var inputFileSystem: Node {
+    public var inputFileSystem: Node {
         get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "inputFileSystem")], inputs: [], outputs: [])
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: Folder.inputFileSystemName)], inputs: [], outputs: [])
             let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
             return fromNode
         }
     }
 
     // BUG: this is extremely slow. TODO cache
-    var outputFileSystem: Node {
+    public var outputFileSystem: Node {
         get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: "outputFileSystem")], inputs: [], outputs: [])
+            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: Folder.outputFileSystemName)], inputs: [], outputs: [])
             let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
             return fromNode
         }
@@ -82,12 +81,11 @@ public final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database332.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database336.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
-        self.commandInterpreter = .init(database: database)
 
         // Capture the fully-initialised self before starting the task.
         let engine = self
@@ -134,15 +132,6 @@ public final class BuildEngine {
     private func cleanUpAllPendingDeletions() throws {
         // Clean up all pending deletions, which are not safe to delete while Nodes are being processed
         while ((try? processPendingDeletions()) ?? 0) > 0 {
-        }
-    }
-
-    public func receiveUserInput(line: String) -> Bool {
-        do {
-            try commandInterpreter.handleCommand(line)
-            return true
-        } catch {
-            return false
         }
     }
 

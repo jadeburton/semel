@@ -20,7 +20,7 @@ extension Node {
         DatabaseLayer.shared
     }
 
-    /// Returns the full logical path of this node from the root, e.g. `inputFileSystem/src/hello.c`.
+    /// Returns the full logical path of this node from the root, e.g. `input:/src/hello.c`.
     /// Returns `.empty` when the node is the specified `baseNodeID` (so callers can do relative paths).
     func buildFullPathName(baseNodeID: ObjectID?) throws -> Path {
 
@@ -50,8 +50,14 @@ extension Node {
         try nodeFunction() as! N
     }
 
-    func nodeFunction() throws -> InputlessNodeFunction {
+    func nodeFunction() throws -> any InputlessNodeFunction {
         try (PolyFactory.type(kind: kind) as! InputlessNodeFunction.Type).init(thisNode: self)
+    }
+
+    /// Returns the node function as `Any` so app-layer callers can pattern-match
+    /// against concrete public types (e.g. `as? UserDeletable`, `as? FileType`).
+    public func nodeAsAny() throws -> Any {
+        try nodeFunction()
     }
 
     var allChildren: [Node] {
@@ -109,7 +115,7 @@ extension Node {
     /// Walk (creating as needed) the given path of folder nodes beneath `self`.
     /// Returns the deepest folder node.
     @discardableResult
-    func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> Node {
+    public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> Node {
         guard kind == Folder.kind else {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
@@ -164,12 +170,12 @@ extension Node {
 
     /// Convenience overload accepting a String path.
     @discardableResult
-    func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
+    public func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
         try ensureEntirePathExistsAsFolders(Path(path), pinned: pinned)
     }
 
     /// Walk the node tree by path segments, returning the node at the given path or `nil` if not found.
-    func childNode(path: Path) throws -> Node? {
+    public func childNode(path: Path) throws -> Node? {
         guard !path.isEmpty else { return self }
         var currentNode = self
         for name in path.segments {
@@ -182,7 +188,7 @@ extension Node {
     }
 
     /// Convenience overload accepting a String path.
-    func childNode(path: String) throws -> Node? {
+    public func childNode(path: String) throws -> Node? {
         try childNode(path: Path(path))
     }
 

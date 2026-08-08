@@ -31,15 +31,15 @@ extension HasPath {
 
         let rootNode: Node
         switch rootName {
-        case "inputFileSystem":
+        case Folder.inputFileSystemName:
             rootNode = try BuildEngine.shared.inputFileSystem
-        case "outputFileSystem":
+        case Folder.outputFileSystemName:
             rootNode = try BuildEngine.shared.outputFileSystem
         default:
-            throw NodeError.other(message: "Path '\(path)' must begin with 'inputFileSystem' or 'outputFileSystem', got '\(rootName)'")
+            throw NodeError.other(message: "Path '\(path)' must begin with 'input:' or 'output:', got '\(rootName)'")
         }
 
-        // If the path is just the root (e.g. Path("inputFileSystem")), return the root ID.
+        // If the path is just the root (e.g. Path(Folder.inputFileSystemName)), return the root ID.
         guard let subPath = path.deletingFirstComponent else {
             return rootNode.id!
         }
@@ -65,7 +65,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
-        assert(!path.string.contains("inputFileSystem"))
+        assert(!path.string.contains(Folder.inputFileSystemName))
         embeddedNode!.name = name
         if embeddedNode!.parentNodeID == nil {
             embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)

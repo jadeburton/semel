@@ -222,7 +222,7 @@ extension GraphShapeNode {
     /// and then both tried to insert the same searchKey.
     ///
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
-    func findOrCreateMatchingNode() throws -> (fromNode: Node, fromSymbolID: ObjectID?) {
+    public func findOrCreateMatchingNode() throws -> (fromNode: Node, fromSymbolID: ObjectID?) {
         let newNode: Node = try database.withTransaction {
             // Inside the transaction the find is serialized with the create, so
             // a concurrent task that committed its insert first will be visible here.
