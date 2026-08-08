@@ -64,8 +64,9 @@ struct SwiftPackageReaderTool: NodeFunction {
     }
 
     static let descriptor = NodeFunctionDescriptor(
-        staticInputPorts: [configuration, packageFile],
-        outputPorts:      [packageJSON, infoLog])
+        inputPorts: [.required(configuration), .required(packageFile)],
+        outputPorts: [packageJSON, infoLog]
+    )
 
     // MARK: - Inputs / Outputs
 

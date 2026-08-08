@@ -23,6 +23,7 @@ public extension DataAccessType {
 }
 
 public final class DatabaseLayer {
+
     public lazy var node       = NodeDataAccess(databaseLayer: self)
     public lazy var wire       = WireDataAccess(databaseLayer: self)
     public lazy var symbol     = SymbolDataAccess(databaseLayer: self)
@@ -58,12 +59,16 @@ public final class DatabaseLayer {
     // ── Internal helpers used by every extension method ──────────────────────
 
     func read<T>(_ block: (Database) throws -> T) throws -> T {
-        if let wrapper = DatabaseLayer.currentDB { return try block(wrapper.db) }
+        if let wrapper = DatabaseLayer.currentDB {
+            return try block(wrapper.db)
+        }
         return try dbQueue.read { db in try block(db) }
     }
 
     func write<T>(_ block: (Database) throws -> T) throws -> T {
-        if let wrapper = DatabaseLayer.currentDB { return try block(wrapper.db) }
+        if let wrapper = DatabaseLayer.currentDB {
+            return try block(wrapper.db)
+        }
         return try dbQueue.write { db in try block(db) }
     }
 
@@ -87,7 +92,9 @@ public final class DatabaseLayer {
     ///     opening a second transaction.
     public func withTransaction<T>(_ work: () throws -> T) throws -> T {
         // Already inside a transaction — participate without opening a new one.
-        if DatabaseLayer.currentDB != nil { return try work() }
+        if DatabaseLayer.currentDB != nil {
+            return try work()
+        }
 
         return try dbQueue.write { db in
             try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
@@ -115,7 +122,6 @@ public final class DatabaseLayer {
         try Symbol.createTable(dbQueue: dbQueue)
         try OutputPort.createTable(dbQueue: dbQueue)
 
-        assert(Self.shared == nil)
         Self.shared = self
     }
 

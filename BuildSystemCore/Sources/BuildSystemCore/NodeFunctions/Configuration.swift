@@ -18,10 +18,10 @@ public struct Configuration: NodeFunction {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort],
-                                            outputPorts: [outputPort],
-                                            dynamicInputPorts: [],
-                                            optionalStaticInputPorts: [inputPort])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [.optional(inputPort)],
+        outputPorts: [outputPort]
+    )
 
     func process(input: ProcessInput) throws -> ProcessOutput {
         var aggregatedConfig = [String: String]()

@@ -39,9 +39,13 @@ struct SwiftFormulaConverter: NodeFunction {
     }
 
     static let descriptor = NodeFunctionDescriptor(
-        staticInputPorts:  [packageFolder, packageJSON],
-        outputPorts:       [formulaOutput, infoLog],
-        dynamicInputPorts: [externalPackageJSONs])
+        inputPorts: [
+            .required(packageFolder),
+            .required(packageJSON),
+            .dynamic(externalPackageJSONs),
+        ],
+        outputPorts: [formulaOutput, infoLog]
+    )
 
     // MARK: - Processing
 

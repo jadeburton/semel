@@ -15,12 +15,6 @@ extension String {
     }
 }
 
-extension DatabaseLayer {
-    static var shared: DatabaseLayer {
-        BuildEngine.shared.database
-    }
-}
-
 extension Node {
     var database: DatabaseLayer {
         DatabaseLayer.shared
@@ -62,7 +56,7 @@ extension Node {
 
     var allChildren: [Node] {
         get throws {
-            try BuildEngine.shared.database.node.select(parentNodeID: id!)
+            try DatabaseLayer.shared.node.select(parentNodeID: id!)
         }
     }
 
@@ -203,7 +197,7 @@ extension Node {
         try database.node.updateScheduled(nodeID: id!, scheduled: scheduled)
 
         if scheduled {
-            BuildEngine.shared.signalWorkAvailable()
+            BuildEngine.shared?.signalWorkAvailable()
         }
     }
 }

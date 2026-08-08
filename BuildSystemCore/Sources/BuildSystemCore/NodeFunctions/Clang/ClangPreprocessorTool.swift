@@ -53,9 +53,15 @@ public struct ClangPreprocessorTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, sourceFileInput],
-                                            outputPorts: [output, errorLog, infoLog],
-                                            dynamicInputPorts: [includeFileLists, headerInputFiles])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [
+            .required(configuration),
+            .required(sourceFileInput),
+            .dynamic(includeFileLists),
+            .dynamic(headerInputFiles),
+        ],
+        outputPorts: [output, errorLog, infoLog]
+    )
 
     // MARK: Processing
 

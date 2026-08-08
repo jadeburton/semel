@@ -9,7 +9,13 @@ import DatabaseModels
 
 public final class BuildEngine {
 
-    public static let shared = try! BuildEngine()
+    /// Nil until `start()` is called. Tests leave this nil and set `DatabaseLayer.shared` directly.
+    public static var shared: BuildEngine! = nil
+
+    /// Creates and starts the engine. Must be called once before using `shared`.
+    public static func start() throws {
+        shared = try BuildEngine()
+    }
 
     // MARK: - Constants
 
@@ -179,15 +185,25 @@ public final class BuildEngine {
     /// affected consumers for re-evaluation on the next pass.
     private func processSomeNodes() async throws -> Bool {
         let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
-        guard !rawNodes.isEmpty else { return false }
+        guard !rawNodes.isEmpty else {
+            return false
+        }
 
         // Phase 1: read inputs and compute outputs concurrently.
         // Only DB reads and CPU work happen here — no graph mutations, no cascades.
         let computedResults: [BatchComputeResult] = await withTaskGroup(of: BatchComputeResult?.self) { group in
+
             for rawNode in rawNodes {
                 group.addTask {
-                    guard let nodeFunction = try? rawNode.nodeFunction() as? NodeFunction else { return nil }
-                    guard let result = nodeFunction.tryComputeOutput() else { return nil }
+
+                    guard let nodeFunction = try? rawNode.nodeFunction() as? NodeFunction else {
+                        return nil
+                    }
+
+                    guard let result = nodeFunction.tryComputeOutput() else {
+                        return nil
+                    }
+
                     return BatchComputeResult(node: rawNode,
                                               output: result.output,
                                               cacheKey: result.cacheKey,
@@ -195,11 +211,23 @@ public final class BuildEngine {
                                               fromCache: result.fromCache)
                 }
             }
+
             var results: [BatchComputeResult] = []
+
             for await result in group {
-                if let result { results.append(result) }
+                if let result {
+                    results.append(result)
+                }
             }
+
             return results
+        }
+
+        // Unschedule every fetched node BEFORE any writes so that cascade
+        // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
+        // by a later unschedule in the loop below.
+        for rawNode in rawNodes {
+            try rawNode.setScheduled(false)
         }
 
         // Phase 2: apply outputs sequentially (all graph mutations happen here).
@@ -208,15 +236,7 @@ public final class BuildEngine {
         // the batch and report no work done so the caller re-enters wait() and
         // stays reactive to future signals from push commands or cascades.
         guard !computedResults.isEmpty else {
-            for rawNode in rawNodes { try? rawNode.setScheduled(false) }
             return false
-        }
-
-        // Unschedule every fetched node BEFORE any writes so that cascade
-        // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
-        // by a later unschedule in the loop below.
-        for rawNode in rawNodes {
-            try? rawNode.setScheduled(false)
         }
 
         for result in computedResults {
@@ -224,12 +244,18 @@ public final class BuildEngine {
                 // Skip nodes that were cascade-deleted by an earlier phase-2 step.
                 // nodeFunction() constructs from the in-memory Node struct and does not
                 // re-query the DB, so this explicit existence check is required.
-                guard let nodeID = result.node.id,
-                      (try? database.node.select(nodeID: nodeID)) != nil else { continue }
-                guard let nodeFunction = try result.node.nodeFunction() as? NodeFunction else { continue }
+                guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
+                    print("WARNING: node \(result.node.id!) deleted during processing")
+                    continue
+                }
+
+                guard let nodeFunction = try result.node.nodeFunction() as? NodeFunction else {
+                    continue
+                }
 
                 do {
                     try nodeFunction.writeToOutputs(output: result.output)
+
                     if !result.fromCache {
                         try? nodeFunction.saveCacheForAllInputsAndOutputs(
                             cacheKey: result.cacheKey,
@@ -282,22 +308,34 @@ extension BuildEngine {
     @discardableResult
     func processPendingDeletions() throws -> Int {
         let pendingNodes = try database.node.selectAllPendingDeletion()
-        guard !pendingNodes.isEmpty else { return 0 }
+
+        guard !pendingNodes.isEmpty else {
+            return 0
+        }
 
         var deletedCount = 0
 
         for node in pendingNodes {
-            guard let nodeID = node.id else { continue }
+
+            guard let nodeID = node.id else {
+                continue
+            }
 
             // Skip if already cascade-deleted by an earlier step in this pass.
-            guard (try? database.node.select(nodeID: nodeID)) != nil else { continue }
-            guard let nodeFunction = try? node.nodeFunction() else { continue }
+            guard (try? database.node.select(nodeID: nodeID)) != nil else {
+                continue
+            }
+
+            guard let nodeFunction = try? node.nodeFunction() else {
+                continue
+            }
 
             // If the node has been re-wired since being marked, clear the flag and skip.
             guard (try? nodeFunction.hasNoOutputWires()) == true else {
                 try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
                 continue
             }
+
             guard (try? nodeFunction.canBeDeleted()) == true else {
                 try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
                 continue

@@ -55,18 +55,46 @@ import Foundation
 // Each NodeFunction provides a NodeFunctionDescriptor, which is derived from hard-coded
 // values and values passed to the NodeFunction's initializer such as e.g. a file path.
 struct NodeFunctionDescriptor {
+
     // A static port is one that cannot change after the NodeFunction has been created.
     // This is important, because changing static ports would break downstream Nodes that
     // rely on an exact upstream/input graph shape.
-    let staticInputPorts: [String]
-    let outputPorts: [String]
-    let dynamicInputPorts: [String]
-    let optionalStaticInputPorts: [String]
+    enum InputPort {
+        case required(String)  // static, must be wired at creation time
+        case optional(String)  // static, may be unwired at creation time
+        case dynamic(String)   // wiring managed at runtime by process()
 
-    init(staticInputPorts: [String], outputPorts: [String], dynamicInputPorts: [String] = [], optionalStaticInputPorts: [String] = []) {
-        self.staticInputPorts = staticInputPorts
+        var name: String {
+            switch self {
+            case .required(let n), .optional(let n), .dynamic(let n): n
+            }
+        }
+    }
+
+    let inputPorts: [InputPort]
+    let outputPorts: [String]
+
+    init(inputPorts: [InputPort] = [], outputPorts: [String]) {
+        self.inputPorts = inputPorts
         self.outputPorts = outputPorts
-        self.dynamicInputPorts = dynamicInputPorts
-        self.optionalStaticInputPorts = optionalStaticInputPorts
+    }
+
+    // MARK: - Computed views (used by existing call sites)
+
+    var staticInputPorts: [String] {
+        inputPorts.compactMap {
+            switch $0 {
+            case .required(let n), .optional(let n): return n
+            case .dynamic: return nil
+            }
+        }
+    }
+
+    var optionalStaticInputPorts: [String] {
+        inputPorts.compactMap { if case .optional(let n) = $0 { return n }; return nil }
+    }
+
+    var dynamicInputPorts: [String] {
+        inputPorts.compactMap { if case .dynamic(let n) = $0 { return n }; return nil }
     }
 }

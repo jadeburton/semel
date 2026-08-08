@@ -50,8 +50,10 @@ public struct ClangCompilerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input],
-                                            outputPorts: [output, errorLog, infoLog])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [.required(configuration), .required(input)],
+        outputPorts: [output, errorLog, infoLog]
+    )
 
     // MARK: Processing
 

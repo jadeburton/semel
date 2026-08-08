@@ -14,11 +14,14 @@ public struct ProjectFinder: NodeFunction {
     static let projectBuildersInputPort = "projectBuilders"
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
-                                                   outputPorts: [],
-                                                   dynamicInputPorts: [rootFolderManifestInputPort,
-                                                                       watchedFolderManifestInputPort,
-                                                                       projectBuildersInputPort])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [
+            .dynamic(rootFolderManifestInputPort),
+            .dynamic(watchedFolderManifestInputPort),
+            .dynamic(projectBuildersInputPort),
+        ],
+        outputPorts: []
+    )
 
     var embeddedNode: Node?
 

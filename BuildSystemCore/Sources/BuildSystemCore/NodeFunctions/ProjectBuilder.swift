@@ -12,9 +12,12 @@ public struct ProjectBuilder: NodeFunction {
     static let foldersInputPort     = "folders"
 
     static let descriptor = NodeFunctionDescriptor(
-        staticInputPorts:  [projectFileInputPort],
-        outputPorts:       [statusOutputPort],
-        dynamicInputPorts: [productInputPort, foldersInputPort]
+        inputPorts: [
+            .required(projectFileInputPort),
+            .dynamic(productInputPort),
+            .dynamic(foldersInputPort),
+        ],
+        outputPorts: [statusOutputPort]
     )
 
     var embeddedNode: Node?

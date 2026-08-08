@@ -9,7 +9,7 @@ import XCTest
 final class FormulaParserTests: XCTestCase {
 
     private func parse(_ source: String) throws -> [String: GraphShapeNode] {
-        try FormulaFile.parse(source, basePath: Path("."))
+        try FormulaFile.parse(source, basePath: Path("."), globber: { _ in [] })
     }
 
     // MARK: - Leaf node construction

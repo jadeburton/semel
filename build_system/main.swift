@@ -12,7 +12,8 @@ func main() throws {
     print("Build System 1.0 (C) 2026 Jade Burton. All rights reserved.")
 
     FileManager.default.changeCurrentDirectoryPath("/Users/jadeburton/build_system")
-    let buildEngine = BuildEngine.shared
+    try BuildEngine.start()
+    let buildEngine = BuildEngine.shared!
 
     while let line = readLine(), buildEngine.receiveUserInput(line: line) {
     }

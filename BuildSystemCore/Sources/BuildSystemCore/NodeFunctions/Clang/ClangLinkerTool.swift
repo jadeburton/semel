@@ -57,9 +57,14 @@ public struct ClangLinkerTool: NodeFunction {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [configuration, input, libraries],
-                                            outputPorts: [output, infoLog],
-                                            optionalStaticInputPorts: [libraries])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [
+            .required(configuration),
+            .required(input),
+            .optional(libraries),
+        ],
+        outputPorts: [output, infoLog]
+    )
 
     // MARK: Processing
 

@@ -59,9 +59,13 @@ struct SwiftLinkerTool: NodeFunction {
     }
 
     static let descriptor = NodeFunctionDescriptor(
-        staticInputPorts: [configuration, input, libraries],
-        outputPorts: [output, infoLog],
-        optionalStaticInputPorts: [libraries])
+        inputPorts: [
+            .required(configuration),
+            .required(input),
+            .optional(libraries),
+        ],
+        outputPorts: [output, infoLog]
+    )
 
     // MARK: Processing
 

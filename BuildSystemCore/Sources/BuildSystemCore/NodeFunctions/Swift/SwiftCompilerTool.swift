@@ -68,10 +68,15 @@ struct SwiftCompilerTool: NodeFunction {
     }
 
     static let descriptor = NodeFunctionDescriptor(
-        staticInputPorts:         [configuration, inputFolder, inputModules, inputModuleMapFolders],
-        outputPorts:              [outputObject, outputModule, outputInterface, infoLog],
-        dynamicInputPorts:        [inputSourceFiles, inputModuleMapFiles],
-        optionalStaticInputPorts: [inputModules, inputModuleMapFolders]
+        inputPorts: [
+            .required(configuration),
+            .required(inputFolder),
+            .optional(inputModules),
+            .optional(inputModuleMapFolders),
+            .dynamic(inputSourceFiles),
+            .dynamic(inputModuleMapFiles),
+        ],
+        outputPorts: [outputObject, outputModule, outputInterface, infoLog]
     )
 
     // MARK: - Inputs / Outputs

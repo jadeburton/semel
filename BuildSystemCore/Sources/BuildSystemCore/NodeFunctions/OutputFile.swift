@@ -72,7 +72,10 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
         }
     }
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [inputPort], outputPorts: [statusOutputPort])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [.required(inputPort)],
+        outputPorts: [statusOutputPort]
+    )
 
     func didCreate() throws -> ProcessOutput? {
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(message: "Missing"))],

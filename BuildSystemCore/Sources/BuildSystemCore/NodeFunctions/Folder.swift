@@ -69,8 +69,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
     static let pinnedOutputPort = "pinned"
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [],
-                                                   outputPorts: [folderManifestOutputPort, pinnedOutputPort])
+    static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event

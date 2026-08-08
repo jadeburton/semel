@@ -15,8 +15,10 @@ public struct IncludeFinder: NodeFunction {
     static let sourceFileInputPort = "sourceFile"
     static let includePathListOutputPort = "includePathList"
 
-    static let descriptor = NodeFunctionDescriptor(staticInputPorts: [Self.sourceFileInputPort],
-                                            outputPorts: [Self.includePathListOutputPort])
+    static let descriptor = NodeFunctionDescriptor(
+        inputPorts: [.required(sourceFileInputPort)],
+        outputPorts: [includePathListOutputPort]
+    )
 
     var embeddedNode: Node?
 
@@ -28,7 +30,7 @@ public struct IncludeFinder: NodeFunction {
 
     /// Returns a deduplicated, ordered list of quoted #include paths found in
     /// `sourceFileContent`, ignoring anything inside block or line comments.
-    private func extractIncludePaths(sourceFileContent: String) -> [String] {
+    static func extractIncludePaths(sourceFileContent: String) -> [String] {
         var text = sourceFileContent
 
         // Remove block comments
@@ -98,7 +100,7 @@ public struct IncludeFinder: NodeFunction {
         for sourceFileValue in inputs.inputSourceFiles {
             let containingFolderOfSourceFile = Path(sourceFileValue.filePath).deletingLastComponent ?? .empty
             let sourceContent = (try? sourceFileValue.contentAsString) ?? ""
-            let includePathList = extractIncludePaths(sourceFileContent: sourceContent).map { (containingFolderOfSourceFile / $0).string }
+            let includePathList = Self.extractIncludePaths(sourceFileContent: sourceContent).map { (containingFolderOfSourceFile / $0).string }
 
             aggregatedIncludePathList.append(includePathList.joined(separator: "\n"))
         }
