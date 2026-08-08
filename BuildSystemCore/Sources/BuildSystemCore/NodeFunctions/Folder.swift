@@ -57,7 +57,8 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 
     // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
     func canBeDeleted() throws -> Bool {
-        try thisNode.allChildren.isEmpty && !(canBePinned() && isPinned)
+        // TODO: slow
+        try (thisNode.allChildren.filter { try !$0.nodeFunction().canBeDeleted() }).isEmpty && !(canBePinned() && isPinned)
     }
 
     // The manifest is a non-recursive list of immediate children

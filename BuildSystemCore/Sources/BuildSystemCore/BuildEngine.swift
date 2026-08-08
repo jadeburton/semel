@@ -76,7 +76,7 @@ public final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database320.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database325.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
@@ -117,6 +117,10 @@ public final class BuildEngine {
             // If a signal arrived while we were processing, drain again immediately
             // instead of sleeping — this is the fix for the "double signal" race.
             guard await workSignal.isPending else {
+                #if DEBUG
+                // Engine is idle — check for nodes that have slipped out of the ownership graph.
+                try? detectOrphans()
+                #endif
                 await workSignal.wait()
                 continue
             }
@@ -191,6 +195,65 @@ public final class BuildEngine {
         try nodeFunction.processWithPreCheck()
     }
 }
+
+// MARK: - Orphan detection (DEBUG only)
+
+#if DEBUG
+extension BuildEngine {
+
+    /// A node is "live" if it is reachable backwards through the wire graph from
+    /// one of the three permanent roots: ProjectFinder, inputFileSystem, outputFileSystem.
+    /// Any node outside that reachable set is orphaned — it cannot affect any product
+    /// and will never be cleaned up by the normal wire-cascade deletion logic.
+    ///
+    /// Runs once per idle cycle and prints a summary if orphans are found.
+    func detectOrphans() throws {
+        let allNodes = try database.node.selectAll()
+        guard !allNodes.isEmpty else { return }
+
+        // Seed the live set with the three permanent roots.
+        var liveIDs = Set<ObjectID>()
+        var queue   = [ObjectID]()
+        let roots: [Node?] = [try? projectFinder, try? inputFileSystem, try? outputFileSystem]
+        for case let root? in roots {
+            if let id = root.id, liveIDs.insert(id).inserted { queue.append(id) }
+        }
+
+        // Build a parentID map from the snapshot to avoid per-node DB queries in the BFS.
+        let parentIDOf: [ObjectID: ObjectID] = Dictionary(
+            uniqueKeysWithValues: allNodes.compactMap { n in
+                guard let id = n.id, let pid = n.parentNodeID else { return nil }
+                return (id, pid)
+            }
+        )
+
+        // BFS with two traversal axes:
+        //   • Wires backward:   providers are live if a live node consumes their output.
+        //   • Child → parent:   a containing folder is live if any of its contents are live.
+        while !queue.isEmpty {
+            let nodeID = queue.removeFirst()
+            for wire in try database.wire.select(goingToNodeID: nodeID) {
+                if liveIDs.insert(wire.fromNodeID).inserted {
+                    queue.append(wire.fromNodeID)
+                }
+            }
+            if let parentID = parentIDOf[nodeID], liveIDs.insert(parentID).inserted {
+                queue.append(parentID)
+            }
+        }
+
+        let orphans = allNodes.filter { $0.id.map { !liveIDs.contains($0) } ?? false }
+        guard !orphans.isEmpty else { return }
+
+        print("⚠️ ORPHAN DETECTION: \(orphans.count) orphaned node(s) (not reachable from any permanent root):")
+        for node in orphans {
+            let typeName = (try? node.nodeFunction()).map { String(describing: type(of: $0)) } ?? "?"
+            let canDelete = try? node.nodeFunction().canBeDeleted()
+            print("  • #\(node.id ?? -1) \(typeName)  canDelete=\(canDelete.map(String.init) ?? "?")  searchKey: \(node.searchKey ?? "—")")
+        }
+    }
+}
+#endif
 
 // MARK: - WorkSignal
 
