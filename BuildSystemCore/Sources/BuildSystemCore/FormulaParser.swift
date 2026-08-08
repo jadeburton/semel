@@ -26,8 +26,9 @@
 // PATH is resolved by the lexer: <rel/path> → basePath/rel/path, with '.' and
 // '..' normalised.  It is an error for a PATH to escape basePath via '..'.
 // EXCEPTION: if the path content contains '%%', it is a template expression —
-// path resolution is skipped and the raw content is emitted as-is so that
-// %%var%% substitution can occur at evaluation time.
+// the static prefix (before the first '%%') is resolved against basePath, then
+// the '%%marker%%' portion is appended verbatim so %%var%% substitution can
+// occur at evaluation time.
 // The parser sees only STRING tokens, so PATH is valid everywhere STRING is.
 //
 // For-each expansion:
@@ -227,8 +228,19 @@ enum FormulaLexer {
                 }
                 i += 1   // consume '>'
                 if raw.contains("%%") {
-                    // Template — skip path resolution; %%var%% will be substituted at eval time.
-                    tokens.append(.string(raw))
+                    // Template path: resolve the static prefix (before the first %%) against
+                    // basePath so the result has the right inputFileSystem/... root.
+                    // The %%marker%% portion is left intact for eval-time substitution.
+                    let templateRange = raw.range(of: "%%")!
+                    let staticPrefix  = String(raw[..<templateRange.lowerBound])
+                    let remainder     = String(raw[templateRange.lowerBound...])
+                    if staticPrefix.isEmpty {
+                        tokens.append(.string(basePath.string + "/" + remainder))
+                    } else {
+                        let resolvedPrefix = try resolvePathLiteral(staticPrefix, relativeTo: basePath)
+                        let sep = staticPrefix.hasSuffix("/") ? "/" : ""
+                        tokens.append(.string(resolvedPrefix + sep + remainder))
+                    }
                 } else {
                     tokens.append(.string(try resolvePathLiteral(raw, relativeTo: basePath)))
                 }
