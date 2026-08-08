@@ -22,25 +22,31 @@ public protocol PolySerializable: Codable, WithKind {
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
 public enum PolyFactory {
 
-    private static var registryCache = [UInt: WithKind.Type]()
+    private static var kindCache = [UInt: WithKind.Type]()
+    private static var nameCache = [String: WithKind.Type]()
 
     /// All polymorphic types must be registered with the factory before they can be serialized/deserialized.
     public static func register(types: [WithKind.Type]) {
         for type in types {
-            registryCache[type.self.kind] = type
+            kindCache[type.kind] = type
+            nameCache[String(describing: type)] = type
         }
+    }
+
+    static func nodeType(forTypeName typeName: String) -> (any WithKind.Type)? {
+        nameCache[typeName]
     }
 
     /// Look up the concrete type for a given kind.
     public static func type(kind: UInt) throws -> WithKind.Type {
-        guard let type = registryCache[kind] else {
+        guard let type = kindCache[kind] else {
             fatalError("Unknown object kind: \(kind)")
         }
         return type
     }
 
     public static func decodableType(kind: UInt) throws -> PolySerializable.Type {
-        guard let type = registryCache[kind] as? PolySerializable.Type else {
+        guard let type = kindCache[kind] as? PolySerializable.Type else {
             fatalError("Unknown object kind, or not PolySerializable: \(kind)")
         }
         return type
@@ -49,10 +55,10 @@ public enum PolyFactory {
     /// Look up the `kind` discriminator for a type identified by its Swift type name.
     /// Used when reconstructing a node from a `GraphShapeNode` string.
     public static func kind(forTypeName typeName: String) throws -> UInt {
-        guard let entry = registryCache.first(where: { String(describing: $0.value) == typeName }) else {
+        guard let type = nameCache[typeName] else {
             throw PolyFactoryError.unknownTypeName(typeName)
         }
-        return entry.key
+        return type.kind
     }
 
     /// Decode a `PolySerializable` from a JSON string that embeds its `kind`.

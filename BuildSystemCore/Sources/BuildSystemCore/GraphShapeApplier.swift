@@ -263,14 +263,14 @@ extension GraphShapeNode {
         // ── All other node types ───────────────────────────────────────────────
         let properties = args.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
 
-        let startTime = Date.now
+//        let startTime = Date.now
 
         let newNode = try Node.createNode(database: database,
                                           kind: kind,
                                           properties: properties,
                                           searchKey: asString(omitOutputPort: true))
 
-        print("createNode time elapsed: \(Date.now.timeIntervalSince(startTime))")
+//        print("createNode time elapsed: \(Date.now.timeIntervalSince(startTime))")
 
         // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
