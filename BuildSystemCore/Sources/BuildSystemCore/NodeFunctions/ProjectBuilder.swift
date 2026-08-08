@@ -52,16 +52,31 @@ public struct ProjectBuilder: NodeFunction {
                                              basePath: parentFolder,
                                              globber: globber)
 
+        // There are two kinds of Formula files. One contains no globber wildcards; the other does.
+        // Formula files with wildcards require multiple passes and the initial passes may not yet have discovered all files,
+        // resulting in empty entries in the GraphShape expectations, which then cause errors when we attempt to apply them.
+        // These errors will cause all other expectations to fail, which we don't want - we need the folder expectations to work.
+        // To avoid this, we just don't output any product expectations until we have one or more folders bound.
+
         // Build output-file expectations for each formula product.
         var productExpectations = [String: String]()
-        for (productName, shapeNode) in products {
-            let fullPath = Path("outputFileSystem")
-                / (parentFolder.deletingFirstComponent ?? Path(""))
-                / Path(productName)
-            let wrapper = try GraphShapeNode.parse(
-                "OutputFile(path: '\(fullPath)', input <- ['product': \(shapeNode.asString(omitOutputPort: false))]).status"
-            )
-            productExpectations[fullPath.string] = wrapper.asString(omitOutputPort: false)
+
+        // Either we don't have any globbing or we do, and we have bound folders - then emit product expectations
+        if record.folderPaths.isEmpty || !folderManifests.isEmpty {
+
+            for (productName, shapeNode) in products {
+
+                let fullPath = Path("outputFileSystem")
+                    / (parentFolder.deletingFirstComponent ?? Path(""))
+                    / Path(productName)
+
+                let wrapper = try GraphShapeNode.parse(
+                    "OutputFile(path: '\(fullPath)', input <- ['product': \(shapeNode.asString(omitOutputPort: false))]).status"
+                )
+
+                productExpectations[fullPath.string] = wrapper.asString(omitOutputPort: false)
+            }
+
         }
 
         // Wire each glob-referenced folder's manifest into our 'folders' port so we

@@ -76,7 +76,7 @@ public final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database325.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database332.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
@@ -155,34 +155,101 @@ public final class BuildEngine {
         while try await processSomeNodes() {}
     }
 
-    /// Fetches a batch of scheduled nodes and processes them **in parallel**.
+    private struct BatchComputeResult {
+        let node: Node
+        let output: ProcessOutput
+        let cacheKey: String?
+        let computeStart: Date
+        let fromCache: Bool
+    }
+
+    /// Fetches a batch of scheduled nodes and processes them in two phases.
     ///
-    /// All nodes in a batch are independent work items, so they are dispatched
-    /// concurrently via a `TaskGroup`. Database access remains safe because
-    /// `DatabaseLayer` serialises all reads/writes through a single GRDB
-    /// `DatabaseQueue`, and each task runs in its own task context so the
-    /// `@TaskLocal` transaction connection is correctly isolated per node.
+    /// **Phase 1 (concurrent):** Each node reads its inputs and runs `process()`
+    /// in parallel.  No graph mutations occur, so concurrent execution is safe
+    /// regardless of shared upstream connections.
     ///
-    /// Errors are caught per-node and logged so that one failing node does not
-    /// cancel the processing of its siblings.
+    /// **Phase 2 (sequential):** Computed outputs are written to the graph one
+    /// at a time.  All wire writes and cascade deletions happen here — serialised,
+    /// so no wire-deletion races can occur.
+    ///
+    /// Nodes in the same batch that share providers compute from a consistent
+    /// snapshot of the graph (the state at the start of phase 1).  If a stale
+    /// result is written in phase 2, the normal cascade mechanism reschedules any
+    /// affected consumers for re-evaluation on the next pass.
     private func processSomeNodes() async throws -> Bool {
         let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
+        guard !rawNodes.isEmpty else { return false }
 
-        guard !rawNodes.isEmpty else {
+        // Phase 1: read inputs and compute outputs concurrently.
+        // Only DB reads and CPU work happen here — no graph mutations, no cascades.
+        let computedResults: [BatchComputeResult] = await withTaskGroup(of: BatchComputeResult?.self) { group in
+            for rawNode in rawNodes {
+                group.addTask {
+                    guard let nodeFunction = try? rawNode.nodeFunction() as? NodeFunction else { return nil }
+                    guard let result = nodeFunction.tryComputeOutput() else { return nil }
+                    return BatchComputeResult(node: rawNode,
+                                              output: result.output,
+                                              cacheKey: result.cacheKey,
+                                              computeStart: result.computeStart,
+                                              fromCache: result.fromCache)
+                }
+            }
+            var results: [BatchComputeResult] = []
+            for await result in group {
+                if let result { results.append(result) }
+            }
+            return results
+        }
+
+        // Phase 2: apply outputs sequentially (all graph mutations happen here).
+        //
+        // If no node was ready (all returned nil from tryComputeOutput), unschedule
+        // the batch and report no work done so the caller re-enters wait() and
+        // stays reactive to future signals from push commands or cascades.
+        guard !computedResults.isEmpty else {
+            for rawNode in rawNodes { try? rawNode.setScheduled(false) }
             return false
         }
 
-        await withTaskGroup(of: Void.self) { group in
-            for rawNode in rawNodes {
-                group.addTask {
-                    do {
-                        try self.processOneNode(rawNode)
-                    } catch {
-                        print("BuildEngine: error processing node \(rawNode.id ?? -1): \(error)")
+        // Unschedule every fetched node BEFORE any writes so that cascade
+        // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
+        // by a later unschedule in the loop below.
+        for rawNode in rawNodes {
+            try? rawNode.setScheduled(false)
+        }
+
+        for result in computedResults {
+            do {
+                // Skip nodes that were cascade-deleted by an earlier phase-2 step.
+                // nodeFunction() constructs from the in-memory Node struct and does not
+                // re-query the DB, so this explicit existence check is required.
+                guard let nodeID = result.node.id,
+                      (try? database.node.select(nodeID: nodeID)) != nil else { continue }
+                guard let nodeFunction = try result.node.nodeFunction() as? NodeFunction else { continue }
+
+                do {
+                    try nodeFunction.writeToOutputs(output: result.output)
+                    if !result.fromCache {
+                        try? nodeFunction.saveCacheForAllInputsAndOutputs(
+                            cacheKey: result.cacheKey,
+                            processingDuration: Date.now.timeIntervalSince(result.computeStart),
+                            output: result.output
+                        )
+                    }
+                } catch {
+                    if result.fromCache {
+                        // Cached output is stale — fall back to a full sequential reprocess
+                        // using the current (post-phase-2) graph state.
+                        print("WARNING: writeToOutputs failed for cached output, reprocessing: \(error)")
+                        try nodeFunction.processWithPreCheck()
+                    } else {
+                        throw error
                     }
                 }
+            } catch {
+                print("BuildEngine: error processing node \(result.node.id ?? -1): \(error)")
             }
-            await group.waitForAll()
         }
 
         return true
@@ -200,64 +267,64 @@ public final class BuildEngine {
     }
 }
 
-// MARK: - Orphan detection (DEBUG only)
+// MARK: - Deferred deletion
 
-#if DEBUG
 extension BuildEngine {
 
-    /// A node is "live" if it is reachable backwards through the wire graph from
-    /// one of the three permanent roots: ProjectFinder, inputFileSystem, outputFileSystem.
-    /// Any node outside that reachable set is orphaned — it cannot affect any product
-    /// and will never be cleaned up by the normal wire-cascade deletion logic.
+    /// Processes all nodes marked `pendingDeletion = true`.
     ///
-    /// Runs once per idle cycle and prints a summary if orphans are found.
-    func detectOrphans() throws {
-        let allNodes = try database.node.selectAll()
-        guard !allNodes.isEmpty else { return }
+    /// Called at idle time (between drain passes) when no concurrent processing is
+    /// running, so structural graph mutations are safe.  Each pass may mark upstream
+    /// nodes for deletion (via `deleteWire`), so the caller loops until this returns 0.
+    ///
+    /// This replaces the old brute-force BFS over all nodes: only the explicitly
+    /// marked set is visited, giving O(pending deletions) work instead of O(all nodes).
+    @discardableResult
+    func processPendingDeletions() throws -> Int {
+        let pendingNodes = try database.node.selectAllPendingDeletion()
+        guard !pendingNodes.isEmpty else { return 0 }
 
-        // Seed the live set with the three permanent roots.
-        var liveIDs = Set<ObjectID>()
-        var queue   = [ObjectID]()
-        let roots: [Node?] = [try? projectFinder, try? inputFileSystem, try? outputFileSystem]
-        for case let root? in roots {
-            if let id = root.id, liveIDs.insert(id).inserted { queue.append(id) }
+        var deletedCount = 0
+
+        for node in pendingNodes {
+            guard let nodeID = node.id else { continue }
+
+            // Skip if already cascade-deleted by an earlier step in this pass.
+            guard (try? database.node.select(nodeID: nodeID)) != nil else { continue }
+            guard let nodeFunction = try? node.nodeFunction() else { continue }
+
+            // If the node has been re-wired since being marked, clear the flag and skip.
+            guard (try? nodeFunction.hasNoOutputWires()) == true else {
+                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+                continue
+            }
+            guard (try? nodeFunction.canBeDeleted()) == true else {
+                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+                continue
+            }
+
+            // Delete each input wire; deleteWire will mark upstream nodes that lose
+            // their last consumer, so they'll be caught in the next pass.
+            for inputWire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
+                try? inputWire.deleteWire(database: database)
+            }
+
+            if (try? nodeFunction.hasNoOutputWires()) == true &&
+               (try? nodeFunction.hasNoInputWires()) == true {
+                try? nodeFunction.delete()
+                deletedCount += 1
+            }
         }
 
-        // Build a parentID map from the snapshot to avoid per-node DB queries in the BFS.
-        let parentIDOf: [ObjectID: ObjectID] = Dictionary(
-            uniqueKeysWithValues: allNodes.compactMap { n in
-                guard let id = n.id, let pid = n.parentNodeID else { return nil }
-                return (id, pid)
-            }
-        )
-
-        // BFS with two traversal axes:
-        //   • Wires backward:   providers are live if a live node consumes their output.
-        //   • Child → parent:   a containing folder is live if any of its contents are live.
-        while !queue.isEmpty {
-            let nodeID = queue.removeFirst()
-            for wire in try database.wire.select(goingToNodeID: nodeID) {
-                if liveIDs.insert(wire.fromNodeID).inserted {
-                    queue.append(wire.fromNodeID)
-                }
-            }
-            if let parentID = parentIDOf[nodeID], liveIDs.insert(parentID).inserted {
-                queue.append(parentID)
-            }
+        #if DEBUG
+        if deletedCount > 0 {
+            print("Pending deletion: removed \(deletedCount) node(s)")
         }
+        #endif
 
-        let orphans = allNodes.filter { $0.id.map { !liveIDs.contains($0) } ?? false }
-        guard !orphans.isEmpty else { return }
-
-        print("⚠️ ORPHAN DETECTION: \(orphans.count) orphaned node(s) (not reachable from any permanent root):")
-        for node in orphans {
-            let typeName = (try? node.nodeFunction()).map { String(describing: type(of: $0)) } ?? "?"
-            let canDelete = try? node.nodeFunction().canBeDeleted()
-            print("  • #\(node.id ?? -1) \(typeName)  canDelete=\(canDelete.map(String.init) ?? "?")  searchKey: \(node.searchKey ?? "—")")
-        }
+        return deletedCount
     }
 }
-#endif
 
 // MARK: - WorkSignal
 

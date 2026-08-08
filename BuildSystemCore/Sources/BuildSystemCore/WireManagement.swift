@@ -44,6 +44,9 @@ extension Wire {
                                           toSymbolID: toSymbolID,
                                           name: name))
 
+        // The source node has a new consumer — clear any pending-deletion mark.
+        try? database.node.updatePendingDeletion(nodeID: fromNodeID, pendingDeletion: false)
+
         let toNode = try database.node.select(nodeID: toNodeID)
         try toNode.writePendingToAllOutputsOfNode()
         try toNode.setScheduled(true)
@@ -74,26 +77,23 @@ extension Wire {
             throw WireError.failedToDeleteWire
         }
 
-        // We deleted an input to another Node; it should update.
-        let toNode = try database.node.select(nodeID: toNodeID)
-        try toNode.writePendingToAllOutputsOfNode()
-        try toNode.setScheduled(true)
-
-        // After deleting the Wire, check the origin (outputting) Node. If it now has no output wires at all, and if it is deletable,
-        // delete it.
-
         let fromNode = try database.node.select(nodeID: fromNodeID)
         let fromNodeFunction = try fromNode.nodeFunction()
 
-        // Now clean up any input wires to the just-deleted Node.
+        let noOutputWires = try fromNodeFunction.hasNoOutputWires()
+        let deletable     = try fromNodeFunction.canBeDeleted()
 
-        for inputWire in try database.wire.select(goingToNodeID: fromNodeID) {
-            _ = try inputWire.deleteWire(database: database)
-        }
-
-        if try fromNodeFunction.hasNoOutputWires() && fromNodeFunction.canBeDeleted() {
-            // Safe to delete.
-            try fromNodeFunction.delete()
+        if noOutputWires && deletable {
+            // fromNode has no remaining consumers — mark it for deferred deletion.
+            // Actual cascade and removal happen at idle time in processPendingDeletions(),
+            // keeping all structural graph mutations out of the processing path.
+            try database.node.updatePendingDeletion(nodeID: fromNodeID, pendingDeletion: true)
+        } else {
+            // fromNode still has other consumers or must be kept alive.
+            // Notify the consumer that one of its inputs changed so it can re-evaluate.
+            let toNode = try database.node.select(nodeID: toNodeID)
+            try toNode.writePendingToAllOutputsOfNode()
+            try toNode.setScheduled(true)
         }
     }
 }

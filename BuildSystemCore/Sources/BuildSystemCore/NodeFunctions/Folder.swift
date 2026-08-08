@@ -85,7 +85,12 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     func onChildDeleted(nodeID: ObjectID) throws {
         try refreshOutputs()
 
-        if try canBeDeleted() && hasNoOutputWires() && hasNoInputWires() {
+        // Only self-delete when the folder is truly empty. Using canBeDeleted() here is wrong:
+        // it returns true whenever all *remaining* children are individually deletable, which
+        // causes premature self-deletion while other children still exist in the DB. When the
+        // second child's cascade later calls notifyParentOfChildDeletion(), the parent is gone
+        // and the lookup throws nodeNotFound, aborting the cascade and leaving orphaned nodes.
+        if try thisNode.allChildren.isEmpty && !(canBePinned() && isPinned) && hasNoOutputWires() && hasNoInputWires() {
             try delete()
         }
     }
