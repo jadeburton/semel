@@ -10,6 +10,8 @@ enum FileSystemForCommand {
 
 enum UserCommand {
     case base(externalPath: String)
+    case cd(folder: FileSystemForCommand?, path: String?)
+    case pwd
     case debug
     case nudge
     case quit
@@ -19,7 +21,7 @@ enum UserCommand {
     case push(externalPathOrWildcard: String)
     case remove(pathOrWildcard: String)
     case copy(folder: FileSystemForCommand, pathOrWildcard: String, destinationPath: String?)
-    case list(folder: FileSystemForCommand, pathOrWildcard: String)
+    case list(folder: FileSystemForCommand?, pathOrWildcard: String?)
     case errors
 }
 
@@ -110,9 +112,16 @@ final class CommandParser {
                          pathOrWildcard: remaining[0],
                          destinationPath: remaining.count >= 2 ? remaining[1] : nil)
 
+        case "cd":
+            let (folder, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+            return .cd(folder: folder, path: remaining.first)
+
+        case "pwd":
+            return .pwd
+
         case "ls", "list":
-            let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
-            return .list(folder: folder, pathOrWildcard: remaining.first ?? "*")
+            let (folder, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+            return .list(folder: folder, pathOrWildcard: remaining.first)
 
         case "e", "errors":
             return .errors
@@ -151,6 +160,17 @@ final class CommandParser {
         case "-i", "--input":  return (.input,  Array(tokens.dropFirst()))
         case "-o", "--output": return (.output, Array(tokens.dropFirst()))
         default:               return (.input,  tokens)
+        }
+    }
+
+    /// Like `parseFileSystemFlag`, but returns `nil` when no flag is present
+    /// so callers can distinguish "explicit FS choice" from "use current".
+    private func parseOptionalFileSystemFlag(tokens: [String]) -> (FileSystemForCommand?, [String]) {
+        guard let first = tokens.first else { return (nil, tokens) }
+        switch first {
+        case "-i", "--input":  return (.input,  Array(tokens.dropFirst()))
+        case "-o", "--output": return (.output, Array(tokens.dropFirst()))
+        default:               return (nil,     tokens)
         }
     }
 }
