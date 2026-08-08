@@ -696,7 +696,7 @@ private struct FormulaResolver {
                                              args:    node.args,
                                              inputs:  node.inputs,
                                              outputs: node.outputs,
-                                             outputPort: port ?? "_default"))
+                                             outputPort: port ?? resolveDefaultOutputPort(forTypeName: name)))
             }
         }
     }
@@ -808,6 +808,19 @@ private struct FormulaResolver {
         }
 
         return .node(GraphShapeNode(typeName: typeName, args: nodeArgs, inputs: inputPorts))
+    }
+
+    // MARK: Output port resolution
+
+    /// Resolves the `_default` output port placeholder to a concrete port name.
+    func resolveDefaultOutputPort(forTypeName typeName: String) -> String {
+        guard let nodeType = PolyFactory.nodeType(forTypeName: typeName) as? InputlessNodeFunction.Type else {
+            return "_default"
+        }
+        let ports = nodeType.descriptor.outputPorts
+        if ports.count == 1 { return ports[0] }
+        if ports.contains("output") { return "output" }
+        return "_default"
     }
 
     // MARK: For-each item expansion
