@@ -10,6 +10,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
         public static let scheduled = Column("scheduled")
         public static let searchKey = Column("searchKey")
         public static let encodedProperties = Column("encodedProperties")
+        public static let pendingDeletion = Column("pendingDeletion")
     }
 
     public var id: ObjectID?
@@ -19,6 +20,9 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
     public var properties: [String: String]
     public var scheduled: Bool
     public var searchKey: String?
+    /// Set when a node loses its last output-wire consumer. Actual deletion is
+    /// deferred to idle time so no structural graph mutations occur during processing.
+    public var pendingDeletion: Bool
 
     public init(id: ObjectID? = nil,
                 parentNodeID: ObjectID? = nil,
@@ -26,7 +30,8 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
                 name: String? = nil,
                 properties: [String: String] = [:],
                 scheduled: Bool = false,
-                searchKey: String? = nil) {
+                searchKey: String? = nil,
+                pendingDeletion: Bool = false) {
         self.id = id
         self.parentNodeID = parentNodeID
         self.kind = kind
@@ -34,6 +39,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
         self.properties = properties
         self.scheduled = scheduled
         self.searchKey = searchKey
+        self.pendingDeletion = pendingDeletion
     }
 
     // MARK: - Serialisation helpers (key=value\n format, stored in "encodedProperties" column)
@@ -70,6 +76,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
         scheduled = row["scheduled"] ?? false
         searchKey = row["searchKey"]
         properties = Self.decodeProperties(row["encodedProperties"])
+        pendingDeletion = row["pendingDeletion"] ?? false
     }
 
     // MARK: - PersistableRecord
@@ -82,6 +89,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
         container["encodedProperties"] = Self.encodeProperties(properties)
         container["scheduled"] = scheduled
         container["searchKey"] = searchKey
+        container["pendingDeletion"] = pendingDeletion
     }
 
     public static func createTable(dbQueue: DatabaseQueue) throws {
@@ -94,6 +102,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
                 t.column("encodedProperties", .text)
                 t.column("scheduled", .integer).indexed().notNull()
                 t.column("searchKey", .text).unique()
+                t.column("pendingDeletion", .integer).notNull().defaults(to: false)
             }
         }
     }
@@ -109,6 +118,21 @@ public struct NodeDataAccess: DataAccessType {
     public func selectAllScheduled(limit: Int) throws -> [Node] {
         try read { db in
             try Node.filter(Node.Columns.scheduled == true).fetchAll(db)
+        }
+    }
+
+    public func selectAllPendingDeletion() throws -> [Node] {
+        try read { db in
+            try Node.filter(Node.Columns.pendingDeletion == true).fetchAll(db)
+        }
+    }
+
+    public func updatePendingDeletion(nodeID: ObjectID, pendingDeletion: Bool) throws {
+        try write { db in
+            try db.execute(
+                sql: "UPDATE Node SET pendingDeletion = ? WHERE id = ?",
+                arguments: [pendingDeletion, nodeID]
+            )
         }
     }
 
