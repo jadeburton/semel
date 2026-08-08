@@ -307,31 +307,3 @@ extension GraphShapeNode {
         return newNode
     }
 }
-
-// MARK: - Recompute Node.searchKey for all nodes
-/*
-extension NodeDataAccess {
-
-    /// Recomputes `Node.searchKey` for every node and persists any changed values.
-    /// Returns the number of rows actually updated.
-    @discardableResult
-    public func recomputeAllSearchKeys() throws -> Int {
-        var updatedCount = 0
-        for var node in try selectAll() {
-            guard let nodeID = node.id else { continue }
-            let newSearchKey: String?
-            do {
-                newSearchKey = try GraphShapeNode.buildFromNode(database: databaseLayer!, nodeID: nodeID).asString(omitOutputPort: true)
-            } catch {
-                print("recomputeAllSearchKeys: skipping node #\(nodeID) (\(node.name ?? "?")) — \(error)")
-                newSearchKey = nil
-            }
-            guard node.searchKey != newSearchKey else { continue }
-            node.searchKey = newSearchKey
-            try update(node)
-            updatedCount += 1
-        }
-        return updatedCount
-    }
-}
-*/
