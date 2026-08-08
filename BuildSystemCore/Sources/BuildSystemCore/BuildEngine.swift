@@ -104,9 +104,9 @@ public final class BuildEngine {
 
     private func processLoop() async throws {
         while true {
-            // Drain all available work before sleeping.
-            // Keep looping as long as processing produces new scheduled nodes.
+
             await workSignal.clear()
+
             do {
                 try await processAllNodes()
             } catch {
@@ -114,16 +114,20 @@ public final class BuildEngine {
                 print("BuildEngine: error during processAllNodes: \(error)")
             }
 
+            try cleanUpAllPendingDeletions()
+
             // If a signal arrived while we were processing, drain again immediately
-            // instead of sleeping — this is the fix for the "double signal" race.
-            guard await workSignal.isPending else {
-                #if DEBUG
-                // Engine is idle — check for nodes that have slipped out of the ownership graph.
-                try? detectOrphans()
-                #endif
-                await workSignal.wait()
+            if await workSignal.isPending {
                 continue
             }
+
+            await workSignal.wait()
+        }
+    }
+
+    private func cleanUpAllPendingDeletions() throws {
+        // Clean up all pending deletions, which are not safe to delete while Nodes are being processed
+        while ((try? processPendingDeletions()) ?? 0) > 0 {
         }
     }
 
