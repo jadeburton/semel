@@ -13,12 +13,16 @@ struct ClangLinkerToolConfiguration {
     let arguments: [String]
     let environment: [String: String]
     let dynamicLibrary: Bool
+    let target: String?     // "arm64-apple-macos14.0"
+    let usrLibPath: String? // /Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib
 
     init(properties: [String: String]) {
         toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
+        target = properties["target"]
+        usrLibPath = properties["usrLibPath"]
     }
 }
 
@@ -102,12 +106,19 @@ public struct ClangLinkerTool: NodeFunction {
         var arguments = [String]()
 
         arguments.append(contentsOf: inputs.configuration.arguments)
-        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        
+        arguments.append("-target");
+        arguments.append(inputs.configuration.target ?? "arm64-apple-macos14.0") // TODO: no fallback hard coded value, ensure all configs have it
+
         arguments.append("-L"); arguments.append(".")
-        // TODO: lock down SDK version and hash for full hermeticity.
+
         arguments.append("-L")
-        arguments.append("/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+        // TODO: is there a thing we can ask/run to resolve this path, given a desired Xcode version?
+        // TODO: no fallback hard coded value
+        arguments.append(inputs.configuration.usrLibPath ?? "/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+
         arguments.append("-lSystem")
+
         arguments.append("-nostdlib")
 
         if inputs.configuration.dynamicLibrary {

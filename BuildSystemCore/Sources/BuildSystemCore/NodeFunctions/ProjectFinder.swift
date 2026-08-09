@@ -150,7 +150,7 @@ public struct ProjectFinder: NodeFunction {
             watchedFolderExpectations[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
         }
 
-        print("ProjectFinder: watchedPaths = \(watchedPaths.joined(separator: ", "))")
+//        print("ProjectFinder: watchedPaths = \(watchedPaths.joined(separator: ", "))")
 
         return .init(outputValues: [:],
                      inputWireExpectations: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: "Folder(path: 'input:').manifest"],

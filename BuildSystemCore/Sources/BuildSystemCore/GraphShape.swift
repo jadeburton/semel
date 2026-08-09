@@ -168,12 +168,14 @@ extension GraphShapeNode {
         let otherPorts = Dictionary(other.inputs.map { ($0.portName, $0.wires) },
                                     uniquingKeysWith: { first, _ in first })
 
-        // The live graph may carry additional dynamic ports that the node's own
-        // process() added after creation (e.g. ClangPreprocessorTool's
-        // `includeFileLists` / `headerInputFiles`).  Those ports are not present
-        // in the formula-derived expected shape and must not be treated as a
-        // mismatch.  We therefore check that every port in `other` (expected)
-        // exists in `self` (current) with matching wires — a subset match.
+        // Ports that are ONLY in `self` (current) are allowed to be extra — they are
+        // dynamic ports added by the engine after node creation (e.g.
+        // ClangPreprocessorTool's `includeFileLists` / `headerInputFiles`).
+        //
+        // For ports that appear in BOTH `self` and `other` (i.e. ports the formula
+        // explicitly specifies), the wire sets must match exactly: same count and
+        // same named wires.  A current port with MORE wires than expected means a
+        // source file was removed and the node must be rewired, not reused.
         //
         // Within each port, wires are matched by name (not by position).
         // `database.wire.select` returns wires in insertion order, which can
@@ -182,6 +184,9 @@ extension GraphShapeNode {
         for (portName, otherWires) in otherPorts {
             guard let selfWires = selfPorts[portName] else {
                 throw TopologyMatchError.noMatch(reason: "Expected port '\(portName)' is absent in the current graph shape")
+            }
+            guard selfWires.count == otherWires.count else {
+                throw TopologyMatchError.noMatch(reason: "Wire count mismatch on port '\(portName)': current=\(selfWires.count), expected=\(otherWires.count)")
             }
             let selfWiresByName = Dictionary(selfWires.map { ($0.name, $0.node) },
                                              uniquingKeysWith: { first, _ in first })

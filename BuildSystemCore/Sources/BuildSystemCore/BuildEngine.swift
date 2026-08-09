@@ -125,6 +125,8 @@ public final class BuildEngine {
                 continue
             }
 
+            reportIdleTimeErrors()
+
             await workSignal.wait()
         }
     }
@@ -133,6 +135,83 @@ public final class BuildEngine {
         // Clean up all pending deletions, which are not safe to delete while Nodes are being processed
         while ((try? processPendingDeletions()) ?? 0) > 0 {
         }
+    }
+
+    // MARK: - Idle-time error reporting
+
+    /// Tracks the last set of error messages reported per node so repeated identical
+    /// errors are not printed on every processing cycle.
+    private var lastReportedErrors: [ObjectID: Set<String>] = [:]
+
+    /// Called once the engine is fully idle (no more scheduled nodes, no pending signals).
+    /// Compares current error state against the last-reported state and prints only
+    /// newly-appearing errors, using the same format as the `errors` command.
+    private func reportIdleTimeErrors() {
+        guard let errorPorts = try? database.outputPort.selectAllErrors() else { return }
+
+        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
+
+        // Build the new "current" error map, filtering out transient "initializing" noise.
+        var current: [ObjectID: Set<String>] = [:]
+        for (nodeID, ports) in byNode {
+            let msgs = Set(ports.compactMap { port -> String? in
+                let msg = (try? port.dataObjectHash?.resolveAsString()) ?? ""
+                return msg.isEmpty || msg == "initializing" ? nil : msg
+            })
+            if !msgs.isEmpty { current[nodeID] = msgs }
+        }
+
+        // Print only nodes with at least one newly-appearing error message.
+        for (nodeID, msgs) in current {
+            let newMsgs = msgs.subtracting(lastReportedErrors[nodeID] ?? [])
+            guard !newMsgs.isEmpty else { continue }
+
+            let node = try? database.node.select(nodeID: nodeID)
+            let kindLabel: String
+            if let node, let nf = try? node.nodeAsAny() {
+                let typeName = String(describing: type(of: nf))
+                if let path = node.properties["path"] {
+                    kindLabel = "\(typeName)  '\(path)'"
+                } else if let wires = try? database.wire.select(goingToNodeID: nodeID,
+                                                                 toSymbolID: "projectFile".asSymbolID()),
+                          let wireName = wires.first?.name {
+                    kindLabel = "\(typeName)  '\(wireName.resolveSymbol())'"
+                } else {
+                    kindLabel = typeName
+                }
+            } else {
+                kindLabel = "Node \(nodeID)"
+            }
+
+            print("❌ \(kindLabel)")
+
+            let portsForNode = byNode[nodeID] ?? []
+            for msg in newMsgs.sorted() {
+                let portsForMsg = portsForNode.filter {
+                    ((try? $0.dataObjectHash?.resolveAsString()) ?? "") == msg
+                }
+                let portNames = portsForMsg
+                    .map { $0.nameSymbolID.resolveSymbol() }
+                    .sorted()
+                    .joined(separator: ", ")
+
+                let lines = msg
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .components(separatedBy: "\n")
+                    .map    { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+
+                if lines.count == 1 {
+                    print("   · \(portNames): \(lines[0])")
+                } else {
+                    print("   · \(portNames):")
+                    lines.forEach { print("     \($0)") }
+                }
+            }
+            print("")
+        }
+
+        lastReportedErrors = current
     }
 
     // MARK: - Batch mode
@@ -378,7 +457,7 @@ extension BuildEngine {
 
         #if DEBUG
         if deletedCount > 0 {
-            print("Pending deletion: removed \(deletedCount) node(s)")
+            print("Removed \(deletedCount) node(s)")
         }
         #endif
 

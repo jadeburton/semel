@@ -29,8 +29,6 @@ func receiveUserInput(line: String) -> Bool {
     }
 }
 
-
-
 #if !UNIT_TESTING
 try main()
 #endif
