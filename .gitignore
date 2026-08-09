@@ -1,7 +1,25 @@
-.build
-/build_system.xcodeproj/project.xcworkspace/xcuserdata/jadeburton.xcuserdatad/UserInterfaceState.xcuserstate
-/build_system.xcodeproj/xcuserdata/jadeburton.xcuserdatad/xcdebugger/Breakpoints_v2.xcbkptlist
-/.swiftpm/xcode/package.xcworkspace/xcuserdata/jadeburton.xcuserdatad/UserInterfaceState.xcuserstate
-/BuildSystemCore/.swiftpm/xcode/package.xcworkspace/xcuserdata/jadeburton.xcuserdatad/UserInterfaceState.xcuserstate
-/DatabaseModels/.swiftpm/xcode/package.xcworkspace/xcuserdata/jadeburton.xcuserdatad/UserInterfaceState.xcuserstate
-/.swiftpm/xcode/xcuserdata/jadeburton.xcuserdatad/xcdebugger/Breakpoints_v2.xcbkptlist
+# Swift build artefacts
+.build/
+*.o
+*.d
+
+# SQLite databases written by the engine at runtime
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Xcode user state (these are machine-local)
+xcuserdata/
+*.xcuserstate
+*.xcbkptlist
+DerivedData/
+
+# SwiftPM Xcode integration
+.swiftpm/
+
+# macOS metadata
+.DS_Store
+
+# Editor
+.idea/
+*.swp

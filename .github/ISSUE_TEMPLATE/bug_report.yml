@@ -1,0 +1,36 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the problem and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands or code that reproduce the issue.
+      placeholder: |
+        1. push src/
+        2. e
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Output of `swift --version` and `sw_vers`.
+    validations:
+      required: true
