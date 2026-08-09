@@ -103,7 +103,7 @@ public final class DatabaseLayer {
         }
     }
 
-    // ── Initialiser ─────────────────────────────────────────────────────────
+    // ── Initialisers ─────────────────────────────────────────────────────────
 
     public init(filePath: String) throws {
         var config = Configuration()
@@ -116,13 +116,30 @@ public final class DatabaseLayer {
         }
         dbQueue = try DatabaseQueue(path: filePath, configuration: config)
 
+        try DatabaseLayer.createTables(dbQueue: dbQueue)
+
+        Self.shared = self
+    }
+
+    /// Creates an anonymous in-memory database — suitable for unit and integration tests.
+    public init() throws {
+        var config = Configuration()
+        config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA foreign_keys=ON")
+        }
+        dbQueue = try DatabaseQueue(configuration: config)
+
+        try DatabaseLayer.createTables(dbQueue: dbQueue)
+
+        Self.shared = self
+    }
+
+    private static func createTables(dbQueue: DatabaseQueue) throws {
         try Node.createTable(dbQueue: dbQueue)
         try Wire.createTable(dbQueue: dbQueue)
         try CacheEntry.createTable(dbQueue: dbQueue)
         try Symbol.createTable(dbQueue: dbQueue)
         try OutputPort.createTable(dbQueue: dbQueue)
-
-        Self.shared = self
     }
 
     /// Legacy helper kept for compatibility; prefer `withTransaction`.

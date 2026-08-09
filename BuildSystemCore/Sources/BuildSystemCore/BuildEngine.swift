@@ -14,7 +14,7 @@ public final class BuildEngine {
 
     /// Creates and starts the engine. Must be called once before using `shared`.
     public static func start() throws {
-        shared = try BuildEngine()
+        shared = try BuildEngine(database: DatabaseLayer(filePath: "database351.sqlite"))
     }
 
     // MARK: - Constants
@@ -81,11 +81,17 @@ public final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database341.sqlite")) throws {
+    /// Creates the engine and optionally starts the background processing loop.
+    ///
+    /// Pass `startProcessingLoop: false` in unit and integration tests to prevent the
+    /// background Task from starting — this keeps tests synchronous and avoids races.
+    init(database: DatabaseLayer, startProcessingLoop: Bool = true) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
+
+        guard startProcessingLoop else { return }
 
         // Capture the fully-initialised self before starting the task.
         let engine = self

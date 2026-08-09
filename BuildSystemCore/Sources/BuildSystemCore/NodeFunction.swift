@@ -345,8 +345,21 @@ extension InputlessNodeFunction {
                     needsReconnection = false
                 } catch {
                     // Topology changed (e.g. a formula was updated to add/remove a dependency).
-                    // Delete the stale wire so we can reconnect below with the correct node.
-                    _ = try existingWire.deleteWire(database: database)
+                    // Before deleting, check whether the expected shape's searchKey already
+                    // matches the node the wire connects to.  If so, expectTopologyMatch
+                    // produced a false positive — reconnecting would reschedule this node every
+                    // pass and cause an infinite loop.
+                    if let match = try? expectedShapeNode.findMatchingNode(),
+                       match.fromNodeID == existingWire.fromNodeID,
+                       match.fromSymbolID == existingWire.fromSymbolID {
+                        needsReconnection = false
+                    } else {
+                        let truncate: (String) -> String = { s in s.count > 300 ? String(s.prefix(300)) + "…" : s }
+                        print("⚠️ topology mismatch on port '\(inputPort)' wire '\(wireName)' of node #\(id ?? -1): \(error)")
+                        print("   current:  \(truncate(currentShapeNode.asString(omitOutputPort: false)))")
+                        print("   expected: \(truncate(expectedShapeNode.asString(omitOutputPort: false)))")
+                        _ = try existingWire.deleteWire(database: database)
+                    }
                 }
             }
 
