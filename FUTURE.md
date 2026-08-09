@@ -6,6 +6,8 @@
 - Plugin arch so that others (and ai) can add toolchains like c++
 - Fix: when node added to output fs, writes to console
 
+- Fix: when copying out an executable file, it should have the +x attribute (libs also?)
+
 - Make github repo public
 
 - Convert to client-server architecture and daemon
