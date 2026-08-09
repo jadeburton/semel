@@ -14,21 +14,9 @@ struct ClangPreprocessorToolConfiguration {
     let environment: [String: String]
 
     init(properties: [String: String]) {
-        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
-                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                               platform: properties["toolDescriptor.platform"] ?? "macOS",
-                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
-                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
-    }
-
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name": toolDescriptor.name,
-         "toolDescriptor.version": toolDescriptor.version,
-         "toolDescriptor.platform": toolDescriptor.platform,
-         "toolDescriptor.architecture": toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
     }
 }
 

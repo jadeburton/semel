@@ -20,21 +20,11 @@ struct SwiftCompilerToolConfiguration {
             version:       properties["toolDescriptor.version"]       ?? "Apple Swift version 6.2.3",
             platform:      properties["toolDescriptor.platform"]      ?? "macOS",
             architecture:  properties["toolDescriptor.architecture"]  ?? "arm64",
-            recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+            recursiveHash: properties["toolDescriptor.recursiveHash"])
         arguments   = []
         environment = [:]
         moduleName  = properties["moduleName"] ?? "Module"
         parseAsLibrary = properties["parseAsLibrary"] != "false"
-    }
-
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name":          toolDescriptor.name,
-         "toolDescriptor.version":       toolDescriptor.version,
-         "toolDescriptor.platform":      toolDescriptor.platform,
-         "toolDescriptor.architecture":  toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? "",
-         "moduleName":                   moduleName,
-         "parseAsLibrary":               parseAsLibrary ? "true" : "false"]
     }
 }
 

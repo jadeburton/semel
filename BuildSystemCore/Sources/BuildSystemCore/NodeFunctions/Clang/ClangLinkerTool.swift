@@ -15,23 +15,10 @@ struct ClangLinkerToolConfiguration {
     let dynamicLibrary: Bool
 
     init(properties: [String: String]) {
-        toolDescriptor = .init(name: properties["toolDescriptor.name"] ?? "clang",
-                               version: properties["toolDescriptor.version"] ?? "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                               platform: properties["toolDescriptor.platform"] ?? "macOS",
-                               architecture: properties["toolDescriptor.architecture"] ?? "arm64",
-                               recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+        toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
-    }
-
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name": toolDescriptor.name,
-         "toolDescriptor.version": toolDescriptor.version,
-         "toolDescriptor.platform": toolDescriptor.platform,
-         "toolDescriptor.architecture": toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? "",
-         "dynamicLibrary": dynamicLibrary ? "true" : "false"]
     }
 }
 
@@ -43,10 +30,7 @@ public struct ClangLinkerTool: NodeFunction {
     // MARK: Ports
 
     static let configuration = "configuration"
-
-    // TODO: rename to "objectFiles"
-    static let input = "input"
-
+    static let input = "objectFiles"
     static let libraries = "libraries"
     static let output = "output"
     static let infoLog = "infoLog"

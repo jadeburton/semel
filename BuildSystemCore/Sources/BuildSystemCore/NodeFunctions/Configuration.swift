@@ -12,7 +12,7 @@ public struct Configuration: NodeFunction {
     var embeddedNode: Node?
 
     static let outputPort = "output"
-    static let inputPort = "input"
+    static let inputPort = "inherit"
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
@@ -31,7 +31,6 @@ public struct Configuration: NodeFunction {
         for inputPortWireKey in inputValues.keys.sorted() {
             let plainText = try inputValues[inputPortWireKey]!.expectValue().resolveAsString()
             let configuration = [String: String](plainText: plainText)
-            // TODO: issue warning output if there are conflicts
             aggregatedConfig = aggregatedConfig.mergedWith(configuration)
         }
 

@@ -100,11 +100,14 @@ enum FormulaCallArg {
 
 /// A single entry in an input-wire dictionary.
 ///
-/// A `simple` entry contributes exactly one wire. A `forEach` entry contributes
-/// one wire per item (after glob expansion), with `%%variable%%` substituted into
-/// the key template and into every string literal in the value expression.
+/// A `simple` entry contributes exactly one wire with an explicit key.
+/// An `unnamed` entry contributes one wire whose name is auto-generated
+/// as `"wire0"`, `"wire1"`, … based on its position in the port's wire list.
+/// A `forEach` entry contributes one wire per item (after glob expansion),
+/// with `%%variable%%` substituted into the key template and every string literal.
 enum WireDictEntry {
     case simple(key: FormulaExpr, value: FormulaExpr)
+    case unnamed(value: FormulaExpr)
     case forEach(variable: String, items: [String], key: String, value: FormulaExpr)
     // simple.key: any expression that resolves to a String (literal, identifier, or template)
     // forEach.key: template string — may contain %%variable%%
@@ -544,18 +547,26 @@ private struct FormulaParser {
             if current == .lbrace {
                 entries.append(try parseForEachEntry())
             } else {
-                // Wire key: string literal "foo" or path <rel/path> (both tokenized as .string),
-                // or an identifier referencing a parameter (e.g. `path`).
-                let keyExpr: FormulaExpr
+                // Detect optional explicit key: (string | ident) immediately followed by ':'.
+                // Anything else is an unnamed wire — auto-generate "wireN" at resolve time.
+                let hasKey: Bool
                 switch current {
-                case .string(let s): advance(); keyExpr = .string(s)
-                case .ident(let n):  advance(); keyExpr = .identifier(n)
-                default:
-                    throw located(FormulaParseError.unexpectedToken(current,
-                                                                     expected: "wire key (string, path, or identifier) in wire dict"))
+                case .string, .ident: hasKey = (peek1 == .colon)
+                default:              hasKey = false
                 }
-                try expect(.colon)
-                entries.append(.simple(key: keyExpr, value: try parseExpr()))
+
+                if hasKey {
+                    let keyExpr: FormulaExpr
+                    switch current {
+                    case .string(let s): advance(); keyExpr = .string(s)
+                    case .ident(let n):  advance(); keyExpr = .identifier(n)
+                    default: fatalError("unreachable")
+                    }
+                    try expect(.colon)
+                    entries.append(.simple(key: keyExpr, value: try parseExpr()))
+                } else {
+                    entries.append(.unnamed(value: try parseExpr()))
+                }
             }
             if current == .comma { advance() }
         }
@@ -874,6 +885,16 @@ private struct FormulaResolver {
                                 context: "wire values must be node expressions")
                         }
                         graphWires.append(GraphShapeWire(name: key, node: node))
+
+                    case .unnamed(let expr):
+                        let value = try eval(expr, env: env, templateEnv: templateEnv)
+                        guard case .node(let node) = value else {
+                            throw FormulaParseError.typeMismatch(
+                                expected: "node (unnamed wire on port '\(portName)' of '\(typeName)')",
+                                got: value.typeName,
+                                context: "wire values must be node expressions")
+                        }
+                        graphWires.append(GraphShapeWire(name: "wire\(graphWires.count)", node: node))
 
                     case .forEach(let variable, let items, let key, let expr):
                         let bindings = try expandForEachItems(variable: variable, items: items)

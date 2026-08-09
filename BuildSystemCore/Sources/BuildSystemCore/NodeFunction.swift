@@ -106,12 +106,12 @@ extension NodeFunction {
         for inputPort in descriptor.staticInputPorts.filter({ !descriptor.optionalStaticInputPorts.contains($0) }) {
 
             guard let values = input.inputValues[inputPort] else {
-                throw NodeError.other(message: "inputValues is missing an entry for input port")
+                throw NodeError.other(message: "inputValues is missing an entry for input port \(inputPort)")
             }
 
             guard !values.isEmpty else {
                 // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
-                // TODO: self-healing
+
                 // TODO when the node is first created and wired up, we should check then, early, to verify everything is connected.
                 throw NodeError.other(message: "Non-optional input port \(inputPort) has no connected wires for \(self)")
             }
@@ -296,7 +296,7 @@ extension InputlessNodeFunction {
             print("applyExpectationConfiguration failed: \(error)")
             #endif
             for outputPort in try descriptor.outputPorts {
-                try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "applyExpectationConfiguration failed")))
+                try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(message: "\(error)")))
             }
             throw error
         }

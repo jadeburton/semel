@@ -83,27 +83,27 @@ final class GraphShapeTests: XCTestCase {
 
     func test_multipleWires_parsesCount() throws {
         let node = try GraphShapeNode.parse(
-            "ClangLinkerTool(input: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires.count, 2)
     }
 
     func test_multipleWires_parsesFirstWireName() throws {
         let node = try GraphShapeNode.parse(
-            "ClangLinkerTool(input: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires[0].name, "a")
     }
 
     func test_multipleWires_parsesSecondWireName() throws {
         let node = try GraphShapeNode.parse(
-            "ClangLinkerTool(input: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertEqual(node.inputs[0].wires[1].name, "b")
     }
 
     func test_multipleWires_roundTrip() throws {
-        let input = "ClangLinkerTool(input: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+        let input = "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         XCTAssertEqual(try GraphShapeNode.parse(input).asString(omitOutputPort: false), input)
     }
 
@@ -235,10 +235,10 @@ final class GraphShapeTests: XCTestCase {
 
     func test_topologyMatches_differentWireCount_doesNotMatch() throws {
         let a = try GraphShapeNode.parse(
-            "ClangLinkerTool(input: [\"a\": StaticFile(path: 'a.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output]).output"
         )
         let b = try GraphShapeNode.parse(
-            "ClangLinkerTool(input: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+            "ClangLinkerTool(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         )
         XCTAssertThrowsError(try a.expectTopologyMatch(b))
     }

@@ -165,7 +165,7 @@ extension GraphShapeNode {
 
         let actualArgs = nodeFunction.graphShapeArgs(node: node)
 
-        guard actualArgs == args else { // TODO: is this order-insensitive?
+        guard Set(actualArgs) == Set(args) else {
             return false
         }
 
@@ -263,7 +263,7 @@ extension GraphShapeNode {
             for wireSpec in inputPortSpec.wires {
                 let newNodeNodeFunction = try newNode.nodeFunction()
                 if try !newNodeNodeFunction.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
-                    throw NodeError.other(message: "The configuration refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
+                    throw NodeError.other(message: "The formula refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
                 }
 
                 let (fromNode, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()

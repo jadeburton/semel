@@ -28,7 +28,7 @@ struct SwiftPackageReaderToolConfiguration {
             version:       properties["toolDescriptor.version"]       ?? "Apple Swift version 6.2.3",
             platform:      properties["toolDescriptor.platform"]      ?? "macOS",
             architecture:  properties["toolDescriptor.architecture"]  ?? "arm64",
-            recursiveHash: properties["toolDescriptor.recursiveHash"] ?? "")
+            recursiveHash: properties["toolDescriptor.recursiveHash"])
     }
 
     func asDictionary() -> [String: String] {

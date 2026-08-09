@@ -32,8 +32,8 @@
 //          configuration: ["config": Configuration(tool: 'preprocessor').output],
 //          input: ["hello.c": StaticFile(path: 'hello.c').output]).output
 //      ClangLinkerTool(
-//          input: ["compiler_hello": ClangCompilerTool(...).output,
-//                  "compiler_main":  ClangCompilerTool(...).output]).output
+//          objectFiles: ["compiler_hello": ClangCompilerTool(...).output,
+//                        "compiler_main":  ClangCompilerTool(...).output]).output
 //
 
 import Foundation

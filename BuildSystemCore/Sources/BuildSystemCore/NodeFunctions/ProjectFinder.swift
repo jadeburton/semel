@@ -4,6 +4,55 @@
 
 import Foundation
 
+// MARK: - ProjectBuilderPlugin
+
+private protocol ProjectBuilderPlugin {
+    /// Returns the ProjectBuilder expectation string for `entry` inside `folderPath`,
+    /// or `nil` if this plugin does not handle the entry.
+    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String?
+}
+
+private struct FormulaFilePlugin: ProjectBuilderPlugin {
+    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+        guard entry.isPinned, entry.name.hasSuffix(".fmla") else { return nil }
+        let fullPath = (Path(folderPath) / entry.name).string
+        return "ProjectBuilder(projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status"
+            .replacingOccurrences(of: "\\'", with: "'")
+    }
+}
+
+private struct SwiftPackagePlugin: ProjectBuilderPlugin {
+    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+        guard entry.isPinned, entry.name == "Package.swift" else { return nil }
+        let fullPath      = (Path(folderPath) / entry.name).string
+        let packageFolder = Path(fullPath).deletingLastComponent!.string
+
+        let pkgReaderExpr =
+            "SwiftPackageReaderTool(" +
+            "configuration: ['config': Configuration().output], " +
+            "packageFile: ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
+            ").packageJSON"
+
+        let converterExpr =
+            "SwiftFormulaConverter(" +
+            "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
+            "packageJSON: ['\(fullPath)': \(pkgReaderExpr)]" +
+            ").formula"
+
+        return
+            "ProjectBuilder(" +
+            "projectFile: ['\(packageFolder)': \(converterExpr)]" +
+            ").status"
+    }
+}
+
+private let projectBuilderPlugins: [any ProjectBuilderPlugin] = [
+    FormulaFilePlugin(),
+    SwiftPackagePlugin(),
+]
+
+// MARK: - ProjectFinder
+
 /// Watches an input file-list and creates a ProjectBuilder child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
 public struct ProjectFinder: NodeFunction {
@@ -37,33 +86,13 @@ public struct ProjectFinder: NodeFunction {
     private func buildProjectBuildersExpectationFromFolderManifest(folderManifests: [(String, FolderManifest)]) throws -> [String: String] {
         var result: [String: String] = [:]
 
-        for folderManifest in folderManifests {
-            for entry in folderManifest.1.entries {
-                // TODO: clean this up. also make plugin-based. -- FOR LATER, NOT NOW
-                if entry.isPinned {
-                    if entry.name.hasSuffix(".fmla") {
-                        let fullPath = (Path(folderManifest.0) / entry.name).string
-                        result[fullPath] = "ProjectBuilder(projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
-                    } else if entry.name == "Package.swift" {
-                        let fullPath      = (Path(folderManifest.0) / entry.name).string
-                        let packageFolder = Path(fullPath).deletingLastComponent!.string
-
-                        let pkgReaderExpr =
-                            "SwiftPackageReaderTool(" +
-                            "configuration: ['config': Configuration().output], " +
-                            "packageFile: ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
-                            ").packageJSON"
-
-                        let converterExpr =
-                            "SwiftFormulaConverter(" +
-                            "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
-                            "packageJSON: ['\(fullPath)': \(pkgReaderExpr)]" +
-                            ").formula"
-
-                        result[fullPath] =
-                            "ProjectBuilder(" +
-                            "projectFile: ['\(packageFolder)': \(converterExpr)]" +
-                            ").status"
+        for (folderPath, folderManifest) in folderManifests {
+            for entry in folderManifest.entries {
+                let fullPath = (Path(folderPath) / entry.name).string
+                for plugin in projectBuilderPlugins {
+                    if let expectation = plugin.expectationString(forEntry: entry, inFolder: folderPath) {
+                        result[fullPath] = expectation
+                        break
                     }
                 }
             }

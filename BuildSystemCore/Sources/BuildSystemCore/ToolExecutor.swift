@@ -14,6 +14,27 @@ struct ToolDescriptor: Hashable, Codable {
     let platform: String
     let architecture: String
     let recursiveHash: String?
+
+    init(name: String,
+         version: String,
+         platform: String,
+         architecture: String,
+         recursiveHash: String?) {
+
+        self.name = name
+        self.version = version
+        self.platform = platform
+        self.architecture = architecture
+        self.recursiveHash = recursiveHash
+    }
+
+    init(properties: [String: String]) {
+        name = properties["toolDescriptor.name"] ?? ""
+        version = properties["toolDescriptor.version"] ?? ""
+        platform = properties["toolDescriptor.platform"] ?? ""
+        architecture = properties["toolDescriptor.architecture"] ?? ""
+        recursiveHash = properties["toolDescriptor.recursiveHash"]
+    }
 }
 
 struct ToolExecuteResult {
@@ -106,21 +127,21 @@ class DefaultTools {
                               version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: ""),
+                              recursiveHash: nil),
             toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
         try toolExecutorRegistry.registerTool(
             descriptor: .init(name: "swiftc",
                               version: "Apple Swift version 6.2.3",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: ""),
+                              recursiveHash: nil),
             toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"))
         try toolExecutorRegistry.registerTool(
             descriptor: .init(name: "swift",
                               version: "Apple Swift version 6.2.3",
                               platform: "macOS",
                               architecture: "arm64",
-                              recursiveHash: ""),
+                              recursiveHash: nil),
             toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"))
     }
 }

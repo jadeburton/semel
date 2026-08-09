@@ -7,6 +7,8 @@
 
 import Foundation
 
+private let cacheEntryLimit = 500
+
 extension NodeFunction {
 
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
@@ -53,10 +55,11 @@ extension NodeFunction {
             return nil
         }
 
-        // TODO: atomically select and update the row simultaneously; the timestamp should be updated.
         guard let cacheEntry = try database.cacheEntry.select(hash: cacheKey) else {
             return nil
         }
+        // Refresh the timestamp so this entry is treated as recently used by the LRU eviction policy.
+        try? database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
 
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
             return nil
@@ -97,5 +100,6 @@ extension NodeFunction {
         try database.cacheEntry.insert(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
                                              cost: Int(processingDuration * 1000.0),
                                              timestamp: Date()))
+        try? database.cacheEntry.trimToLimit(cacheEntryLimit)
     }
 }
