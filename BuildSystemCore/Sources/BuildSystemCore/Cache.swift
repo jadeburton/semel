@@ -86,7 +86,7 @@ extension NodeFunction {
             return
         }
 
-        let thresholdDuration = 0.025 // 25ms
+        let thresholdDuration = 0.015 // 15ms
 
         if processingDuration < thresholdDuration {
             return

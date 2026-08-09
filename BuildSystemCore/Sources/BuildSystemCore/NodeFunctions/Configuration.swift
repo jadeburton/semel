@@ -63,6 +63,6 @@ extension [String: String] {
     }
 
     func asPlainText() -> String {
-        self.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+        self.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
     }
 }
