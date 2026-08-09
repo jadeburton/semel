@@ -94,6 +94,8 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
 
     func process(input: ProcessInput) throws -> ProcessOutput {
         let inputValue = input.inputValues[Self.inputPort]!.first!
+        let previousStatus = try thisNode.readFromOutputPort(Self.statusOutputPort)
+        let hadValue = !previousStatus.isNoValue
 
         let outputValue: NodeValue
 
@@ -101,9 +103,13 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
 
         case .noValue(let reason):
             outputValue = .noValue(reason: reason)
+            if hadValue {
+                print("[-] \(path)")
+            }
 
         case .value:
             outputValue = .value("Product is up to date".intern())
+            print("\(hadValue ? "[~]" : "[+]") \(path)")
 
         }
 
