@@ -192,7 +192,7 @@ public struct ClangPreprocessorTool: NodeFunction {
         var includeFileListWireExpections = [String: String]()
 
         for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile <- ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
+            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
         }
 
         // There must be one IncludeFinder attached to the .c file.

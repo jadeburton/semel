@@ -43,26 +43,26 @@ public struct ProjectFinder: NodeFunction {
                 if entry.isPinned {
                     if entry.name.hasSuffix(".fmla") {
                         let fullPath = (Path(folderManifest.0) / entry.name).string
-                        result[fullPath] = "ProjectBuilder(projectFile <- [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
+                        result[fullPath] = "ProjectBuilder(projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status".replacingOccurrences(of: "\\'", with: "'")
                     } else if entry.name == "Package.swift" {
                         let fullPath      = (Path(folderManifest.0) / entry.name).string
                         let packageFolder = Path(fullPath).deletingLastComponent!.string
 
                         let pkgReaderExpr =
                             "SwiftPackageReaderTool(" +
-                            "configuration <- ['config': Configuration().output], " +
-                            "packageFile <- ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
+                            "configuration: ['config': Configuration().output], " +
+                            "packageFile: ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
                             ").packageJSON"
 
                         let converterExpr =
                             "SwiftFormulaConverter(" +
-                            "packageFolder <- ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
-                            "packageJSON <- ['\(fullPath)': \(pkgReaderExpr)]" +
+                            "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
+                            "packageJSON: ['\(fullPath)': \(pkgReaderExpr)]" +
                             ").formula"
 
                         result[fullPath] =
                             "ProjectBuilder(" +
-                            "projectFile <- ['\(packageFolder)': \(converterExpr)]" +
+                            "projectFile: ['\(packageFolder)': \(converterExpr)]" +
                             ").status"
                     }
                 }

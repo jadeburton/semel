@@ -74,7 +74,7 @@ public struct ProjectBuilder: NodeFunction {
                     / Path(productName)
 
                 let wrapper = try GraphShapeNode.parse(
-                    "OutputFile(path: '\(fullPath)', input <- ['product': \(shapeNode.asString(omitOutputPort: false))]).status"
+                    "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]).status"
                 )
 
                 productExpectations[fullPath.string] = wrapper.asString(omitOutputPort: false)

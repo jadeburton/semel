@@ -73,7 +73,7 @@ extension NodeFunction {
             return
         }
 
-        print("Cache cost: \(Int(processingDuration * 1000.0)) ms")
+        //print("Cache cost: \(Int(processingDuration * 1000.0)) ms")
 
         if descriptor.staticInputPorts.isEmpty {
             return
@@ -89,7 +89,7 @@ extension NodeFunction {
             return
         }
 
-        print("Saving cache entry..")
+        //print("Saving cache entry..")
 
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireExpectations: output.inputWireExpectations)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!

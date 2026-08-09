@@ -138,8 +138,8 @@ struct SwiftFormulaConverter: NodeFunction {
     private func packageReaderExpectation(for extPath: String) -> String {
         let pkgFilePath = "\(extPath)/Package.swift"
         return "SwiftPackageReaderTool(" +
-               "configuration <- ['config': Configuration().output], " +
-               "packageFile <- ['\(pkgFilePath)': StaticFile(path: '\(pkgFilePath)').output]" +
+               "configuration: ['config': Configuration().output], " +
+               "packageFile: ['\(pkgFilePath)': StaticFile(path: '\(pkgFilePath)').output]" +
                ").packageJSON"
     }
 
@@ -349,8 +349,8 @@ struct SwiftFormulaConverter: NodeFunction {
             let block =
                 "product '\(product.name)' =\n" +
                 "    SwiftLinkerTool(\n" +
-                "        configuration <- ['config': \(linkerConfig)],\n" +
-                "        input <- [\n" +
+                "        configuration: ['config': \(linkerConfig)],\n" +
+                "        input: [\n" +
                 objectWires.joined(separator: ",\n") + "\n" +
                 "        ]\n" +
                 "    ).output"
@@ -426,13 +426,13 @@ struct SwiftFormulaConverter: NodeFunction {
         }
 
         var args =
-            "    configuration <- ['config': \(configExpr)],\n" +
-            "    inputFolder   <- ['folder0': \(folderExpr)]"
+            "    configuration: ['config': \(configExpr)],\n" +
+            "    inputFolder: ['folder0': \(folderExpr)]"
         if !moduleWires.isEmpty {
-            args += ",\n    inputModules  <- [\n" + moduleWires.joined(separator: ",\n") + "\n    ]"
+            args += ",\n    inputModules: [\n" + moduleWires.joined(separator: ",\n") + "\n    ]"
         }
         if !moduleMapFolderWires.isEmpty {
-            args += ",\n    inputModuleMapFolders <- [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
+            args += ",\n    inputModuleMapFolders: [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
         }
         return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompilerTool(\n\(args)\n    )"
     }

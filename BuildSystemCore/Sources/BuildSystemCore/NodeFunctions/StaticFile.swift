@@ -84,8 +84,14 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
     public func deleteInInputFileSystem() throws {
         _ = try replaceContent(nil)
 
-        if try hasNoOutputWires() && canBeDeleted() {
-            try delete()
+        // Defer physical deletion to the idle-time GC (processPendingDeletions) rather
+        // than deleting immediately.  This matters when the engine hasn't yet wired this
+        // file to its consumers (ClangCompilerTool etc.) — in that window hasNoOutputWires()
+        // would be true even though the file IS referenced, causing the node to be destroyed
+        // instead of remaining as a [missing] ghost.  connectWire() automatically clears
+        // the pendingDeletion flag if a wire is later connected, rescuing the node.
+        if try hasNoOutputWires() {
+            try database.node.updatePendingDeletion(nodeID: id!, pendingDeletion: true)
         }
     }
 }

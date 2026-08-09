@@ -15,7 +15,7 @@
 //   expr        = STRING | PATH
 //               | IDENT                                   -- parameter reference
 //               | IDENT '(' argList? ')' ('.' IDENT)?    -- call or node construct
-//   arg         = IDENT '<-' '[' wireEntry* ']'           -- input-wire port
+//   arg         = IDENT ':' '[' wireEntry* ']'            -- input-wire port (value is a wire dict)
 //               | IDENT ':' expr                          -- labeled / property
 //               | expr                                    -- positional
 //   wireEntry   = forEachPrefix? (STRING | PATH) ':' expr (',' wireEntry)*
@@ -114,7 +114,10 @@ enum WireDictEntry {
 // MARK: - Errors
 
 enum FormulaParseError: Error, LocalizedError {
-    case unexpectedToken(FormulaToken?, context: String)
+    case unexpectedToken(FormulaToken, expected: String)
+    case unexpectedCharacter(Character, context: String)
+    case unterminatedLiteralString(context: String)
+    case unterminatedPathLiteral(context: String)
     case undefinedIdentifier(String)
     case typeMismatch(expected: String, got: String, context: String)
     case wrongArgumentCount(function: String, expected: Int, got: Int)
@@ -124,8 +127,14 @@ enum FormulaParseError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unexpectedToken(let t, let ctx):
-            return "Unexpected \(t.map { "\($0)" } ?? "end of input") — \(ctx)"
+        case .unexpectedToken(let token, let expected):
+            return "Unexpected token: \(token) — expected: \(expected)"
+        case .unexpectedCharacter(let c, let ctx):
+            return "Unexpected character: \(c) — \(ctx)"
+        case .unterminatedLiteralString(let ctx):
+            return "Unterminated literal string — \(ctx)"
+        case .unterminatedPathLiteral(let ctx):
+            return "Unterminated path literal — \(ctx)"
         case .undefinedIdentifier(let n):
             return "Undefined identifier '\(n)'"
         case .typeMismatch(let exp, let got, let ctx):
@@ -133,12 +142,30 @@ enum FormulaParseError: Error, LocalizedError {
         case .wrongArgumentCount(let f, let exp, let got):
             return "Wrong argument count for '\(f)': expected \(exp), got \(got)"
         case .positionalArgInNodeConstruction(let t):
-            return "Positional argument in node construction '\(t)': use 'key: value' or 'port <- [...]'"
+            return "Positional argument in node construction '\(t)': use 'key: value' or 'port: [...]'"
         case .pathEscapesBasePath(let p):
             return "Path literal '<\(p)>' escapes the formula base path"
         case .forEachRequiresAtLeastOneItem:
             return "for-each '{...}' requires at least one item"
         }
+    }
+}
+
+/// A `FormulaParseError` enriched with the source location where the problem occurred.
+/// Produced by the lexer for character-level failures (unrecognised character, unterminated
+/// literal).  Its `CustomStringConvertible` produces a multi-line human-readable string
+/// that is stored verbatim in the node's error output port and shown by the `errors` command.
+struct FormulaLexerError: Error, CustomStringConvertible {
+    let underlying: FormulaParseError
+    let line: Int       // 1-based
+    let column: Int     // 1-based
+    let lineText: String
+
+    var description: String {
+        let detail = underlying.errorDescription ?? "\(underlying)"
+        var msg = "line \(line), col \(column): \(detail)"
+        if !lineText.isEmpty { msg += "\n\(lineText)" }
+        return msg
     }
 }
 
@@ -150,7 +177,6 @@ enum FormulaToken: Equatable, CustomStringConvertible {
     case lbracket, rbracket
     case lbrace, rbrace
     case comma, colon, equals, dot
-    case arrow           // <-
     case ident(String)
     case string(String)
     case eof
@@ -169,7 +195,6 @@ enum FormulaToken: Equatable, CustomStringConvertible {
         case .colon:         return "':'"
         case .equals:        return "'='"
         case .dot:           return "'.'"
-        case .arrow:         return "'<-'"
         case .ident(let s):  return "identifier '\(s)'"
         case .string(let s): return "string '\(s)'"
         case .eof:           return "end of input"
@@ -177,19 +202,58 @@ enum FormulaToken: Equatable, CustomStringConvertible {
     }
 }
 
+/// A lexed token together with its source location, used by `FormulaParser`
+/// to attach position info to every parse error.
+fileprivate struct TokenWithLocation {
+    let token:    FormulaToken
+    let line:     Int     // 1-based
+    let col:      Int     // 1-based
+    let lineText: String
+}
+
 // MARK: - Lexer
 
 enum FormulaLexer {
-    static func tokenize(_ source: String, basePath: Path) throws -> [FormulaToken] {
-        var tokens: [FormulaToken] = []
+    fileprivate static func tokenize(_ source: String, basePath: Path) throws -> [TokenWithLocation] {
+        var tokens: [TokenWithLocation] = []
         let chars = Array(source)
         var i = 0
+        var lineNumber = 1
+        var lineStart  = 0   // index of the first character on the current line
+
+        // Current-line text at any point.
+        func currentLineText() -> String {
+            var end = lineStart
+            while end < chars.count && chars[end] != "\n" { end += 1 }
+            return String(chars[lineStart..<end])
+        }
+
+        // Wraps a FormulaParseError with the current character position (error sites).
+        func located(_ error: FormulaParseError) -> FormulaLexerError {
+            FormulaLexerError(underlying: error,
+                              line: lineNumber,
+                              column: i - lineStart + 1,
+                              lineText: currentLineText())
+        }
+
+        // Token-start location — set just before processing each non-whitespace token.
+        var tokLine = 1
+        var tokCol  = 1
+        var tokText = ""
+
+        // Appends a token tagged with the position captured at tokLine/tokCol/tokText.
+        func add(_ tok: FormulaToken) {
+            tokens.append(TokenWithLocation(token: tok, line: tokLine, col: tokCol, lineText: tokText))
+        }
 
         while i < chars.count {
             let c = chars[i]
 
-            // Whitespace
-            if c.isWhitespace { i += 1; continue }
+            // Whitespace — track newlines for line/column reporting.
+            if c.isWhitespace {
+                if c == "\n" { lineNumber += 1; lineStart = i + 1 }
+                i += 1; continue
+            }
 
             // // line comment — skip to end of line
             if c == "/" && i + 1 < chars.count && chars[i + 1] == "/" {
@@ -197,22 +261,22 @@ enum FormulaLexer {
                 continue
             }
 
+            // Record the start position of this token (after whitespace/comments).
+            tokLine = lineNumber
+            tokCol  = i - lineStart + 1
+            tokText = currentLineText()
+
             // String literals (single or double quoted)
             if c == "'" || c == "\"" {
                 let q = c; i += 1
                 var s = ""
                 while i < chars.count && chars[i] != q { s.append(chars[i]); i += 1 }
                 guard i < chars.count else {
-                    throw FormulaParseError.unexpectedToken(nil, context: "unterminated string literal")
+                    throw located(FormulaParseError.unterminatedLiteralString(context: "unterminated string literal"))
                 }
                 i += 1   // closing quote
-                tokens.append(.string(s))
+                add(.string(s))
                 continue
-            }
-
-            // <- arrow (must check before path literal handling of '<')
-            if c == "<" && i + 1 < chars.count && chars[i + 1] == "-" {
-                i += 2; tokens.append(.arrow); continue
             }
 
             // Angle-bracket path literal  <rel/path>  — resolved against basePath.
@@ -224,7 +288,7 @@ enum FormulaLexer {
                 var raw = ""
                 while i < chars.count && chars[i] != ">" { raw.append(chars[i]); i += 1 }
                 guard i < chars.count else {
-                    throw FormulaParseError.unexpectedToken(nil, context: "unterminated path literal '<\(raw)'")
+                    throw located(FormulaParseError.unterminatedPathLiteral(context: "<\(raw)"))
                 }
                 i += 1   // consume '>'
                 if raw.contains("%%") {
@@ -235,30 +299,30 @@ enum FormulaLexer {
                     let staticPrefix  = String(raw[..<templateRange.lowerBound])
                     let remainder     = String(raw[templateRange.lowerBound...])
                     if staticPrefix.isEmpty {
-                        tokens.append(.string(basePath.string + "/" + remainder))
+                        add(.string(basePath.string + "/" + remainder))
                     } else {
                         let resolvedPrefix = try resolvePathLiteral(staticPrefix, relativeTo: basePath)
                         let sep = staticPrefix.hasSuffix("/") ? "/" : ""
-                        tokens.append(.string(resolvedPrefix + sep + remainder))
+                        add(.string(resolvedPrefix + sep + remainder))
                     }
                 } else {
-                    tokens.append(.string(try resolvePathLiteral(raw, relativeTo: basePath)))
+                    add(.string(try resolvePathLiteral(raw, relativeTo: basePath)))
                 }
                 continue
             }
 
             // Single-character tokens
             switch c {
-            case "(": tokens.append(.lparen);   i += 1
-            case ")": tokens.append(.rparen);   i += 1
-            case "[": tokens.append(.lbracket); i += 1
-            case "]": tokens.append(.rbracket); i += 1
-            case "{": tokens.append(.lbrace);   i += 1
-            case "}": tokens.append(.rbrace);   i += 1
-            case ",": tokens.append(.comma);    i += 1
-            case ":": tokens.append(.colon);    i += 1
-            case "=": tokens.append(.equals);   i += 1
-            case ".": tokens.append(.dot);      i += 1
+            case "(": add(.lparen);   i += 1
+            case ")": add(.rparen);   i += 1
+            case "[": add(.lbracket); i += 1
+            case "]": add(.rbracket); i += 1
+            case "{": add(.lbrace);   i += 1
+            case "}": add(.rbrace);   i += 1
+            case ",": add(.comma);    i += 1
+            case ":": add(.colon);    i += 1
+            case "=": add(.equals);   i += 1
+            case ".": add(.dot);      i += 1
             default:
                 if c.isLetter || c == "_" {
                     var s = ""
@@ -266,17 +330,20 @@ enum FormulaLexer {
                         s.append(chars[i]); i += 1
                     }
                     switch s {
-                    case "func":    tokens.append(.kwFunc)
-                    case "product": tokens.append(.kwProduct)
-                    default:        tokens.append(.ident(s))
+                    case "func":    add(.kwFunc)
+                    case "product": add(.kwProduct)
+                    default:        add(.ident(s))
                     }
                 } else {
-                    throw FormulaParseError.unexpectedToken(nil, context: "unexpected character '\(c)'")
+                    throw located(FormulaParseError.unexpectedCharacter(c, context: ""))
                 }
             }
         }
 
-        tokens.append(.eof)
+        tokens.append(TokenWithLocation(token: .eof,
+                                         line: lineNumber,
+                                         col: i - lineStart + 1,
+                                         lineText: currentLineText()))
         return tokens
     }
 
@@ -317,19 +384,25 @@ enum FormulaLexer {
 // MARK: - Parser
 
 private struct FormulaParser {
-    private let tokens: [FormulaToken]
+    private let tokens: [TokenWithLocation]
     private var pos = 0
 
-    init(_ tokens: [FormulaToken]) { self.tokens = tokens }
+    init(_ tokens: [TokenWithLocation]) { self.tokens = tokens }
 
-    private var current: FormulaToken { tokens[pos] }
-    private var peek1:   FormulaToken { pos + 1 < tokens.count ? tokens[pos + 1] : .eof }
+    private var current: FormulaToken { tokens[pos].token }
+    private var peek1:   FormulaToken { pos + 1 < tokens.count ? tokens[pos + 1].token : .eof }
 
     private mutating func advance() { if pos < tokens.count - 1 { pos += 1 } }
 
+    // Wraps a FormulaParseError with the current token's source location.
+    private func located(_ error: FormulaParseError) -> FormulaLexerError {
+        let t = tokens[pos]
+        return FormulaLexerError(underlying: error, line: t.line, column: t.col, lineText: t.lineText)
+    }
+
     private mutating func expect(_ t: FormulaToken) throws {
         guard current == t else {
-            throw FormulaParseError.unexpectedToken(current, context: "expected \(t)")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "\(t)"))
         }
         advance()
     }
@@ -347,7 +420,7 @@ private struct FormulaParser {
             case .kwProduct:
                 products.append(try parseProductDef())
             default:
-                throw FormulaParseError.unexpectedToken(current, context: "expected 'func' or 'product'")
+                throw located(FormulaParseError.unexpectedToken(current, expected: "'func' or 'product'"))
             }
         }
 
@@ -358,14 +431,14 @@ private struct FormulaParser {
     private mutating func parseFuncDef() throws -> FuncDef {
         try expect(.kwFunc)
         guard case .ident(let name) = current else {
-            throw FormulaParseError.unexpectedToken(current, context: "expected function name after 'func'")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "function name after 'func'"))
         }
         advance()
         try expect(.lparen)
         var params: [String] = []
         while current != .rparen {
             guard case .ident(let p) = current else {
-                throw FormulaParseError.unexpectedToken(current, context: "expected parameter name")
+                throw located(FormulaParseError.unexpectedToken(current, expected: "parameter name"))
             }
             params.append(p); advance()
             if current == .comma { advance() }
@@ -379,7 +452,7 @@ private struct FormulaParser {
     private mutating func parseProductDef() throws -> ProductDef {
         try expect(.kwProduct)
         guard case .string(let name) = current else {
-            throw FormulaParseError.unexpectedToken(current, context: "expected product name string after 'product'")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "product name string after 'product'"))
         }
         advance()
         try expect(.equals)
@@ -407,7 +480,7 @@ private struct FormulaParser {
             let port = try parseOptionalPort()
             return .call(name: name, args: args, port: port)
         default:
-            throw FormulaParseError.unexpectedToken(current, context: "expected expression")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "expression"))
         }
     }
 
@@ -422,20 +495,40 @@ private struct FormulaParser {
         return args
     }
 
-    // arg = IDENT '<-' '[' wireDict ']'   -- input-wire port
-    //     | IDENT ':' expr                -- labeled arg or node property
-    //     | expr                          -- positional
+    // arg = IDENT ':' '[' wireDict ']'              -- input-wire port (wire dict starts with '[')
+    //     | IDENT ':' expr                           -- labeled arg or node property
+    //     | IDENT ('.' IDENT)+ ':' expr              -- dotted property key (e.g. toolDescriptor.name: "clang")
+    //     | expr                                     -- positional
     //
-    // Two-token lookahead (current + peek1) disambiguates the first two forms.
+    // A '[' immediately after ':' distinguishes a wire port from a property value.
+    // Dotted keys use position-saving backtracking and are always property values.
     private mutating func parseArg() throws -> FormulaCallArg {
         if case .ident(let name) = current {
-            if peek1 == .arrow {
-                advance(); advance()   // consume IDENT and <-
-                return .inputWire(portName: name, wires: try parseWireDict())
-            }
             if peek1 == .colon {
                 advance(); advance()   // consume IDENT and :
+                if current == .lbracket {
+                    return .inputWire(portName: name, wires: try parseWireDict())
+                }
                 return .labeled(key: name, value: try parseExpr())
+            }
+            // Dotted property key: e.g. toolDescriptor.name: "clang"
+            if peek1 == .dot {
+                let savedPos = pos
+                var key = name
+                advance()           // consume leading IDENT
+                while current == .dot {
+                    advance()       // consume '.'
+                    guard case .ident(let part) = current else {
+                        pos = savedPos; break
+                    }
+                    key += "." + part
+                    advance()       // consume part
+                }
+                if current == .colon {
+                    advance()       // consume ':'
+                    return .labeled(key: key, value: try parseExpr())
+                }
+                pos = savedPos      // not a dotted key — restore for positional fallthrough
             }
         }
         return .positional(try parseExpr())
@@ -458,8 +551,8 @@ private struct FormulaParser {
                 case .string(let s): advance(); keyExpr = .string(s)
                 case .ident(let n):  advance(); keyExpr = .identifier(n)
                 default:
-                    throw FormulaParseError.unexpectedToken(current,
-                        context: "expected wire key (string, path, or identifier) in wire dict")
+                    throw located(FormulaParseError.unexpectedToken(current,
+                                                                     expected: "wire key (string, path, or identifier) in wire dict"))
                 }
                 try expect(.colon)
                 entries.append(.simple(key: keyExpr, value: try parseExpr()))
@@ -474,7 +567,7 @@ private struct FormulaParser {
     private mutating func parseForEachEntry() throws -> WireDictEntry {
         try expect(.lbrace)
         guard case .ident(let variable) = current else {
-            throw FormulaParseError.unexpectedToken(current, context: "expected variable name in for-each '{var: ...}'")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "variable name in for-each '{var: ...}'"))
         }
         advance()
         try expect(.colon)
@@ -483,7 +576,8 @@ private struct FormulaParser {
         var items: [String] = []
         repeat {
             guard case .string(let item) = current else {
-                throw FormulaParseError.unexpectedToken(current, context: "expected for-each item (string or path) after '\(variable):'")
+                throw located(FormulaParseError.unexpectedToken(current,
+                                                                 expected: "for-each item (string or path) after '\(variable):'"))
             }
             items.append(item)
             advance()
@@ -492,12 +586,12 @@ private struct FormulaParser {
         try expect(.rbrace)
 
         guard !items.isEmpty else {
-            throw FormulaParseError.forEachRequiresAtLeastOneItem
+            throw located(FormulaParseError.forEachRequiresAtLeastOneItem)
         }
 
         // Key template: the wire dict key, may contain %%variable%%.
         guard case .string(let key) = current else {
-            throw FormulaParseError.unexpectedToken(current, context: "expected wire key template after for-each '{...}'")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "wire key template after for-each '{...}'"))
         }
         advance()
         try expect(.colon)
@@ -510,7 +604,7 @@ private struct FormulaParser {
         guard current == .dot else { return nil }
         advance()
         guard case .ident(let port) = current else {
-            throw FormulaParseError.unexpectedToken(current, context: "expected port name after '.'")
+            throw located(FormulaParseError.unexpectedToken(current, expected: "port name after '.'"))
         }
         advance()
         return port
@@ -730,7 +824,7 @@ private struct FormulaResolver {
 
             case .inputWire:
                 throw FormulaParseError.typeMismatch(
-                    expected: "value argument", got: "wire expression '<-'",
+                    expected: "value argument", got: "wire dict '[...]'",
                     context: "wire syntax is not valid when calling function '\(funcDef.name)'")
             }
         }

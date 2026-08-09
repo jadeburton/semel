@@ -42,6 +42,9 @@ final class FilePlugin: CommandPlugin {
     // MARK: - push
 
     private func handlePush(externalPathOrWildcard: String, context: any CommandContext) throws {
+        BuildEngine.shared.beginBatch()
+        defer { BuildEngine.shared.endBatch() }
+
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: context.baseDirectory))
         try matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
             try pushOne(entry, baseDirectory: context.baseDirectory, context: context)
@@ -68,14 +71,33 @@ final class FilePlugin: CommandPlugin {
 
         case .folder:
             _ = try context.inputFileSystem.ensureEntirePathExistsAsFolders(relativePath, pinned: true)
+            // Recursively push every file inside the directory.
+            // Only .file entries are forwarded to pushOne; folder nodes are created
+            // implicitly by ensureEntirePathExistsAsFolders when each file is pushed.
+            let subMatcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
+            try subMatcher.findAllMatching(pathOrWildcard: relativePath.string + "/**/*").forEach { child in
+                if case .file = child.kind {
+                    try pushOne(child, baseDirectory: baseDirectory, context: context)
+                }
+            }
         }
     }
 
     // MARK: - rm
 
     private func handleRemove(pathOrWildcard: String, context: any CommandContext) throws {
+        let base = context.currentDirectoryPath
+        let fullPattern: Path = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
+
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try context.inputFileSystem))
-        try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+        let entries = try matcher.findAllMatching(pathOrWildcard: fullPattern)
+
+        guard !entries.isEmpty else {
+            context.outputError("rm: \(pathOrWildcard): no such file or directory")
+            return
+        }
+
+        for entry in entries {
             try removeOne(entry, context: context)
         }
     }

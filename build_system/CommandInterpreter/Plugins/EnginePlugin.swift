@@ -40,15 +40,27 @@ final class EnginePlugin: CommandPlugin {
                               "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
 
         for nodeID in sortedNodeIDs {
-            let node     = try? context.database.node.select(nodeID: nodeID)
-            let nodeName = node?.name ?? "Node \(nodeID)"
+            let node = try? context.database.node.select(nodeID: nodeID)
 
+            // Build a user-friendly label: TypeName + meaningful identifier.
+            // Internal node IDs (surrogate ints) are not shown to the user.
             let kindLabel: String
             if let node, let nf = try? node.nodeAsAny() {
                 let typeName = String(describing: type(of: nf))
-                kindLabel = typeName == nodeName ? nodeName : "\(nodeName)  [\(typeName)]"
+                if let path = node.properties["path"] {
+                    // Nodes with a static path property (Folder, StaticFile, …)
+                    kindLabel = "\(typeName)  '\(path)'"
+                } else if let wires = try? context.database.wire.select(
+                                goingToNodeID: nodeID,
+                                toSymbolID: "projectFile".asSymbolID()),
+                          let wireName = wires.first?.name {
+                    // ProjectBuilder: the projectFile wire name is the .fmla path
+                    kindLabel = "\(typeName)  '\(wireName.resolveSymbol())'"
+                } else {
+                    kindLabel = typeName
+                }
             } else {
-                kindLabel = nodeName
+                kindLabel = "Node \(nodeID)"
             }
 
             context.outputMessage("❌ \(kindLabel)")

@@ -81,7 +81,7 @@ public final class BuildEngine {
 
     // MARK: - Init
 
-    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database336.sqlite")) throws {
+    private init(database: DatabaseLayer = try! DatabaseLayer(filePath: "database339.sqlite")) throws {
         Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
@@ -135,12 +135,45 @@ public final class BuildEngine {
         }
     }
 
+    // MARK: - Batch mode
+
+    /// Guards `batchDepth` and `signalPendingInBatch` from concurrent access.
+    private let batchLock = NSLock()
+    private var batchDepth = 0
+    private var signalPendingInBatch = false
+
+    /// Suppress work signals for the duration of a batch write (e.g. a multi-file push).
+    /// Nest calls freely; the engine is unblocked only when the outermost `endBatch()` runs.
+    public func beginBatch() {
+        batchLock.withLock { batchDepth += 1 }
+    }
+
+    /// End a batch. Sends a single coalesced signal if any were suppressed inside.
+    public func endBatch() {
+        let shouldSignal = batchLock.withLock { () -> Bool in
+            batchDepth -= 1
+            guard batchDepth == 0, signalPendingInBatch else { return false }
+            signalPendingInBatch = false
+            return true
+        }
+        if shouldSignal {
+            Task { await workSignal.signal() }
+        }
+    }
+
     // MARK: - Signalling
 
     /// Safe to call from any actor or thread. A signal will never be lost:
     /// if the engine is currently draining, the pending count is incremented
     /// and the next iteration of processLoop will drain again immediately.
+    /// When a batch is active, the signal is deferred until `endBatch()`.
     func signalWorkAvailable() {
+        let inBatch = batchLock.withLock { () -> Bool in
+            guard batchDepth > 0 else { return false }
+            signalPendingInBatch = true
+            return true
+        }
+        guard !inBatch else { return }
         Task { await workSignal.signal() }
     }
 

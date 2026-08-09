@@ -65,49 +65,49 @@ final class FormulaParserTests: XCTestCase {
 
     func test_wire_portName() throws {
         let result = try parse(
-            "product \"X\" = Tool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "product \"X\" = Tool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.portName, "input")
     }
 
     func test_wire_wireName() throws {
         let result = try parse(
-            "product \"X\" = Tool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "product \"X\" = Tool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.wires.first?.name, "hello.c")
     }
 
     func test_wire_upstreamNodeTypeName() throws {
         let result = try parse(
-            "product \"X\" = Tool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "product \"X\" = Tool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.wires.first?.node.typeName, "StaticFile")
     }
 
     func test_wire_upstreamNodeOutputPort() throws {
         let result = try parse(
-            "product \"X\" = Tool(input <- [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
+            "product \"X\" = Tool(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.wires.first?.node.outputPort, "output")
     }
 
     func test_multipleWires_count() throws {
         let result = try parse(
-            "product \"X\" = Linker(input <- [\"a.o\": Compiler(path: 'a').output, \"b.o\": Compiler(path: 'b').output]).output"
+            "product \"X\" = Linker(input: [\"a.o\": Compiler(path: 'a').output, \"b.o\": Compiler(path: 'b').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.wires.count, 2)
     }
 
     func test_multipleWires_firstWireName() throws {
         let result = try parse(
-            "product \"X\" = Linker(input <- [\"a.o\": Compiler(path: 'a').output, \"b.o\": Compiler(path: 'b').output]).output"
+            "product \"X\" = Linker(input: [\"a.o\": Compiler(path: 'a').output, \"b.o\": Compiler(path: 'b').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.wires[0].name, "a.o")
     }
 
     func test_multipleWires_secondWireName() throws {
         let result = try parse(
-            "product \"X\" = Linker(input <- [\"a.o\": Compiler(path: 'a').output, \"b.o\": Compiler(path: 'b').output]).output"
+            "product \"X\" = Linker(input: [\"a.o\": Compiler(path: 'a').output, \"b.o\": Compiler(path: 'b').output]).output"
         )
         XCTAssertEqual(result["X"]?.inputs.first?.wires[1].name, "b.o")
     }
@@ -115,8 +115,8 @@ final class FormulaParserTests: XCTestCase {
     func test_multipleInputPorts_count() throws {
         let result = try parse("""
             product "X" = Tool(
-                config <- ["c": Configuration().output],
-                input  <- ["f": StaticFile(path: 'f').output]
+                config: ["c": Configuration().output],
+                input : ["f": StaticFile(path: 'f').output]
             ).output
             """)
         XCTAssertEqual(result["X"]?.inputs.count, 2)
@@ -125,8 +125,8 @@ final class FormulaParserTests: XCTestCase {
     func test_multipleInputPorts_portNames() throws {
         let result = try parse("""
             product "X" = Tool(
-                config <- ["c": Configuration().output],
-                input  <- ["f": StaticFile(path: 'f').output]
+                config: ["c": Configuration().output],
+                input : ["f": StaticFile(path: 'f').output]
             ).output
             """)
         let portNames = result["X"]?.inputs.map(\.portName) ?? []
@@ -285,8 +285,8 @@ final class FormulaParserTests: XCTestCase {
         func file(path) = StaticFile(path: path).output
 
         func result(path) = SwiftPackageReaderTool(
-          configuration <- ['config': Configuration().output],
-          packageFile <- ["Package.swift": file(path)]
+          configuration: ['config': Configuration().output],
+          packageFile: ["Package.swift": file(path)]
         ).packageJSON
 
         product "Package.json" = result(path())
@@ -400,7 +400,7 @@ final class FormulaParserTests: XCTestCase {
     func test_error_wireSyntaxInFunctionCall() {
         XCTAssertThrowsError(try parse("""
             func foo(x) = StaticFile(path: x).output
-            product "X" = foo(x <- ["k": StaticFile(path: 'a').output])
+            product "X" = foo(x: ["k": StaticFile(path: 'a').output])
             """))
     }
 
