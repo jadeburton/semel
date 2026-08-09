@@ -6,8 +6,11 @@
 //
 
 enum WireError: Error {
-    case attemptToCreateWireWithDuplicateName(_ name: String) // TODO: the label of a wire is unique only on the target node input port, is that what we are checking here?
+    /// Wire names are unique per (toNodeID, toSymbolID) — i.e. per input port on the target node.
+    case attemptToCreateWireWithDuplicateName(_ name: String)
     case failedToDeleteWire
+    /// Adding this wire would form a cycle in the dependency graph.
+    case circularReference(fromNodeID: ObjectID, toNodeID: ObjectID)
 }
 
 // Wire management
@@ -36,8 +39,14 @@ extension Wire {
             throw WireError.attemptToCreateWireWithDuplicateName(name.resolveSymbol())
         }
 
-        // TODO: transactional
-        // TODO: if there is a circular reference, block the creation of the Wire
+        // connectWire is always called inside database.withTransaction (in
+        // applyExpectationConfiguration and GraphShapeApplier.createNode), so
+        // the insert, pendingDeletion clear, and writePending are all-or-nothing.
+
+        if try wouldCreateCycle(database: database, fromNodeID: fromNodeID, toNodeID: toNodeID) {
+            throw WireError.circularReference(fromNodeID: fromNodeID, toNodeID: toNodeID)
+        }
+
         _ = try database.wire.insert(.init(fromNodeID: fromNodeID,
                                           fromSymbolID: fromSymbolID,
                                           toNodeID: toNodeID,
@@ -50,6 +59,26 @@ extension Wire {
         let toNode = try database.node.select(nodeID: toNodeID)
         try toNode.writePendingToAllOutputsOfNode()
         try toNode.setScheduled(true)
+    }
+
+    /// Returns `true` if adding `fromNodeID → toNodeID` would create a cycle —
+    /// i.e. `toNodeID` can already reach `fromNodeID` through existing wires.
+    /// Uses BFS over outgoing wires (data-flow direction).
+    private static func wouldCreateCycle(database: DatabaseLayer,
+                                         fromNodeID: ObjectID,
+                                         toNodeID: ObjectID) throws -> Bool {
+        var visited = Set<ObjectID>()
+        var queue = [toNodeID]
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            if current == fromNodeID { return true }
+            guard !visited.contains(current) else { continue }
+            visited.insert(current)
+            for wire in try database.wire.select(comingFromNodeID: current) {
+                queue.append(wire.toNodeID)
+            }
+        }
+        return false
     }
 
     /// Returns `true` if a wire going to `(toNodeID, toSymbolID)` already uses
@@ -67,7 +96,6 @@ extension Wire {
             .contains { $0.name == name && ($0.fromNodeID != fromNodeID || $0.fromSymbolID != fromSymbolID) }
     }
 
-    // TODO: find home
     func deleteWire(database: DatabaseLayer) throws {
 
         guard try database.wire.delete(comingFromNodeID: fromNodeID,

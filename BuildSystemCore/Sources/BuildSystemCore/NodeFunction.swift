@@ -110,10 +110,9 @@ extension NodeFunction {
             }
 
             guard !values.isEmpty else {
-                // The input port is non-optional. Therefore it is a serious integrity error for it to not be connected.
-
-                // TODO when the node is first created and wired up, we should check then, early, to verify everything is connected.
-                throw NodeError.other(message: "Non-optional input port \(inputPort) has no connected wires for \(self)")
+                // GraphShapeApplier.createNode() validates this at creation time (requiredPortUnwired),
+                // so reaching here means a wire was removed after the node was built — a real integrity error.
+                throw NodeError.other(message: "Non-optional input port '\(inputPort)' has no connected wires for \(self)")
             }
 
             if values.contains(where: { $0.value.isPending }) {
