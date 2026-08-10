@@ -109,8 +109,9 @@ extension GraphShapeNode {
 
         var params: [String] = []
 
-        // Args: key: 'value'
-        for arg in args {
+        // Args: key: 'value' — always sorted so the string is deterministic regardless
+        // of dictionary-iteration order in graphShapeArgs or formula-file ordering.
+        for arg in args.sorted(by: { $0.key < $1.key }) {
             params.append("\(arg.key): '\(arg.value)'")
         }
 
