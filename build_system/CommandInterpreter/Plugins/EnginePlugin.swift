@@ -1,22 +1,30 @@
 // EnginePlugin.swift
 // build_system
 //
-// Handles: d / debug, n / nudge, e / errors
+// Handles: d / debug, n / nudge, e / errors, reset
 
 import BuildSystemCore
 import Foundation
 
 final class EnginePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors"]
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "reset"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
         case "d", "debug":  try context.buildEngine.printAll()
         case "n", "nudge":  try context.buildEngine.nudge()
         case "e", "errors": try handleErrors(context: context)
+        case "reset":       try handleReset(context: context)
         default:            break
         }
+    }
+
+    // MARK: - reset
+
+    private func handleReset(context: any CommandContext) throws {
+        try context.buildEngine.reset()
+        context.outputMessage("Rebuild started.")
     }
 
     // MARK: - errors
