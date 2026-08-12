@@ -25,7 +25,7 @@ final class FilePlugin: CommandPlugin {
             try handleRemove(pathOrWildcard: path, context: context)
 
         case "cp", "copy":
-            let (folder, remaining) = parseFileSystemFlag(tokens: tokens)
+            let (folder, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
             guard remaining.count >= 1 else {
                 throw CommandParserError.missingArgument(command: "cp",
                                                          expected: "pathOrWildcard [destinationPath]")
@@ -45,16 +45,29 @@ final class FilePlugin: CommandPlugin {
         BuildEngine.shared.beginBatch()
         defer { BuildEngine.shared.endBatch() }
 
+        // The matcher is rooted at baseDirectory, and Path drops a leading slash, so an
+        // absolute path would silently be reinterpreted as relative and match nothing.
+        // Say so instead of doing nothing.
+        guard !externalPathOrWildcard.hasPrefix("/"), !externalPathOrWildcard.hasPrefix("~") else {
+            context.outputError("push: \(externalPathOrWildcard): only paths under \(context.baseDirectory) can be pushed")
+            return
+        }
+
         // Resolve the user-supplied wildcard relative to the internal current directory
         // so that "push *.c" from "src/a" reads baseDirectory/src/a/*.c and stores
-        // the files at input:/src/a/*.c.
-        let current = context.currentDirectoryPath
-        let effectiveWildcard = current.isEmpty
-            ? externalPathOrWildcard
-            : current.string + "/" + externalPathOrWildcard
+        // the files at input:/src/a/*.c.  `resolve` also folds away "." and "..".
+        let effectiveWildcard = context.resolve(externalPathOrWildcard,
+                                                relativeTo: context.currentDirectoryPath)
 
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: context.baseDirectory))
-        try matcher.findAllMatching(pathOrWildcard: effectiveWildcard).forEach { entry in
+        let entries = try matcher.findAllMatching(pathOrWildcard: effectiveWildcard)
+
+        guard !entries.isEmpty else {
+            context.outputError("push: \(externalPathOrWildcard): no such file or directory")
+            return
+        }
+
+        try entries.forEach { entry in
             try pushOne(entry, baseDirectory: context.baseDirectory, context: context)
         }
     }
@@ -124,36 +137,40 @@ final class FilePlugin: CommandPlugin {
 
     // MARK: - cp
 
-    private func handleCopy(folder: FileSystemForCommand, pathOrWildcard: String,
+    private func handleCopy(folder: FileSystemForCommand?, pathOrWildcard: String,
                              destinationPath: String?, context: any CommandContext) throws {
-        let fileSystem = try context.fileSystem(for: folder)
+        // An explicit -i/-o names a file system the current directory does not belong
+        // to, so the source pattern is root-relative in that case (same rule as `ls`).
+        let targetFS   = folder ?? context.currentFileSystem
+        let base: Path = folder != nil ? .empty : context.currentDirectoryPath
+
+        let fileSystem = try context.fileSystem(for: targetFS)
         let matcher    = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
 
-        // Resolve internal source relative to the current directory (same as rm).
-        let base = context.currentDirectoryPath
-        let fullPattern = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
+        // `resolve` folds away "." and "..", and treats a leading "/" as the root of
+        // the internal file system.
+        let fullPattern = context.resolve(pathOrWildcard, relativeTo: base)
 
-        // Resolve external destination relative to baseDirectory/currentDirectoryPath.
-        let externalDest = resolveExternalDestination(destinationPath ?? ".", context: context)
+        // The destination is an external OS path, so it follows the same rules as every
+        // other external path the user types: "~" expands, relative is relative to the
+        // process working directory.
+        let externalDest = ExternalPathSanitizer.expandPartialPath(destinationPath ?? ".")
 
-        try matcher.findAllMatching(pathOrWildcard: fullPattern).forEach { entry in
-            try? copyOneFile(folder: fileSystem, entry: entry,
-                             destinationPath: externalDest, context: context)
+        let entries = try matcher.findAllMatching(pathOrWildcard: fullPattern)
+
+        guard !entries.isEmpty else {
+            context.outputError("cp: \(pathOrWildcard): no such file or directory")
+            return
         }
-    }
 
-    /// Resolves an external destination path.
-    /// Absolute OS paths (starting with "/" or "~") are left as-is; relative paths
-    /// are resolved against baseDirectory/currentDirectoryPath.
-    private func resolveExternalDestination(_ path: String, context: any CommandContext) -> String {
-        if path.hasPrefix("/") || path.hasPrefix("~") {
-            return ExternalPathSanitizer.expandPartialPath(path)
+        for entry in entries {
+            do {
+                try copyOneFile(folder: fileSystem, entry: entry,
+                                destinationPath: externalDest, context: context)
+            } catch {
+                context.outputError("cp: \(entry.path): \(error)")
+            }
         }
-        let current = context.currentDirectoryPath
-        let externalBase = current.isEmpty
-            ? context.baseDirectory
-            : (context.baseDirectory as NSString).appendingPathComponent(current.string)
-        return (externalBase as NSString).appendingPathComponent(path)
     }
 
     private func copyOneFile(folder: Node, entry: FileWildcardEntry,
