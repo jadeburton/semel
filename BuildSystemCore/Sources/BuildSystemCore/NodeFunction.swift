@@ -75,6 +75,15 @@ protocol InputlessNodeFunction: WithKind {
     func onChildAdded(nodeID: ObjectID) throws
     func onChildContentChanged(nodeID: ObjectID, name: String) throws
     func onChildDeleted(nodeID: ObjectID) throws
+
+    /// Called immediately before the node is permanently removed from the DB.
+    /// Default implementation is a no-op; override to perform cleanup or logging.
+    func willBeDeleted() throws
+
+    /// Called at the end of `writeToOutputs`, after all output port values have
+    /// been written to the DB.  Default implementation is a no-op; override to
+    /// react to the written output without mutating the Node itself.
+    func didWriteOutputs(output: ProcessOutput) throws
 }
 
 extension InputlessNodeFunction {
@@ -240,9 +249,14 @@ extension InputlessNodeFunction {
         try parentNodeFunction?.onChildDeleted(nodeID: thisNode.id!)
     }
 
+    func willBeDeleted() throws { }
+
+    func didWriteOutputs(output: ProcessOutput) throws { }
+
     func delete() throws {
         let safeToDelete = try hasNoOutputWires() && hasNoInputWires()
         assert(safeToDelete)
+        try willBeDeleted()
         _ = try database.node.delete(nodeID: id!)
         try notifyParentOfChildDeletion()
     }
@@ -285,6 +299,8 @@ extension InputlessNodeFunction {
             }
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
+
+        try didWriteOutputs(output: output)
 
         do {
             for (inputPort, wireExpectations) in output.inputWireExpectations {

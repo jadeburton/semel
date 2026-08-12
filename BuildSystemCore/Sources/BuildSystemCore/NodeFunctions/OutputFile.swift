@@ -116,6 +116,12 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
     }
 
+    func didWriteOutputs(output: ProcessOutput) throws {
+    }
+
+    func willBeDeleted() throws {
+    }
+
     func read() throws -> NodeValue? {
         try thisNode.readFromInputPort(Self.inputPort).first?.value
     }
