@@ -41,11 +41,11 @@ extension HasPath {
 
         // If the path is just the root (e.g. Path(Folder.inputFileSystemName)), return the root ID.
         guard let subPath = path.deletingFirstComponent else {
-            return rootNode.id!
+            return (try rootNode.requireID())
         }
 
         let resolvedFolder = try rootNode.ensureEntirePathExistsAsFolders(subPath, pinned: false)
-        return resolvedFolder.id!
+        return (try resolvedFolder.requireID())
     }
 }
 

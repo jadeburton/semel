@@ -65,7 +65,7 @@ extension NodeFunction {
             return nil
         }
 
-        print("using cache: \(type(of: self)), nodeID \(id!)")
+        print("using cache: \(type(of: self)), nodeID \(try requireID())")
 
         return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
                              inputWireExpectations: decodedCacheEntry.inputWireExpectations)

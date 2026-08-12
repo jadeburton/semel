@@ -91,7 +91,7 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
         // instead of remaining as a [missing] ghost.  connectWire() automatically clears
         // the pendingDeletion flag if a wire is later connected, rescuing the node.
         if try hasNoOutputWires() {
-            try database.node.updatePendingDeletion(nodeID: id!, pendingDeletion: true)
+            try database.node.updatePendingDeletion(nodeID: (try requireID()), pendingDeletion: true)
         }
     }
 }

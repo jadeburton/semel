@@ -355,7 +355,7 @@ public final class BuildEngine {
                 // nodeFunction() constructs from the in-memory Node struct and does not
                 // re-query the DB, so this explicit existence check is required.
                 guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
-                    print("WARNING: node \(result.node.id!) deleted during processing")
+                    print("WARNING: node \(try result.node.requireID()) deleted during processing")
                     continue
                 }
 

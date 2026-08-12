@@ -35,6 +35,11 @@ extension InputlessNodeFunction {
         thisNode.id
     }
 
+    /// The node's id, or an integrity error if it has not been persisted yet.
+    func requireID() throws -> ObjectID {
+        try thisNode.requireID()
+    }
+
     var parentNodeID: ObjectID? {
         thisNode.parentNodeID
     }
@@ -153,7 +158,7 @@ extension NodeFunction {
 
     private func processWithCatch(input: ProcessInput) -> ProcessOutput {
         do {
-            print("process: \(type(of: self)), nodeID \(id!)")
+            print("process: \(type(of: self)), nodeID \(try requireID())")
             return try process(input: input)
         } catch {
             return buildErrorOutput(withError: error)
@@ -238,15 +243,15 @@ extension InputlessNodeFunction {
     }
 
     func notifyParentThisChildAdded() throws {
-        try parentNodeFunction?.onChildAdded(nodeID: thisNode.id!)
+        try parentNodeFunction?.onChildAdded(nodeID: (try thisNode.requireID()))
     }
 
     func notifyParentOfChildContentChange() throws {
-        try parentNodeFunction?.onChildContentChanged(nodeID: thisNode.id!, name: thisNode.name!)
+        try parentNodeFunction?.onChildContentChanged(nodeID: (try thisNode.requireID()), name: thisNode.name!)
     }
 
     func notifyParentOfChildDeletion() throws {
-        try parentNodeFunction?.onChildDeleted(nodeID: thisNode.id!)
+        try parentNodeFunction?.onChildDeleted(nodeID: (try thisNode.requireID()))
     }
 
     func willBeDeleted() throws { }
@@ -257,7 +262,7 @@ extension InputlessNodeFunction {
         let safeToDelete = try hasNoOutputWires() && hasNoInputWires()
         assert(safeToDelete)
         try willBeDeleted()
-        _ = try database.node.delete(nodeID: id!)
+        _ = try database.node.delete(nodeID: (try requireID()))
         try notifyParentOfChildDeletion()
     }
 
@@ -270,11 +275,11 @@ extension InputlessNodeFunction {
     }
 
     func hasNoOutputWires() throws -> Bool {
-        try database.wire.select(comingFromNodeID: id!).isEmpty
+        try database.wire.select(comingFromNodeID: (try requireID())).isEmpty
     }
 
     func hasNoInputWires() throws -> Bool {
-        try database.wire.select(goingToNodeID: id!).isEmpty
+        try database.wire.select(goingToNodeID: (try requireID())).isEmpty
     }
 
     func didCreate() throws -> ProcessOutput? {
@@ -283,7 +288,7 @@ extension InputlessNodeFunction {
 
     func writeToOutputs(output: ProcessOutput) throws {
 
-        let numberOfOutputPorts = try database.outputPort.selectAll(nodeID: id!).count
+        let numberOfOutputPorts = try database.outputPort.selectAll(nodeID: (try requireID())).count
 
         if numberOfOutputPorts != output.outputValues.count {
             print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
@@ -326,7 +331,7 @@ extension InputlessNodeFunction {
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
-        let existingWires = try database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID)
+        let existingWires = try database.wire.select(goingToNodeID: (try requireID()), toSymbolID: toSymbolID)
 
         // Build a lookup from wire name → existing Wire for steps 2 & 3.
         let existingWiresByName: [String: Wire] = Dictionary(
@@ -396,9 +401,9 @@ extension InputlessNodeFunction {
                     return
                 }
                 try Wire.connectWire(database: database,
-                                     fromNodeID: fromNode.id!,
+                                     fromNodeID: (try fromNode.requireID()),
                                      fromSymbolID: fromSymbolID,
-                                     toNodeID: id!,
+                                     toNodeID: (try requireID()),
                                      toSymbolID: toSymbolID,
                                      name: wireNameSymbolID)
             }
@@ -441,7 +446,7 @@ extension InputlessNodeFunction {
         for port in descriptor.dynamicInputPorts {
             let toSymbolID = port.asSymbolID()
 
-            guard let wires = try? database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID), !wires.isEmpty else {
+            guard let wires = try? database.wire.select(goingToNodeID: (try requireID()), toSymbolID: toSymbolID), !wires.isEmpty else {
                 continue
             }
 

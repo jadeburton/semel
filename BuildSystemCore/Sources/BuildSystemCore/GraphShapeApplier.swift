@@ -132,11 +132,11 @@ extension GraphShapeNode {
     private func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         for node in try database.node.selectAll() {
             let graphShape = try GraphShapeNode.buildFromNode(database: database,
-                                                              nodeID: node.id!,
+                                                              nodeID: (try node.requireID()),
                                                               fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
 
             if graphShape == asString(omitOutputPort: true) {
-                return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
+                return (fromNodeID: (try node.requireID()), fromSymbolID: outputPort?.asSymbolID())
             }
         }
 
@@ -150,7 +150,7 @@ extension GraphShapeNode {
             return nil
         }
 
-        return (fromNodeID: node.id!, fromSymbolID: outputPort?.asSymbolID())
+        return (fromNodeID: (try node.requireID()), fromSymbolID: outputPort?.asSymbolID())
     }
 
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
@@ -279,9 +279,9 @@ extension GraphShapeNode {
                 }
 
                 try Wire.connectWire(database: database,
-                                     fromNodeID: fromNode.id!,
+                                     fromNodeID: (try fromNode.requireID()),
                                      fromSymbolID: fromSymbolID,
-                                     toNodeID: newNode.id!,
+                                     toNodeID: (try newNode.requireID()),
                                      toSymbolID: toSymbolID,
                                      name: wireSpec.name.asSymbolID())
             }
@@ -294,7 +294,7 @@ extension GraphShapeNode {
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
             let portSymbolID   = portSpec.portName.asSymbolID()
-            let connectedWires = try database.wire.select(goingToNodeID: newNode.id!, toSymbolID: portSymbolID)
+            let connectedWires = try database.wire.select(goingToNodeID: (try newNode.requireID()), toSymbolID: portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.
                 throw GraphShapeApplierError.requiredPortUnwired(typeName: typeName,

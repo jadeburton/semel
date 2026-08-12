@@ -20,14 +20,14 @@ extension BuildEngine {
         var preservedIDs = Set<ObjectID>()
 
         let inputRoot = try inputFileSystem
-        preservedIDs.insert(inputRoot.id!)
-        collectDescendants(of: inputRoot.id!, into: &preservedIDs)
+        preservedIDs.insert(try inputRoot.requireID())
+        collectDescendants(of: (try inputRoot.requireID()), into: &preservedIDs)
 
         let outputRoot = try outputFileSystem
-        preservedIDs.insert(outputRoot.id!)
+        preservedIDs.insert(try outputRoot.requireID())
 
         let pfNode = try projectFinder
-        preservedIDs.insert(pfNode.id!)
+        preservedIDs.insert(try pfNode.requireID())
 
         // 2. Determine which nodes to delete.
         let allNodes  = try database.node.selectAll()

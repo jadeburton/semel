@@ -38,7 +38,7 @@ extension Node {
         }
 
         guard let name, !name.isEmpty else {
-            throw NodeError.other(message: "Node \(id!) in \(try parentPath()) has no name or it is empty; cannot build full path")
+            throw NodeError.other(message: "Node \(try requireID()) in \(try parentPath()) has no name or it is empty; cannot build full path")
         }
 
         let parent = try parentPath()
@@ -62,7 +62,7 @@ extension Node {
 
     var allChildren: [Node] {
         get throws {
-            try DatabaseLayer.shared.node.select(parentNodeID: id!)
+            try DatabaseLayer.shared.node.select(parentNodeID: (try requireID()))
         }
     }
 
@@ -82,7 +82,8 @@ extension Node {
         node.name = nodeFunction.thisNode.name
         node.parentNodeID = nodeFunction.thisNode.parentNodeID
 
-        assert(node.parentNodeID != node.id!)
+        let nodeID = try node.requireID()
+        assert(node.parentNodeID != nodeID, "a node cannot be its own parent")
 
         try node.writePendingToAllOutputsOfNode()
 
@@ -96,7 +97,7 @@ extension Node {
 
         if searchKey == nil {
             do {
-                node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: node.id!).asString(omitOutputPort: true)
+                node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: (try node.requireID())).asString(omitOutputPort: true)
             } catch {
                 print("WARNING: failed to patch-in searchKey (\(error)), are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
                 throw error
@@ -126,7 +127,7 @@ extension Node {
         for name in path.segments {
             pathSoFar = pathSoFar.isEmpty ? Path(name) : pathSoFar / name
 
-            let existingChildren = try database.node.select(named: name, parentNodeID: currentFolder.id!)
+            let existingChildren = try database.node.select(named: name, parentNodeID: (try currentFolder.requireID()))
 
             if existingChildren.count > 1 {
                 // Can happen when folder and file have same name
@@ -145,7 +146,7 @@ extension Node {
                 let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar.string)')")
                 let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
                 var newFolder = fromNode
-                newFolder.parentNodeID = currentFolder.id!
+                newFolder.parentNodeID = (try currentFolder.requireID())
                 try database.node.update(newFolder)
 
                 try newFolder.nodeFunction().notifyParentThisChildAdded()
@@ -179,7 +180,7 @@ extension Node {
         guard !path.isEmpty else { return self }
         var currentNode = self
         for name in path.segments {
-            guard let child = try database.node.select(named: name, parentNodeID: currentNode.id!).first else {
+            guard let child = try database.node.select(named: name, parentNodeID: (try currentNode.requireID())).first else {
                 return nil
             }
             currentNode = child
@@ -200,7 +201,7 @@ extension Node {
             return
         }
 
-        try database.node.updateScheduled(nodeID: id!, scheduled: scheduled)
+        try database.node.updateScheduled(nodeID: (try requireID()), scheduled: scheduled)
 
         if scheduled {
             BuildEngine.shared?.signalWorkAvailable()
@@ -212,13 +213,13 @@ extension Node {
 
 extension Node {
     func hasOneOrMoreErrorOrPendingOutputs() throws -> Bool {
-        try database.outputPort.selectAll(nodeID: id!).contains { $0.valueKind != .value }
+        try database.outputPort.selectAll(nodeID: (try requireID())).contains { $0.valueKind != .value }
     }
 
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
         let outputSymbolID = outputPort.asSymbolID()
 
-        guard let port = try database.outputPort.select(nodeID: id!, nameSymbolID: outputSymbolID) else {
+        guard let port = try database.outputPort.select(nodeID: (try requireID()), nameSymbolID: outputSymbolID) else {
             return .noValue(reason: .error(message: "No value ever existed"))
         }
         return try port.asNodeValue()
@@ -227,7 +228,7 @@ extension Node {
     func readFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
         let inputSymbolID = inputPort.asSymbolID()
 
-        let wiresOnThisInput = try database.wire.select(goingToNodeID: id!, toSymbolID: inputSymbolID)
+        let wiresOnThisInput = try database.wire.select(goingToNodeID: (try requireID()), toSymbolID: inputSymbolID)
 
         var result = [String: NodeValue]()
 
@@ -249,18 +250,18 @@ extension Node {
     }
 
     @discardableResult func writeToOutputPort(_ outputPort: String, value: NodeValue) throws -> Bool {
-        try writeToOutputPort(port: try value.mapPort(nodeID: id!, outputSymbolID: outputPort.asSymbolID()))
+        try writeToOutputPort(port: try value.mapPort(nodeID: (try requireID()), outputSymbolID: outputPort.asSymbolID()))
     }
 
     @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {
 
-        if let existing = try database.outputPort.select(nodeID: id!, nameSymbolID: port.nameSymbolID) {
+        if let existing = try database.outputPort.select(nodeID: (try requireID()), nameSymbolID: port.nameSymbolID) {
             if existing == port { return false }
         }
 
         try database.outputPort.insertOrUpdate(port)
 
-        for wire in try database.wire.select(comingFromNodeID: id!, fromSymbolID: port.nameSymbolID) {
+        for wire in try database.wire.select(comingFromNodeID: (try requireID()), fromSymbolID: port.nameSymbolID) {
             let toNode = try database.node.select(nodeID: wire.toNodeID)
 
             try toNode.writePendingToAllOutputsOfNode()

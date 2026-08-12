@@ -24,6 +24,17 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
     /// deferred to idle time so no structural graph mutations occur during processing.
     public var pendingDeletion: Bool
 
+    /// The node's id, or an error if it has not been inserted yet.
+    ///
+    /// `id` is optional only because a Node exists briefly in memory before its row is
+    /// written.  Every operation that needs an id needs a *persisted* node, so asking
+    /// for one that isn't there is an integrity error to be reported — not a reason to
+    /// abort the process, which is what the force unwraps this replaces used to do.
+    public func requireID() throws -> ObjectID {
+        guard let id else { throw NodeIdentityError.nodeNotPersisted(kind: kind, name: name) }
+        return id
+    }
+
     public init(id: ObjectID? = nil,
                 parentNodeID: ObjectID? = nil,
                 kind: UInt,
@@ -237,5 +248,17 @@ public struct NodeDataAccess: DataAccessType {
 extension Node: CustomStringConvertible {
     public var description: String {
         "Node \(id ?? -1): kind \(kind), name=\(name ?? "nil"), scheduled=\(scheduled)"
+    }
+}
+
+public enum NodeIdentityError: Error, CustomStringConvertible {
+    /// An operation needed a persisted node's id, but the node has no row yet.
+    case nodeNotPersisted(kind: UInt, name: String?)
+
+    public var description: String {
+        switch self {
+        case .nodeNotPersisted(let kind, let name):
+            return "node of kind \(kind)\(name.map { " named '\($0)'" } ?? "") has not been saved, so it has no id"
+        }
     }
 }
