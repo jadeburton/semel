@@ -156,11 +156,17 @@ extension NodeFunction {
         return true
     }
 
-    private func processWithCatch(input: ProcessInput) -> ProcessOutput {
+    /// Runs `process` and turns any thrown error into an error result on the node's
+    /// output ports — except an unrecoverable one, which stops the build.
+    /// Internal rather than private so a test can drive this boundary directly.
+    func processWithCatch(input: ProcessInput) -> ProcessOutput {
         do {
             print("process: \(type(of: self)), nodeID \(try requireID())")
             return try process(input: input)
         } catch {
+            // Filing a full disk as "node 47 failed" hides the real problem, and every
+            // node after this one would fail the same way.
+            FatalErrors.check(error)
             return buildErrorOutput(withError: error)
         }
     }

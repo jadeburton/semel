@@ -124,6 +124,7 @@ public final class BuildEngine {
                 try await processAllNodes()
             } catch {
                 // Surface DB / processing errors instead of swallowing them.
+                FatalErrors.check(error)
                 print("BuildEngine: error during processAllNodes: \(error)")
             }
 

@@ -17,6 +17,7 @@
 // by Git's object store.
 
 import Foundation
+import DatabaseModels
 import CryptoKit
 
 // MARK: - DataObjectStore
@@ -91,14 +92,21 @@ final class DataObjectStore {
         let url = objectURL(hash: hash)
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
 
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true)
-        try Data(content).write(to: url, options: .atomic)
-        // Mark immutable so nothing can accidentally overwrite the entry.
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: 0o444)],
-            ofItemAtPath: url.path)
+        // Every failure here is a property of the volume, not of the content being
+        // stored: out of space, read-only mount, permissions. The next node would hit
+        // exactly the same wall, so this is unrecoverable rather than a node error.
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try Data(content).write(to: url, options: .atomic)
+            // Mark immutable so nothing can accidentally overwrite the entry.
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: 0o444)],
+                ofItemAtPath: url.path)
+        } catch {
+            throw ObjectStoreError.cannotWrite(storeRoot: storeRoot.path, underlying: error)
+        }
     }
 
     // MARK: - Projecting into a sandbox
@@ -160,5 +168,25 @@ public struct Sha256 {
         let hash = [UInt8](SHA256.hash(data: Data(data)))
         let final = (hash.count < data.count) ? hash : data
         return final.asHex()
+    }
+}
+
+/// Failures writing the content-addressed store.  Unrecoverable: the store is where every
+/// build output lives, so if it cannot be written nothing further can succeed.
+enum ObjectStoreError: UnrecoverableError {
+    case cannotWrite(storeRoot: String, underlying: Error)
+
+    var unrecoverableDescription: String {
+        switch self {
+        case .cannotWrite(let storeRoot, let underlying):
+            return """
+                Could not write to the object store at \(storeRoot).
+
+                \(underlying.localizedDescription)
+
+                Every build output is stored there, so the build cannot proceed. Check
+                free space and permissions on that volume.
+                """
+        }
     }
 }

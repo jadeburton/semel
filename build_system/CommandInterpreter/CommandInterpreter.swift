@@ -65,6 +65,9 @@ public final class CommandInterpreter: CommandContext {
         } catch let error as NodeError {
             outputError("\(error)")
         } catch {
+            // A command that failed because the store or database is unusable is not a
+            // command error — reporting it as one invites the user to try again.
+            FatalErrors.check(error)
             outputError(error.localizedDescription)
         }
     }
