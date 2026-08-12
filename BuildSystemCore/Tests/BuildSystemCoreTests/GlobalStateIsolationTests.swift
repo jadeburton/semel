@@ -16,7 +16,7 @@ final class GlobalStateIsolationTests: BuildSystemTestCase {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
 
-        let token = "isolation probe \(UUID().uuidString)".intern()
+        let token = try "isolation probe \(UUID().uuidString)".intern()
         let storedAt = DataObjectStore.shared.objectURL(hash: token).path
 
         XCTAssertFalse(storedAt.hasPrefix(appSupport.path),
@@ -25,7 +25,7 @@ final class GlobalStateIsolationTests: BuildSystemTestCase {
 
     func test_isolatedStoreStillRoundTripsContent() throws {
         let content = "isolation round trip \(UUID().uuidString)"
-        let token = content.intern()
+        let token = try content.intern()
 
         XCTAssertEqual(try token.resolveAsString(), content)
     }

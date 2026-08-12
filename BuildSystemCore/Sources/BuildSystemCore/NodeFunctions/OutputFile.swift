@@ -121,7 +121,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
             outputValue = .noValue(reason: reason)
 
         case .value:
-            outputValue = .value("Product is up to date".intern())
+            outputValue = .value(try "Product is up to date".intern())
 
         }
 

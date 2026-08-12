@@ -90,7 +90,7 @@ public struct ProjectBuilder: NodeFunction {
         }
 
         return .init(
-            outputValues: [Self.statusOutputPort: .value("OK".intern())],
+            outputValues: [Self.statusOutputPort: .value(try "OK".intern())],
             inputWireExpectations: [
                 Self.productInputPort: productExpectations,
                 Self.foldersInputPort: folderExpectations

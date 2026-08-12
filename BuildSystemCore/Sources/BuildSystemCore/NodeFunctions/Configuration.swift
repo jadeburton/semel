@@ -34,7 +34,7 @@ public struct Configuration: NodeFunction {
             aggregatedConfig = aggregatedConfig.mergedWith(configuration)
         }
 
-        return .init(outputValues: [Self.outputPort: .value(aggregatedConfig.mergedWith(thisNode.properties).asPlainText().intern())],
+        return .init(outputValues: [Self.outputPort: .value(try aggregatedConfig.mergedWith(thisNode.properties).asPlainText().intern())],
                      inputWireExpectations: [:])
     }
 }

@@ -13,10 +13,10 @@ final class SymbolCacheTests: BuildSystemTestCase {
 
     func testSymbolIDResolvesInTheDatabaseThatIsCurrent() throws {
         _ = try DatabaseLayer()
-        _ = "symbol-cache-probe".asSymbolID()
+        _ = try "symbol-cache-probe".asSymbolID()
 
         _ = try DatabaseLayer()
-        let id = "symbol-cache-probe".asSymbolID()
+        let id = try "symbol-cache-probe".asSymbolID()
 
         XCTAssertNotNil(try DatabaseLayer.shared.symbol.select(symbolID: id),
                         "symbol id must name a row in the current database")

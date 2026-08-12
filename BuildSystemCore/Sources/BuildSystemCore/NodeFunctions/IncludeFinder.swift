@@ -105,6 +105,6 @@ public struct IncludeFinder: NodeFunction {
             aggregatedIncludePathList.append(includePathList.joined(separator: "\n"))
         }
 
-        return .init(includePathList: .value(aggregatedIncludePathList.intern()))
+        return .init(includePathList: .value(try aggregatedIncludePathList.intern()))
     }
 }

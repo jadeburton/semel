@@ -119,8 +119,8 @@ struct SwiftFormulaConverter: NodeFunction {
                                       externalManifests: availableManifests,
                                       rootPackageFolder: rootPackageFolder)
         return .init(
-            outputValues: [Self.formulaOutput: .value(formula.intern()),
-                           Self.infoLog:       .value("".intern())],
+            outputValues: [Self.formulaOutput: .value(try formula.intern()),
+                           Self.infoLog:       .value("")],
             inputWireExpectations: [Self.externalPackageJSONs: expectations])
     }
 
@@ -128,7 +128,7 @@ struct SwiftFormulaConverter: NodeFunction {
     // so applyExpectationConfiguration keeps (or creates) the needed wires.
     private func pendingOutput(reason: String, externalExpectations: [String: String]) -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(message: reason)),
-                             Self.infoLog:       .value("".intern())],
+                             Self.infoLog:       .value("")],   // empty content never reaches the store
               inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
     }
 

@@ -134,9 +134,14 @@ enum SymbolError: Error {
 }
 
 extension String {
-    public func asSymbolID() -> ObjectID {
+    /// Interns this name in the Symbol table and returns its id.
+    ///
+    /// Throws rather than trapping: this writes to the database, which fails for
+    /// ordinary reasons.  A failed insert should fail the operation that needed the
+    /// symbol, not abort the process.
+    public func asSymbolID() throws -> ObjectID {
         if let id = symbolCache.id(for: self) { return id }
-        let id = try! DatabaseLayer.shared.symbol.insertOrGetID(name: self)
+        let id = try DatabaseLayer.shared.symbol.insertOrGetID(name: self)
         symbolCache.store(name: self, id: id)
         return id
     }

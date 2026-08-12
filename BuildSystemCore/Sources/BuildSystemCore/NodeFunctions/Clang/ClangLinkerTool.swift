@@ -169,7 +169,7 @@ public struct ClangLinkerTool: NodeFunction {
                               output.append(contentsOf: data)
                           })).exitCode
 
-        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: errorOutput)),
-                     infoLog: .value(infoOutput.intern()))
+        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(message: errorOutput)),
+                     infoLog: .value(try infoOutput.intern()))
     }
 }

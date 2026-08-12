@@ -217,7 +217,7 @@ extension Node {
     }
 
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
-        let outputSymbolID = outputPort.asSymbolID()
+        let outputSymbolID = try outputPort.asSymbolID()
 
         guard let port = try database.outputPort.select(nodeID: (try requireID()), nameSymbolID: outputSymbolID) else {
             return .noValue(reason: .error(message: "No value ever existed"))
@@ -226,7 +226,7 @@ extension Node {
     }
 
     func readFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
-        let inputSymbolID = inputPort.asSymbolID()
+        let inputSymbolID = try inputPort.asSymbolID()
 
         let wiresOnThisInput = try database.wire.select(goingToNodeID: (try requireID()), toSymbolID: inputSymbolID)
 

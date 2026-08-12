@@ -46,10 +46,10 @@ final class CascadeDeletionTests: BuildSystemTestCase {
     private func wire(_ source: Node, to consumer: Node, name: String) throws {
         try Wire.connectWire(database: engine.database,
                              fromNodeID: source.id!,
-                             fromSymbolID: "output".asSymbolID(),
+                             fromSymbolID: try "output".asSymbolID(),
                              toNodeID:   consumer.id!,
-                             toSymbolID: "inherit".asSymbolID(),
-                             name: name.asSymbolID())
+                             toSymbolID: try "inherit".asSymbolID(),
+                             name: try name.asSymbolID())
     }
 
     private func runCleanup() throws {

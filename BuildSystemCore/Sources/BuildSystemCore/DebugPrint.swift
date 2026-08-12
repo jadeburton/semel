@@ -145,7 +145,8 @@ extension BuildEngine {
                 print("  inputs:")
                 for inputPort in inputPorts {
                     let dynamic = descriptor?.dynamicInputPorts.contains(inputPort) == true ? " (dynamic)" : ""
-                    let wires   = incomingWires.filter { $0.toSymbolID == inputPort.asSymbolID() }
+                    let inputSymbolID = try inputPort.asSymbolID()
+                    let wires   = incomingWires.filter { $0.toSymbolID == inputSymbolID }
                     if wires.isEmpty {
                         print("    · \(inputPort)\(dynamic)  — no wires")
                     } else {
@@ -162,7 +163,7 @@ extension BuildEngine {
             if !outputPorts.isEmpty {
                 print("  outputs:")
                 for outputPort in outputPorts {
-                    let symbolID   = outputPort.asSymbolID()
+                    let symbolID   = try outputPort.asSymbolID()
                     let wires      = outgoingWires.filter { $0.fromSymbolID == symbolID }
                     let portValue  = outputValues.first { $0.nameSymbolID == symbolID }
                     let valueDesc  = portValue.map { formatOutputPort($0) } ?? "—"

@@ -25,7 +25,7 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
         try SwiftLinkerTool(thisNode: Node(id: 1, kind: SwiftLinkerTool.kind))
     }
 
-    private func makeInput(objectFiles: [String], libraries: [String] = []) -> ProcessInput {
+    private func makeInput(objectFiles: [String], libraries: [String] = []) throws -> ProcessInput {
         let configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -35,13 +35,13 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
             """
 
         var objects: [String: NodeValue] = [:]
-        for path in objectFiles { objects[path] = .value("object \(path)".intern()) }
+        for path in objectFiles { objects[path] = .value(try "object \(path)".intern()) }
 
         var libraryValues: [String: NodeValue] = [:]
-        for path in libraries { libraryValues[path] = .value("library \(path)".intern()) }
+        for path in libraries { libraryValues[path] = .value(try "library \(path)".intern()) }
 
         return ProcessInput(inputValues: [
-            SwiftLinkerTool.configuration: ["configuration": .value(configuration.intern())],
+            SwiftLinkerTool.configuration: ["configuration": .value(try configuration.intern())],
             SwiftLinkerTool.input: objects,
             SwiftLinkerTool.libraries: libraryValues,
         ])
@@ -52,7 +52,7 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
     func test_objectFilesAreOrderedDeterministically() throws {
         let objectFiles = ["zebra.o", "alpha.o", "middle.o", "beta.o", "yankee.o"]
 
-        _ = try makeTool().process(input: makeInput(objectFiles: objectFiles))
+        _ = try makeTool().process(input: try makeInput(objectFiles: objectFiles))
 
         XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".o") },
                        objectFiles.sorted())
@@ -61,14 +61,14 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
     func test_librariesAreOrderedDeterministically() throws {
         let libraries = ["libz.dylib", "libapple.dylib", "libmiddle.dylib"]
 
-        _ = try makeTool().process(input: makeInput(objectFiles: ["a.o"], libraries: libraries))
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], libraries: libraries))
 
         XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".dylib") },
                        libraries.sorted())
     }
 
     func test_linksToTheConfiguredOutputName() throws {
-        _ = try makeTool().process(input: makeInput(objectFiles: ["a.o"]))
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
 
         XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-o", "product"])
     }

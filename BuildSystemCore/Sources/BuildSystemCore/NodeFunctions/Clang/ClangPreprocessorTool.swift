@@ -163,9 +163,9 @@ public struct ClangPreprocessorTool: NodeFunction {
                                                           output.append(contentsOf: data)
         })).exitCode
 
-        return .init(output: (exitCode == 0) ? .value(output.intern()) : .noValue(reason: .error(message: "Preprocessor exited with exitcode \(exitCode)")),
-                     errorLog: .value(errorOutput.intern()),
-                     infoLog: .value(infoOutput.intern()),
+        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(message: "Preprocessor exited with exitcode \(exitCode)")),
+                     errorLog: .value(try errorOutput.intern()),
+                     infoLog: .value(try infoOutput.intern()),
                      headerInputFilesWireExpectations: headerInputFilesWireExpectations,
                      includeFileListWireExpections: includeFileListWireExpections)
     }

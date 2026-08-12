@@ -58,9 +58,10 @@ final class EnginePlugin: CommandPlugin {
                 if let path = node.properties["path"] {
                     // Nodes with a static path property (Folder, StaticFile, …)
                     kindLabel = "\(typeName)  '\(path)'"
-                } else if let wires = try? context.database.wire.select(
+                } else if let projectFileSymbolID = try? "projectFile".asSymbolID(),
+                          let wires = try? context.database.wire.select(
                                 goingToNodeID: nodeID,
-                                toSymbolID: "projectFile".asSymbolID()),
+                                toSymbolID: projectFileSymbolID),
                           let wireName = wires.first?.name {
                     // ProjectBuilder: the projectFile wire name is the .fmla path
                     kindLabel = "\(typeName)  '\(wireName.resolveSymbol())'"

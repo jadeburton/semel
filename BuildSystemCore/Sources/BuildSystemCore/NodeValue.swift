@@ -103,7 +103,7 @@ extension NodeValue {
                 return OutputPort(nodeID: nodeID,
                                   nameSymbolID: outputSymbolID,
                                   valueKind: .error,
-                                  dataObjectHash: message.intern())
+                                  dataObjectHash: try message.intern())
             }
 
         case .value(let dataObjectHash):

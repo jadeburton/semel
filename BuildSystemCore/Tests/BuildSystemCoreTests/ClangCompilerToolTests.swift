@@ -31,7 +31,7 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
     }
 
     private func makeInput(sourcePath: String = "src/hello.c.p",
-                           contents: String = "int main(){}") -> ProcessInput {
+                           contents: String = "int main(){}") throws -> ProcessInput {
         let configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -39,15 +39,15 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
             toolDescriptor.architecture=\(descriptor.architecture)
             """
         return ProcessInput(inputValues: [
-            ClangCompilerTool.configuration: ["configuration": .value(configuration.intern())],
-            ClangCompilerTool.input: [sourcePath: .value(contents.intern())],
+            ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
+            ClangCompilerTool.input: [sourcePath: .value(try contents.intern())],
         ])
     }
 
     // MARK: - Command line
 
     func test_compilesTheInputAsCToAnObjectFileForTheTargetArchitecture() throws {
-        _ = try makeTool().process(input: makeInput(sourcePath: "src/hello.c.p"))
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c.p"))
 
         XCTAssertEqual(executor.lastArguments,
                        ["-x", "c",
@@ -57,7 +57,7 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
     }
 
     func test_passesTheSourceFileToTheToolAsAnInput() throws {
-        _ = try makeTool().process(input: makeInput(sourcePath: "a/b/c.p"))
+        _ = try makeTool().process(input: try makeInput(sourcePath: "a/b/c.p"))
 
         XCTAssertEqual(executor.invocations.first?.inputFileNames, ["a/b/c.p"])
         XCTAssertEqual(executor.invocations.first?.expectedOutputFileNames, ["a/b/c.p.o"])
@@ -68,7 +68,7 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
     func test_successfulRunPublishesTheObjectFileOnTheOutputPort() throws {
         executor.producedFiles = ["src/hello.c.p.o": Array("OBJECT-BYTES".utf8)]
 
-        let output = try makeTool().process(input: makeInput())
+        let output = try makeTool().process(input: try makeInput())
 
         let value = try XCTUnwrap(output.outputValues[ClangCompilerTool.output])
         XCTAssertEqual(try value.expectValue().resolveAsString(), "OBJECT-BYTES")
@@ -77,7 +77,7 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
     func test_failedRunReportsTheExitCodeInsteadOfPublishingAnObject() throws {
         executor.exitCode = 1
 
-        let output = try makeTool().process(input: makeInput())
+        let output = try makeTool().process(input: try makeInput())
 
         let value = try XCTUnwrap(output.outputValues[ClangCompilerTool.output])
         guard case .noValue(let reason) = value else {
@@ -92,7 +92,7 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
     func test_missingToolNamesWhatWasRequestedAndWhatIsRegistered() throws {
         ToolExecutorRegistry.instance = ToolExecutorRegistry()
 
-        XCTAssertThrowsError(try makeTool().process(input: makeInput())) { error in
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput())) { error in
             let message = String(describing: error)
             XCTAssertTrue(message.contains("clang"), "should name the requested tool, got \(message)")
             XCTAssertTrue(message.contains("no tools are registered"),

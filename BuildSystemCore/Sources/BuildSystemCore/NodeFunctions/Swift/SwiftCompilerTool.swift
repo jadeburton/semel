@@ -187,7 +187,7 @@ struct SwiftCompilerTool: NodeFunction {
             return .init(outputObject: error,
                          outputModule: error,
                          outputInterface: error,
-                         infoLog: .value("".intern()),
+                         infoLog: .value(""),
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
@@ -268,15 +268,15 @@ struct SwiftCompilerTool: NodeFunction {
             return .init(outputObject: error,
                          outputModule: error,
                          outputInterface: error,
-                         infoLog: .value(infoOutput.intern()),
+                         infoLog: .value(try infoOutput.intern()),
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
 
-        return .init(outputObject:    .value(objectBytes.intern()),
-                     outputModule:    .value(moduleBytes.intern()),
-                     outputInterface: .value(interfaceBytes.intern()),
-                     infoLog:         .value(infoOutput.intern()),
+        return .init(outputObject:    .value(try objectBytes.intern()),
+                     outputModule:    .value(try moduleBytes.intern()),
+                     outputInterface: .value(try interfaceBytes.intern()),
+                     infoLog:         .value(try infoOutput.intern()),
                      inputSourceFilesExpectations: inputSourceFilesExpectations,
                      inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
     }
@@ -293,7 +293,7 @@ struct SwiftCompilerTool: NodeFunction {
             return .init(outputObject: errorNodeValue,
                          outputModule: errorNodeValue,
                          outputInterface: errorNodeValue,
-                         infoLog: .value("".intern()),
+                         infoLog: .value(""),   // empty content never reaches the store
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }

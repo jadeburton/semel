@@ -131,13 +131,13 @@ struct SwiftPackageReaderTool: NodeFunction {
         guard result.exitCode == 0 else {
             return .init(
                 packageJSON: .noValue(reason: .error(message: "swift package dump-package failed:\n\(stderrOutput)")),
-                infoLog: .value(stderrOutput.intern()))
+                infoLog: .value(try stderrOutput.intern()))
         }
 
         guard !jsonOutput.isEmpty else {
             return .init(
                 packageJSON: .noValue(reason: .error(message: "SwiftPackageReaderTool: no output from swift package dump-package")),
-                infoLog: .value(stderrOutput.intern()))
+                infoLog: .value(try stderrOutput.intern()))
         }
 
         // sandboxPathUsed is already symlink-resolved (captured before the sandbox
@@ -145,8 +145,8 @@ struct SwiftPackageReaderTool: NodeFunction {
         jsonOutput = stripOutSandboxPaths(sandboxPath: result.sandboxPathUsed, jsonOutput: jsonOutput)
 
         return .init(
-            packageJSON: .value(jsonOutput.intern()),
-            infoLog:     .value(stderrOutput.intern()))
+            packageJSON: .value(try jsonOutput.intern()),
+            infoLog:     .value(try stderrOutput.intern()))
     }
 
     /// Parses `jsonOutput`, replaces every string value that starts with a
