@@ -119,6 +119,9 @@ class ToolExecutorRegistry {
 
     private var toolsByDescriptor: [ToolDescriptor: ToolExecutor] = [:]
 
+    /// Every tool currently available to build with.  This is what a formula has to name.
+    var registeredDescriptors: [ToolDescriptor] { Array(toolsByDescriptor.keys) }
+
     func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolExecutor) {
         toolsByDescriptor[descriptor] = toolExecutor
     }
@@ -126,7 +129,7 @@ class ToolExecutorRegistry {
     func tool(descriptor: ToolDescriptor) throws -> ToolExecutor {
         guard let tool = toolsByDescriptor[descriptor] else {
             throw ToolError.noMatchingToolFound(requested: descriptor,
-                                                available: Array(toolsByDescriptor.keys))
+                                                available: registeredDescriptors)
         }
         return tool
     }
@@ -136,41 +139,33 @@ class ToolExecutorRegistry {
 
 class DefaultTools {
 
-    /// The tools this build system knows how to run.
-    ///
-    /// The version is the descriptor a formula matches against, and it is part of the
-    /// cache key, so it stays pinned here rather than following whatever happens to be
-    /// installed — a build must not silently change compiler behind a stable cache key.
-    /// The *path* is discovered per machine, and a difference between the pinned version
-    /// and the installed one is reported, because it means cached outputs are keyed to a
-    /// compiler that is not the one running.
-    private static let knownTools: [(name: String, version: String)] = [
-        (name: "clang",  version: "Apple clang version 17.0.0 (clang-1700.6.3.2)"),
-        (name: "swiftc", version: "Apple Swift version 6.2.3"),
-        (name: "swift",  version: "Apple Swift version 6.2.3"),
-    ]
+    /// The tools this build system knows how to run, by name.  This list is the only
+    /// hard-coded part: both the path and the version come from the machine.
+    private static let knownToolNames = ["clang", "swiftc", "swift"]
 
-    /// Registers all known tools with the given registry, locating each one in the
-    /// active toolchain via `xcrun --find`.
+    /// Registers whatever is actually installed.
+    ///
+    /// Each tool is located with `xcrun --find` and registered under the version it
+    /// reports, so a descriptor always describes the binary that will really run.
+    ///
+    /// Nothing is warned about here.  Installing a newer toolchain is not by itself a
+    /// problem, and a node that does not use the changed tool is unaffected — so there is
+    /// nothing to say at launch.  A node whose configuration names a version that is no
+    /// longer installed fails when it is processed, and `ToolError.noMatchingToolFound`
+    /// names both what it asked for and what is available, so the fix is to update that
+    /// node's configuration.  Keeping the version in the configuration rather than
+    /// following the machine is deliberate: it is what makes a toolchain upgrade
+    /// invalidate the cache instead of silently reusing objects built by another compiler.
     static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
-        for tool in knownTools {
-            guard let path = Toolchain.find(tool.name) else {
-                print("WARNING: '\(tool.name)' is not in the active toolchain (xcrun --find "
-                    + "\(tool.name) found nothing). Builds that need it will fail.")
+        for name in knownToolNames {
+            guard let path = Toolchain.find(name),
+                  let version = Toolchain.version(ofToolAt: path) else {
                 continue
             }
 
-            if let installed = Toolchain.version(ofToolAt: path),
-               let pinned = Toolchain.parseVersion(from: tool.version),
-               installed != pinned {
-                print("WARNING: '\(tool.name)' at \(path) reports \(installed), but is registered "
-                    + "as \(pinned). Cached outputs are keyed to the registered version, so this "
-                    + "difference will not invalidate them.")
-            }
-
             toolExecutorRegistry.registerTool(
-                descriptor: .init(name: tool.name,
-                                  version: tool.version,
+                descriptor: .init(name: name,
+                                  version: version,
                                   platform: "macOS",
                                   architecture: "arm64",
                                   recursiveHash: nil),

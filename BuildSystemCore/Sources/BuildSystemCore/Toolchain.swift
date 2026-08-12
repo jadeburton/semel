@@ -28,13 +28,18 @@ enum Toolchain {
         return parseVersion(from: output)
     }
 
-    /// Reduces any tool version output — or an already-recorded descriptor version — to
-    /// the canonical `Apple <product> version <number>` form, so the two can be compared.
+    /// Extracts the tool's own version from its `--version` output: the
+    /// `Apple <product> version <number>` string, together with the parenthesised build
+    /// identifier when the tool reports one.
     ///
-    /// Handles clang, which leads with the string, and swiftc, which reports its driver
-    /// version first and carries a trailing build identifier.
+    /// The build id is kept deliberately.  This string ends up in a ToolDescriptor, which
+    /// keys the build cache, and two compilers sharing a marketing version with different
+    /// build ids are different binaries that can produce different output.
+    ///
+    /// Handles clang, which leads with the string, and swiftc, which reports its own
+    /// driver version first — that part is not the tool's version and is skipped.
     static func parseVersion(from output: String) -> String? {
-        let pattern = #"Apple [A-Za-z]+ version [0-9]+(\.[0-9]+)*"#
+        let pattern = #"Apple [A-Za-z]+ version [0-9]+(\.[0-9]+)*( \([^)]*\))?"#
         guard let range = output.range(of: pattern, options: .regularExpression) else { return nil }
         return String(output[range])
     }
