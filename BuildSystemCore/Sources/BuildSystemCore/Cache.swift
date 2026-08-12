@@ -12,11 +12,21 @@ private let cacheEntryLimit = 500
 extension NodeFunction {
 
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
-        let oneInput = input.inputValues[inputPort]!
+        // Keying on a partial input set would produce a key that collides with a
+        // different set of inputs — the one failure mode a cache must never have.
+        guard let oneInput = input.inputValues[inputPort] else {
+            throw NodeError.other(
+                message: "Cannot build a cache key for \(type(of: self)): input port '\(inputPort)' has no entry")
+        }
 
+        // Both halves matter.  The wire key is the file's path, and the tools embed it —
+        // in the object file's debug info, in the output filename derived from it, and in
+        // the compiler output published on the log ports.  Keying on the values alone
+        // meant identical content at a different path scored a hit and came back with
+        // another file's build.
         return try oneInput
             .sorted { $0.key < $1.key }
-            .map { $0.value }
+            .map { CacheKeyEntry(wire: $0.key, value: $0.value) }
             .toJSON()
     }
 
@@ -102,4 +112,11 @@ extension NodeFunction {
                                              timestamp: Date()))
         try? database.cacheEntry.trimToLimit(cacheEntryLimit)
     }
+}
+
+/// One wired input as it contributes to a cache key: which wire it arrived on, and what
+/// it carried. Both are part of the build's identity.
+struct CacheKeyEntry: Codable {
+    let wire: String
+    let value: NodeValue
 }
