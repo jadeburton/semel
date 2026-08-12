@@ -6,7 +6,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class FormulaParserTests: XCTestCase {
+final class FormulaParserTests: BuildSystemTestCase {
 
     private func parse(_ source: String) throws -> [String: GraphShapeNode] {
         try FormulaFile.parse(source, basePath: Path("."), globber: { _ in [] })
@@ -29,10 +29,18 @@ final class FormulaParserTests: XCTestCase {
         XCTAssertEqual(result["X"]?.outputPort, "output")
     }
 
-    func test_leafNode_noOutputPort_usesDefault() throws {
-        // Node constructors without an explicit .port get "_default", which
-        // GraphShapeApplier resolves to the node's single output port at apply time.
+    func test_leafNode_noOutputPort_resolvesToTheTypesSingleOutputPort() throws {
+        // A node constructor without an explicit .port is resolved against the registered
+        // type: StaticFile declares exactly one output port, so that is what it gets.
         let result = try parse("product \"X\" = StaticFile(path: 'src/hello.c')")
+        XCTAssertEqual(result["X"]?.outputPort, "output")
+    }
+
+    // Only an unregistered type leaves the placeholder in place — there is nothing
+    // downstream that resolves "_default", so this is a formula naming a type that does
+    // not exist, not a deferred resolution.
+    func test_leafNode_noOutputPort_unknownType_keepsPlaceholder() throws {
+        let result = try parse("product \"X\" = NoSuchNodeType(path: 'src/hello.c')")
         XCTAssertEqual(result["X"]?.outputPort, "_default")
     }
 

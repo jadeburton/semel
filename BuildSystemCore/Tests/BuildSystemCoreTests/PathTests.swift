@@ -6,7 +6,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class PathTests: XCTestCase {
+final class PathTests: BuildSystemTestCase {
 
     // MARK: - init(_ string:)
 

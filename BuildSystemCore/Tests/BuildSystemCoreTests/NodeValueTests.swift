@@ -6,7 +6,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class NodeValueTests: XCTestCase {
+final class NodeValueTests: BuildSystemTestCase {
 
     // MARK: - NodeValue.noValue(.pending) Codable round-trip
 

@@ -1,7 +1,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class IncludeFinderTests: XCTestCase {
+final class IncludeFinderTests: BuildSystemTestCase {
 
     // MARK: - Basic extraction
 

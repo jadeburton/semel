@@ -8,11 +8,12 @@ import XCTest
 
 /// `reset()` wipes the derived build graph and reschedules ProjectFinder so the
 /// whole graph is rebuilt from the current input file system contents.
-final class BuildEngineResetTests: XCTestCase {
+final class BuildEngineResetTests: BuildSystemTestCase {
 
     var engine: BuildEngine!
 
     override func setUpWithError() throws {
+        try super.setUpWithError()
         let database = try DatabaseLayer()
         engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine

@@ -6,7 +6,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class GraphShapeTests: XCTestCase {
+final class GraphShapeTests: BuildSystemTestCase {
 
     // MARK: - Leaf node
 

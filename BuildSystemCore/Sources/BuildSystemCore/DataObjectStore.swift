@@ -28,14 +28,24 @@ import CryptoKit
 /// read-only (0o444) after being stored to enforce this invariant.
 final class DataObjectStore {
 
-    static let shared = DataObjectStore()
+    /// The process-wide store.  Every `intern()` goes through it, so it is a global
+    /// rather than something threaded through each call site — but it is swappable, so
+    /// a test can point the whole process at a private store instead of the user's.
+    static var shared = DataObjectStore()
 
     private let storeRoot: URL
 
-    private init() {
+    convenience init() {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        storeRoot = appSupport.appendingPathComponent("build_system/objects", isDirectory: true)
+        self.init(storeRoot: appSupport.appendingPathComponent("build_system/objects",
+                                                               isDirectory: true))
+    }
+
+    init(storeRoot: URL) {
+        self.storeRoot = storeRoot
+        // Best-effort: `store(hash:content:)` creates the shard directory with
+        // intermediates anyway, so a failure here is not fatal.
         try? FileManager.default.createDirectory(at: storeRoot, withIntermediateDirectories: true)
     }
 

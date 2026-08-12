@@ -789,8 +789,9 @@ private struct FormulaResolver {
                                              outputs: node.outputs,
                                              outputPort: port))
             } else {
-                // Node constructor: no .port suffix → "_default", resolved to the single
-                // output port by GraphShapeApplier at apply time.
+                // Node constructor: no .port suffix → resolved here against the registered
+                // type's descriptor.  Nothing downstream understands "_default", so it only
+                // survives for a type PolyFactory does not know about.
                 let base = try evalNodeConstruct(typeName: name, args: args, env: env, templateEnv: templateEnv)
                 guard case .node(let node) = base else {
                     throw FormulaParseError.typeMismatch(

@@ -33,7 +33,10 @@ public final class BuildEngine {
     /// before sleeping.
     private let workSignal = WorkSignal()
 
-    private static func registerTypes() {
+    /// Populates the process-global `PolyFactory` type registry.  Internal rather than
+    /// private so tests can put the registry into the same state production runs in —
+    /// formula parsing resolves a node's default output port through it.
+    static func registerTypes() {
         PolyFactory.register(types: [
             FolderManifest.self,
             OutputFile.self,

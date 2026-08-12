@@ -1,7 +1,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class NodeDescriptorTests: XCTestCase {
+final class NodeDescriptorTests: BuildSystemTestCase {
 
     // MARK: - InputPort.name
 

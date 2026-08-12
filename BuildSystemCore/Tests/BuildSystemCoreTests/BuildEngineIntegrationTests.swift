@@ -20,11 +20,12 @@ private func makeEngine() throws -> BuildEngine {
 /// Verifies that `processPendingDeletions` cascades upward through the dependency
 /// graph: when a consumer node is removed, source nodes that have no remaining
 /// consumers are also cleaned up.
-final class CascadeDeletionTests: XCTestCase {
+final class CascadeDeletionTests: BuildSystemTestCase {
 
     var engine: BuildEngine!
 
     override func setUpWithError() throws {
+        try super.setUpWithError()
         engine = try makeEngine()
     }
 
@@ -138,11 +139,12 @@ final class CascadeDeletionTests: XCTestCase {
 // whose findMatchingNode() returns the node that was created the first time.
 // These tests verify that guarantee holds.
 
-final class FindMatchingNodeTests: XCTestCase {
+final class FindMatchingNodeTests: BuildSystemTestCase {
 
     var engine: BuildEngine!
 
     override func setUpWithError() throws {
+        try super.setUpWithError()
         engine = try makeEngine()
         BuildEngine.shared = engine
     }
@@ -201,7 +203,7 @@ final class FindMatchingNodeTests: XCTestCase {
 
 // MARK: - Formula parsing error handling
 
-final class FormulaMalformedTests: XCTestCase {
+final class FormulaMalformedTests: BuildSystemTestCase {
 
     private func parse(_ source: String) throws -> [String: GraphShapeNode] {
         try FormulaFile.parse(source, basePath: Path("."), globber: { _ in [] })

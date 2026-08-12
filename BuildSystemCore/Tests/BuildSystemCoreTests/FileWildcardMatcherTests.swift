@@ -1,7 +1,7 @@
 @testable import BuildSystemCore
 import XCTest
 
-final class FileWildcardMatcherTests: XCTestCase {
+final class FileWildcardMatcherTests: BuildSystemTestCase {
 
     // MARK: - Mock input
 

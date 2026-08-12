@@ -6,7 +6,7 @@
 import BuildSystemCore
 import XCTest
 
-final class PolyFactoryTests: XCTestCase {
+final class PolyFactoryTests: BuildSystemTestCase {
 
     // MARK: - JSON helpers (generic Encodable/Decodable extensions)
 

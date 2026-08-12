@@ -101,7 +101,9 @@ enum ToolError: Error {
 
 /// A registry that maps ToolDescriptors to their concrete ToolExecutor implementations.
 class ToolExecutorRegistry {
-    static let instance = ToolExecutorRegistry()
+    /// Swappable so a test can install a registry holding fake executors without
+    /// threading a registry through every node function.
+    static var instance = ToolExecutorRegistry()
 
     private var toolsByDescriptor: [ToolDescriptor: ToolExecutor] = [:]
 
