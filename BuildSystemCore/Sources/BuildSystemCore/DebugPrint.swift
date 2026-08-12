@@ -16,7 +16,7 @@ extension String {
         }.joined()
     }
 
-    fileprivate func truncated(to maxLength: Int = 80) -> String {
+    func truncated(to maxLength: Int = 80) -> String {
         count > maxLength ? String(prefix(maxLength)) + "…" : self
     }
 }
