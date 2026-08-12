@@ -62,7 +62,6 @@ final class FilePlugin: CommandPlugin {
     private func pushOne(_ entry: FileWildcardEntry, baseDirectory: String,
                           context: any CommandContext) throws {
         let relativePath = entry.path
-        context.outputMessage("Push: \(relativePath)")
 
         switch entry.kind {
         case .file:
@@ -75,9 +74,12 @@ final class FilePlugin: CommandPlugin {
             let fullPath      = Path(Folder.inputFileSystemName) / relativePath
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(fullPath.string)')")
             let (fromNode, _) = try graphShapeNode.findOrCreateMatchingNode()
-            _ = try (fromNode.nodeAsAny() as! StaticFile).replaceContent(fileContent.intern())
+            let didChange = try (fromNode.nodeAsAny() as! StaticFile).replaceContent(fileContent.intern())
+
+            context.outputMessage("Push file: \(relativePath) \(didChange ? "" : "[no change]")")
 
         case .folder:
+            context.outputMessage("Push folder: \(relativePath)")
             _ = try context.inputFileSystem.ensureEntirePathExistsAsFolders(relativePath, pinned: true)
             // Recursively push every file inside the directory.
             // Only .file entries are forwarded to pushOne; folder nodes are created
