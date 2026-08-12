@@ -101,19 +101,18 @@ extension BuildEngine {
     public func printAll() throws {
         let allNodes       = try database.node.selectAll()
         let allWires       = try database.wire.selectAll()
-        //let allDataHashes  = DataObjectStore.shared.allHashes()
 
         // Indexes built once and reused throughout
         let nodeByID: [ObjectID: Node] = Dictionary(
             uniqueKeysWithValues: allNodes.compactMap { node in node.id.map { ($0, node) } })
         let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.toNodeID)
         let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.fromNodeID)
-        
+
         // MARK: Section 1 — Nodes
-        
+
         printSectionHeader("BUILD GRAPH STATE (\(allNodes.count) nodes)")
         print()
-        
+
         for rawNode in allNodes {
             guard let nodeID = rawNode.id else { continue }
             
@@ -130,18 +129,18 @@ extension BuildEngine {
             } else {
                 print("  searchKey: nil")
             }
-            
+
             if let parentNodeID = rawNode.parentNodeID {
                 print("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
             }
-            
+
             let descriptor    = (try? rawNode.nodeFunction())?.descriptor
             let inputPorts    = (descriptor?.staticInputPorts  ?? []) + (descriptor?.dynamicInputPorts ?? [])
             let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires = wiresByFromNodeID[nodeID] ?? []
             let outputValues  = (try? database.outputPort.selectAll(nodeID: nodeID)) ?? []
-            
+
             if !inputPorts.isEmpty {
                 print("  inputs:")
                 for inputPort in inputPorts {
@@ -159,7 +158,7 @@ extension BuildEngine {
                     }
                 }
             }
-            
+
             if !outputPorts.isEmpty {
                 print("  outputs:")
                 for outputPort in outputPorts {
@@ -182,18 +181,8 @@ extension BuildEngine {
             print()
         }
 
-        // MARK: Section 3 — Data objects
-/*
-        if !allDataHashes.isEmpty {
-            printSectionHeader("DATA OBJECTS (\(allDataHashes.count))")
-            for hash in allDataHashes {
-                let byteCount = DataObjectStore.shared.size(hash: hash) ?? 0
-                let preview   = formatBytes(DataObjectStore.shared.read(hash: hash))
-                print("  · 🗄 \(byteCount) byte(s): \(preview)")
-            }
-            print()
-        }
-*/
+        print("OutputPort count: \(try! database.outputPort.selectAllCount())\n")
+
         debugPrintTree()
     }
 

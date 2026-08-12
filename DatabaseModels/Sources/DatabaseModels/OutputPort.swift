@@ -54,6 +54,12 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
+    public func selectAllCount() throws -> Int {
+        try read { db in
+            try OutputPort.fetchAll(db).count
+        }
+    }
+
     public func select(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
         try read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
