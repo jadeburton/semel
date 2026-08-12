@@ -104,8 +104,11 @@ struct SwiftCompilerTool: NodeFunction {
                 }
                 .sorted { $0.filePath < $1.filePath }
 
+            // Sorted for the same reason the source file list above is sorted: these
+            // become an ordered list feeding the command line, and dictionary iteration
+            // order is not stable across processes.
             var allFolderManifests = [(String, FolderManifest)]()
-            for (key, value) in input.inputValues[SwiftCompilerTool.inputFolder] ?? [:] {
+            for (key, value) in (input.inputValues[SwiftCompilerTool.inputFolder] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 let object = try? PolyFactory.decode(encodedJSON: value.expectValue().resolveAsString())
                 guard let folderManifest = object as? FolderManifest else {
                     throw NodeError.other(message: "Could not decode FolderManifest")
@@ -115,7 +118,7 @@ struct SwiftCompilerTool: NodeFunction {
             inputFolderManifests = allFolderManifests
 
             var allModuleMapFolders = [(String, FolderManifest)]()
-            for (key, value) in input.inputValues[SwiftCompilerTool.inputModuleMapFolders] ?? [:] {
+            for (key, value) in (input.inputValues[SwiftCompilerTool.inputModuleMapFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 guard let jsonStr = try? value.expectValue().resolveAsString(),
                       let manifest = try? PolyFactory.decode(encodedJSON: jsonStr) as? FolderManifest
                 else { continue }

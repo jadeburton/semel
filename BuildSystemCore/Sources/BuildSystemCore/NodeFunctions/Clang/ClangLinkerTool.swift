@@ -68,9 +68,13 @@ public struct ClangLinkerTool: NodeFunction {
             let inputValues = input.inputValues[ClangLinkerTool.input]!
             let libraryValues = input.inputValues[ClangLinkerTool.libraries]!
 
+            // Sorted, not straight out of the dictionary: iteration order for a Swift
+            // Dictionary varies from one process to the next, which would put the object
+            // and library files on the linker command line in a different order on every
+            // run.  A build has to produce the same command line from the same inputs.
             var libraryFiles: [FileNameAndContent] = []
 
-            for (libraryName, nodeValue) in libraryValues {
+            for (libraryName, nodeValue) in libraryValues.sorted(by: { $0.key < $1.key }) {
                 libraryFiles.append(.init(filePath: libraryName, hash: try nodeValue.expectValue()))
             }
 
@@ -78,7 +82,7 @@ public struct ClangLinkerTool: NodeFunction {
 
             var objectFiles: [FileNameAndContent] = []
 
-            for (objectFileName, nodeValue) in inputValues {
+            for (objectFileName, nodeValue) in inputValues.sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: objectFileName, hash: try nodeValue.expectValue()))
             }
 

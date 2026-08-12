@@ -68,14 +68,16 @@ struct SwiftLinkerTool: NodeFunction {
             let configurationString = try input.inputValues[SwiftLinkerTool.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = .init(properties: [String: String](plainText: configurationString))
 
+            // Sorted: these go straight onto the command line, and Swift Dictionary
+            // iteration order changes from one process to the next.
             var objectFiles: [FileNameAndContent] = []
-            for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.input]! {
+            for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.input]!.sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
             self.objectFiles = objectFiles
 
             var libraryFiles: [FileNameAndContent] = []
-            for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.libraries]! {
+            for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.libraries]!.sorted(by: { $0.key < $1.key }) {
                 libraryFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
             self.libraryFiles = libraryFiles
