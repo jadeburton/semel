@@ -96,7 +96,7 @@ final class NavigationPlugin: CommandPlugin {
         for entry in sorted {
             let name   = context.relativeName(entry.path, to: displayBase)
             let suffix = entry.kind == .folder ? "/" : ""
-            let note   = entry.isMissing ? " [missing]" : entry.isUnreferenced ? " [?]" : ""
+            let note   = entry.isMissing ? " [missing]" : entry.isUnreferenced ? " [unreferenced]" : ""
             context.outputMessage("\(name)\(suffix)\(note)")
         }
     }
