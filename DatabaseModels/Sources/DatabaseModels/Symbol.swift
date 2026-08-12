@@ -108,9 +108,24 @@ private final class SymbolCache: @unchecked Sendable {
             idToName[id]   = name
         }
     }
+
+    func removeAll() {
+        lock.withLock {
+            nameToID.removeAll()
+            idToName.removeAll()
+        }
+    }
 }
 
 private let symbolCache = SymbolCache()
+
+/// Drops every interned name↔id mapping.  A SymbolID only means anything within the
+/// database that issued it, so this must run whenever `DatabaseLayer.shared` is
+/// replaced — otherwise ids interned against the previous database leak into the new
+/// one, where the matching Symbol rows do not exist.
+func resetSymbolCache() {
+    symbolCache.removeAll()
+}
 
 // MARK: - Resolving a DataToken back to bytes
 

@@ -33,39 +33,50 @@ extension BuildEngine {
         let allNodes  = try database.node.selectAll()
         let deleteIDs = allNodes.compactMap(\.id).filter { !preservedIDs.contains($0) }
 
-        guard !deleteIDs.isEmpty else { return }
-
         // 3. Bulk delete — wires, output ports, nodes, and the cache — in one transaction.
-        try database.withTransaction {
-            for nodeID in deleteIDs {
-                // Wires entering this node (from preserved or other deleted nodes).
-                for wire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
-                    _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
-                                                  fromSymbolID:    wire.fromSymbolID,
-                                                  goingToNodeID:   wire.toNodeID,
-                                                  toSymbolID:      wire.toSymbolID)
+        //    An empty delete set is not an early exit: the rebuild in step 4 still has to
+        //    run, otherwise `reset` on an already-clean graph silently does nothing.
+        if !deleteIDs.isEmpty {
+            try database.withTransaction {
+                for nodeID in deleteIDs {
+                    // Wires entering this node (from preserved or other deleted nodes).
+                    for wire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
+                        _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
+                                                      fromSymbolID:    wire.fromSymbolID,
+                                                      goingToNodeID:   wire.toNodeID,
+                                                      toSymbolID:      wire.toSymbolID)
+                    }
+                    // Wires leaving this node (to preserved or other deleted nodes).
+                    for wire in (try? database.wire.select(comingFromNodeID: nodeID)) ?? [] {
+                        _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
+                                                      fromSymbolID:    wire.fromSymbolID,
+                                                      goingToNodeID:   wire.toNodeID,
+                                                      toSymbolID:      wire.toSymbolID)
+                    }
+                    _ = try? database.outputPort.deleteAll(nodeID: nodeID)
+                    _ = try? database.node.delete(nodeID: nodeID)
                 }
-                // Wires leaving this node (to preserved or other deleted nodes).
-                for wire in (try? database.wire.select(comingFromNodeID: nodeID)) ?? [] {
-                    _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
-                                                  fromSymbolID:    wire.fromSymbolID,
-                                                  goingToNodeID:   wire.toNodeID,
-                                                  toSymbolID:      wire.toSymbolID)
-                }
-                _ = try? database.outputPort.deleteAll(nodeID: nodeID)
-                _ = try? database.node.delete(nodeID: nodeID)
+
+                // All cached build outputs are now invalid.
+                _ = try? database.cacheEntry.deleteAll()
+
+                // Pending-deletion marks on preserved nodes are deliberately left alone.
+                // A mark means the user ran `rm` and the idle-time GC has not collected
+                // the node yet; clearing it here would silently undo the delete, and
+                // nothing would ever re-mark it.  `connectWire` clears the flag on its
+                // own if the rebuild wires the node back up.
             }
 
-            // All cached build outputs are now invalid.
-            _ = try? database.cacheEntry.deleteAll()
+            print("Reset: removed \(deleteIDs.count) node(s).")
 
-            // Clear any stale pending-deletion marks on the nodes we kept.
-            for nodeID in preservedIDs {
-                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+            // The output root is preserved but every child under it was just deleted.
+            // Its manifest is built from the child list, and the bulk delete above
+            // bypasses nodeFunction.delete() — the only path that notifies a parent —
+            // so refresh it here or it keeps advertising products that are gone.
+            if let outputFolder = try? outputRoot.nodeFunction() as? Folder {
+                try outputFolder.refreshOutputs()
             }
         }
-
-        print("Reset: removed \(deleteIDs.count) node(s).")
 
         // 4. Reschedule ProjectFinder so it re-reads the input manifests and
         //    recreates all ProjectBuilder nodes and the downstream build graph.

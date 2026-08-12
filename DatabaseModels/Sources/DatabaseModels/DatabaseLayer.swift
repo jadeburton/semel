@@ -118,6 +118,7 @@ public final class DatabaseLayer {
 
         try DatabaseLayer.createTables(dbQueue: dbQueue)
 
+        resetSymbolCache()
         Self.shared = self
     }
 
@@ -131,6 +132,7 @@ public final class DatabaseLayer {
 
         try DatabaseLayer.createTables(dbQueue: dbQueue)
 
+        resetSymbolCache()
         Self.shared = self
     }
 
