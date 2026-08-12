@@ -168,9 +168,11 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
     }
 
     public func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
-        let start = try folder.childNode(path: inDirectoryPath)!
+        guard let start = try folder.childNode(path: inDirectoryPath) else {
+            throw NodeError.other(message: "No such directory: \(inDirectoryPath)")
+        }
 
-        return try! start.allChildren.map { node in
+        return try start.allChildren.map { node in
             switch node.kind {
 
             case Folder.kind:

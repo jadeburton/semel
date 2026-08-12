@@ -283,7 +283,7 @@ extension InputlessNodeFunction {
 
     func writeToOutputs(output: ProcessOutput) throws {
 
-        let numberOfOutputPorts = try! database.outputPort.selectAll(nodeID: id!).count
+        let numberOfOutputPorts = try database.outputPort.selectAll(nodeID: id!).count
 
         if numberOfOutputPorts != output.outputValues.count {
             print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")

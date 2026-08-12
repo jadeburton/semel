@@ -181,7 +181,9 @@ extension BuildEngine {
             print()
         }
 
-        print("OutputPort count: \(try! database.outputPort.selectAllCount())\n")
+        // Debug output must never be the thing that takes the process down.
+        let outputPortCount = (try? database.outputPort.selectAllCount()).map(String.init) ?? "unavailable"
+        print("OutputPort count: \(outputPortCount)\n")
 
         debugPrintTree()
     }
@@ -200,17 +202,20 @@ extension Node {
 
     fileprivate func printDependencyTree(indentLevel: Int) {
         let indent = String(repeating: "  ", count: indentLevel)
-        let nodeFunction = try! nodeFunction()
 
-        let kindName = String(describing: type(of: nodeFunction))
+        // Debug output must never be the thing that takes the process down: an
+        // unregistered kind here means the tree prints "kind 27?" rather than crashing.
+        let kindName = (try? nodeFunction()).map { String(describing: type(of: $0)) }
+                    ?? "kind \(kind)?"
 
         let nodeName = name ?? ""
 
-        print("\(indent)- \(kindName)(\(nodeName)) \(id!)")
-
         guard let nodeID = id else {
+            print("\(indent)- \(kindName)(\(nodeName)) [unsaved]")
             return
         }
+
+        print("\(indent)- \(kindName)(\(nodeName)) \(nodeID)")
 
         do {
             let incomingWires = try database.wire.select(goingToNodeID: nodeID)

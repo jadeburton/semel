@@ -85,6 +85,24 @@ final class FilePluginPathTests: XCTestCase {
                       "expected a not-found error, got \(context.allOutput)")
     }
 
+    // The matcher lists a file, then pushOne reads it. Anything can happen in between —
+    // and the read result was force-unwrapped, so a permission change or a deleted file
+    // took the whole process down.
+    func test_push_reportsAnUnreadableFileInsteadOfCrashing() throws {
+        try writeExternalFile("secret.c")
+        let url = externalRoot.appendingPathComponent("secret.c")
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: url.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                   ofItemAtPath: url.path)
+        }
+
+        try run("push", ["secret.c"])
+
+        XCTAssertTrue(context.errors.contains { $0.contains("secret.c") },
+                      "expected an error naming the file, got \(context.allOutput)")
+    }
+
     func test_push_resolvesDotDotAgainstTheCurrentDirectory() throws {
         try writeExternalFile("shared/util.c")
         context.currentDirectoryPath = Path("src")

@@ -79,7 +79,16 @@ final class FilePlugin: CommandPlugin {
         switch entry.kind {
         case .file:
             let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath.string)
-            let fileContent  = try! [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
+
+            // The matcher listed this file a moment ago, but it can be deleted or made
+            // unreadable in between — that is a report-and-continue, not a crash.
+            let fileContent: [UInt8]
+            do {
+                fileContent = try [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
+            } catch {
+                context.outputError("push: \(relativePath): \(error.localizedDescription)")
+                return
+            }
 
             _ = try context.inputFileSystem.ensureEntirePathExistsAsFolders(
                     relativePath.deletingLastComponent ?? .empty, pinned: true)
@@ -87,7 +96,13 @@ final class FilePlugin: CommandPlugin {
             let fullPath      = Path(Folder.inputFileSystemName) / relativePath
             let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(fullPath.string)')")
             let (fromNode, _) = try graphShapeNode.findOrCreateMatchingNode()
-            let didChange = try (fromNode.nodeAsAny() as! StaticFile).replaceContent(fileContent.intern())
+
+            guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
+                context.outputError("push: \(relativePath): the graph holds a non-file node at this path")
+                return
+            }
+
+            let didChange = try staticFile.replaceContent(fileContent.intern())
 
             context.outputMessage("Push file: \(relativePath) \(didChange ? "" : "[no change]")")
 
