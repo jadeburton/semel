@@ -32,7 +32,7 @@ public struct ClangCompilerTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

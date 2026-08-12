@@ -32,7 +32,7 @@ struct SwiftFormulaConverter: NodeFunction {
     static let infoLog              = "infoLog"
     static let externalPackageJSONs = "externalPackageJSONs"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

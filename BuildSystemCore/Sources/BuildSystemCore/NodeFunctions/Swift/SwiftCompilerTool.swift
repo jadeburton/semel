@@ -51,7 +51,7 @@ struct SwiftCompilerTool: NodeFunction {
     static let outputInterface       = "swiftinterface"
     static let infoLog               = "infoLog"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

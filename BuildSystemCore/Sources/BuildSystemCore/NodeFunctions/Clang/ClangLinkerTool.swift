@@ -39,7 +39,7 @@ public struct ClangLinkerTool: NodeFunction {
     static let output = "output"
     static let infoLog = "infoLog"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

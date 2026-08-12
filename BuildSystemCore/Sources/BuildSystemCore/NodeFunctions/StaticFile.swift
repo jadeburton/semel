@@ -31,7 +31,7 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
 
     static let outputPort = "output"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     var path: Path {
         Path(thisNode.properties["path"]!)
@@ -40,9 +40,9 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
     init(thisNode: Node) throws {
         embeddedNode = thisNode
         assert(!path.string.contains(Folder.outputFileSystemName))
-        embeddedNode!.name = name
-        if embeddedNode!.parentNodeID == nil {
-            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        embeddedNode.name = name
+        if embeddedNode.parentNodeID == nil {
+            embeddedNode.parentNodeID = try resolveFolderID(path: containingPath)
         }
     }
 

@@ -30,7 +30,7 @@ struct ClangPreprocessorToolConfiguration {
 public struct ClangPreprocessorTool: NodeFunction {
     public static let kind: UInt = 17
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

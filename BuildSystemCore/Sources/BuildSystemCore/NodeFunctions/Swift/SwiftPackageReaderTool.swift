@@ -57,7 +57,7 @@ struct SwiftPackageReaderTool: NodeFunction {
     static let packageJSON   = "packageJSON"
     static let infoLog       = "infoLog"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

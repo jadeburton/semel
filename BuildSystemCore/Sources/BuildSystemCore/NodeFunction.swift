@@ -28,7 +28,7 @@ protocol WithDefaultInitializer {
 
 extension InputlessNodeFunction {
     var thisNode: Node {
-        embeddedNode!
+        embeddedNode
     }
 
     var id: ObjectID? {
@@ -49,7 +49,7 @@ extension InputlessNodeFunction {
 }
 
 protocol InputlessNodeFunction: WithKind {
-    var embeddedNode: Node? { get set }
+    var embeddedNode: Node { get set }
 
     init(thisNode: Node) throws
 

@@ -26,13 +26,13 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     public static let inputFileSystemName = "input:"
     public static let outputFileSystemName = "output:"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
-        embeddedNode!.name = name
-        if embeddedNode!.parentNodeID == nil {
-            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        embeddedNode.name = name
+        if embeddedNode.parentNodeID == nil {
+            embeddedNode.parentNodeID = try resolveFolderID(path: containingPath)
         }
     }
 

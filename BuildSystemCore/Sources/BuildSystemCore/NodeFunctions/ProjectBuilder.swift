@@ -20,7 +20,7 @@ public struct ProjectBuilder: NodeFunction {
         outputPorts: [statusOutputPort]
     )
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

@@ -9,7 +9,7 @@
 public struct Configuration: NodeFunction {
     public static let kind: UInt = 9
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     static let outputPort = "output"
     static let inputPort = "inherit"

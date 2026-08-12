@@ -20,7 +20,7 @@ public struct IncludeFinder: NodeFunction {
         outputPorts: [includePathListOutputPort]
     )
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode

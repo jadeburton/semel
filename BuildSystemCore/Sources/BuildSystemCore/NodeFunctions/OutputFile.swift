@@ -57,7 +57,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     static let inputPort = "input"
     static let statusOutputPort = "status"
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     var path: Path {
         Path(thisNode.properties["path"]!)
@@ -66,9 +66,9 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     init(thisNode: Node) throws {
         embeddedNode = thisNode
         assert(!path.string.contains(Folder.inputFileSystemName))
-        embeddedNode!.name = name
-        if embeddedNode!.parentNodeID == nil {
-            embeddedNode!.parentNodeID = try resolveFolderID(path: containingPath)
+        embeddedNode.name = name
+        if embeddedNode.parentNodeID == nil {
+            embeddedNode.parentNodeID = try resolveFolderID(path: containingPath)
         }
     }
 

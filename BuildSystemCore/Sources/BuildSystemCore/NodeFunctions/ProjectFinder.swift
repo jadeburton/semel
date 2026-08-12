@@ -72,7 +72,7 @@ public struct ProjectFinder: NodeFunction {
         outputPorts: []
     )
 
-    var embeddedNode: Node?
+    var embeddedNode: Node
 
     init(thisNode: Node) throws {
         embeddedNode = thisNode
