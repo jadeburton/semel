@@ -19,8 +19,13 @@ public enum NodeValue: Codable {
 extension NodeValue {
     func expectValue() throws -> DataObjectHash {
         switch self {
-        case .noValue:
-            throw NodeError.missingInputs
+        case .noValue(let reason):
+            switch reason {
+            case .pending:
+                throw NodeError.inputValuePending
+            case .error:
+                throw NodeError.inputValueInError
+            }
         case .value(let value):
             return value
         }

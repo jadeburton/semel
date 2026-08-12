@@ -80,12 +80,13 @@ struct SwiftPackageReaderTool: NodeFunction {
 
             configuration = .init(properties: [String: String](plainText: configString))
 
-            guard let fileEntry = input.inputValues[SwiftPackageReaderTool.packageFile]?.first else {
-                throw NodeError.missingInput(name: SwiftPackageReaderTool.packageFile)
-            }
-            // Place the file at the sandbox root so `swift package dump-package`
+            let packageFileNodeValues = input.inputValues[SwiftPackageReaderTool.packageFile]!.values.first!
+
+            let fileEntry = try packageFileNodeValues.expectValue()
+
+                // Place the file at the sandbox root so `swift package dump-package`
             // finds it in the working directory, regardless of the wire key's full path.
-            packageFile = FileNameAndContent(filePath: "Package.swift", hash: try fileEntry.value.expectValue())
+            packageFile = FileNameAndContent(filePath: "Package.swift", hash: fileEntry)
         }
     }
 

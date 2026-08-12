@@ -93,24 +93,40 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     }
 
     func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputValue = input.inputValues[Self.inputPort]!.first!
+        func describeValue(_ value: NodeValue) -> String {
+            switch value {
+            case .noValue(let reason):
+                switch reason {
+                case .pending:
+                    return "Updating.."
+                case .error:
+                    return "Error"
+                }
+            case .value:
+                return "OK"
+            }
+        }
+
+        let inputValue = input.inputValues[Self.inputPort]!.first!.value
         let previousStatus = try thisNode.readFromOutputPort(Self.statusOutputPort)
-        let hadValue = !previousStatus.isNoValue
+
+        let oldDescription = describeValue(previousStatus)
+        let newDescription = describeValue(inputValue)
 
         let outputValue: NodeValue
 
-        switch inputValue.value {
+        switch inputValue {
 
         case .noValue(let reason):
             outputValue = .noValue(reason: reason)
-            if hadValue {
-                print("[-] \(path)")
-            }
 
         case .value:
             outputValue = .value("Product is up to date".intern())
-            print("\(hadValue ? "[~]" : "[+]") \(path)")
 
+        }
+
+        if newDescription != oldDescription {
+            print("\(path): \(newDescription)")
         }
 
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
@@ -120,6 +136,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     }
 
     func willBeDeleted() throws {
+        print("\(path): Deleted")
     }
 
     func read() throws -> NodeValue? {

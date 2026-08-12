@@ -52,23 +52,22 @@ struct SwiftFormulaConverter: NodeFunction {
     func process(input: ProcessInput) throws -> ProcessOutput {
 
         // ── packageFolder ─────────────────────────────────────────────────────
-        guard let folderEntry = input.inputValues[Self.packageFolder]?.values.first else {
-            throw NodeError.missingInput(name: Self.packageFolder)
-        }
-        let manifestJSON = try folderEntry.expectValue().resolveAsString()
+        let manifestJSON = try input.inputValues[Self.packageFolder]!.values.first!.expectValue().resolveAsString()
+
         guard let folderManifest = try? PolyFactory.decode(encodedJSON: manifestJSON) as? FolderManifest else {
             return pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
                                  externalExpectations: [:])
         }
+
         let rootPackageFolder = folderManifest.baseFolderPath
 
         // ── root packageJSON ──────────────────────────────────────────────────
-        guard let jsonEntry = input.inputValues[Self.packageJSON]?.values.first else {
-            throw NodeError.missingInput(name: Self.packageJSON)
-        }
+        let jsonEntry = try input.inputValues[Self.packageJSON]!.values.first!.expectValue()
+
         let rootManifest: SPMManifest
+
         do {
-            rootManifest = try SPMManifest.decode(try jsonEntry.expectValue().resolveAsString())
+            rootManifest = try SPMManifest.decode(try jsonEntry.resolveAsString())
         } catch {
             return pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalExpectations: [:])
         }

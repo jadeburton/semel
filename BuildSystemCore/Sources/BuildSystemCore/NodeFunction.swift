@@ -370,10 +370,9 @@ extension InputlessNodeFunction {
                        match.fromSymbolID == existingWire.fromSymbolID {
                         needsReconnection = false
                     } else {
-                        let truncate: (String) -> String = { s in s.count > 300 ? String(s.prefix(300)) + "…" : s }
-                        print("⚠️ topology mismatch on port '\(inputPort)' wire '\(wireName)' of node #\(id ?? -1): \(error)")
-                        print("   current:  \(truncate(currentShapeNode.asString(omitOutputPort: false)))")
-                        print("   expected: \(truncate(expectedShapeNode.asString(omitOutputPort: false)))")
+//                        print("⚠️ topology mismatch on port '\(inputPort)' wire '\(wireName)' of node #\(id ?? -1): \(error)")
+//                        print("   current:  \(currentShapeNode.asString(omitOutputPort: false).truncated(to: 3000))")
+//                        print("   expected: \(expectedShapeNode.asString(omitOutputPort: false).truncated(to: 3000))")
                         _ = try existingWire.deleteWire(database: database)
                     }
                 }
@@ -418,25 +417,44 @@ extension InputlessNodeFunction {
 
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
-        for outputPort in descriptor.outputPorts {
-            outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
+
+        switch error {
+        case NodeError.inputValuePending:
+            for outputPort in descriptor.outputPorts {
+                outputValues[outputPort] = .noValue(reason: .pending)
+            }
+
+        default:
+            for outputPort in descriptor.outputPorts {
+                outputValues[outputPort] = .noValue(reason: .error(message: "\(error)"))
+            }
         }
+
+
         // Reconstruct existing dynamic wire expectations from the live graph so
         // applyExpectationConfiguration's step 1 doesn't delete them on error.
         // A brand-new node that errors on first run has no wires yet, so the
         // dict is empty for it — which is also correct (nothing to preserve).
+
         var wireExpectations = [String: [String: String]]()
+
         for port in descriptor.dynamicInputPorts {
             let toSymbolID = port.asSymbolID()
-            guard let wires = try? database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID),
-                  !wires.isEmpty else { continue }
+
+            guard let wires = try? database.wire.select(goingToNodeID: id!, toSymbolID: toSymbolID), !wires.isEmpty else {
+                continue
+            }
+
             var portExpectations = [String: String]()
+
             for wire in wires {
                 let wireName = wire.name.resolveSymbol()
+
                 if let shapeNode = try? GraphShapeNode.buildFromWire(wire, database: database) {
                     portExpectations[wireName] = shapeNode.asString(omitOutputPort: false)
                 }
             }
+
             if !portExpectations.isEmpty {
                 wireExpectations[port] = portExpectations
             }
@@ -457,8 +475,8 @@ protocol MessageType: AnyObject, Codable, PolySerializable {
 public enum NodeError: Error {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
-    case missingInputs
-    case missingInput(name: String)
+    case inputValueInError
+    case inputValuePending
     case other(message: String)
     case processNotSupported
     case cannotHaveProperties
