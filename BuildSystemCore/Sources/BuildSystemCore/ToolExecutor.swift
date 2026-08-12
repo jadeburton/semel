@@ -93,8 +93,20 @@ enum ToolExecutionError: Error {
     case processLaunchFailed(underlying: Error)
 }
 
-enum ToolError: Error {
-    case noMatchingToolFound
+enum ToolError: Error, CustomStringConvertible {
+    case noMatchingToolFound(requested: ToolDescriptor, available: [ToolDescriptor])
+
+    var description: String {
+        switch self {
+        case .noMatchingToolFound(let requested, let available):
+            let have = available.isEmpty
+                ? "no tools are registered"
+                : available.map { "\($0.name) \($0.version) (\($0.platform)/\($0.architecture))" }
+                           .sorted().joined(separator: ", ")
+            return "no tool matches \(requested.name) \(requested.version) "
+                 + "(\(requested.platform)/\(requested.architecture)); registered: \(have)"
+        }
+    }
 }
 
 // MARK: - Registry
@@ -113,7 +125,8 @@ class ToolExecutorRegistry {
 
     func tool(descriptor: ToolDescriptor) throws -> ToolExecutor {
         guard let tool = toolsByDescriptor[descriptor] else {
-            throw ToolError.noMatchingToolFound
+            throw ToolError.noMatchingToolFound(requested: descriptor,
+                                                available: Array(toolsByDescriptor.keys))
         }
         return tool
     }
@@ -122,29 +135,47 @@ class ToolExecutorRegistry {
 // MARK: - Default tools
 
 class DefaultTools {
-    /// Registers all known tools with the given registry.
+
+    /// The tools this build system knows how to run.
+    ///
+    /// The version is the descriptor a formula matches against, and it is part of the
+    /// cache key, so it stays pinned here rather than following whatever happens to be
+    /// installed — a build must not silently change compiler behind a stable cache key.
+    /// The *path* is discovered per machine, and a difference between the pinned version
+    /// and the installed one is reported, because it means cached outputs are keyed to a
+    /// compiler that is not the one running.
+    private static let knownTools: [(name: String, version: String)] = [
+        (name: "clang",  version: "Apple clang version 17.0.0 (clang-1700.6.3.2)"),
+        (name: "swiftc", version: "Apple Swift version 6.2.3"),
+        (name: "swift",  version: "Apple Swift version 6.2.3"),
+    ]
+
+    /// Registers all known tools with the given registry, locating each one in the
+    /// active toolchain via `xcrun --find`.
     static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
-        try toolExecutorRegistry.registerTool(
-            descriptor: .init(name: "clang",
-                              version: "Apple clang version 17.0.0 (clang-1700.6.3.2)",
-                              platform: "macOS",
-                              architecture: "arm64",
-                              recursiveHash: nil),
-            toolExecutor: LocalFileSystemTool(localPath: "/usr/bin/clang"))
-        try toolExecutorRegistry.registerTool(
-            descriptor: .init(name: "swiftc",
-                              version: "Apple Swift version 6.2.3",
-                              platform: "macOS",
-                              architecture: "arm64",
-                              recursiveHash: nil),
-            toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"))
-        try toolExecutorRegistry.registerTool(
-            descriptor: .init(name: "swift",
-                              version: "Apple Swift version 6.2.3",
-                              platform: "macOS",
-                              architecture: "arm64",
-                              recursiveHash: nil),
-            toolExecutor: LocalFileSystemTool(localPath: "/Applications/Xcode_26_6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"))
+        for tool in knownTools {
+            guard let path = Toolchain.find(tool.name) else {
+                print("WARNING: '\(tool.name)' is not in the active toolchain (xcrun --find "
+                    + "\(tool.name) found nothing). Builds that need it will fail.")
+                continue
+            }
+
+            if let installed = Toolchain.version(ofToolAt: path),
+               let pinned = Toolchain.parseVersion(from: tool.version),
+               installed != pinned {
+                print("WARNING: '\(tool.name)' at \(path) reports \(installed), but is registered "
+                    + "as \(pinned). Cached outputs are keyed to the registered version, so this "
+                    + "difference will not invalidate them.")
+            }
+
+            toolExecutorRegistry.registerTool(
+                descriptor: .init(name: tool.name,
+                                  version: tool.version,
+                                  platform: "macOS",
+                                  architecture: "arm64",
+                                  recursiveHash: nil),
+                toolExecutor: try LocalFileSystemTool(localPath: path))
+        }
     }
 }
 
