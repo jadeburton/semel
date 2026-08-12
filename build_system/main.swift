@@ -7,6 +7,7 @@
 
 import Foundation
 import BuildSystemCore
+import BuildSystemCLI
 
 var commandInterpreter: CommandInterpreter?
 

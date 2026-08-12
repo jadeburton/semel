@@ -8,7 +8,7 @@ enum CommandInterpreterError: Error {
     case quit
 }
 
-final class CommandInterpreter: CommandContext {
+public final class CommandInterpreter: CommandContext {
 
     let database: DatabaseLayer
     var baseDirectory: String
@@ -32,19 +32,23 @@ final class CommandInterpreter: CommandContext {
         return map
     }()
 
+    public convenience init(database: DatabaseLayer,
+                            baseDirectory: String = FileManager.default.currentDirectoryPath) {
+        self.init(database: database,
+                  baseDirectory: baseDirectory,
+                  plugins: [NavigationPlugin(), FilePlugin(), EnginePlugin(), SessionPlugin()])
+    }
+
     required init(database: DatabaseLayer,
-                  baseDirectory: String = FileManager.default.currentDirectoryPath,
-                  plugins: [any CommandPlugin] = [NavigationPlugin(),
-                                                  FilePlugin(),
-                                                  EnginePlugin(),
-                                                  SessionPlugin()]) {
+                  baseDirectory: String,
+                  plugins: [any CommandPlugin]) {
 
         self.plugins = plugins
         self.baseDirectory = baseDirectory
         self.database = database
     }
 
-    func handleCommand(_ command: String) throws {
+    public func handleCommand(_ command: String) throws {
         var tokens = tokenize(command)
         guard !tokens.isEmpty else { return }
         if tokens.first == "strato" { tokens.removeFirst() }
