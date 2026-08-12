@@ -45,8 +45,16 @@ final class FilePlugin: CommandPlugin {
         BuildEngine.shared.beginBatch()
         defer { BuildEngine.shared.endBatch() }
 
+        // Resolve the user-supplied wildcard relative to the internal current directory
+        // so that "push *.c" from "src/a" reads baseDirectory/src/a/*.c and stores
+        // the files at input:/src/a/*.c.
+        let current = context.currentDirectoryPath
+        let effectiveWildcard = current.isEmpty
+            ? externalPathOrWildcard
+            : current.string + "/" + externalPathOrWildcard
+
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: context.baseDirectory))
-        try matcher.findAllMatching(pathOrWildcard: externalPathOrWildcard).forEach { entry in
+        try matcher.findAllMatching(pathOrWildcard: effectiveWildcard).forEach { entry in
             try pushOne(entry, baseDirectory: context.baseDirectory, context: context)
         }
     }
@@ -118,10 +126,32 @@ final class FilePlugin: CommandPlugin {
                              destinationPath: String?, context: any CommandContext) throws {
         let fileSystem = try context.fileSystem(for: folder)
         let matcher    = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
-        try matcher.findAllMatching(pathOrWildcard: pathOrWildcard).forEach { entry in
+
+        // Resolve internal source relative to the current directory (same as rm).
+        let base = context.currentDirectoryPath
+        let fullPattern = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
+
+        // Resolve external destination relative to baseDirectory/currentDirectoryPath.
+        let externalDest = resolveExternalDestination(destinationPath ?? ".", context: context)
+
+        try matcher.findAllMatching(pathOrWildcard: fullPattern).forEach { entry in
             try? copyOneFile(folder: fileSystem, entry: entry,
-                             destinationPath: destinationPath ?? ".", context: context)
+                             destinationPath: externalDest, context: context)
         }
+    }
+
+    /// Resolves an external destination path.
+    /// Absolute OS paths (starting with "/" or "~") are left as-is; relative paths
+    /// are resolved against baseDirectory/currentDirectoryPath.
+    private func resolveExternalDestination(_ path: String, context: any CommandContext) -> String {
+        if path.hasPrefix("/") || path.hasPrefix("~") {
+            return ExternalPathSanitizer.expandPartialPath(path)
+        }
+        let current = context.currentDirectoryPath
+        let externalBase = current.isEmpty
+            ? context.baseDirectory
+            : (context.baseDirectory as NSString).appendingPathComponent(current.string)
+        return (externalBase as NSString).appendingPathComponent(path)
     }
 
     private func copyOneFile(folder: Node, entry: FileWildcardEntry,
