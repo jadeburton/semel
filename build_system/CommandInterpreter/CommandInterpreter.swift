@@ -57,7 +57,7 @@ public final class CommandInterpreter: CommandContext {
     public func handleCommand(_ command: String) throws {
         var tokens = tokenize(command)
         guard !tokens.isEmpty else { return }
-        if tokens.first == "strato" { tokens.removeFirst() }
+        if tokens.first == "semel" { tokens.removeFirst() }
         guard let verb = tokens.first else { return }
         let remaining = Array(tokens.dropFirst())
 

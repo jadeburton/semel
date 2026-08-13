@@ -38,7 +38,7 @@ enum TestGlobals {
         // Formula parsing resolves a node's default output port through the PolyFactory
         // registry, so a test that skips this would parse against a different rulebook
         // than production — and would pass or fail depending on which test ran first.
-        BuildEngine.registerTypes()
+        try BuildEngine.registerTypes()
     }
 
     private static func makeTemporaryStoreRoot() -> URL {

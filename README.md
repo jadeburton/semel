@@ -82,7 +82,7 @@ rm build/**
 | `base [path]` | Show or set the external base directory for `push` |
 | `q` / `quit` / `exit` | Exit |
 
-Commands can be prefixed with `strato` (e.g. `strato ls`) for scripting.
+Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 
 ## Architecture
 

@@ -36,8 +36,8 @@ public final class BuildEngine {
     /// Populates the process-global `PolyFactory` type registry.  Internal rather than
     /// private so tests can put the registry into the same state production runs in —
     /// formula parsing resolves a node's default output port through it.
-    static func registerTypes() {
-        PolyFactory.register(types: [
+    static func registerTypes() throws {
+        try PolyFactory.register(types: [
             FolderManifest.self,
             OutputFile.self,
             StaticFile.self,
@@ -81,7 +81,7 @@ public final class BuildEngine {
     /// Pass `startProcessingLoop: false` in unit and integration tests to prevent the
     /// background Task from starting — this keeps tests synchronous and avoids races.
     init(database: DatabaseLayer, startProcessingLoop: Bool = true) throws {
-        Self.registerTypes()
+        try Self.registerTypes()
 
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database

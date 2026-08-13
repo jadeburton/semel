@@ -41,6 +41,61 @@ final class PolyFactoryTests: BuildSystemTestCase {
         }
     }
 
+    // MARK: - Unknown kinds
+    //
+    // In-process an unknown kind is a programming error. Once this format is on a socket
+    // it is routine — an older client, a newer server, a garbled or hostile frame. None of
+    // those may take the process down.
+
+    func test_decodingAnUnregisteredKindThrows() {
+        let json = #"{"kind": 999999, "object": {}}"#
+
+        XCTAssertThrowsError(try PolyFactory.decode(encodedJSON: json)) { error in
+            guard case PolyFactoryError.unknownKind(let kind) = error else {
+                return XCTFail("expected unknownKind, got \(error)")
+            }
+            XCTAssertEqual(kind, 999999)
+        }
+    }
+
+    func test_lookingUpAnUnregisteredKindThrows() {
+        XCTAssertThrowsError(try PolyFactory.type(kind: 999999))
+        XCTAssertThrowsError(try PolyFactory.decodableType(kind: 999999))
+    }
+
+    // MARK: - Kind collisions
+    //
+    // `kind` is one flat number space shared by every polymorphic type. Registering a
+    // duplicate used to overwrite silently, which surfaces later as a wrong-type decode
+    // somewhere unrelated.
+
+    private struct FirstClaimant: PolySerializable {
+        static let kind: UInt = 987_001
+        let value: String
+    }
+
+    private struct SecondClaimant: PolySerializable {
+        static let kind: UInt = 987_001
+        let value: String
+    }
+
+    func test_registeringADuplicateKindIsRejected() throws {
+        try PolyFactory.register(types: [FirstClaimant.self])
+
+        XCTAssertThrowsError(try PolyFactory.register(types: [SecondClaimant.self])) { error in
+            guard case PolyFactoryError.duplicateKind(let kind, _, _) = error else {
+                return XCTFail("expected duplicateKind, got \(error)")
+            }
+            XCTAssertEqual(kind, 987_001)
+        }
+    }
+
+    func test_registeringTheSameTypeTwiceIsFine() throws {
+        try PolyFactory.register(types: [FirstClaimant.self])
+        XCTAssertNoThrow(try PolyFactory.register(types: [FirstClaimant.self]),
+                         "re-registering an identical type is idempotent, not a collision")
+    }
+
     // MARK: - Multiple kinds are distinct
 
     func test_allRegisteredKindsAreDistinct() throws {

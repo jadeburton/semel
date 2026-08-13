@@ -26,8 +26,18 @@ public enum PolyFactory {
     private static var nameCache = [String: WithKind.Type]()
 
     /// All polymorphic types must be registered with the factory before they can be serialized/deserialized.
-    public static func register(types: [WithKind.Type]) {
+    ///
+    /// `kind` is one flat number space shared by every polymorphic type, so a duplicate is
+    /// rejected rather than silently overwriting the earlier claimant — a collision would
+    /// otherwise surface much later as a wrong-type decode somewhere unrelated.
+    /// Re-registering the identical type is idempotent.
+    public static func register(types: [WithKind.Type]) throws {
         for type in types {
+            if let existing = kindCache[type.kind], existing != type {
+                throw PolyFactoryError.duplicateKind(kind: type.kind,
+                                                     existing: String(describing: existing),
+                                                     duplicate: String(describing: type))
+            }
             kindCache[type.kind] = type
             nameCache[String(describing: type)] = type
         }
@@ -38,16 +48,21 @@ public enum PolyFactory {
     }
 
     /// Look up the concrete type for a given kind.
+    ///
+    /// Throws rather than trapping. In-process an unknown kind is a programming error, but
+    /// this same decoder reads bytes that arrive from elsewhere, where an unrecognised kind
+    /// is routine: an older peer, a newer peer, a truncated or hostile frame. None of those
+    /// should be able to take the process down.
     public static func type(kind: UInt) throws -> WithKind.Type {
         guard let type = kindCache[kind] else {
-            fatalError("Unknown object kind: \(kind)")
+            throw PolyFactoryError.unknownKind(kind)
         }
         return type
     }
 
     public static func decodableType(kind: UInt) throws -> PolySerializable.Type {
-        guard let type = kindCache[kind] as? PolySerializable.Type else {
-            fatalError("Unknown object kind, or not PolySerializable: \(kind)")
+        guard let type = try type(kind: kind) as? PolySerializable.Type else {
+            throw PolyFactoryError.notPolySerializable(kind)
         }
         return type
     }
@@ -78,9 +93,29 @@ public enum PolyFactory {
     }
 }
 
-public enum PolyFactoryError: Error {
+public enum PolyFactoryError: Error, CustomStringConvertible {
     case unexpectedType
     case unknownTypeName(String)
+    /// A kind arrived that nothing is registered for — most likely a peer built against a
+    /// different version, or a malformed frame.
+    case unknownKind(UInt)
+    case notPolySerializable(UInt)
+    case duplicateKind(kind: UInt, existing: String, duplicate: String)
+
+    public var description: String {
+        switch self {
+        case .unexpectedType:
+            return "decoded object was not of the expected type"
+        case .unknownTypeName(let name):
+            return "no type is registered under the name '\(name)'"
+        case .unknownKind(let kind):
+            return "no type is registered for kind \(kind)"
+        case .notPolySerializable(let kind):
+            return "the type registered for kind \(kind) is not PolySerializable"
+        case .duplicateKind(let kind, let existing, let duplicate):
+            return "kind \(kind) is claimed by both \(existing) and \(duplicate)"
+        }
+    }
 }
 
 extension PolySerializable {
