@@ -13,8 +13,8 @@ struct ClangLinkerToolConfiguration {
     let arguments: [String]
     let environment: [String: String]
     let dynamicLibrary: Bool
-    let target: String?     // "arm64-apple-macos14.0"
-    let usrLibPath: String? // /Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib
+    let target: String?  // e.g. "arm64-apple-macos14.0"
+    let sdkPath: String?
 
     init(properties: [String: String]) {
         toolDescriptor = .init(properties: properties)
@@ -22,7 +22,7 @@ struct ClangLinkerToolConfiguration {
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
         target = properties["target"]
-        usrLibPath = properties["usrLibPath"]
+        sdkPath = properties["sdkPath"]
     }
 }
 
@@ -116,10 +116,9 @@ public struct ClangLinkerTool: NodeFunction {
 
         arguments.append("-L"); arguments.append(".")
 
-        arguments.append("-L")
-        // TODO: is there a thing we can ask/run to resolve this path, given a desired Xcode version?
-        // TODO: no fallback hard coded value
-        arguments.append(inputs.configuration.usrLibPath ?? "/Applications/Xcode_26_6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib")
+        if let sdkPath = inputs.configuration.sdkPath {
+            arguments.append("-L"); arguments.append(sdkPath + "/usr/lib")
+        }
 
         arguments.append("-lSystem")
 

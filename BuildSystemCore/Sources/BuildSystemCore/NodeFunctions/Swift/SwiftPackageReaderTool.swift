@@ -84,7 +84,7 @@ struct SwiftPackageReaderTool: NodeFunction {
 
             let fileEntry = try packageFileNodeValues.expectValue()
 
-                // Place the file at the sandbox root so `swift package dump-package`
+            // Place the file at the sandbox root so `swift package dump-package`
             // finds it in the working directory, regardless of the wire key's full path.
             packageFile = FileNameAndContent(filePath: "Package.swift", hash: fileEntry)
         }

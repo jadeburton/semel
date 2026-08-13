@@ -126,10 +126,12 @@ public struct ClangPreprocessorTool: NodeFunction {
         arguments.append("-E")
         arguments.append("-x"); arguments.append("c")
         arguments.append("-I"); arguments.append(".")
+
         if let sdkPath = inputs.configuration.sdkPath {
             arguments.append("-I"); arguments.append("\(sdkPath)/usr/include")
             arguments.append("-nostdinc")
         }
+
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o"); arguments.append(outputFilename)
