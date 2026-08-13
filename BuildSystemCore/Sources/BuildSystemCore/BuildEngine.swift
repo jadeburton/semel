@@ -64,22 +64,14 @@ public final class BuildEngine {
         }
     }
 
-    // BUG: this is extremely slow. TODO cache
+    /// Convenience for callers that already hold an engine. The roots belong to the graph,
+    /// not to the engine — `Folder` owns the lookup.
     public var inputFileSystem: Node {
-        get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: Folder.inputFileSystemName)], inputs: [], outputs: [])
-            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
-            return fromNode
-        }
+        get throws { try Folder.inputFileSystem }
     }
 
-    // BUG: this is extremely slow. TODO cache
     public var outputFileSystem: Node {
-        get throws {
-            let graphShape = GraphShapeNode(typeName: "Folder", args: [.init(key: "path", value: Folder.outputFileSystemName)], inputs: [], outputs: [])
-            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
-            return fromNode
-        }
+        get throws { try Folder.outputFileSystem }
     }
 
     // MARK: - Init

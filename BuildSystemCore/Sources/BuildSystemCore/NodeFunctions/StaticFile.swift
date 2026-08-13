@@ -48,11 +48,11 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
 
     static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [outputPort])
 
-    var inputFileSystem: Node {
-        get throws {
-            try BuildEngine.shared.inputFileSystem
-        }
-    }
+//    var inputFileSystem: Node {
+//        get throws {
+//            try BuildEngine.shared.inputFileSystem
+//        }
+//    }
 
     // If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted

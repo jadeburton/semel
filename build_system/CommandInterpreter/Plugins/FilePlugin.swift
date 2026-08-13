@@ -42,8 +42,8 @@ final class FilePlugin: CommandPlugin {
     // MARK: - push
 
     private func handlePush(externalPathOrWildcard: String, context: any CommandContext) throws {
-        BuildEngine.shared.beginBatch()
-        defer { BuildEngine.shared.endBatch() }
+        context.buildEngine.beginBatch()
+        defer { context.buildEngine.endBatch() }
 
         // The matcher is rooted at baseDirectory, and Path drops a leading slash, so an
         // absolute path would silently be reinterpreted as relative and match nothing.

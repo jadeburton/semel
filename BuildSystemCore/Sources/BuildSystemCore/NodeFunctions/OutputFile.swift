@@ -32,9 +32,9 @@ extension HasPath {
         let rootNode: Node
         switch rootName {
         case Folder.inputFileSystemName:
-            rootNode = try BuildEngine.shared.inputFileSystem
+            rootNode = try Folder.inputFileSystem
         case Folder.outputFileSystemName:
-            rootNode = try BuildEngine.shared.outputFileSystem
+            rootNode = try Folder.outputFileSystem
         default:
             throw NodeError.other(message: "Path '\(path)' must begin with 'input:' or 'output:', got '\(rootName)'")
         }

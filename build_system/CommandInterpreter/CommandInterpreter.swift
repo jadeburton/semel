@@ -15,7 +15,7 @@ public final class CommandInterpreter: CommandContext {
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
 
-    var buildEngine: BuildEngine  { BuildEngine.shared }
+    let buildEngine: BuildEngine
     var inputFileSystem: Node     { get throws { try buildEngine.inputFileSystem } }
     var outputFileSystem: Node    { get throws { try buildEngine.outputFileSystem } }
 
@@ -32,20 +32,26 @@ public final class CommandInterpreter: CommandContext {
         return map
     }()
 
+    /// No default for `buildEngine`: the one place that resolves the process-wide engine
+    /// should be the composition root in main.swift, not a default argument here.
     public convenience init(database: DatabaseLayer,
+                            buildEngine: BuildEngine,
                             baseDirectory: String = FileManager.default.currentDirectoryPath) {
         self.init(database: database,
+                  buildEngine: buildEngine,
                   baseDirectory: baseDirectory,
                   plugins: [NavigationPlugin(), FilePlugin(), EnginePlugin(), SessionPlugin()])
     }
 
     required init(database: DatabaseLayer,
+                  buildEngine: BuildEngine,
                   baseDirectory: String,
                   plugins: [any CommandPlugin]) {
 
-        self.plugins = plugins
-        self.baseDirectory = baseDirectory
         self.database = database
+        self.buildEngine = buildEngine
+        self.baseDirectory = baseDirectory
+        self.plugins = plugins
     }
 
     public func handleCommand(_ command: String) throws {

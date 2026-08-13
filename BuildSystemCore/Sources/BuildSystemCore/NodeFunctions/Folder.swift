@@ -38,7 +38,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 
     var inputFileSystem: Node {
         get throws {
-            try BuildEngine.shared.inputFileSystem
+            try Folder.inputFileSystem
         }
     }
 
@@ -149,5 +149,35 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
         if try hasNoOutputWires() && canBeDeleted() {
             try delete()
         }
+    }
+}
+
+// MARK: - File system roots
+
+extension Folder {
+
+    /// The input file system's root Folder.
+    ///
+    /// These roots are a property of the graph, not of the engine: each is just the Folder
+    /// node whose path is "input:" or "output:", found or created by shape like any other
+    /// node. They live here rather than on BuildEngine so a node function does not have to
+    /// reach for the engine — and so the engine is not a dependency of the layer below it.
+    public static var inputFileSystem: Node {
+        get throws { try root(named: inputFileSystemName) }
+    }
+
+    /// The output file system's root Folder.
+    public static var outputFileSystem: Node {
+        get throws { try root(named: outputFileSystemName) }
+    }
+
+    // BUG: this is extremely slow. TODO cache
+    private static func root(named name: String) throws -> Node {
+        let graphShape = GraphShapeNode(typeName: "Folder",
+                                        args: [.init(key: "path", value: name)],
+                                        inputs: [],
+                                        outputs: [])
+        let (rootNode, _) = try graphShape.findOrCreateMatchingNode()
+        return rootNode
     }
 }

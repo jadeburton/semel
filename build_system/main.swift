@@ -16,7 +16,10 @@ func main() throws {
 
     try BuildEngine.start()
 
-    commandInterpreter = CommandInterpreter(database: DatabaseLayer.shared)
+    // Composition root: the process-wide engine and database are resolved once, here, and
+    // handed to everything else.
+    commandInterpreter = CommandInterpreter(database: DatabaseLayer.shared,
+                                            buildEngine: BuildEngine.shared)
     while let line = readLine(), receiveUserInput(line: line) {
     }
 }
