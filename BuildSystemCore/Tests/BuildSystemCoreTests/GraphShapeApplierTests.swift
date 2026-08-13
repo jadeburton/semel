@@ -100,20 +100,50 @@ final class GraphShapeApplierTests: BuildSystemTestCase {
                        "the shape read back from the graph should be the one stored as the key")
     }
 
-    // MARK: - searchKey drift
-    //
-    // findMatchingNode is only ever the searchKey lookup — the structural comparison in
-    // this file (matchesNode, findMatchingNodeBruteForce) is private and never called.
-    // The key is written once at creation and there is no recompute pass, so a node whose
-    // static wiring later changes keeps advertising the shape it had when it was born.
+    /// A node's live shape must always topology-match the key it is stored under.
+    ///
+    /// This is the invariant the whole identity scheme rests on: the key is written once
+    /// at creation and never recomputed, which is only sound because a node's static
+    /// wiring and args are immutable. If this ever fails, `expectTopologyMatch` and
+    /// `findMatchingNode` can disagree about the same node — which is exactly the
+    /// disagreement `applyExpectationConfiguration` papers over as a "false positive".
+    func test_aLiveShapeTopologyMatchesItsOwnStoredKey() throws {
+        let shapes = [
+            "Configuration(role: 'plain').output",
+            "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'up').output]).output",
+            "Configuration(role: 'two', inherit: ['a': Configuration(role: 'x').output]).output",
+        ]
 
-    func test_theStoredKeyGoesStaleWhenAStaticInputIsRewired() throws {
+        for shape in shapes {
+            let (node, _) = try GraphShapeNode.parse(shape).findOrCreateMatchingNode()
+            let live = try GraphShapeNode.buildFromNode(database: database,
+                                                        nodeID: try node.requireID())
+            let stored = try GraphShapeNode.parse(try XCTUnwrap(node.searchKey))
+
+            XCTAssertNoThrow(try live.expectTopologyMatch(stored),
+                             "live shape disagrees with the stored key for \(shape)")
+        }
+    }
+
+    // MARK: - The invariant that makes a frozen key sound
+    //
+    // A searchKey is written once at creation and never recomputed. That is correct only
+    // while a node's static wiring and args cannot change: static topology is identity, so
+    // different static wiring is a different node. Only dynamic ports are rewired after
+    // creation, and they are deliberately excluded from the shape.
+    //
+    // The two tests below reach past the engine and mutate static wiring directly. Nothing
+    // in the engine does this — applyExpectationConfiguration only ever touches ports
+    // declared `.dynamic`. They exist to show what breaks if that invariant is ever
+    // violated, so the cost is visible before someone rewires a static port.
+
+    func test_theStoredKeyGoesStaleIfAStaticInputIsRewired() throws {
         let originalShape = "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'first').output]).output"
         let (consumer, _) = try GraphShapeNode.parse(originalShape).findOrCreateMatchingNode()
         let keyAtCreation = try XCTUnwrap(consumer.searchKey)
 
-        // Rewire the static input to a different upstream, as applyExpectationConfiguration
-        // does when a formula changes.
+        // Rewire the static input directly. Note the engine never does this — only
+        // dynamic ports are rewired after creation.
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
                                                           toSymbolID: try "inherit".asSymbolID()).first)
         try existing.deleteWire(database: database)
@@ -138,7 +168,7 @@ final class GraphShapeApplierTests: BuildSystemTestCase {
                        "and the key was never recomputed")
     }
 
-    /// The consequence: a shape describing wiring the node no longer has still resolves
+    /// And the consequence if it were: a shape describing wiring the node no longer has
     /// to it, because the lookup only consults the frozen key.
     func test_aStaleKeyStillResolvesToTheRewiredNode() throws {
         let originalShape = "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'first').output]).output"
