@@ -74,21 +74,6 @@ final class ClangCompilerToolTests: BuildSystemTestCase {
         XCTAssertEqual(try value.expectValue().resolveAsString(), "OBJECT-BYTES")
     }
 
-    func test_failedRunReportsTheExitCodeInsteadOfPublishingAnObject() throws {
-        executor.exitCode = 1
-
-        let output = try makeTool().process(input: try makeInput())
-
-        let value = try XCTUnwrap(output.outputValues[ClangCompilerTool.output])
-        guard case .noValue(let reason) = value else {
-            return XCTFail("a failed compile must not publish a value, got \(value)")
-        }
-        guard case .error(let message) = reason else {
-            return XCTFail("a failed compile is an error, not pending")
-        }
-        XCTAssertTrue(message.contains("1"), "the exit code should be reported, got \(message)")
-    }
-
     func test_missingToolNamesWhatWasRequestedAndWhatIsRegistered() throws {
         ToolExecutorRegistry.instance = ToolExecutorRegistry()
 

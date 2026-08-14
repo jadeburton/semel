@@ -239,36 +239,22 @@ struct SwiftCompilerTool: NodeFunction {
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
-        var objectBytes:    [UInt8] = []
-        var moduleBytes:    [UInt8] = []
-        var interfaceBytes: [UInt8] = []
-        var errorOutput = ""
-        var infoOutput  = ""
-
-        let exitCode = try tool.execute(
+        let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleMapFiles,
-            expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput],
-            output: .init(
-                logError:   { message in errorOutput += message + "\n"; },
-                logMessage: { message in infoOutput  += message + "\n"; },
-                write: { filename, data in
-                    if filename == objectOutput {
-                        objectBytes.append(contentsOf: data)
-                    } else if filename == moduleOutput {
-                        moduleBytes.append(contentsOf: data)
-                    } else if filename == interfaceOutput {
-                        interfaceBytes.append(contentsOf: data)
-                    }
-                })).exitCode
+            expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput])
 
-        guard exitCode == 0 else {
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
+        let objectBytes = result.outputFiles[objectOutput] ?? []
+        let moduleBytes = result.outputFiles[moduleOutput] ?? []
+        let interfaceBytes = result.outputFiles[interfaceOutput] ?? []
+
+        guard result.exitCode == 0 else {
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try result.errorOutput.intern()))
             return .init(outputObject: error,
                          outputModule: error,
                          outputInterface: error,
-                         infoLog: .value(try infoOutput.intern()),
+                         infoLog: .value(try result.infoOutput.intern()),
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
@@ -276,7 +262,7 @@ struct SwiftCompilerTool: NodeFunction {
         return .init(outputObject:    .value(try objectBytes.intern()),
                      outputModule:    .value(try moduleBytes.intern()),
                      outputInterface: .value(try interfaceBytes.intern()),
-                     infoLog:         .value(try infoOutput.intern()),
+                     infoLog:         .value(try result.infoOutput.intern()),
                      inputSourceFilesExpectations: inputSourceFilesExpectations,
                      inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
     }

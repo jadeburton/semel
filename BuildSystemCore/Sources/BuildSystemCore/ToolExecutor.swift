@@ -37,6 +37,15 @@ struct ToolDescriptor: Hashable, Codable {
     }
 }
 
+struct SimplifiedToolExecuteResult {
+    let exitCode: Int32
+    // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
+    let sandboxPathUsed: String
+    let infoOutput: String
+    let errorOutput: String
+    let outputFiles: [String: [UInt8]]
+}
+
 struct ToolExecuteResult {
     let exitCode: Int32
     // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
@@ -51,6 +60,45 @@ protocol ToolExecutor {
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
                  output: ToolOutput) throws -> ToolExecuteResult
+}
+
+extension ToolExecutor {
+    // Simplified version of execute that does not stream the outputs
+    func execute(arguments: [String],
+                 environment: [String: String],
+                 inputFiles: [FileNameAndContent],
+                 expectedOutputFileNames: [String]) throws -> SimplifiedToolExecuteResult {
+
+        var infoOutput = ""
+        var errorOutput = ""
+        var outputFiles = [String: [UInt8]]()
+
+        let result = try execute(arguments: arguments,
+                                   environment: environment,
+                                   inputFiles: inputFiles,
+                                   expectedOutputFileNames: expectedOutputFileNames,
+                                   output: .init(logError: { error in
+                                                     errorOutput += error
+                                                     errorOutput += "\n"
+                                                 },
+                                                 logMessage: { message in
+                                                     infoOutput += message
+                                                     infoOutput += "\n"
+                                                 },
+                                                 write: { filename, data in
+                                                     if outputFiles[filename] == nil {
+                                                         outputFiles[filename] = data
+                                                     } else {
+                                                         outputFiles[filename] = outputFiles[filename]! + data
+                                                     }
+                                                 }))
+
+        return .init(exitCode: result.exitCode,
+                     sandboxPathUsed: result.sandboxPathUsed,
+                     infoOutput: infoOutput,
+                     errorOutput: errorOutput,
+                     outputFiles: outputFiles)
+    }
 }
 
 // MARK: - Supporting types

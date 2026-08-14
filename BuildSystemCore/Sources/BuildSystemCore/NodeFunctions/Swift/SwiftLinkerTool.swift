@@ -133,32 +133,12 @@ struct SwiftLinkerTool: NodeFunction {
         inputFiles.append(contentsOf: inputs.objectFiles)
         inputFiles.append(contentsOf: inputs.libraryFiles)
 
-        var output: [UInt8] = []
-        var errorOutput = ""
-        var infoOutput = ""
-
-        let exitCode = try tool.execute(
+        let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
             inputFiles: inputFiles,
-            expectedOutputFileNames: [outputName],
-            output: .init(
-                logError: { error in
-                    errorOutput += error
-                    errorOutput += "\n"
-                    print(error)
-                },
-                logMessage: { message in
-                    infoOutput += message
-                    infoOutput += "\n"
-                    print(message)
-                },
-                write: { _, data in
-                    output.append(contentsOf: data)
-                })).exitCode
+            expectedOutputFileNames: [outputName])
 
-        return .init(
-            output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern())),
-            infoLog: .value(try infoOutput.intern()))
+        return .init(output: try result.asOutputNodeValue(), infoLog: .value(try result.infoOutput.intern()))
     }
 }

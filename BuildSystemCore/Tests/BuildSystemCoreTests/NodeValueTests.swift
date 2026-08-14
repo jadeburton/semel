@@ -24,24 +24,24 @@ final class NodeValueTests: BuildSystemTestCase {
 
     func test_noValue_error_preservesMessage() throws {
         let message = "clang exited with status 1"
-        let original = NodeValue.noValue(reason: .error(message: message))
+        let original = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
         let json = try original.toJSON()
         let decoded = try NodeValue.fromJSON(json)
-        guard case .noValue(let reason) = decoded, case .error(let msg) = reason else {
+        guard case .noValue(let reason) = decoded, case .error(let decodedHash) = reason else {
             XCTFail("Expected .noValue(.error), got \(decoded)")
             return
         }
-        XCTAssertEqual(msg, message)
+        XCTAssertEqual(try decodedHash.resolveAsString(), message)
     }
 
     func test_noValue_error_emptyMessage_roundTrip() throws {
-        let original = NodeValue.noValue(reason: .error(message: ""))
+        let original = NodeValue.noValue(reason: .error(messageDataObjectHash: try "".intern()))
         let json = try original.toJSON()
         let decoded = try NodeValue.fromJSON(json)
-        guard case .noValue(let reason) = decoded, case .error(let msg) = reason else {
+        guard case .noValue(let reason) = decoded, case .error(let decodedHash) = reason else {
             XCTFail(); return
         }
-        XCTAssertEqual(msg, "")
+        XCTAssertEqual(try decodedHash.resolveAsString(), "")
     }
 
     // MARK: - NodeValue.value Codable round-trip
@@ -72,7 +72,7 @@ final class NodeValueTests: BuildSystemTestCase {
     }
 
     func test_isNoValue_error_isTrue() {
-        XCTAssertTrue(NodeValue.noValue(reason: .error(message: "oops")).isNoValue)
+        XCTAssertTrue(NodeValue.noValue(reason: .error(messageDataObjectHash: "oops")).isNoValue)
     }
 
     func test_isNoValue_value_isFalse() {
@@ -91,7 +91,7 @@ final class NodeValueTests: BuildSystemTestCase {
     }
 
     func test_expectValue_noValue_error_throws() {
-        XCTAssertThrowsError(try NodeValue.noValue(reason: .error(message: "err")).expectValue())
+        XCTAssertThrowsError(try NodeValue.noValue(reason: .error(messageDataObjectHash: "err")).expectValue())
     }
 
     // MARK: - JSON is stable (same input always produces same output)

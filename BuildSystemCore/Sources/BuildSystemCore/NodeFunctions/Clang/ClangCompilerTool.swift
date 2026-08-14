@@ -99,34 +99,29 @@ public struct ClangCompilerTool: NodeFunction {
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
-        var output: [UInt8] = []
-        var errorOutput = ""
-        var infoOutput = ""
-
-        let exitCode = try tool.execute(
+        let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
             inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)],
-            expectedOutputFileNames: [outputFilename],
-            output: .init(logError: { error in
-                              errorOutput += error
-                              errorOutput += "\n"
-//                              print(error)
-                          },
-                          logMessage: { message in
-                              infoOutput += message
-                              infoOutput += "\n"
-//                              print(message)
-                          },
-                          write: { _, data in
-                              output.append(contentsOf: data)
-                          })).exitCode
+            expectedOutputFileNames: [outputFilename])
 
-        let errorOutputInterned = try errorOutput.intern()
+        return .init(output: try result.asOutputNodeValue(),
+                     errorLog: .value(try result.errorOutput.intern()),
+                     infoLog: .value(try result.infoOutput.intern()))
+    }
+}
 
-        // TODO: error messages should be interned also in .noValue enum
-        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: errorOutputInterned)),
-                     errorLog: .value(errorOutputInterned),
-                     infoLog: .value(try infoOutput.intern()))
+extension SimplifiedToolExecuteResult {
+    // Assumes only one output file
+    func asOutputNodeValue() throws -> NodeValue {
+        if exitCode == 0 {
+            if let outputFile = outputFiles.values.first {
+                return .value(try outputFile.intern())
+            } else {
+                return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
+            }
+        } else {
+            return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
+        }
     }
 }

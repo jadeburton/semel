@@ -166,33 +166,14 @@ public struct ClangPreprocessorTool: NodeFunction {
 
         inputFiles.append(contentsOf: inputs.headerFiles)
 
-        var output: [UInt8] = []
-        var errorOutput = ""
-        var infoOutput = ""
+        let result = try tool.execute(arguments: arguments,
+                                      environment: inputs.configuration.environment,
+                                      inputFiles: inputFiles,
+                                      expectedOutputFileNames: [outputFilename])
 
-        let exitCode = try tool.execute(arguments: arguments,
-                                        environment: inputs.configuration.environment,
-                                        inputFiles: inputFiles,
-                                        expectedOutputFileNames: [outputFilename],
-                                        output: .init(logError: { error in
-                                                          errorOutput += error
-                                                          errorOutput += "\n"
-//                                                          print(error)
-                                                      },
-                                                      logMessage: { message in
-                                                          infoOutput += message
-                                                          infoOutput += "\n"
-//                                                          print(message)
-                                                      },
-                                                      write: { _, data in
-                                                          output.append(contentsOf: data)
-        })).exitCode
-
-        let errorOutputInterned = try errorOutput.intern()
-
-        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: errorOutputInterned)),
-                     errorLog: .value(errorOutputInterned),
-                     infoLog: .value(try infoOutput.intern()),
+        return .init(output: try result.asOutputNodeValue(),
+                     errorLog: .value(try result.errorOutput.intern()),
+                     infoLog: .value(try result.infoOutput.intern()),
                      headerInputFilesWireExpectations: headerInputFilesWireExpectations,
                      includeFileListWireExpections: includeFileListWireExpections)
     }

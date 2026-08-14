@@ -160,35 +160,18 @@ public struct ClangLinkerTool: NodeFunction {
         inputFiles.append(contentsOf: inputs.libraryFiles)
         inputFiles.append(contentsOf: inputs.objectFiles)
 
-        var output: [UInt8] = []
-        var errorOutput = ""
-        var infoOutput = ""
-
-        let exitCode = try tool.execute(
+        let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
             inputFiles: inputFiles,
-            expectedOutputFileNames: ["output.dylib"],
-            output: .init(logError: { error in
-                              errorOutput += error
-                              errorOutput += "\n"
-//                              print(error)
-                          },
-                          logMessage: { message in
-                              infoOutput += message
-                              infoOutput += "\n"
-//                              print(message)
-                          },
-                          write: { _, data in
-                              output.append(contentsOf: data)
-                          })).exitCode
+            expectedOutputFileNames: ["output.dylib"])
 
         let mode: UInt16 = inputs.configuration.dynamicLibrary ? FileMetadata.defaultMode : FileMetadata.executableMode
         let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
         let metadataValue = NodeValue.value(try metadataJSON.intern())
 
-        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern())),
-                     infoLog: .value(try infoOutput.intern()),
+        return .init(output: try result.asOutputNodeValue(),
+                     infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: metadataValue)
     }
 }
