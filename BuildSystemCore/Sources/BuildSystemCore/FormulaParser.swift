@@ -108,10 +108,10 @@ enum FormulaCallArg {
 enum WireDictEntry {
     case simple(key: FormulaExpr, value: FormulaExpr)
     case unnamed(value: FormulaExpr)
-    case forEach(variable: String, items: [String], key: String, value: FormulaExpr)
+    case forEach(variable: String, items: [FormulaExpr], key: String, value: FormulaExpr)
     // simple.key: any expression that resolves to a String (literal, identifier, or template)
     // forEach.key: template string — may contain %%variable%%
-    // items: literal strings or glob patterns (already path-resolved if angle-bracketed)
+    // items: string expressions or parameter references — evaluated then glob-expanded if they contain wildcards
 }
 
 // MARK: - Errors
@@ -584,14 +584,19 @@ private struct FormulaParser {
         try expect(.colon)
 
         // Parse one or more items separated by commas, until '}'.
-        var items: [String] = []
+        var items: [FormulaExpr] = []
         repeat {
-            guard case .string(let item) = current else {
+            switch current {
+            case .string(let item):
+                items.append(.string(item))
+                advance()
+            case .ident(let name):
+                items.append(.identifier(name))
+                advance()
+            default:
                 throw located(FormulaParseError.unexpectedToken(current,
-                                                                 expected: "for-each item (string or path) after '\(variable):'"))
+                                                                 expected: "for-each item (string, path, or parameter name) after '\(variable):'"))
             }
-            items.append(item)
-            advance()
             if current == .comma { advance() }
         } while current != .rbrace
         try expect(.rbrace)
@@ -897,8 +902,19 @@ private struct FormulaResolver {
                         }
                         graphWires.append(GraphShapeWire(name: "wire\(graphWires.count)", node: node))
 
-                    case .forEach(let variable, let items, let key, let expr):
-                        let bindings = try expandForEachItems(variable: variable, items: items)
+                    case .forEach(let variable, let itemExprs, let key, let expr):
+                        var resolvedItems: [String] = []
+                        for itemExpr in itemExprs {
+                            let itemValue = try eval(itemExpr, env: env, templateEnv: templateEnv)
+                            guard case .string(let s) = itemValue else {
+                                throw FormulaParseError.typeMismatch(
+                                    expected: "string (for-each item)",
+                                    got: itemValue.typeName,
+                                    context: "for-each items must resolve to strings")
+                            }
+                            resolvedItems.append(s)
+                        }
+                        let bindings = try expandForEachItems(variable: variable, items: resolvedItems)
                         for binding in bindings {
                             var newTemplateEnv = templateEnv
                             newTemplateEnv[variable] = binding
