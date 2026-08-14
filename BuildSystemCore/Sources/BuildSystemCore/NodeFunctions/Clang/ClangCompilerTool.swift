@@ -11,11 +11,15 @@ struct ClangCompilerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    /// C++ language standard, e.g. `"c++17"` or `"c++20"`.
+    /// Defaults to `"c++17"` for C++ source files when not specified.
+    let std: String?
 
     init(properties: [String: String]) {
         toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
+        std = properties["std"]
     }
 }
 
@@ -79,9 +83,15 @@ public struct ClangCompilerTool: NodeFunction {
 
         let outputFilename = inputs.inputSourceFile.filePath + ".o"
 
+        let language = ClangPreprocessorTool.language(for: inputs.inputSourceFile.filePath)
+        let effectiveStd = inputs.configuration.std ?? (language == "c++" ? "c++17" : nil)
+
         var arguments = [String]()
-        arguments.append("-x");      arguments.append("c")
+        arguments.append("-x");      arguments.append(language)
         arguments.append("-c")
+        if let std = effectiveStd {
+            arguments.append("-std=\(std)")
+        }
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")

@@ -13,15 +13,20 @@ struct ClangPreprocessorToolConfiguration {
     let arguments: [String]
     let environment: [String: String]
     /// Path to the SDK root (e.g. `/path/to/MacOSX.sdk`).
-    /// When set, `-I <sdkPath>/usr/include -nostdinc` is passed to the preprocessor.
+    /// When set, `-isysroot <sdkPath>` is passed so clang can find system headers.
     /// Supply via `Configuration(sdkPath: '/path/to/MacOSX.sdk')` in the formula.
     let sdkPath: String?
+    /// C++ language standard, e.g. `"c++17"` or `"c++20"`.
+    /// Defaults to `"c++17"` for C++ source files when not specified.
+    /// Supply via `Configuration(std: 'c++17')` in the formula.
+    let std: String?
 
     init(properties: [String: String]) {
         toolDescriptor = .init(properties: properties)
         arguments = []
         environment = [:]
         sdkPath = properties["sdkPath"]
+        std     = properties["std"]
     }
 }
 
@@ -114,6 +119,16 @@ public struct ClangPreprocessorTool: NodeFunction {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
+    /// Returns the clang `-x` language flag for `filePath`, handling raw source
+    /// files (`.cpp`), preprocessed files (`.cpp.p`), and object files (`.cpp.p.o`).
+    static func language(for filePath: String) -> String {
+        var lower = filePath.lowercased()
+        if lower.hasSuffix(".o") { lower = String(lower.dropLast(2)) }
+        let cppSuffixes = [".cpp", ".cc", ".cxx", ".c++",
+                           ".cpp.p", ".cc.p", ".cxx.p", ".c++.p"]
+        return cppSuffixes.contains(where: { lower.hasSuffix($0) }) ? "c++" : "c"
+    }
+
     private func runPreprocessor(inputs: ClangPreprocessorToolInputs,
                                  headerInputFilesWireExpectations: [String: String],
                                  includeFileListWireExpections: [String: String]) throws -> ClangPreprocessorToolOutputs {
@@ -123,13 +138,21 @@ public struct ClangPreprocessorTool: NodeFunction {
         var arguments = [String]()
 
         // Preprocess only.
+        let language = Self.language(for: inputs.inputSourceFile.filePath)
         arguments.append("-E")
-        arguments.append("-x"); arguments.append("c")
+        arguments.append("-x"); arguments.append(language)
         arguments.append("-I"); arguments.append(".")
 
+        let effectiveStd = inputs.configuration.std ?? (language == "c++" ? "c++17" : nil)
+        if let std = effectiveStd {
+            arguments.append("-std=\(std)")
+        }
+
         if let sdkPath = inputs.configuration.sdkPath {
-            arguments.append("-I"); arguments.append("\(sdkPath)/usr/include")
-            arguments.append("-nostdinc")
+            // -isysroot locates the SDK without stripping the compiler's own include
+            // paths (-nostdinc would do that, breaking C++ standard-library headers
+            // which live in the toolchain, not the SDK).
+            arguments.append("-isysroot"); arguments.append(sdkPath)
         }
 
         arguments.append("-target"); arguments.append("arm64-apple-macos14.0")

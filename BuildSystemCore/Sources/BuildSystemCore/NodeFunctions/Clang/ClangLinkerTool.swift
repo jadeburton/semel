@@ -15,6 +15,9 @@ struct ClangLinkerToolConfiguration {
     let dynamicLibrary: Bool
     let target: String?  // e.g. "arm64-apple-macos14.0"
     let sdkPath: String?
+    /// True when the `std` property starts with `"c++"`, indicating a C++ link
+    /// that requires `-lc++` in addition to `-lSystem`.
+    let cxx: Bool
 
     init(properties: [String: String]) {
         toolDescriptor = .init(properties: properties)
@@ -23,6 +26,7 @@ struct ClangLinkerToolConfiguration {
         dynamicLibrary = properties["dynamicLibrary"] == "true"
         target = properties["target"]
         sdkPath = properties["sdkPath"]
+        cxx = (properties["std"] ?? "").hasPrefix("c++")
     }
 }
 
@@ -121,6 +125,14 @@ public struct ClangLinkerTool: NodeFunction {
         }
 
         arguments.append("-lSystem")
+        // Link against libc++ if any object file was compiled from C++ source, or if
+        // the configuration explicitly declares a C++ standard (std: 'c++17' etc.).
+        let hasCxxObjects = inputs.objectFiles.contains {
+            ClangPreprocessorTool.language(for: $0.filePath) == "c++"
+        }
+        if hasCxxObjects || inputs.configuration.cxx {
+            arguments.append("-lc++")
+        }
 
         arguments.append("-nostdlib")
 
