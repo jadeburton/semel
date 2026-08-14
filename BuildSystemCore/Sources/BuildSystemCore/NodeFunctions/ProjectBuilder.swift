@@ -6,16 +6,18 @@
 public struct ProjectBuilder: NodeFunction {
     public static let kind: UInt = 6
 
-    static let projectFileInputPort = "projectFile"
-    static let productInputPort     = "input"
-    static let statusOutputPort     = "status"
-    static let foldersInputPort     = "folders"
+    static let projectFileInputPort   = "projectFile"
+    static let productInputPort       = "input"
+    static let statusOutputPort       = "status"
+    static let foldersInputPort       = "folders"
+    static let graphImportsInputPort  = "graphImports"
 
     static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(projectFileInputPort),
             .dynamic(productInputPort),
             .dynamic(foldersInputPort),
+            .dynamic(graphImportsInputPort),
         ],
         outputPorts: [statusOutputPort]
     )
@@ -37,11 +39,14 @@ public struct ProjectBuilder: NodeFunction {
         // On the first run these are empty; subsequent runs have real data.
         let folderManifests = decodeFolderManifests(input.inputValues[Self.foldersInputPort] ?? [:])
 
-        // Record every folder path that the formula references via a glob so we can
-        // wire them and trigger re-processing when their contents change.
-        final class GlobRecord { var folderPaths = Set<String>() }
-        let record  = GlobRecord()
-        let capture = self   // value-type copy for use inside @escaping closure
+        // Record every folder path the formula references via a glob and every file
+        // path it references via import(), so we can wire them and be rescheduled
+        // whenever their contents change.
+        final class GlobRecord   { var folderPaths = Set<String>() }
+        final class ImportRecord { var filePaths = Set<String>(); var anyMissing = false }
+        let record       = GlobRecord()
+        let importRecord = ImportRecord()
+        let capture      = self   // value-type copy for use inside @escaping closures
 
         let globber: (String) throws -> [String] = { pattern in
             let folder = capture.extractFolderPath(fromGlobPattern: pattern)
@@ -51,22 +56,35 @@ public struct ProjectBuilder: NodeFunction {
                                      manifests: folderManifests)
         }
 
+        let fileReader: (String) throws -> String? = { path in
+            importRecord.filePaths.insert(path)
+            guard let nodeValue = input.inputValues[Self.graphImportsInputPort]?[path] else {
+                importRecord.anyMissing = true
+                return nil
+            }
+            return try nodeValue.expectValue().resolveAsString()
+        }
+
         let products = try FormulaFile.parse(projectFileContent,
                                              basePath: parentFolder,
-                                             globber: globber)
+                                             globber: globber,
+                                             fileReader: fileReader)
 
-        // There are two kinds of Formula files. One contains no globber wildcards; the other does.
-        // Formula files with wildcards require multiple passes and the initial passes may not yet have discovered all files,
-        // resulting in empty entries in the GraphShape expectations, which then cause errors when we attempt to apply them.
-        // These errors will cause all other expectations to fail, which we don't want - we need the folder expectations to work.
-        // To avoid this, we just don't output any product expectations until we have one or more folders bound.
+        // There are two kinds of Formula files: those without globber wildcards, and
+        // those with.  Files with wildcards require multiple passes — the initial passes
+        // may not have discovered all files yet, resulting in an empty objectFiles list
+        // that would produce bad product expectations.  Similarly, imported .graph files
+        // may not be wired yet on the first pass.  In both cases we suppress product
+        // expectations until all dependencies are ready, while still emitting the wire
+        // expectations that will make the missing dependencies available on the next pass.
 
         // Build output-file expectations for each formula product.
         var productExpectations = [String: String]()
 
-        // Either we don't have any globbing or we do, and we have bound folders - then emit product expectations
-        if record.folderPaths.isEmpty || !folderManifests.isEmpty {
+        let globsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
+        let importsReady = !importRecord.anyMissing
 
+        if globsReady && importsReady {
             for (productName, shapeNode) in products {
 
                 let fullPath = Path(Folder.outputFileSystemName)
@@ -79,7 +97,6 @@ public struct ProjectBuilder: NodeFunction {
 
                 productExpectations[fullPath.string] = wrapper.asString(omitOutputPort: false)
             }
-
         }
 
         // Wire each glob-referenced folder's manifest into our 'folders' port so we
@@ -89,11 +106,19 @@ public struct ProjectBuilder: NodeFunction {
             folderExpectations[folderPath] = "Folder(path: '\(folderPath)').manifest"
         }
 
+        // Wire each imported .graph file into our 'graphImports' port so we are
+        // automatically rescheduled whenever its content changes.
+        var importExpectations = [String: String]()
+        for importPath in importRecord.filePaths {
+            importExpectations[importPath] = "StaticFile(path: '\(importPath)').output"
+        }
+
         return .init(
             outputValues: [Self.statusOutputPort: .value(try "OK".intern())],
             inputWireExpectations: [
-                Self.productInputPort: productExpectations,
-                Self.foldersInputPort: folderExpectations
+                Self.productInputPort:      productExpectations,
+                Self.foldersInputPort:      folderExpectations,
+                Self.graphImportsInputPort: importExpectations,
             ]
         )
     }

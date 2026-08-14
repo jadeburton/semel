@@ -55,16 +55,22 @@ extension FormulaFile {
     /// declaration to a `GraphShapeNode`.
     /// `globber` is called for any for-each items that contain glob wildcards
     /// ('*' or '?'); it should return the sorted list of matching logical paths.
+    /// `fileReader` is called for every `import(path:)` expression; it should
+    /// return the file contents, or `nil` if the file is not yet available (which
+    /// causes the resolver to substitute a placeholder node so that dependency
+    /// discovery continues — the caller is responsible for checking whether any
+    /// import was unavailable before using the returned products).
     /// Returns a mapping of product name → node, ready for `GraphShapeApplier`.
     static func parse(
         _ source: String,
         basePath: Path,
-        globber: @escaping (String) throws -> [String]
+        globber: @escaping (String) throws -> [String],
+        fileReader: @escaping (String) throws -> String? = { _ in nil }
     ) throws -> [String: GraphShapeNode] {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
         let file   = try parser.parseFile()
-        return try FormulaResolver(file, globber: globber).resolve()
+        return try FormulaResolver(file, globber: globber, fileReader: fileReader).resolve()
     }
 }
 
@@ -734,14 +740,18 @@ private func extractSegmentCaptures(pattern: String, text: String) -> [String] {
 // MARK: - Resolver
 
 private struct FormulaResolver {
-    let functions: [String: FuncDef]
-    let products:  [ProductDef]
-    let globber:   (String) throws -> [String]
+    let functions:  [String: FuncDef]
+    let products:   [ProductDef]
+    let globber:    (String) throws -> [String]
+    let fileReader: (String) throws -> String?
 
-    init(_ file: FormulaFile, globber: @escaping (String) throws -> [String]) {
-        functions    = Dictionary(uniqueKeysWithValues: file.functions.map { ($0.name, $0) })
-        products     = file.products
-        self.globber = globber
+    init(_ file: FormulaFile,
+         globber:    @escaping (String) throws -> [String],
+         fileReader: @escaping (String) throws -> String?) {
+        functions        = Dictionary(uniqueKeysWithValues: file.functions.map { ($0.name, $0) })
+        products         = file.products
+        self.globber     = globber
+        self.fileReader  = fileReader
     }
 
     func resolve() throws -> [String: GraphShapeNode] {
@@ -779,6 +789,9 @@ private struct FormulaResolver {
             return value
 
         case .call(let name, let args, let port):
+            if name == "import" {
+                return try evalImport(args: args, port: port, env: env, templateEnv: templateEnv)
+            }
             if let funcDef = functions[name] {
                 // User-defined function: no .port suffix → preserve the function's own return port.
                 let base = try evalFuncCall(funcDef, args: args, env: env, templateEnv: templateEnv)
@@ -847,6 +860,49 @@ private struct FormulaResolver {
         }
 
         return try eval(funcDef.body, env: newEnv, templateEnv: templateEnv)
+    }
+
+    // import(path: <file>) — reads an external .graph file and returns its root node.
+    // If the file is not yet available the fileReader returns nil; we substitute a
+    // placeholder node so that the rest of the formula continues to evaluate (allowing
+    // all other dependency paths — globs, other imports — to be recorded).  The caller
+    // is responsible for suppressing product expectations when anyImportMissing is set.
+    private func evalImport(
+        args: [FormulaCallArg],
+        port: String?,
+        env: [String: FormulaValue],
+        templateEnv: [String: ForEachBinding]
+    ) throws -> FormulaValue {
+        guard args.count == 1,
+              case .labeled(let key, let pathExpr) = args[0],
+              key == "path"
+        else {
+            throw FormulaParseError.typeMismatch(
+                expected: "import(path: <file>)",
+                got: "unexpected arguments",
+                context: "import() requires exactly one 'path:' labeled argument")
+        }
+
+        let pathValue = try eval(pathExpr, env: env, templateEnv: templateEnv)
+        guard case .string(let path) = pathValue else {
+            throw FormulaParseError.typeMismatch(
+                expected: "string",
+                got: pathValue.typeName,
+                context: "import path must resolve to a string")
+        }
+
+        guard let content = try fileReader(path) else {
+            // File not yet wired — return a placeholder so dependency recording continues.
+            return .node(GraphShapeNode(typeName: "__ImportPending__"))
+        }
+
+        let baseNode       = try GraphShapeNode.parse(content)
+        let effectivePort  = port ?? baseNode.outputPort ?? resolveDefaultOutputPort(forTypeName: baseNode.typeName)
+        return .node(GraphShapeNode(typeName:   baseNode.typeName,
+                                     args:       baseNode.args,
+                                     inputs:     baseNode.inputs,
+                                     outputs:    baseNode.outputs,
+                                     outputPort: effectivePort))
     }
 
     // Node construction: map labeled args → GraphShapeArg, wires → GraphShapeInputPort.
