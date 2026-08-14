@@ -78,7 +78,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     )
 
     func didCreate() throws -> ProcessOutput? {
-        return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(message: "Missing"))],
+        return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(messageDataObjectHash: try "Missing".intern()))],
                      inputWireExpectations: [:])
     }
 

@@ -55,7 +55,7 @@ struct SwiftFormulaConverter: NodeFunction {
         let manifestJSON = try input.inputValues[Self.packageFolder]!.values.first!.expectValue().resolveAsString()
 
         guard let folderManifest = try? PolyFactory.decode(encodedJSON: manifestJSON) as? FolderManifest else {
-            return pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
+            return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
                                  externalExpectations: [:])
         }
 
@@ -69,7 +69,7 @@ struct SwiftFormulaConverter: NodeFunction {
         do {
             rootManifest = try SPMManifest.decode(try jsonEntry.resolveAsString())
         } catch {
-            return pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalExpectations: [:])
+            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalExpectations: [:])
         }
 
         // ── already-received external manifests ───────────────────────────────
@@ -109,7 +109,7 @@ struct SwiftFormulaConverter: NodeFunction {
         // ── wait until every expected manifest has been received ──────────────
         let missing = expectations.keys.filter { availableManifests[$0] == nil }
         guard missing.isEmpty else {
-            return pendingOutput(
+            return try pendingOutput(
                 reason: "SwiftFormulaConverter: awaiting external packages: \(missing.sorted().joined(separator: ", "))",
                 externalExpectations: expectations)
         }
@@ -126,8 +126,8 @@ struct SwiftFormulaConverter: NodeFunction {
 
     // Returns a noValue output that still carries the current expectations,
     // so applyExpectationConfiguration keeps (or creates) the needed wires.
-    private func pendingOutput(reason: String, externalExpectations: [String: String]) -> ProcessOutput {
-        .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(message: reason)),
+    private func pendingOutput(reason: String, externalExpectations: [String: String]) throws -> ProcessOutput {
+        .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog:       .value("")],   // empty content never reaches the store
               inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
     }

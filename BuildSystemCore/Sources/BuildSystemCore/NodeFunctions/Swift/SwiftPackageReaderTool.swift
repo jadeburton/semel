@@ -130,13 +130,13 @@ struct SwiftPackageReaderTool: NodeFunction {
 
         guard result.exitCode == 0 else {
             return .init(
-                packageJSON: .noValue(reason: .error(message: "swift package dump-package failed:\n\(stderrOutput)")),
+                packageJSON: .noValue(reason: .error(messageDataObjectHash: try "swift package dump-package failed:\n\(stderrOutput)".intern())),
                 infoLog: .value(try stderrOutput.intern()))
         }
 
         guard !jsonOutput.isEmpty else {
             return .init(
-                packageJSON: .noValue(reason: .error(message: "SwiftPackageReaderTool: no output from swift package dump-package")),
+                packageJSON: .noValue(reason: .error(messageDataObjectHash: try "SwiftPackageReaderTool: no output from swift package dump-package".intern())),
                 infoLog: .value(try stderrOutput.intern()))
         }
 

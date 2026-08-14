@@ -50,7 +50,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 
     func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
-                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(message: "Deleted")) : .value("")], // HACK
+                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())) : .value("")], // HACK
               inputWireExpectations: [:])
     }
 
@@ -108,7 +108,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
             return
         }
         try thisNode.writeToOutputPort(Self.pinnedOutputPort,
-                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(message: "Deleted/Nonexistent")))
+                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(messageDataObjectHash: "Deleted/Nonexistent".intern())))
 
         try notifyParentOfChildContentChange()
     }

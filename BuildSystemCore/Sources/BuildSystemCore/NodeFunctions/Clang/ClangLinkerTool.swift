@@ -157,18 +157,18 @@ public struct ClangLinkerTool: NodeFunction {
             output: .init(logError: { error in
                               errorOutput += error
                               errorOutput += "\n"
-                              print(error)
+//                              print(error)
                           },
                           logMessage: { message in
                               infoOutput += message
                               infoOutput += "\n"
-                              print(message)
+//                              print(message)
                           },
                           write: { _, data in
                               output.append(contentsOf: data)
                           })).exitCode
 
-        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(message: errorOutput)),
+        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern())),
                      infoLog: .value(try infoOutput.intern()))
     }
 }

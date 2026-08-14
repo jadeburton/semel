@@ -71,7 +71,7 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
         if let content {
             changed = try thisNode.writeToOutputPort(Self.outputPort, value: .value(content))
         } else {
-            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(message: "Deleted")))
+            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(messageDataObjectHash: "Deleted".intern())))
         }
 
         if changed {

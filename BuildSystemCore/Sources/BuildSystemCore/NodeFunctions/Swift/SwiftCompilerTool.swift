@@ -183,7 +183,7 @@ struct SwiftCompilerTool: NodeFunction {
                          inputModuleMapFilesExpectations: [String: String]) throws -> SwiftCompilerToolOutputs {
 
         guard !inputs.sourceFiles.isEmpty else {
-            let error = NodeValue.noValue(reason: .error(message: "SwiftCompilerTool: no source files"))
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "SwiftCompilerTool: no source files".intern()))
             return .init(outputObject: error,
                          outputModule: error,
                          outputInterface: error,
@@ -264,7 +264,7 @@ struct SwiftCompilerTool: NodeFunction {
                 })).exitCode
 
         guard exitCode == 0 else {
-            let error = NodeValue.noValue(reason: .error(message: errorOutput))
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
             return .init(outputObject: error,
                          outputModule: error,
                          outputInterface: error,
@@ -281,7 +281,7 @@ struct SwiftCompilerTool: NodeFunction {
                      inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
     }
 
-    private func process(inputs: SwiftCompilerToolInputs) -> SwiftCompilerToolOutputs {
+    private func process(inputs: SwiftCompilerToolInputs) throws -> SwiftCompilerToolOutputs {
         let inputSourceFilesExpectations    = buildInputSourceFilesExpectations(folderManifests: inputs.inputFolderManifests)
         let inputModuleMapFilesExpectations = buildInputModuleMapFilesExpectations(moduleMapFolderManifests: inputs.moduleMapFolderManifests)
         do {
@@ -289,7 +289,7 @@ struct SwiftCompilerTool: NodeFunction {
                                inputSourceFilesExpectations: inputSourceFilesExpectations,
                                inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         } catch {
-            let errorNodeValue = NodeValue.noValue(reason: .error(message: error.localizedDescription))
+            let errorNodeValue = NodeValue.noValue(reason: .error(messageDataObjectHash: try error.localizedDescription.intern()))
             return .init(outputObject: errorNodeValue,
                          outputModule: errorNodeValue,
                          outputInterface: errorNodeValue,

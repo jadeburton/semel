@@ -101,19 +101,22 @@ public struct ClangCompilerTool: NodeFunction {
             output: .init(logError: { error in
                               errorOutput += error
                               errorOutput += "\n"
-                              print(error)
+//                              print(error)
                           },
                           logMessage: { message in
                               infoOutput += message
                               infoOutput += "\n"
-                              print(message)
+//                              print(message)
                           },
                           write: { _, data in
                               output.append(contentsOf: data)
                           })).exitCode
 
-        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(message: "Compiler exited with exitcode \(exitCode)")),
-                     errorLog: .value(try errorOutput.intern()),
+        let errorOutputInterned = try errorOutput.intern()
+
+        // TODO: error messages should be interned also in .noValue enum
+        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: errorOutputInterned)),
+                     errorLog: .value(errorOutputInterned),
                      infoLog: .value(try infoOutput.intern()))
     }
 }

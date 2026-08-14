@@ -158,9 +158,7 @@ struct SwiftLinkerTool: NodeFunction {
                 })).exitCode
 
         return .init(
-            output: (exitCode == 0)
-                ? .value(try output.intern())
-                : .noValue(reason: .error(message: errorOutput)),
+            output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern())),
             infoLog: .value(try infoOutput.intern()))
     }
 }

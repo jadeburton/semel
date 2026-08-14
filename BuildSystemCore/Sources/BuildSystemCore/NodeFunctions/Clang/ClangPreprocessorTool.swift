@@ -154,19 +154,21 @@ public struct ClangPreprocessorTool: NodeFunction {
                                         output: .init(logError: { error in
                                                           errorOutput += error
                                                           errorOutput += "\n"
-                                                          print(error)
+//                                                          print(error)
                                                       },
                                                       logMessage: { message in
                                                           infoOutput += message
                                                           infoOutput += "\n"
-                                                          print(message)
+//                                                          print(message)
                                                       },
                                                       write: { _, data in
                                                           output.append(contentsOf: data)
         })).exitCode
 
-        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(message: "Preprocessor exited with exitcode \(exitCode)")),
-                     errorLog: .value(try errorOutput.intern()),
+        let errorOutputInterned = try errorOutput.intern()
+
+        return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: errorOutputInterned)),
+                     errorLog: .value(errorOutputInterned),
                      infoLog: .value(try infoOutput.intern()),
                      headerInputFilesWireExpectations: headerInputFilesWireExpectations,
                      includeFileListWireExpections: includeFileListWireExpections)
@@ -193,7 +195,7 @@ public struct ClangPreprocessorTool: NodeFunction {
         // There must be one IncludeFinder attached to the .c file.
 
         if inputs.includePathLists[inputs.inputSourceFile.filePath] == nil {
-            let error = NodeValue.noValue(reason: .error(message: "Still resolving include files"))
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still resolving include files".intern()))
             return .init(output: error,
                          errorLog: error,
                          infoLog: error,
@@ -207,7 +209,7 @@ public struct ClangPreprocessorTool: NodeFunction {
         //          nodes' outputs to go to Pending, including us.
         //    yes -> proceed to running the preprocessor
         guard inputs.headerFiles.count == aggregatedIncludePathList.count else {
-            let error = NodeValue.noValue(reason: .error(message: "Still resolving include files"))
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still resolving include files".intern()))
             return .init(output: error,
                          errorLog: error,
                          infoLog: error,

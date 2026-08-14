@@ -220,7 +220,7 @@ extension Node {
         let outputSymbolID = try outputPort.asSymbolID()
 
         guard let port = try database.outputPort.select(nodeID: (try requireID()), nameSymbolID: outputSymbolID) else {
-            return .noValue(reason: .error(message: "No value ever existed"))
+            return .noValue(reason: .error(messageDataObjectHash: try "No value ever existed".intern()))
         }
         return try port.asNodeValue()
     }

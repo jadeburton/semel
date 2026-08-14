@@ -8,7 +8,7 @@ import DatabaseModels
 
 public enum NoValueReason: Codable {
     case pending
-    case error(message: String)
+    case error(messageDataObjectHash: DataObjectHash)
 }
 
 public enum NodeValue: Codable {
@@ -75,7 +75,7 @@ extension NodeValue {
             self = .noValue(reason: .pending)
 
         case .error:
-            self = .noValue(reason: .error(message: (try? port.dataObjectHash?.resolveAsString()) ?? "<unknown>"))
+            self = try .noValue(reason: .error(messageDataObjectHash: port.dataObjectHash ?? "<unknown>".intern()))
 
         case .value:
 
@@ -99,11 +99,11 @@ extension NodeValue {
                                   valueKind: .pending,
                                   dataObjectHash: nil)
 
-            case .error(let message):
+            case .error(let messageDataObjectHash):
                 return OutputPort(nodeID: nodeID,
                                   nameSymbolID: outputSymbolID,
                                   valueKind: .error,
-                                  dataObjectHash: try message.intern())
+                                  dataObjectHash: messageDataObjectHash)
             }
 
         case .value(let dataObjectHash):
