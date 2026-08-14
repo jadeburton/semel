@@ -91,8 +91,21 @@ public struct ProjectBuilder: NodeFunction {
                     / (parentFolder.deletingFirstComponent ?? Path(""))
                     / Path(productName)
 
+                // If the source node type exposes a "fileMetadata" output port,
+                // wire it into the OutputFile wrapper so chmod can be applied on cp.
+                var metadataWire = ""
+                if let nodeType = PolyFactory.nodeType(forTypeName: shapeNode.typeName) as? InputlessNodeFunction.Type,
+                   nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
+                    let metaShape = GraphShapeNode(typeName: shapeNode.typeName,
+                                                   args: shapeNode.args,
+                                                   inputs: shapeNode.inputs,
+                                                   outputs: shapeNode.outputs,
+                                                   outputPort: FileMetadata.portName)
+                    metadataWire = ", \(FileMetadata.portName): ['metadata': \(metaShape.asString(omitOutputPort: false))]"
+                }
+
                 let wrapper = try GraphShapeNode.parse(
-                    "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]).status"
+                    "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]\(metadataWire)).status"
                 )
 
                 productExpectations[fullPath.string] = wrapper.asString(omitOutputPort: false)

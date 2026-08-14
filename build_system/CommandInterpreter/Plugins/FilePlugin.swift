@@ -204,6 +204,10 @@ final class FilePlugin: CommandPlugin {
             let fileContent = Data(try dataObjectHash.resolve())
             let finalPath   = destinationPath + "/" + (entry.path.lastComponent ?? entry.path.string)
             try fileContent.write(to: URL(fileURLWithPath: finalPath))
+            if let metadataProvider = try fileNode.nodeAsAny() as? FileMetadataProvider,
+               let metadata = try metadataProvider.readFileMetadata() {
+                chmod(finalPath, mode_t(metadata.mode ?? FileMetadata.defaultMode))
+            }
             context.outputMessage("File written: \(finalPath)")
         case .noValue(let reason):
             context.outputError("File \(entry.path) has no content: \(reason)")

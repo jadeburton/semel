@@ -42,6 +42,7 @@ public struct ClangLinkerTool: NodeFunction {
     static let libraries = "libraries"
     static let output = "output"
     static let infoLog = "infoLog"
+    static let fileMetadata = FileMetadata.portName
 
     var embeddedNode: Node
 
@@ -55,7 +56,7 @@ public struct ClangLinkerTool: NodeFunction {
             .required(input),
             .optional(libraries),
         ],
-        outputPorts: [output, infoLog]
+        outputPorts: [output, infoLog, fileMetadata]
     )
 
     // MARK: Processing
@@ -97,10 +98,12 @@ public struct ClangLinkerTool: NodeFunction {
     struct ClangLinkerToolOutputs {
         let output: NodeValue
         let infoLog: NodeValue
+        let fileMetadata: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [ClangPreprocessorTool.output: output,
-                                 ClangPreprocessorTool.infoLog: infoLog],
+                                 ClangPreprocessorTool.infoLog: infoLog,
+                                 ClangLinkerTool.fileMetadata: fileMetadata],
                   inputWireExpectations: [:])
         }
     }
@@ -180,7 +183,12 @@ public struct ClangLinkerTool: NodeFunction {
                               output.append(contentsOf: data)
                           })).exitCode
 
+        let mode: UInt16 = inputs.configuration.dynamicLibrary ? FileMetadata.defaultMode : FileMetadata.executableMode
+        let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
+        let metadataValue = NodeValue.value(try metadataJSON.intern())
+
         return .init(output: (exitCode == 0) ? .value(try output.intern()) : .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern())),
-                     infoLog: .value(try infoOutput.intern()))
+                     infoLog: .value(try infoOutput.intern()),
+                     fileMetadata: metadataValue)
     }
 }

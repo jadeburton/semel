@@ -50,11 +50,12 @@ extension HasPath {
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
-struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
+struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     static let kind: UInt = 8
 
     static let inputPort = "input"
+    static let fileMetadataInputPort = FileMetadata.portName
     static let statusOutputPort = "status"
 
     var embeddedNode: Node
@@ -73,7 +74,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
     }
 
     static let descriptor = NodeFunctionDescriptor(
-        inputPorts: [.required(inputPort)],
+        inputPorts: [.required(inputPort), .optional(fileMetadataInputPort)],
         outputPorts: [statusOutputPort]
     )
 
@@ -141,5 +142,13 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable {
 
     func read() throws -> NodeValue? {
         try thisNode.readFromInputPort(Self.inputPort).first?.value
+    }
+
+    func readFileMetadata() throws -> FileMetadata? {
+        guard let metadataValue = try thisNode.readFromInputPort(Self.fileMetadataInputPort).first?.value,
+              case .value(let hash) = metadataValue,
+              let json = try? hash.resolveAsString()
+        else { return nil }
+        return FileMetadata.decode(from: json)
     }
 }
