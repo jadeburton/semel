@@ -61,8 +61,8 @@ final class NavigationPlugin: CommandPlugin {
         let results: [FileWildcardEntry]
         let displayBase: Path
 
-        if let p = pathOrWildcard {
-            let fullPattern = base.isEmpty ? Path(p) : base / p
+        if let pattern = pathOrWildcard {
+            let fullPattern = base.isEmpty ? Path(pattern) : base / pattern
 
             if fullPattern.containsWildcard {
                 let staticSegs = fullPattern.segments.prefix(while: {
@@ -94,10 +94,64 @@ final class NavigationPlugin: CommandPlugin {
         }
 
         for entry in sorted {
-            let name   = context.relativeName(entry.path, to: displayBase)
-            let suffix = entry.kind == .folder ? "/" : ""
-            let note   = entry.isMissing ? " [missing]" : entry.isUnreferenced ? " [unreferenced]" : ""
-            context.outputMessage("\(name)\(suffix)\(note)")
+            let name = context.relativeName(entry.path, to: displayBase)
+
+            var statusNote = ""
+            if entry.isMissing {
+                statusNote = "  [missing]"
+            } else if entry.isUnreferenced {
+                statusNote = "  [unreferenced]"
+            }
+
+            if entry.kind == .folder {
+                context.outputMessage("\(Self.modeString(0, isDirectory: true))  \(Self.noSize)  \(name)/\(statusNote)")
+                continue
+            }
+
+            var modeStr = Self.modeString(0)
+            var sizeStr = Self.noSize
+
+            if let fileNode = try? fileSystem.childNode(path: entry.path),
+               let file     = try? fileNode.nodeAsAny() as? FileType,
+               let value    = try? file.read() {
+                switch value {
+                case .value(let hash):
+                    sizeStr = hash.size().map { String(format: "%8d", $0) } ?? Self.noSize
+                    if let provider = file as? FileMetadataProvider,
+                       let metadata = try? provider.readFileMetadata() {
+                        modeStr = Self.modeString(metadata.mode ?? FileMetadata.defaultMode)
+                    } else {
+                        modeStr = Self.modeString(FileMetadata.defaultMode)
+                    }
+                case .noValue(let reason):
+                    modeStr = Self.modeString(FileMetadata.defaultMode)
+                    if statusNote.isEmpty {
+                        switch reason {
+                        case .pending: statusNote = "  [pending]"
+                        case .error:   statusNote = "  [error]"
+                        }
+                    }
+                }
+            }
+
+            context.outputMessage("\(modeStr)  \(sizeStr)  \(name)\(statusNote)")
         }
+    }
+
+    private static let noSize = "       -"
+
+    private static func modeString(_ mode: UInt16, isDirectory: Bool = false) -> String {
+        String([
+            isDirectory ? Character("d") : Character("-"),
+            mode & 0o400 != 0 ? "r" : "-",
+            mode & 0o200 != 0 ? "w" : "-",
+            mode & 0o100 != 0 ? "x" : "-",
+            mode & 0o040 != 0 ? "r" : "-",
+            mode & 0o020 != 0 ? "w" : "-",
+            mode & 0o010 != 0 ? "x" : "-",
+            mode & 0o004 != 0 ? "r" : "-",
+            mode & 0o002 != 0 ? "w" : "-",
+            mode & 0o001 != 0 ? "x" : "-",
+        ] as [Character])
     }
 }

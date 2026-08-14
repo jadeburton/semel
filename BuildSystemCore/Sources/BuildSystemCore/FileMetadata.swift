@@ -11,18 +11,19 @@ public struct FileMetadata: Codable {
     /// Unix mode bits. `nil` is treated as `defaultMode` by the consumer.
     public var mode: UInt16?
 
-    public static let portName = "fileMetadata"
+    // portName and executableMode are only used within BuildSystemCore.
+    static let portName      = "fileMetadata"
+    static let executableMode: UInt16 = 0o755
     public static let defaultMode: UInt16 = 0o644
-    public static let executableMode: UInt16 = 0o755
 
-    public init(mode: UInt16? = nil) { self.mode = mode }
+    init(mode: UInt16? = nil) { self.mode = mode }
 
-    public func jsonString() throws -> String {
+    func jsonString() throws -> String {
         let data = try JSONEncoder().encode(self)
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
-    public static func decode(from json: String) -> FileMetadata? {
+    static func decode(from json: String) -> FileMetadata? {
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(FileMetadata.self, from: data)
     }

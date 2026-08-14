@@ -17,7 +17,7 @@ extension [UInt8] {
     /// reasons — a full volume, a permissions change, a read-only mount.  Those should
     /// fail the node being processed, not abort the build.
     public func intern() throws -> DataToken {
-        if self.isEmpty {
+        if isEmpty {
             return ""
         }
 
@@ -56,6 +56,24 @@ extension DataToken {
     }
 
     public func resolveAsString() throws -> String {
-        String(decoding: try resolve(), as: Unicode.UTF8.self)
+        .init(decoding: try resolve(), as: Unicode.UTF8.self)
+    }
+
+    /// Returns the byte count of the stored object without loading its contents.
+    public func size() -> Int? {
+
+        guard !isEmpty else {
+            return 0
+        }
+
+        let url = DataObjectStore.shared.objectURL(hash: self)
+
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int else {
+
+            return nil
+        }
+
+        return size
     }
 }
