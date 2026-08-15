@@ -11,11 +11,11 @@
 import Foundation
 import SemelNodeKit
 
-enum Toolchain {
+public enum Toolchain {
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`,
     /// or `nil` if there is no such tool.
-    static func find(_ toolName: String) -> String? {
+    public static func find(_ toolName: String) -> String? {
         guard let output = run("/usr/bin/xcrun", ["--find", toolName]) else { return nil }
         let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else { return nil }
@@ -24,7 +24,7 @@ enum Toolchain {
 
     /// The canonical version string the tool at `path` reports, e.g.
     /// `Apple clang version 21.0.0`, or `nil` if it reports nothing recognisable.
-    static func version(ofToolAt path: String) -> String? {
+    public static func version(ofToolAt path: String) -> String? {
         guard let output = run(path, ["--version"]) else { return nil }
         return parseVersion(from: output)
     }
@@ -39,7 +39,7 @@ enum Toolchain {
     ///
     /// Handles clang, which leads with the string, and swiftc, which reports its own
     /// driver version first — that part is not the tool's version and is skipped.
-    static func parseVersion(from output: String) -> String? {
+    public static func parseVersion(from output: String) -> String? {
         let pattern = #"Apple [A-Za-z]+ version [0-9]+(\.[0-9]+)*( \([^)]*\))?"#
         guard let range = output.range(of: pattern, options: .regularExpression) else { return nil }
         return String(output[range])

@@ -9,14 +9,14 @@ import SemelNodeKit
 
 // MARK: - Protocol
 
-struct ToolDescriptor: Hashable, Codable {
-    let name: String
-    let version: String
-    let platform: String
-    let architecture: String
-    let recursiveHash: String?
+public struct ToolDescriptor: Hashable, Codable {
+    public let name: String
+    public let version: String
+    public let platform: String
+    public let architecture: String
+    public let recursiveHash: String?
 
-    init(name: String,
+    public init(name: String,
          version: String,
          platform: String,
          architecture: String,
@@ -29,7 +29,7 @@ struct ToolDescriptor: Hashable, Codable {
         self.recursiveHash = recursiveHash
     }
 
-    init(properties: [String: String]) {
+    public init(properties: [String: String]) {
         name = properties["toolDescriptor.name"] ?? ""
         version = properties["toolDescriptor.version"] ?? ""
         platform = properties["toolDescriptor.platform"] ?? ""
@@ -38,24 +38,29 @@ struct ToolDescriptor: Hashable, Codable {
     }
 }
 
-struct SimplifiedToolExecuteResult {
-    let exitCode: Int32
+public struct SimplifiedToolExecuteResult {
+    public let exitCode: Int32
     // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
-    let sandboxPathUsed: String
-    let infoOutput: String
-    let errorOutput: String
-    let outputFiles: [String: [UInt8]]
+    public let sandboxPathUsed: String
+    public let infoOutput: String
+    public let errorOutput: String
+    public let outputFiles: [String: [UInt8]]
 }
 
-struct ToolExecuteResult {
-    let exitCode: Int32
+public struct ToolExecuteResult {
+    public let exitCode: Int32
     // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
-    let sandboxPathUsed: String
+    public let sandboxPathUsed: String
+
+    public init(exitCode: Int32, sandboxPathUsed: String) {
+        self.exitCode = exitCode
+        self.sandboxPathUsed = sandboxPathUsed
+    }
 }
 
 /// A build tool that can be executed with a set of arguments and input files,
 /// producing output files and log messages via a ToolOutput callback object.
-protocol ToolExecutor {
+public protocol ToolExecutor {
     func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
@@ -65,7 +70,7 @@ protocol ToolExecutor {
 
 extension ToolExecutor {
     // Simplified version of execute that does not stream the outputs
-    func execute(arguments: [String],
+    public func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String]) throws -> SimplifiedToolExecuteResult {
@@ -104,11 +109,21 @@ extension ToolExecutor {
 
 // MARK: - Supporting types
 
-struct ToolOutput {
-    let logError: (_ error: String) -> Void
-    let logMessage: (_ message: String) -> Void
-    let write: (_ filePath: String, _ data: [UInt8]) -> Void
+public struct ToolOutput {
+    public let logError: (_ error: String) -> Void
+    public let logMessage: (_ message: String) -> Void
+    public let write: (_ filePath: String, _ data: [UInt8]) -> Void
     // ISSUE: the JSON file has abs paths to the temp directory. we need to remove these but we need the ToolExecutor to tell us what dir it used
+
+    // Spelled out because a public struct's memberwise initializer is internal, and a
+    // node function in another package has to be able to construct one.
+    public init(logError: @escaping (_ error: String) -> Void,
+                logMessage: @escaping (_ message: String) -> Void,
+                write: @escaping (_ filePath: String, _ data: [UInt8]) -> Void) {
+        self.logError = logError
+        self.logMessage = logMessage
+        self.write = write
+    }
 }
 
 /// A file entry passed to a `ToolExecutor`.
@@ -117,15 +132,20 @@ struct ToolOutput {
 /// `DataObjectStore` before the tool is invoked.  `LocalFileSystemTool`
 /// projects the file into the sandbox via an APFS copy-on-write clone using
 /// the SHA-256 `hash` as the lookup key.
-struct FileNameAndContent {
-    let filePath: String
+public struct FileNameAndContent {
+    public let filePath: String
     /// SHA-256 hex digest that identifies the content in `DataObjectStore`.
-    let hash: String
+    public let hash: String
+
+    public init(filePath: String, hash: String) {
+        self.filePath = filePath
+        self.hash = hash
+    }
 }
 
 extension FileNameAndContent {
     /// Reads the content from `DataObjectStore` and decodes it as UTF-8.
-    var contentAsString: String {
+    public var contentAsString: String {
         get throws {
             guard let bytes = try DataObjectStore.shared.read(hash: hash) else { return "" }
             return String(decoding: bytes, as: Unicode.UTF8.self)
@@ -133,7 +153,7 @@ extension FileNameAndContent {
     }
 }
 
-enum ToolExecutionError: Error {
+public enum ToolExecutionError: Error {
     case toolNotFound(path: String)
     case toolNotExecutable(path: String)
     case failedToCreateSandbox(underlying: Error)
@@ -142,10 +162,10 @@ enum ToolExecutionError: Error {
     case processLaunchFailed(underlying: Error)
 }
 
-enum ToolError: Error, CustomStringConvertible {
+public enum ToolError: Error, CustomStringConvertible {
     case noMatchingToolFound(requested: ToolDescriptor, available: [ToolDescriptor])
 
-    var description: String {
+    public var description: String {
         switch self {
         case .noMatchingToolFound(let requested, let available):
             let have = available.isEmpty
@@ -161,21 +181,24 @@ enum ToolError: Error, CustomStringConvertible {
 // MARK: - Registry
 
 /// A registry that maps ToolDescriptors to their concrete ToolExecutor implementations.
-class ToolExecutorRegistry {
+public class ToolExecutorRegistry {
+
+    public init() {}
+
     /// Swappable so a test can install a registry holding fake executors without
     /// threading a registry through every node function.
-    static var instance = ToolExecutorRegistry()
+    public static var instance = ToolExecutorRegistry()
 
     private var toolsByDescriptor: [ToolDescriptor: ToolExecutor] = [:]
 
     /// Every tool currently available to build with.  This is what a formula has to name.
-    var registeredDescriptors: [ToolDescriptor] { Array(toolsByDescriptor.keys) }
+    public var registeredDescriptors: [ToolDescriptor] { Array(toolsByDescriptor.keys) }
 
-    func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolExecutor) {
+    public func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolExecutor) {
         toolsByDescriptor[descriptor] = toolExecutor
     }
 
-    func tool(descriptor: ToolDescriptor) throws -> ToolExecutor {
+    public func tool(descriptor: ToolDescriptor) throws -> ToolExecutor {
         guard let tool = toolsByDescriptor[descriptor] else {
             throw ToolError.noMatchingToolFound(requested: descriptor,
                                                 available: registeredDescriptors)
@@ -186,7 +209,7 @@ class ToolExecutorRegistry {
 
 // MARK: - Default tools
 
-class DefaultTools {
+public class DefaultTools {
 
     /// The tools this build system knows how to run, by name.  This list is the only
     /// hard-coded part: both the path and the version come from the machine.
@@ -205,7 +228,7 @@ class DefaultTools {
     /// node's configuration.  Keeping the version in the configuration rather than
     /// following the machine is deliberate: it is what makes a toolchain upgrade
     /// invalidate the cache instead of silently reusing objects built by another compiler.
-    static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
+    public static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
         for name in knownToolNames {
             guard let path = Toolchain.find(name),
                   let version = Toolchain.version(ofToolAt: path) else {
@@ -233,10 +256,10 @@ class DefaultTools {
 /// an APFS copy-on-write clone (essentially free) when available.
 /// All input bytes must already be stored in `DataObjectStore` before calling
 /// `execute` — `FileNameAndContent` carries only the path and the hash.
-class LocalFileSystemTool: ToolExecutor {
+public class LocalFileSystemTool: ToolExecutor {
     private let localPath: String
 
-    init(localPath: String) throws {
+    public init(localPath: String) throws {
         self.localPath = localPath
 
         let fileManager = FileManager.default
@@ -250,7 +273,7 @@ class LocalFileSystemTool: ToolExecutor {
         }
     }
 
-    func execute(arguments: [String],
+    public func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
