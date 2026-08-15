@@ -33,7 +33,17 @@ public struct ProjectBuilder: NodeFunction {
         let projectFileName    = inputValue.key
         let projectFileContent = try inputValue.value.expectValue().resolveAsString()
 
+        // Base for resolving <rel/path> literals inside the formula text.
         let parentFolder = (Path(projectFileName).deletingLastComponent) ?? Path(".")
+
+        // Where this project's products are written.  Deliberately separate from
+        // `parentFolder`: only the ProjectFinder plugin that created this node knows
+        // whether the project file *is* the project's directory (a Swift package is wired
+        // by its package folder) or merely sits inside it (a .fmla file).  Inferring it
+        // from the wire key put a package's products in its *parent*, so a package whose
+        // folder also held other packages produced a file on the very path their output
+        // folder needed — two children of one folder with the same name.
+        let outputFolder = thisNode.properties["outputFolder"].map { Path($0) } ?? parentFolder
 
         // Decode any folder manifests already wired to our 'folders' port.
         // On the first run these are empty; subsequent runs have real data.
@@ -88,7 +98,7 @@ public struct ProjectBuilder: NodeFunction {
             for (productName, shapeNode) in products {
 
                 let fullPath = Path(Folder.outputFileSystemName)
-                    / (parentFolder.deletingFirstComponent ?? Path(""))
+                    / (outputFolder.deletingFirstComponent ?? Path(""))
                     / Path(productName)
 
                 // If the source node type exposes a "fileMetadata" output port,

@@ -16,7 +16,8 @@ private struct FormulaFilePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
         guard entry.isPinned, entry.name.hasSuffix(".fmla") else { return nil }
         let fullPath = (Path(folderPath) / entry.name).string
-        return "ProjectBuilder(projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status"
+        // The .fmla file sits *in* the project's directory, so products go beside it.
+        return "ProjectBuilder(outputFolder: '\(folderPath)', projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status"
             .replacingOccurrences(of: "\\'", with: "'")
     }
 }
@@ -39,8 +40,13 @@ private struct SwiftPackagePlugin: ProjectBuilderPlugin {
             "packageJSON: ['\(fullPath)': \(pkgReaderExpr)]" +
             ").formula"
 
+        // Products go *inside* the package folder, not beside it.  A package directory may
+        // contain other packages — this repository's root package holds BuildSystemCore,
+        // DatabaseModels and GRDB.swift — and placing its product one level up collides
+        // with the folder holding theirs.
         return
             "ProjectBuilder(" +
+            "outputFolder: '\(packageFolder)', " +
             "projectFile: ['\(packageFolder)': \(converterExpr)]" +
             ").status"
     }

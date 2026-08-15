@@ -85,6 +85,20 @@ extension Node {
         let nodeID = try node.requireID()
         assert(node.parentNodeID != nodeID, "a node cannot be its own parent")
 
+        // The row was inserted above before the node function could report its name, so
+        // the uniqueness check can only happen here — and a rejection has to back that
+        // row out, or a failed creation leaves an unreachable orphan behind.
+        if let name = node.name, let parentNodeID = node.parentNodeID {
+            let siblings = try database.node.select(named: name, parentNodeID: parentNodeID)
+            if let existing = siblings.first(where: { $0.id != nodeID }) {
+                _ = try? database.node.delete(nodeID: nodeID)
+                throw NodeError.nameCollision(path: try Self.describePath(database: database,
+                                                                          parentNodeID: parentNodeID,
+                                                                          name: name),
+                                              existingKind: existing.kind)
+            }
+        }
+
         try node.writePendingToAllOutputsOfNode()
 
         let output = try nodeFunction.didCreate() ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
@@ -113,6 +127,16 @@ extension Node {
         return node
     }
 
+    /// Best-effort full path of a would-be child, for error messages only. Falls back to
+    /// the bare name if the parent cannot be resolved — an error report must never fail.
+    private static func describePath(database: DatabaseLayer, parentNodeID: ObjectID, name: String) throws -> String {
+        guard let parent = try? database.node.select(nodeID: parentNodeID),
+              let parentPath = try? parent.buildFullPathName(baseNodeID: nil) else {
+            return name
+        }
+        return (parentPath / name).string
+    }
+
     /// Walk (creating as needed) the given path of folder nodes beneath `self`.
     /// Returns the deepest folder node.
     @discardableResult
@@ -136,7 +160,9 @@ extension Node {
 
             if let existingChild = existingChildren.first {
                 if existingChild.kind != Folder.kind {
-                    break
+                    // Previously a `break`, which silently returned the last good folder
+                    // and left the caller believing a path had been created that had not.
+                    throw NodeError.nameCollision(path: pathSoFar.string, existingKind: existingChild.kind)
                 }
                 currentFolder = existingChild
             } else {

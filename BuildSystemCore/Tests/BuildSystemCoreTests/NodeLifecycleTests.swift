@@ -28,6 +28,49 @@ final class NodeLifecycleTests: BuildSystemTestCase {
 
     private var database: DatabaseLayer { engine.database }
 
+    // MARK: - Name collisions
+
+    /// Two children of one folder sharing a name makes the tree ambiguous: `childNode`
+    /// walks by name and takes the first match, so which node a path reaches depends on
+    /// database ordering. `ensureEntirePathExistsAsFolders` already refused to walk such
+    /// a folder — this stops the state being created in the first place.
+    func test_aFileCannotTakeTheNameOfAnExistingSiblingFolder() throws {
+        _ = try engine.outputFileSystem.ensureEntirePathExistsAsFolders(Path("build_system"), pinned: false)
+
+        XCTAssertThrowsError(try GraphShapeNode.parse("OutputFile(path: 'output:/build_system')")
+                                .findOrCreateMatchingNode()) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("build_system"), "should name the collision, got \(message)")
+        }
+    }
+
+    func test_aFolderCannotTakeTheNameOfAnExistingSiblingFile() throws {
+        _ = try GraphShapeNode.parse("OutputFile(path: 'output:/product')").findOrCreateMatchingNode()
+
+        XCTAssertThrowsError(try engine.outputFileSystem.ensureEntirePathExistsAsFolders(
+            Path("product/nested"), pinned: false))
+    }
+
+    /// A rejected creation must not leave the half-built row behind — createNode inserts
+    /// before it knows the node's name, so the check happens after the insert.
+    func test_aRejectedNameCollisionLeavesNoOrphanNode() throws {
+        _ = try engine.outputFileSystem.ensureEntirePathExistsAsFolders(Path("collide"), pinned: false)
+        let before = try database.node.selectAll().count
+
+        _ = try? GraphShapeNode.parse("OutputFile(path: 'output:/collide')").findOrCreateMatchingNode()
+
+        XCTAssertEqual(try database.node.selectAll().count, before)
+    }
+
+    /// Nameless nodes (compilers, linkers — everything that is not a file-system entry)
+    /// share a nil name by design and must not be caught by the check.
+    func test_namelessNodesAreNotTreatedAsColliding() throws {
+        let first  = try GraphShapeNode.parse("Configuration(moduleName: 'A')").findOrCreateMatchingNode()
+        let second = try GraphShapeNode.parse("Configuration(moduleName: 'B')").findOrCreateMatchingNode()
+
+        XCTAssertNotEqual(try first.0.requireID(), try second.0.requireID())
+    }
+
     // MARK: - Helpers
 
     /// Creates a StaticFile in the input file system, with content unless told otherwise.
