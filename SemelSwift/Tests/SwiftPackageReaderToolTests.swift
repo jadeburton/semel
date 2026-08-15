@@ -7,11 +7,12 @@
 //  keyed.
 //
 
-@testable import BuildSystemCore
+@testable import SemelSwift
 import XCTest
 import SemelNodeKit
+import DatabaseModels
 
-final class SwiftPackageReaderToolTests: BuildSystemTestCase {
+final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
 
     private let descriptor = ToolDescriptor(name: "swift",
                                             version: "test-swift",

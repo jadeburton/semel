@@ -7,13 +7,25 @@ about how to change it.
 
 ```sh
 swift build                                  # builds everything, from the repo root
-swift test --package-path SemelNodeKit       # the node-authoring API (~63)
-swift test --package-path BuildSystemCore    # the engine tests (~336)
+swift test --package-path SemelNodeKit       # the node-authoring API (~68)
+swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
+swift test --package-path BuildSystemCore    # the engine tests (~274)
 swift test                                   # the CLI tests only (~8)
 ```
 
-`swift test` at the root runs **only** the `BuildSystemCLI` tests. The engine lives in a
-separate package, so a green root-level run means almost nothing. Run both.
+`swift test` at the root runs **only** the `BuildSystemCLI` tests. The engine and the
+toolchains live in separate packages, so a green root-level run means almost nothing. Run
+all four.
+
+**A toolchain package must not depend on the engine.** `SemelSwift` sees only
+`SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
+you find yourself wanting to import `BuildSystemCore` from a toolchain package, something
+belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`/`output:`
+names and the configuration text format ended up there.
+
+Nothing registers a toolchain automatically. `semel`'s `main.swift` is the composition
+root: it calls `SemelSwift.register()`, and a binary that did not would simply have no idea
+what a `Package.swift` is.
 
 In Xcode, open **`Semel.xcworkspace`**, not the package. Opening `Package.swift` makes
 `BuildSystemCore` and `DatabaseModels` read-only *dependencies*, and Xcode neither builds

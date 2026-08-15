@@ -7,11 +7,12 @@
 //  subfolders the tool asks for, and which .swift files it ends up compiling.
 //
 
-@testable import BuildSystemCore
+@testable import SemelSwift
 import XCTest
 import SemelNodeKit
+import DatabaseModels
 
-final class SwiftCompilerToolTests: BuildSystemTestCase {
+final class SwiftCompilerToolTests: SemelSwiftTestCase {
 
     private let descriptor = ToolDescriptor(name: "swiftc",
                                             version: "test-swiftc",

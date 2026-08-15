@@ -34,11 +34,6 @@ enum GraphShapeApplierError: Error {
 extension InputlessNodeFunction {
     /// Default: delegate to `WithProperties` if the type conforms, else no args.
     /// Declared in the protocol so Swift dispatches dynamically via the witness table.
-    public func graphShapeArgs(node: Node) -> [GraphShapeArg] {
-        thisNode.properties
-            .sorted(by: { $0.key < $1.key })
-            .map { GraphShapeArg(key: $0.key, value: $0.value) }
-    }
 }
 
 // MARK: - Build shape from the live graph

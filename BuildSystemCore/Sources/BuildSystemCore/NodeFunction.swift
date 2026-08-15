@@ -136,15 +136,6 @@ extension NodeFunction {
 }
 
 extension InputlessNodeFunction {
-    public func onChildAdded(nodeID: ObjectID) throws {
-    }
-
-    public func onChildDeleted(nodeID: ObjectID) throws {
-    }
-
-    public func onChildContentChanged(nodeID: ObjectID, name: String) throws {
-    }
-
     var parentNodeFunction: InputlessNodeFunction? {
         get throws {
             if let parentNodeID = thisNode.parentNodeID {
@@ -166,10 +157,6 @@ extension InputlessNodeFunction {
         try parentNodeFunction?.onChildDeleted(nodeID: (try thisNode.requireID()))
     }
 
-    public func willBeDeleted() throws { }
-
-    public func didWriteOutputs(output: ProcessOutput) throws { }
-
     func delete() throws {
         let safeToDelete = try hasNoOutputWires() && hasNoInputWires()
         assert(safeToDelete)
@@ -182,20 +169,12 @@ extension InputlessNodeFunction {
         DatabaseLayer.shared
     }
 
-    public func canBeDeleted() throws -> Bool {
-        true
-    }
-
     func hasNoOutputWires() throws -> Bool {
         try database.wire.select(comingFromNodeID: (try requireID())).isEmpty
     }
 
     func hasNoInputWires() throws -> Bool {
         try database.wire.select(goingToNodeID: (try requireID())).isEmpty
-    }
-
-    public func didCreate() throws -> ProcessOutput? {
-        nil
     }
 
     func writeToOutputs(output: ProcessOutput) throws {

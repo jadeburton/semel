@@ -230,8 +230,23 @@ project kind without depending on the engine, which is the whole direction of th
 into `registerEngineTypes()` and a `registerBuiltInToolchains()` whose existence measures
 how far the split has got: it disappears when steps 3 and 4 land.
 
-**Steps remaining:** move Swift nodes (3), move Clang nodes (4), rename BuildSystemCore →
-SemelCore (5).
+**Step 3 done.** SemelSwift holds the four Swift node types, SwiftToolSupport and
+SwiftPackagePlugin, and depends on SemelNodeKit but *not* on the engine — which is now
+provable: no Swift symbol appears anywhere in BuildSystemCore's sources. `semel`'s
+main.swift is the composition root and calls `SemelSwift.register()`.
+
+Four more things turned out to be API rather than engine, each found by SemelSwift failing
+to compile without them: the protocol's *default implementations* (invisible across a
+module boundary, so every requirement came back as "does not conform"), the
+`[String: String](plainText:)` configuration format, `asOutputNodeValue`, and
+`FileSystemName` replacing the single `Folder.inputFileSystemName` reference.
+
+SemelSwift has its own test harness — no database, no BuildEngine, no graph — which is the
+evidence the seam is in the right place. `RecordingToolExecutor` is duplicated from the
+engine's tests; a testing-support module for SemelNodeKit is the tidier answer once
+SemelClang wants one too.
+
+**Steps remaining:** move Clang nodes (4), rename BuildSystemCore → SemelCore (5).
 
 ## Server
 

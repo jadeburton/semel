@@ -8,6 +8,9 @@
       location = "group:SemelNodeKit">
    </FileRef>
    <FileRef
+      location = "group:SemelSwift">
+   </FileRef>
+   <FileRef
       location = "group:BuildSystemCore">
    </FileRef>
    <FileRef

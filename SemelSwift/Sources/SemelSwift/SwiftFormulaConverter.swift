@@ -23,6 +23,7 @@
 
 import Foundation
 import SemelNodeKit
+import DatabaseModels
 
 struct SwiftFormulaConverter: NodeFunction {
     public static let kind: UInt = 24
@@ -103,7 +104,7 @@ struct SwiftFormulaConverter: NodeFunction {
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
                 // that cannot be read through the build graph.
-                guard extPath.hasPrefix(Folder.inputFileSystemName + "/") else { continue }
+                guard extPath.hasPrefix(FileSystemName.input + "/") else { continue }
                 guard !visitedPaths.contains(extPath) else { continue }
                 visitedPaths.insert(extPath)
                 expectations[extPath] = packageReaderExpectation(for: extPath)

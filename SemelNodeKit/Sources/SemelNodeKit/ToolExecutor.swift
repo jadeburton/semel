@@ -398,3 +398,22 @@ public class LocalFileSystemTool: ToolExecutor {
         return .init(exitCode: exitCode, sandboxPathUsed: canonicalSandboxPath)
     }
 }
+
+extension SimplifiedToolExecuteResult {
+    /// The single output file as a wire value, or the tool's error output if it failed.
+    ///
+    /// Lived on the Clang compiler until the Swift linker turned out to need it too. It is
+    /// how any node turns a tool result into something the graph can carry, so it belongs
+    /// with the tool types rather than with one toolchain.
+    public func asOutputNodeValue() throws -> NodeValue {
+        if exitCode == 0 {
+            if let outputFile = outputFiles.values.first {
+                return .value(try outputFile.intern())
+            } else {
+                return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
+            }
+        } else {
+            return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
+        }
+    }
+}

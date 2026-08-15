@@ -7,11 +7,12 @@
 //  come out of it for a given manifest shape.
 //
 
-@testable import BuildSystemCore
+@testable import SemelSwift
 import XCTest
 import SemelNodeKit
+import DatabaseModels
 
-final class SwiftFormulaConverterTests: BuildSystemTestCase {
+final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     // MARK: - Helpers
 

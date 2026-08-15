@@ -112,17 +112,4 @@ public struct ClangCompilerTool: NodeFunction {
     }
 }
 
-extension SimplifiedToolExecuteResult {
-    // Assumes only one output file
-    func asOutputNodeValue() throws -> NodeValue {
-        if exitCode == 0 {
-            if let outputFile = outputFiles.values.first {
-                return .value(try outputFile.intern())
-            } else {
-                return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
-            }
-        } else {
-            return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
-        }
-    }
-}
+

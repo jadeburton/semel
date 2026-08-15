@@ -60,21 +60,16 @@ public final class BuildEngine {
         ProjectDiscovery.register(FormulaFilePlugin())
     }
 
-    /// TEMPORARY. The Swift and Clang nodes still live in this package; when they move to
-    /// SemelSwift and SemelClang each will expose its own registration and this goes away.
-    /// Its existence is the measure of how far the split has got.
+    /// TEMPORARY. The Clang nodes still live in this package; when they move to SemelClang
+    /// it will expose its own registration and this goes away. Its existence is the measure
+    /// of how far the split has got — Swift has already left.
     public static func registerBuiltInToolchains() throws {
         try PolyFactory.register(types: [
             ClangLinkerTool.self,
             ClangCompilerTool.self,
             ClangPreprocessorTool.self,
             IncludeFinder.self,
-            SwiftCompilerTool.self,
-            SwiftLinkerTool.self,
-            SwiftPackageReaderTool.self,
-            SwiftFormulaConverter.self,
         ])
-        ProjectDiscovery.register(SwiftPackagePlugin())
     }
 
     var projectFinder: Node {

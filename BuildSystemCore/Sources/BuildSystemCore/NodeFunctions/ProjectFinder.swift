@@ -7,10 +7,9 @@ import SemelNodeKit
 
 // MARK: - Project kinds
 //
-// The protocol these conform to is declared in SemelNodeKit, so a toolchain package can
-// contribute a project kind without depending on the engine. SwiftPackagePlugin is still
-// here only until the Swift nodes move out; FormulaFilePlugin belongs to the engine, since
-// a .fmla file names no toolchain.
+// The protocol this conforms to is declared in SemelNodeKit, so a toolchain package can
+// contribute a project kind without depending on the engine. FormulaFilePlugin belongs to
+// the engine, since a .fmla file names no toolchain; SemelSwift brings its own.
 
 struct FormulaFilePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
@@ -22,35 +21,6 @@ struct FormulaFilePlugin: ProjectBuilderPlugin {
     }
 }
 
-struct SwiftPackagePlugin: ProjectBuilderPlugin {
-    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
-        guard entry.isPinned, entry.name == "Package.swift" else { return nil }
-        let fullPath      = (Path(folderPath) / entry.name).string
-        let packageFolder = Path(fullPath).deletingLastComponent!.string
-
-        let pkgReaderExpr =
-            "SwiftPackageReaderTool(" +
-            "configuration: ['config': Configuration().output], " +
-            "packageFile: ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
-            ").packageJSON"
-
-        let converterExpr =
-            "SwiftFormulaConverter(" +
-            "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
-            "packageJSON: ['\(fullPath)': \(pkgReaderExpr)]" +
-            ").formula"
-
-        // Products go *inside* the package folder, not beside it.  A package directory may
-        // contain other packages — this repository's root package holds BuildSystemCore,
-        // DatabaseModels and GRDB.swift — and placing its product one level up collides
-        // with the folder holding theirs.
-        return
-            "ProjectBuilder(" +
-            "outputFolder: '\(packageFolder)', " +
-            "projectFile: ['\(packageFolder)': \(converterExpr)]" +
-            ").status"
-    }
-}
 
 
 

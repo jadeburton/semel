@@ -3,11 +3,12 @@
 //  build_system_tests
 //
 
-@testable import BuildSystemCore
+@testable import SemelSwift
 import XCTest
 import SemelNodeKit
+import DatabaseModels
 
-final class SwiftLinkerToolTests: BuildSystemTestCase {
+final class SwiftLinkerToolTests: SemelSwiftTestCase {
 
     private let descriptor = ToolDescriptor(name: "swiftc",
                                             version: "test-swiftc",
