@@ -12,6 +12,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Errors
 

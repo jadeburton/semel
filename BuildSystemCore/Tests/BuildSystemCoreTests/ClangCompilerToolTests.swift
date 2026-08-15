@@ -8,6 +8,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 final class ClangCompilerToolTests: BuildSystemTestCase {
 

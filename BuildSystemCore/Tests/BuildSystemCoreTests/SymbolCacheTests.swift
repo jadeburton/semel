@@ -5,6 +5,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 /// `asSymbolID()` interns names in a process-global cache, but each `DatabaseLayer`
 /// replaces `DatabaseLayer.shared`. Ids held over from a previous database refer to

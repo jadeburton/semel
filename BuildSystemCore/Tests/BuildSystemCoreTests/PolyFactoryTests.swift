@@ -5,6 +5,7 @@
 
 import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 final class PolyFactoryTests: BuildSystemTestCase {
 

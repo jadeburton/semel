@@ -5,6 +5,8 @@
 //  Created by Jade Burton on 28.02.26.
 //
 
+import SemelNodeKit
+
 enum WireError: Error {
     /// Wire names are unique per (toNodeID, toSymbolID) — i.e. per input port on the target node.
     case attemptToCreateWireWithDuplicateName(_ name: String)

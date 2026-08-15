@@ -37,6 +37,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Model
 

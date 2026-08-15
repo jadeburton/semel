@@ -5,6 +5,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 /// Tool descriptors key the build cache, so the version recorded against a tool has to
 /// describe the binary that actually runs.  `Toolchain` reads both from the machine.

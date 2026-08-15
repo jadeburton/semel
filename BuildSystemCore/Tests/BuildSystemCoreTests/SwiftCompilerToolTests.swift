@@ -9,6 +9,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 final class SwiftCompilerToolTests: BuildSystemTestCase {
 

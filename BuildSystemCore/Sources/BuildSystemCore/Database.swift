@@ -6,6 +6,7 @@
 //
 
 import GRDB
+import SemelNodeKit
 @_exported import DatabaseModels
 
 // DatabaseLayer is now defined in DatabaseModels package

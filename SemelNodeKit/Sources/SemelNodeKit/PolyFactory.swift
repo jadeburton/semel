@@ -43,7 +43,7 @@ public enum PolyFactory {
         }
     }
 
-    static func nodeType(forTypeName typeName: String) -> (any WithKind.Type)? {
+    public static func nodeType(forTypeName typeName: String) -> (any WithKind.Type)? {
         nameCache[typeName]
     }
 
@@ -120,7 +120,13 @@ public enum PolyFactoryError: Error, CustomStringConvertible {
 
 extension PolySerializable {
     /// Encode a `PolySerializable` to a JSON string, embedding its `kind`.
-    func toJSON() throws -> String {
+    ///
+    /// Must stay `public`. There is also a `public` `Encodable.toJSON()` below that writes
+    /// no `kind` wrapper. While both lived in one module Swift picked this, more specific,
+    /// overload — but an `internal` overload is simply invisible from another module, so
+    /// callers outside silently resolved to the *other* one and produced JSON that
+    /// PolyFactory could not decode. It failed at runtime, not at compile time.
+    public func toJSON() throws -> String {
         try Caddy(object: self).toJSON()
     }
 }

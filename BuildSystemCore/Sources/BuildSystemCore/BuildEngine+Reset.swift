@@ -3,6 +3,8 @@
 //  BuildSystemCore
 //
 
+import SemelNodeKit
+
 extension BuildEngine {
 
     /// Resets the build graph to a clean state.

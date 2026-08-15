@@ -15,6 +15,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 
 /// Something that happened to a product between two passes.
 ///

@@ -4,6 +4,7 @@
 // Clang compiler stage: compiles a preprocessed .p file into a .o object file.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Configuration
 

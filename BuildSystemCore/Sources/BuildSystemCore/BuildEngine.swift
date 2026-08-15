@@ -6,6 +6,7 @@
 import Foundation
 import GRDB
 import DatabaseModels
+import SemelNodeKit
 
 public final class BuildEngine {
 

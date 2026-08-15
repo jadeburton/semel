@@ -6,6 +6,8 @@
 //
 
 // Like a StaticFile, but it allows you to put configuration directly into the formula.
+import SemelNodeKit
+
 public struct Configuration: NodeFunction {
     public static let kind: UInt = 9
 

@@ -9,6 +9,7 @@
 // that cached outputs survive a toolchain upgrade they should have been invalidated by.
 
 import Foundation
+import SemelNodeKit
 
 enum Toolchain {
 

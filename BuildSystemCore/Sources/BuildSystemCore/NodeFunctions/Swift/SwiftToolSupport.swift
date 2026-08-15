@@ -4,6 +4,7 @@
 // Shared helpers for Swift-based tool nodes (SwiftCompilerTool, SwiftLinkerTool).
 
 import Foundation
+import SemelNodeKit
 
 /// Runs `xcrun` with `arguments` and returns its trimmed stdout, or nil if it is
 /// unavailable or exits non-zero.

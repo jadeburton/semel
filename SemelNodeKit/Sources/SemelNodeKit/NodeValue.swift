@@ -17,7 +17,7 @@ public enum NodeValue: Codable {
 }
 
 extension NodeValue {
-    func expectValue() throws -> DataObjectHash {
+    public func expectValue() throws -> DataObjectHash {
         switch self {
         case .noValue(let reason):
             switch reason {
@@ -31,7 +31,7 @@ extension NodeValue {
         }
     }
 
-    var isNoValue: Bool {
+    public var isNoValue: Bool {
         if case .noValue = self {
             return true
         } else {
@@ -39,7 +39,7 @@ extension NodeValue {
         }
     }
 
-    var isPending: Bool {
+    public var isPending: Bool {
         if case .noValue(let reason) = self {
             if case .pending = reason {
                 return true
@@ -60,7 +60,7 @@ enum ProcessingCycleError: Error {
 // MARK: - DatabaseModels.Port → NodeValue
 
 extension DatabaseModels.OutputPort {
-    func asNodeValue() throws -> NodeValue {
+    public func asNodeValue() throws -> NodeValue {
         try .init(port: self)
     }
 }
@@ -87,7 +87,7 @@ extension NodeValue {
         }
     }
 
-    func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> OutputPort {
+    public func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> OutputPort {
         switch self {
 
         case .noValue(let reason):
