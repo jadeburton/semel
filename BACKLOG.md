@@ -112,7 +112,7 @@ No static archive support; every library product becomes a `.dylib` by assumptio
 than by choice.
 
 **B-10** `open` — **Publish only final products.**
-`libBuildSystemCore.dylib` and friends appear in `output:` though they are internal. A
+`libSemelCore.dylib` and friends appear in `output:` though they are internal. A
 product is an intermediate iff another discovered package consumes it — roots of the
 dependency DAG are the deliverables. Nesting is *not* the right test: it misclassifies
 `MyLibrary`, a sibling of `MyApp` consumed by it. Implementation is one boolean:
@@ -200,7 +200,7 @@ is swapped — which every test does. Not measured yet; measure before optimisin
 **B-24** `open` — **`Folder.canBeDeleted` instantiates every child's node function.**
 `TODO: slow` at `Folder.swift:63`. Same shape as B-16 but on the delete path.
 
-**B-28** `doing` — **Split the toolchains out of the engine.**
+**B-28** `done` — **Split the toolchains out of the engine.**
 `SemelNodeKit` (the node-authoring API), `SemelSwift` and `SemelClang`, with the toolchain
 packages depending on NodeKit and *not* on the engine — the absent arrow is what makes the
 engine agnostic. Design and phasing in
@@ -215,7 +215,7 @@ live databases.
 **Step 1 done** (`b49e2b5`…`435fd5a`). SemelNodeKit exists and holds 13 files: the node
 protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, PolyFactory, Path,
 DataObjectStore, DataToken, ToolExecutor, Toolchain, FileMetadata, GraphShapeArg and
-FolderManifest. 63 tests; depends only on DatabaseModels.
+FolderManifest. 63 tests; depends only on SemelDatabaseModels.
 
 Two traps worth knowing before step 3. An `internal` overload becomes *invisible* rather
 than ambiguous across modules, so `PolySerializable.toJSON` silently lost to
@@ -232,7 +232,7 @@ how far the split has got: it disappears when steps 3 and 4 land.
 
 **Step 3 done.** SemelSwift holds the four Swift node types, SwiftToolSupport and
 SwiftPackagePlugin, and depends on SemelNodeKit but *not* on the engine — which is now
-provable: no Swift symbol appears anywhere in BuildSystemCore's sources. `semel`'s
+provable: no Swift symbol appears anywhere in SemelCore's sources. `semel`'s
 main.swift is the composition root and calls `SemelSwift.register()`.
 
 Four more things turned out to be API rather than engine, each found by SemelSwift failing
@@ -258,8 +258,14 @@ the type registry and unrecoverable-error handling, none of which has anything t
 The golden cache-key value had to be re-recorded, since a node's type name is part of its
 key.
 
-**Step remaining:** rename BuildSystemCore → SemelCore, DatabaseModels →
-SemelDatabaseModels (5), whenever those are next touched anyway.
+**Step 5 done.** `BuildSystemCore` → `SemelCore`, `DatabaseModels` → `SemelDatabaseModels`,
+`BuildSystemCLI` → `SemelCLI`, `BuildSystemTestCase` → `SemelCoreTestCase`. 80 files
+rewritten.
+
+Still carrying the old vocabulary, deliberately out of scope: the root package is named
+`build_system` and the CLI's sources live in `build_system/`. Renaming those changes the
+repository's own layout and the C1 test fixtures that reference those paths, which is a
+wider blast radius than a module rename.
 
 ## Server
 

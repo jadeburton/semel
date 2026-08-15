@@ -10,7 +10,7 @@
 @testable import SemelSwift
 import XCTest
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 final class SwiftCompilerToolTests: SemelSwiftTestCase {
 
@@ -135,7 +135,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
 
     /// SPM lets one target's directory contain another's, kept apart by `sources:`.
     /// This repository's own executable target is `build_system`, whose directory also
-    /// holds BuildSystemCLI's sources and the XCTest target — walking it wholesale
+    /// holds SemelCLI's sources and the XCTest target — walking it wholesale
     /// compiles a sibling target's files and the test suite into the binary.
     func test_restrictsSourceDiscoveryToAnExplicitSourcesList() throws {
         let output = try makeTool().process(input: try makeInput(

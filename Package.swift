@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v13),
     ],
     dependencies: [
-        .package(path: "BuildSystemCore"),
+        .package(path: "SemelCore"),
         .package(path: "SemelSwift"),
         .package(path: "SemelClang"),
     ],
@@ -16,17 +16,17 @@ let package = Package(
         // be imported by tests — an executable target with top-level code in main.swift
         // cannot be.
         .target(
-            name: "BuildSystemCLI",
+            name: "SemelCLI",
             dependencies: [
-                .product(name: "BuildSystemCore", package: "BuildSystemCore"),
+                .product(name: "SemelCore", package: "SemelCore"),
             ],
             path: "build_system/CommandInterpreter"
         ),
         .executableTarget(
             name: "semel",
             dependencies: [
-                "BuildSystemCLI",
-                .product(name: "BuildSystemCore", package: "BuildSystemCore"),
+                "SemelCLI",
+                .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
             ],
@@ -34,10 +34,10 @@ let package = Package(
             sources: ["main.swift"]
         ),
         .testTarget(
-            name: "BuildSystemCLITests",
+            name: "SemelCLITests",
             dependencies: [
-                "BuildSystemCLI",
-                .product(name: "BuildSystemCore", package: "BuildSystemCore"),
+                "SemelCLI",
+                .product(name: "SemelCore", package: "SemelCore"),
             ],
             path: "build_system/Tests"
         ),

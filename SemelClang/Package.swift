@@ -16,14 +16,14 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../SemelNodeKit"),
-        .package(path: "../DatabaseModels"),
+        .package(path: "../SemelDatabaseModels"),
     ],
     targets: [
         .target(
             name: "SemelClang",
             dependencies: [
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
-                .product(name: "DatabaseModels", package: "DatabaseModels"),
+                .product(name: "SemelDatabaseModels", package: "SemelDatabaseModels"),
             ],
             path: "Sources/SemelClang"
         ),

@@ -6,7 +6,7 @@
 @testable import SemelSwift
 import XCTest
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 final class SwiftLinkerToolTests: SemelSwiftTestCase {
 

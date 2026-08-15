@@ -12,6 +12,6 @@
 
 ## Checklist
 
-- [ ] Tests pass (`swift test --package-path BuildSystemCore`)
+- [ ] Tests pass (`swift test --package-path SemelCore`)
 - [ ] New behaviour is covered by tests where practical
 - [ ] No unrelated changes included

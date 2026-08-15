@@ -6,7 +6,7 @@
 // engine's implementation of it, which reads and writes the graph, stays in the engine.
 
 import Foundation
-import DatabaseModels
+import SemelDatabaseModels
 
 import SemelNodeKit
 

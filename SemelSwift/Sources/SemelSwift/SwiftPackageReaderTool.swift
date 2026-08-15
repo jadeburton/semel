@@ -17,7 +17,7 @@
 
 import Foundation
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 // MARK: - Configuration
 

@@ -5,6 +5,9 @@
       location = "group:.">
    </FileRef>
    <FileRef
+      location = "group:SemelDatabaseModels">
+   </FileRef>
+   <FileRef
       location = "group:SemelNodeKit">
    </FileRef>
    <FileRef
@@ -14,9 +17,6 @@
       location = "group:SemelClang">
    </FileRef>
    <FileRef
-      location = "group:BuildSystemCore">
-   </FileRef>
-   <FileRef
-      location = "group:DatabaseModels">
+      location = "group:SemelCore">
    </FileRef>
 </Workspace>

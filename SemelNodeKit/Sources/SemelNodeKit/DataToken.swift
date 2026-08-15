@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import DatabaseModels
+import SemelDatabaseModels
 
 public typealias DataToken = DataObjectHash
 

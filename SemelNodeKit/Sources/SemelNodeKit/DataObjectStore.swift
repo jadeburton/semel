@@ -17,7 +17,7 @@
 // by Git's object store.
 
 import Foundation
-import DatabaseModels
+import SemelDatabaseModels
 import CryptoKit
 
 // MARK: - DataObjectStore

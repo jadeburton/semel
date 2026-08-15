@@ -9,7 +9,7 @@
 // covered came back as "does not conform, add stubs". None of them touches the graph, so
 // they belong with the declaration.
 
-import DatabaseModels
+import SemelDatabaseModels
 
 public extension InputlessNodeFunction {
 

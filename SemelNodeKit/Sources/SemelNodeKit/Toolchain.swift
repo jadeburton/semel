@@ -1,5 +1,5 @@
 // Toolchain.swift
-// BuildSystemCore
+// SemelCore
 //
 // Locating build tools on the machine, and reading the version they report.
 //

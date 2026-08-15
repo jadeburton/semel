@@ -15,13 +15,13 @@ let package = Package(
         .library(name: "SemelNodeKit", targets: ["SemelNodeKit"]),
     ],
     dependencies: [
-        .package(path: "../DatabaseModels"),
+        .package(path: "../SemelDatabaseModels"),
     ],
     targets: [
         .target(
             name: "SemelNodeKit",
             dependencies: [
-                .product(name: "DatabaseModels", package: "DatabaseModels"),
+                .product(name: "SemelDatabaseModels", package: "SemelDatabaseModels"),
             ],
             path: "Sources/SemelNodeKit"
         ),

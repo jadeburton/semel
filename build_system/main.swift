@@ -6,8 +6,8 @@
 //
 
 import Foundation
-import BuildSystemCore
-import BuildSystemCLI
+import SemelCore
+import SemelCLI
 import SemelSwift
 import SemelClang
 

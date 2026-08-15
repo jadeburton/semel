@@ -4,7 +4,7 @@
 
 import Foundation
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 // MARK: - Configuration
 
@@ -47,7 +47,7 @@ struct SwiftCompilerToolConfiguration {
 ///
 /// SPM lets a target declare an explicit `sources:` list, and lets one target's directory
 /// contain another's — this repository's own executable target is `build_system`, whose
-/// directory also holds BuildSystemCLI's sources and the XCTest target. So "every .swift
+/// directory also holds SemelCLI's sources and the XCTest target. So "every .swift
 /// file beneath the folder" is not the same thing as "this target's sources", and the
 /// recursive walk needs both predicates to stay honest.
 struct SourceScope {

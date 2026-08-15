@@ -1,7 +1,7 @@
 // CommandContext.swift
 // build_system
 
-import BuildSystemCore
+import SemelCore
 import Foundation
 import SemelNodeKit
 

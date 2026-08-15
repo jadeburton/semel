@@ -47,8 +47,8 @@ struct SwiftPackagePlugin: ProjectBuilderPlugin {
             ").formula"
 
         // Products go *inside* the package folder, not beside it.  A package directory may
-        // contain other packages — this repository's root package holds BuildSystemCore,
-        // DatabaseModels and GRDB.swift — and placing its product one level up collides
+        // contain other packages — this repository's root package holds SemelCore,
+        // SemelDatabaseModels and GRDB.swift — and placing its product one level up collides
         // with the folder holding theirs.
         return
             "ProjectBuilder(" +

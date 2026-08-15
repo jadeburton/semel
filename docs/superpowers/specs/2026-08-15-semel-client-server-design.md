@@ -32,7 +32,7 @@ socket.
 - All users share **one** graph, with a per-user home directory off the root of both the
   input and output file systems. Sharing is deliberate: the content-addressed store means
   a file one person pushes is instantly free for everyone else.
-- `BuildSystemCore` comes out of this unchanged, and in particular learns nothing about
+- `SemelCore` comes out of this unchanged, and in particular learns nothing about
   users, sockets or sessions. That is the test of whether the seam is in the right place.
 
 ## Non-goals for this round
@@ -61,12 +61,12 @@ necessary at larger scale are deliberately not here.
 ## Module layout
 
 ```
-BuildSystemCore      unchanged — no users, no sockets, no sessions
-DatabaseModels       unchanged
+SemelCore      unchanged — no users, no sockets, no sessions
+SemelDatabaseModels       unchanged
 SemelProtocol   NEW  frame codec + message types; shared by client and server
 semelserv       NEW  owns BuildEngine + DatabaseLayer + DataObjectStore;
                      listener, per-connection state, path authorisation
-BuildSystemCLI       keeps CommandInterpreter and plugins; CommandContext now
+SemelCLI       keeps CommandInterpreter and plugins; CommandContext now
                      holds a SemelClient instead of DatabaseLayer/BuildEngine
 semel                REPL, command parsing, session state, local disk I/O
 ```
@@ -321,7 +321,7 @@ unlucky connection.
 
 ## Testing
 
-Four layers, following the existing conventions (`BuildSystemTestCase`,
+Four layers, following the existing conventions (`SemelCoreTestCase`,
 `test_whatItDoes`, a real in-memory `DatabaseLayer` in preference to mocks).
 
 **Frame codec** — round-trip, truncation mid-header and mid-body, zero-length sections,

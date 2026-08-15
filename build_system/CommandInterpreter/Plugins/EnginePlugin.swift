@@ -3,7 +3,7 @@
 //
 // Handles: d / debug, n / nudge, e / errors, reset
 
-import BuildSystemCore
+import SemelCore
 import Foundation
 
 final class EnginePlugin: CommandPlugin {

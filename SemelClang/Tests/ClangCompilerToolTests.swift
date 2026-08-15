@@ -9,7 +9,7 @@
 @testable import SemelClang
 import XCTest
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 final class ClangCompilerToolTests: SemelClangTestCase {
 

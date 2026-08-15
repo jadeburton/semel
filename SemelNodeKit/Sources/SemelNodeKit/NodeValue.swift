@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import DatabaseModels
+import SemelDatabaseModels
 
 public enum NoValueReason: Codable {
     case pending
@@ -57,9 +57,9 @@ enum ProcessingCycleError: Error {
     case outputPortHasNoValue
 }
 
-// MARK: - DatabaseModels.Port → NodeValue
+// MARK: - SemelDatabaseModels.Port → NodeValue
 
-extension DatabaseModels.OutputPort {
+extension SemelDatabaseModels.OutputPort {
     public func asNodeValue() throws -> NodeValue {
         try .init(port: self)
     }
@@ -68,7 +68,7 @@ extension DatabaseModels.OutputPort {
 // MARK: - NodeValue helpers
 
 extension NodeValue {
-    init(port: DatabaseModels.OutputPort) throws {
+    init(port: SemelDatabaseModels.OutputPort) throws {
         switch port.valueKind {
 
         case .pending:

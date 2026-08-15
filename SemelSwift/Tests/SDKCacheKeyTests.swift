@@ -12,7 +12,7 @@
 //
 
 @testable import SemelSwift
-import DatabaseModels
+import SemelDatabaseModels
 import SemelNodeKit
 import XCTest
 

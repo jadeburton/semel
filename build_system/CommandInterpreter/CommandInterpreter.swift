@@ -2,7 +2,7 @@
 // build_system
 
 import Foundation
-import BuildSystemCore
+import SemelCore
 import SemelNodeKit
 
 enum CommandInterpreterError: Error {

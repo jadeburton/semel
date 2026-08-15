@@ -10,17 +10,17 @@ swift build                                  # builds everything, from the repo 
 swift test --package-path SemelNodeKit       # the node-authoring API (~68)
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~27)
-swift test --package-path BuildSystemCore    # the engine tests (~247)
+swift test --package-path SemelCore    # the engine tests (~247)
 swift test                                   # the CLI tests only (~8)
 ```
 
-`swift test` at the root runs **only** the `BuildSystemCLI` tests. The engine and the
+`swift test` at the root runs **only** the `SemelCLI` tests. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all five.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
-you find yourself wanting to import `BuildSystemCore` from a toolchain package, something
+you find yourself wanting to import `SemelCore` from a toolchain package, something
 belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`/`output:`
 names and the configuration text format ended up there.
 
@@ -33,16 +33,20 @@ A test that needs a node type but does not care which should use `SampleTool` fr
 tied the engine's cache and factory tests to Clang.
 
 In Xcode, open **`Semel.xcworkspace`**, not the package. Opening `Package.swift` makes
-`BuildSystemCore` and `DatabaseModels` read-only *dependencies*, and Xcode neither builds
+`SemelCore` and `SemelDatabaseModels` read-only *dependencies*, and Xcode neither builds
 nor lists the test targets of a dependency package — which is why the engine's tests could
 not be run from the root package. The workspace holds all three as peers, so each gets its
 own scheme and its own runnable tests.
 
 ## Naming of modules
 
-`BuildSystem` is being phased out in favour of `Semel` — opportunistically, not in one
-sweep. New modules take the new prefix; existing ones are renamed when they are being
-touched for other reasons. Expect both prefixes in the tree meanwhile.
+Modules are `Semel`-prefixed. The old `BuildSystem` prefix is gone from every module name
+and from the code entirely.
+
+Two things still carry the old vocabulary and are a deliberate leftover: the root package
+is named `build_system` and the CLI's sources live in `build_system/`. Renaming those
+changes the repository's layout and the C1 fixtures that reference those paths, so it is a
+wider job than a module rename.
 
 Two words are taken and must not be reused for anything else. **Plugin** means a
 `CommandPlugin` (a CLI verb) or a `ProjectBuilderPlugin` (project discovery). **Toolchain**
@@ -140,7 +144,7 @@ is genuinely impossible, and then it wants a comment saying why.
 
 ## Tests
 
-- Every test class inherits `BuildSystemTestCase`, which isolates the process-globals per
+- Every test class inherits `SemelCoreTestCase`, which isolates the process-globals per
   test. If you override `setUpWithError`, call `super` first.
 - Name tests `test_whatItDoes` — snake after the prefix, describing behaviour not method
   names. That is the dominant convention (~242 to 64).

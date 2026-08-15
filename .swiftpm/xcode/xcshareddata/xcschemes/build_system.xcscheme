@@ -39,9 +39,9 @@
             skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "BuildSystemCLITests"
-               BuildableName = "BuildSystemCLITests"
-               BlueprintName = "BuildSystemCLITests"
+               BlueprintIdentifier = "SemelCLITests"
+               BuildableName = "SemelCLITests"
+               BlueprintName = "SemelCLITests"
                ReferencedContainer = "container:">
             </BuildableReference>
          </TestableReference>

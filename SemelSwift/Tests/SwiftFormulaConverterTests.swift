@@ -10,7 +10,7 @@
 @testable import SemelSwift
 import XCTest
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
@@ -470,36 +470,36 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     private let rootManifestShape = """
         {
           "name": "build_system",
-          "dependencies": [{"fileSystem": [{"identity": "buildsystemcore", "path": "BuildSystemCore"}]}],
+          "dependencies": [{"fileSystem": [{"identity": "buildsystemcore", "path": "SemelCore"}]}],
           "products": [],
           "targets": [
-            {"name": "BuildSystemCLI", "type": "regular", "path": "build_system/CommandInterpreter",
-             "dependencies": [{"product": ["BuildSystemCore", "BuildSystemCore", null, null]}]},
+            {"name": "SemelCLI", "type": "regular", "path": "build_system/CommandInterpreter",
+             "dependencies": [{"product": ["SemelCore", "SemelCore", null, null]}]},
             {"name": "build_system", "type": "executable", "path": "build_system",
              "sources": ["main.swift"],
-             "dependencies": [{"byName": ["BuildSystemCLI", null]},
-                              {"product": ["BuildSystemCore", "BuildSystemCore", null, null]}]},
-            {"name": "BuildSystemCLITests", "type": "test", "path": "build_system/Tests",
-             "dependencies": [{"byName": ["BuildSystemCLI", null]}]}
+             "dependencies": [{"byName": ["SemelCLI", null]},
+                              {"product": ["SemelCore", "SemelCore", null, null]}]},
+            {"name": "SemelCLITests", "type": "test", "path": "build_system/Tests",
+             "dependencies": [{"byName": ["SemelCLI", null]}]}
           ]
         }
         """
 
-    /// BuildSystemCore as it really is: a path dependency of the root manifest that
+    /// SemelCore as it really is: a path dependency of the root manifest that
     /// itself pulls in GRDB by git URL. Together with grdbShapedManifest this reproduces
-    /// the whole production chain — root -> BuildSystemCore -> GRDB -> GRDBSQLite.
+    /// the whole production chain — root -> SemelCore -> GRDB -> GRDBSQLite.
     private let buildSystemCoreManifest = """
         {
-          "name": "BuildSystemCore",
+          "name": "SemelCore",
           "dependencies": [
             {"sourceControl": [{"identity": "grdb.swift",
                                 "location": {"remote": [{"urlString": "https://github.com/groue/GRDB.swift.git"}]}}]}
           ],
           "products": [
-            {"name": "BuildSystemCore", "targets": ["BuildSystemCore"], "type": {"library": ["automatic"]}}
+            {"name": "SemelCore", "targets": ["SemelCore"], "type": {"library": ["automatic"]}}
           ],
           "targets": [
-            {"name": "BuildSystemCore", "type": "regular", "path": "Sources/BuildSystemCore",
+            {"name": "SemelCore", "type": "regular", "path": "Sources/SemelCore",
              "dependencies": [{"product": ["GRDB", "GRDB.swift", null, null]}]}
           ]
         }
@@ -508,7 +508,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     private func rootFormula() throws -> String {
         try formula(packageFolder: "input:/repo",
                     json: rootManifestShape,
-                    externalManifests: ["input:/repo/BuildSystemCore": buildSystemCoreManifest,
+                    externalManifests: ["input:/repo/SemelCore": buildSystemCoreManifest,
                                         "input:/repo/GRDB.swift":      grdbShapedManifest])
     }
 
@@ -517,10 +517,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertTrue(result.contains("product 'build_system' ="), "got:\n\(result)")
         XCTAssertTrue(result.contains("'build_system.o': compilerbuild_system().object"), "got:\n\(result)")
-        XCTAssertTrue(result.contains("'BuildSystemCLI.o': compilerBuildSystemCLI().object"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("'SemelCLI.o': compilerSemelCLI().object"), "got:\n\(result)")
     }
 
-    /// The executable's folder also holds BuildSystemCLI's sources and the XCTest target,
+    /// The executable's folder also holds SemelCLI's sources and the XCTest target,
     /// so the walk has to be held to `sources: ["main.swift"]`.
     func test_confinesTheExecutableTargetToItsDeclaredSources() throws {
         let result = try rootFormula()
@@ -533,14 +533,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_neverBuildsTheTestTarget() throws {
         let result = try rootFormula()
 
-        XCTAssertFalse(result.contains("BuildSystemCLITests"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("SemelCLITests"), "got:\n\(result)")
     }
 
-    /// The failure this whole chain produced: BuildSystemCLI imports only BuildSystemCore,
+    /// The failure this whole chain produced: SemelCLI imports only SemelCore,
     /// but loading that module needs GRDB — and GRDB in turn needs GRDBSQLite's module map.
     /// Both have to reach a target three packages away that names neither.
     func test_reachesThroughThreePackagesToTheSystemLibrary() throws {
-        let block = try funcDefinition("compilerBuildSystemCLI", in: try rootFormula())
+        let block = try funcDefinition("compilerSemelCLI", in: try rootFormula())
 
         XCTAssertTrue(block.contains("'GRDB': compilerGRDB().swiftmodule"), "got:\n\(block)")
         XCTAssertTrue(block.contains("'GRDBSQLite': Folder(path: 'input:/repo/GRDB.swift/Sources/GRDBSQLite').manifest"),
@@ -644,15 +644,15 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     /// checkout sits beside the package that named it — so the walk must resolve each
     /// sourceControl URL against the manifest that declared it, not against the root.
     func test_resolvesASourceControlDependencyDeclaredByAnExternalPackage() throws {
-        let output = try convert(packageFolder: "input:/repo/BuildSystemCore", json: """
+        let output = try convert(packageFolder: "input:/repo/SemelCore", json: """
             {
-              "name": "BuildSystemCore",
+              "name": "SemelCore",
               "dependencies": [{"fileSystem": [{"identity": "databasemodels", "path": "../DatabaseModels"}]}],
               "products": [
-                {"name": "BuildSystemCore", "targets": ["BuildSystemCore"], "type": {"library": ["automatic"]}}
+                {"name": "SemelCore", "targets": ["SemelCore"], "type": {"library": ["automatic"]}}
               ],
               "targets": [
-                {"name": "BuildSystemCore", "type": "regular", "path": "Sources/BuildSystemCore",
+                {"name": "SemelCore", "type": "regular", "path": "Sources/SemelCore",
                  "dependencies": [{"product": ["DatabaseModels", "DatabaseModels", null, null]}]}
               ]
             }

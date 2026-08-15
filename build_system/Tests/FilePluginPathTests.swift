@@ -1,14 +1,14 @@
 //
 //  FilePluginPathTests.swift
-//  BuildSystemCLITests
+//  SemelCLITests
 //
 //  Regression cover for the push/cp path resolution defects. Each of these commands
 //  used to match nothing and report nothing — the failure mode was silence, which is
 //  why they went unnoticed.
 //
 
-@testable import BuildSystemCLI
-@testable import BuildSystemCore
+@testable import SemelCLI
+@testable import SemelCore
 import XCTest
 import SemelNodeKit
 

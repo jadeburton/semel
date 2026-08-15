@@ -3,7 +3,7 @@
 //
 // Handles: cd, pwd, ls / list
 
-import BuildSystemCore
+import SemelCore
 import Foundation
 import SemelNodeKit
 

@@ -5,7 +5,7 @@
 
 ## Goal
 
-`BuildSystemCore` should know nothing about Swift or C/C++. The nine toolchain node
+`SemelCore` should know nothing about Swift or C/C++. The nine toolchain node
 functions move into their own packages, programming against a published node-authoring API
 rather than against the engine.
 
@@ -28,7 +28,7 @@ functions).
 ## Layout
 
 ```
-DatabaseModels                        (→ SemelDatabaseModels, later)
+SemelDatabaseModels                        (was DatabaseModels)
       ↑
 SemelNodeKit          what a node function programs against
       ↑           ↑             ↑
@@ -130,8 +130,9 @@ Each step keeps both suites green, and none is a point of no return.
 2. **Open the two seams.** Core stops hardcoding the type list and the discovery plugins.
 3. **Move the Swift nodes** to `SemelSwift`, with their tests.
 4. **Move the Clang nodes** to `SemelClang`, with their tests.
-5. **Rename** `BuildSystemCore` → `SemelCore`, `DatabaseModels` → `SemelDatabaseModels`,
-   when they are next being touched anyway.
+5. **Rename** `BuildSystemCore` → `SemelCore` and `DatabaseModels` → `SemelDatabaseModels`.
+   (Done. Names throughout this document were rewritten by that sweep, so it reads in the
+   new vocabulary even where it describes the old state.)
 
 ## What proves it worked
 

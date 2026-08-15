@@ -1,5 +1,5 @@
 // SwiftFormulaConverter.swift
-// BuildSystemCore
+// SemelCore
 //
 // Converts a `swift package dump-package` JSON manifest into a .fmla formula
 // string that ProjectBuilder can consume as its projectFile input.
@@ -23,7 +23,7 @@
 
 import Foundation
 import SemelNodeKit
-import DatabaseModels
+import SemelDatabaseModels
 
 struct SwiftFormulaConverter: NodeFunction {
     public static let kind: UInt = 24
@@ -630,8 +630,8 @@ struct SwiftFormulaConverter: NodeFunction {
 
         // Every transitively reachable Swift target, not just the direct dependencies.
         // A binary .swiftmodule records the modules it was built against, and swiftc must
-        // load all of them to load it: compiling BuildSystemCLI, which imports only
-        // BuildSystemCore, fails with "missing required modules: 'DatabaseModels', 'GRDB'"
+        // load all of them to load it: compiling SemelCLI, which imports only
+        // SemelCore, fails with "missing required modules: 'SemelDatabaseModels', 'GRDB'"
         // unless those are on its import path too.
         var moduleWires: [String] = []
         for depTarget in collectTransitiveTargets(root: target, lookupAll: lookupAll)

@@ -96,7 +96,7 @@ Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 
 ```
 build_system/          CLI executable — REPL and command plugins
-BuildSystemCore/       Core library
+SemelCore/       Core library
   BuildEngine          Async process loop, batch scheduling, deferred deletion
   NodeFunction         Protocol for all build steps
   NodeFunctions/
@@ -115,7 +115,7 @@ BuildSystemCore/       Core library
   Database             GRDB-backed persistence layer
   DataObjectStore      Content-addressed blob store
   PolyFactory          Deserialises nodes by kind ID
-DatabaseModels/        GRDB schema models (Node, Wire, OutputPort, …)
+SemelDatabaseModels/        GRDB schema models (Node, Wire, OutputPort, …)
 ```
 
 The engine runs a two-phase processing loop:

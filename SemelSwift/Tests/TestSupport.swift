@@ -2,7 +2,7 @@
 //  TestSupport.swift
 //  SemelSwiftTests
 //
-//  The engine's BuildSystemTestCase cannot be used here — SemelSwift deliberately cannot
+//  The engine's SemelCoreTestCase cannot be used here — SemelSwift deliberately cannot
 //  see the engine — so this is the equivalent isolation for a package that only needs the
 //  node-authoring API.
 //

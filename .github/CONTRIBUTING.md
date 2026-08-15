@@ -8,7 +8,7 @@ Contributions are welcome. Here's how to get started.
 git clone <repo-url>
 cd build_system
 swift build
-swift test --package-path BuildSystemCore
+swift test --package-path SemelCore
 ```
 
 ## Project layout
@@ -16,14 +16,14 @@ swift test --package-path BuildSystemCore
 | Directory | Purpose |
 |-----------|---------|
 | `build_system/` | CLI executable and command plugins |
-| `BuildSystemCore/` | Core library — engine, node functions, graph, database |
-| `DatabaseModels/` | GRDB schema models shared by both packages |
+| `SemelCore/` | Core library — engine, node functions, graph, database |
+| `SemelDatabaseModels/` | GRDB schema models shared by both packages |
 
 ## Making changes
 
 - Keep changes focused — one concern per PR
-- Add or update tests in `BuildSystemCore/Tests/` for anything in the core library
-- Run `swift test --package-path BuildSystemCore` before opening a PR
+- Add or update tests in `SemelCore/Tests/` for anything in the core library
+- Run `swift test --package-path SemelCore` before opening a PR
 - Follow the existing code style (no comments explaining *what* code does, only *why*)
 
 ## Reporting bugs
