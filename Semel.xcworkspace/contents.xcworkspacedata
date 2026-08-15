@@ -11,6 +11,9 @@
       location = "group:SemelSwift">
    </FileRef>
    <FileRef
+      location = "group:SemelClang">
+   </FileRef>
+   <FileRef
       location = "group:BuildSystemCore">
    </FileRef>
    <FileRef

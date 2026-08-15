@@ -3,11 +3,12 @@
 //  build_system_tests
 //
 
-@testable import BuildSystemCore
+@testable import SemelClang
 import XCTest
 import SemelNodeKit
+import DatabaseModels
 
-final class ClangLinkerToolTests: BuildSystemTestCase {
+final class ClangLinkerToolTests: SemelClangTestCase {
 
     private let descriptor = ToolDescriptor(name: "clang",
                                             version: "test-clang",

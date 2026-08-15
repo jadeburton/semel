@@ -1,8 +1,8 @@
-@testable import BuildSystemCore
+@testable import SemelClang
 import XCTest
 import SemelNodeKit
 
-final class IncludeFinderTests: BuildSystemTestCase {
+final class IncludeFinderTests: SemelClangTestCase {
 
     // MARK: - Basic extraction
 

@@ -246,7 +246,20 @@ evidence the seam is in the right place. `RecordingToolExecutor` is duplicated f
 engine's tests; a testing-support module for SemelNodeKit is the tidier answer once
 SemelClang wants one too.
 
-**Steps remaining:** move Clang nodes (4), rename BuildSystemCore → SemelCore (5).
+**Step 4 done.** SemelClang holds the three Clang nodes and IncludeFinder. It contributes
+no project kind — a C project is described by a `.fmla` file, which the engine recognises
+itself because a formula names no toolchain. `registerBuiltInToolchains()` is deleted: the
+engine now registers only its own types and cannot name a toolchain at all.
+
+Three of the engine's own test files had been reaching for `ClangCompilerTool` as a
+convenient sample node. They now use `SampleTool`/`OtherSampleTool` from `SampleNodes.swift`,
+which is what they should always have used — their subjects are the cache-key algorithm,
+the type registry and unrecoverable-error handling, none of which has anything to do with C.
+The golden cache-key value had to be re-recorded, since a node's type name is part of its
+key.
+
+**Step remaining:** rename BuildSystemCore → SemelCore, DatabaseModels →
+SemelDatabaseModels (5), whenever those are next touched anyway.
 
 ## Server
 

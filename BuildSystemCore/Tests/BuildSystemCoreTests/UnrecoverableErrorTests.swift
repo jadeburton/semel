@@ -92,14 +92,14 @@ final class UnrecoverableErrorTests: BuildSystemTestCase {
                                                    toolExecutor: executor)
 
         let configuration = """
-            toolDescriptor.name=clang
-            toolDescriptor.version=test-clang
+            toolDescriptor.name=sample
+            toolDescriptor.version=test-sample
             toolDescriptor.platform=macOS
             toolDescriptor.architecture=arm64
             """
         let input = ProcessInput(inputValues: [
-            ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
-            ClangCompilerTool.input: ["src/hello.c.p": .value(try "int main(){}".intern())],
+            SampleTool.configuration: ["configuration": .value(try configuration.intern())],
+            SampleTool.input: ["src/hello.c.p": .value(try "int main(){}".intern())],
         ])
 
         // Make the store read-only rather than unreachable: the node still has to read
@@ -111,13 +111,13 @@ final class UnrecoverableErrorTests: BuildSystemTestCase {
                                                    ofItemAtPath: self.storeRoot.path)
         }
 
-        let tool = try ClangCompilerTool(thisNode: Node(id: 1, kind: ClangCompilerTool.kind))
+        let tool = try SampleTool(thisNode: Node(id: 1, kind: SampleTool.kind))
         let output = tool.processWithCatch(input: input)
 
         XCTAssertFalse(reported.isEmpty,
                        "the store failure must reach the fatal handler, not just the node")
         // It is still recorded against the node as well — the handler is what decides
         // whether the process continues, not this code path.
-        XCTAssertTrue(output.outputValues[ClangCompilerTool.output]?.isNoValue ?? false)
+        XCTAssertTrue(output.outputValues[SampleTool.output]?.isNoValue ?? false)
     }
 }

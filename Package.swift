@@ -9,6 +9,7 @@ let package = Package(
     dependencies: [
         .package(path: "BuildSystemCore"),
         .package(path: "SemelSwift"),
+        .package(path: "SemelClang"),
     ],
     targets: [
         // The command interpreter lives in a library rather than the executable so it can
@@ -27,6 +28,7 @@ let package = Package(
                 "BuildSystemCLI",
                 .product(name: "BuildSystemCore", package: "BuildSystemCore"),
                 .product(name: "SemelSwift", package: "SemelSwift"),
+                .product(name: "SemelClang", package: "SemelClang"),
             ],
             path: "build_system",
             sources: ["main.swift"]

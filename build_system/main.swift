@@ -9,6 +9,7 @@ import Foundation
 import BuildSystemCore
 import BuildSystemCLI
 import SemelSwift
+import SemelClang
 
 var commandInterpreter: CommandInterpreter?
 
@@ -18,6 +19,7 @@ func main() throws {
     // Composition root: the engine knows no toolchains, so this is where the ones this
     // binary ships are installed. Before start(), so discovery sees them on its first pass.
     try SemelSwift.register()
+    try SemelClang.register()
 
     try BuildEngine.start()
 

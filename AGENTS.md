@@ -9,13 +9,14 @@ about how to change it.
 swift build                                  # builds everything, from the repo root
 swift test --package-path SemelNodeKit       # the node-authoring API (~68)
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
-swift test --package-path BuildSystemCore    # the engine tests (~274)
+swift test --package-path SemelClang         # the C/C++ toolchain nodes (~27)
+swift test --package-path BuildSystemCore    # the engine tests (~247)
 swift test                                   # the CLI tests only (~8)
 ```
 
 `swift test` at the root runs **only** the `BuildSystemCLI` tests. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all four.
+all five.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
@@ -24,8 +25,12 @@ belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`
 names and the configuration text format ended up there.
 
 Nothing registers a toolchain automatically. `semel`'s `main.swift` is the composition
-root: it calls `SemelSwift.register()`, and a binary that did not would simply have no idea
-what a `Package.swift` is.
+root: it calls `SemelSwift.register()` and `SemelClang.register()`, and a binary that did
+not would simply have no idea what a `Package.swift` is or how to compile a `.c` file.
+
+A test that needs a node type but does not care which should use `SampleTool` from
+`SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
+tied the engine's cache and factory tests to Clang.
 
 In Xcode, open **`Semel.xcworkspace`**, not the package. Opening `Package.swift` makes
 `BuildSystemCore` and `DatabaseModels` read-only *dependencies*, and Xcode neither builds

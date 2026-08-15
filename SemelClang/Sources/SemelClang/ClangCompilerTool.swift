@@ -5,6 +5,7 @@
 
 import Foundation
 import SemelNodeKit
+import DatabaseModels
 
 // MARK: - Configuration
 

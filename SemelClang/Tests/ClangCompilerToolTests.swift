@@ -6,11 +6,12 @@
 //  output ports. A recording executor makes both observable without running a compiler.
 //
 
-@testable import BuildSystemCore
+@testable import SemelClang
 import XCTest
 import SemelNodeKit
+import DatabaseModels
 
-final class ClangCompilerToolTests: BuildSystemTestCase {
+final class ClangCompilerToolTests: SemelClangTestCase {
 
     private let descriptor = ToolDescriptor(name: "clang",
                                             version: "test-clang",

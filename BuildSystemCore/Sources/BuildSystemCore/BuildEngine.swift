@@ -34,20 +34,12 @@ public final class BuildEngine {
     /// before sleeping.
     private let workSignal = WorkSignal()
 
-    /// Registers everything this process should know how to build.
+    /// The node types and project kinds the engine itself defines.
     ///
-    /// Split so each package owns its own contribution: the engine registers the node types
-    /// and project kinds it defines, and a toolchain package registers its own. Until the
-    /// Swift and Clang nodes move out they are registered here too, by
-    /// `registerBuiltInToolchains()` — a seam that exists to be removed.
+    /// Toolchains are not registered here and cannot be: the engine has no way to name
+    /// them. A composition root installs the ones its binary ships — see semel's
+    /// main.swift. A `.fmla` file names no toolchain, so recognising one belongs here.
     static func registerTypes() throws {
-        try registerEngineTypes()
-        try registerBuiltInToolchains()
-    }
-
-    /// The node types and project kinds the engine itself defines. A `.fmla` file names no
-    /// toolchain, so recognising one belongs here.
-    public static func registerEngineTypes() throws {
         try PolyFactory.register(types: [
             FolderManifest.self,
             OutputFile.self,
@@ -58,18 +50,6 @@ public final class BuildEngine {
             Configuration.self,
         ])
         ProjectDiscovery.register(FormulaFilePlugin())
-    }
-
-    /// TEMPORARY. The Clang nodes still live in this package; when they move to SemelClang
-    /// it will expose its own registration and this goes away. Its existence is the measure
-    /// of how far the split has got — Swift has already left.
-    public static func registerBuiltInToolchains() throws {
-        try PolyFactory.register(types: [
-            ClangLinkerTool.self,
-            ClangCompilerTool.self,
-            ClangPreprocessorTool.self,
-            IncludeFinder.self,
-        ])
     }
 
     var projectFinder: Node {

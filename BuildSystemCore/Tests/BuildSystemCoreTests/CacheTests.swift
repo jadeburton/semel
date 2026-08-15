@@ -28,16 +28,16 @@ final class CacheTests: BuildSystemTestCase {
 
     // MARK: - Helpers
 
-    private func makeCompilerNode() throws -> ClangCompilerTool {
-        let shape = try GraphShapeNode.parse("ClangCompilerTool()")
+    private func makeCompilerNode() throws -> SampleTool {
+        let shape = try GraphShapeNode.parse("SampleTool()")
         let (node, _) = try shape.findOrCreateMatchingNode()
-        return try ClangCompilerTool(thisNode: node)
+        return try SampleTool(thisNode: node)
     }
 
-    private func configuration(toolVersion: String = "Apple clang version 17.0.0",
+    private func configuration(toolVersion: String = "sample tool version 1",
                                extra: [String: String] = [:]) -> String {
         var properties = [
-            "toolDescriptor.name": "clang",
+            "toolDescriptor.name": "sample",
             "toolDescriptor.version": toolVersion,
             "toolDescriptor.platform": "macOS",
             "toolDescriptor.architecture": "arm64",
@@ -52,8 +52,8 @@ final class CacheTests: BuildSystemTestCase {
                            sourcePath: String = "src/hello.c.p",
                            contents: String = "int main(){}") throws -> ProcessInput {
         ProcessInput(inputValues: [
-            ClangCompilerTool.configuration: ["configuration": .value(try (config ?? configuration()).intern())],
-            ClangCompilerTool.input: [sourcePath: .value(try contents.intern())],
+            SampleTool.configuration: ["configuration": .value(try (config ?? configuration()).intern())],
+            SampleTool.input: [sourcePath: .value(try contents.intern())],
         ])
     }
 
@@ -61,13 +61,17 @@ final class CacheTests: BuildSystemTestCase {
 
     /// Pins the key format. A cache key is a promise that identical inputs mean an
     /// identical build, so an unintended change to how it is composed silently discards
-    /// every existing entry — and, on a shared cache, does it for everyone. This value was
-    /// recorded before the environment hook was added; it must not move when a node
-    /// declares no machine-derived inputs.
+    /// every existing entry — and, on a shared cache, does it for everyone.
+    ///
+    /// Re-recorded when this test's subject moved from ClangCompilerTool to SampleTool:
+    /// the node type's name is part of the key, so the value had to change even though the
+    /// format did not. That cost the original provenance — it no longer proves the
+    /// environment hook left keys untouched — but it buys something better going forward,
+    /// because SampleTool exists only for these tests and will not be moved again.
     func test_theKeyFormatHasNotDrifted() throws {
         let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
 
-        XCTAssertEqual(key, "50ff754ae32daaa6087d74d0c1eb7dcb2542570aff56ebfaba9805bf12604779")
+        XCTAssertEqual(key, "68ecc3b48fb17569b87a4ad22f02de81ee0046a45d2124d7985291c1e2a5feb0")
     }
 
     // MARK: - What the key covers
@@ -107,9 +111,9 @@ final class CacheTests: BuildSystemTestCase {
         let tool = try makeCompilerNode()
 
         let before = try tool.buildCacheKeyFromAllInputs(
-            input: try makeInput(configuration: configuration(toolVersion: "Apple clang version 17.0.0")))
+            input: try makeInput(configuration: configuration(toolVersion: "sample tool version 1")))
         let after = try tool.buildCacheKeyFromAllInputs(
-            input: try makeInput(configuration: configuration(toolVersion: "Apple clang version 21.0.0")))
+            input: try makeInput(configuration: configuration(toolVersion: "sample tool version 2")))
 
         XCTAssertNotEqual(before, after, "a different compiler must produce a different key")
     }
@@ -125,13 +129,13 @@ final class CacheTests: BuildSystemTestCase {
     }
 
     func test_differentNodeTypesDoNotShareAKey() throws {
-        let compilerShape = try GraphShapeNode.parse("ClangCompilerTool()")
+        let compilerShape = try GraphShapeNode.parse("SampleTool()")
         let (compilerNode, _) = try compilerShape.findOrCreateMatchingNode()
-        let preprocessorShape = try GraphShapeNode.parse("ClangPreprocessorTool()")
+        let preprocessorShape = try GraphShapeNode.parse("OtherSampleTool()")
         let (preprocessorNode, _) = try preprocessorShape.findOrCreateMatchingNode()
 
-        let compiler = try ClangCompilerTool(thisNode: compilerNode)
-        let preprocessor = try ClangPreprocessorTool(thisNode: preprocessorNode)
+        let compiler = try SampleTool(thisNode: compilerNode)
+        let preprocessor = try OtherSampleTool(thisNode: preprocessorNode)
 
         let input = try makeInput()
         let compilerKey = try compiler.buildCacheKeyFromAllInputs(input: input)
@@ -149,14 +153,14 @@ final class CacheTests: BuildSystemTestCase {
         let key = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
 
         let output = ProcessOutput(
-            outputValues: [ClangCompilerTool.output: .value(try "OBJECT".intern()),
-                           ClangCompilerTool.errorLog: .value(""),
-                           ClangCompilerTool.infoLog: .value("")],
+            outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
+                           SampleTool.errorLog: .value(""),
+                           SampleTool.infoLog: .value("")],
             inputWireExpectations: [:])
         try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
-        XCTAssertEqual(try loaded.outputValues[ClangCompilerTool.output]?.expectValue().resolveAsString(),
+        XCTAssertEqual(try loaded.outputValues[SampleTool.output]?.expectValue().resolveAsString(),
                        "OBJECT")
     }
 
@@ -165,9 +169,9 @@ final class CacheTests: BuildSystemTestCase {
         let key = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
 
         let output = ProcessOutput(
-            outputValues: [ClangCompilerTool.output: .value(try "OBJECT".intern()),
-                           ClangCompilerTool.errorLog: .value(""),
-                           ClangCompilerTool.infoLog: .value("")],
+            outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
+                           SampleTool.errorLog: .value(""),
+                           SampleTool.infoLog: .value("")],
             inputWireExpectations: [:])
         try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
 
@@ -182,7 +186,7 @@ final class CacheTests: BuildSystemTestCase {
     func test_aMissingInputPortIsReportedRatherThanCrashing() throws {
         let tool = try makeCompilerNode()
         let partial = ProcessInput(inputValues: [
-            ClangCompilerTool.configuration: ["configuration": .value(try configuration().intern())],
+            SampleTool.configuration: ["configuration": .value(try configuration().intern())],
         ])
 
         XCTAssertThrowsError(try tool.buildCacheKeyFromAllInputs(input: partial))

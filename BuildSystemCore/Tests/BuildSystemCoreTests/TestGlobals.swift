@@ -40,6 +40,11 @@ enum TestGlobals {
         // registry, so a test that skips this would parse against a different rulebook
         // than production — and would pass or fail depending on which test ran first.
         try BuildEngine.registerTypes()
+
+        // The stand-ins these tests use in place of a toolchain node. Registered here for
+        // the same reason the engine's own types are: GraphShapeNode.parse resolves a type
+        // name through the factory.
+        try PolyFactory.register(types: [SampleTool.self, OtherSampleTool.self])
     }
 
     private static func makeTemporaryStoreRoot() -> URL {

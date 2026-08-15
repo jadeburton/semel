@@ -3,7 +3,7 @@
 //  build_system_tests
 //
 
-import BuildSystemCore
+@testable import BuildSystemCore
 import XCTest
 import SemelNodeKit
 
@@ -102,8 +102,7 @@ final class PolyFactoryTests: BuildSystemTestCase {
     func test_allRegisteredKindsAreDistinct() throws {
         let kinds: [UInt] = [
             ProjectFinder.kind, ProjectBuilder.kind, StaticFile.kind, Folder.kind,
-            ClangLinkerTool.kind, ClangCompilerTool.kind, ClangPreprocessorTool.kind,
-            Configuration.kind, IncludeFinder.kind
+            OutputFile.kind, Configuration.kind, FolderManifest.kind
         ]
         XCTAssertEqual(kinds.count, Set(kinds).count, "Each NodeFunction must have a unique kind")
     }

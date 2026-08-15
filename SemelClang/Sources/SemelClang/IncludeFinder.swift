@@ -7,6 +7,7 @@
 
 import Foundation
 import SemelNodeKit
+import DatabaseModels
 
 public struct IncludeFinder: NodeFunction {
     public static let kind: UInt = 15
