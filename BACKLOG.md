@@ -200,7 +200,7 @@ is swapped — which every test does. Not measured yet; measure before optimisin
 **B-24** `open` — **`Folder.canBeDeleted` instantiates every child's node function.**
 `TODO: slow` at `Folder.swift:63`. Same shape as B-16 but on the delete path.
 
-**B-28** `open` — **Split the toolchains out of the engine.**
+**B-28** `doing` — **Split the toolchains out of the engine.**
 `SemelNodeKit` (the node-authoring API), `SemelSwift` and `SemelClang`, with the toolchain
 packages depending on NodeKit and *not* on the engine — the absent arrow is what makes the
 engine agnostic. Design and phasing in
@@ -211,6 +211,20 @@ Measured first: across all nine toolchain nodes there is exactly one reach into 
 looks. Two seams to open — `BuildEngine.registerTypes()` and `ProjectFinder`'s plugin array
 — plus a kind-ID allocation rule, since existing IDs cannot be renumbered without orphaning
 live databases.
+
+**Step 1 done** (`b49e2b5`…`435fd5a`). SemelNodeKit exists and holds 13 files: the node
+protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, PolyFactory, Path,
+DataObjectStore, DataToken, ToolExecutor, Toolchain, FileMetadata, GraphShapeArg and
+FolderManifest. 63 tests; depends only on DatabaseModels.
+
+Two traps worth knowing before step 3. An `internal` overload becomes *invisible* rather
+than ambiguous across modules, so `PolySerializable.toJSON` silently lost to
+`Encodable.toJSON` and produced JSON with no `kind` — 51 runtime failures, no compile
+error. And a stale build plan makes a dependency package's new or changed files invisible;
+`rm -f <pkg>/.build/build.db <pkg>/.build/plan.json` when errors contradict a fix.
+
+**Steps remaining:** open the two seams (2), move Swift nodes (3), move Clang nodes (4),
+rename BuildSystemCore → SemelCore (5).
 
 ## Server
 
