@@ -33,13 +33,13 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
 
     static let outputPort = "output"
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
     var path: Path {
         Path(thisNode.properties["path"]!)
     }
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
         assert(!path.string.contains(Folder.outputFileSystemName))
         embeddedNode.name = name
@@ -48,7 +48,7 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
         }
     }
 
-    static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [outputPort])
+    public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [outputPort])
 
 //    var inputFileSystem: Node {
 //        get throws {
@@ -59,7 +59,7 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
     // If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted
     // if there are no output Wires.
-    func canBeDeleted() throws -> Bool {
+    public func canBeDeleted() throws -> Bool {
         try !isPinned
     }
 

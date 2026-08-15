@@ -1,128 +1,16 @@
 //
-//  NodeProtocol.swift
+//  NodeFunction+Graph.swift
 //  build_system
+//
+//  The engine's side of the node protocols declared in SemelNodeKit: reading input ports,
+//  deciding whether a node is ready, applying wire expectations, writing outputs and
+//  notifying parents. All of it touches the graph, which is why it is here and not in the
+//  node-authoring API.
 //
 
 import Foundation
 import DatabaseModels
 import SemelNodeKit
-
-// MARK: - Protocols
-
-struct ProcessCacheEntry: Codable {
-    let outputValues: [String: NodeValue]
-    let inputWireExpectations: [String: [String: String]]
-}
-
-struct ProcessInput {
-    let inputValues: [String: [String: NodeValue]]
-}
-
-public struct ProcessOutput {
-    public let outputValues: [String: NodeValue]
-    public let inputWireExpectations: [String: [String: String]] // each dynamic input port has N wires connected to it, each wire has an expectation
-}
-
-protocol WithDefaultInitializer {
-    init() throws
-}
-
-extension InputlessNodeFunction {
-    var thisNode: Node {
-        embeddedNode
-    }
-
-    var id: ObjectID? {
-        thisNode.id
-    }
-
-    /// The node's id, or an integrity error if it has not been persisted yet.
-    func requireID() throws -> ObjectID {
-        try thisNode.requireID()
-    }
-
-    var parentNodeID: ObjectID? {
-        thisNode.parentNodeID
-    }
-
-    var scheduled: Bool {
-        thisNode.scheduled
-    }
-
-    var searchKey: String? {
-        thisNode.searchKey
-    }
-}
-
-protocol InputlessNodeFunction: WithKind {
-    var embeddedNode: Node { get set }
-
-    init(thisNode: Node) throws
-
-    func didCreate() throws -> ProcessOutput?
-
-    static var descriptor: NodeFunctionDescriptor { get }
-
-    /// Returns the init-time key-value arguments that distinguish this node from
-    /// others of the same type (e.g. `path='src/hello.c'` for StaticFile).
-    /// Declared here so Swift dispatches it dynamically via the protocol witness table,
-    /// not statically via the extension — which would always call the default `[]`.
-    func graphShapeArgs(node: Node) -> [GraphShapeArg]
-
-    // Most Nodes can be immediately deleted as soon as all of their output wires are deleted. Deleting involves deleting all input Wires,
-    // which may cause a cascade deletion.
-    // Some Nodes should not be deleted even if they have no connected output Wires;
-    // - ProjectFinder (which is the root object, and has no outputs by design)
-    // - StaticFile. If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
-    //   it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted if there are no output Wires.
-    // - If the Node (usually a Folder) has one or more children it must not be deleted. (If a Node is deleted, we must check if it's parent can be deleted.)
-    func canBeDeleted() throws -> Bool
-
-    func onChildAdded(nodeID: ObjectID) throws
-    func onChildContentChanged(nodeID: ObjectID, name: String) throws
-    func onChildDeleted(nodeID: ObjectID) throws
-
-    /// Called immediately before the node is permanently removed from the DB.
-    /// Default implementation is a no-op; override to perform cleanup or logging.
-    func willBeDeleted() throws
-
-    /// Called at the end of `writeToOutputs`, after all output port values have
-    /// been written to the DB.  Default implementation is a no-op; override to
-    /// react to the written output without mutating the Node itself.
-    func didWriteOutputs(output: ProcessOutput) throws
-}
-
-extension InputlessNodeFunction {
-    var descriptor: NodeFunctionDescriptor { Self.descriptor }
-}
-
-protocol NodeFunction: InputlessNodeFunction {
-    /// Increment this to invalidate cached outputs when processing logic changes.
-    /// Defaults to 0; override in any NodeFunction whose output format changes.
-    static var codeVersion: Int { get }
-
-    /// Anything read from the *machine* rather than from a wire or a property that can
-    /// change this node's output — an SDK version, a resolved toolchain, an environment
-    /// variable the tool consults.
-    ///
-    /// Such values are invisible to the ordinary key, which covers only the node type,
-    /// its properties and its inputs. A node that omits one here produces identical keys
-    /// for genuinely different builds, which is the single failure a cache must never
-    /// have: locally that is a stale result you eventually notice, and on a shared cache
-    /// it is a wrong build handed to everyone else that looks correct on the machine that
-    /// produced it.
-    ///
-    /// Empty means "nothing beyond the graph influences my output", and leaves the key
-    /// byte-for-byte as it was.
-    var cacheKeyEnvironment: String { get }
-
-    func process(input: ProcessInput) throws -> ProcessOutput
-}
-
-extension NodeFunction {
-    static var codeVersion: Int { 0 }
-    var cacheKeyEnvironment: String { "" }
-}
 
 extension NodeFunction {
 
@@ -248,13 +136,13 @@ extension NodeFunction {
 }
 
 extension InputlessNodeFunction {
-    func onChildAdded(nodeID: ObjectID) throws {
+    public func onChildAdded(nodeID: ObjectID) throws {
     }
 
-    func onChildDeleted(nodeID: ObjectID) throws {
+    public func onChildDeleted(nodeID: ObjectID) throws {
     }
 
-    func onChildContentChanged(nodeID: ObjectID, name: String) throws {
+    public func onChildContentChanged(nodeID: ObjectID, name: String) throws {
     }
 
     var parentNodeFunction: InputlessNodeFunction? {
@@ -278,9 +166,9 @@ extension InputlessNodeFunction {
         try parentNodeFunction?.onChildDeleted(nodeID: (try thisNode.requireID()))
     }
 
-    func willBeDeleted() throws { }
+    public func willBeDeleted() throws { }
 
-    func didWriteOutputs(output: ProcessOutput) throws { }
+    public func didWriteOutputs(output: ProcessOutput) throws { }
 
     func delete() throws {
         let safeToDelete = try hasNoOutputWires() && hasNoInputWires()
@@ -294,7 +182,7 @@ extension InputlessNodeFunction {
         DatabaseLayer.shared
     }
 
-    func canBeDeleted() throws -> Bool {
+    public func canBeDeleted() throws -> Bool {
         true
     }
 
@@ -306,7 +194,7 @@ extension InputlessNodeFunction {
         try database.wire.select(goingToNodeID: (try requireID())).isEmpty
     }
 
-    func didCreate() throws -> ProcessOutput? {
+    public func didCreate() throws -> ProcessOutput? {
         nil
     }
 

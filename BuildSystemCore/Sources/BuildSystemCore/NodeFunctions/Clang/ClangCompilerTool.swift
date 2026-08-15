@@ -37,13 +37,13 @@ public struct ClangCompilerTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [.required(configuration), .required(input)],
         outputPorts: [output, errorLog, infoLog]
     )
@@ -76,7 +76,7 @@ public struct ClangCompilerTool: NodeFunction {
         }
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 

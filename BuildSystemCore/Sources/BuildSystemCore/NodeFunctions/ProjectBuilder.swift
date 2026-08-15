@@ -17,7 +17,7 @@ public struct ProjectBuilder: NodeFunction {
     static let foldersInputPort       = "folders"
     static let graphImportsInputPort  = "graphImports"
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(projectFileInputPort),
             .dynamic(productInputPort),
@@ -27,13 +27,13 @@ public struct ProjectBuilder: NodeFunction {
         outputPorts: [statusOutputPort, productsOutputPort]
     )
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         let inputValue = input.inputValues[Self.projectFileInputPort]!.first!
         let projectFileName    = inputValue.key
         let projectFileContent = try inputValue.value.expectValue().resolveAsString()

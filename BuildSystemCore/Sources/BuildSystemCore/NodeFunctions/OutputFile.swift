@@ -54,19 +54,19 @@ extension HasPath {
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
 struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvider {
 
-    static let kind: UInt = 8
+    public static let kind: UInt = 8
 
     static let inputPort = "input"
     static let fileMetadataInputPort = FileMetadata.portName
     static let statusOutputPort = "status"
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
     var path: Path {
         Path(thisNode.properties["path"]!)
     }
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
         assert(!path.string.contains(Folder.inputFileSystemName))
         embeddedNode.name = name
@@ -75,12 +75,12 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
         }
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [.required(inputPort), .optional(fileMetadataInputPort)],
         outputPorts: [statusOutputPort]
     )
 
-    func didCreate() throws -> ProcessOutput? {
+    public func didCreate() throws -> ProcessOutput? {
         return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(messageDataObjectHash: try "Missing".intern()))],
                      inputWireExpectations: [:])
     }
@@ -95,7 +95,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
         }
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         func describeValue(_ value: NodeValue) -> String {
             switch value {
             case .noValue(let reason):
@@ -135,10 +135,10 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
     }
 
-    func didWriteOutputs(output: ProcessOutput) throws {
+    public func didWriteOutputs(output: ProcessOutput) throws {
     }
 
-    func willBeDeleted() throws {
+    public func willBeDeleted() throws {
     }
 
     func read() throws -> NodeValue? {

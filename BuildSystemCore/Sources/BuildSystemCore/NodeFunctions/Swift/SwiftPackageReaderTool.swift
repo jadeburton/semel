@@ -44,9 +44,9 @@ struct SwiftPackageReaderToolConfiguration {
 // MARK: - Node
 
 struct SwiftPackageReaderTool: NodeFunction {
-    static let kind: UInt = 23
+    public static let kind: UInt = 23
     // Bump to invalidate caches whenever stripping logic changes.
-    static let codeVersion: Int = 4
+    public static let codeVersion: Int = 4
 
     // MARK: Ports
 
@@ -58,13 +58,13 @@ struct SwiftPackageReaderTool: NodeFunction {
     static let packageJSON   = "packageJSON"
     static let infoLog       = "infoLog"
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [.required(configuration), .required(packageFile)],
         outputPorts: [packageJSON, infoLog]
     )
@@ -104,7 +104,7 @@ struct SwiftPackageReaderTool: NodeFunction {
 
     // MARK: - Processing
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 

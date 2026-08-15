@@ -25,7 +25,7 @@ import Foundation
 import SemelNodeKit
 
 struct SwiftFormulaConverter: NodeFunction {
-    static let kind: UInt = 24
+    public static let kind: UInt = 24
 
     static let packageFolder        = "packageFolder"
     static let packageJSON          = "packageJSON"
@@ -33,13 +33,13 @@ struct SwiftFormulaConverter: NodeFunction {
     static let infoLog              = "infoLog"
     static let externalPackageJSONs = "externalPackageJSONs"
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(packageFolder),
             .required(packageJSON),
@@ -50,7 +50,7 @@ struct SwiftFormulaConverter: NodeFunction {
 
     // MARK: - Processing
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
 
         // ── packageFolder ─────────────────────────────────────────────────────
         let manifestJSON = try input.inputValues[Self.packageFolder]!.values.first!.expectValue().resolveAsString()

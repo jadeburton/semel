@@ -8,28 +8,18 @@
 import Foundation
 import SemelNodeKit
 
-struct FolderManifestEntry: Codable {
-    let name: String
-    let isFolder: Bool
-    let isPinned: Bool
-}
-
-struct FolderManifest: PolySerializable {
-    static let kind: UInt = 4
-
-    let baseFolderPath: String
-    let entries: [FolderManifestEntry]
-}
-
 public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
-    public static let inputFileSystemName = "input:"
-    public static let outputFileSystemName = "output:"
+    // The values live in SemelNodeKit, where a node function can reach them without
+    // depending on the engine. Kept here under their long-standing names so the call
+    // sites read as they always have.
+    public static let inputFileSystemName  = FileSystemName.input
+    public static let outputFileSystemName = FileSystemName.output
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
         embeddedNode.name = name
         if embeddedNode.parentNodeID == nil {
@@ -49,7 +39,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
 //        self.parentNodeFunction?.canBePin
     }
 
-    func didCreate() throws -> ProcessOutput? {
+    public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
                              Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())) : .value("")], // HACK
               inputWireExpectations: [:])
@@ -60,7 +50,7 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     }
 
     // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
-    func canBeDeleted() throws -> Bool {
+    public func canBeDeleted() throws -> Bool {
         // TODO: slow
         try (thisNode.allChildren.filter { try !$0.nodeFunction().canBeDeleted() }).isEmpty && !(canBePinned() && isPinned)
     }
@@ -73,19 +63,19 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
     static let pinnedOutputPort = "pinned"
 
-    static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
+    public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
-    func onChildAdded(nodeID: ObjectID) throws {
+    public func onChildAdded(nodeID: ObjectID) throws {
         try refreshOutputs()
     }
 
-    func onChildContentChanged(nodeID: ObjectID, name: String) throws {
+    public func onChildContentChanged(nodeID: ObjectID, name: String) throws {
         try refreshOutputs()
     }
 
-    func onChildDeleted(nodeID: ObjectID) throws {
+    public func onChildDeleted(nodeID: ObjectID) throws {
         try refreshOutputs()
 
         // Only self-delete when the folder is truly empty. Using canBeDeleted() here is wrong:

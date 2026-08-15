@@ -36,9 +36,9 @@ struct ClangPreprocessorToolConfiguration {
 public struct ClangPreprocessorTool: NodeFunction {
     public static let kind: UInt = 17
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
@@ -52,7 +52,7 @@ public struct ClangPreprocessorTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(configuration),
             .required(sourceFileInput),
@@ -116,7 +116,7 @@ public struct ClangPreprocessorTool: NodeFunction {
         }
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 

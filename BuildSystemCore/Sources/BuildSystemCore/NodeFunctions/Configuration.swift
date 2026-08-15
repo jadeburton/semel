@@ -11,21 +11,21 @@ import SemelNodeKit
 public struct Configuration: NodeFunction {
     public static let kind: UInt = 9
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
     static let outputPort = "output"
     static let inputPort = "inherit"
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [.optional(inputPort)],
         outputPorts: [outputPort]
     )
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         var aggregatedConfig = [String: String]()
 
         let inputValues = input.inputValues[Self.inputPort] ?? [:]

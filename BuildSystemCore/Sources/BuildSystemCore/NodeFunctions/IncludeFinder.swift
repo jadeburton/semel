@@ -16,14 +16,14 @@ public struct IncludeFinder: NodeFunction {
     static let sourceFileInputPort = "sourceFile"
     static let includePathListOutputPort = "includePathList"
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [.required(sourceFileInputPort)],
         outputPorts: [includePathListOutputPort]
     )
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
@@ -90,7 +90,7 @@ public struct IncludeFinder: NodeFunction {
         }
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         let inputs = try IncludeFinderInputs(input: input)
         return try process(inputs: inputs).asProcessOutput()
     }

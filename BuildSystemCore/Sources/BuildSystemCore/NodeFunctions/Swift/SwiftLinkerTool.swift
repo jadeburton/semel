@@ -33,7 +33,7 @@ struct SwiftLinkerToolConfiguration {
 // MARK: - Node
 
 struct SwiftLinkerTool: NodeFunction {
-    static let kind: UInt = 21
+    public static let kind: UInt = 21
 
     // MARK: Ports
 
@@ -53,13 +53,13 @@ struct SwiftLinkerTool: NodeFunction {
     /// published at the default 0644 and will not run. Same arrangement as ClangLinkerTool.
     static let fileMetadata = FileMetadata.portName
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(configuration),
             .required(input),
@@ -72,7 +72,7 @@ struct SwiftLinkerTool: NodeFunction {
     /// The SDK is resolved from the machine at process time and passed as `-sdk`, so it
     /// changes the output without appearing anywhere in the graph. Recording it here is
     /// what stops two different SDKs colliding on one cache entry.
-    var cacheKeyEnvironment: String {
+    public var cacheKeyEnvironment: String {
         resolveSDKIdentity().map { "sdk=\($0)" } ?? ""
     }
 
@@ -127,7 +127,7 @@ struct SwiftLinkerTool: NodeFunction {
         }
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 

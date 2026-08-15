@@ -94,10 +94,10 @@ struct SourceScope {
 // MARK: - Node
 
 struct SwiftCompilerTool: NodeFunction {
-    static let kind: UInt = 20
+    public static let kind: UInt = 20
     // 2: sources are now discovered recursively through subfolders, so a node cached
     // against the old top-level-only file set would replay a partial compile.
-    static let codeVersion: Int = 2
+    public static let codeVersion: Int = 2
 
     // MARK: Ports
 
@@ -122,13 +122,13 @@ struct SwiftCompilerTool: NodeFunction {
     static let outputInterface       = "swiftinterface"
     static let infoLog               = "infoLog"
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(configuration),
             .required(inputFolder),
@@ -144,7 +144,7 @@ struct SwiftCompilerTool: NodeFunction {
     /// The SDK is resolved from the machine at process time and passed as `-sdk`, so it
     /// changes the output without appearing anywhere in the graph. Recording it here is
     /// what stops two different SDKs colliding on one cache entry.
-    var cacheKeyEnvironment: String {
+    public var cacheKeyEnvironment: String {
         resolveSDKIdentity().map { "sdk=\($0)" } ?? ""
     }
 
@@ -246,7 +246,7 @@ struct SwiftCompilerTool: NodeFunction {
 
     // MARK: - Processing
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 

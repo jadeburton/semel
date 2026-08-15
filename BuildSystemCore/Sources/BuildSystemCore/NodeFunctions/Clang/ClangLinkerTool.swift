@@ -45,13 +45,13 @@ public struct ClangLinkerTool: NodeFunction {
     static let infoLog = "infoLog"
     static let fileMetadata = FileMetadata.portName
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .required(configuration),
             .required(input),
@@ -109,7 +109,7 @@ public struct ClangLinkerTool: NodeFunction {
         }
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 

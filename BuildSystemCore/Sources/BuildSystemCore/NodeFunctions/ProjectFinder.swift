@@ -70,7 +70,7 @@ public struct ProjectFinder: NodeFunction {
     static let projectBuildersInputPort = "projectBuilders"
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
-    static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [
             .dynamic(rootFolderManifestInputPort),
             .dynamic(watchedFolderManifestInputPort),
@@ -79,14 +79,14 @@ public struct ProjectFinder: NodeFunction {
         outputPorts: []
     )
 
-    var embeddedNode: Node
+    public var embeddedNode: Node
 
-    init(thisNode: Node) throws {
+    public init(thisNode: Node) throws {
         embeddedNode = thisNode
     }
 
     // ProjectFinder is the root object and so must never be deleted.
-    func canBeDeleted() throws -> Bool {
+    public func canBeDeleted() throws -> Bool {
         false
     }
 
@@ -108,7 +108,7 @@ public struct ProjectFinder: NodeFunction {
         return result
     }
 
-    func process(input: ProcessInput) throws -> ProcessOutput {
+    public func process(input: ProcessInput) throws -> ProcessOutput {
         var projectBuildersExpectations = [String: String]()
 
         let allWatchedFolderManifests = input.inputValues[Self.watchedFolderManifestInputPort]

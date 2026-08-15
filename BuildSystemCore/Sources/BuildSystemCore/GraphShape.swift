@@ -42,10 +42,6 @@ import SemelNodeKit
 // MARK: - Model
 
 /// An initialization-time string argument, e.g. `path: 'src/hello.c'`.
-public struct GraphShapeArg: Equatable, Hashable {
-    public let key:   String
-    public let value: String
-}
 
 /// A single named wire feeding an input port.
 struct GraphShapeWire: Equatable {
