@@ -1,7 +1,19 @@
 # Splitting Semel into `semelserv` and `semel`
 
-**Status:** design agreed, not yet implemented
+**Status:** superseded pending decision — see
+`2026-08-15-semel-cache-server-design.md`, which is the recommended direction
 **Date:** 2026-08-15
+
+> **Why this is on hold.** A shared *cache* server achieves the cross-user reuse this
+> design was built for, at roughly a tenth of the complexity, while scaling with headcount
+> rather than with one machine's cores and degrading to "slower" rather than "stopped"
+> when the server is down. It also removes the artifact-subscription and file-watching
+> subsystems entirely, because a locally-built artifact is already where you want it.
+>
+> This document is kept rather than deleted: the frame design is reused verbatim by the
+> cache server, the push-protocol reasoning (blobs outside the transaction, manifest
+> retained server-side, merge semantics and the measurements behind them) still applies,
+> and the analysis of what a shared graph costs is the argument for not building it.
 
 ## What this is
 
