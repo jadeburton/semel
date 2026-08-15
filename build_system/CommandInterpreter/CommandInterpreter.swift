@@ -3,6 +3,7 @@
 
 import Foundation
 import BuildSystemCore
+import SemelNodeKit
 
 enum CommandInterpreterError: Error {
     case quit

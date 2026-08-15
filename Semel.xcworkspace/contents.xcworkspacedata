@@ -5,6 +5,9 @@
       location = "group:.">
    </FileRef>
    <FileRef
+      location = "group:SemelNodeKit">
+   </FileRef>
+   <FileRef
       location = "group:BuildSystemCore">
    </FileRef>
    <FileRef

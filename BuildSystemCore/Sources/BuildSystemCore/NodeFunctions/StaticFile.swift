@@ -5,6 +5,8 @@
 //  Created by Jade Burton on 22.02.26.
 //
 
+import SemelNodeKit
+
 public protocol Pinnable {
     var isPinned: Bool { get throws }
 }

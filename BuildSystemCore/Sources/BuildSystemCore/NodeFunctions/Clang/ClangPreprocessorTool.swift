@@ -5,6 +5,7 @@
 // producing a preprocessed .p file ready for the compiler stage.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Configuration
 

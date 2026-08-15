@@ -5,6 +5,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 /// `reset()` wipes the derived build graph and reschedules ProjectFinder so the
 /// whole graph is rebuilt from the current input file system contents.

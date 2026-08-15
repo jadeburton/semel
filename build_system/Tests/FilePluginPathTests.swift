@@ -10,6 +10,7 @@
 @testable import BuildSystemCLI
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 final class FilePluginPathTests: XCTestCase {
 

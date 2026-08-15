@@ -5,6 +5,7 @@
 
 import BuildSystemCore
 import Foundation
+import SemelNodeKit
 
 final class FilePlugin: CommandPlugin {
 

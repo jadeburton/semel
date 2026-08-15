@@ -22,6 +22,7 @@
 // referenced are automatically unwired by applyExpectationConfiguration.
 
 import Foundation
+import SemelNodeKit
 
 struct SwiftFormulaConverter: NodeFunction {
     static let kind: UInt = 24

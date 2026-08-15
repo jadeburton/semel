@@ -3,10 +3,14 @@
 //  build_system_tests
 //
 
-@testable import BuildSystemCore
+@testable import SemelNodeKit
 import XCTest
 
-final class PathTests: BuildSystemTestCase {
+final class PathTests: XCTestCase {
+
+    // XCTestCase rather than the engine's BuildSystemTestCase: Path is a pure value type
+    // with no process-globals to isolate, and SemelNodeKit deliberately cannot see the
+    // engine's test helpers.
 
     // MARK: - init(_ string:)
 

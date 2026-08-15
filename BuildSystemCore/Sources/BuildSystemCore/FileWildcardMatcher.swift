@@ -2,6 +2,7 @@
 // build_system
 
 import Foundation
+import SemelNodeKit
 
 public enum FileWildcardEntryKind {
     case file

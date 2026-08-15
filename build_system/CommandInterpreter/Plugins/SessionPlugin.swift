@@ -4,6 +4,7 @@
 // Handles: base, begin, commit, discard, q / quit / exit
 
 import Foundation
+import SemelNodeKit
 
 final class SessionPlugin: CommandPlugin {
 

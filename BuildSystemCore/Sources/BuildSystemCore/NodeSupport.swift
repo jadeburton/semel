@@ -7,6 +7,8 @@
 
 // MARK: - String helpers
 
+import SemelNodeKit
+
 extension String {
     /// Returns the string with the given suffix removed, or the original string
     /// unchanged if it does not end with that suffix.

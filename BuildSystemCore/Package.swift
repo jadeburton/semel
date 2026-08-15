@@ -12,6 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
         .package(path: "../DatabaseModels"),
+        .package(path: "../SemelNodeKit"),
     ],
     targets: [
         .target(
@@ -19,6 +20,7 @@ let package = Package(
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "DatabaseModels", package: "DatabaseModels"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
             ],
             path: "Sources/BuildSystemCore"
         ),

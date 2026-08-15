@@ -46,6 +46,7 @@
 // construction.  This is decided during resolution, not parsing.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Public entry point
 

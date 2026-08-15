@@ -5,6 +5,8 @@
 //  Created by Jade Burton on 28.06.26.
 //
 
+import SemelNodeKit
+
 protocol HasPath {
     var path: Path { get }
 }

@@ -3,6 +3,8 @@
 //  build_system
 //
 
+import SemelNodeKit
+
 public struct ProjectBuilder: NodeFunction {
     public static let kind: UInt = 6
 

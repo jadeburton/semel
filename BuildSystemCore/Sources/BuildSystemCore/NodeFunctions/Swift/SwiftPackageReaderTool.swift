@@ -16,6 +16,7 @@
 // subcommand looks for it in the working directory.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Configuration
 

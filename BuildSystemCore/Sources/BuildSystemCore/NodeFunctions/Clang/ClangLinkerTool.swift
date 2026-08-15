@@ -5,6 +5,7 @@
 // libraries) into a final output binary.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Configuration
 

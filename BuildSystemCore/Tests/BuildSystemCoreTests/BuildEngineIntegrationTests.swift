@@ -5,6 +5,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 // MARK: - Helpers
 

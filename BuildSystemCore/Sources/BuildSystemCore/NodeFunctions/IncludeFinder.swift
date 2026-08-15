@@ -6,6 +6,7 @@
 // are intentionally ignored).
 
 import Foundation
+import SemelNodeKit
 
 public struct IncludeFinder: NodeFunction {
     public static let kind: UInt = 15

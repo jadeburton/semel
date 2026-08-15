@@ -3,6 +3,7 @@
 
 import BuildSystemCore
 import Foundation
+import SemelNodeKit
 
 protocol CommandContext: AnyObject {
     var database: DatabaseLayer { get }

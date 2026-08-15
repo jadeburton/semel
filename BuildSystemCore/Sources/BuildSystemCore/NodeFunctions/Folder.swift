@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 
 struct FolderManifestEntry: Codable {
     let name: String

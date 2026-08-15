@@ -1,5 +1,6 @@
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 final class IncludeFinderTests: BuildSystemTestCase {
 

@@ -7,7 +7,8 @@ about how to change it.
 
 ```sh
 swift build                                  # builds everything, from the repo root
-swift test --package-path BuildSystemCore    # the engine tests (~298)
+swift test --package-path SemelNodeKit       # the node-authoring API (~63)
+swift test --package-path BuildSystemCore    # the engine tests (~336)
 swift test                                   # the CLI tests only (~8)
 ```
 

@@ -5,6 +5,7 @@
 // executable or dynamic library using `swiftc` as the driver.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Configuration
 
