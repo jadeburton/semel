@@ -34,10 +34,20 @@ public final class BuildEngine {
     /// before sleeping.
     private let workSignal = WorkSignal()
 
-    /// Populates the process-global `PolyFactory` type registry.  Internal rather than
-    /// private so tests can put the registry into the same state production runs in —
-    /// formula parsing resolves a node's default output port through it.
+    /// Registers everything this process should know how to build.
+    ///
+    /// Split so each package owns its own contribution: the engine registers the node types
+    /// and project kinds it defines, and a toolchain package registers its own. Until the
+    /// Swift and Clang nodes move out they are registered here too, by
+    /// `registerBuiltInToolchains()` — a seam that exists to be removed.
     static func registerTypes() throws {
+        try registerEngineTypes()
+        try registerBuiltInToolchains()
+    }
+
+    /// The node types and project kinds the engine itself defines. A `.fmla` file names no
+    /// toolchain, so recognising one belongs here.
+    public static func registerEngineTypes() throws {
         try PolyFactory.register(types: [
             FolderManifest.self,
             OutputFile.self,
@@ -45,16 +55,26 @@ public final class BuildEngine {
             Folder.self,
             ProjectFinder.self,
             ProjectBuilder.self,
+            Configuration.self,
+        ])
+        ProjectDiscovery.register(FormulaFilePlugin())
+    }
+
+    /// TEMPORARY. The Swift and Clang nodes still live in this package; when they move to
+    /// SemelSwift and SemelClang each will expose its own registration and this goes away.
+    /// Its existence is the measure of how far the split has got.
+    public static func registerBuiltInToolchains() throws {
+        try PolyFactory.register(types: [
             ClangLinkerTool.self,
             ClangCompilerTool.self,
             ClangPreprocessorTool.self,
-            Configuration.self,
             IncludeFinder.self,
             SwiftCompilerTool.self,
             SwiftLinkerTool.self,
             SwiftPackageReaderTool.self,
-            SwiftFormulaConverter.self
+            SwiftFormulaConverter.self,
         ])
+        ProjectDiscovery.register(SwiftPackagePlugin())
     }
 
     var projectFinder: Node {

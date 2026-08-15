@@ -5,15 +5,14 @@
 import Foundation
 import SemelNodeKit
 
-// MARK: - ProjectBuilderPlugin
+// MARK: - Project kinds
+//
+// The protocol these conform to is declared in SemelNodeKit, so a toolchain package can
+// contribute a project kind without depending on the engine. SwiftPackagePlugin is still
+// here only until the Swift nodes move out; FormulaFilePlugin belongs to the engine, since
+// a .fmla file names no toolchain.
 
-private protocol ProjectBuilderPlugin {
-    /// Returns the ProjectBuilder expectation string for `entry` inside `folderPath`,
-    /// or `nil` if this plugin does not handle the entry.
-    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String?
-}
-
-private struct FormulaFilePlugin: ProjectBuilderPlugin {
+struct FormulaFilePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
         guard entry.isPinned, entry.name.hasSuffix(".fmla") else { return nil }
         let fullPath = (Path(folderPath) / entry.name).string
@@ -23,7 +22,7 @@ private struct FormulaFilePlugin: ProjectBuilderPlugin {
     }
 }
 
-private struct SwiftPackagePlugin: ProjectBuilderPlugin {
+struct SwiftPackagePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
         guard entry.isPinned, entry.name == "Package.swift" else { return nil }
         let fullPath      = (Path(folderPath) / entry.name).string
@@ -53,10 +52,7 @@ private struct SwiftPackagePlugin: ProjectBuilderPlugin {
     }
 }
 
-private let projectBuilderPlugins: [any ProjectBuilderPlugin] = [
-    FormulaFilePlugin(),
-    SwiftPackagePlugin(),
-]
+
 
 // MARK: - ProjectFinder
 
@@ -96,7 +92,7 @@ public struct ProjectFinder: NodeFunction {
         for (folderPath, folderManifest) in folderManifests {
             for entry in folderManifest.entries {
                 let fullPath = (Path(folderPath) / entry.name).string
-                for plugin in projectBuilderPlugins {
+                for plugin in ProjectDiscovery.plugins {
                     if let expectation = plugin.expectationString(forEntry: entry, inFolder: folderPath) {
                         result[fullPath] = expectation
                         break

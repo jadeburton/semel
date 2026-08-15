@@ -223,8 +223,15 @@ than ambiguous across modules, so `PolySerializable.toJSON` silently lost to
 error. And a stale build plan makes a dependency package's new or changed files invisible;
 `rm -f <pkg>/.build/build.db <pkg>/.build/plan.json` when errors contradict a fix.
 
-**Steps remaining:** open the two seams (2), move Swift nodes (3), move Clang nodes (4),
-rename BuildSystemCore → SemelCore (5).
+**Step 2 done.** `ProjectBuilderPlugin` and a `ProjectDiscovery` registry now live in
+SemelNodeKit — not the engine — because a toolchain package must be able to contribute a
+project kind without depending on the engine, which is the whole direction of the split.
+`ProjectFinder` reads the registry instead of a hardcoded array. `registerTypes()` is split
+into `registerEngineTypes()` and a `registerBuiltInToolchains()` whose existence measures
+how far the split has got: it disappears when steps 3 and 4 land.
+
+**Steps remaining:** move Swift nodes (3), move Clang nodes (4), rename BuildSystemCore →
+SemelCore (5).
 
 ## Server
 
