@@ -56,6 +56,42 @@ final class CacheTests: BuildSystemTestCase {
         ])
     }
 
+    // MARK: - Machine-derived inputs
+
+    /// The SDK a node compiles against changes its output, but it is resolved from the
+    /// machine at process time rather than arriving on a wire — so nothing put it in the
+    /// key. Two machines on different SDKs produced different object files under
+    /// identical keys, which is only mild staleness locally and silent corruption once a
+    /// cache is shared between developers.
+    func test_theSwiftCompilerRecordsItsSDKInTheCacheKey() throws {
+        let shape = try GraphShapeNode.parse("SwiftCompilerTool()")
+        let (node, _) = try shape.findOrCreateMatchingNode()
+        let tool = try SwiftCompilerTool(thisNode: node)
+
+        XCTAssertFalse(tool.cacheKeyEnvironment.isEmpty,
+                       "the SDK influences the output, so it must contribute to the key")
+    }
+
+    func test_theSwiftLinkerRecordsItsSDKInTheCacheKey() throws {
+        let shape = try GraphShapeNode.parse("SwiftLinkerTool()")
+        let (node, _) = try shape.findOrCreateMatchingNode()
+        let tool = try SwiftLinkerTool(thisNode: node)
+
+        XCTAssertFalse(tool.cacheKeyEnvironment.isEmpty,
+                       "the SDK influences the output, so it must contribute to the key")
+    }
+
+    /// Pins the key format. A cache key is a promise that identical inputs mean an
+    /// identical build, so an unintended change to how it is composed silently discards
+    /// every existing entry — and, on a shared cache, does it for everyone. This value was
+    /// recorded before the environment hook was added; it must not move when a node
+    /// declares no machine-derived inputs.
+    func test_theKeyFormatHasNotDrifted() throws {
+        let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
+
+        XCTAssertEqual(key, "50ff754ae32daaa6087d74d0c1eb7dcb2542570aff56ebfaba9805bf12604779")
+    }
+
     // MARK: - What the key covers
 
     func test_identicalInputsProduceTheSameKey() throws {

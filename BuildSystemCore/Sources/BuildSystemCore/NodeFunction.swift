@@ -99,11 +99,28 @@ protocol NodeFunction: InputlessNodeFunction {
     /// Increment this to invalidate cached outputs when processing logic changes.
     /// Defaults to 0; override in any NodeFunction whose output format changes.
     static var codeVersion: Int { get }
+
+    /// Anything read from the *machine* rather than from a wire or a property that can
+    /// change this node's output — an SDK version, a resolved toolchain, an environment
+    /// variable the tool consults.
+    ///
+    /// Such values are invisible to the ordinary key, which covers only the node type,
+    /// its properties and its inputs. A node that omits one here produces identical keys
+    /// for genuinely different builds, which is the single failure a cache must never
+    /// have: locally that is a stale result you eventually notice, and on a shared cache
+    /// it is a wrong build handed to everyone else that looks correct on the machine that
+    /// produced it.
+    ///
+    /// Empty means "nothing beyond the graph influences my output", and leaves the key
+    /// byte-for-byte as it was.
+    var cacheKeyEnvironment: String { get }
+
     func process(input: ProcessInput) throws -> ProcessOutput
 }
 
 extension NodeFunction {
     static var codeVersion: Int { 0 }
+    var cacheKeyEnvironment: String { "" }
 }
 
 extension NodeFunction {

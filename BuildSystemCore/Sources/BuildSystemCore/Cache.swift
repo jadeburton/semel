@@ -31,7 +31,13 @@ extension NodeFunction {
     }
 
     private var nodeFunctionCacheKey: String {
-        "\(String(describing: type(of: self)))\nv\(Self.codeVersion)\n\(thisNode.properties.asPlainText())"
+        let base = "\(String(describing: type(of: self)))\nv\(Self.codeVersion)\n\(thisNode.properties.asPlainText())"
+
+        // Appended only when non-empty, so every node that reads nothing from the machine
+        // keys exactly as it did before this existed. Appending an empty section with its
+        // separator would change every key in every existing cache for no reason.
+        let environment = cacheKeyEnvironment
+        return environment.isEmpty ? base : "\(base)\nenv:\(environment)"
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
