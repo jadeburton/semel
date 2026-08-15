@@ -14,6 +14,12 @@ swift test                                   # the CLI tests only (~8)
 `swift test` at the root runs **only** the `BuildSystemCLI` tests. The engine lives in a
 separate package, so a green root-level run means almost nothing. Run both.
 
+In Xcode, open **`Semel.xcworkspace`**, not the package. Opening `Package.swift` makes
+`BuildSystemCore` and `DatabaseModels` read-only *dependencies*, and Xcode neither builds
+nor lists the test targets of a dependency package — which is why the engine's tests could
+not be run from the root package. The workspace holds all three as peers, so each gets its
+own scheme and its own runnable tests.
+
 ## Formatting
 
 - Four spaces, never tabs.
