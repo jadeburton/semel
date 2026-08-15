@@ -12,6 +12,10 @@ struct SwiftCompilerToolConfiguration {
     let environment: [String: String]
     let moduleName: String
     let parseAsLibrary: Bool
+    /// SPM's `sources:` list, relative to the target folder. Empty means the whole tree.
+    let sourcePaths: [String]
+    /// SPM's `exclude:` list, relative to the target folder.
+    let excludedPaths: [String]
 
     init(properties: [String: String]) {
         // TODO: remove these defaults and come up with easier way to avoid duplication
@@ -25,6 +29,64 @@ struct SwiftCompilerToolConfiguration {
         environment = [:]
         moduleName  = properties["moduleName"] ?? "Module"
         parseAsLibrary = properties["parseAsLibrary"] != "false"
+        sourcePaths   = Self.pathList(properties["sourcePaths"])
+        excludedPaths = Self.pathList(properties["excludedPaths"])
+    }
+
+    /// Configuration values are one line of `key=value`, so a list is comma-joined.
+    private static func pathList(_ value: String?) -> [String] {
+        (value ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+}
+
+// MARK: - Source scope
+
+/// Which files under a target's folder actually belong to the target.
+///
+/// SPM lets a target declare an explicit `sources:` list, and lets one target's directory
+/// contain another's — this repository's own executable target is `build_system`, whose
+/// directory also holds BuildSystemCLI's sources and the XCTest target. So "every .swift
+/// file beneath the folder" is not the same thing as "this target's sources", and the
+/// recursive walk needs both predicates to stay honest.
+struct SourceScope {
+    let roots: [String]
+    let sourcePaths: [String]
+    let excludedPaths: [String]
+
+    /// A file belongs to the target when it sits under one of the listed source paths
+    /// (or none were listed) and under none of the excluded ones.
+    func includesFile(_ fullPath: String) -> Bool {
+        guard let relative = relativePath(of: fullPath) else { return sourcePaths.isEmpty }
+        guard !isExcluded(relative) else { return false }
+        return sourcePaths.isEmpty || sourcePaths.contains { Self.isAtOrUnder(relative, $0) }
+    }
+
+    /// A folder is worth walking when it is under a listed source path *or* an ancestor
+    /// of one — `sources: ["Core/Thing.swift"]` still has to descend through `Core`.
+    func includesFolder(_ fullPath: String) -> Bool {
+        guard let relative = relativePath(of: fullPath) else { return sourcePaths.isEmpty }
+        guard !isExcluded(relative) else { return false }
+        return sourcePaths.isEmpty || sourcePaths.contains {
+            Self.isAtOrUnder(relative, $0) || Self.isAtOrUnder($0, relative)
+        }
+    }
+
+    private func isExcluded(_ relative: String) -> Bool {
+        excludedPaths.contains { Self.isAtOrUnder(relative, $0) }
+    }
+
+    /// Path beneath whichever target root contains `fullPath`, or nil if none does.
+    private func relativePath(of fullPath: String) -> String? {
+        for root in roots where fullPath.hasPrefix(root + "/") {
+            return String(fullPath.dropFirst(root.count + 1))
+        }
+        return nil
+    }
+
+    /// True when `path` is `prefix` itself or sits inside it. Compared segment-wise so
+    /// "CoreExtras" is not mistaken for something under "Core".
+    private static func isAtOrUnder(_ path: String, _ prefix: String) -> Bool {
+        path == prefix || path.hasPrefix(prefix + "/")
     }
 }
 
@@ -32,13 +94,21 @@ struct SwiftCompilerToolConfiguration {
 
 struct SwiftCompilerTool: NodeFunction {
     static let kind: UInt = 20
-    static let codeVersion: Int = 1
+    // 2: sources are now discovered recursively through subfolders, so a node cached
+    // against the old top-level-only file set would replay a partial compile.
+    static let codeVersion: Int = 2
 
     // MARK: Ports
 
     static let configuration         = "configuration"
     static let inputSourceFiles      = "sourceFiles"          // dynamic: one wire per .swift file
     static let inputFolder           = "inputFolder"          // manifest to watch for swift files
+    /// Dynamic port — one manifest per subfolder discovered beneath `inputFolder`.
+    /// A FolderManifest lists only its immediate children, so a nested source tree is
+    /// walked one level per process() run: each pass wires the subfolders it has just
+    /// learned about, which schedules another pass. Same idiom as ProjectFinder's
+    /// watchedFolderManifest port. Wire key = the subfolder's full input path.
+    static let inputSubfolders       = "inputSubfolders"
     static let inputModules          = "inputModules"         // one wire per upstream swiftmodule
     /// Folder manifests for system-library targets (e.g. GRDBSQLite).
     /// Each entry key becomes the subdirectory name placed in the sandbox.
@@ -64,6 +134,7 @@ struct SwiftCompilerTool: NodeFunction {
             .optional(inputModules),
             .optional(inputModuleMapFolders),
             .dynamic(inputSourceFiles),
+            .dynamic(inputSubfolders),
             .dynamic(inputModuleMapFiles),
         ],
         outputPorts: [outputObject, outputModule, outputInterface, infoLog]
@@ -77,6 +148,7 @@ struct SwiftCompilerTool: NodeFunction {
         let moduleFiles: [FileNameAndContent]
         let moduleMapFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
+        let subfolderManifests: [(String, FolderManifest)]
         let moduleMapFolderManifests: [(String, FolderManifest)]
 
         init(input: ProcessInput) throws {
@@ -104,18 +176,14 @@ struct SwiftCompilerTool: NodeFunction {
                 }
                 .sorted { $0.filePath < $1.filePath }
 
-            // Sorted for the same reason the source file list above is sorted: these
-            // become an ordered list feeding the command line, and dictionary iteration
-            // order is not stable across processes.
-            var allFolderManifests = [(String, FolderManifest)]()
-            for (key, value) in (input.inputValues[SwiftCompilerTool.inputFolder] ?? [:]).sorted(by: { $0.key < $1.key }) {
-                let object = try? PolyFactory.decode(encodedJSON: value.expectValue().resolveAsString())
-                guard let folderManifest = object as? FolderManifest else {
-                    throw NodeError.other(message: "Could not decode FolderManifest")
-                }
-                allFolderManifests.append((key, folderManifest))
-            }
-            inputFolderManifests = allFolderManifests
+            inputFolderManifests = try SwiftCompilerTool.decodeFolderManifests(
+                input: input, port: SwiftCompilerTool.inputFolder)
+
+            // Decoded strictly, like inputFolder: a subfolder manifest that failed to
+            // arrive would silently shrink the source set, and a partial whole-module
+            // compile fails with baffling "cannot find type" errors far from the cause.
+            subfolderManifests = try SwiftCompilerTool.decodeFolderManifests(
+                input: input, port: SwiftCompilerTool.inputSubfolders)
 
             var allModuleMapFolders = [(String, FolderManifest)]()
             for (key, value) in (input.inputValues[SwiftCompilerTool.inputModuleMapFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
@@ -128,12 +196,31 @@ struct SwiftCompilerTool: NodeFunction {
         }
     }
 
+    /// Decodes every FolderManifest wired to `port`, ordered by wire key.
+    ///
+    /// Sorted for the same reason the source file list is sorted: these end up as an
+    /// ordered list feeding a command line, and Swift's Dictionary iteration order is
+    /// seeded per process, so an unsorted walk would produce a different invocation
+    /// on every run.
+    private static func decodeFolderManifests(input: ProcessInput, port: String) throws -> [(String, FolderManifest)] {
+        var result = [(String, FolderManifest)]()
+        for (key, value) in (input.inputValues[port] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let object = try? PolyFactory.decode(encodedJSON: value.expectValue().resolveAsString())
+            guard let folderManifest = object as? FolderManifest else {
+                throw NodeError.other(message: "Could not decode FolderManifest on port \(port) for '\(key)'")
+            }
+            result.append((key, folderManifest))
+        }
+        return result
+    }
+
     struct SwiftCompilerToolOutputs {
         let outputObject:    NodeValue
         let outputModule:    NodeValue
         let outputInterface: NodeValue
         let infoLog:         NodeValue
         let inputSourceFilesExpectations:    [String: String]
+        let inputSubfoldersExpectations:     [String: String]
         let inputModuleMapFilesExpectations: [String: String]
 
         func asProcessOutput() -> ProcessOutput {
@@ -143,6 +230,7 @@ struct SwiftCompilerTool: NodeFunction {
                                  SwiftCompilerTool.infoLog:         infoLog],
                   inputWireExpectations: [
                       SwiftCompilerTool.inputSourceFiles:    inputSourceFilesExpectations,
+                      SwiftCompilerTool.inputSubfolders:     inputSubfoldersExpectations,
                       SwiftCompilerTool.inputModuleMapFiles: inputModuleMapFilesExpectations
                   ])
         }
@@ -154,12 +242,37 @@ struct SwiftCompilerTool: NodeFunction {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
-    private func buildInputSourceFilesExpectations(folderManifests: [(String, FolderManifest)]) -> [String: String] {
+    private func buildInputSourceFilesExpectations(folderManifests: [(String, FolderManifest)],
+                                                  scope: SourceScope) -> [String: String] {
         var result: [String: String] = [:]
         for folderManifest in folderManifests {
             for entry in folderManifest.1.entries where entry.isPinned && entry.name.hasSuffix(".swift") && !entry.isFolder {
                 let fullPath = (Path(folderManifest.1.baseFolderPath) / entry.name).string
+                guard scope.includesFile(fullPath) else { continue }
                 result[fullPath] = "StaticFile(path: \"\(fullPath)\").output".replacingOccurrences(of: "\\'", with: "'")
+            }
+        }
+        return result
+    }
+
+    /// Generates a Folder wire expectation for every subfolder named in `folderManifests`.
+    ///
+    /// A FolderManifest is a non-recursive list of immediate children, so one pass only
+    /// reaches one level down. Feeding this port's own manifests back in means each run
+    /// discovers the next level and reschedules the node, until the tree is exhausted and
+    /// the expectation set stops changing — the same walk ProjectFinder does for its
+    /// watched folders.
+    ///
+    /// Unpinned entries are ghosts (deleted, or never pushed); wiring one would resurrect
+    /// a folder the user removed.
+    private func buildInputSubfoldersExpectations(folderManifests: [(String, FolderManifest)],
+                                                 scope: SourceScope) -> [String: String] {
+        var result: [String: String] = [:]
+        for (_, manifest) in folderManifests {
+            for entry in manifest.entries where entry.isFolder && entry.isPinned {
+                let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
+                guard scope.includesFolder(fullPath) else { continue }
+                result[fullPath] = "Folder(path: '\(fullPath)').manifest"
             }
         }
         return result
@@ -180,6 +293,7 @@ struct SwiftCompilerTool: NodeFunction {
 
     private func compile(inputs: SwiftCompilerToolInputs,
                          inputSourceFilesExpectations: [String: String],
+                         inputSubfoldersExpectations: [String: String],
                          inputModuleMapFilesExpectations: [String: String]) throws -> SwiftCompilerToolOutputs {
 
         guard !inputs.sourceFiles.isEmpty else {
@@ -189,6 +303,7 @@ struct SwiftCompilerTool: NodeFunction {
                          outputInterface: error,
                          infoLog: .value(""),
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
+                         inputSubfoldersExpectations: inputSubfoldersExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
 
@@ -256,6 +371,7 @@ struct SwiftCompilerTool: NodeFunction {
                          outputInterface: error,
                          infoLog: .value(try result.infoOutput.intern()),
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
+                         inputSubfoldersExpectations: inputSubfoldersExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
 
@@ -264,15 +380,29 @@ struct SwiftCompilerTool: NodeFunction {
                      outputInterface: .value(try interfaceBytes.intern()),
                      infoLog:         .value(try result.infoOutput.intern()),
                      inputSourceFilesExpectations: inputSourceFilesExpectations,
+                     inputSubfoldersExpectations: inputSubfoldersExpectations,
                      inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
     }
 
     private func process(inputs: SwiftCompilerToolInputs) throws -> SwiftCompilerToolOutputs {
-        let inputSourceFilesExpectations    = buildInputSourceFilesExpectations(folderManifests: inputs.inputFolderManifests)
+        // The target's own folder plus every subfolder discovered so far. Sources are
+        // gathered from all of them, and each is re-scanned for further subfolders, so
+        // the tree is walked one level per run until it is fully covered.
+        let allSourceFolders = inputs.inputFolderManifests + inputs.subfolderManifests
+
+        // Scoped to the target's own roots: a subfolder manifest's base sits deeper, so
+        // relative paths must be measured from where the target actually starts.
+        let scope = SourceScope(roots: inputs.inputFolderManifests.map { $0.1.baseFolderPath },
+                                sourcePaths: inputs.configuration.sourcePaths,
+                                excludedPaths: inputs.configuration.excludedPaths)
+
+        let inputSourceFilesExpectations    = buildInputSourceFilesExpectations(folderManifests: allSourceFolders, scope: scope)
+        let inputSubfoldersExpectations     = buildInputSubfoldersExpectations(folderManifests: allSourceFolders, scope: scope)
         let inputModuleMapFilesExpectations = buildInputModuleMapFilesExpectations(moduleMapFolderManifests: inputs.moduleMapFolderManifests)
         do {
             return try compile(inputs: inputs,
                                inputSourceFilesExpectations: inputSourceFilesExpectations,
+                               inputSubfoldersExpectations: inputSubfoldersExpectations,
                                inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         } catch {
             let errorNodeValue = NodeValue.noValue(reason: .error(messageDataObjectHash: try error.localizedDescription.intern()))
@@ -281,6 +411,7 @@ struct SwiftCompilerTool: NodeFunction {
                          outputInterface: errorNodeValue,
                          infoLog: .value(""),   // empty content never reaches the store
                          inputSourceFilesExpectations: inputSourceFilesExpectations,
+                         inputSubfoldersExpectations: inputSubfoldersExpectations,
                          inputModuleMapFilesExpectations: inputModuleMapFilesExpectations)
         }
     }

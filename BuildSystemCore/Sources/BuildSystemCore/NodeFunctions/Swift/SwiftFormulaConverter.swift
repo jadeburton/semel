@@ -91,8 +91,11 @@ struct SwiftFormulaConverter: NodeFunction {
 
         while bfsIndex < bfsQueue.count {
             let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
-            for dep in manifest.packageDependencies {
-                let extPath = resolveRelativePath(dep.path, from: manifestPath)
+            for dependencyPath in manifest.packageDependencies {
+                // Resolved against the manifest that declared it, not the root: a vendored
+                // checkout sits beside whichever package named it, and that package may
+                // itself be an external one several levels down.
+                let extPath = resolveRelativePath(dependencyPath, from: manifestPath)
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
                 // that cannot be read through the build graph.
@@ -148,8 +151,9 @@ struct SwiftFormulaConverter: NodeFunction {
         let name: String
         let targets: [SPMTarget]
         let products: [SPMProduct]
-        /// fileSystem-based package dependencies (local paths only).
-        let packageDependencies: [SPMFileSystemDependency]
+        /// Package dependencies as local paths relative to this manifest, whatever form
+        /// they were declared in. See AnySPMDependency for how a git URL becomes one.
+        let packageDependencies: [String]
 
         enum CodingKeys: String, CodingKey {
             case name, targets, products, dependencies
@@ -161,7 +165,7 @@ struct SwiftFormulaConverter: NodeFunction {
             targets      = try c.decode([SPMTarget].self,  forKey: .targets)
             products     = try c.decode([SPMProduct].self, forKey: .products)
             let rawDeps  = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
-            packageDependencies = rawDeps.compactMap { $0.fileSystem }.flatMap { $0 }
+            packageDependencies = rawDeps.flatMap { $0.localPaths }
         }
 
         static func decode(_ json: String) throws -> SPMManifest {
@@ -169,16 +173,30 @@ struct SwiftFormulaConverter: NodeFunction {
         }
     }
 
-    // Decodes one element of the top-level "dependencies" array, extracting only
-    // fileSystem (local-path) entries and ignoring sourceControl / registry.
+    // Decodes one element of the top-level "dependencies" array down to local paths.
+    //
+    // fileSystem entries carry their path directly.  sourceControl entries name a git
+    // URL, which this build system never fetches — every input must come through the
+    // graph — so the repository is expected to be *vendored* into the input filesystem
+    // beside the package that depends on it, and resolves to "../<RepositoryName>".
+    //
+    // ISSUE: a sourceControl dependency's version requirement is not checked against the
+    // vendored copy.  Nothing here can read a version out of a bare source tree, so a
+    // manifest asking for `from: "7.11.1"` builds against whatever happens to be vendored.
+    // Enforcing that needs a version marker in the tree; until then it is on the person
+    // doing the vendoring.
+    //
+    // TODO: registry dependencies are still ignored entirely.
     private struct AnySPMDependency: Decodable {
-        let fileSystem: [SPMFileSystemDependency]?
+        let localPaths: [String]
 
-        enum CodingKeys: String, CodingKey { case fileSystem }
+        enum CodingKeys: String, CodingKey { case fileSystem, sourceControl }
 
         init(from decoder: Decoder) throws {
-            let c      = try decoder.container(keyedBy: CodingKeys.self)
-            fileSystem = try? c.decodeIfPresent([SPMFileSystemDependency].self, forKey: .fileSystem)
+            let c             = try decoder.container(keyedBy: CodingKeys.self)
+            let fileSystem    = (try? c.decode([SPMFileSystemDependency].self,    forKey: .fileSystem))    ?? []
+            let sourceControl = (try? c.decode([SPMSourceControlDependency].self, forKey: .sourceControl)) ?? []
+            localPaths = fileSystem.map { $0.path } + sourceControl.compactMap { $0.vendoredSiblingPath }
         }
     }
 
@@ -187,16 +205,60 @@ struct SwiftFormulaConverter: NodeFunction {
         let path: String
     }
 
+    private struct SPMSourceControlDependency: Decodable {
+        /// nil when the location is not a remote URL, or the URL names nothing usable.
+        let repositoryName: String?
+
+        private struct Location: Decodable {
+            struct Remote: Decodable { let urlString: String }
+            let remote: [Remote]?
+        }
+
+        enum CodingKeys: String, CodingKey { case location }
+
+        init(from decoder: Decoder) throws {
+            let c    = try decoder.container(keyedBy: CodingKeys.self)
+            let url  = (try? c.decode(Location.self, forKey: .location))?.remote?.first?.urlString
+            repositoryName = url.flatMap { Self.directoryName(forRepositoryURL: $0) }
+        }
+
+        /// A vendored dependency sits beside the package that named it.
+        var vendoredSiblingPath: String? {
+            repositoryName.map { "../\($0)" }
+        }
+
+        /// "https://github.com/groue/GRDB.swift.git" -> "GRDB.swift".
+        ///
+        /// Derived from the URL rather than from SPM's `identity`, which is lowercased
+        /// ("grdb.swift") and so cannot name a directory on a case-sensitive filesystem.
+        /// Splits on ":" as well as "/" so scp-style remotes (git@host:owner/repo.git)
+        /// resolve the same way.
+        static func directoryName(forRepositoryURL urlString: String) -> String? {
+            var name = urlString
+            while name.hasSuffix("/") { name.removeLast() }
+            if let lastSeparator = name.lastIndex(where: { $0 == "/" || $0 == ":" }) {
+                name = String(name[name.index(after: lastSeparator)...])
+            }
+            if name.hasSuffix(".git") { name.removeLast(4) }
+            return name.isEmpty ? nil : name
+        }
+    }
+
     private struct SPMTarget: Decodable {
         let name: String
         let type: String?
         let path: String?
         let dependencies: [SPMTargetDependency]
+        /// Explicit `sources:` list, relative to the target's path.  Empty means the whole
+        /// directory, which is the usual case.
+        let sources: [String]
+        /// `exclude:` list, relative to the target's path.
+        let exclude: [String]
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
 
         enum CodingKeys: String, CodingKey {
-            case name, type, path, dependencies
+            case name, type, path, dependencies, sources, exclude
         }
 
         init(from decoder: Decoder) throws {
@@ -205,6 +267,8 @@ struct SwiftFormulaConverter: NodeFunction {
             type         = try? c.decode(String.self, forKey: .type)
             path         = try? c.decode(String.self, forKey: .path)
             dependencies = (try? c.decode([SPMTargetDependency].self, forKey: .dependencies)) ?? []
+            sources      = (try? c.decode([String].self, forKey: .sources)) ?? []
+            exclude      = (try? c.decode([String].self, forKey: .exclude)) ?? []
             overridePackageFolder = nil
         }
 
@@ -267,6 +331,12 @@ struct SwiftFormulaConverter: NodeFunction {
 
         enum CodingKeys: String, CodingKey { case name, targets, type }
 
+        init(name: String, targets: [String], productType: ProductType) {
+            self.name        = name
+            self.targets     = targets
+            self.productType = productType
+        }
+
         init(from decoder: Decoder) throws {
             let c   = try decoder.container(keyedBy: CodingKeys.self)
             name    = try c.decode(String.self,   forKey: .name)
@@ -316,14 +386,29 @@ struct SwiftFormulaConverter: NodeFunction {
         var blocks: [String] = []
         var emittedFuncs = Set<String>()
 
-        for product in rootManifest.products {
-            guard product.productType != .other,
-                  let primaryTargetName = product.targets.first,
-                  let primaryTarget = allTargetsByName[primaryTargetName] else { continue }
+        for product in productsToBuild(in: rootManifest) {
 
-            // All transitively reachable targets in dependency-first order so
-            // each func is defined before any func that references it.
-            let allTargets = collectTransitiveTargets(root: primaryTarget, lookupAll: allTargetsNamed)
+            // All transitively reachable targets in dependency-first order so each func
+            // is defined before any func that references it.  Seeded from *every* target
+            // the product vends, not just the first: a multi-target product would
+            // otherwise link only one of them, and a product whose first target is a
+            // system library would collapse to nothing at all.
+            var allTargets: [SPMTarget] = []
+            var collected = Set<String>()
+            for productTargetName in product.targets {
+                for rootTarget in allTargetsNamed(productTargetName) {
+                    for target in collectTransitiveTargets(root: rootTarget, lookupAll: allTargetsNamed) {
+                        guard collected.insert(target.name).inserted else { continue }
+                        allTargets.append(target)
+                    }
+                }
+            }
+
+            // A product that reduces to no compilable targets — GRDB's `GRDBSQLite`
+            // library vends nothing but a .systemLibrary — has no object files to link.
+            // Emitting a SwiftLinkerTool for it anyway leaves its required `input` port
+            // unwired, which fails the entire ProjectBuilder rather than just that product.
+            guard !allTargets.isEmpty else { continue }
 
             // Emit one func definition per unique target (shared across products).
             for target in allTargets {
@@ -359,6 +444,26 @@ struct SwiftFormulaConverter: NodeFunction {
         return blocks.joined(separator: "\n\n")
     }
 
+    // Every product the package should actually produce.
+    //
+    // `swift build` builds an executable target whether or not a product lists it, and
+    // manifests rely on that: this repository's own root manifest declares no products at
+    // all and still yields the `build_system` binary.  Emitting only declared products
+    // produced an empty formula and, worse, no error explaining the silence.
+    //
+    // Only executables are synthesised.  A library target with no product is an internal
+    // dependency of one that does have a product, and a test target is not built here.
+    private func productsToBuild(in manifest: SPMManifest) -> [SPMProduct] {
+        var result = manifest.products.filter { $0.productType != .other }
+
+        let alreadyCovered = Set(result.flatMap { $0.targets })
+        for target in manifest.targets
+        where target.type == "executable" && !alreadyCovered.contains(target.name) {
+            result.append(SPMProduct(name: target.name, targets: [target.name], productType: .executable))
+        }
+        return result
+    }
+
     // Returns all targets reachable from `root` in dependency-first topological
     // order (leaves first, root last). `lookupAll` resolves a dependency name to
     // every target it covers (one for a named target, several for a product).
@@ -387,6 +492,34 @@ struct SwiftFormulaConverter: NodeFunction {
         return ordered
     }
 
+    // Every system-library target reachable from `root`, in encounter order — directly,
+    // or through any chain of regular targets. `collectTransitiveTargets` deliberately
+    // stops at system libraries because they have nothing to compile; this walks past
+    // them to find the ones a target needs on its import path but never names.
+    private func collectTransitiveSystemLibraries(root: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [SPMTarget] {
+        var ordered: [SPMTarget] = []
+        var visited = Set<String>()
+        var collected = Set<String>()
+
+        func visit(_ target: SPMTarget) {
+            guard visited.insert(target.name).inserted else { return }
+            for dep in target.dependencies {
+                guard let depName = dep.targetName else { continue }
+                for depTarget in lookupAll(depName) {
+                    guard depTarget.isSystemLibrary else {
+                        visit(depTarget)
+                        continue
+                    }
+                    guard collected.insert(depTarget.name).inserted else { continue }
+                    ordered.append(depTarget)
+                }
+            }
+        }
+
+        visit(root)
+        return ordered
+    }
+
     // "MyTarget-A" → "compilerMyTarget_A"  (must be a valid formula identifier)
     private func compilerFuncName(for targetName: String) -> String {
         let sanitized = String(targetName.map { $0.isLetter || $0.isNumber ? $0 : Character("_") })
@@ -401,27 +534,51 @@ struct SwiftFormulaConverter: NodeFunction {
                               lookupAll: (String) -> [SPMTarget]) -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
-        let configExpr  = target.type == "executable"
-            ? "Configuration(moduleName: '\(target.name)', parseAsLibrary: 'false').output"
-            : "Configuration(moduleName: '\(target.name)').output"
+        // Built up rather than written out so a target declaring neither list produces
+        // exactly the configuration it always did — anything else would invalidate every
+        // cached compile in every existing project for no behavioural gain.
+        //
+        // The lists are comma-joined because a configuration value is one line of
+        // `key=value` and so cannot hold a newline.  A path containing a comma would
+        // break this, as would one containing a quote — which the formula lexer has
+        // never handled for any value.
+        var configProperties = ["moduleName: '\(target.name)'"]
+        if target.type == "executable" {
+            configProperties.append("parseAsLibrary: 'false'")
+        }
+        if !target.sources.isEmpty {
+            configProperties.append("sourcePaths: '\(target.sources.joined(separator: ","))'")
+        }
+        if !target.exclude.isEmpty {
+            configProperties.append("excludedPaths: '\(target.exclude.joined(separator: ","))'")
+        }
+        let configExpr  = "Configuration(\(configProperties.joined(separator: ", "))).output"
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 
+        // Every transitively reachable Swift target, not just the direct dependencies.
+        // A binary .swiftmodule records the modules it was built against, and swiftc must
+        // load all of them to load it: compiling BuildSystemCLI, which imports only
+        // BuildSystemCore, fails with "missing required modules: 'DatabaseModels', 'GRDB'"
+        // unless those are on its import path too.
         var moduleWires: [String] = []
+        for depTarget in collectTransitiveTargets(root: target, lookupAll: lookupAll)
+        where depTarget.name != target.name {
+            let fn = compilerFuncName(for: depTarget.name)
+            moduleWires.append("            '\(depTarget.name)': \(fn)().swiftmodule")
+        }
+
+        // System libraries, by contrast, must reach every target that imports them
+        // *transitively*.  A .swiftmodule records the Clang modules it was built against,
+        // so loading GRDB.swiftmodule without GRDBSQLite's module.modulemap on the import
+        // path fails with "missing required module 'GRDBSQLite'" — in a target that never
+        // names GRDBSQLite itself.
         var moduleMapFolderWires: [String] = []
-        for dep in target.dependencies {
-            guard let depName = dep.targetName else { continue }
-            for depTarget in lookupAll(depName) {
-                if depTarget.isSystemLibrary {
-                    // Place the module.modulemap directory into the sandbox so
-                    // swiftc can resolve the system module (e.g. GRDBSQLite).
-                    let depPkgRoot    = depTarget.overridePackageFolder ?? packageFolder
-                    let mapFolderPath = "\(depPkgRoot)/\(depTarget.sourcesRelativePath)"
-                    moduleMapFolderWires.append("            '\(depTarget.name)': Folder(path: '\(mapFolderPath)').manifest")
-                } else {
-                    let fn = compilerFuncName(for: depTarget.name)
-                    moduleWires.append("            '\(depTarget.name)': \(fn)().swiftmodule")
-                }
-            }
+        for systemLibrary in collectTransitiveSystemLibraries(root: target, lookupAll: lookupAll) {
+            // Place the module.modulemap directory into the sandbox so swiftc can
+            // resolve the system module.
+            let depPkgRoot    = systemLibrary.overridePackageFolder ?? packageFolder
+            let mapFolderPath = "\(depPkgRoot)/\(systemLibrary.sourcesRelativePath)"
+            moduleMapFolderWires.append("            '\(systemLibrary.name)': Folder(path: '\(mapFolderPath)').manifest")
         }
 
         var args =
