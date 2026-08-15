@@ -12,7 +12,7 @@ import BuildSystemCLI
 var commandInterpreter: CommandInterpreter?
 
 func main() throws {
-    print("Build System 1.0 (C) 2026 Jade Burton. All rights reserved.")
+    print("Semel 1.0 (C) 2026 Jade Burton. All rights reserved.")
 
     try BuildEngine.start()
 

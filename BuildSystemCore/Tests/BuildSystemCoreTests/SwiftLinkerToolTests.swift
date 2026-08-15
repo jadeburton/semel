@@ -76,6 +76,71 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
         XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-o", "product"])
     }
 
+    // MARK: - Vendored system libraries
+
+    private func file(_ name: String) -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }
+
+    private func manifestValue(_ baseFolderPath: String, _ entries: [FolderManifestEntry]) throws -> NodeValue {
+        .value(try FolderManifest(baseFolderPath: baseFolderPath, entries: entries).toJSON().intern())
+    }
+
+    /// The folder a `.systemLibrary` target points at, once a user has dropped a vendored
+    /// archive and header beside the module map.
+    private func vendoredFolderInput(_ entries: [FolderManifestEntry]) throws -> ProcessInput {
+        let configuration = """
+            toolDescriptor.name=\(descriptor.name)
+            toolDescriptor.version=\(descriptor.version)
+            toolDescriptor.platform=\(descriptor.platform)
+            toolDescriptor.architecture=\(descriptor.architecture)
+            outputName=product
+            """
+        return ProcessInput(inputValues: [
+            SwiftLinkerTool.configuration:   ["configuration": .value(try configuration.intern())],
+            SwiftLinkerTool.input:           ["a.o": .value(try "object".intern())],
+            SwiftLinkerTool.libraries:       [:],
+            SwiftLinkerTool.libraryFolders:  ["GRDBSQLite": try manifestValue("input:/pkg/Sources/GRDBSQLite", entries)],
+        ])
+    }
+
+    private func libraryExpectations(_ output: ProcessOutput) throws -> [String] {
+        try XCTUnwrap(output.inputWireExpectations[SwiftLinkerTool.libraries]).keys.sorted()
+    }
+
+    /// A static archive dropped in the system library's folder is what makes the linked
+    /// binary self-contained — without it the modulemap's `link "sqlite3"` resolves
+    /// against the SDK and the product silently depends on the system copy.
+    func test_wiresStaticArchivesFoundInASystemLibraryFolder() throws {
+        let output = try makeTool().process(input: try vendoredFolderInput(
+            [file("libsqlite3.a"), file("module.modulemap"), file("shim.h"), file("sqlite3.h")]))
+
+        XCTAssertEqual(try libraryExpectations(output), ["input:/pkg/Sources/GRDBSQLite/libsqlite3.a"])
+    }
+
+    /// The module map, the shim and the vendored header belong to the *compile*, not the
+    /// link — handing them to the linker would be an error, not merely noise.
+    func test_ignoresEverythingButArchivesInASystemLibraryFolder() throws {
+        let output = try makeTool().process(input: try vendoredFolderInput(
+            [file("module.modulemap"), file("shim.h"), file("sqlite3.h")]))
+
+        XCTAssertEqual(try libraryExpectations(output), [])
+    }
+
+    /// A folder with no archive is the "use the system library" case, and must link
+    /// exactly as it did before this port existed.
+    func test_aSystemLibraryFolderWithNoArchiveAddsNoLinkerArguments() throws {
+        _ = try makeTool().process(input: try vendoredFolderInput([file("module.modulemap")]))
+
+        XCTAssertFalse(executor.lastArguments.contains { $0.hasSuffix(".a") })
+    }
+
+    func test_passesAWiredArchiveToTheLinker() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                        libraries: ["input:/pkg/Sources/GRDBSQLite/libsqlite3.a"]))
+
+        XCTAssertTrue(executor.lastArguments.contains("input:/pkg/Sources/GRDBSQLite/libsqlite3.a"),
+                      "got \(executor.lastArguments)")
+    }
+
     // MARK: - File metadata
 
     private func linkedFileMode(dynamicLibrary: Bool) throws -> UInt16? {

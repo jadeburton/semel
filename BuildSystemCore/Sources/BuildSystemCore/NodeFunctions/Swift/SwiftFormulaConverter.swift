@@ -421,6 +421,12 @@ struct SwiftFormulaConverter: NodeFunction {
             }
 
             // Linker configuration.
+            //
+            // `outputName` is both the file the linker writes and the name the product is
+            // published under: ProjectBuilder turns a formula product's label into its
+            // path in the output file system.  Labelling the block with the bare product
+            // name instead published a linked lib<name>.dylib as plain "<name>", so the
+            // file's content and its name disagreed.
             let isLibrary    = (product.productType == .library)
             let outputName   = isLibrary ? "lib\(product.name).dylib" : product.name
             let linkerConfig = "Configuration(dynamicLibrary: '\(isLibrary ? "true" : "false")', outputName: '\(outputName)').output"
@@ -430,13 +436,34 @@ struct SwiftFormulaConverter: NodeFunction {
                 "        '\(t.name).o': \(compilerFuncName(for: t.name))().object"
             }
 
-            let block =
-                "product '\(product.name)' =\n" +
-                "    SwiftLinkerTool(\n" +
+            // Every system library the product reaches, so a vendored static archive
+            // dropped in one of those folders is linked in.  The linker needs the same
+            // folders the compiler already gets for their module maps — see
+            // SwiftLinkerTool.libraryFolders.
+            var systemLibraryFolderWires: [String] = []
+            var wiredSystemLibraries = Set<String>()
+            for target in allTargets {
+                for systemLibrary in collectTransitiveSystemLibraries(root: target, lookupAll: allTargetsNamed) {
+                    guard wiredSystemLibraries.insert(systemLibrary.name).inserted else { continue }
+                    let libraryPkgRoot = systemLibrary.overridePackageFolder ?? rootPackageFolder
+                    let folderPath     = "\(libraryPkgRoot)/\(systemLibrary.sourcesRelativePath)"
+                    systemLibraryFolderWires.append("            '\(systemLibrary.name)': Folder(path: '\(folderPath)').manifest")
+                }
+            }
+
+            var linkerArgs =
                 "        configuration: ['config': \(linkerConfig)],\n" +
                 "        input: [\n" +
                 objectWires.joined(separator: ",\n") + "\n" +
-                "        ]\n" +
+                "        ]"
+            if !systemLibraryFolderWires.isEmpty {
+                linkerArgs += ",\n        libraryFolders: [\n" + systemLibraryFolderWires.joined(separator: ",\n") + "\n        ]"
+            }
+
+            let block =
+                "product '\(outputName)' =\n" +
+                "    SwiftLinkerTool(\n" +
+                linkerArgs + "\n" +
                 "    ).output"
             blocks.append(block)
         }

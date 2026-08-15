@@ -100,10 +100,14 @@ final class SwiftFormulaConverterTests: BuildSystemTestCase {
     func test_skipsProductsThatVendOnlySystemLibraries() throws {
         let result = try formula(json: grdbShapedManifest)
 
-        XCTAssertFalse(result.contains("product 'GRDBSQLite'"),
-                       "GRDBSQLite vends only a system library, got:\n\(result)")
-        XCTAssertTrue(result.contains("product 'GRDB'"),
-                      "the real product should still be emitted, got:\n\(result)")
+        let productLabels = result.components(separatedBy: "\n\n")
+            .filter { $0.hasPrefix("product ") }
+            .compactMap { $0.components(separatedBy: "'").dropFirst().first }
+
+        XCTAssertFalse(productLabels.contains { $0.contains("GRDBSQLite") },
+                       "GRDBSQLite vends only a system library, got: \(productLabels)")
+        XCTAssertTrue(productLabels.contains("libGRDB.dylib"),
+                      "the real product should still be emitted, got: \(productLabels)")
     }
 
     func test_emitsNoLinkerWithAnEmptyInputList() throws {
@@ -111,6 +115,87 @@ final class SwiftFormulaConverterTests: BuildSystemTestCase {
 
         XCTAssertFalse(result.contains("input: [\n\n        ]"),
                        "a linker with no object wires would fail as requiredPortUnwired, got:\n\(result)")
+    }
+
+    // MARK: - System libraries at link time
+
+    private func productBlock(_ label: String, in formula: String) throws -> String {
+        try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("product '\(label)'") },
+                      "no product '\(label)' block in:\n\(formula)")
+    }
+
+    /// The compile side already places a system library's folder in the sandbox for its
+    /// module map. The link side needs the same folder, because that is where a vendored
+    /// static archive is dropped — without it the modulemap's `link "sqlite3"` resolves
+    /// against the SDK and the product depends on the system copy instead.
+    func test_wiresASystemLibraryFolderToTheLinker() throws {
+        let block = try productBlock("libGRDB.dylib", in: try formula(json: grdbShapedManifest))
+
+        XCTAssertTrue(block.contains("libraryFolders: [\n            'GRDBSQLite': Folder(path: 'input:/pkg/Sources/GRDBSQLite').manifest\n        ]"),
+                      "got:\n\(block)")
+    }
+
+    /// A product with no system library anywhere in its closure must emit exactly what it
+    /// did before, or every existing project relinks for nothing.
+    func test_omitsTheLibraryFoldersPortWhenNoSystemLibraryIsReached() throws {
+        let result = try formula(json: """
+            {
+              "name": "plain",
+              "dependencies": [],
+              "products": [{"name": "plain", "targets": ["Plain"], "type": {"executable": null}}],
+              "targets": [{"name": "Plain", "type": "executable", "path": "Plain", "dependencies": []}]
+            }
+            """)
+
+        XCTAssertFalse(result.contains("libraryFolders"), "got:\n\(result)")
+    }
+
+    /// Same reach as the module map: the executable is three packages away and names
+    /// GRDBSQLite nowhere, but its archive still has to be on the link line.
+    func test_reachesASystemLibraryThroughThreePackagesAtLinkTime() throws {
+        let block = try productBlock("build_system", in: try rootFormula())
+
+        XCTAssertTrue(block.contains("'GRDBSQLite': Folder(path: 'input:/repo/GRDB.swift/Sources/GRDBSQLite').manifest"),
+                      "got:\n\(block)")
+    }
+
+    // MARK: - Product file names
+
+    /// The product's formula label becomes its file name in the output file system, so it
+    /// has to be the name the linker actually writes. A library is linked as
+    /// lib<name>.dylib but was published as the bare product name, so a dylib appeared
+    /// with neither the lib prefix nor the extension.
+    func test_publishesALibraryUnderItsLinkedFileName() throws {
+        let result = try formula(json: grdbShapedManifest)
+
+        XCTAssertTrue(result.contains("product 'libGRDB.dylib' ="), "got:\n\(result)")
+        XCTAssertTrue(result.contains("outputName: 'libGRDB.dylib'"), "got:\n\(result)")
+    }
+
+    func test_publishesAnExecutableUnderItsPlainName() throws {
+        let result = try formula(json: """
+            {
+              "name": "tool",
+              "dependencies": [],
+              "products": [{"name": "tool", "targets": ["tool"], "type": {"executable": null}}],
+              "targets": [{"name": "tool", "type": "executable", "path": "tool", "dependencies": []}]
+            }
+            """)
+
+        XCTAssertTrue(result.contains("product 'tool' ="), "got:\n\(result)")
+        XCTAssertFalse(result.contains("libtool"), "an executable takes no lib prefix, got:\n\(result)")
+    }
+
+    /// The label and the linker's outputName must not drift apart again — they are the
+    /// same file, described in two places.
+    func test_theProductLabelMatchesTheLinkedFileName() throws {
+        let result = try formula(json: grdbShapedManifest)
+
+        for block in result.components(separatedBy: "\n\n") where block.hasPrefix("product ") {
+            let label = try XCTUnwrap(block.components(separatedBy: "'").dropFirst().first)
+            XCTAssertTrue(block.contains("outputName: '\(label)'"),
+                          "product '\(label)' is published under a name the linker does not write:\n\(block)")
+        }
     }
 
     // MARK: - Multi-target products

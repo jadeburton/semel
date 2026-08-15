@@ -21,7 +21,7 @@ let package = Package(
             path: "build_system/CommandInterpreter"
         ),
         .executableTarget(
-            name: "build_system",
+            name: "semel",
             dependencies: [
                 "BuildSystemCLI",
                 .product(name: "BuildSystemCore", package: "BuildSystemCore"),
