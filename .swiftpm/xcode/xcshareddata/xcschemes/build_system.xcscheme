@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "build_system"
-               BuildableName = "build_system"
-               BlueprintName = "build_system"
+               BlueprintIdentifier = "semel"
+               BuildableName = "semel"
+               BlueprintName = "semel"
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
@@ -58,9 +58,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "build_system"
-            BuildableName = "build_system"
-            BlueprintName = "build_system"
+            BlueprintIdentifier = "semel"
+            BuildableName = "semel"
+            BlueprintName = "semel"
             ReferencedContainer = "container:">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -71,16 +71,6 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <BuildableProductRunnable
-         runnableDebuggingMode = "0">
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "build_system"
-            BuildableName = "build_system"
-            BlueprintName = "build_system"
-            ReferencedContainer = "container:">
-         </BuildableReference>
-      </BuildableProductRunnable>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">

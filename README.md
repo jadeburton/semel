@@ -1,8 +1,13 @@
-# Build System
+# Semel
+## A build system
 
-A graph-based incremental build engine for Swift and C/Clang projects, written in Swift.
+Semel pro semper: once and for all. Semel is a functional build system that aims to cache the shit out of your builds, together with a fully hermetic, private filesystem that greatly reduces the chance of corrupt or missing files or versioning issues. 
 
-The engine models a build as a directed graph of **Nodes** (compilation steps, file sources, folders) connected by **Wires** (data dependencies). All graph state is persisted in a SQLite database via [GRDB](https://github.com/groue/GRDB.swift). When source files change, only the affected subgraph is reprocessed.
+The same work is never done twice.
+
+Isn't every build system meant to do that anyway? This project was born out of frustration with Apple's build system rebuilding files that definitely had not changed, and generally not scaling for very large project sizes.
+
+The engine models a build as a persistent directed graph of **Nodes** (compilation steps, file sources, folders) connected by **Wires** (data dependencies). All graph state is persisted in a SQLite database via [GRDB](https://github.com/groue/GRDB.swift). When source files change, only the affected subgraph is reprocessed.
 
 ## Features
 
@@ -11,6 +16,9 @@ The engine models a build as a directed graph of **Nodes** (compilation steps, f
 - **Swift & Clang support** — compiles `.swift` modules and C/C++ translation units with full header dependency tracking
 - **Interactive REPL** — inspect and drive builds from a shell-like command line
 - **Persistent graph** — the build graph survives restarts; the engine resumes from the last known state
+- **Extensible** - Write a plugin and provide your own Node types that can be put into the graph
+- **Intuitive language** - A declarative language for specifying what Nodes are needed to derive a given product
+- **Shared cache over multiple users** - A server process combines all graphs to allow intrinsic reuse and caching
 
 ## Requirements
 
@@ -25,14 +33,14 @@ cd build_system
 swift build -c release
 ```
 
-The executable is placed at `.build/release/build_system`.
+The executable is placed at `.build/release/semel`.
 
 ## Usage
 
 Start the engine:
 
 ```sh
-.build/release/build_system
+.build/release/semel
 ```
 
 The engine opens an interactive prompt. Available commands:

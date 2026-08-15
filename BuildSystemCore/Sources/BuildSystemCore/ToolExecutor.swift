@@ -126,7 +126,7 @@ extension FileNameAndContent {
     /// Reads the content from `DataObjectStore` and decodes it as UTF-8.
     var contentAsString: String {
         get throws {
-            guard let bytes = DataObjectStore.shared.read(hash: hash) else { return "" }
+            guard let bytes = try DataObjectStore.shared.read(hash: hash) else { return "" }
             return String(decoding: bytes, as: Unicode.UTF8.self)
         }
     }

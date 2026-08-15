@@ -3,25 +3,29 @@
 ## Planning and strategy
 
 - Fix issue of tests not being runnable in root project in xcode
-- Plugin arch so that others (and ai) can add toolchains like c++
-- Fix: when node added to output fs, writes to console
+- Fix: when node added to output fs, writes to console. Currently false positives caused by branches being deleted and recreated; output files disappear briefly.
 
-- Fix: when copying out an executable file, it should have the +x attribute (libs also?)
+- Clearly delineate Core, DatabaseModels, CLI, SemelServ
+- Convert to client-server architecture and daemon
+
+- Central cache server 
+
+- Get it working with large swift package that has complicated dependencies and targets
+
+- Get it working with large c or c++ project
+
+- Maybe, if at all technically possible, a tool to convert a makefile or cmake file to a Formula file. Or even a Node that does it. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional. Cmake still has add_xxx methods and a mess of a syntax.
 
 - Make github repo public
 
-- Convert to client-server architecture and daemon
-- Clearly delineate Core, DatabaseModels, CLI, SemelServ
+- Remote execution of tools. Ideally in docker containers running wherever.
 
-- Get it working with large c or c++ project
-- Get it working with large swift package similar to a kit
+- Solve the problem of code changes invalidating the entire cache and database. I.e. Semel code itself should have some kind of hash over it and this is used to invalidate caches. 
 
-- Better integration tests that cover situations where for example an input file is created but then deleted and a number of nodes should also be deleted
+- Periodic cache integrity check: randomly compare the cache with computed output and if they differ, reset the entire cache.
 
-- Solve the problem of code changes invalidating the entire cache and database. 
+- Database migration: probably just clear all caches and rebuild everything
 
-- Database migration: export all input files, upgrade, then import all
+- Rollback of all input file changes if any Node enters an error state as a result, thus guaranteeing the build is always green.
 
-- Cache integrity check: compare the cache with computed output and if they differ, reset the entire cache.
-
-- Also a command to reset and rebuild the graph. Deletes all nodes that are not folders, projectfinder, or staticfiles in the inputfs, then lets projectfinder re-find everything and rebuild the graph. This also helps with dev since we don’t have to rename db every time.
+- Plugin arch so that others (and ai) can add toolchains like c++

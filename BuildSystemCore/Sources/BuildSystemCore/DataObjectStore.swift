@@ -69,9 +69,25 @@ final class DataObjectStore {
     // MARK: - Reading
 
     /// Returns the stored bytes for `hash`, or `nil` if not present.
-    func read(hash: String) -> [UInt8]? {
-        guard let data = try? Data(contentsOf: objectURL(hash: hash)) else { return nil }
-        return [UInt8](data)
+    ///
+    /// The bytes are re-hashed and checked against the name they are filed under. In a
+    /// content-addressed store that name *is* a claim about the content, and nothing
+    /// verified it on the way out — so bit rot, a truncated write, a bad sector or a
+    /// hand-edited store all produced a build that looked entirely successful. Re-hashing
+    /// costs a fraction of the read it accompanies and closes the whole class.
+    ///
+    /// Corruption throws rather than reporting absence: a missing object is rebuilt
+    /// silently, which is exactly the wrong response to a damaged store.
+    func read(hash: String) throws -> [UInt8]? {
+        let url = objectURL(hash: hash)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let bytes = [UInt8](data)
+
+        let actual = Sha256.hash(bytes)
+        guard actual == hash else {
+            throw ObjectStoreReadError.corrupted(expected: hash, actual: actual, path: url.path)
+        }
+        return bytes
     }
 
     /// Returns the on-disk byte count for `hash`, or `nil` if not present.
@@ -168,6 +184,23 @@ public struct Sha256 {
         let hash = [UInt8](SHA256.hash(data: Data(data)))
         let final = (hash.count < data.count) ? hash : data
         return final.asHex()
+    }
+}
+
+/// A stored object whose bytes no longer match the hash they are filed under.
+///
+/// Deliberately *not* an `UnrecoverableError`: one damaged object fails the nodes that
+/// need it, while the rest of the build carries on and reports the rest of its errors.
+/// Deleting the named file makes it rebuild, which is why the path is in the message.
+enum ObjectStoreReadError: Error, CustomStringConvertible {
+    case corrupted(expected: String, actual: String, path: String)
+
+    var description: String {
+        switch self {
+        case .corrupted(let expected, let actual, let path):
+            return "Object store corruption: \(path) is filed as \(expected) but its bytes "
+                 + "hash to \(actual). Delete that file to have it rebuilt."
+        }
     }
 }
 

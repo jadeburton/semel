@@ -48,7 +48,7 @@ extension DataToken {
             return []
         }
 
-        guard let bytes = DataObjectStore.shared.read(hash: self) else {
+        guard let bytes = try DataObjectStore.shared.read(hash: self) else {
             throw DataObjectError.dataObjectNotFoundByHash
         }
 

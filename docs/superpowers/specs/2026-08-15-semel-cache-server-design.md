@@ -139,6 +139,64 @@ comes from the machine rather than from the graph: SDK path and version, tool ve
 (`DefaultTools` deliberately takes these from the machine), environment variables, locale,
 and anything else `process.run()` can observe that the key does not name.
 
+## Corruption detection
+
+The failure modes are distinct and no single check sees them all. In particular, re-running
+a cached node catches two of them and cannot, on its own, tell them apart.
+
+| Mode | Caught by |
+|---|---|
+| Storage corruption — bit rot, truncated write, hand-edited store | re-hash on read; total and cheap |
+| **Tool non-determinism** | re-run, but as a *false* corruption report |
+| Key under-specification (the SDK bug) | re-run, or environment perturbation |
+| A poisoned entry from another client | re-run, or quorum |
+| Entry referencing evicted objects | existence check before use |
+
+**1. Re-hash on read. *(implemented)*** The store is content-addressed, so an object's name
+is a claim about its bytes, and nothing verified it on the way out. `DataObjectStore.read`
+now re-hashes and throws `ObjectStoreReadError.corrupted` naming the expected hash, the
+actual hash and the file to delete. Corruption throws rather than reporting absence,
+because a missing object is silently rebuilt — precisely the wrong response to a damaged
+store.
+
+**2. Distinguish non-determinism from corruption by running twice.** If a re-run disagrees
+with the cache you cannot tell whether the cache is wrong or the compiler is
+non-deterministic — timestamps, `__DATE__`, paths in debug info, order-dependent output. If
+two *fresh* runs disagree with each other, the tool is non-deterministic and the cache is
+innocent; if they agree with each other and differ from the entry, the entry is bad.
+
+**3. Probe determinism at write, not only at read.** Occasionally run a node twice before
+caching and compare. A node that is not reproducible is marked never-cacheable, which fixes
+the problem at source rather than detecting its symptoms forever — and answers the question
+a shared cache most needs answered: which tools are safe to share at all.
+
+**4. Sampled re-verification, weighted and distributed.** Uniform random sampling spends
+most of its effort on entries nobody uses. `CacheEntry.cost` already records the compute an
+entry saves; with a reuse counter, sample by `cost × reuse` so the entries most people
+depend on are checked most. On a shared cache, have each client deliberately ignore a small
+percentage of hits and recompute them: coverage is sampling-rate × fleet-size, so it scales
+with the very thing that makes the risk worse. At 1% and 100 users that is a lot of samples
+for almost nothing per machine.
+
+**5. Environment perturbation, as a test-suite tool.** Run a node twice while varying
+something deliberately *not* in the key — `TMPDIR`, working directory, locale, hostname,
+wall-clock. If the output changes, something outside the key influenced it and the key is
+under-specified. This is the systematic version of how the SDK bug was found: a fuzzer for
+cache keys, run once per node type to learn something permanent.
+
+**Store the key material, not just the key.** Today a mismatch says two builds disagreed and
+nothing about why. Recording the node type, `codeVersion`, properties, input wire keys and
+hashes, and `cacheKeyEnvironment` alongside each entry makes a mismatch diffable, and allows
+recomputing keys offline to catch bugs in the key computation itself.
+
+**Quarantine, don't merely log.** A detected-but-still-served entry is worse than an
+undetected one, because you now know and are shipping it anyway. This is what makes
+purge-by-key a prerequisite rather than a convenience.
+
+Build order: (1) is done; then (3), because it turns "is this tool cacheable?" from an
+assumption into a fact; then key material, so everything after is diagnosable; then (4);
+then (5).
+
 ## Trust
 
 Anyone who can write to the cache can poison everyone who reads it. `Hello` carries
