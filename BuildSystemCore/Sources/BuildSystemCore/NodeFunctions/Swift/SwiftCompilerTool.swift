@@ -17,7 +17,7 @@ struct SwiftCompilerToolConfiguration {
         // TODO: remove these defaults and come up with easier way to avoid duplication
         toolDescriptor = .init(
             name:          properties["toolDescriptor.name"]          ?? "swiftc",
-            version:       properties["toolDescriptor.version"]       ?? "Apple Swift version 6.2.3",
+            version:       properties["toolDescriptor.version"]       ?? "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)",
             platform:      properties["toolDescriptor.platform"]      ?? "macOS",
             architecture:  properties["toolDescriptor.architecture"]  ?? "arm64",
             recursiveHash: properties["toolDescriptor.recursiveHash"])
