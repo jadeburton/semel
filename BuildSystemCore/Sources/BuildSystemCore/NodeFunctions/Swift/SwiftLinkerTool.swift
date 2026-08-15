@@ -41,6 +41,10 @@ struct SwiftLinkerTool: NodeFunction {
     static let libraries = "libraries"
     static let output = "output"
     static let infoLog = "infoLog"
+    /// Declaring this port is what makes ProjectBuilder wire the linked file's Unix mode
+    /// into its OutputFile wrapper, so `cp` can chmod it. Without it an executable is
+    /// published at the default 0644 and will not run. Same arrangement as ClangLinkerTool.
+    static let fileMetadata = FileMetadata.portName
 
     var embeddedNode: Node
 
@@ -54,7 +58,7 @@ struct SwiftLinkerTool: NodeFunction {
             .required(input),
             .optional(libraries),
         ],
-        outputPorts: [output, infoLog]
+        outputPorts: [output, infoLog, fileMetadata]
     )
 
     // MARK: Processing
@@ -87,10 +91,12 @@ struct SwiftLinkerTool: NodeFunction {
     struct SwiftLinkerToolOutputs {
         let output: NodeValue
         let infoLog: NodeValue
+        let fileMetadata: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftLinkerTool.output: output,
-                                 SwiftLinkerTool.infoLog: infoLog],
+                                 SwiftLinkerTool.infoLog: infoLog,
+                                 SwiftLinkerTool.fileMetadata: fileMetadata],
                   inputWireExpectations: [:])
         }
     }
@@ -139,6 +145,12 @@ struct SwiftLinkerTool: NodeFunction {
             inputFiles: inputFiles,
             expectedOutputFileNames: [outputName])
 
-        return .init(output: try result.asOutputNodeValue(), infoLog: .value(try result.infoOutput.intern()))
+        // A dynamic library is loaded, not run, so only an executable needs the x bits.
+        let mode: UInt16 = inputs.configuration.dynamicLibrary ? FileMetadata.defaultMode : FileMetadata.executableMode
+        let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
+
+        return .init(output: try result.asOutputNodeValue(),
+                     infoLog: .value(try result.infoOutput.intern()),
+                     fileMetadata: .value(try metadataJSON.intern()))
     }
 }

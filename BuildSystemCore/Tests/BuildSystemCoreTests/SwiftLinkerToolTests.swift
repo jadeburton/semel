@@ -25,13 +25,16 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
         try SwiftLinkerTool(thisNode: Node(id: 1, kind: SwiftLinkerTool.kind))
     }
 
-    private func makeInput(objectFiles: [String], libraries: [String] = []) throws -> ProcessInput {
+    private func makeInput(objectFiles: [String],
+                           libraries: [String] = [],
+                           dynamicLibrary: Bool = false) throws -> ProcessInput {
         let configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
             toolDescriptor.platform=\(descriptor.platform)
             toolDescriptor.architecture=\(descriptor.architecture)
             outputName=product
+            dynamicLibrary=\(dynamicLibrary)
             """
 
         var objects: [String: NodeValue] = [:]
@@ -71,5 +74,31 @@ final class SwiftLinkerToolTests: BuildSystemTestCase {
         _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
 
         XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-o", "product"])
+    }
+
+    // MARK: - File metadata
+
+    private func linkedFileMode(dynamicLibrary: Bool) throws -> UInt16? {
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                                 dynamicLibrary: dynamicLibrary))
+        let value = try XCTUnwrap(output.outputValues[SwiftLinkerTool.fileMetadata])
+        let metadata = try XCTUnwrap(FileMetadata.decode(from: try value.expectValue().resolveAsString()))
+        return metadata.mode
+    }
+
+    /// Without this the linked binary is copied out at the default 0644 and will not run.
+    /// ProjectBuilder wires the port automatically for any node type that declares it, so
+    /// declaring it is the whole fix — same as ClangLinkerTool.
+    func test_anExecutableIsPublishedAsExecutable() throws {
+        XCTAssertEqual(try linkedFileMode(dynamicLibrary: false), FileMetadata.executableMode)
+    }
+
+    func test_aDynamicLibraryIsPublishedWithTheDefaultMode() throws {
+        XCTAssertEqual(try linkedFileMode(dynamicLibrary: true), FileMetadata.defaultMode)
+    }
+
+    /// ProjectBuilder only wires the metadata if the port is declared on the type.
+    func test_declaresTheFileMetadataPort() {
+        XCTAssertTrue(SwiftLinkerTool.descriptor.outputPorts.contains(FileMetadata.portName))
     }
 }
