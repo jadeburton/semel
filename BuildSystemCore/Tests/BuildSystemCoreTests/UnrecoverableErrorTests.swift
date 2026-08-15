@@ -5,6 +5,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 /// Some failures are properties of the machine rather than of one node — the object store
 /// cannot be written, the database rejects writes. Filing those against a node hides them,

@@ -11,6 +11,7 @@
 @testable import BuildSystemCore
 import Foundation
 import XCTest
+import SemelNodeKit
 
 final class DataObjectStoreTests: BuildSystemTestCase {
 

@@ -5,6 +5,7 @@
 
 @testable import BuildSystemCore
 import XCTest
+import SemelNodeKit
 
 /// The build system reaches its object store, symbol table and tool registry through
 /// process-globals rather than threading them through every call site.  That is a

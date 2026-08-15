@@ -5,6 +5,7 @@
 // in an isolated sandbox environment.
 
 import Foundation
+import SemelNodeKit
 
 // MARK: - Protocol
 

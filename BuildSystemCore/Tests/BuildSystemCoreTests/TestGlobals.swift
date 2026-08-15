@@ -12,6 +12,7 @@
 @testable import BuildSystemCore
 import Foundation
 import XCTest
+import SemelNodeKit
 
 /// Base class for every test in this target: isolates the process-globals before each
 /// test so nothing leaks between them and nothing reaches the user's real object store.

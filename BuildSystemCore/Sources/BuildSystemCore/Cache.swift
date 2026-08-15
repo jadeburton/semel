@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 
 private let cacheEntryLimit = 500
 

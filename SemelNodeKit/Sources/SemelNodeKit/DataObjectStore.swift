@@ -27,12 +27,12 @@ import CryptoKit
 /// Content is immutable once written: a given hash always maps to the same
 /// bytes, so entries are written once and never modified.  Files are marked
 /// read-only (0o444) after being stored to enforce this invariant.
-final class DataObjectStore {
+public final class DataObjectStore {
 
     /// The process-wide store.  Every `intern()` goes through it, so it is a global
     /// rather than something threaded through each call site — but it is swappable, so
     /// a test can point the whole process at a private store instead of the user's.
-    static var shared = DataObjectStore()
+    public static var shared = DataObjectStore()
 
     private let storeRoot: URL
 
@@ -43,7 +43,7 @@ final class DataObjectStore {
                                                                isDirectory: true))
     }
 
-    init(storeRoot: URL) {
+    public init(storeRoot: URL) {
         self.storeRoot = storeRoot
         // Best-effort: `store(hash:content:)` creates the shard directory with
         // intermediates anyway, so a failure here is not fatal.
@@ -53,7 +53,7 @@ final class DataObjectStore {
     // MARK: - Paths
 
     /// Canonical on-disk URL for the object with the given hash.
-    func objectURL(hash: String) -> URL {
+    public func objectURL(hash: String) -> URL {
         let prefix = String(hash.prefix(2))
         return storeRoot
             .appendingPathComponent(prefix, isDirectory: true)
@@ -62,7 +62,7 @@ final class DataObjectStore {
 
     // MARK: - Existence check
 
-    func exists(hash: String) -> Bool {
+    public func exists(hash: String) -> Bool {
         FileManager.default.fileExists(atPath: objectURL(hash: hash).path)
     }
 
@@ -78,7 +78,7 @@ final class DataObjectStore {
     ///
     /// Corruption throws rather than reporting absence: a missing object is rebuilt
     /// silently, which is exactly the wrong response to a damaged store.
-    func read(hash: String) throws -> [UInt8]? {
+    public func read(hash: String) throws -> [UInt8]? {
         let url = objectURL(hash: hash)
         guard let data = try? Data(contentsOf: url) else { return nil }
         let bytes = [UInt8](data)
@@ -91,7 +91,7 @@ final class DataObjectStore {
     }
 
     /// Returns the on-disk byte count for `hash`, or `nil` if not present.
-    func size(hash: String) -> Int? {
+    public func size(hash: String) -> Int? {
         let url = objectURL(hash: hash)
         return (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
     }
@@ -104,7 +104,7 @@ final class DataObjectStore {
     /// `Data.write(to:options:.atomic)` writes to a temp file and renames, so
     /// the final entry is always coherent.  The first writer wins the rename race;
     /// subsequent writers silently leave the existing entry untouched.
-    func store(hash: String, content: [UInt8]) throws {
+    public func store(hash: String, content: [UInt8]) throws {
         let url = objectURL(hash: hash)
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
 
@@ -128,7 +128,7 @@ final class DataObjectStore {
     // MARK: - Projecting into a sandbox
 
     /// Returns all hashes present in the store by walking the shard directories.
-    func allHashes() -> [String] {
+    public func allHashes() -> [String] {
         var hashes: [String] = []
         let fm = FileManager.default
         guard let shards = try? fm.contentsOfDirectory(atPath: storeRoot.path) else { return [] }
@@ -146,7 +146,7 @@ final class DataObjectStore {
     /// On non-APFS volumes (HFS+, network mounts, Docker bind mounts) the
     /// call falls back to a regular `FileManager.copyItem`, which is still
     /// cheaper than re-extracting bytes from the database.
-    func project(hash: String, to destination: URL) throws {
+    public func project(hash: String, to destination: URL) throws {
         let source = objectURL(hash: hash)
 
         guard FileManager.default.fileExists(atPath: source.path) else {
@@ -167,7 +167,7 @@ final class DataObjectStore {
     }
 
     /// Ensures `content` is stored under `hash`, then projects to `destination`.
-    func storeAndProject(hash: String, content: [UInt8], to destination: URL) throws {
+    public func storeAndProject(hash: String, content: [UInt8], to destination: URL) throws {
         try store(hash: hash, content: content)
         try project(hash: hash, to: destination)
     }
@@ -192,10 +192,10 @@ public struct Sha256 {
 /// Deliberately *not* an `UnrecoverableError`: one damaged object fails the nodes that
 /// need it, while the rest of the build carries on and reports the rest of its errors.
 /// Deleting the named file makes it rebuild, which is why the path is in the message.
-enum ObjectStoreReadError: Error, CustomStringConvertible {
+public enum ObjectStoreReadError: Error, CustomStringConvertible {
     case corrupted(expected: String, actual: String, path: String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .corrupted(let expected, let actual, let path):
             return "Object store corruption: \(path) is filed as \(expected) but its bytes "
@@ -206,10 +206,10 @@ enum ObjectStoreReadError: Error, CustomStringConvertible {
 
 /// Failures writing the content-addressed store.  Unrecoverable: the store is where every
 /// build output lives, so if it cannot be written nothing further can succeed.
-enum ObjectStoreError: UnrecoverableError {
+public enum ObjectStoreError: UnrecoverableError {
     case cannotWrite(storeRoot: String, underlying: Error)
 
-    var unrecoverableDescription: String {
+    public var unrecoverableDescription: String {
         switch self {
         case .cannotWrite(let storeRoot, let underlying):
             return """
