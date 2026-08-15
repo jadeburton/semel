@@ -2,10 +2,7 @@
 
 ## Planning and strategy
 
-- Fix issue of tests not being runnable in root project in xcode
-- Fix: when node added to output fs, writes to console. Currently false positives caused by branches being deleted and recreated; output files disappear briefly.
-
-- Clearly delineate Core, DatabaseModels, CLI, SemelServ
+- Clearly delineate Core, DatabaseModels, CLI, SemelServ, and separate package for Swift nodes, separate package for C/CPP nodes, separate package for over-the-wire encodable objects used for socket communication.
 - Convert to client-server architecture and daemon
 
 - Central cache server 
@@ -24,8 +21,9 @@
 
 - Periodic cache integrity check: randomly compare the cache with computed output and if they differ, reset the entire cache.
 
-- Database migration: probably just clear all caches and rebuild everything
+- Database migration: probably just clear all caches and rebuild everything. Maybe the program could dump the SQL schema as a blob of text on launch and compare with previous to detect schema change.
 
 - Rollback of all input file changes if any Node enters an error state as a result, thus guaranteeing the build is always green.
 
-- Plugin arch so that others (and ai) can add toolchains like c++
+- Set up SwiftLint or similar linter in the repo
+

@@ -20,6 +20,17 @@ nor lists the test targets of a dependency package — which is why the engine's
 not be run from the root package. The workspace holds all three as peers, so each gets its
 own scheme and its own runnable tests.
 
+## Naming of modules
+
+`BuildSystem` is being phased out in favour of `Semel` — opportunistically, not in one
+sweep. New modules take the new prefix; existing ones are renamed when they are being
+touched for other reasons. Expect both prefixes in the tree meanwhile.
+
+Two words are taken and must not be reused for anything else. **Plugin** means a
+`CommandPlugin` (a CLI verb) or a `ProjectBuilderPlugin` (project discovery). **Toolchain**
+means tool discovery and versioning — `Toolchain.swift`, `ToolDescriptor` — not a set of
+node functions.
+
 ## Formatting
 
 - Four spaces, never tabs.

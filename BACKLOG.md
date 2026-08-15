@@ -200,6 +200,18 @@ is swapped — which every test does. Not measured yet; measure before optimisin
 **B-24** `open` — **`Folder.canBeDeleted` instantiates every child's node function.**
 `TODO: slow` at `Folder.swift:63`. Same shape as B-16 but on the delete path.
 
+**B-28** `open` — **Split the toolchains out of the engine.**
+`SemelNodeKit` (the node-authoring API), `SemelSwift` and `SemelClang`, with the toolchain
+packages depending on NodeKit and *not* on the engine — the absent arrow is what makes the
+engine agnostic. Design and phasing in
+`docs/superpowers/specs/2026-08-15-semel-package-split-design.md`.
+
+Measured first: across all nine toolchain nodes there is exactly one reach into the graph
+(`Folder.inputFileSystemName`), so the API needs no graph access and is smaller than it
+looks. Two seams to open — `BuildEngine.registerTypes()` and `ProjectFinder`'s plugin array
+— plus a kind-ID allocation rule, since existing IDs cannot be renumbered without orphaning
+live databases.
+
 ## Server
 
 **B-30** `open` — **`semelserv` with three roles.**
