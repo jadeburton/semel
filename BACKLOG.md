@@ -61,12 +61,44 @@ currently share a cache key. Narrow, and B-03 subsumes it.
 
 ## Swift package conversion
 
-**B-06** `open` — **Verify vendored dependency versions.**
+**B-06** `open` — **Lock vendored dependencies by content hash.**
 `ISSUE:` at `SwiftFormulaConverter.swift:183`. A `sourceControl` dependency resolves to a
-vendored sibling directory with no check that its contents satisfy the manifest's version
-requirement. Needs a provenance file per vendored package (identity, URL, revision,
-version), written by a `semel vendor` tool that reads `Package.resolved`. Staged behaviour:
-no provenance at all → warn once; provenance present but version unsatisfied → fail.
+vendored sibling directory with nothing checking that what is there is what was meant.
+
+Approach: a recursive content hash over the vendored package's own folder in the input file
+system — `input:/repo/GRDB.swift` — recorded and compared on every build. Guarantees the
+dependency has not changed, without claiming to guarantee which version it is.
+
+*What this does not need to fix.* Cache correctness is already guaranteed: a vendored
+package's files are ordinary `StaticFile` nodes whose content hashes are wire values, and
+`buildCacheKeyPartFromOneInput` puts every wire's key and value into the cache key. Adding
+or removing a file changes the `Folder` manifest, which is also an input. So an edit to
+vendored GRDB *already* changes the key of everything downstream. A lock adds nothing to
+detection.
+
+*What it does buy* is notification and consent. Today a change is silently absorbed — the
+graph rebuilds and succeeds, and nobody is told their dependency moved. A lock turns that
+into "expected `abc…`, found `def…`; update the lock if this was intended", which is the
+same value `Package.resolved` and `yarn.lock` provide.
+
+*Open sub-decision: where the lock lives.* Jade suggested graph configuration. The
+counter-argument is that the value is entirely in the diff being reviewable — a hash in
+node configuration lives in the database, so it cannot be diffed in review, shared between
+developers, or inspected without the build system running. Recommendation is a checked-in
+file in the vendored folder, which still reaches the graph as an ordinary `StaticFile` and
+so participates in cache keys with no special path:
+
+    GRDB.swift/.semel-lock
+        content   sha256:abc…      enforced; a mismatch stops the build
+        version   7.11.1           recorded only, never enforced
+        origin    https://github.com/groue/GRDB.swift.git
+
+Keeping an unenforced version line costs one line and answers two questions a hash cannot:
+whether this is the library that was meant in the first place — a lock preserves a
+first-time mistake forever — and whether a published advisory applies. Degrades gracefully:
+absent → warn once, present and mismatched → fail.
+
+Depends on B-26.
 
 **B-07** `open` — **Registry dependencies are ignored.**
 `TODO:` at `SwiftFormulaConverter.swift:189`. Neither resolved nor reported.
@@ -88,6 +120,13 @@ dependency DAG are the deliverables. Nesting is *not* the right test: it misclas
 can expose them; `ProjectFinder` unions them into an "is depended upon" set and sets
 `publishProducts: false` on those `ProjectBuilder`s. Products still build and cache; they
 just get no `OutputFile`.
+
+**B-26** `open` — **Recursive content hash for a folder tree.**
+`FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
+manifest changes when names change but not when contents do. A Merkle root needs a derived
+hash over the sorted `(name, contentHash)` pairs, folded up the tree. Wanted by B-06 for
+locking a vendored dependency, and by the client/server design for making reconciliation
+O(changed) rather than O(tree) — the same piece of work, worth building once.
 
 ## Cache
 
