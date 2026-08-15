@@ -28,6 +28,35 @@ final class NodeLifecycleTests: BuildSystemTestCase {
 
     private var database: DatabaseLayer { engine.database }
 
+    // MARK: - Manifest pinned state
+
+    /// The manifest reads pinned state straight from the output ports in one query per
+    /// kind, rather than asking each child through `Pinnable`. That is faster but loses
+    /// the polymorphism, so this asserts the two readings still agree — across a pinned
+    /// file, a ghost (referenced but removed), a pinned subfolder and an empty one.
+    func test_manifestPinnedStateAgreesWithEachChildsOwn() throws {
+        try pushFile("mixed/kept.swift")
+        try pushFile("mixed/ghost.swift")
+        _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("mixed/sub"), pinned: true)
+        _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("mixed/unpinnedsub"), pinned: false)
+
+        let ghost = try XCTUnwrap(try engine.inputFileSystem.childNode(path: "mixed/ghost.swift"))
+        _ = try XCTUnwrap(ghost.nodeAsAny() as? StaticFile).replaceContent(nil)
+
+        let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: "mixed"))
+        let manifestJSON = try folder.readFromOutputPort(Folder.folderManifestOutputPort)
+            .expectValue().resolveAsString()
+        let manifest = try XCTUnwrap(try PolyFactory.decode(encodedJSON: manifestJSON) as? FolderManifest)
+
+        XCTAssertFalse(manifest.entries.isEmpty)
+        for entry in manifest.entries {
+            let child = try XCTUnwrap(try folder.childNode(path: entry.name))
+            let expected = try (child.nodeAsAny() as? Pinnable)?.isPinned ?? false
+            XCTAssertEqual(entry.isPinned, expected,
+                           "\(entry.name): manifest says \(entry.isPinned), the node says \(expected)")
+        }
+    }
+
     // MARK: - Name collisions
 
     /// Two children of one folder sharing a name makes the tree ambiguous: `childNode`

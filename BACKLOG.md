@@ -117,11 +117,28 @@ entirely in-process.
 
 ## Performance
 
-**B-16** `open` — **Folder manifest rebuilding is very slow.**
-`BUG:` at `Folder.swift:174` ("extremely slow, TODO cache"), plus `Folder.swift:63` and
-`NodeSupport.swift:188`. Predates this work, but the recursive source discovery added for
-nested packages calls folder manifests far more often than when those comments were written.
-Caching must not break manifest freshness on child add/delete.
+**B-16** `done` — **Folder manifest rebuilt a database query per child.**
+Measured: pushing N files into one folder was O(N²) queries, because a manifest is rebuilt
+on *every* child change and each rebuild asked every child for its pinned state
+individually. Now one query per kind. 50/100/200 files went 0.30/0.99/3.39s → 0.14/0.34/0.84s,
+and growth per doubling fell from ~3.4× to ~2.4×. Agreement with each type's own `isPinned`
+is pinned by `test_manifestPinnedStateAgreesWithEachChildsOwn`. See B-18 for what remains.
+
+**B-18** `open` — **Manifest rebuilds are still super-linear.**
+After B-16, pushing N files into one folder still grows at ~n^1.26: every child change
+re-encodes the whole manifest to JSON, hashes it and writes an object. Extrapolated, 20,000
+files is still minutes. The fix is to stop rebuilding per change — mark the folder dirty and
+flush before the next processing pass — but manifest freshness is relied on between mutation
+and processing, so this needs care rather than a quick cache.
+
+**B-19** `open` — **`Folder.root(named:)` builds a graph shape on every call.**
+`BUG:` at `Folder.swift` ("extremely slow. TODO cache"). Every `Folder.inputFileSystem` /
+`outputFileSystem` does a `findOrCreateMatchingNode`, and those are called constantly. A
+cache must key on the current `DatabaseLayer` identity, or it goes stale when the database
+is swapped — which every test does. Not measured yet; measure before optimising.
+
+**B-24** `open` — **`Folder.canBeDeleted` instantiates every child's node function.**
+`TODO: slow` at `Folder.swift:63`. Same shape as B-16 but on the delete path.
 
 ## Server
 

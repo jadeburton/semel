@@ -114,17 +114,42 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     }
 
     private func buildManifest() throws -> FolderManifest {
+        let children = try thisNode.allChildren
+        let pinned   = try pinnedStates(of: children)
+
         var folderManifestEntries = [FolderManifestEntry]()
-
-        for child in try thisNode.allChildren {
-            let pinnable = try child.nodeFunction() as? Pinnable
-
+        for child in children {
             folderManifestEntries.append(.init(name: child.name!,
                                                isFolder: child.kind == Folder.kind,
-                                               isPinned: (pinnable != nil) ? try pinnable!.isPinned : false))
+                                               isPinned: pinned[try child.requireID()] ?? false))
         }
 
         return .init(baseFolderPath: path.string, entries: folderManifestEntries)
+    }
+
+    /// Pinned state for every child, in one query per kind that has one.
+    ///
+    /// This used to ask each child individually, through its `Pinnable` conformance. Since
+    /// a manifest is rebuilt on *every* child change, pushing N files into a folder cost
+    /// N²/2 database round trips: 200 files took 3.4s, and the time quadrupled with each
+    /// doubling. Reading the port directly loses the polymorphism, so the mapping from
+    /// kind to port is spelled out here and pinned by a test asserting it still agrees
+    /// with each type's own `isPinned`.
+    private func pinnedStates(of children: [Node]) throws -> [ObjectID: Bool] {
+        var result: [ObjectID: Bool] = [:]
+
+        for (kind, portName) in [(Folder.kind,     Folder.pinnedOutputPort),
+                                 (StaticFile.kind, StaticFile.outputPort)] {
+            let nodeIDs = try children.filter { $0.kind == kind }.map { try $0.requireID() }
+            let ports   = try database.outputPort.selectAll(nodeIDs: nodeIDs,
+                                                            nameSymbolID: try portName.asSymbolID())
+            for nodeID in nodeIDs {
+                // Absent or non-value both mean not pinned — the same reading `isPinned`
+                // gives, where a missing port becomes a noValue.
+                result[nodeID] = ports[nodeID]?.valueKind == .value
+            }
+        }
+        return result
     }
 
     // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.
