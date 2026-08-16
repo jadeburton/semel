@@ -87,15 +87,18 @@ struct SwiftFormulaConverter: NodeFunction {
         var bfsQueue: [(path: String, manifest: SPMManifest)] = [(rootPackageFolder, rootManifest)]
         var visitedPaths = Set<String>([rootPackageFolder])
         var expectations: [String: String] = [:]
+        // Path -> repository URL it stands for, nil when the manifest named the path
+        // itself. Only ever read to explain a stall.
+        var originOfExpectedPath: [String: String?] = [:]
         var bfsIndex = 0
 
         while bfsIndex < bfsQueue.count {
             let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
-            for dependencyPath in manifest.packageDependencies {
+            for dependency in manifest.packageDependencies {
                 // Resolved against the manifest that declared it, not the root: a vendored
                 // checkout sits beside whichever package named it, and that package may
                 // itself be an external one several levels down.
-                let extPath = resolveRelativePath(dependencyPath, from: manifestPath)
+                let extPath = resolveRelativePath(dependency.path, from: manifestPath)
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
                 // that cannot be read through the build graph.
@@ -103,6 +106,7 @@ struct SwiftFormulaConverter: NodeFunction {
                 guard !visitedPaths.contains(extPath) else { continue }
                 visitedPaths.insert(extPath)
                 expectations[extPath] = packageReaderExpectation(for: extPath)
+                originOfExpectedPath[extPath] = dependency.repositoryURL
                 if let extManifest = availableManifests[extPath] {
                     bfsQueue.append((extPath, extManifest))
                 }
@@ -113,7 +117,7 @@ struct SwiftFormulaConverter: NodeFunction {
         let missing = expectations.keys.filter { availableManifests[$0] == nil }
         guard missing.isEmpty else {
             return try pendingOutput(
-                reason: "SwiftFormulaConverter: awaiting external packages: \(missing.sorted().joined(separator: ", "))",
+                reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
                 externalExpectations: expectations)
         }
 
@@ -135,6 +139,27 @@ struct SwiftFormulaConverter: NodeFunction {
               inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
     }
 
+    /// Explains a stall in terms the user can act on.
+    ///
+    /// The old text named only the paths being waited on, which is the least useful part:
+    /// for a git dependency that path is a *convention this build system invented*, so a
+    /// user seeing `input:/repo/GRDB.swift` had no way to connect it to the
+    /// `.package(url:)` line in their manifest, and no hint that nothing was ever going to
+    /// arrive on its own.
+    private func describeStall(missingPaths: [String], origins: [String: String?]) -> String {
+        let lines = missingPaths.map { path -> String in
+            guard let url = origins[path] ?? nil else {
+                return "  \(path) — declared as a local path dependency, but nothing is there"
+            }
+            return "  \(path) — where \(url) is expected to be vendored"
+        }
+
+        return "SwiftFormulaConverter: waiting for \(missingPaths.count) package(s):\n"
+             + lines.joined(separator: "\n")
+             + "\nThis build system never fetches anything: a dependency must be present in "
+             + "the input file system at the path above, pushed like any other source."
+    }
+
     // Graph-shape expectation string for a SwiftPackageReaderTool that reads
     // the Package.swift at `extPath` in the input filesystem.
     private func packageReaderExpectation(for extPath: String) -> String {
@@ -151,9 +176,9 @@ struct SwiftFormulaConverter: NodeFunction {
         let name: String
         let targets: [SPMTarget]
         let products: [SPMProduct]
-        /// Package dependencies as local paths relative to this manifest, whatever form
-        /// they were declared in. See AnySPMDependency for how a git URL becomes one.
-        let packageDependencies: [String]
+        /// Package dependencies as local paths relative to this manifest, each carrying
+        /// enough of where it came from to explain itself when nothing is at that path.
+        let packageDependencies: [SPMPackageDependency]
 
         enum CodingKeys: String, CodingKey {
             case name, targets, products, dependencies
@@ -165,7 +190,7 @@ struct SwiftFormulaConverter: NodeFunction {
             targets      = try c.decode([SPMTarget].self,  forKey: .targets)
             products     = try c.decode([SPMProduct].self, forKey: .products)
             let rawDeps  = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
-            packageDependencies = rawDeps.flatMap { $0.localPaths }
+            packageDependencies = rawDeps.flatMap { $0.dependencies }
         }
 
         static func decode(_ json: String) throws -> SPMManifest {
@@ -188,7 +213,7 @@ struct SwiftFormulaConverter: NodeFunction {
     //
     // TODO: registry dependencies are still ignored entirely.
     private struct AnySPMDependency: Decodable {
-        let localPaths: [String]
+        let dependencies: [SPMPackageDependency]
 
         enum CodingKeys: String, CodingKey { case fileSystem, sourceControl }
 
@@ -196,8 +221,24 @@ struct SwiftFormulaConverter: NodeFunction {
             let c             = try decoder.container(keyedBy: CodingKeys.self)
             let fileSystem    = (try? c.decode([SPMFileSystemDependency].self,    forKey: .fileSystem))    ?? []
             let sourceControl = (try? c.decode([SPMSourceControlDependency].self, forKey: .sourceControl)) ?? []
-            localPaths = fileSystem.map { $0.path } + sourceControl.compactMap { $0.vendoredSiblingPath }
+
+            dependencies =
+                fileSystem.map { SPMPackageDependency(path: $0.path, repositoryURL: nil) } +
+                sourceControl.compactMap { control in
+                    control.vendoredSiblingPath.map {
+                        SPMPackageDependency(path: $0, repositoryURL: control.repositoryURL)
+                    }
+                }
         }
+    }
+
+    /// A package dependency reduced to a local path. `repositoryURL` is nil for a
+    /// fileSystem dependency, whose path the manifest stated outright, and set for a
+    /// sourceControl one, whose path is a convention this build system applied — which is
+    /// exactly the difference a user needs told when nothing is at that path.
+    private struct SPMPackageDependency {
+        let path: String
+        let repositoryURL: String?
     }
 
     private struct SPMFileSystemDependency: Decodable {
@@ -208,6 +249,8 @@ struct SwiftFormulaConverter: NodeFunction {
     private struct SPMSourceControlDependency: Decodable {
         /// nil when the location is not a remote URL, or the URL names nothing usable.
         let repositoryName: String?
+        /// Kept verbatim so a stalled build can name what it is waiting for.
+        let repositoryURL: String?
 
         private struct Location: Decodable {
             struct Remote: Decodable { let urlString: String }
@@ -219,6 +262,7 @@ struct SwiftFormulaConverter: NodeFunction {
         init(from decoder: Decoder) throws {
             let c    = try decoder.container(keyedBy: CodingKeys.self)
             let url  = (try? c.decode(Location.self, forKey: .location))?.remote?.first?.urlString
+            repositoryURL  = url
             repositoryName = url.flatMap { Self.directoryName(forRepositoryURL: $0) }
         }
 

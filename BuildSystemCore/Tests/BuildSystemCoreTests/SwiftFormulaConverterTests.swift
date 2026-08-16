@@ -545,6 +545,53 @@ final class SwiftFormulaConverterTests: BuildSystemTestCase {
                       "got:\n\(block)")
     }
 
+    // MARK: - Explaining a stall
+
+    /// The reason text on a pending output, which is what the user actually sees.
+    private func pendingReason(_ output: ProcessOutput) throws -> String {
+        let value = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
+        guard case .noValue(let reason) = value, case .error(let hash) = reason else {
+            XCTFail("expected a pending output, got \(value)")
+            return ""
+        }
+        return try hash.resolveAsString()
+    }
+
+    /// A vendored package that is not there stalls the whole conversion, and the old
+    /// message named only the path it was waiting on — which says nothing about why that
+    /// path is expected, or that this build system never fetches anything.
+    func test_explainsWhichRepositoryAVendoredPathIsWaitingFor() throws {
+        let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest())
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("input:/repo/GRDB.swift"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("https://github.com/groue/GRDB.swift.git"),
+                      "should name the repository the path stands for, got:\n\(reason)")
+    }
+
+    func test_saysThatAVendoredPackageIsNeverFetched() throws {
+        let reason = try pendingReason(
+            try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest()))
+
+        XCTAssertTrue(reason.lowercased().contains("never fetch"),
+                      "should say why nothing is downloading it, got:\n\(reason)")
+    }
+
+    /// A local path dependency has no repository behind it, so it must not claim one.
+    func test_describesAMissingLocalPathDependencyDifferently() throws {
+        let reason = try pendingReason(try convert(packageFolder: "input:/repo/App", json: """
+            {
+              "name": "App",
+              "dependencies": [{"fileSystem": [{"identity": "helper", "path": "../Helper"}]}],
+              "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+              "targets": [{"name": "App", "type": "executable", "path": "App", "dependencies": []}]
+            }
+            """))
+
+        XCTAssertTrue(reason.contains("input:/repo/Helper"), "got:\n\(reason)")
+        XCTAssertFalse(reason.contains("http"), "a path dependency has no repository, got:\n\(reason)")
+    }
+
     // MARK: - sourceControl dependencies
 
     /// This build system never fetches anything, so a git dependency is resolved to a

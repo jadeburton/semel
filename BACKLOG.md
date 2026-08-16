@@ -71,7 +71,7 @@ no provenance at all → warn once; provenance present but version unsatisfied �
 **B-07** `open` — **Registry dependencies are ignored.**
 `TODO:` at `SwiftFormulaConverter.swift:189`. Neither resolved nor reported.
 
-**B-08** `open` — **Unhelpful stall when a vendored package is missing.**
+**B-08** `done` — **Unhelpful stall when a vendored package is missing.**
 The converter reports `awaiting external packages: input:/…/GRDB.swift` without naming the
 originating URL or saying that the package must be vendored there.
 
@@ -135,7 +135,7 @@ Role 3 is still wanted even with local building, because the point is a build th
 in the background regardless of which CLIs are open — local CLI to local server. Write it as
 if multiple users might share it, without the full auth apparatus for now.
 
-**B-31** `open` — **Fix `ClangLinkerTool.asProcessOutput` port constants.**
+**B-31** `done` — **Fix `ClangLinkerTool.asProcessOutput` port constants.**
 Writes its values under `ClangPreprocessorTool.output` and `.infoLog` rather than its own.
 Works only because all four constants are the same strings.
 

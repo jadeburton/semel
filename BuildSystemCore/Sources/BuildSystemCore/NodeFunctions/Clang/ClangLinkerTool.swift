@@ -101,8 +101,8 @@ public struct ClangLinkerTool: NodeFunction {
         let fileMetadata: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
-            .init(outputValues: [ClangPreprocessorTool.output: output,
-                                 ClangPreprocessorTool.infoLog: infoLog,
+            .init(outputValues: [ClangLinkerTool.output: output,
+                                 ClangLinkerTool.infoLog: infoLog,
                                  ClangLinkerTool.fileMetadata: fileMetadata],
                   inputWireExpectations: [:])
         }
