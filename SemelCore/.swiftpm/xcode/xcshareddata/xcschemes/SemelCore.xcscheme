@@ -30,11 +30,8 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <TestPlans>
          <TestPlanReference
-            reference = "container:SemelCore.xctestplan"
+            reference = "container:BuildSystemCore.xctestplan"
             default = "YES">
-         </TestPlanReference>
-         <TestPlanReference
-            reference = "container:../build_system.xctestplan">
          </TestPlanReference>
       </TestPlans>
       <Testables>

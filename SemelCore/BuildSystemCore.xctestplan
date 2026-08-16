@@ -15,8 +15,8 @@
     {
       "target" : {
         "containerPath" : "container:",
-        "identifier" : "BuildSystemCoreTests",
-        "name" : "BuildSystemCoreTests"
+        "identifier" : "SemelCoreTests",
+        "name" : "SemelCoreTests"
       }
     }
   ],
