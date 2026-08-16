@@ -19,5 +19,21 @@ jobs:
       - name: Build
         run: swift build -c release
 
-      - name: Run tests
-        run: swift test --package-path BuildSystemCore
+      # Every package is tested. The engine lives in its own package and the toolchains in
+      # theirs, so a green run of any one of them covers well under half the suite — before
+      # this, CI ran only the engine's tests and would not have noticed a broken toolchain
+      # at all.
+      - name: Test SemelNodeKit
+        run: swift test --package-path SemelNodeKit
+
+      - name: Test SemelSwift
+        run: swift test --package-path SemelSwift
+
+      - name: Test SemelClang
+        run: swift test --package-path SemelClang
+
+      - name: Test SemelCore
+        run: swift test --package-path SemelCore
+
+      - name: Test the CLI
+        run: swift test
