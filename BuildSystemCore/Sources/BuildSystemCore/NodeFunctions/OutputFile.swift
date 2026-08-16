@@ -137,7 +137,6 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
     }
 
     func willBeDeleted() throws {
-        print("\(path): Deleted")
     }
 
     func read() throws -> NodeValue? {

@@ -224,6 +224,10 @@ Works only because all four constants are the same strings.
 removed from the tree.
 **B-23** `done` — `SwiftPackageReaderTool` no longer overrides HOME and TMPDIR back to the
 real machine, closing the only hole in the executor's sandbox.
+**B-27** `done` — Product created/deleted events are decided by path in ProjectBuilder
+(`ProductPresence`), not by OutputFile node lifecycle. Node identity includes static wiring,
+so an OutputFile is deleted and recreated whenever anything upstream changes; reporting from
+there announced a deletion every time a file was merely rebuilt.
 
 ## Not doing
 

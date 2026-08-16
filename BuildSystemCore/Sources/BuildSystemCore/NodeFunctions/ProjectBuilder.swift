@@ -9,6 +9,9 @@ public struct ProjectBuilder: NodeFunction {
     static let projectFileInputPort   = "projectFile"
     static let productInputPort       = "input"
     static let statusOutputPort       = "status"
+    /// The set of product paths that currently exist, carried between passes so
+    /// ProductPresence can say what appeared or disappeared. See ProductPresence.
+    static let productsOutputPort     = "products"
     static let foldersInputPort       = "folders"
     static let graphImportsInputPort  = "graphImports"
 
@@ -19,7 +22,7 @@ public struct ProjectBuilder: NodeFunction {
             .dynamic(foldersInputPort),
             .dynamic(graphImportsInputPort),
         ],
-        outputPorts: [statusOutputPort]
+        outputPorts: [statusOutputPort, productsOutputPort]
     )
 
     var embeddedNode: Node
@@ -136,8 +139,24 @@ public struct ProjectBuilder: NodeFunction {
             importExpectations[importPath] = "StaticFile(path: '\(importPath)').output"
         }
 
+        // Which products exist, and what that means happened. The decision lives in
+        // ProductPresence; all this does is hand it the previous set and the statuses
+        // arriving on the product port, and report what comes back.
+        let (productEvents, existingProducts) = ProductPresence.reconcile(
+            existingBefore: ProductPresence.decode(try thisNode.readFromOutputPort(Self.productsOutputPort)),
+            statuses: (input.inputValues[Self.productInputPort] ?? [:]))
+
+        for event in productEvents {
+            // Only deletions are printed. A creation is already announced by OutputFile's
+            // own status line, and saying it twice would be worse than not saying it.
+            if case .deleted(let path) = event {
+                print("\(path): Deleted")
+            }
+        }
+
         return .init(
-            outputValues: [Self.statusOutputPort: .value(try "OK".intern())],
+            outputValues: [Self.statusOutputPort:   .value(try "OK".intern()),
+                           Self.productsOutputPort: .value(try ProductPresence.encode(existingProducts).intern())],
             inputWireExpectations: [
                 Self.productInputPort:      productExpectations,
                 Self.foldersInputPort:      folderExpectations,
