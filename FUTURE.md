@@ -2,7 +2,6 @@
 
 ## Planning and strategy
 
-- Clearly delineate Core, SemelDatabaseModels, CLI, SemelServ, and separate package for Swift nodes, separate package for C/CPP nodes, separate package for over-the-wire encodable objects used for socket communication.
 - Convert to client-server architecture and daemon
 
 - Central cache server 
