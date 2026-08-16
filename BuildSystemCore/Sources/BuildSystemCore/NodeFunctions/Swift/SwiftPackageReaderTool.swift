@@ -115,12 +115,7 @@ struct SwiftPackageReaderTool: NodeFunction {
 
         let result = try tool.execute(
             arguments: ["package", "dump-package"],
-            environment: [
-                // Allow swift to access its normal caches and toolchain resources
-                // from the real home directory rather than the sandbox temp dir.
-                "HOME":   NSHomeDirectory(),
-                "TMPDIR": NSTemporaryDirectory(),
-            ],
+            environment: [:],
             inputFiles: [inputs.packageFile],
             expectedOutputFileNames: [],   // JSON is emitted to stdout, not a file
             output: .init(
