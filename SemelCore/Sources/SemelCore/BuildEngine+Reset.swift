@@ -43,17 +43,11 @@ extension BuildEngine {
                 for nodeID in deleteIDs {
                     // Wires entering this node (from preserved or other deleted nodes).
                     for wire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
-                        _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
-                                                      fromSymbolID:    wire.fromSymbolID,
-                                                      goingToNodeID:   wire.toNodeID,
-                                                      toSymbolID:      wire.toSymbolID)
+                        _ = try? database.wire.delete(wire: wire)
                     }
                     // Wires leaving this node (to preserved or other deleted nodes).
                     for wire in (try? database.wire.select(comingFromNodeID: nodeID)) ?? [] {
-                        _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
-                                                      fromSymbolID:    wire.fromSymbolID,
-                                                      goingToNodeID:   wire.toNodeID,
-                                                      toSymbolID:      wire.toSymbolID)
+                        _ = try? database.wire.delete(wire: wire)
                     }
                     _ = try? database.outputPort.deleteAll(nodeID: nodeID)
                     _ = try? database.node.delete(nodeID: nodeID)

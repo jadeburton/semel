@@ -220,6 +220,7 @@ public struct ProjectBuilder: NodeFunction {
     }
 
     // Standard NFA-free glob matcher (same algorithm as FileWildcardMatcher).
+    // TODO: coding style, should be static, possibly shared code with FileWildcardMatcher
     private func segmentMatches(pattern: String, name: String) -> Bool {
         let p = Array(pattern.unicodeScalars)
         let t = Array(name.unicodeScalars)

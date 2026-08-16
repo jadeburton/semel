@@ -33,11 +33,6 @@ private func xcrun(_ arguments: [String]) -> String? {
 // subprocesses for an answer that cannot change mid-build.
 private let cachedSDKPath: String? = xcrun(["--show-sdk-path", "--sdk", "macosx"])
 
-private let cachedSDKIdentity: String? = {
-    guard let version = xcrun(["--show-sdk-version", "--sdk", "macosx"]) else { return nil }
-    guard let build = xcrun(["--show-sdk-build-version", "--sdk", "macosx"]) else { return version }
-    return "\(version) (\(build))"
-}()
 
 /// The current macOS SDK path.
 ///
@@ -51,17 +46,3 @@ func resolveSDKPath() -> String? {
     cachedSDKPath
 }
 
-/// The SDK's version and build, for the cache key — deliberately *not* its path.
-///
-/// The SDK changes what a compile produces, so it has to contribute to the key or two
-/// different builds collide on one entry. But the path must not: this machine reports
-/// SDK 26.5 from inside `Xcode_26_6.app`, and two developers with the same SDK installed
-/// at different paths would otherwise miss each other's cache entries for no reason.
-/// Keying on the version is the same choice `DefaultTools` makes for tools themselves —
-/// take it from the machine, and record what was taken.
-///
-/// Returns `nil` when the SDK cannot be resolved, in which case no `-sdk` is passed
-/// either, so there is nothing to record.
-func resolveSDKIdentity() -> String? {
-    cachedSDKIdentity
-}

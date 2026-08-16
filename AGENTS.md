@@ -58,6 +58,8 @@ node functions.
 - Four spaces, never tabs.
 - Opening brace on the same line as the declaration. There is not one Allman-style brace
   in the codebase; do not introduce the first.
+- Do not chain if statements as in `else if`. Put the new if into curly braces or prefer a switch statement when possible.
+- Code comments: one space after a period (.). US-English spelling.
 - Align related things into columns when it aids reading — assignments in a group,
   argument labels in a multi-line call:
 

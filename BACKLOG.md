@@ -8,6 +8,12 @@ their reasoning is findable, then get pruned.
 
 ## Hermeticity and determinism
 
+**B-30-SDK** `open` — **The SDK must be configuration, not ambient machine state.**
+`cacheKeyEnvironment` is removed (see B-01's outcome for why it was never sufficient). Until
+the Swift tools take `sdkVersion` from configuration the way the Clang tools take `sdkPath`,
+two machines on different SDKs once again produce identical keys — harmless while the cache
+is local, and a prerequisite for B-15 and the shared cache in B-30.
+
 **B-01** `done` — **Audit every machine-derived input into the cache key.**
 `cacheKeyEnvironment` now records the SDK for the Swift tools, but that was one instance of
 a class. `DefaultTools` deliberately takes tool versions from the machine; environment
@@ -20,7 +26,11 @@ the per-run sandbox and cwd there too. Exactly one node punched through it, and 
 longer (`SwiftPackageReaderTool`). Tool versions turned out fail-safe rather than silently
 wrong: `Toolchain.parseVersion` keeps the build id deliberately, and the registry refuses a
 tool whose reported version differs from the key's claim. Remaining gap tracked as B-17.
-Superseded in the long run by B-03, which replaces enumeration with one value.*
+Superseded in the long run by B-03, which replaces enumeration with one value.
+
+*Correction, later:* `cacheKeyEnvironment` was the wrong instrument and has been removed. It
+could stop a wrong cache *hit* but could never trigger the rebuild that produces a right
+one, because an unscheduled node never recomputes its key. See B-29 and B-30-SDK.*
 
 **B-02** `open` — **Make it hard to read outside a node's declared inputs.**
 Hermeticity is load-bearing for the whole design, and nothing currently prevents a node
@@ -127,6 +137,22 @@ manifest changes when names change but not when contents do. A Merkle root needs
 hash over the sorted `(name, contentHash)` pairs, folded up the tree. Wanted by B-06 for
 locking a vendored dependency, and by the client/server design for making reconciliation
 O(changed) rather than O(tree) — the same piece of work, worth building once.
+
+**B-29** `open` — **Invalidate everything when Semel or the schema changes.**
+A cache key can prevent a *wrong reuse*; it cannot cause a *recomputation*. Nodes are
+scheduled only on creation, on a wire change, on `nudge()` or after `reset` — so anything
+that changes outputs without changing a wire leaves stale artifacts published indefinitely,
+whatever the key says. Upgrading Semel is exactly that.
+
+So the marker has to trigger, not merely compare: record schema version and Semel version at
+launch, and `reset` on mismatch — which preserves the input file system and rebuilds
+everything derived. FUTURE.md already proposes the schema half ("dump the SQL schema as a
+blob of text on launch and compare"); the Semel version is a second field in the same marker.
+
+Deliberately *not* a hash of the binary in the cache key. It would be automatic where
+`codeVersion` is manual, and the discrimination is the point: hashing the binary means every
+rebuild of Semel — including a comment change — invalidates every entry for every project,
+so nobody developing Semel would ever see a cache hit.
 
 ## Cache
 

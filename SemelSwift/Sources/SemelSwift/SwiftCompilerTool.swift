@@ -142,12 +142,9 @@ struct SwiftCompilerTool: NodeFunction {
         outputPorts: [outputObject, outputModule, outputInterface, infoLog]
     )
 
-    /// The SDK is resolved from the machine at process time and passed as `-sdk`, so it
-    /// changes the output without appearing anywhere in the graph. Recording it here is
-    /// what stops two different SDKs colliding on one cache entry.
-    public var cacheKeyEnvironment: String {
-        resolveSDKIdentity().map { "sdk=\($0)" } ?? ""
-    }
+    // TODO: this is wrong. *all* node inputs must ultimately exist inside the input fs or be derived from it.
+    // this "sdk" setting should therefore exist in a config file somewhere in the input fs; it cannot come
+    // from outside because whenever it changes the graph won't update outputs automatically.
 
     // MARK: - Inputs / Outputs
 

@@ -70,12 +70,6 @@ struct SwiftLinkerTool: NodeFunction {
         outputPorts: [output, infoLog, fileMetadata]
     )
 
-    /// The SDK is resolved from the machine at process time and passed as `-sdk`, so it
-    /// changes the output without appearing anywhere in the graph. Recording it here is
-    /// what stops two different SDKs colliding on one cache entry.
-    public var cacheKeyEnvironment: String {
-        resolveSDKIdentity().map { "sdk=\($0)" } ?? ""
-    }
 
     // MARK: Processing
 

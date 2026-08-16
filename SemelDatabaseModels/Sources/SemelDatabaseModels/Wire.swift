@@ -82,8 +82,10 @@ public struct WireDataAccess: DataAccessType {
         }
     }
 
-    public func select(comingFromNodeID: ObjectID, fromSymbolID: ObjectID,
-                       goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
+    public func select(comingFromNodeID: ObjectID,
+                       fromSymbolID: ObjectID,
+                       goingToNodeID: ObjectID,
+                       toSymbolID: ObjectID) throws -> [Wire] {
         try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.fromSymbolID == fromSymbolID &&
@@ -103,13 +105,24 @@ public struct WireDataAccess: DataAccessType {
         try write { db in try wire.update(db) }
     }
 
-    public func delete(comingFromNodeID: ObjectID, fromSymbolID: ObjectID,
-                       goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> Bool {
+    public func delete(comingFromNodeID: ObjectID,
+                       fromSymbolID: ObjectID,
+                       goingToNodeID: ObjectID,
+                       toSymbolID: ObjectID) throws -> Bool {
         try write { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.fromSymbolID == fromSymbolID &&
                             Wire.Columns.toNodeID == goingToNodeID &&
                             Wire.Columns.toSymbolID == toSymbolID).deleteAll(db) > 0
+        }
+    }
+
+    public func delete(wire: Wire) throws -> Bool {
+        try write { db in
+            try Wire.filter(Wire.Columns.fromNodeID == wire.fromNodeID &&
+                            Wire.Columns.fromSymbolID == wire.fromSymbolID &&
+                            Wire.Columns.toNodeID == wire.toNodeID &&
+                            Wire.Columns.toSymbolID == wire.toSymbolID).deleteAll(db) > 0
         }
     }
 }

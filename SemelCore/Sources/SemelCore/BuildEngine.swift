@@ -34,11 +34,6 @@ public final class BuildEngine {
     /// before sleeping.
     private let workSignal = WorkSignal()
 
-    /// The node types and project kinds the engine itself defines.
-    ///
-    /// Toolchains are not registered here and cannot be: the engine has no way to name
-    /// them. A composition root installs the ones its binary ships — see semel's
-    /// main.swift. A `.fmla` file names no toolchain, so recognising one belongs here.
     static func registerTypes() throws {
         try PolyFactory.register(types: [
             FolderManifest.self,

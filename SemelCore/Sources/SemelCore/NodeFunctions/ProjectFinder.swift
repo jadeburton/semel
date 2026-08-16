@@ -6,10 +6,6 @@ import Foundation
 import SemelNodeKit
 
 // MARK: - Project kinds
-//
-// The protocol this conforms to is declared in SemelNodeKit, so a toolchain package can
-// contribute a project kind without depending on the engine. FormulaFilePlugin belongs to
-// the engine, since a .fmla file names no toolchain; SemelSwift brings its own.
 
 struct FormulaFilePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
@@ -20,9 +16,6 @@ struct FormulaFilePlugin: ProjectBuilderPlugin {
             .replacingOccurrences(of: "\\'", with: "'")
     }
 }
-
-
-
 
 // MARK: - ProjectFinder
 
@@ -122,8 +115,6 @@ public struct ProjectFinder: NodeFunction {
         for watchedPath in watchedPaths {
             watchedFolderExpectations[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
         }
-
-//        print("ProjectFinder: watchedPaths = \(watchedPaths.joined(separator: ", "))")
 
         return .init(outputValues: [:],
                      inputWireExpectations: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: "Folder(path: 'input:').manifest"],
