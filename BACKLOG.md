@@ -124,12 +124,33 @@ individually. Now one query per kind. 50/100/200 files went 0.30/0.99/3.39s → 
 and growth per doubling fell from ~3.4× to ~2.4×. Agreement with each type's own `isPinned`
 is pinned by `test_manifestPinnedStateAgreesWithEachChildsOwn`. See B-18 for what remains.
 
-**B-18** `open` — **Manifest rebuilds are still super-linear.**
-After B-16, pushing N files into one folder still grows at ~n^1.26: every child change
-re-encodes the whole manifest to JSON, hashes it and writes an object. Extrapolated, 20,000
-files is still minutes. The fix is to stop rebuilding per change — mark the folder dirty and
-flush before the next processing pass — but manifest freshness is relied on between mutation
-and processing, so this needs care rather than a quick cache.
+**B-18** `done` — **Manifest rebuilds were dominated by two avoidable costs.**
+Measured rather than assumed, and the assumption in this item's original text was wrong:
+JSON encoding, hashing and storing the manifest are only 16% of a rebuild. The cost was
+`buildManifest` itself — 84%. Within that, `pinnedStates` was 70%, from binding a folder's
+200 children as an `IN` list; and fetching whole `Node`s decoded every child's properties
+only to discard them. Fixed by projecting child summaries, joining on `parentNodeID`
+instead of an `IN` list, and adding the missing index on `Node.parentNodeID` — which was
+unindexed, so every tree walk in the system was a full table scan.
+
+Pushing into one folder, cumulative across B-16 and B-18:
+
+| files | original | after B-16 | after B-18 |
+|-------|----------|-----------|-----------|
+| 50    | 0.30s    | 0.14s     | 0.13s     |
+| 100   | 0.99s    | 0.34s     | 0.28s     |
+| 200   | 3.39s    | 0.84s     | 0.63s     |
+| 400   | —        | —         | 1.58s     |
+
+Still super-linear at ~2.3× per doubling. See B-25.
+
+**B-25** `open` — **A folder manifest is still rebuilt on every child change.**
+Each rebuild is O(children) and there are O(children) of them, so a single-folder push stays
+quadratic no matter how cheap each rebuild gets — and it is 2 rebuilds per file, since both
+`onChildAdded` and `onChildContentChanged` fire. The fix is to stop rebuilding per change:
+mark the folder dirty and flush before the next processing pass. Deliberately not attempted
+yet — manifest freshness is relied on between mutation and processing, so this is the one
+change here that can actually break correctness rather than just speed.
 
 **B-19** `open` — **`Folder.root(named:)` builds a graph shape on every call.**
 `BUG:` at `Folder.swift` ("extremely slow. TODO cache"). Every `Folder.inputFileSystem` /

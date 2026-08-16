@@ -114,14 +114,16 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     }
 
     private func buildManifest() throws -> FolderManifest {
-        let children = try thisNode.allChildren
+        // Summaries rather than whole nodes: a manifest entry is a name and two flags, and
+        // decoding every child's properties to produce that was most of the rebuild cost.
+        let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let pinned   = try pinnedStates(of: children)
 
         var folderManifestEntries = [FolderManifestEntry]()
         for child in children {
             folderManifestEntries.append(.init(name: child.name!,
                                                isFolder: child.kind == Folder.kind,
-                                               isPinned: pinned[try child.requireID()] ?? false))
+                                               isPinned: pinned[child.id] ?? false))
         }
 
         return .init(baseFolderPath: path.string, entries: folderManifestEntries)
@@ -135,18 +137,19 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     /// doubling. Reading the port directly loses the polymorphism, so the mapping from
     /// kind to port is spelled out here and pinned by a test asserting it still agrees
     /// with each type's own `isPinned`.
-    private func pinnedStates(of children: [Node]) throws -> [ObjectID: Bool] {
+    private func pinnedStates(of children: [NodeChildSummary]) throws -> [ObjectID: Bool] {
         var result: [ObjectID: Bool] = [:]
+
+        let parentNodeID = try thisNode.requireID()
 
         for (kind, portName) in [(Folder.kind,     Folder.pinnedOutputPort),
                                  (StaticFile.kind, StaticFile.outputPort)] {
-            let nodeIDs = try children.filter { $0.kind == kind }.map { try $0.requireID() }
-            let ports   = try database.outputPort.selectAll(nodeIDs: nodeIDs,
-                                                            nameSymbolID: try portName.asSymbolID())
-            for nodeID in nodeIDs {
+            let kinds = try database.node.selectChildPortKinds(parentNodeID: parentNodeID,
+                                                               nameSymbolID: try portName.asSymbolID())
+            for child in children where child.kind == kind {
                 // Absent or non-value both mean not pinned — the same reading `isPinned`
                 // gives, where a missing port becomes a noValue.
-                result[nodeID] = ports[nodeID]?.valueKind == .value
+                result[child.id] = kinds[child.id] == .value
             }
         }
         return result

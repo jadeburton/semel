@@ -107,7 +107,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
         try dbQueue.write { db in
             try db.create(table: "Node", options: .ifNotExists) { t in
                 t.autoIncrementedPrimaryKey("id")
-                t.column("parentNodeID", .integer)
+                t.column("parentNodeID", .integer).indexed()
                 t.column("kind", .integer).notNull()
                 t.column("name", .text)
                 t.column("encodedProperties", .text)
@@ -116,6 +116,19 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
                 t.column("pendingDeletion", .integer).notNull().defaults(to: false)
             }
         }
+    }
+}
+
+/// A child node reduced to what a folder manifest needs. See `selectChildSummaries`.
+public struct NodeChildSummary {
+    public let id: ObjectID
+    public let kind: UInt
+    public let name: String?
+
+    public init(id: ObjectID, kind: UInt, name: String?) {
+        self.id = id
+        self.kind = kind
+        self.name = name
     }
 }
 
@@ -144,6 +157,37 @@ public struct NodeDataAccess: DataAccessType {
                 sql: "UPDATE Node SET pendingDeletion = ? WHERE id = ?",
                 arguments: [pendingDeletion, nodeID]
             )
+        }
+    }
+
+    public func selectChildSummaries(parentNodeID: ObjectID) throws -> [NodeChildSummary] {
+        try read { db in
+            try Row.fetchAll(db,
+                             sql: "SELECT id, kind, name FROM Node WHERE parentNodeID = ?",
+                             arguments: [parentNodeID])
+                .map { NodeChildSummary(id: $0["id"], kind: $0["kind"], name: $0["name"]) }
+        }
+    }
+
+    /// The value kind of one port, for every child of `parentNodeID`.
+    ///
+    /// Joins rather than binding the children's ids as an `IN` list: a folder with 200
+    /// children meant 200 bound parameters per rebuild, which cost more than the query.
+    public func selectChildPortKinds(parentNodeID: ObjectID,
+                                     nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort.ValueKind] {
+        try read { db in
+            var result: [ObjectID: OutputPort.ValueKind] = [:]
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT p.nodeID AS nodeID, p.valueKind AS valueKind
+                FROM OutputPort p
+                JOIN Node n ON n.id = p.nodeID
+                WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
+                """, arguments: [parentNodeID, nameSymbolID])
+            for row in rows {
+                let raw: UInt8 = row["valueKind"]
+                result[row["nodeID"]] = OutputPort.ValueKind(rawValue: raw)
+            }
+            return result
         }
     }
 

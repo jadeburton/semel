@@ -54,23 +54,6 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
-    /// One port, for many nodes, in a single query.
-    ///
-    /// Reading the same port node-by-node is what made rebuilding a folder manifest cost a
-    /// round trip per child — and since a manifest is rebuilt on every child change, that
-    /// made pushing N files into one folder O(N²) queries.
-    public func selectAll(nodeIDs: [ObjectID], nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort] {
-        guard !nodeIDs.isEmpty else { return [:] }
-
-        let ports = try read { db in
-            try OutputPort
-                .filter(nodeIDs.contains(OutputPort.Columns.nodeID))
-                .filter(OutputPort.Columns.nameSymbolID == nameSymbolID)
-                .fetchAll(db)
-        }
-        return Dictionary(uniqueKeysWithValues: ports.map { ($0.nodeID, $0) })
-    }
-
     public func selectAllCount() throws -> Int {
         try read { db in
             try OutputPort.fetchAll(db).count
