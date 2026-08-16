@@ -85,7 +85,7 @@ extension BuildEngine {
     // MARK: nudge
 
     public func nudge() throws {
-        try database.cacheEntry.deleteAll()
+        _ = try database.cacheEntry.deleteAll()
         // Reset all NodeFunction outputs to pending so downstream nodes block on
         // stale values and wait for fresh upstream results (correct ordering).
         for node in try database.node.selectAll() {

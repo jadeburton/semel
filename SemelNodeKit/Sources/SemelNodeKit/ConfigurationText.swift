@@ -17,7 +17,7 @@ public extension Dictionary where Key == String, Value == String {
         return result
     }
 
-    public init(plainText: String) {
+    init(plainText: String) {
         var result: [String: String] = [:]
         let lines = plainText.split(separator: "\n")
         for line in lines {
@@ -31,7 +31,7 @@ public extension Dictionary where Key == String, Value == String {
         self = result
     }
 
-    public func asPlainText() -> String {
+    func asPlainText() -> String {
         self.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
     }
 }

@@ -117,7 +117,7 @@ extension NodeFunction {
         try database.cacheEntry.insert(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
                                              cost: Int(processingDuration * 1000.0),
                                              timestamp: Date()))
-        try? database.cacheEntry.trimToLimit(cacheEntryLimit)
+        _ = try? database.cacheEntry.trimToLimit(cacheEntryLimit)
     }
 }
 

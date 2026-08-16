@@ -260,7 +260,7 @@ extension GraphShapeNode {
 
             for wireSpec in inputPortSpec.wires {
                 let newNodeNodeFunction = try newNode.nodeFunction()
-                if try !newNodeNodeFunction.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
+                if !newNodeNodeFunction.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
                     throw NodeError.other(message: "The formula refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
                 }
 

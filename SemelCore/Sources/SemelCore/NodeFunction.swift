@@ -206,7 +206,7 @@ extension InputlessNodeFunction {
             #if DEBUG
             print("applyExpectationConfiguration failed: \(error)")
             #endif
-            for outputPort in try descriptor.outputPorts {
+            for outputPort in descriptor.outputPorts {
                 try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(messageDataObjectHash: "\(error)".intern())))
             }
             throw error
