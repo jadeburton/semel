@@ -87,12 +87,26 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
 
 ## Comments
 
+- When a bug fix is made, keep code comments short and clear, or omit them entirely if the new code 
+  is unlikely to make the reader wonder why it was done that way. Do not explain the history of the 
+  bug (e.g. "before this change, this line...") 
+- A brief background for why a bug was fixed can be included in the commit message if needed, 
+  that's why history is not needed in code comments
+
 - `///` doc comments on anything non-obvious, explaining **why**, not what. The code says
   what. Roughly a third of the comments here are doc comments and they carry the design
   reasoning — match that density.
 - Where a decision looks wrong at first glance, say why it is right. The best comments in
   this codebase are the ones explaining what was tried and why it failed.
 - `TODO:` / `BUG:` / `ISSUE:` for known gaps. Do not silently leave a gap unmarked.
+
+## Maintaining backwards compatibility
+
+- This software is not yet public. (Once it is, this rule will be removed.) This means 
+  file formats and database schemas do NOT need to be migrated by the code, nor does it 
+  need to tolerate or convert old formats; we can just break the format completely. 
+  It is very important to keep database and serialization code clean and not have to 
+  deal with old files.
 
 ## Types and errors
 
