@@ -42,6 +42,24 @@ struct SwiftCompilerToolConfiguration {
     private static func pathList(_ value: String?) -> [String] {
         (value ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
     }
+
+    /// How a `semel.config` addresses this tool: `swift.compiler.sdkVersion`.
+    static let settingNamespace = "compiler"
+
+    /// What a `semel.config` may set here.
+    ///
+    /// Deliberately not every key this configuration reads: `moduleName`, `parseAsLibrary`,
+    /// `sourcePaths` and `excludedPaths` describe what a target *is* and come from the
+    /// package manifest. A file that could set them could rename a module — and the formula
+    /// wires modules by target name, so the rename would break the wiring silently.
+    static let acceptedSettings: Set<String> = [
+        "sdkVersion",
+        "toolDescriptor.name",
+        "toolDescriptor.version",
+        "toolDescriptor.platform",
+        "toolDescriptor.architecture",
+        "toolDescriptor.recursiveHash",
+    ]
 }
 
 // MARK: - Source scope

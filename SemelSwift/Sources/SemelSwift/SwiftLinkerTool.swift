@@ -32,6 +32,23 @@ struct SwiftLinkerToolConfiguration {
         dynamicLibrary = properties["dynamicLibrary"] == "true"
         outputName = properties["outputName"] ?? (dynamicLibrary ? "output.dylib" : "output")
     }
+
+    /// How a `semel.config` addresses this tool: `swift.linker.sdkVersion`.
+    static let settingNamespace = "linker"
+
+    /// What a `semel.config` may set here.
+    ///
+    /// `dynamicLibrary` and `outputName` are absent for the same reason the compiler's
+    /// `moduleName` is: they follow from the product the manifest declares, and `outputName`
+    /// is also the path the product is published under.
+    static let acceptedSettings: Set<String> = [
+        "sdkVersion",
+        "toolDescriptor.name",
+        "toolDescriptor.version",
+        "toolDescriptor.platform",
+        "toolDescriptor.architecture",
+        "toolDescriptor.recursiveHash",
+    ]
 }
 
 // MARK: - Node

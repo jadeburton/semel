@@ -12,14 +12,25 @@ their reasoning is findable, then get pruned.
 `semel.config`, in the same `key=value` format the wire already carries, dropped anywhere
 above a package. `SwiftFormulaConverter` asks for one at every ancestor; absent ones are
 ghosts, so pushing the file later lights up the wire and re-runs the conversion with no
-rescan. Nearest ancestor wins per key. `swift.` is stripped for the node's own
-configuration, which is already scoped to a Swift compile.
+rescan.
 
-The manifest *owns* `moduleName`, `parseAsLibrary`, `sourcePaths`, `excludedPaths`,
-`dynamicLibrary` and `outputName` — a file cannot set them at all. Merely letting the
-derived value win was not enough: the linker derives no `moduleName`, so a file setting one
-sailed past the override onto the linker's configuration and into its node identity. A test
-caught it.
+Two dimensions of inheritance and one rule for both — most specific wins. Across files, a
+nearer ancestor beats a further one, per key. Across tools, `swift.compiler.sdkVersion`
+beats `swift.sdkVersion` for the compiler; an unqualified key is a default for every Swift
+tool, which is what makes a master config of defaults possible.
+
+The tool dimension was added second, and it fixed a real defect: every setting used to be
+broadcast to every node the converter emitted, so a key one tool ignored still landed in the
+other's properties — which are its `searchKey` and part of its cache key. An ignored setting
+therefore gave a node a new identity and orphaned its cached output. The first attempt
+patched one symptom of this with a list of manifest-owned keys the file could not set; the
+namespace fixes the cause.
+
+Each tool now declares `acceptedSettings` — what a *file* may set, which deliberately
+excludes what the manifest supplies (`moduleName`, `outputName` and the rest). Anything no
+tool accepts is dropped **and reported** through the converter's `infoLog`, naming the file
+that set it. A silently ignored typo is the worst outcome available: nothing changes and
+nothing is said, so an SDK the user believes is pinned is not.
 
 `SwiftCompilerTool` and `SwiftLinkerTool` fail loudly when the machine's SDK is not the
 declared one, mirroring what `ToolExecutorRegistry` does for a pinned tool version.

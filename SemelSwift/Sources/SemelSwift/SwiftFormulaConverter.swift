@@ -94,7 +94,9 @@ struct SwiftFormulaConverter: NodeFunction {
         // rebuilds. Read from the machine instead — as the SDK once was — a change
         // schedules nothing and the stale artifact stays published.
         let configExpectations = configFileExpectations(forPackageAt: rootPackageFolder)
-        let settings = mergedSettings(from: input.inputValues[Self.configFiles] ?? [:])
+        let settings = SwiftConfigSettings(files: input.inputValues[Self.configFiles] ?? [:],
+                                           schemas: Self.toolSchemas)
+        let settingsReport = settings.rejections.joined(separator: "\n")
 
         // ── BFS: discover all transitively needed external packages ───────────
         // Each run reaches one more nesting level; missing manifests are requested
@@ -134,7 +136,8 @@ struct SwiftFormulaConverter: NodeFunction {
             return try pendingOutput(
                 reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
                 externalExpectations: expectations,
-                configExpectations: configExpectations)
+                configExpectations: configExpectations,
+                settingsReport: settingsReport)
         }
 
         // ── all manifests present — generate formula ──────────────────────────
@@ -144,30 +147,46 @@ struct SwiftFormulaConverter: NodeFunction {
                                       settings: settings)
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
-                           Self.infoLog:       .value("")],
+                           Self.infoLog:       try Self.logValue(settingsReport)],
             inputWireExpectations: [Self.externalPackageJSONs: expectations,
                                     Self.configFiles:          configExpectations])
     }
 
     // Returns a noValue output that still carries the current expectations,
     // so applyExpectationConfiguration keeps (or creates) the needed wires.
+    //
+    // The settings report still goes out while stalled: a config file the user got wrong is
+    // worth saying so about now, not once the last external manifest finally arrives.
     private func pendingOutput(reason: String,
                                externalExpectations: [String: String],
-                               configExpectations: [String: String] = [:]) throws -> ProcessOutput {
+                               configExpectations: [String: String] = [:],
+                               settingsReport: String = "") throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
-                             Self.infoLog:       .value("")],   // empty content never reaches the store
+                             Self.infoLog:       try Self.logValue(settingsReport)],
               inputWireExpectations: [Self.externalPackageJSONs: externalExpectations,
                                       Self.configFiles:          configExpectations])
+    }
+
+    /// Nothing to say stays an empty value rather than an interned empty string, which is
+    /// what keeps a clean build from writing to the store on every conversion.
+    private static func logValue(_ text: String) throws -> NodeValue {
+        text.isEmpty ? .value("") : .value(try text.intern())
     }
 
     // MARK: - semel.config
 
     static let configFileName = "semel.config"
 
-    /// Namespaced because one file serves every toolchain in a tree. A node's own
-    /// configuration is already scoped to a Swift compile, so the prefix comes off before
-    /// the settings reach it.
-    private static let settingPrefix = "swift."
+    /// The tools a `semel.config` can address, and what each will accept.
+    ///
+    /// Declared by the tools themselves rather than listed here: a tool knows which settings
+    /// it reads, and a converter that kept its own copy would drift from them.
+    static let toolSchemas: [SwiftToolSchema] = [
+        .init(namespace: SwiftCompilerToolConfiguration.settingNamespace,
+              acceptedSettings: SwiftCompilerToolConfiguration.acceptedSettings),
+        .init(namespace: SwiftLinkerToolConfiguration.settingNamespace,
+              acceptedSettings: SwiftLinkerToolConfiguration.acceptedSettings),
+    ]
 
     /// A wire for `semel.config` at the package folder and every ancestor above it.
     ///
@@ -182,28 +201,6 @@ struct SwiftFormulaConverter: NodeFunction {
             let path = "\(components.joined(separator: "/"))/\(Self.configFileName)"
             result[path] = "StaticFile(path: '\(path)').output"
             components.removeLast()
-        }
-        return result
-    }
-
-    /// The settings that apply here, nearest ancestor winning per key.
-    ///
-    /// Per *key*, not per file: a nearer file overriding one setting does not discard the
-    /// rest. That rule is the whole reason the format is a flat map of dotted keys — it
-    /// answers "what does inheriting mean" once, for every setting that will ever exist.
-    private func mergedSettings(from configValues: [String: NodeValue]) -> [String: String] {
-        // Furthest first, so nearer files overwrite. Depth is the path's component count;
-        // sorted rather than dictionary order, which varies between processes.
-        let byDepth = configValues.keys.sorted {
-            $0.split(separator: "/").count < $1.split(separator: "/").count
-        }
-
-        var result: [String: String] = [:]
-        for path in byDepth {
-            guard let text = try? configValues[path]?.expectValue().resolveAsString() else { continue }
-            for (key, value) in [String: String](plainText: text) where key.hasPrefix(Self.settingPrefix) {
-                result[String(key.dropFirst(Self.settingPrefix.count))] = value
-            }
         }
         return result
     }
@@ -466,7 +463,7 @@ struct SwiftFormulaConverter: NodeFunction {
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
-                                 settings: [String: String]) -> String {
+                                 settings: SwiftConfigSettings) -> String {
         // Build combined target name → SPMTarget map.
         // External targets carry overridePackageFolder so buildFuncDef uses the
         // correct source root.  Root targets take precedence on any name conflict.
@@ -545,7 +542,7 @@ struct SwiftFormulaConverter: NodeFunction {
             let isLibrary    = (product.productType == .library)
             let outputName   = isLibrary ? "lib\(product.name).dylib" : product.name
             let linkerProperties = configProperties(
-                settings: settings,
+                settings: settings.settings(forNamespace: SwiftLinkerToolConfiguration.settingNamespace),
                 overriding: ["dynamicLibrary": isLibrary ? "true" : "false",
                              "outputName":     outputName])
             let linkerConfig = "Configuration(\(linkerProperties)).output"
@@ -666,27 +663,19 @@ struct SwiftFormulaConverter: NodeFunction {
         return ordered
     }
 
-    /// Keys the manifest owns. A `semel.config` may not set these at any level, whatever
-    /// node they would land on.
+    /// Renders `Configuration(...)` arguments: the settings addressed to this tool, then the
+    /// values derived from the manifest.
     ///
-    /// "Derived wins" is not enough: the linker derives neither `moduleName` nor
-    /// `sourcePaths`, so a file setting one would sail past its override and end up on the
-    /// linker's configuration — and therefore in its node identity. The manifest describes
-    /// what the targets *are*; the file describes the environment they are built in.
-    private static let manifestOwnedKeys: Set<String> = [
-        "moduleName", "parseAsLibrary", "sourcePaths", "excludedPaths",
-        "dynamicLibrary", "outputName",
-    ]
-
-    /// Renders `Configuration(...)` arguments: the file's settings, then the values derived
-    /// from the manifest.
+    /// No filtering here any more — `settings` has already been narrowed to what this tool
+    /// accepts, which is what keeps a key meant for another tool out of this node's
+    /// identity. The derived values still overwrite, but nothing can now collide with them.
     ///
     /// Sorted, because these become a formula string that becomes a node's searchKey — and
     /// Dictionary iteration order is seeded per process, so an unsorted render would give
     /// the same package a different node identity on every run.
     private func configProperties(settings: [String: String],
                                   overriding derived: [String: String]) -> String {
-        var merged = settings.filter { !Self.manifestOwnedKeys.contains($0.key) }
+        var merged = settings
         for (key, value) in derived {
             merged[key] = value
         }
@@ -707,7 +696,7 @@ struct SwiftFormulaConverter: NodeFunction {
     private func buildFuncDef(target: SPMTarget,
                               packageFolder: String,
                               lookupAll: (String) -> [SPMTarget],
-                              settings: [String: String]) -> String {
+                              settings: SwiftConfigSettings) -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
         // Settings from semel.config come first and the manifest-derived ones overwrite
@@ -727,7 +716,9 @@ struct SwiftFormulaConverter: NodeFunction {
             derived["excludedPaths"] = target.exclude.joined(separator: ",")
         }
 
-        let configExpr  = "Configuration(\(configProperties(settings: settings, overriding: derived))).output"
+        let compilerSettings = settings.settings(
+            forNamespace: SwiftCompilerToolConfiguration.settingNamespace)
+        let configExpr  = "Configuration(\(configProperties(settings: compilerSettings, overriding: derived))).output"
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 
         // Every transitively reachable Swift target, not just the direct dependencies.
