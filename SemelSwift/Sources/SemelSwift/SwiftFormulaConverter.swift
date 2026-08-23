@@ -33,6 +33,10 @@ struct SwiftFormulaConverter: NodeFunction {
     static let formulaOutput        = "formula"
     static let infoLog              = "infoLog"
     static let externalPackageJSONs = "externalPackageJSONs"
+    /// Dynamic port — one wire per `semel.config` that could apply to this package, one at
+    /// each ancestor. Most will be ghosts with no value; that is deliberate, because it is
+    /// what makes dropping the file in later light up the wire and re-run the conversion.
+    static let configFiles          = "configFiles"
 
     public var embeddedNode: Node
 
@@ -45,6 +49,7 @@ struct SwiftFormulaConverter: NodeFunction {
             .required(packageFolder),
             .required(packageJSON),
             .dynamic(externalPackageJSONs),
+            .dynamic(configFiles),
         ],
         outputPorts: [formulaOutput, infoLog]
     )
@@ -83,6 +88,14 @@ struct SwiftFormulaConverter: NodeFunction {
             availableManifests[extPath] = manifest
         }
 
+        // ── semel.config ──────────────────────────────────────────────────────
+        // Settings live in the input file system so a change propagates the ordinary way:
+        // the file's content is a wire value, so editing it cascades, reschedules and
+        // rebuilds. Read from the machine instead — as the SDK once was — a change
+        // schedules nothing and the stale artifact stays published.
+        let configExpectations = configFileExpectations(forPackageAt: rootPackageFolder)
+        let settings = mergedSettings(from: input.inputValues[Self.configFiles] ?? [:])
+
         // ── BFS: discover all transitively needed external packages ───────────
         // Each run reaches one more nesting level; missing manifests are requested
         // via wire expectations and the node is re-scheduled when they arrive.
@@ -120,25 +133,79 @@ struct SwiftFormulaConverter: NodeFunction {
         guard missing.isEmpty else {
             return try pendingOutput(
                 reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
-                externalExpectations: expectations)
+                externalExpectations: expectations,
+                configExpectations: configExpectations)
         }
 
         // ── all manifests present — generate formula ──────────────────────────
         let formula = generateFormula(rootManifest: rootManifest,
                                       externalManifests: availableManifests,
-                                      rootPackageFolder: rootPackageFolder)
+                                      rootPackageFolder: rootPackageFolder,
+                                      settings: settings)
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog:       .value("")],
-            inputWireExpectations: [Self.externalPackageJSONs: expectations])
+            inputWireExpectations: [Self.externalPackageJSONs: expectations,
+                                    Self.configFiles:          configExpectations])
     }
 
     // Returns a noValue output that still carries the current expectations,
     // so applyExpectationConfiguration keeps (or creates) the needed wires.
-    private func pendingOutput(reason: String, externalExpectations: [String: String]) throws -> ProcessOutput {
+    private func pendingOutput(reason: String,
+                               externalExpectations: [String: String],
+                               configExpectations: [String: String] = [:]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog:       .value("")],   // empty content never reaches the store
-              inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
+              inputWireExpectations: [Self.externalPackageJSONs: externalExpectations,
+                                      Self.configFiles:          configExpectations])
+    }
+
+    // MARK: - semel.config
+
+    static let configFileName = "semel.config"
+
+    /// Namespaced because one file serves every toolchain in a tree. A node's own
+    /// configuration is already scoped to a Swift compile, so the prefix comes off before
+    /// the settings reach it.
+    private static let settingPrefix = "swift."
+
+    /// A wire for `semel.config` at the package folder and every ancestor above it.
+    ///
+    /// Asking for files that do not exist is the point: an absent one is a ghost with no
+    /// value, and pushing it later fills the wire and re-runs this node without anyone
+    /// having to rescan or restart.
+    private func configFileExpectations(forPackageAt packageFolder: String) -> [String: String] {
+        var result: [String: String] = [:]
+        var components = packageFolder.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+
+        while !components.isEmpty {
+            let path = "\(components.joined(separator: "/"))/\(Self.configFileName)"
+            result[path] = "StaticFile(path: '\(path)').output"
+            components.removeLast()
+        }
+        return result
+    }
+
+    /// The settings that apply here, nearest ancestor winning per key.
+    ///
+    /// Per *key*, not per file: a nearer file overriding one setting does not discard the
+    /// rest. That rule is the whole reason the format is a flat map of dotted keys — it
+    /// answers "what does inheriting mean" once, for every setting that will ever exist.
+    private func mergedSettings(from configValues: [String: NodeValue]) -> [String: String] {
+        // Furthest first, so nearer files overwrite. Depth is the path's component count;
+        // sorted rather than dictionary order, which varies between processes.
+        let byDepth = configValues.keys.sorted {
+            $0.split(separator: "/").count < $1.split(separator: "/").count
+        }
+
+        var result: [String: String] = [:]
+        for path in byDepth {
+            guard let text = try? configValues[path]?.expectValue().resolveAsString() else { continue }
+            for (key, value) in [String: String](plainText: text) where key.hasPrefix(Self.settingPrefix) {
+                result[String(key.dropFirst(Self.settingPrefix.count))] = value
+            }
+        }
+        return result
     }
 
     /// Explains a stall in terms the user can act on.
@@ -398,7 +465,8 @@ struct SwiftFormulaConverter: NodeFunction {
 
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
-                                 rootPackageFolder: String) -> String {
+                                 rootPackageFolder: String,
+                                 settings: [String: String]) -> String {
         // Build combined target name → SPMTarget map.
         // External targets carry overridePackageFolder so buildFuncDef uses the
         // correct source root.  Root targets take precedence on any name conflict.
@@ -462,7 +530,8 @@ struct SwiftFormulaConverter: NodeFunction {
                 guard !emittedFuncs.contains(fn) else { continue }
                 blocks.append(buildFuncDef(target: target,
                                            packageFolder: rootPackageFolder,
-                                           lookupAll: allTargetsNamed))
+                                           lookupAll: allTargetsNamed,
+                                           settings: settings))
                 emittedFuncs.insert(fn)
             }
 
@@ -475,7 +544,11 @@ struct SwiftFormulaConverter: NodeFunction {
             // file's content and its name disagreed.
             let isLibrary    = (product.productType == .library)
             let outputName   = isLibrary ? "lib\(product.name).dylib" : product.name
-            let linkerConfig = "Configuration(dynamicLibrary: '\(isLibrary ? "true" : "false")', outputName: '\(outputName)').output"
+            let linkerProperties = configProperties(
+                settings: settings,
+                overriding: ["dynamicLibrary": isLibrary ? "true" : "false",
+                             "outputName":     outputName])
+            let linkerConfig = "Configuration(\(linkerProperties)).output"
 
             // One object-file wire per compiled target (all transitive deps included).
             let objectWires = allTargets.map { t in
@@ -593,6 +666,35 @@ struct SwiftFormulaConverter: NodeFunction {
         return ordered
     }
 
+    /// Keys the manifest owns. A `semel.config` may not set these at any level, whatever
+    /// node they would land on.
+    ///
+    /// "Derived wins" is not enough: the linker derives neither `moduleName` nor
+    /// `sourcePaths`, so a file setting one would sail past its override and end up on the
+    /// linker's configuration — and therefore in its node identity. The manifest describes
+    /// what the targets *are*; the file describes the environment they are built in.
+    private static let manifestOwnedKeys: Set<String> = [
+        "moduleName", "parseAsLibrary", "sourcePaths", "excludedPaths",
+        "dynamicLibrary", "outputName",
+    ]
+
+    /// Renders `Configuration(...)` arguments: the file's settings, then the values derived
+    /// from the manifest.
+    ///
+    /// Sorted, because these become a formula string that becomes a node's searchKey — and
+    /// Dictionary iteration order is seeded per process, so an unsorted render would give
+    /// the same package a different node identity on every run.
+    private func configProperties(settings: [String: String],
+                                  overriding derived: [String: String]) -> String {
+        var merged = settings.filter { !Self.manifestOwnedKeys.contains($0.key) }
+        for (key, value) in derived {
+            merged[key] = value
+        }
+        return merged.sorted { $0.key < $1.key }
+                     .map { "\($0.key): '\($0.value)'" }
+                     .joined(separator: ", ")
+    }
+
     // "MyTarget-A" → "compilerMyTarget_A"  (must be a valid formula identifier)
     private func compilerFuncName(for targetName: String) -> String {
         let sanitized = String(targetName.map { $0.isLetter || $0.isNumber ? $0 : Character("_") })
@@ -604,28 +706,28 @@ struct SwiftFormulaConverter: NodeFunction {
     // the root from which `sourcesRelativePath` is resolved.
     private func buildFuncDef(target: SPMTarget,
                               packageFolder: String,
-                              lookupAll: (String) -> [SPMTarget]) -> String {
+                              lookupAll: (String) -> [SPMTarget],
+                              settings: [String: String]) -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
-        // Built up rather than written out so a target declaring neither list produces
-        // exactly the configuration it always did — anything else would invalidate every
-        // cached compile in every existing project for no behavioural gain.
-        //
-        // The lists are comma-joined because a configuration value is one line of
-        // `key=value` and so cannot hold a newline.  A path containing a comma would
-        // break this, as would one containing a quote — which the formula lexer has
-        // never handled for any value.
-        var configProperties = ["moduleName: '\(target.name)'"]
+        // Settings from semel.config come first and the manifest-derived ones overwrite
+        // them: moduleName is what makes a target itself, and a config file must not be
+        // able to rename it.
+        var derived = ["moduleName": target.name]
         if target.type == "executable" {
-            configProperties.append("parseAsLibrary: 'false'")
+            derived["parseAsLibrary"] = "false"
         }
+        // Comma-joined because a configuration value is one line of `key=value` and so
+        // cannot hold a newline. A path containing a comma would break this, as would one
+        // containing a quote — which the formula lexer has never handled for any value.
         if !target.sources.isEmpty {
-            configProperties.append("sourcePaths: '\(target.sources.joined(separator: ","))'")
+            derived["sourcePaths"] = target.sources.joined(separator: ",")
         }
         if !target.exclude.isEmpty {
-            configProperties.append("excludedPaths: '\(target.exclude.joined(separator: ","))'")
+            derived["excludedPaths"] = target.exclude.joined(separator: ",")
         }
-        let configExpr  = "Configuration(\(configProperties.joined(separator: ", "))).output"
+
+        let configExpr  = "Configuration(\(configProperties(settings: settings, overriding: derived))).output"
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 
         // Every transitively reachable Swift target, not just the direct dependencies.

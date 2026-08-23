@@ -8,11 +8,26 @@ their reasoning is findable, then get pruned.
 
 ## Hermeticity and determinism
 
-**B-30-SDK** `open` — **The SDK must be configuration, not ambient machine state.**
-`cacheKeyEnvironment` is removed (see B-01's outcome for why it was never sufficient). Until
-the Swift tools take `sdkVersion` from configuration the way the Clang tools take `sdkPath`,
-two machines on different SDKs once again produce identical keys — harmless while the cache
-is local, and a prerequisite for B-15 and the shared cache in B-30.
+**B-30-SDK** `done` — **The SDK is configuration, not ambient machine state.**
+`semel.config`, in the same `key=value` format the wire already carries, dropped anywhere
+above a package. `SwiftFormulaConverter` asks for one at every ancestor; absent ones are
+ghosts, so pushing the file later lights up the wire and re-runs the conversion with no
+rescan. Nearest ancestor wins per key. `swift.` is stripped for the node's own
+configuration, which is already scoped to a Swift compile.
+
+The manifest *owns* `moduleName`, `parseAsLibrary`, `sourcePaths`, `excludedPaths`,
+`dynamicLibrary` and `outputName` — a file cannot set them at all. Merely letting the
+derived value win was not enough: the linker derives no `moduleName`, so a file setting one
+sailed past the override onto the linker's configuration and into its node identity. A test
+caught it.
+
+`SwiftCompilerTool` and `SwiftLinkerTool` fail loudly when the machine's SDK is not the
+declared one, mirroring what `ToolExecutorRegistry` does for a pinned tool version.
+Declaring nothing keeps the previous behaviour.
+
+*Not settled:* the check compares the version string only, not the build (`26.5`, not
+`26.5 (25F70)`), because a build number is unpleasant to write in a config by hand. Two
+different builds of one SDK version are still indistinguishable.
 
 **B-01** `done` — **Audit every machine-derived input into the cache key.**
 `cacheKeyEnvironment` now records the SDK for the Swift tools, but that was one instance of

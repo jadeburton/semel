@@ -14,6 +14,8 @@ struct SwiftLinkerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    /// Declared in semel.config; nil means whatever this machine has.
+    let sdkVersion: String?
     let dynamicLibrary: Bool
     let outputName: String
 
@@ -26,6 +28,7 @@ struct SwiftLinkerToolConfiguration {
             recursiveHash: properties["toolDescriptor.recursiveHash"])
         arguments = []
         environment = [:]
+        sdkVersion  = properties["sdkVersion"]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
         outputName = properties["outputName"] ?? (dynamicLibrary ? "output.dylib" : "output")
     }
@@ -157,6 +160,8 @@ struct SwiftLinkerTool: NodeFunction {
 
         // Pass the SDK path so swiftc's linker driver can find libSystem and
         // other system libraries when invoked directly (outside of xcodebuild).
+        try verifySDKVersion(inputs.configuration.sdkVersion)
+
         if let sdkPath = resolveSDKPath() {
             arguments.append("-sdk")
             arguments.append(sdkPath)

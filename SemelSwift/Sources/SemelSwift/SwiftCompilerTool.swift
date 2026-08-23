@@ -12,6 +12,8 @@ struct SwiftCompilerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    /// Declared in semel.config; nil means whatever this machine has.
+    let sdkVersion: String?
     let moduleName: String
     let parseAsLibrary: Bool
     /// SPM's `sources:` list, relative to the target folder. Empty means the whole tree.
@@ -29,6 +31,7 @@ struct SwiftCompilerToolConfiguration {
             recursiveHash: properties["toolDescriptor.recursiveHash"])
         arguments   = []
         environment = [:]
+        sdkVersion  = properties["sdkVersion"]
         moduleName  = properties["moduleName"] ?? "Module"
         parseAsLibrary = properties["parseAsLibrary"] != "false"
         sourcePaths   = Self.pathList(properties["sourcePaths"])
@@ -319,6 +322,8 @@ struct SwiftCompilerTool: NodeFunction {
         let interfaceOutput = "\(moduleName).swiftinterface"
 
         var arguments = [String]()
+
+        try verifySDKVersion(inputs.configuration.sdkVersion)
 
         if let sdkPath = resolveSDKPath() {
             arguments.append("-sdk");                        arguments.append(sdkPath)
