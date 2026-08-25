@@ -159,6 +159,22 @@ final class ConfigFileTests: SemelSwiftTestCase {
         XCTAssertEqual(try infoLog(output), "", "it is a real setting, not a mistake")
     }
 
+    /// The payoff, with a real key rather than an invented one: an optimisation level is
+    /// something the compiler acts on and the linker has no flag for. Set unqualified — the
+    /// natural way to write it — it still reaches only the compiler, so editing it rebuilds
+    /// objects without relinking every product in the tree.
+    func test_aCompilerOnlySettingReachesOnlyTheCompiler() throws {
+        let output = try convert(configs: ["input:/semel.config": "swift.optimisationLevel=speed"])
+        let result = try formula(output)
+
+        XCTAssertTrue(try compilerConfig(in: result).contains("optimisationLevel: 'speed'"),
+                      "got:\n\(result)")
+        XCTAssertFalse(try linkerConfig(in: result).contains("optimisationLevel"),
+                       "the linker takes no optimisation flag, got:\n\(result)")
+        XCTAssertEqual(try infoLog(output), "",
+                       "and it is a real setting, so nothing is reported")
+    }
+
     // MARK: - Keys a tool does not accept
 
     /// Each tool declares what a file may set; everything else is dropped and *reported*.

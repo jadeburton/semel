@@ -76,3 +76,23 @@ func verifySDKVersion(_ declared: String?) throws {
                                      + "would produce artifacts that do not match what was declared.")
     }
 }
+
+/// The `swiftc` flag for a declared `optimisationLevel`, or nil when nothing is declared.
+///
+/// Named for what the user wants rather than for the flag: `-Osize` and `-O` are not a
+/// scale, and a config that spelled the flags directly would invite `-Ounchecked`, which
+/// removes bounds and overflow checks and is not something to reach by typo.
+///
+/// Nothing declared emits no flag at all, which is what keeps every existing tree building
+/// exactly the arguments it built before this setting existed.
+func swiftOptimisationFlag(_ declared: String?) throws -> String? {
+    guard let declared else { return nil }
+    switch declared {
+    case "none":  return "-Onone"
+    case "speed": return "-O"
+    case "size":  return "-Osize"
+    default:
+        throw NodeError.other(message: "semel.config declares swift.compiler.optimisationLevel="
+                                     + "\(declared), which is not one of none, speed or size.")
+    }
+}

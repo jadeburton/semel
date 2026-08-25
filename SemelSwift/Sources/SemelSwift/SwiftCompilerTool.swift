@@ -14,6 +14,10 @@ struct SwiftCompilerToolConfiguration {
     let environment: [String: String]
     /// Declared in semel.config; nil means whatever this machine has.
     let sdkVersion: String?
+    /// Declared in semel.config; nil means no -O flag at all, as before it existed.
+    /// Compiler-only -- the linker takes no optimisation flag, which is what makes this the
+    /// first setting the per-tool accepted sets actually keep apart.
+    let optimisationLevel: String?
     let moduleName: String
     let parseAsLibrary: Bool
     /// SPM's `sources:` list, relative to the target folder. Empty means the whole tree.
@@ -32,6 +36,7 @@ struct SwiftCompilerToolConfiguration {
         arguments   = []
         environment = [:]
         sdkVersion  = properties["sdkVersion"]
+        optimisationLevel = properties["optimisationLevel"]
         moduleName  = properties["moduleName"] ?? "Module"
         parseAsLibrary = properties["parseAsLibrary"] != "false"
         sourcePaths   = Self.pathList(properties["sourcePaths"])
@@ -54,6 +59,7 @@ struct SwiftCompilerToolConfiguration {
     /// wires modules by target name, so the rename would break the wiring silently.
     static let acceptedSettings: Set<String> = [
         "sdkVersion",
+        "optimisationLevel",
         "toolDescriptor.name",
         "toolDescriptor.version",
         "toolDescriptor.platform",
@@ -355,6 +361,9 @@ struct SwiftCompilerTool: NodeFunction {
 
         arguments.append("-c")
         arguments.append("-whole-module-optimization")
+        if let optimisation = try swiftOptimisationFlag(inputs.configuration.optimisationLevel) {
+            arguments.append(optimisation)
+        }
         arguments.append("-o");                              arguments.append(objectOutput)
         arguments.append("-emit-module")
         arguments.append("-emit-module-path");               arguments.append(moduleOutput)

@@ -184,3 +184,36 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
         XCTAssertEqual(try subfolderExpectations(output), [:])
     }
 }
+
+// MARK: - Optimisation level
+
+/// The first setting a `semel.config` can give the compiler that the linker has no use for.
+/// Until it existed, both tools accepted an identical set of keys, so the per-tool filtering
+/// had nothing real to keep apart and only ever caught typos.
+final class SwiftOptimisationLevelTests: SemelSwiftTestCase {
+
+    /// Named for what the user wants rather than for the flag: `-O` and `-Osize` are not
+    /// points on a scale, and spelling flags directly in a config would put `-Ounchecked` —
+    /// which removes bounds and overflow checks — one typo away.
+    func test_mapsEachLevelToItsFlag() throws {
+        XCTAssertEqual(try swiftOptimisationFlag("none"),  "-Onone")
+        XCTAssertEqual(try swiftOptimisationFlag("speed"), "-O")
+        XCTAssertEqual(try swiftOptimisationFlag("size"),  "-Osize")
+    }
+
+    /// Nothing declared emits no flag at all, so every tree that predates this setting
+    /// builds the same arguments it built before — and keeps its cached objects.
+    func test_declaringNothingEmitsNoFlag() throws {
+        XCTAssertNil(try swiftOptimisationFlag(nil))
+    }
+
+    /// Loud rather than accommodating, like the SDK check: a misspelt level that silently
+    /// compiled unoptimised would be discovered by someone benchmarking, not by the build.
+    func test_anUnknownLevelFailsAndNamesTheValidOnes() {
+        XCTAssertThrowsError(try swiftOptimisationFlag("-Ofast")) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("-Ofast"), "should name what was declared, got \(message)")
+            XCTAssertTrue(message.contains("none, speed or size"), "got \(message)")
+        }
+    }
+}

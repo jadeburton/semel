@@ -30,6 +30,23 @@ struct ClangPreprocessorToolConfiguration {
         sdkPath = properties["sdkPath"]
         std     = properties["std"]
     }
+
+    /// How a `semel.config` addresses this tool: `clang.preprocessor.<key>`.
+    static let settingNamespace = "preprocessor"
+
+    /// What a `semel.config` may set here.
+    ///
+    /// Both of these describe the environment a translation unit is preprocessed in rather
+    /// than what the unit *is*, so a tree-wide default for them is exactly the point.
+    static let acceptedSettings: Set<String> = [
+        "sdkPath",
+        "std",
+        "toolDescriptor.name",
+        "toolDescriptor.version",
+        "toolDescriptor.platform",
+        "toolDescriptor.architecture",
+        "toolDescriptor.recursiveHash",
+    ]
 }
 
 // MARK: - Node

@@ -93,9 +93,12 @@ struct SwiftFormulaConverter: NodeFunction {
         // the file's content is a wire value, so editing it cascades, reschedules and
         // rebuilds. Read from the machine instead — as the SDK once was — a change
         // schedules nothing and the stale artifact stays published.
-        let configExpectations = configFileExpectations(forPackageAt: rootPackageFolder)
-        let settings = SwiftConfigSettings(files: input.inputValues[Self.configFiles] ?? [:],
-                                           schemas: Self.toolSchemas)
+        let configExpectations = SemelConfig.expectations(forFolder: rootPackageFolder)
+        let settings = ConfigSettings(files: input.inputValues[Self.configFiles] ?? [:],
+                                      toolchainPrefix: "swift.",
+                                      schemas: Self.toolSchemas,
+                                      suppliedByProject: Self.manifestSuppliedSettings,
+                                      projectName: "the package manifest")
         let settingsReport = settings.rejections.joined(separator: "\n")
 
         // ── BFS: discover all transitively needed external packages ───────────
@@ -175,35 +178,27 @@ struct SwiftFormulaConverter: NodeFunction {
 
     // MARK: - semel.config
 
-    static let configFileName = "semel.config"
+    static let configFileName = SemelConfig.fileName
 
     /// The tools a `semel.config` can address, and what each will accept.
     ///
     /// Declared by the tools themselves rather than listed here: a tool knows which settings
     /// it reads, and a converter that kept its own copy would drift from them.
-    static let toolSchemas: [SwiftToolSchema] = [
+    static let toolSchemas: [ToolSchema] = [
         .init(namespace: SwiftCompilerToolConfiguration.settingNamespace,
               acceptedSettings: SwiftCompilerToolConfiguration.acceptedSettings),
         .init(namespace: SwiftLinkerToolConfiguration.settingNamespace,
               acceptedSettings: SwiftLinkerToolConfiguration.acceptedSettings),
     ]
 
-    /// A wire for `semel.config` at the package folder and every ancestor above it.
-    ///
-    /// Asking for files that do not exist is the point: an absent one is a ghost with no
-    /// value, and pushing it later fills the wire and re-runs this node without anyone
-    /// having to rescan or restart.
-    private func configFileExpectations(forPackageAt packageFolder: String) -> [String: String] {
-        var result: [String: String] = [:]
-        var components = packageFolder.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-
-        while !components.isEmpty {
-            let path = "\(components.joined(separator: "/"))/\(Self.configFileName)"
-            result[path] = "StaticFile(path: '\(path)').output"
-            components.removeLast()
-        }
-        return result
-    }
+    /// Keys the package manifest supplies. Used only to explain a rejection: what stops a
+    /// file from setting these is their absence from every tool's accepted set, not this
+    /// list. It exists because "the compiler accepts no such setting" is true but unhelpful
+    /// for a key the user can plainly see the compiler using.
+    static let manifestSuppliedSettings: Set<String> = [
+        "moduleName", "parseAsLibrary", "sourcePaths", "excludedPaths",
+        "dynamicLibrary", "outputName",
+    ]
 
     /// Explains a stall in terms the user can act on.
     ///
@@ -463,7 +458,7 @@ struct SwiftFormulaConverter: NodeFunction {
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
-                                 settings: SwiftConfigSettings) -> String {
+                                 settings: ConfigSettings) -> String {
         // Build combined target name → SPMTarget map.
         // External targets carry overridePackageFolder so buildFuncDef uses the
         // correct source root.  Root targets take precedence on any name conflict.
@@ -696,7 +691,7 @@ struct SwiftFormulaConverter: NodeFunction {
     private func buildFuncDef(target: SPMTarget,
                               packageFolder: String,
                               lookupAll: (String) -> [SPMTarget],
-                              settings: SwiftConfigSettings) -> String {
+                              settings: ConfigSettings) -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
         // Settings from semel.config come first and the manifest-derived ones overwrite

@@ -30,6 +30,25 @@ struct ClangLinkerToolConfiguration {
         sdkPath = properties["sdkPath"]
         cxx = (properties["std"] ?? "").hasPrefix("c++")
     }
+
+    /// How a `semel.config` addresses this tool: `clang.linker.<key>`.
+    static let settingNamespace = "linker"
+
+    /// What a `semel.config` may set here.
+    ///
+    /// `dynamicLibrary` is absent for the same reason Swift's is: it says what the product
+    /// *is*, which the formula declares. `std` is here only because the linker reads it to
+    /// choose the C or C++ driver.
+    static let acceptedSettings: Set<String> = [
+        "sdkPath",
+        "std",
+        "target",
+        "toolDescriptor.name",
+        "toolDescriptor.version",
+        "toolDescriptor.platform",
+        "toolDescriptor.architecture",
+        "toolDescriptor.recursiveHash",
+    ]
 }
 
 // MARK: - Node
