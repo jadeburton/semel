@@ -335,6 +335,43 @@ if multiple users might share it, without the full auth apparatus for now.
 Writes its values under `ClangPreprocessorTool.output` and `.infoLog` rather than its own.
 Works only because all four constants are the same strings.
 
+**B-42** `open` — **How inheritable configuration works, across both toolchains.**
+Shelved mid-design on 2026-08-26 — easy to get wrong, so parked deliberately rather than
+guessed at. What exists today still works; this is about the shape it should settle into.
+
+*Where it stands.* `semel.config` reaches Swift through `SwiftFormulaConverter`, which
+resolves it and writes the values into the formula text as node **properties**. `SemelClang`
+has no route at all: a `.fmla` project has no converter, so the `settingNamespace` and
+`acceptedSettings` the three Clang tools now declare (`8a9fd0e`) are inert. Bridging the two
+kept producing invented machinery — a path property to anchor the ancestor walk, a registry,
+a new node type — which is the signal that the underlying model is unsettled, not that the
+bridge needs more parts.
+
+*Settled in the discussion.* A node's identity should be **which configuration it is wired
+to**, never the values inside it. Debug and release side by side then falls out of two
+`Configuration` nodes composed differently — no need for settings to be identity. But that
+only holds if values arrive as **file contents on wires**: a searchKey renders the whole
+upstream shape, so a value written as a property of a `Configuration` node lands in every
+consuming tool's searchKey just as surely as one written directly on the tool. So:
+
+    identity = which files compose into this configuration, and what it is called
+    value    = what those files currently say
+
+That also replaces `acceptedSettings` with a principled boundary rather than a hand-kept key
+list: a literal in formula text says what a thing *is* (`moduleName: 'Lib'`, from the
+manifest — identity); a file says what environment it is built in (never identity).
+
+*The open question.* Which axis inheritance runs on. What is built is **folder ancestry** —
+a package at `input:/a/b/pkg` implicitly picks up `semel.config` from `b`, `a`, then the
+root. The debug/release case instead wants **explicit composition** — a base config that two
+variants name and override. "Both" is not free: a variant would silently also absorb whatever
+sits above it positionally, and the two orderings need reconciling.
+
+*Also unresolved, and downstream of the above.* Where filtering sits. It cannot be inside the
+tool: a cache key aggregates every input port's wire values (`Cache.swift:38`), so unfiltered
+text on the wire has already rescheduled the node and changed its key before the tool sees
+it. Filtering has to happen upstream of the wire into the tool.
+
 ## Closed
 
 **B-20** `done` — SDK is in the Swift tools' cache key (`e6ca4cd`).
