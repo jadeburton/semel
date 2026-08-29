@@ -1,5 +1,5 @@
 //
-//  ToolchainTests.swift
+//  AppleClangSwiftToolchainHelperTests.swift
 //  build_system_tests
 //
 
@@ -9,7 +9,7 @@ import SemelNodeKit
 
 /// Tool descriptors key the build cache, so the version recorded against a tool has to
 /// describe the binary that actually runs.  `Toolchain` reads both from the machine.
-final class ToolchainTests: SemelCoreTestCase {
+final class AppleClangSwiftToolchainHelperTests: SemelCoreTestCase {
 
     // MARK: - Version parsing
 
@@ -18,7 +18,7 @@ final class ToolchainTests: SemelCoreTestCase {
     // the string that keys the cache.
     func test_parseVersion_clangKeepsTheBuildIdentifier() {
         let output = "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.3.0"
-        XCTAssertEqual(Toolchain.parseVersion(from: output),
+        XCTAssertEqual(AppleClangSwiftToolchainHelper.parseVersion(from: output),
                        "Apple clang version 21.0.0 (clang-2100.1.1.101)")
     }
 
@@ -26,34 +26,34 @@ final class ToolchainTests: SemelCoreTestCase {
     // mid-line and carries the swiftlang build id.
     func test_parseVersion_swiftcSkipsTheDriverVersion() {
         let output = "swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)"
-        XCTAssertEqual(Toolchain.parseVersion(from: output),
+        XCTAssertEqual(AppleClangSwiftToolchainHelper.parseVersion(from: output),
                        "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)")
     }
 
     func test_parseVersion_withoutABuildIdentifier() {
-        XCTAssertEqual(Toolchain.parseVersion(from: "Apple Swift version 6.2.3"),
+        XCTAssertEqual(AppleClangSwiftToolchainHelper.parseVersion(from: "Apple Swift version 6.2.3"),
                        "Apple Swift version 6.2.3")
     }
 
     func test_parseVersion_unrecognisedOutput() {
-        XCTAssertNil(Toolchain.parseVersion(from: "some tool that reports nothing useful"))
+        XCTAssertNil(AppleClangSwiftToolchainHelper.parseVersion(from: "some tool that reports nothing useful"))
     }
 
     // MARK: - Discovery
 
     func test_findLocatesAnExecutableForAToolInTheActiveToolchain() throws {
-        let path = try XCTUnwrap(Toolchain.find("clang"), "clang must be discoverable via xcrun")
+        let path = try XCTUnwrap(AppleClangSwiftToolchainHelper.find("clang"), "clang must be discoverable via xcrun")
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: path),
                       "\(path) must be an executable")
     }
 
     func test_findReturnsNilForAToolThatDoesNotExist() {
-        XCTAssertNil(Toolchain.find("definitely-not-a-real-tool-name"))
+        XCTAssertNil(AppleClangSwiftToolchainHelper.find("definitely-not-a-real-tool-name"))
     }
 
     func test_versionOfDiscoveredToolIsReadable() throws {
-        let path = try XCTUnwrap(Toolchain.find("clang"))
-        let version = try XCTUnwrap(Toolchain.version(ofToolAt: path))
+        let path = try XCTUnwrap(AppleClangSwiftToolchainHelper.find("clang"))
+        let version = try XCTUnwrap(AppleClangSwiftToolchainHelper.version(ofToolAt: path))
         XCTAssertTrue(version.hasPrefix("Apple clang version"), "got \(version)")
     }
 
@@ -65,8 +65,8 @@ final class ToolchainTests: SemelCoreTestCase {
         let registry = ToolExecutorRegistry()
         try DefaultTools.setup(toolExecutorRegistry: registry)
 
-        let clangPath = try XCTUnwrap(Toolchain.find("clang"))
-        let installedVersion = try XCTUnwrap(Toolchain.version(ofToolAt: clangPath))
+        let clangPath = try XCTUnwrap(AppleClangSwiftToolchainHelper.find("clang"))
+        let installedVersion = try XCTUnwrap(AppleClangSwiftToolchainHelper.version(ofToolAt: clangPath))
 
         let clang = try XCTUnwrap(registry.registeredDescriptors.first { $0.name == "clang" },
                                   "clang should be registered on a machine that has it")

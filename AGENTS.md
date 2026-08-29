@@ -50,7 +50,7 @@ wider job than a module rename.
 
 Two words are taken and must not be reused for anything else. **Plugin** means a
 `CommandPlugin` (a CLI verb) or a `ProjectBuilderPlugin` (project discovery). **Toolchain**
-means tool discovery and versioning — `Toolchain.swift`, `ToolDescriptor` — not a set of
+means tool discovery and versioning — `AppleClangSwiftToolchainHelper.swift`, `ToolDescriptor` — not a set of
 node functions.
 
 ## Formatting

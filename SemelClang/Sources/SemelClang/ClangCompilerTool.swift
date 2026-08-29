@@ -42,6 +42,16 @@ struct ClangCompilerToolConfiguration {
     ]
 }
 
+extension ToolDescriptor {
+    init(properties: [String: String]) {
+        self.init(name: properties["toolDescriptor.name"] ?? "",
+                  version: properties["toolDescriptor.version"] ?? "",
+                  platform: properties["toolDescriptor.platform"] ?? "",
+                  architecture: properties["toolDescriptor.architecture"] ?? "",
+                  recursiveHash: properties["toolDescriptor.recursiveHash"])
+    }
+}
+
 // MARK: - Node
 
 public struct ClangCompilerTool: NodeFunction {
@@ -55,10 +65,10 @@ public struct ClangCompilerTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(

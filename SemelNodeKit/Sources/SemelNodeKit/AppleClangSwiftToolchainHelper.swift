@@ -1,4 +1,4 @@
-// Toolchain.swift
+// AppleClangSwiftToolchainHelper.swift
 // SemelCore
 //
 // Locating build tools on the machine, and reading the version they report.
@@ -10,7 +10,7 @@
 
 import Foundation
 
-public enum Toolchain {
+public enum AppleClangSwiftToolchainHelper {
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`,
     /// or `nil` if there is no such tool.
