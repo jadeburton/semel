@@ -1,17 +1,17 @@
 // FolderManifest.swift
 // SemelNodeKit
 //
-// What a folder tells the nodes downstream of it, and the names of the two file systems.
+// What a folder tells the nodes downstream of it.
 //
-// Both were declared inside Folder.swift, which reads naturally until you notice that the
-// manifest is a *wire data format* every node function decodes, and that "input:" and
-// "output:" are shared vocabulary rather than one node type's internals. Neither can move
-// to a toolchain package, and neither should oblige it to depend on the engine.
-
-/// One immediate child of a folder. A manifest is deliberately non-recursive.
+/// One immediate child of a folder. A manifest is deliberately non-recursive,
+/// as this will not scale to massive file system trees.
 public struct FolderManifestEntry: Codable {
     public let name: String
     public let isFolder: Bool
+
+    // A pinned object is one that was explicitly added by the user, not one that exists only as a product of the graph
+    // itself and is only held alive by wires from the graph. If an object is not pinned and not held alive by wires,
+    // then it stops existing.
     public let isPinned: Bool
 
     public init(name: String, isFolder: Bool, isPinned: Bool) {

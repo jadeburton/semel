@@ -38,10 +38,10 @@ struct SwiftFormulaConverter: NodeFunction {
     /// what makes dropping the file in later light up the wire and re-run the conversion.
     static let configFiles          = "configFiles"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(

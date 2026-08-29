@@ -16,6 +16,9 @@ extension [UInt8] {
     /// Throws rather than trapping: the store is on disk, so this fails for ordinary
     /// reasons — a full volume, a permissions change, a read-only mount.  Those should
     /// fail the node being processed, not abort the build.
+    /// TODO: revisit this idea, maybe this should crash the process and not throw anything; afterall there
+    /// is no real recovery from such a serious error and it certainly is not the graph's problem.
+    /// Also brings a burden to the code with the explicit try's.
     public func intern() throws -> DataToken {
         if isEmpty {
             return ""

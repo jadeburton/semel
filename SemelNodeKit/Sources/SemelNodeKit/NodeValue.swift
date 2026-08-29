@@ -87,30 +87,32 @@ extension NodeValue {
         }
     }
 
-    public func mapPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> OutputPort {
+    public func asOutputPort(nodeID: ObjectID, outputSymbolID: ObjectID) throws -> OutputPort {
         switch self {
 
         case .noValue(let reason):
 
             switch reason {
+
             case .pending:
-                return OutputPort(nodeID: nodeID,
-                                  nameSymbolID: outputSymbolID,
-                                  valueKind: .pending,
-                                  dataObjectHash: nil)
+                return .init(nodeID: nodeID,
+                             nameSymbolID: outputSymbolID,
+                             valueKind: .pending,
+                             dataObjectHash: nil)
 
             case .error(let messageDataObjectHash):
-                return OutputPort(nodeID: nodeID,
-                                  nameSymbolID: outputSymbolID,
-                                  valueKind: .error,
-                                  dataObjectHash: messageDataObjectHash)
+                return .init(nodeID: nodeID,
+                             nameSymbolID: outputSymbolID,
+                             valueKind: .error,
+                             dataObjectHash: messageDataObjectHash)
+
             }
 
         case .value(let dataObjectHash):
-            return OutputPort(nodeID: nodeID,
-                              nameSymbolID: outputSymbolID,
-                              valueKind: .value,
-                              dataObjectHash: dataObjectHash)
+            return .init(nodeID: nodeID,
+                         nameSymbolID: outputSymbolID,
+                         valueKind: .value,
+                         dataObjectHash: dataObjectHash)
         }
     }
 }

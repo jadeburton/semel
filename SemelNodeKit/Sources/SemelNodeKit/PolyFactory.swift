@@ -47,12 +47,6 @@ public enum PolyFactory {
         nameCache[typeName]
     }
 
-    /// Look up the concrete type for a given kind.
-    ///
-    /// Throws rather than trapping. In-process an unknown kind is a programming error, but
-    /// this same decoder reads bytes that arrive from elsewhere, where an unrecognised kind
-    /// is routine: an older peer, a newer peer, a truncated or hostile frame. None of those
-    /// should be able to take the process down.
     public static func type(kind: UInt) throws -> WithKind.Type {
         guard let type = kindCache[kind] else {
             throw PolyFactoryError.unknownKind(kind)

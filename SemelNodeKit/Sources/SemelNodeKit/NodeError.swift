@@ -21,4 +21,3 @@ public enum NodeError: Error {
     case nameCollision(path: String, existingKind: UInt)
 
 }
-

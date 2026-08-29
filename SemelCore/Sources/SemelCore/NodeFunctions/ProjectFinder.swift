@@ -38,10 +38,10 @@ public struct ProjectFinder: NodeFunction {
         outputPorts: []
     )
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     // ProjectFinder is the root object and so must never be deleted.

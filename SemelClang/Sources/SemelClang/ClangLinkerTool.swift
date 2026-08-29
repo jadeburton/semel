@@ -65,10 +65,10 @@ public struct ClangLinkerTool: NodeFunction {
     static let infoLog = "infoLog"
     static let fileMetadata = FileMetadata.portName
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(

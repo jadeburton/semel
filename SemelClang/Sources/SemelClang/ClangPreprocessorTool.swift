@@ -54,10 +54,10 @@ struct ClangPreprocessorToolConfiguration {
 public struct ClangPreprocessorTool: NodeFunction {
     public static let kind: UInt = 17
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     // MARK: Ports

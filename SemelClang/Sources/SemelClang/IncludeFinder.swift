@@ -22,10 +22,10 @@ public struct IncludeFinder: NodeFunction {
         outputPorts: [includePathListOutputPort]
     )
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     // MARK: Include extraction

@@ -74,10 +74,10 @@ struct SwiftLinkerTool: NodeFunction {
     /// published at the default 0644 and will not run. Same arrangement as ClangLinkerTool.
     static let fileMetadata = FileMetadata.portName
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(

@@ -22,8 +22,8 @@ touched for other reasons.
 
 Two words are deliberately **not** used, because both already mean something else here:
 *plugin* (`CommandPlugin` for CLI verbs, `ProjectBuilderPlugin` for project discovery) and
-*toolchain* (`Toolchain.swift`, `ToolDescriptor` — tool discovery and versioning, not node
-functions).
+*toolchain* (`AppleClangSwiftToolchainHelper.swift`, `ToolDescriptor` — tool discovery and 
+versioning, not node functions).
 
 ## Layout
 

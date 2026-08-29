@@ -8,6 +8,3 @@
 import GRDB
 import SemelNodeKit
 @_exported import SemelDatabaseModels
-
-// DatabaseLayer is now defined in SemelDatabaseModels package
-// This file can contain additional extensions for business logic

@@ -40,7 +40,7 @@ concurrent mutation of one graph.
 ## What is already built
 
 `CacheEntry` is already `hash → content` with `cost` and `timestamp`. The cache key is
-already a pure function of node function type, `codeVersion`, node properties, and every
+already a pure function of node function type, node properties, and every
 static and dynamic input wire — key *and* value, because the wire key is the file's path
 and tools embed it.
 
@@ -185,7 +185,7 @@ under-specified. This is the systematic version of how the SDK bug was found: a 
 cache keys, run once per node type to learn something permanent.
 
 **Store the key material, not just the key.** Today a mismatch says two builds disagreed and
-nothing about why. Recording the node type, `codeVersion`, properties, input wire keys and
+nothing about why. Recording the node type, properties, input wire keys and
 hashes, and `cacheKeyEnvironment` alongside each entry makes a mismatch diffable, and allows
 recomputing keys offline to catch bugs in the key computation itself.
 

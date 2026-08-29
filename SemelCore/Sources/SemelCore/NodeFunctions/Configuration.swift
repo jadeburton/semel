@@ -11,13 +11,13 @@ import SemelNodeKit
 public struct Configuration: NodeFunction {
     public static let kind: UInt = 9
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     static let outputPort = "output"
     static let inputPort = "inherit"
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(
