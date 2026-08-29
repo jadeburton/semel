@@ -29,11 +29,19 @@ enum GraphShapeApplierError: Error {
     case emtpyStringWireName
 }
 
-// MARK: - graphShapeArgs — extracting init-time arguments from a live node
+// MARK: - graphShapeProperties — extracting init-time properties from a live node
 
-extension InputlessNodeFunction {
-    /// Default: delegate to `WithProperties` if the type conforms, else no args.
+extension NodeFunction {
+    /// Default: delegate to `WithProperties` if the type conforms, else no properties.
     /// Declared in the protocol so Swift dispatches dynamically via the witness table.
+}
+
+extension NodeFunction {
+    func graphShapeProperties() -> [GraphShapeProperty] {
+        thisNode.properties
+            .sorted(by: { $0.key < $1.key })
+            .map { GraphShapeProperty(key: $0.key, value: $0.value) }
+    }
 }
 
 // MARK: - Build shape from the live graph
@@ -83,7 +91,8 @@ extension GraphShapeNode {
         }
         visited.insert(fromNodeID)
 
-        let args = nodeFunction.graphShapeArgs(node: sourceNode)
+        // TODO: var naming conventions
+        let properties = nodeFunction.graphShapeProperties()
 
         // Only static ports are included.  Dynamic ports (e.g. includeFileLists)
         // are managed by the engine after the schema is laid down; including them
@@ -91,11 +100,16 @@ extension GraphShapeNode {
         let staticInputPorts = nodeFunction.descriptor.staticInputPorts
 
         var inputs: [GraphShapeInputPort] = []
+
         for portName in staticInputPorts {
             let portSymbolID  = try portName.asSymbolID()
+
             let incomingWires = try database.wire.select(goingToNodeID: fromNodeID,
-                                                                     toSymbolID:    portSymbolID)
-            guard !incomingWires.isEmpty else { continue }
+                                                         toSymbolID: portSymbolID)
+
+            guard !incomingWires.isEmpty else {
+                continue
+            }
 
             var wires: [GraphShapeWire] = []
             for wire in incomingWires {
@@ -111,7 +125,7 @@ extension GraphShapeNode {
             inputs.append(GraphShapeInputPort(portName: portName, wires: wires))
         }
 
-        return GraphShapeNode(typeName: typeName, args: args, inputs: inputs, outputPort: outputPortName)
+        return GraphShapeNode(typeName: typeName, properties: properties, inputs: inputs, outputPort: outputPortName)
     }
 }
 
@@ -161,9 +175,9 @@ extension GraphShapeNode {
             return false
         }
 
-        let actualArgs = nodeFunction.graphShapeArgs(node: node)
+        let actualProperties = nodeFunction.graphShapeProperties()
 
-        guard Set(actualArgs) == Set(args) else {
+        guard Set(actualProperties) == Set(properties) else {
             return false
         }
 
@@ -243,13 +257,13 @@ extension GraphShapeNode {
         }
 
         // ── All other node types ───────────────────────────────────────────────
-        let properties = args.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: args.map { ($0.key, $0.value) })
+        let nodeProperties = properties.isEmpty ? [:] : Dictionary(uniqueKeysWithValues: properties.map { ($0.key, $0.value) })
 
 //        let startTime = Date.now
 
         let newNode = try Node.createNode(database: database,
                                           kind: kind,
-                                          properties: properties,
+                                          properties: nodeProperties,
                                           searchKey: asString(omitOutputPort: true))
 
 //        print("createNode time elapsed: \(Date.now.timeIntervalSince(startTime))")
@@ -298,7 +312,9 @@ extension GraphShapeNode {
             }
         }
 
-        if nodeFunction is NodeFunction { // don't schedule if it's not a NodeFunction (i.e. if it's just a Folder or similar)
+        // A source node — a Folder, a StaticFile — has nothing to be handed, so it is
+        // never scheduled.
+        if type(of: nodeFunction).descriptor.hasInputs {
             try newNode.setScheduled(true)
         }
 

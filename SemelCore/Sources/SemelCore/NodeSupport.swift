@@ -48,12 +48,12 @@ extension Node {
         return parent.isEmpty ? Path(name) : parent / name
     }
 
-    func nodeFunctionCast<N: InputlessNodeFunction>() throws -> N {
+    func nodeFunctionCast<N: NodeFunction>() throws -> N {
         try nodeFunction() as! N
     }
 
-    func nodeFunction() throws -> any InputlessNodeFunction {
-        try (PolyFactory.type(kind: kind) as! InputlessNodeFunction.Type).init(thisNode: self)
+    func nodeFunction() throws -> any NodeFunction {
+        try (PolyFactory.type(kind: kind) as! NodeFunction.Type).init(thisNode: self)
     }
 
     /// Returns the node function as `Any` so app-layer callers can pattern-match
@@ -107,7 +107,7 @@ extension Node {
 
         try nodeFunction.writeToOutputs(output: output)
 
-        if nodeFunction is NodeFunction {
+        if type(of: nodeFunction).descriptor.hasInputs {
             try node.setScheduled(true)
         }
 
@@ -224,7 +224,7 @@ extension Node {
     func setScheduled(_ scheduled: Bool) throws {
         let nodeFunction = try self.nodeFunction()
 
-        guard nodeFunction is NodeFunction else {
+        guard type(of: nodeFunction).descriptor.hasInputs else {
             print("Attempted to schedule a \(self) / \(type(of: nodeFunction)) that cannot be scheduled because it does not accept inputs. Ignoring.")
             return
         }
@@ -278,7 +278,7 @@ extension Node {
     }
 
     @discardableResult func writeToOutputPort(_ outputPort: String, value: NodeValue) throws -> Bool {
-        try writeToOutputPort(port: try value.mapPort(nodeID: (try requireID()), outputSymbolID: outputPort.asSymbolID()))
+        try writeToOutputPort(port: try value.asOutputPort(nodeID: (try requireID()), outputSymbolID: outputPort.asSymbolID()))
     }
 
     @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {

@@ -135,8 +135,8 @@ extension NodeFunction {
     }
 }
 
-extension InputlessNodeFunction {
-    var parentNodeFunction: InputlessNodeFunction? {
+extension NodeFunction {
+    var parentNodeFunction: NodeFunction? {
         get throws {
             if let parentNodeID = thisNode.parentNodeID {
                 return try database.node.select(nodeID: parentNodeID).nodeFunction()
@@ -160,7 +160,7 @@ extension InputlessNodeFunction {
     func delete() throws {
         let safeToDelete = try hasNoOutputWires() && hasNoInputWires()
         assert(safeToDelete)
-        try willBeDeleted()
+
         _ = try database.node.delete(nodeID: (try requireID()))
         try notifyParentOfChildDeletion()
     }
@@ -195,8 +195,6 @@ extension InputlessNodeFunction {
             }
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
-
-        try didWriteOutputs(output: output)
 
         do {
             for (inputPort, wireExpectations) in output.inputWireExpectations {
@@ -282,7 +280,7 @@ extension InputlessNodeFunction {
             let wireNameSymbolID = try wireName.asSymbolID()
             try database.withTransaction {
                 guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) else {
-                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(id ?? -1)")
+                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
                     return
                 }
                 // fromSymbolID is nil when the expectation string has no .outputPort suffix,

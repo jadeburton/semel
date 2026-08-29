@@ -49,7 +49,7 @@ public final class BuildEngine {
 
     var projectFinder: Node {
         get throws {
-            let graphShape = GraphShapeNode(typeName: "ProjectFinder", args: [], inputs: [], outputs: [])
+            let graphShape = GraphShapeNode(typeName: "ProjectFinder", properties: [], inputs: [], outputs: [])
             let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
             return fromNode
         }
@@ -290,7 +290,8 @@ public final class BuildEngine {
             for rawNode in rawNodes {
                 group.addTask {
 
-                    guard let nodeFunction = try? rawNode.nodeFunction() as? NodeFunction else {
+                    guard let nodeFunction = try? rawNode.nodeFunction(),
+                          type(of: nodeFunction).descriptor.hasInputs else {
                         return nil
                     }
 
@@ -343,7 +344,8 @@ public final class BuildEngine {
                     continue
                 }
 
-                guard let nodeFunction = try result.node.nodeFunction() as? NodeFunction else {
+                let nodeFunction = try result.node.nodeFunction()
+                guard type(of: nodeFunction).descriptor.hasInputs else {
                     continue
                 }
 
@@ -378,8 +380,9 @@ public final class BuildEngine {
     func processOneNode(_ node: Node) throws {
         try node.setScheduled(false)
 
-        guard let nodeFunction = try node.nodeFunction() as? NodeFunction else {
-            print("WARNING: attempted to process a non-inputtable Node")
+        let nodeFunction = try node.nodeFunction()
+        guard type(of: nodeFunction).descriptor.hasInputs else {
+            print("WARNING: attempted to process a Node that declares no inputs")
             return
         }
 

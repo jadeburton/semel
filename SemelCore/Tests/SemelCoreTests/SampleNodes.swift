@@ -25,10 +25,10 @@ public struct SampleTool: NodeFunction {
     static let errorLog      = "errorLog"
     static let infoLog       = "infoLog"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(
@@ -48,10 +48,10 @@ public struct SampleTool: NodeFunction {
 public struct OtherSampleTool: NodeFunction {
     public static let kind: UInt = 987_102
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(
@@ -61,5 +61,29 @@ public struct OtherSampleTool: NodeFunction {
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         .init(outputValues: [:], inputWireExpectations: [:])
+    }
+}
+
+/// A node with no input ports at all — the shape a `StaticFile` or a `Folder` has.
+///
+/// Exists so the source/processing distinction can be tested without dragging in the file
+/// system. `process` is unreachable in a working graph; it throws rather than trapping,
+/// because enforcing the engine's invariants is not a node's job and a third-party node
+/// should not be able to bring the process down.
+public struct SampleSourceNode: NodeFunction {
+    public static let kind: UInt = 987_103
+
+    static let output = "output"
+
+    public var thisNode: Node
+
+    public init(thisNode: Node) throws {
+        self.thisNode = thisNode
+    }
+
+    public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [output])
+
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
     }
 }

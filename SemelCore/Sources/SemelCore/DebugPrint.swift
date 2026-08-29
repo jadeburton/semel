@@ -89,7 +89,8 @@ extension BuildEngine {
         // Reset all NodeFunction outputs to pending so downstream nodes block on
         // stale values and wait for fresh upstream results (correct ordering).
         for node in try database.node.selectAll() {
-            guard (try? node.nodeFunction()) is NodeFunction else { continue }
+            guard let nodeFunction = try? node.nodeFunction(),
+                  type(of: nodeFunction).descriptor.hasInputs else { continue }
             try node.writePendingToAllOutputsOfNode()
         }
         for node in try database.node.selectAll() {
