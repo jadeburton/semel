@@ -71,7 +71,7 @@ final class CacheTests: SemelCoreTestCase {
     func test_theKeyFormatHasNotDrifted() throws {
         let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
 
-        XCTAssertEqual(key, "68ecc3b48fb17569b87a4ad22f02de81ee0046a45d2124d7985291c1e2a5feb0")
+        XCTAssertEqual(key, "102e7cf2a0a9219f558f27e4a9051479857dec7e0455e8440469b8e32d920e87")
     }
 
     // MARK: - What the key covers

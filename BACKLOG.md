@@ -178,7 +178,8 @@ blob of text on launch and compare"); the Semel version is a second field in the
 Deliberately *not* a hash of the binary in the cache key. It would be automatic where
 `codeVersion` is manual, and the discrimination is the point: hashing the binary means every
 rebuild of Semel — including a comment change — invalidates every entry for every project,
-so nobody developing Semel would ever see a cache hit.
+so nobody developing Semel would ever see a cache hit. (Update: `codeVersion` was deleted, 
+as this is not a reliable enough mechanism.)
 
 ## Cache
 
@@ -196,7 +197,8 @@ and recompute: coverage is sampling-rate × fleet-size.
 **B-13** `open` — **Store key material alongside each entry.**
 Today a mismatch says two builds disagreed and nothing about why. Recording node type,
 `codeVersion`, properties, input wire keys and hashes, and `cacheKeyEnvironment` makes a
-mismatch diffable and lets keys be recomputed offline.
+mismatch diffable and lets keys be recomputed offline. (Update: `codeVersion` was deleted, 
+as this is not a reliable enough mechanism.)
 
 **B-14** `open` — **No blob GC.**
 Unreferenced objects accumulate in the object store with no collector. Not urgent.
@@ -268,6 +270,11 @@ live databases.
 protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, PolyFactory, Path,
 DataObjectStore, DataToken, ToolExecutor, Toolchain, FileMetadata, GraphShapeArg and
 FolderManifest. 63 tests; depends only on SemelDatabaseModels.
+
+*Since:* `GraphShapeArg` has gone back to SemelCore as `GraphShapeProperty`. It was moved
+here because `InputlessNodeFunction.graphShapeArgs` named it in the protocol, so a node
+function could not be declared without it; that requirement no longer exists, and NodeKit
+now exports no GraphShape type at all.
 
 Two traps worth knowing before step 3. An `internal` overload becomes *invisible* rather
 than ambiguous across modules, so `PolySerializable.toJSON` silently lost to

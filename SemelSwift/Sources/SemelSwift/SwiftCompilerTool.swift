@@ -123,9 +123,6 @@ struct SourceScope {
 
 struct SwiftCompilerTool: NodeFunction {
     public static let kind: UInt = 20
-    // 2: sources are now discovered recursively through subfolders, so a node cached
-    // against the old top-level-only file set would replay a partial compile.
-    public static let codeVersion: Int = 2
 
     // MARK: Ports
 
@@ -150,10 +147,10 @@ struct SwiftCompilerTool: NodeFunction {
     static let outputInterface       = "swiftinterface"
     static let infoLog               = "infoLog"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(

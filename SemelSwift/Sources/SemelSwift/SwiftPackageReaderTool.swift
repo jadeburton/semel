@@ -46,8 +46,6 @@ struct SwiftPackageReaderToolConfiguration {
 
 struct SwiftPackageReaderTool: NodeFunction {
     public static let kind: UInt = 23
-    // Bump to invalidate caches whenever stripping logic changes.
-    public static let codeVersion: Int = 4
 
     // MARK: Ports
 
@@ -59,10 +57,10 @@ struct SwiftPackageReaderTool: NodeFunction {
     static let packageJSON   = "packageJSON"
     static let infoLog       = "infoLog"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public static let descriptor = NodeFunctionDescriptor(
