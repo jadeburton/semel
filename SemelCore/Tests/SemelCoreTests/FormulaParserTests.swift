@@ -22,7 +22,7 @@ final class FormulaParserTests: SemelCoreTestCase {
 
     func test_leafNode_arg() throws {
         let result = try parse("product \"X\" = StaticFile(path: 'src/hello.c').output")
-        XCTAssertEqual(result["X"]?.args, [GraphShapeArg(key: "path", value: "src/hello.c")])
+        XCTAssertEqual(result["X"]?.properties, [GraphShapeProperty(key: "path", value: "src/hello.c")])
     }
 
     func test_leafNode_outputPort() throws {
@@ -48,9 +48,9 @@ final class FormulaParserTests: SemelCoreTestCase {
     func test_leafNode_multipleArgs() throws {
         let result = try parse("product \"X\" = Tool(name: 'foo', version: '1.0').output")
         let node = try XCTUnwrap(result["X"])
-        XCTAssertEqual(node.args.count, 2)
-        XCTAssertEqual(node.args[0], GraphShapeArg(key: "name", value: "foo"))
-        XCTAssertEqual(node.args[1], GraphShapeArg(key: "version", value: "1.0"))
+        XCTAssertEqual(node.properties.count, 2)
+        XCTAssertEqual(node.properties[0], GraphShapeProperty(key: "name", value: "foo"))
+        XCTAssertEqual(node.properties[1], GraphShapeProperty(key: "version", value: "1.0"))
     }
 
     // MARK: - No-arg node
@@ -62,7 +62,7 @@ final class FormulaParserTests: SemelCoreTestCase {
 
     func test_noArgNode_emptyArgs() throws {
         let result = try parse("product \"X\" = Configuration().output")
-        XCTAssertEqual(result["X"]?.args, [])
+        XCTAssertEqual(result["X"]?.properties, [])
     }
 
     func test_noArgNode_outputPort() throws {
@@ -150,7 +150,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             func path() = 'src/hello.c'
             product "X" = StaticFile(path: path()).output
             """)
-        XCTAssertEqual(result["X"]?.args.first?.value, "src/hello.c")
+        XCTAssertEqual(result["X"]?.properties.first?.value, "src/hello.c")
     }
 
     // MARK: - One-param function, positional call
@@ -168,7 +168,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             func file(path) = StaticFile(path: path).output
             product "X" = file('src/hello.c')
             """)
-        XCTAssertEqual(result["X"]?.args.first?.value, "src/hello.c")
+        XCTAssertEqual(result["X"]?.properties.first?.value, "src/hello.c")
     }
 
     func test_oneParamFunc_positional_port() throws {
@@ -186,7 +186,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             func file(path) = StaticFile(path: path).output
             product "X" = file(path: 'src/hello.c')
             """)
-        XCTAssertEqual(result["X"]?.args.first?.value, "src/hello.c")
+        XCTAssertEqual(result["X"]?.properties.first?.value, "src/hello.c")
     }
 
     // MARK: - Two-param function
@@ -197,8 +197,8 @@ final class FormulaParserTests: SemelCoreTestCase {
             product "X" = make('foo', 'o')
             """)
         let node = try XCTUnwrap(result["X"])
-        XCTAssertEqual(node.args.first(where: { $0.key == "name" })?.value, "foo")
-        XCTAssertEqual(node.args.first(where: { $0.key == "ext" })?.value, "o")
+        XCTAssertEqual(node.properties.first(where: { $0.key == "name" })?.value, "foo")
+        XCTAssertEqual(node.properties.first(where: { $0.key == "ext" })?.value, "o")
     }
 
     // MARK: - Forward reference
@@ -209,7 +209,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             func file(path) = StaticFile(path: path).output
             """)
         XCTAssertEqual(result["X"]?.typeName, "StaticFile")
-        XCTAssertEqual(result["X"]?.args.first?.value, "src/hello.c")
+        XCTAssertEqual(result["X"]?.properties.first?.value, "src/hello.c")
     }
 
     // MARK: - Parameter shadowing
@@ -220,7 +220,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             func file(path) = StaticFile(path: path).output
             product "X" = file('local/path')
             """)
-        XCTAssertEqual(result["X"]?.args.first?.value, "local/path")
+        XCTAssertEqual(result["X"]?.properties.first?.value, "local/path")
     }
 
     // MARK: - Comments
@@ -266,15 +266,15 @@ final class FormulaParserTests: SemelCoreTestCase {
             product "A" = StaticFile(path: 'a').output
             product "B" = StaticFile(path: 'b').output
             """)
-        XCTAssertEqual(result["A"]?.args.first?.value, "a")
-        XCTAssertEqual(result["B"]?.args.first?.value, "b")
+        XCTAssertEqual(result["A"]?.properties.first?.value, "a")
+        XCTAssertEqual(result["B"]?.properties.first?.value, "b")
     }
 
     // MARK: - Double-quoted strings
 
     func test_doubleQuotedString_inProperty() throws {
         let result = try parse("product \"X\" = StaticFile(path: \"src/hello.c\").output")
-        XCTAssertEqual(result["X"]?.args.first?.value, "src/hello.c")
+        XCTAssertEqual(result["X"]?.properties.first?.value, "src/hello.c")
     }
 
     func test_singleQuotedProductName() throws {
@@ -357,7 +357,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         let node = try XCTUnwrap(result["Package.json"])
         let port = try XCTUnwrap(node.inputs.first(where: { $0.portName == "packageFile" }))
         let staticFile = try XCTUnwrap(port.wires.first?.node)
-        XCTAssertEqual(staticFile.args.first?.value, "input:/swift/Package.swift")
+        XCTAssertEqual(staticFile.properties.first?.value, "input:/swift/Package.swift")
     }
 
     func test_specExample_extraJson_differentPath() throws {
@@ -365,7 +365,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         let node = try XCTUnwrap(result["Extra.json"])
         let port = try XCTUnwrap(node.inputs.first(where: { $0.portName == "packageFile" }))
         let staticFile = try XCTUnwrap(port.wires.first?.node)
-        XCTAssertEqual(staticFile.args.first?.value, "input:/swift/Extra/Package.swift")
+        XCTAssertEqual(staticFile.properties.first?.value, "input:/swift/Extra/Package.swift")
     }
 
     func test_specExample_extraJson_sameStructureAsPackageJson() throws {

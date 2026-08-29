@@ -803,7 +803,7 @@ private struct FormulaResolver {
                         context: "cannot access an output port on a string value")
                 }
                 return .node(GraphShapeNode(typeName: node.typeName,
-                                             args:    node.args,
+                                             properties: node.properties,
                                              inputs:  node.inputs,
                                              outputs: node.outputs,
                                              outputPort: port))
@@ -818,7 +818,7 @@ private struct FormulaResolver {
                         context: "node constructor '\(name)' did not return a node")
                 }
                 return .node(GraphShapeNode(typeName: node.typeName,
-                                             args:    node.args,
+                                             properties: node.properties,
                                              inputs:  node.inputs,
                                              outputs: node.outputs,
                                              outputPort: port ?? resolveDefaultOutputPort(forTypeName: name)))
@@ -900,20 +900,20 @@ private struct FormulaResolver {
         let baseNode       = try GraphShapeNode.parse(content)
         let effectivePort  = port ?? baseNode.outputPort ?? resolveDefaultOutputPort(forTypeName: baseNode.typeName)
         return .node(GraphShapeNode(typeName:   baseNode.typeName,
-                                     args:       baseNode.args,
+                                     properties: baseNode.properties,
                                      inputs:     baseNode.inputs,
                                      outputs:    baseNode.outputs,
                                      outputPort: effectivePort))
     }
 
-    // Node construction: map labeled args → GraphShapeArg, wires → GraphShapeInputPort.
+    // Node construction: map labeled args → GraphShapeProperty, wires → GraphShapeInputPort.
     func evalNodeConstruct(
         typeName: String,
         args: [FormulaCallArg],
         env: [String: FormulaValue],
         templateEnv: [String: ForEachBinding]
     ) throws -> FormulaValue {
-        var nodeArgs:   [GraphShapeArg]       = []
+        var nodeProps:  [GraphShapeProperty]  = []
         var inputPorts: [GraphShapeInputPort] = []
 
         for arg in args {
@@ -926,7 +926,7 @@ private struct FormulaResolver {
                         got: value.typeName,
                         context: "node property values must be string expressions")
                 }
-                nodeArgs.append(GraphShapeArg(key: key, value: s))
+                nodeProps.append(GraphShapeProperty(key: key, value: s))
 
             case .inputWire(let portName, let entries):
                 var graphWires: [GraphShapeWire] = []
@@ -996,14 +996,14 @@ private struct FormulaResolver {
             }
         }
 
-        return .node(GraphShapeNode(typeName: typeName, args: nodeArgs, inputs: inputPorts))
+        return .node(GraphShapeNode(typeName: typeName, properties: nodeProps, inputs: inputPorts))
     }
 
     // MARK: Output port resolution
 
     /// Resolves the `_default` output port placeholder to a concrete port name.
     func resolveDefaultOutputPort(forTypeName typeName: String) -> String {
-        guard let nodeType = PolyFactory.nodeType(forTypeName: typeName) as? InputlessNodeFunction.Type else {
+        guard let nodeType = PolyFactory.nodeType(forTypeName: typeName) as? NodeFunction.Type else {
             return "_default"
         }
         let ports = nodeType.descriptor.outputPorts

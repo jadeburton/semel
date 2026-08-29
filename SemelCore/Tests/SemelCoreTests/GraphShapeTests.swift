@@ -18,7 +18,7 @@ final class GraphShapeTests: SemelCoreTestCase {
 
     func test_leafNode_parsesArg() throws {
         let node = try GraphShapeNode.parse("StaticFile(path: 'src/hello.c').output")
-        XCTAssertEqual(node.args, [GraphShapeArg(key: "path", value: "src/hello.c")])
+        XCTAssertEqual(node.properties, [GraphShapeProperty(key: "path", value: "src/hello.c")])
     }
 
     func test_leafNode_parsesOutputPort() throws {
@@ -135,7 +135,7 @@ final class GraphShapeTests: SemelCoreTestCase {
 
     func test_doubleQuotedArg_parsesValue() throws {
         let node = try GraphShapeNode.parse("StaticFile(path: \"hello.c\")")
-        XCTAssertEqual(node.args[0].value, "hello.c")
+        XCTAssertEqual(node.properties[0].value, "hello.c")
     }
 
     // MARK: - asString pretty
@@ -195,12 +195,12 @@ final class GraphShapeTests: SemelCoreTestCase {
                 GraphShapeInputPort(portName: "configuration", wires: [
                     GraphShapeWire(name: "config",
                                    node: GraphShapeNode(typeName: "Configuration",
-                                                        args: [GraphShapeArg(key: "tool", value: "compiler")]))
+                                                        properties: [GraphShapeProperty(key: "tool", value: "compiler")]))
                 ]),
                 GraphShapeInputPort(portName: "input", wires: [
                     GraphShapeWire(name: "hello.c",
                                    node: GraphShapeNode(typeName: "StaticFile",
-                                                        args: [GraphShapeArg(key: "path", value: "hello.c")]))
+                                                        properties: [GraphShapeProperty(key: "path", value: "hello.c")]))
                 ])
             ],
             outputPort: "output"
@@ -211,12 +211,12 @@ final class GraphShapeTests: SemelCoreTestCase {
                 GraphShapeInputPort(portName: "input", wires: [
                     GraphShapeWire(name: "hello.c",
                                    node: GraphShapeNode(typeName: "StaticFile",
-                                                        args: [GraphShapeArg(key: "path", value: "hello.c")]))
+                                                        properties: [GraphShapeProperty(key: "path", value: "hello.c")]))
                 ]),
                 GraphShapeInputPort(portName: "configuration", wires: [
                     GraphShapeWire(name: "config",
                                    node: GraphShapeNode(typeName: "Configuration",
-                                                        args: [GraphShapeArg(key: "tool", value: "compiler")]))
+                                                        properties: [GraphShapeProperty(key: "tool", value: "compiler")]))
                 ])
             ],
             outputPort: "output"

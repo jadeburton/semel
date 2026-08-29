@@ -41,7 +41,15 @@ import SemelNodeKit
 
 // MARK: - Model
 
-/// An initialization-time string argument, e.g. `path: 'src/hello.c'`.
+/// One init-time property that distinguishes a node from others of its type — `path` for a
+/// StaticFile, `moduleName` for a compile.
+///
+/// Called a property, not an argument, because that is what a node calls it: these are
+/// exactly `Node.properties`, rendered into a shape.
+struct GraphShapeProperty: Equatable, Hashable {
+    let key: String
+    let value: String
+}
 
 /// A single named wire feeding an input port.
 struct GraphShapeWire: Equatable {
@@ -65,8 +73,8 @@ struct GraphShapeOutputPort: Equatable {
 public struct GraphShapeNode: Equatable {
     /// Swift type name of the NodeFunction, e.g. `"StaticFile"`, `"ClangCompilerTool"`.
     let typeName:   String
-    /// Init-time key-value arguments (e.g. `path: 'src/hello.c'`).  Ordered.
-    let args:       [GraphShapeArg]
+    /// Init-time key-value properties (e.g. `path: 'src/hello.c'`).  Ordered.
+    let properties: [GraphShapeProperty]
     /// Wired input ports.  Ordered.
     let inputs:     [GraphShapeInputPort]
     /// Expected output ports (future use — stored but not yet matched).
@@ -75,12 +83,12 @@ public struct GraphShapeNode: Equatable {
     let outputPort: String?
 
     init(typeName:   String,
-         args:       [GraphShapeArg]        = [],
+         properties: [GraphShapeProperty]   = [],
          inputs:     [GraphShapeInputPort]  = [],
          outputs:    [GraphShapeOutputPort] = [],
          outputPort: String?                = nil) {
         self.typeName   = typeName
-        self.args       = args
+        self.properties = properties
         self.inputs     = inputs
         self.outputs    = outputs
         self.outputPort = outputPort
@@ -106,10 +114,10 @@ extension GraphShapeNode {
 
         var params: [String] = []
 
-        // Args: key: 'value' — always sorted so the string is deterministic regardless
-        // of dictionary-iteration order in graphShapeArgs or formula-file ordering.
-        for arg in args.sorted(by: { $0.key < $1.key }) {
-            params.append("\(arg.key): '\(arg.value)'")
+        // Properties: key: 'value' — always sorted so the string is deterministic
+        // regardless of dictionary-iteration order or formula-file ordering.
+        for property in properties.sorted(by: { $0.key < $1.key }) {
+            params.append("\(property.key): '\(property.value)'")
         }
 
         // Inputs: portName: ["wireName": Node, ...]
@@ -156,8 +164,8 @@ extension GraphShapeNode {
         guard typeName == other.typeName else {
             throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
         }
-        guard Set(args) == Set(other.args) else {
-            throw TopologyMatchError.noMatch(reason: "Args mismatch: \(args) != \(other.args)")
+        guard Set(properties) == Set(other.properties) else {
+            throw TopologyMatchError.noMatch(reason: "Properties mismatch: \(properties) != \(other.properties)")
         }
 
         let selfPorts  = Dictionary(inputs.map       { ($0.portName, $0.wires) },
@@ -236,19 +244,19 @@ private struct GraphShapeParser {
         try consume("(")
         skipWhitespace()
 
-        var args:    [GraphShapeArg]        = []
-        var inputs:  [GraphShapeInputPort]  = []
-        var outputs: [GraphShapeOutputPort] = []
+        var properties: [GraphShapeProperty]   = []
+        var inputs:     [GraphShapeInputPort]  = []
+        var outputs:    [GraphShapeOutputPort] = []
 
         if peek() != ")" {
-            try parseParamList(args: &args, inputs: &inputs, outputs: &outputs)
+            try parseParamList(properties: &properties, inputs: &inputs, outputs: &outputs)
         }
         skipWhitespace()
         try consume(")")
 
         let outputPort = try parseOptionalOutputPort()
         return GraphShapeNode(typeName:   typeName,
-                              args:       args,
+                              properties: properties,
                               inputs:     inputs,
                               outputs:    outputs,
                               outputPort: outputPort)
@@ -256,27 +264,27 @@ private struct GraphShapeParser {
 
     // ── Parameter list ────────────────────────────────────────────────────────
 
-    mutating func parseParamList(args:    inout [GraphShapeArg],
-                                 inputs:  inout [GraphShapeInputPort],
-                                 outputs: inout [GraphShapeOutputPort]) throws {
-        try parseOneParam(args: &args, inputs: &inputs, outputs: &outputs)
+    mutating func parseParamList(properties: inout [GraphShapeProperty],
+                                 inputs:     inout [GraphShapeInputPort],
+                                 outputs:    inout [GraphShapeOutputPort]) throws {
+        try parseOneParam(properties: &properties, inputs: &inputs, outputs: &outputs)
         while peek() == "," {
             advance()
             skipWhitespace()
             guard peek() != ")" else { break }
-            try parseOneParam(args: &args, inputs: &inputs, outputs: &outputs)
+            try parseOneParam(properties: &properties, inputs: &inputs, outputs: &outputs)
         }
     }
 
     /// Parse one parameter.  Operator and value type determine kind:
     ///
-    ///   `key: 'value'`              → arg (quoted string after `:`)
-    ///   `key.dotted: 'value'`       → arg (dotted property key, e.g. toolDescriptor.name)
+    ///   `key: 'value'`              → property (quoted string after `:`)
+    ///   `key.dotted: 'value'`       → property (dotted key, e.g. toolDescriptor.name)
     ///   `key: [...]`                → input (wire array after `:`)
     ///   `key -> [...]`              → output (future use)
-    mutating func parseOneParam(args:    inout [GraphShapeArg],
-                                inputs:  inout [GraphShapeInputPort],
-                                outputs: inout [GraphShapeOutputPort]) throws {
+    mutating func parseOneParam(properties: inout [GraphShapeProperty],
+                                inputs:     inout [GraphShapeInputPort],
+                                outputs:    inout [GraphShapeOutputPort]) throws {
         skipWhitespace()
         let key = try parseDottedKey()
         skipWhitespace()
@@ -289,9 +297,9 @@ private struct GraphShapeParser {
                 let wires = try parseWireArray()
                 inputs.append(GraphShapeInputPort(portName: key, wires: wires))
             } else {
-                // arg:  key: 'value'
+                // property:  key: 'value'
                 let value = try parseQuotedString()
-                args.append(GraphShapeArg(key: key, value: value))
+                properties.append(GraphShapeProperty(key: key, value: value))
             }
 
         } else if peek() == "-" {

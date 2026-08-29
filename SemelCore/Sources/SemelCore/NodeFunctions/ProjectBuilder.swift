@@ -27,10 +27,10 @@ public struct ProjectBuilder: NodeFunction {
         outputPorts: [statusOutputPort, productsOutputPort]
     )
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
@@ -109,10 +109,10 @@ public struct ProjectBuilder: NodeFunction {
                 // If the source node type exposes a "fileMetadata" output port,
                 // wire it into the OutputFile wrapper so chmod can be applied on cp.
                 var metadataWire = ""
-                if let nodeType = PolyFactory.nodeType(forTypeName: shapeNode.typeName) as? InputlessNodeFunction.Type,
+                if let nodeType = PolyFactory.nodeType(forTypeName: shapeNode.typeName) as? NodeFunction.Type,
                    nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
                     let metaShape = GraphShapeNode(typeName: shapeNode.typeName,
-                                                   args: shapeNode.args,
+                                                   properties: shapeNode.properties,
                                                    inputs: shapeNode.inputs,
                                                    outputs: shapeNode.outputs,
                                                    outputPort: FileMetadata.portName)
