@@ -8,7 +8,7 @@
 import Foundation
 import SemelNodeKit
 
-public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
+public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
     // The values live in SemelNodeKit, where a node function can reach them without
@@ -17,14 +17,11 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     public static let inputFileSystemName  = FileSystemName.input
     public static let outputFileSystemName = FileSystemName.output
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
-        embeddedNode.name = name
-        if embeddedNode.parentNodeID == nil {
-            embeddedNode.parentNodeID = try resolveFolderID(path: containingPath)
-        }
+        self.thisNode = thisNode
+        try placeInFileSystem()
     }
 
     var inputFileSystem: Node {
@@ -64,6 +61,14 @@ public struct Folder: InputlessNodeFunction, HasPath, Pinnable, UserDeletable {
     static let pinnedOutputPort = "pinned"
 
     public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
+
+    /// Never reached in a working graph: a node declaring no input ports is not scheduled,
+    /// so nothing asks it to process. An ordinary error rather than a trap — a node is not
+    /// the right place to enforce the engine's invariants, and a third-party one should not
+    /// be able to bring the process down.
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+    }
 
     // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
     // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
@@ -193,7 +198,7 @@ extension Folder {
     // BUG: this is extremely slow. TODO cache
     private static func root(named name: String) throws -> Node {
         let graphShape = GraphShapeNode(typeName: "Folder",
-                                        args: [.init(key: "path", value: name)],
+                                        properties: [.init(key: "path", value: name)],
                                         inputs: [],
                                         outputs: [])
         let (rootNode, _) = try graphShape.findOrCreateMatchingNode()

@@ -18,7 +18,7 @@ public protocol UserDeletable {
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, UserDeletable {
+public struct StaticFile: NodeFunction, FileType, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 3
 
     public var isPinned: Bool {
@@ -33,22 +33,28 @@ public struct StaticFile: InputlessNodeFunction, FileType, HasPath, Pinnable, Us
 
     static let outputPort = "output"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     var path: Path {
         Path(thisNode.properties["path"]!)
     }
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
         assert(!path.string.contains(Folder.outputFileSystemName))
-        embeddedNode.name = name
-        if embeddedNode.parentNodeID == nil {
-            embeddedNode.parentNodeID = try resolveFolderID(path: containingPath)
-        }
+        try placeInFileSystem()
     }
 
     public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [outputPort])
+
+    /// Never reached in a working graph: a node declaring no input ports is not scheduled,
+    /// so nothing asks it to process. An ordinary error rather than a trap — a node is not
+    /// the right place to enforce the engine's invariants, and a third-party one should not
+    /// be able to bring the process down.
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
+    }
+
 
     // If StaticFile has content set, it must not be deleted even when there are no output Wires. However, if
     // it has no content set (i.e. the user never pushed the file, or they deleted it) then it can be deleted

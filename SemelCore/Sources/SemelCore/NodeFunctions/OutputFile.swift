@@ -51,6 +51,26 @@ extension HasPath {
     }
 }
 
+extension HasPath where Self: NodeFunction {
+
+    /// Puts this node in its place in the file-system tree: named after the last component
+    /// of its path, parented to the folder that contains it.
+    ///
+    /// Every path-based node does exactly this on init. The rest of the vocabulary it needs
+    /// — `name`, `containingPath`, `resolveFolderID` — was already here; only the step that
+    /// uses them stayed behind, copied into `Folder`, `StaticFile` and `OutputFile` alike.
+    ///
+    /// The parent is resolved only when there is not one already. A node loaded from the
+    /// database arrives with its parent set, and resolving again would walk a tree that
+    /// exists to create folders that exist.
+    mutating func placeInFileSystem() throws {
+        thisNode.name = name
+        if thisNode.parentNodeID == nil {
+            thisNode.parentNodeID = try resolveFolderID(path: containingPath)
+        }
+    }
+}
+
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
 struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvider {
 
@@ -60,19 +80,16 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
     static let fileMetadataInputPort = FileMetadata.portName
     static let statusOutputPort = "status"
 
-    public var embeddedNode: Node
+    public var thisNode: Node
 
     var path: Path {
         Path(thisNode.properties["path"]!)
     }
 
     public init(thisNode: Node) throws {
-        embeddedNode = thisNode
+        self.thisNode = thisNode
         assert(!path.string.contains(Folder.inputFileSystemName))
-        embeddedNode.name = name
-        if embeddedNode.parentNodeID == nil {
-            embeddedNode.parentNodeID = try resolveFolderID(path: containingPath)
-        }
+        try placeInFileSystem()
     }
 
     public static let descriptor = NodeFunctionDescriptor(
@@ -133,12 +150,6 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
         }
 
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
-    }
-
-    public func didWriteOutputs(output: ProcessOutput) throws {
-    }
-
-    public func willBeDeleted() throws {
     }
 
     func read() throws -> NodeValue? {
