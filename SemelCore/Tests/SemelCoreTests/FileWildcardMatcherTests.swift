@@ -166,20 +166,14 @@ final class FileWildcardMatcherTests: SemelCoreTestCase {
 /// The segment matcher on its own, without a filesystem in the way.
 ///
 /// Backtracking is the entire reason the algorithm has the shape it does, and nothing
-/// exercised it: every earlier test drives it through directory listings, where building a
-/// case costs a mock tree. These are the cases that decide which files a glob picks up.
-final class FileWildcardSegmentMatchingTests: SemelCoreTestCase {
-
-    private struct NoFiles: FileWildcardMatcherInput {
-        let rootDirectoryPath = "/"
-        func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] { [] }
-    }
-
-    private let matcher = FileWildcardMatcher(input: NoFiles())
+/// exercised it: every other test drives it through directory listings, where building a
+/// case costs a mock tree. These are the cases that decide which files a glob picks up —
+/// for ProjectBuilder's manifest globs as much as for a walk of a real directory.
+final class WildcardSegmentTests: SemelCoreTestCase {
 
     private func assertMatches(_ pattern: String, _ name: String,
                                _ expected: Bool, line: UInt = #line) {
-        XCTAssertEqual(matcher.segmentMatches(pattern: pattern, name: name), expected,
+        XCTAssertEqual(WildcardSegment.matches(pattern: pattern, name: name), expected,
                        "'\(pattern)' vs '\(name)'", line: line)
     }
 

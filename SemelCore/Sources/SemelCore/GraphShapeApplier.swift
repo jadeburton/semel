@@ -91,7 +91,6 @@ extension GraphShapeNode {
         }
         visited.insert(fromNodeID)
 
-        // TODO: var naming conventions
         let properties = nodeFunction.graphShapeProperties()
 
         // Only static ports are included.  Dynamic ports (e.g. includeFileLists)

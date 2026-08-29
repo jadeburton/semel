@@ -213,28 +213,9 @@ public struct ProjectBuilder: NodeFunction {
                 !entry.name.hasPrefix(".")
                     && !entry.isFolder
                     && entry.isPinned
-                    && segmentMatches(pattern: tailPattern, name: entry.name)
+                    && WildcardSegment.matches(pattern: tailPattern, name: entry.name)
             }
             .map { "\(folderPath)/\($0.name)" }
             .sorted()
-    }
-
-    // Standard NFA-free glob matcher (same algorithm as FileWildcardMatcher).
-    // TODO: coding style, should be static, possibly shared code with FileWildcardMatcher
-    private func segmentMatches(pattern: String, name: String) -> Bool {
-        let p = Array(pattern.unicodeScalars)
-        let t = Array(name.unicodeScalars)
-        var pi = 0, ti = 0, starPI = -1, starTI = -1
-        while ti < t.count {
-            if pi < p.count && (p[pi] == "?" || p[pi] == t[ti]) {
-                pi += 1; ti += 1
-            } else if pi < p.count && p[pi] == "*" {
-                starPI = pi + 1; starTI = ti; pi += 1
-            } else if starPI != -1 {
-                starTI += 1; ti = starTI; pi = starPI
-            } else { return false }
-        }
-        while pi < p.count && p[pi] == "*" { pi += 1 }
-        return pi == p.count
     }
 }
