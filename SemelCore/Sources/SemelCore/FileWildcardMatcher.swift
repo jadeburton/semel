@@ -108,29 +108,58 @@ public final class FileWildcardMatcher {
 
     // MARK: - Segment-level glob matching
 
-    private func segmentMatches(pattern: String, name: String) -> Bool {
-        globMatch(pattern: Array(pattern.unicodeScalars), pi: 0,
-                  text: Array(name.unicodeScalars), ti: 0)
+    /// Internal rather than private so the segment matcher can be tested directly. Driving
+    /// it through directory listings costs a mock filesystem per case, which is why the
+    /// backtracking it exists for went untested for so long.
+    func segmentMatches(pattern: String, name: String) -> Bool {
+        segmentMatches(pattern: Array(pattern.unicodeScalars),
+                       name:    Array(name.unicodeScalars))
     }
 
-    private func globMatch(pattern: [Unicode.Scalar], pi: Int,
-                           text: [Unicode.Scalar], ti: Int) -> Bool {
-        var pi = pi; var ti = ti
-        var starPI = -1; var starTI = -1
+    /// Matches one path segment against a pattern containing `*` and `?`.
+    ///
+    /// Walks both strings once, remembering the most recent `*` so it can come back to it.
+    /// When the rest of the pattern hits a dead end, that `*` is given one more character and
+    /// the walk resumes — which is what makes `*.swift` match `a.b.swift`, where the first
+    /// attempt commits the `*` to the wrong dot.
+    ///
+    /// Only the most recent `*` needs remembering. An earlier one can always hand its work to
+    /// a later one, so backtracking further can never find a match this one could not.
+    private func segmentMatches(pattern: [Unicode.Scalar], name: [Unicode.Scalar]) -> Bool {
+        var patternIndex = 0
+        var nameIndex    = 0
 
-        while ti < text.count {
-            if pi < pattern.count && (pattern[pi] == "?" || pattern[pi] == text[ti]) {
-                pi += 1; ti += 1
-            } else if pi < pattern.count && pattern[pi] == "*" {
-                starPI = pi + 1; starTI = ti; pi += 1
-            } else if starPI != -1 {
-                starTI += 1; ti = starTI; pi = starPI
+        // Where to resume when an attempt fails: the pattern position just after the most
+        // recent `*`, and how much of the name that `*` has been given so far. Nil until a
+        // `*` has been seen, which is what makes a mismatch final rather than retried.
+        var afterLastStar:  Int? = nil
+        var nameAtLastStar: Int  = 0
+
+        while nameIndex < name.count {
+            if patternIndex < pattern.count,
+               pattern[patternIndex] == "?" || pattern[patternIndex] == name[nameIndex] {
+                patternIndex += 1
+                nameIndex    += 1
+
+            } else if patternIndex < pattern.count, pattern[patternIndex] == "*" {
+                // Start by letting this `*` match nothing, and note where to come back to.
+                afterLastStar  = patternIndex + 1
+                nameAtLastStar = nameIndex
+                patternIndex  += 1
+
+            } else if let afterLastStar {
+                // Dead end — give the most recent `*` one more character and resume after it.
+                nameAtLastStar += 1
+                nameIndex       = nameAtLastStar
+                patternIndex    = afterLastStar
+
             } else {
-                return false
+                return false        // mismatch, and no `*` to fall back on
             }
         }
-        while pi < pattern.count && pattern[pi] == "*" { pi += 1 }
-        return pi == pattern.count
+
+        // The name is used up; the pattern matches only if what is left of it is all `*`.
+        return pattern[patternIndex...].allSatisfy { $0 == "*" }
     }
 }
 

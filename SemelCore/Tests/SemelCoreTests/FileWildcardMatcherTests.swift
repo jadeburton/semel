@@ -160,3 +160,86 @@ final class FileWildcardMatcherTests: SemelCoreTestCase {
         XCTAssertEqual(results.first?.path.string, "src/main.c")
     }
 }
+
+// MARK: - Segment matching
+
+/// The segment matcher on its own, without a filesystem in the way.
+///
+/// Backtracking is the entire reason the algorithm has the shape it does, and nothing
+/// exercised it: every earlier test drives it through directory listings, where building a
+/// case costs a mock tree. These are the cases that decide which files a glob picks up.
+final class FileWildcardSegmentMatchingTests: SemelCoreTestCase {
+
+    private struct NoFiles: FileWildcardMatcherInput {
+        let rootDirectoryPath = "/"
+        func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] { [] }
+    }
+
+    private let matcher = FileWildcardMatcher(input: NoFiles())
+
+    private func assertMatches(_ pattern: String, _ name: String,
+                               _ expected: Bool, line: UInt = #line) {
+        XCTAssertEqual(matcher.segmentMatches(pattern: pattern, name: name), expected,
+                       "'\(pattern)' vs '\(name)'", line: line)
+    }
+
+    func test_literalsMatchOnlyThemselves() {
+        assertMatches("hello.c", "hello.c", true)
+        assertMatches("hello.c", "hello.h", false)
+        assertMatches("abc", "ab", false)
+        assertMatches("ab", "abc", false)
+    }
+
+    func test_questionMarkMatchesExactlyOneCharacter() {
+        assertMatches("?", "a", true)
+        assertMatches("?", "", false)
+        assertMatches("?", "ab", false)
+        assertMatches("a?c", "abc", true)
+        assertMatches("a?", "a", false)
+    }
+
+    func test_starMatchesAnyRun() {
+        assertMatches("*", "", true)
+        assertMatches("*", "anything", true)
+        assertMatches("*.c", "hello.c", true)
+        assertMatches("*.c", "hello.h", false)
+        assertMatches("hello*", "hello", true)
+        assertMatches("hello*", "hello.c", true)
+    }
+
+    /// The case the remembered-star machinery exists for: the first attempt commits `*` to
+    /// the wrong dot and has to come back. Without backtracking this returns false.
+    func test_starBacktracksWhenTheFirstAttemptFails() {
+        assertMatches("*.swift", "a.b.swift", true)
+        assertMatches("*a", "aa", true)
+        assertMatches("*a", "ba", true)
+        assertMatches("*ab", "aaab", true)
+    }
+
+    func test_severalStarsInOnePattern() {
+        assertMatches("a*b*c", "abc", true)
+        assertMatches("a*b*c", "axxbyyc", true)
+        assertMatches("a*b*c", "axxcyyb", false)
+        assertMatches("*a*a*b", "aaab", true)
+    }
+
+    /// Trailing stars have nothing left to consume, which is the one place the loop cannot
+    /// decide the answer and the tail check does.
+    func test_trailingStarsMatchNothingLeftOver() {
+        assertMatches("abc*", "abc", true)
+        assertMatches("abc**", "abc", true)
+        assertMatches("abc*d", "abc", false)
+    }
+
+    func test_emptyPatternMatchesOnlyTheEmptyName() {
+        assertMatches("", "", true)
+        assertMatches("", "a", false)
+    }
+
+    func test_starIsTheOnlyPatternThatMatchesAnEmptyName() {
+        assertMatches("*", "", true)
+        assertMatches("**", "", true)
+        assertMatches("?", "", false)
+        assertMatches("a", "", false)
+    }
+}
