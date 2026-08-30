@@ -379,6 +379,52 @@ tool: a cache key aggregates every input port's wire values (`Cache.swift:38`), 
 text on the wire has already rescheduled the node and changed its key before the tool sees
 it. Filtering has to happen upstream of the wire into the tool.
 
+**B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
+as back doors.**
+A node's outputs are supposed to be a function of its inputs. Three types are not, and none
+of them says so — they simply reach around the model, which makes the exception look like an
+oversight rather than a part of the architecture.
+
+They break *different* rules, and one concept will not cover all three.
+
+*`StaticFile` — genuinely external.* No input ports, yet its output value arrives: the push
+path writes its output port from outside. Same for user intent, "pinned" versus deleted.
+Candidate fix: a fourth port kind, `.external(name)`, filled by the runtime rather than by a
+wire. Purity then becomes universal — every node's output is a function of its declared input
+ports, and what varies is only who fills them. That is also what would make B-02 enforceable:
+"no node may read outside its declared inputs" cannot be stated while two types quietly do.
+
+*`Folder.manifest` — not external at all.* It is a projection of the graph itself: the set of
+child nodes, plus each child's pinned state, both read straight from the database, recomputed
+by `onChildAdded`/`onChildContentChanged`/`onChildDeleted`. The dependency is the parent-child
+edge, which the engine already has — represented as `parentNodeID` rather than N wire rows,
+because a folder of 10,000 files would otherwise mean 10,000 wires. (That edge is also what
+the missing index cost: 200 files, 3.39s to 0.63s.)
+
+So the honest framing is that **the parent-child relation is a high-fan-out dependency edge,
+and the child callbacks are its propagation mechanism** — the structural analogue of
+`writeToOutputPort` scheduling downstream nodes. Nothing is wrong with it except that nothing
+declares it, so it reads as a node reaching out to write itself.
+
+*`OutputFile` — dissolvable, not formalisable.* It reads its own previous output port only to
+decide whether to print a status change. The engine already computes exactly that:
+`writeToOutputPort` returns false when the value is unchanged. Move change-notification to the
+engine — which has to happen anyway when printing becomes structured logging aimed at showing
+system *state* rather than a flowing event log — and the self-read has no reason to exist.
+
+*A correction to our own comment.* `Folder.pinnedOutputPort` is marked HACK for storing state
+in a "fake" output. That is too harsh. Putting the state in an output port is what keeps it
+inside the dataflow model: it can be wired, downstream nodes can see it, and it lands in cache
+keys. A private state field would be invisible to all three. The fix is to declare what that
+output means, not to invent a state slot beside the ports.
+
+*Cost to know before starting.* If either external inputs or structural dependencies become
+declared, `StaticFile` and `Folder` become nodes the engine schedules and processes — which is
+arguably more correct, since a push *is* an event that should run the node. But
+`descriptor.hasInputs` is now the single answer to "does the graph process this node"
+(`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
+distinction would have to become "wired inputs" rather than "inputs".
+
 ## Closed
 
 **B-20** `done` — SDK is in the Swift tools' cache key (`e6ca4cd`).
