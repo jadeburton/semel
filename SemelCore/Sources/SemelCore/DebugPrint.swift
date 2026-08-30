@@ -88,13 +88,13 @@ extension BuildEngine {
         _ = try database.cacheEntry.deleteAll()
         // Reset all Node outputs to pending so downstream nodes block on
         // stale values and wait for fresh upstream results (correct ordering).
-        for node in try database.node.selectAll() {
-            guard let nodeFunction = try? node.makeNode(),
-                  type(of: nodeFunction).descriptor.hasInputs else { continue }
-            try node.writePendingToAllOutputsOfNode()
+        for nodeRecord in try database.node.selectAll() {
+            guard let node = try? nodeRecord.makeNode(),
+                  type(of: node).descriptor.hasInputs else { continue }
+            try nodeRecord.writePendingToAllOutputsOfNode()
         }
-        for node in try database.node.selectAll() {
-            try node.setScheduled(true)
+        for nodeRecord in try database.node.selectAll() {
+            try nodeRecord.setScheduled(true)
         }
     }
 
@@ -115,28 +115,28 @@ extension BuildEngine {
         printSectionHeader("BUILD GRAPH STATE (\(allNodes.count) nodes)")
         print()
 
-        for rawNode in allNodes {
-            guard let nodeID = rawNode.id else { continue }
+        for nodeRecord in allNodes {
+            guard let nodeID = nodeRecord.id else { continue }
             
-            let scheduled = rawNode.scheduled ? "⏱ scheduled" : ""
-            print("⬢ \(type(of: try rawNode.makeNode())) #\(nodeID)  \(scheduled)")
+            let scheduled = nodeRecord.scheduled ? "⏱ scheduled" : ""
+            print("⬢ \(type(of: try nodeRecord.makeNode())) #\(nodeID)  \(scheduled)")
 
-            if let name = rawNode.name {
+            if let name = nodeRecord.name {
                 print("  name: '\(name)'")
             }
 
-            if let searchKey = rawNode.searchKey {
+            if let searchKey = nodeRecord.searchKey {
                 let graphShapeNode = try GraphShapeNode.parse(searchKey)
                 print("  searchKey:\n\(graphShapeNode.asString(pretty: true, omitOutputPort: true))\n")
             } else {
                 print("  searchKey: nil")
             }
 
-            if let parentNodeID = rawNode.parentNodeID {
+            if let parentNodeID = nodeRecord.parentNodeID {
                 print("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
             }
 
-            let descriptor    = (try? rawNode.makeNode())?.descriptor
+            let descriptor    = (try? nodeRecord.makeNode())?.descriptor
             let inputPorts    = (descriptor?.staticInputPorts  ?? []) + (descriptor?.dynamicInputPorts ?? [])
             let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
@@ -230,8 +230,8 @@ extension NodeRecord {
                 guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
                 visitedDependencyNodeIDs.insert(wire.fromNodeID)
 
-                if let rawNode = try? database.node.select(nodeID: wire.fromNodeID) {
-                    dependencyNodes.append(rawNode)
+                if let nodeRecord = try? database.node.select(nodeID: wire.fromNodeID) {
+                    dependencyNodes.append(nodeRecord)
                 }
             }
 

@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// The C/C++ toolchain as node functions.
+// The C/C++ toolchain as nodes.
 //
 // Depends on SemelNodeKit and *not* on the engine, for the same reason SemelSwift does:
 // the absent dependency is what keeps the engine from acquiring knowledge of a toolchain

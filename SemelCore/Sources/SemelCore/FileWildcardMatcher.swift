@@ -146,32 +146,32 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
             throw NodeError.other(message: "No such directory: \(inDirectoryPath)")
         }
 
-        return try start.allChildren.map { node in
-            switch node.kind {
+        return try start.allChildren.map { nodeRecord in
+            switch nodeRecord.kind {
 
             case Folder.kind:
-                guard let folder = try node.makeNode() as? Folder else {
+                guard let folder = try nodeRecord.makeNode() as? Folder else {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
                 let isOutputFileSystem = try folder.thisNode
                     .buildFullPathName(baseNodeID: nil)
                     .firstComponent == Folder.outputFileSystemName
-                return FileWildcardEntry(path: Path(node.name!),
+                return FileWildcardEntry(path: Path(nodeRecord.name!),
                                          kind: .folder,
                                          isMissing: isOutputFileSystem ? false : try !folder.isPinned,
-                                         isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
+                                         isUnreferenced: try folder.hasNoOutputWires() && nodeRecord.allChildren.isEmpty)
 
             default:
-                let nodeFunction = try node.makeNode()
-                guard let pinnable = nodeFunction as? Pinnable else {
+                let node = try nodeRecord.makeNode()
+                guard let pinnable = node as? Pinnable else {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
-                return FileWildcardEntry(path: Path(node.name!),
+                return FileWildcardEntry(path: Path(nodeRecord.name!),
                                          kind: .file,
                                          isMissing: try !pinnable.isPinned,
-                                         isUnreferenced: try nodeFunction.hasNoOutputWires())
+                                         isUnreferenced: try node.hasNoOutputWires())
             }
         }
     }

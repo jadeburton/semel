@@ -1,7 +1,7 @@
 // NodeError.swift
 // SemelNodeKit
 //
-// The errors a node function can throw. Part of the node-authoring API rather than the
+// The errors a node can throw. Part of the node-authoring API rather than the
 // engine: a node reports these, and the engine decides what to do about them.
 
 public enum NodeError: Error {

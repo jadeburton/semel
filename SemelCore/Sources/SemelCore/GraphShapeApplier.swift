@@ -82,8 +82,8 @@ extension GraphShapeNode {
             ? fromSymbolID!.resolveSymbol() : nil
 
         let sourceNode   = try database.node.select(nodeID: fromNodeID)
-        let nodeFunction = try sourceNode.makeNode()
-        let typeName     = String(describing: type(of: nodeFunction))
+        let node = try sourceNode.makeNode()
+        let typeName     = String(describing: type(of: node))
 
         // Cycle guard — return a stub with no inputs to stop infinite recursion.
         guard !visited.contains(fromNodeID) else {
@@ -91,12 +91,12 @@ extension GraphShapeNode {
         }
         visited.insert(fromNodeID)
 
-        let properties = nodeFunction.graphShapeProperties()
+        let properties = node.graphShapeProperties()
 
         // Only static ports are included.  Dynamic ports (e.g. includeFileLists)
         // are managed by the engine after the schema is laid down; including them
         // would make searchKey change on every cycle, breaking topology matching.
-        let staticInputPorts = nodeFunction.descriptor.staticInputPorts
+        let staticInputPorts = node.descriptor.staticInputPorts
 
         var inputs: [GraphShapeInputPort] = []
 
@@ -139,13 +139,13 @@ extension GraphShapeNode {
     /// Returns `(fromNodeID, fromSymbolID)` of the first live node whose topology
     /// matches `self`, or `nil` if no match exists.
     private func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        for node in try database.node.selectAll() {
+        for nodeRecord in try database.node.selectAll() {
             let graphShape = try GraphShapeNode.buildFromNode(database: database,
-                                                              nodeID: (try node.requireID()),
+                                                              nodeID: (try nodeRecord.requireID()),
                                                               fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
 
             if graphShape == asString(omitOutputPort: true) {
-                return (fromNodeID: (try node.requireID()), fromSymbolID: outputPort?.asSymbolID())
+                return (fromNodeID: (try nodeRecord.requireID()), fromSymbolID: outputPort?.asSymbolID())
             }
         }
 
@@ -155,11 +155,11 @@ extension GraphShapeNode {
     private func findMatchingNodeUsingSearchKey() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let thisGraphShape = asString(omitOutputPort: true)
 
-        guard let node = try database.node.select(searchKey: thisGraphShape).first else {
+        guard let nodeRecord = try database.node.select(searchKey: thisGraphShape).first else {
             return nil
         }
 
-        return (fromNodeID: (try node.requireID()), fromSymbolID: outputPort?.asSymbolID())
+        return (fromNodeID: (try nodeRecord.requireID()), fromSymbolID: outputPort?.asSymbolID())
     }
 
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
@@ -167,14 +167,14 @@ extension GraphShapeNode {
     }
 
     private func matchesNode(nodeID: ObjectID) throws -> Bool {
-        let node = try database.node.select(nodeID: nodeID)
-        let nodeFunction = try node.makeNode()
+        let nodeRecord = try database.node.select(nodeID: nodeID)
+        let node = try nodeRecord.makeNode()
 
-        guard String(describing: type(of: nodeFunction)) == typeName else {
+        guard String(describing: type(of: node)) == typeName else {
             return false
         }
 
-        let actualProperties = nodeFunction.graphShapeProperties()
+        let actualProperties = node.graphShapeProperties()
 
         guard Set(actualProperties) == Set(properties) else {
             return false
@@ -245,8 +245,8 @@ extension GraphShapeNode {
         // writers below. The worst it can do is miss a node another task has not committed
         // yet, which falls through to the transaction, where the second find sees it.
         if let existing = try findMatchingNode(),
-           let node = try? database.node.select(nodeID: existing.fromNodeID) {
-            return (fromNode: node, fromSymbolID: outputPort?.asSymbolID())
+           let nodeRecord = try? database.node.select(nodeID: existing.fromNodeID) {
+            return (fromNode: nodeRecord, fromSymbolID: outputPort?.asSymbolID())
         }
 
         let newNode: NodeRecord = try database.withTransaction {
@@ -314,8 +314,8 @@ extension GraphShapeNode {
         }
 
         // ── Validate: every required port declared in the shape must be wired ─
-        let nodeFunction  = try newNode.makeNode()
-        let descriptor    = nodeFunction.descriptor
+        let node  = try newNode.makeNode()
+        let descriptor    = node.descriptor
         let optionalPorts = Set(descriptor.optionalStaticInputPorts)
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
@@ -330,7 +330,7 @@ extension GraphShapeNode {
 
         // A source node — a Folder, a StaticFile — has nothing to be handed, so it is
         // never scheduled.
-        if type(of: nodeFunction).descriptor.hasInputs {
+        if type(of: node).descriptor.hasInputs {
             try newNode.setScheduled(true)
         }
 

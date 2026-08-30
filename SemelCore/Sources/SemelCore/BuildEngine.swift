@@ -148,8 +148,8 @@ public final class BuildEngine {
     /// key would require knowing which keys each tool actually reads, the per-type key list
     /// this design deleted.
     func unclaimedConfigKeys(inFileNodeID fileNodeID: ObjectID) throws -> [String] {
-        let node = try database.node.select(nodeID: fileNodeID)
-        guard let staticFile = try node.nodeAsAny() as? StaticFile,
+        let nodeRecord = try database.node.select(nodeID: fileNodeID)
+        guard let staticFile = try nodeRecord.nodeAsAny() as? StaticFile,
               let content = try staticFile.read(),
               case .value(let hash) = content else { return [] }
 
@@ -305,7 +305,7 @@ public final class BuildEngine {
     }
 
     private struct BatchComputeResult {
-        let node: NodeRecord
+        let nodeRecord: NodeRecord
         let output: ProcessOutput
         let cacheKey: String?
         let computeStart: Date
@@ -327,8 +327,8 @@ public final class BuildEngine {
     /// result is written in phase 2, the normal cascade mechanism reschedules any
     /// affected consumers for re-evaluation on the next pass.
     private func processSomeNodes() async throws -> Bool {
-        let rawNodes = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
-        guard !rawNodes.isEmpty else {
+        let nodeRecords = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
+        guard !nodeRecords.isEmpty else {
             return false
         }
 
@@ -336,19 +336,19 @@ public final class BuildEngine {
         // Only DB reads and CPU work happen here — no graph mutations, no cascades.
         let computedResults: [BatchComputeResult] = await withTaskGroup(of: BatchComputeResult?.self) { group in
 
-            for rawNode in rawNodes {
+            for nodeRecord in nodeRecords {
                 group.addTask {
 
-                    guard let nodeFunction = try? rawNode.makeNode(),
-                          type(of: nodeFunction).descriptor.hasInputs else {
+                    guard let node = try? nodeRecord.makeNode(),
+                          type(of: node).descriptor.hasInputs else {
                         return nil
                     }
 
-                    guard let result = nodeFunction.tryComputeOutput() else {
+                    guard let result = node.tryComputeOutput() else {
                         return nil
                     }
 
-                    return BatchComputeResult(node: rawNode,
+                    return BatchComputeResult(nodeRecord: nodeRecord,
                                               output: result.output,
                                               cacheKey: result.cacheKey,
                                               computeStart: result.computeStart,
@@ -370,8 +370,8 @@ public final class BuildEngine {
         // Unschedule every fetched node BEFORE any writes so that cascade
         // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
         // by a later unschedule in the loop below.
-        for rawNode in rawNodes {
-            try rawNode.setScheduled(false)
+        for nodeRecord in nodeRecords {
+            try nodeRecord.setScheduled(false)
         }
 
         // Phase 2: apply outputs sequentially (all graph mutations happen here).
@@ -388,21 +388,21 @@ public final class BuildEngine {
                 // Skip nodes that were cascade-deleted by an earlier phase-2 step.
                 // makeNode() constructs from the in-memory NodeRecord struct and does not
                 // re-query the DB, so this explicit existence check is required.
-                guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
-                    Debug.warn("node \(result.node.id ?? -1) deleted during processing")
+                guard let nodeID = result.nodeRecord.id, (try? database.node.select(nodeID: nodeID)) != nil else {
+                    Debug.warn("node \(result.nodeRecord.id ?? -1) deleted during processing")
                     continue
                 }
 
-                let nodeFunction = try result.node.makeNode()
-                guard type(of: nodeFunction).descriptor.hasInputs else {
+                let node = try result.nodeRecord.makeNode()
+                guard type(of: node).descriptor.hasInputs else {
                     continue
                 }
 
                 do {
-                    try nodeFunction.writeToOutputs(output: result.output)
+                    try node.writeToOutputs(output: result.output)
 
                     if !result.fromCache {
-                        try? nodeFunction.saveCacheForAllInputsAndOutputs(
+                        try? node.saveCacheForAllInputsAndOutputs(
                             cacheKey: result.cacheKey,
                             processingDuration: Date.now.timeIntervalSince(result.computeStart),
                             output: result.output
@@ -413,29 +413,29 @@ public final class BuildEngine {
                         // Cached output is stale — fall back to a full sequential reprocess
                         // using the current (post-phase-2) graph state.
                         Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
-                        try nodeFunction.processWithPreCheck()
+                        try node.processWithPreCheck()
                     } else {
                         throw error
                     }
                 }
             } catch {
-                Debug.warn("error processing node \(result.node.id ?? -1): \(error)")
+                Debug.warn("error processing node \(result.nodeRecord.id ?? -1): \(error)")
             }
         }
 
         return true
     }
 
-    func processOneNode(_ node: NodeRecord) throws {
-        try node.setScheduled(false)
+    func processOneNode(_ nodeRecord: NodeRecord) throws {
+        try nodeRecord.setScheduled(false)
 
-        let nodeFunction = try node.makeNode()
-        guard type(of: nodeFunction).descriptor.hasInputs else {
+        let node = try nodeRecord.makeNode()
+        guard type(of: node).descriptor.hasInputs else {
             Debug.warn("attempted to process a node that declares no inputs")
             return
         }
 
-        try nodeFunction.processWithPreCheck()
+        try node.processWithPreCheck()
     }
 }
 
@@ -461,9 +461,9 @@ extension BuildEngine {
 
         var deletedCount = 0
 
-        for node in pendingNodes {
+        for nodeRecord in pendingNodes {
 
-            guard let nodeID = node.id else {
+            guard let nodeID = nodeRecord.id else {
                 continue
             }
 
@@ -472,17 +472,17 @@ extension BuildEngine {
                 continue
             }
 
-            guard let nodeFunction = try? node.makeNode() else {
+            guard let node = try? nodeRecord.makeNode() else {
                 continue
             }
 
             // If the node has been re-wired since being marked, clear the flag and skip.
-            guard (try? nodeFunction.hasNoOutputWires()) == true else {
+            guard (try? node.hasNoOutputWires()) == true else {
                 try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
                 continue
             }
 
-            guard (try? nodeFunction.canBeDeleted()) == true else {
+            guard (try? node.canBeDeleted()) == true else {
                 try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
                 continue
             }
@@ -493,9 +493,9 @@ extension BuildEngine {
                 try? inputWire.deleteWire(database: database)
             }
 
-            if (try? nodeFunction.hasNoOutputWires()) == true &&
-               (try? nodeFunction.hasNoInputWires()) == true {
-                try? nodeFunction.delete()
+            if (try? node.hasNoOutputWires()) == true &&
+               (try? node.hasNoInputWires()) == true {
+                try? node.delete()
                 deletedCount += 1
             }
         }

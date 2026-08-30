@@ -56,7 +56,7 @@ public struct ToolOutput {
     public let write: (_ filePath: String, _ data: [UInt8]) -> Void
 
     // Spelled out because a public struct's memberwise initializer is internal, and a
-    // node function in another package has to be able to construct one.
+    // node in another package has to be able to construct one.
     public init(logError: @escaping (_ error: String) -> Void,
                 logMessage: @escaping (_ message: String) -> Void,
                 write: @escaping (_ filePath: String, _ data: [UInt8]) -> Void) {
@@ -118,7 +118,7 @@ public class ToolExecutorRegistry {
     }
 
     /// Swappable so a test can install a registry holding fake executors without
-    /// threading a registry through every node function.
+    /// threading a registry through every node.
     public static var instance = ToolExecutorRegistry()
 
     private var toolsByDescriptor: [ToolDescriptor: ToolExecutor] = [:]

@@ -67,7 +67,7 @@ extension BuildEngine {
 
             // The output root is preserved but every child under it was just deleted.
             // Its manifest is built from the child list, and the bulk delete above
-            // bypasses nodeFunction.delete() — the only path that notifies a parent —
+            // bypasses node.delete() — the only path that notifies a parent —
             // so refresh it here or it keeps advertising products that are gone.
             if let outputFolder = try? outputRoot.makeNode() as? Folder {
                 try outputFolder.refreshOutputs()

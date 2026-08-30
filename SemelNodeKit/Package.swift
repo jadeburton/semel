@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// The node-authoring API: what a node function programs against, and nothing more.
+// The node-authoring API: what a node programs against, and nothing more.
 //
 // It deliberately does not depend on the engine. That absent dependency is what lets a
 // toolchain package (SemelSwift, SemelClang) be written without being able to refer to the

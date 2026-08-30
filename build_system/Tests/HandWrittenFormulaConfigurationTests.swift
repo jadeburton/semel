@@ -119,10 +119,10 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         guard let configText else { return }
 
         var found = 0
-        for node in try database.node.select(kind: StaticFile.kind)
-        where node.properties["path"]?.hasSuffix("clang.cfg") == true {
+        for nodeRecord in try database.node.select(kind: StaticFile.kind)
+        where nodeRecord.properties["path"]?.hasSuffix("clang.cfg") == true {
             found += 1
-            try node.writeToOutputPort(StaticFile.outputPort, value: .value(try configText.intern()))
+            try nodeRecord.writeToOutputPort(StaticFile.outputPort, value: .value(try configText.intern()))
         }
         XCTAssertGreaterThan(found, 0, "nothing in the graph reads the config file")
 
@@ -133,13 +133,13 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     /// Drives one kind directly. The tools themselves must not run — there is no real source
     /// file — so this stops at the two node types between the file and a tool.
     private func processEveryNode(ofKind kind: UInt) throws {
-        for node in try database.node.select(kind: kind) {
-            let function = try node.makeNode()
+        for nodeRecord in try database.node.select(kind: kind) {
+            let node = try nodeRecord.makeNode()
             var inputValues: [String: [String: NodeValue]] = [:]
-            for port in function.descriptor.inputPorts {
-                inputValues[port.name] = try node.readFromInputPort(port.name)
+            for port in node.descriptor.inputPorts {
+                inputValues[port.name] = try nodeRecord.readFromInputPort(port.name)
             }
-            try function.writeToOutputs(output: try function.process(input: ProcessInput(inputValues: inputValues)))
+            try node.writeToOutputs(output: try node.process(input: ProcessInput(inputValues: inputValues)))
         }
     }
 
@@ -147,9 +147,9 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     /// `init(properties:)` is handed at process time.
     private func settingsReaching(kind: UInt) throws -> [String: String] {
         let nodes = try database.node.select(kind: kind)
-        let node = try XCTUnwrap(nodes.first, "no node of kind \(kind) in the graph")
+        let nodeRecord = try XCTUnwrap(nodes.first, "no node of kind \(kind) in the graph")
 
-        let wires = try node.readFromInputPort("configuration")
+        let wires = try nodeRecord.readFromInputPort("configuration")
         XCTAssertFalse(wires.isEmpty, "nothing is wired to the configuration port of kind \(kind)")
 
         var merged: [String: String] = [:]

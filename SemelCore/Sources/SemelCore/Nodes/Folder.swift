@@ -11,7 +11,7 @@ import SemelNodeKit
 public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
-    // The values live in SemelNodeKit, where a node function can reach them without
+    // The values live in SemelNodeKit, where a node can reach them without
     // depending on the engine. Kept here under their long-standing names so the call
     // sites read as they always have.
     public static let inputFileSystemName  = FileSystemName.input
@@ -60,7 +60,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// Whether anything under this folder objects to being collected.
     ///
     /// Reads pinned state per kind in one query, exactly as `buildManifest` does, rather than
-    /// building a node function per child and asking it. Asking each child directly is
+    /// building a node per child and asking it. Asking each child directly is
     /// expensive four ways at once: whole `NodeRecord` rows with their properties decoded, a node
     /// function constructed per child, an output-port read inside each `isPinned`, and no way
     /// to stop at the first objection. This recurses, so that is the cost *per level* — during
@@ -99,8 +99,8 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
         // Descend only into the subfolders that did not already answer for themselves.
         for subfolderID in unpinnedSubfolderIDs {
-            let node = try database.node.select(nodeID: subfolderID)
-            guard let subfolder = try node.makeNode() as? Folder else { continue }
+            let nodeRecord = try database.node.select(nodeID: subfolderID)
+            guard let subfolder = try nodeRecord.makeNode() as? Folder else { continue }
             guard try subfolder.everyChildCanBeDeleted() else { return false }
         }
 
@@ -239,7 +239,7 @@ extension Folder {
     ///
     /// These roots are a property of the graph, not of the engine: each is just the Folder
     /// node whose path is "input:" or "output:", found or created by shape like any other
-    /// node. They live here rather than on BuildEngine so a node function does not have to
+    /// node. They live here rather than on BuildEngine so a node does not have to
     /// reach for the engine — and so the engine is not a dependency of the layer below it.
     public static var inputFileSystem: NodeRecord {
         get throws { try root(named: inputFileSystemName) }

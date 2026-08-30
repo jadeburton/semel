@@ -501,10 +501,12 @@ turned `fromNodeFunction` into `fromNode`, colliding with the record already nam
 the collision was a compile error; the rest needed reading. Assume any future rename here
 costs a prose audit, not a sweep.
 
-*Still open.* 45 locals still spell `nodeFunction` while holding a `Node`; renaming them to
-`node` shadows the `NodeRecord` often named `node` in the same scope, which Swift accepts
-silently. `ToolExecutor` → `ToolRunner` and `ConfigSubset` are untouched; `isPinned` is
-deliberately kept.
+Locals follow the type: a `NodeRecord` is `nodeRecord`, a `Node` is `node`. Names that say
+*which* node — `toNode`, `fromNode`, `child`, `consumer`, `sourceNode`, `folder` — keep their
+role name, which is the divergence the convention allows for.
+
+*Still open.* `ToolExecutor` → `ToolRunner` and `ConfigSubset` are untouched; `isPinned` is
+deliberately kept. `makeNodeCast` (`NodeSupport.swift`) has no callers.
 
 **B-45** `open` — **Database write failures are not classified as unrecoverable.**
 `UnrecoverableError.swift` used to claim they were; `db5fcb7` corrected the claim rather than

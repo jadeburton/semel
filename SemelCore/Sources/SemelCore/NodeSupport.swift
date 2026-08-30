@@ -56,7 +56,7 @@ extension NodeRecord {
         try (PolyFactory.type(kind: kind) as! Node.Type).init(thisNode: self)
     }
 
-    /// Returns the node function as `Any` so app-layer callers can pattern-match
+    /// Returns the node as `Any` so app-layer callers can pattern-match
     /// against concrete public types (e.g. `as? UserDeletable`, `as? FileType`).
     public func nodeAsAny() throws -> Any {
         try makeNode()
@@ -70,27 +70,27 @@ extension NodeRecord {
 
     static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> NodeRecord {
 
-        var node = NodeRecord(parentNodeID: nil,
+        var nodeRecord = NodeRecord(parentNodeID: nil,
                         kind: kind,
                         name: nil,
                         properties: properties,
                         scheduled: false,
                         searchKey: searchKey)
 
-        node.id = try database.node.insert(node)
+        nodeRecord.id = try database.node.insert(nodeRecord)
 
-        let nodeFunction = try node.makeNode()
+        let node = try nodeRecord.makeNode()
 
-        node.name = nodeFunction.thisNode.name
-        node.parentNodeID = nodeFunction.thisNode.parentNodeID
+        nodeRecord.name = node.thisNode.name
+        nodeRecord.parentNodeID = node.thisNode.parentNodeID
 
-        let nodeID = try node.requireID()
-        assert(node.parentNodeID != nodeID, "a node cannot be its own parent")
+        let nodeID = try nodeRecord.requireID()
+        assert(nodeRecord.parentNodeID != nodeID, "a node cannot be its own parent")
 
-        // The row was inserted above before the node function could report its name, so
-        // the uniqueness check can only happen here — and a rejection has to back that
+        // The row was inserted above before the node could report its name, so the
+        // uniqueness check can only happen here — and a rejection has to back that
         // row out, or a failed creation leaves an unreachable orphan behind.
-        if let name = node.name, let parentNodeID = node.parentNodeID {
+        if let name = nodeRecord.name, let parentNodeID = nodeRecord.parentNodeID {
             let siblings = try database.node.select(named: name, parentNodeID: parentNodeID)
             if let existing = siblings.first(where: { $0.id != nodeID }) {
                 _ = try? database.node.delete(nodeID: nodeID)
@@ -101,32 +101,32 @@ extension NodeRecord {
             }
         }
 
-        try node.writePendingToAllOutputsOfNode()
+        try nodeRecord.writePendingToAllOutputsOfNode()
 
-        let output = try nodeFunction.didCreate() ?? nodeFunction.buildErrorOutput(withError: NodeError.initializing)
+        let output = try node.didCreate() ?? node.buildErrorOutput(withError: NodeError.initializing)
 
-        try nodeFunction.writeToOutputs(output: output)
+        try node.writeToOutputs(output: output)
 
-        if type(of: nodeFunction).descriptor.hasInputs {
-            try node.setScheduled(true)
+        if type(of: node).descriptor.hasInputs {
+            try nodeRecord.setScheduled(true)
         }
 
         if searchKey == nil {
             do {
-                node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: (try node.requireID())).asString(omitOutputPort: true)
+                nodeRecord.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: (try nodeRecord.requireID())).asString(omitOutputPort: true)
             } catch {
-                Debug.warn("failed to patch in searchKey (\(error)) — a duplicate node? searchKey = \(node.searchKey ?? "(null)")")
+                Debug.warn("failed to patch in searchKey (\(error)) — a duplicate node? searchKey = \(nodeRecord.searchKey ?? "(null)")")
                 throw error
             }
         }
 
-        try database.node.update(node)
+        try database.node.update(nodeRecord)
 
-        assert(node.searchKey != nil)
+        assert(nodeRecord.searchKey != nil)
 
-        try nodeFunction.notifyParentThisChildAdded()
+        try node.notifyParentThisChildAdded()
 
-        return node
+        return nodeRecord
     }
 
     /// Best-effort full path of a would-be child, for error messages only. Falls back to
@@ -225,10 +225,10 @@ extension NodeRecord {
     }
 
     func setScheduled(_ scheduled: Bool) throws {
-        let nodeFunction = try self.makeNode()
+        let node = try self.makeNode()
 
-        guard type(of: nodeFunction).descriptor.hasInputs else {
-            Debug.warn("ignoring a request to schedule \(self) / \(type(of: nodeFunction)), which declares no inputs")
+        guard type(of: node).descriptor.hasInputs else {
+            Debug.warn("ignoring a request to schedule \(self) / \(type(of: node)), which declares no inputs")
             return
         }
 

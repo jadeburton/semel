@@ -1,7 +1,7 @@
 // Node.swift
 // SemelNodeKit
 //
-// What a node function is: the ports it declares, what `process` receives and returns, and
+// What a node is: the ports it declares, what `process` receives and returns, and
 // the lifecycle callbacks the engine will make. Everything here is declaration — the
 // engine's implementation of it, which reads and writes the graph, stays in the engine.
 
@@ -29,7 +29,7 @@ public protocol Node: WithKind, WithChildren {
     /// Called only when `descriptor.hasInputs`.
     ///
     /// A source node has to declare this anyway, and deliberately gets no default: a default
-    /// would also cover a node function that *does* take inputs and forgot to implement it,
+    /// would also cover a node that *does* take inputs and forgot to implement it,
     /// turning a compile error into a surprise at run time.
     func process(input: ProcessInput) throws -> ProcessOutput
 }

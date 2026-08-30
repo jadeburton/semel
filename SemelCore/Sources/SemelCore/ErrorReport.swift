@@ -21,14 +21,14 @@ public enum ErrorReport {
     /// is the last resort rather than the first: a path if the node has one, the project file
     /// if it is a builder, the type name otherwise.
     public static func label(forNodeID nodeID: ObjectID, database: DatabaseLayer) -> String {
-        guard let node = try? database.node.select(nodeID: nodeID),
-              let nodeFunction = try? node.nodeAsAny() else {
+        guard let nodeRecord = try? database.node.select(nodeID: nodeID),
+              let node = try? nodeRecord.nodeAsAny() else {
             return "Node \(nodeID)"
         }
 
-        let typeName = String(describing: type(of: nodeFunction))
+        let typeName = String(describing: type(of: node))
 
-        if let path = node.properties["path"] {
+        if let path = nodeRecord.properties["path"] {
             return "\(typeName)  '\(path)'"
         }
 

@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// The Swift toolchain as node functions.
+// The Swift toolchain as nodes.
 //
 // Depends on SemelNodeKit and *not* on the engine. That absent dependency is the point of
 // the split: this package cannot reach the graph even by accident, so the engine stays

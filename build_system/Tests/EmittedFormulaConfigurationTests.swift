@@ -158,10 +158,10 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     /// have nothing to do with what is being asserted.
     private func supplyConfigFile() throws {
         var configFilesFound = 0
-        for node in try database.node.select(kind: StaticFile.kind) {
-            guard node.properties["path"]?.hasSuffix(SwiftFormulaConverter.configFileName) == true else { continue }
+        for nodeRecord in try database.node.select(kind: StaticFile.kind) {
+            guard nodeRecord.properties["path"]?.hasSuffix(SwiftFormulaConverter.configFileName) == true else { continue }
             configFilesFound += 1
-            try node.writeToOutputPort(StaticFile.outputPort, value: .value(try configFile.intern()))
+            try nodeRecord.writeToOutputPort(StaticFile.outputPort, value: .value(try configFile.intern()))
         }
         XCTAssertGreaterThan(configFilesFound, 0, "nothing in the graph reads a config file")
 
@@ -170,21 +170,21 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     }
 
     private func processEveryNode(ofKind kind: UInt) throws {
-        for node in try database.node.select(kind: kind) {
-            let function = try node.makeNode()
+        for nodeRecord in try database.node.select(kind: kind) {
+            let node = try nodeRecord.makeNode()
             var inputValues: [String: [String: NodeValue]] = [:]
-            for port in function.descriptor.inputPorts {
-                inputValues[port.name] = try node.readFromInputPort(port.name)
+            for port in node.descriptor.inputPorts {
+                inputValues[port.name] = try nodeRecord.readFromInputPort(port.name)
             }
-            try function.writeToOutputs(output: try function.process(input: ProcessInput(inputValues: inputValues)))
+            try node.writeToOutputs(output: try node.process(input: ProcessInput(inputValues: inputValues)))
         }
     }
 
     /// The merged `key=value` text arriving on one node's `configuration` port — the exact
     /// value the node's own `init(properties:)` is handed at process time.
-    private func settingsReaching(_ node: NodeRecord, port: String) throws -> [String: String] {
-        let wires = try node.readFromInputPort(port)
-        XCTAssertFalse(wires.isEmpty, "nothing is wired to \(node.kind)'s \(port) port")
+    private func settingsReaching(_ nodeRecord: NodeRecord, port: String) throws -> [String: String] {
+        let wires = try nodeRecord.readFromInputPort(port)
+        XCTAssertFalse(wires.isEmpty, "nothing is wired to \(nodeRecord.kind)'s \(port) port")
 
         var merged: [String: String] = [:]
         for wireKey in wires.keys.sorted() {
@@ -209,22 +209,22 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
         var checked: [String] = []
 
-        for node in try database.node.select(kind: SwiftCompilerTool.kind) {
-            let settings = try settingsReaching(node, port: SwiftCompilerTool.configuration)
+        for nodeRecord in try database.node.select(kind: SwiftCompilerTool.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftCompilerTool.configuration)
             XCTAssertNoThrow(try SwiftCompilerToolConfiguration(properties: settings),
                              "compiler for \(settings["moduleName"] ?? "?")")
             checked.append("compiler:\(settings["moduleName"] ?? "?")")
         }
 
-        for node in try database.node.select(kind: SwiftLinkerTool.kind) {
-            let settings = try settingsReaching(node, port: SwiftLinkerTool.configuration)
+        for nodeRecord in try database.node.select(kind: SwiftLinkerTool.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftLinkerTool.configuration)
             XCTAssertNoThrow(try SwiftLinkerToolConfiguration(properties: settings),
                              "linker for \(settings["outputName"] ?? "?")")
             checked.append("linker:\(settings["outputName"] ?? "?")")
         }
 
-        for node in try database.node.select(kind: SwiftPackageReaderTool.kind) {
-            let settings = try settingsReaching(node, port: SwiftPackageReaderTool.configuration)
+        for nodeRecord in try database.node.select(kind: SwiftPackageReaderTool.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftPackageReaderTool.configuration)
             XCTAssertNoThrow(try SwiftPackageReaderToolConfiguration(properties: settings),
                              "package reader")
             checked.append("packageReader")
@@ -253,8 +253,8 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         try processEveryNode(ofKind: ConfigSubset.kind)
         try processEveryNode(ofKind: Configuration.kind)
 
-        for node in try database.node.select(kind: SwiftPackageReaderTool.kind) {
-            let settings = try settingsReaching(node, port: SwiftPackageReaderTool.configuration)
+        for nodeRecord in try database.node.select(kind: SwiftPackageReaderTool.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftPackageReaderTool.configuration)
             XCTAssertThrowsError(try SwiftPackageReaderToolConfiguration(properties: settings)) { error in
                 let message = String(describing: error)
                 XCTAssertTrue(message.contains("swift.packageReader.toolDescriptor.name"), "got \(message)")
@@ -276,8 +276,8 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         try supplyConfigFile()
 
         for kind in [SwiftCompilerTool.kind, SwiftLinkerTool.kind, SwiftPackageReaderTool.kind] {
-            for node in try database.node.select(kind: kind) {
-                let searchKey = node.searchKey ?? ""
+            for nodeRecord in try database.node.select(kind: kind) {
+                let searchKey = nodeRecord.searchKey ?? ""
                 XCTAssertFalse(searchKey.contains("test-swiftc"), "got:\n\(searchKey)")
                 XCTAssertFalse(searchKey.contains("test-swift"), "got:\n\(searchKey)")
             }

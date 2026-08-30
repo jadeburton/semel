@@ -15,7 +15,7 @@ import Foundation
 import SemelNodeKit
 import XCTest
 
-/// Base class for every test here: swaps the process-globals a node function can reach.
+/// Base class for every test here: swaps the process-globals a node can reach.
 class SemelClangTestCase: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
