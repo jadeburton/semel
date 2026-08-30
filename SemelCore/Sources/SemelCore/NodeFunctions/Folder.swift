@@ -195,13 +195,46 @@ extension Folder {
         get throws { try root(named: outputFileSystemName) }
     }
 
-    // BUG: this is extremely slow. TODO cache
+    /// Node IDs of the two file-system roots, so the common case is one indexed read by
+    /// primary key instead of a graph-shape lookup wrapped in a write transaction.
+    ///
+    /// `root(named:)` is on a very hot path: every `resolveFolderID` goes through it, which
+    /// is every `StaticFile` and every `Folder` init. The searchKey lookup it did was itself
+    /// cheap — `Node.searchKey` is unique-indexed — but `findOrCreateMatchingNode` wraps
+    /// find-and-create in a transaction, so the read paid for a write it never did.
+    ///
+    /// The ID is cached rather than the Node: `Node` is a mutable value type, and handing
+    /// out a stale copy invites writing it back.
+    private static var cachedRootIDs: [String: ObjectID] = [:]
+
     private static func root(named name: String) throws -> Node {
+        // Verified, not trusted, because a cached ID can be wrong in two ways.
+        //
+        // It can point at nothing: the roots are *not* permanent. `canBePinned()` asks
+        // whether the containing path is under `input:`, and a root's containing path is
+        // empty — so it is false for the roots themselves, and a root with no children and
+        // no output wires is collectable. The collector takes it and the next caller has to
+        // build it again, which is why this is find-*or-create*.
+        //
+        // Worse, it can point at the wrong node. Every test builds a fresh database, and a
+        // fresh database reissues low rowids, so an ID carried over from the previous one
+        // resolves to a real node that is not this root. Checking kind and path costs a
+        // dictionary lookup on a row already fetched, and makes the cache correct without
+        // depending on every test target remembering to clear it — which the CLI target,
+        // having no TestGlobals of its own, would not have done.
+        if let cachedID = cachedRootIDs[name],
+           let cached = try? DatabaseLayer.shared.node.select(nodeID: cachedID),
+           cached.kind == Folder.kind,
+           cached.properties["path"] == name {
+            return cached
+        }
+
         let graphShape = GraphShapeNode(typeName: "Folder",
                                         properties: [.init(key: "path", value: name)],
                                         inputs: [],
                                         outputs: [])
         let (rootNode, _) = try graphShape.findOrCreateMatchingNode()
+        cachedRootIDs[name] = try rootNode.requireID()
         return rootNode
     }
 }
