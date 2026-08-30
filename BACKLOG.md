@@ -342,42 +342,34 @@ if multiple users might share it, without the full auth apparatus for now.
 Writes its values under `ClangPreprocessorTool.output` and `.infoLog` rather than its own.
 Works only because all four constants are the same strings.
 
-**B-42** `open` — **How inheritable configuration works, across both toolchains.**
-Shelved mid-design on 2026-08-26 — easy to get wrong, so parked deliberately rather than
-guessed at. What exists today still works; this is about the shape it should settle into.
+**B-42** `doing` — **How configuration works, across both toolchains.**
+Design settled and written up: `docs/superpowers/specs/2026-08-30-semel-configuration-design.md`.
+Not yet implemented.
 
-*Where it stands.* `semel.config` reaches Swift through `SwiftFormulaConverter`, which
-resolves it and writes the values into the formula text as node **properties**. `SemelClang`
-has no route at all: a `.fmla` project has no converter, so the `settingNamespace` and
-`acceptedSettings` the three Clang tools now declare (`8a9fd0e`) are inert. Bridging the two
-kept producing invented machinery — a path property to anchor the ancestor walk, a registry,
-a new node type — which is the signal that the underlying model is unsettled, not that the
-bridge needs more parts.
+*The shape.* Inheritance is killed in both dimensions — no ancestor walk, no cross-tool
+defaults. A configuration is one file, copied and edited rather than composed. Every key lives
+under a global `<domain>.<node>.<key>` namespace designed so a single master config can hold
+everything without collision, with `<node>` derived from the node type name and pinnable when
+a rename would otherwise break users.
 
-*Settled in the discussion.* A node's identity should be **which configuration it is wired
-to**, never the values inside it. Debug and release side by side then falls out of two
-`Configuration` nodes composed differently — no need for settings to be identity. But that
-only holds if values arrive as **file contents on wires**: a searchKey renders the whole
-upstream shape, so a value written as a property of a `Configuration` node lands in every
-consuming tool's searchKey just as surely as one written directly on the tool. So:
+A node reads configuration through a selector node that names a prefix and takes the file on a
+wire — so identity is *which file and which slice*, and the values themselves are never in a
+searchKey. That fixes the original defect (settings as identity, orphaning cache on every
+edit), gives SemelClang a route for the first time, and answers the 10,000-compiler problem:
+an unrelated key changing leaves a selector's output byte-identical, and `writeToOutputPort`
+stops the cascade there.
 
-    identity = which files compose into this configuration, and what it is called
-    value    = what those files currently say
+It also dissolves `acceptedSettings` — the prefix in the graph is the accepted set — and
+recovers typo reporting in a better form, by asking the graph which prefixes anyone selected
+and reporting the keys nobody claimed.
 
-That also replaces `acceptedSettings` with a principled boundary rather than a hand-kept key
-list: a literal in formula text says what a thing *is* (`moduleName: 'Lib'`, from the
-manifest — identity); a file says what environment it is built in (never identity).
+*Costs accepted knowingly:* `sdkVersion` written once per node that reads it, and no
+per-target overrides, which would be most-specific-wins and therefore inheritance again.
 
-*The open question.* Which axis inheritance runs on. What is built is **folder ancestry** —
-a package at `input:/a/b/pkg` implicitly picks up `semel.config` from `b`, `a`, then the
-root. The debug/release case instead wants **explicit composition** — a base config that two
-variants name and override. "Both" is not free: a variant would silently also absorb whatever
-sits above it positionally, and the two orderings need reconciling.
-
-*Also unresolved, and downstream of the above.* Where filtering sits. It cannot be inside the
-tool: a cache key aggregates every input port's wire values (`Cache.swift:38`), so unfiltered
-text on the wire has already rescheduled the node and changed its key before the tool sees
-it. Filtering has to happen upstream of the wire into the tool.
+*Blocked on this:* the hardcoded fallbacks at `ClangLinkerTool.swift:143` and
+`SwiftCompilerTool.swift:29`. They are ambient state entering by another door, and the spec's
+last open question — whether a missing config file means "empty" and lets those literals win
+silently — should be settled with this work rather than after it.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
