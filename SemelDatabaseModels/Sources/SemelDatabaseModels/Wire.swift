@@ -45,7 +45,7 @@ public struct WireDataAccess: DataAccessType {
     }
 
     public func selectAll() throws -> [Wire] {
-        print("WARNING: expensive selectAllWires call")
+        Debug.warn("expensive selectAllWires call")
         return try read { db in try Wire.fetchAll(db) }
     }
 

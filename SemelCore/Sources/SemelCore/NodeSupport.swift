@@ -115,7 +115,7 @@ extension Node {
             do {
                 node.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: (try node.requireID())).asString(omitOutputPort: true)
             } catch {
-                print("WARNING: failed to patch-in searchKey (\(error)), are we attempting to create a duplicate Node? searchKey = \(node.searchKey ?? "(null)")")
+                Debug.warn("failed to patch in searchKey (\(error)) — a duplicate node? searchKey = \(node.searchKey ?? "(null)")")
                 throw error
             }
         }
@@ -228,7 +228,7 @@ extension Node {
         let nodeFunction = try self.nodeFunction()
 
         guard type(of: nodeFunction).descriptor.hasInputs else {
-            print("Attempted to schedule a \(self) / \(type(of: nodeFunction)) that cannot be scheduled because it does not accept inputs. Ignoring.")
+            Debug.warn("ignoring a request to schedule \(self) / \(type(of: nodeFunction)), which declares no inputs")
             return
         }
 

@@ -93,7 +93,7 @@ public final class BuildEngine {
                 try await engine.processLoop()
             } catch {
                 // processLoop is not expected to throw; log and surface if it does.
-                print("BuildEngine: processLoop terminated with error: \(error)")
+                Debug.warn("processLoop terminated with error: \(error)")
             }
         }
     }
@@ -110,7 +110,7 @@ public final class BuildEngine {
             } catch {
                 // Surface DB / processing errors instead of swallowing them.
                 FatalErrors.check(error)
-                print("BuildEngine: error during processAllNodes: \(error)")
+                Debug.warn("error during processAllNodes: \(error)")
             }
 
             try cleanUpAllPendingDeletions()
@@ -389,7 +389,7 @@ public final class BuildEngine {
                 // nodeFunction() constructs from the in-memory Node struct and does not
                 // re-query the DB, so this explicit existence check is required.
                 guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
-                    print("WARNING: node \(try result.node.requireID()) deleted during processing")
+                    Debug.warn("node \(result.node.id ?? -1) deleted during processing")
                     continue
                 }
 
@@ -412,14 +412,14 @@ public final class BuildEngine {
                     if result.fromCache {
                         // Cached output is stale — fall back to a full sequential reprocess
                         // using the current (post-phase-2) graph state.
-                        print("WARNING: writeToOutputs failed for cached output, reprocessing: \(error)")
+                        Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
                         try nodeFunction.processWithPreCheck()
                     } else {
                         throw error
                     }
                 }
             } catch {
-                print("BuildEngine: error processing node \(result.node.id ?? -1): \(error)")
+                Debug.warn("error processing node \(result.node.id ?? -1): \(error)")
             }
         }
 
@@ -431,7 +431,7 @@ public final class BuildEngine {
 
         let nodeFunction = try node.nodeFunction()
         guard type(of: nodeFunction).descriptor.hasInputs else {
-            print("WARNING: attempted to process a Node that declares no inputs")
+            Debug.warn("attempted to process a node that declares no inputs")
             return
         }
 
@@ -500,11 +500,9 @@ extension BuildEngine {
             }
         }
 
-        #if DEBUG
         if deletedCount > 0 {
-            print("Removed \(deletedCount) node(s)")
+            Debug.log("removed \(deletedCount) node(s)")
         }
-        #endif
 
         return deletedCount
     }

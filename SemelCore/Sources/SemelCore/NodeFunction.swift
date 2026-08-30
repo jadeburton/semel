@@ -67,7 +67,7 @@ extension NodeFunction {
     /// Internal rather than private so a test can drive this boundary directly.
     func processWithCatch(input: ProcessInput) -> ProcessOutput {
         do {
-            print("process: \(type(of: self)), nodeID \(try requireID())")
+            Debug.log("\(type(of: self)), nodeID \(thisNode.id ?? -1)")
             return try process(input: input)
         } catch {
             // Filing a full disk as "node 47 failed" hides the real problem, and every
@@ -101,7 +101,7 @@ extension NodeFunction {
             } catch {
                 // Cached output is stale or the graph topology changed — fall
                 // through and reprocess so the node does not stay stuck.
-                print("WARNING: writeToOutputs failed for cached output, reprocessing: \(error)")
+                Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
             }
         }
 
@@ -182,16 +182,16 @@ extension NodeFunction {
         let numberOfOutputPorts = try database.outputPort.selectAll(nodeID: (try requireID())).count
 
         if numberOfOutputPorts != output.outputValues.count {
-            print("WARNING: Mismatch between number of output values (\(output.outputValues.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
+            Debug.warn("mismatch between \(output.outputValues.count) output values and \(numberOfOutputPorts) output ports for node \(thisNode)")
         }
 
         if numberOfOutputPorts != descriptor.outputPorts.count {
-            print("WARNING: Mismatch between number of outputs defined in the Descriptor (\(descriptor.outputPorts.count)) and number of output ports (\(numberOfOutputPorts)) for node \(thisNode)")
+            Debug.warn("descriptor declares \(descriptor.outputPorts.count) outputs but the node has \(numberOfOutputPorts) output ports: \(thisNode)")
         }
 
         for (outputPort, outputValue) in output.outputValues {
             if outputValue.isPending {
-                print("WARNING: Output left Pending for node \(thisNode): outputPort \(outputPort)")
+                Debug.warn("output left pending for node \(thisNode): outputPort \(outputPort)")
             }
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
@@ -202,7 +202,7 @@ extension NodeFunction {
             }
         } catch {
             #if DEBUG
-            print("applyExpectationConfiguration failed: \(error)")
+            Debug.warn("applyExpectationConfiguration failed: \(error)")
             #endif
             for outputPort in descriptor.outputPorts {
                 try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(messageDataObjectHash: "\(error)".intern())))
@@ -280,13 +280,13 @@ extension NodeFunction {
             let wireNameSymbolID = wireName.asSymbolID()
             try database.withTransaction {
                 guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) else {
-                    print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
+                    Debug.warn("no node matches expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
                     return
                 }
                 // fromSymbolID is nil when the expectation string has no .outputPort suffix,
                 // which is invalid for wiring — expectation strings must include a port.
                 guard let fromSymbolID else {
-                    print("applyExpectationConfiguration: expectation '\(expectationString)' has no output port — cannot wire")
+                    Debug.warn("expectation '\(expectationString)' has no output port — cannot wire")
                     return
                 }
                 try Wire.connectWire(database: database,

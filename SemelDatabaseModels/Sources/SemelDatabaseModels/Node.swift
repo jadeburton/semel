@@ -192,7 +192,7 @@ public struct NodeDataAccess: DataAccessType {
     }
 
     public func selectAll() throws -> [Node] {
-        print("WARNING: expensive selectAllNodes call")
+        Debug.warn("expensive selectAllNodes call")
         return try read { db in try Node.fetchAll(db) }
     }
 

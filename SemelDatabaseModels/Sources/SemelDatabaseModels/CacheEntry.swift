@@ -35,7 +35,7 @@ public struct CacheEntryDataAccess: DataAccessType {
     }
 
     public func selectAll() throws -> [CacheEntry] {
-        print("WARNING: expensive selectAllCacheEntries call")
+        Debug.warn("expensive selectAllCacheEntries call")
         return try read { db in try CacheEntry.fetchAll(db) }
     }
 

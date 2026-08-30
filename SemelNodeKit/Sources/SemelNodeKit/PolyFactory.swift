@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SemelDatabaseModels
 
 // MARK: - Protocol
 
@@ -82,7 +83,7 @@ public enum PolyFactory {
             return object
         }
 
-        print("ERROR: expected type \(P.self), got \(Swift.type(of: decoded))")
+        Debug.warn("expected type \(P.self), got \(Swift.type(of: decoded))")
         throw PolyFactoryError.unexpectedType
     }
 }

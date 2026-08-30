@@ -76,7 +76,7 @@ extension NodeFunction {
             return nil
         }
 
-        print("using cache: \(type(of: self)), nodeID \(try requireID())")
+        Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
 
         return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
                              inputWireExpectations: decodedCacheEntry.inputWireExpectations)

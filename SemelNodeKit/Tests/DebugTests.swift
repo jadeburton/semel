@@ -11,7 +11,7 @@
 //  how often the autoclosure runs.
 //
 
-@testable import SemelNodeKit
+@testable import SemelDatabaseModels
 import XCTest
 
 final class DebugTests: XCTestCase {
