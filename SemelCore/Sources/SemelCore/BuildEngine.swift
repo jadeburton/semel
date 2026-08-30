@@ -212,7 +212,7 @@ public final class BuildEngine {
 
             guard !unclaimed.isEmpty else { continue }
             let path = (try? database.node.select(nodeID: fileNodeID))?.properties["path"] ?? "config file \(fileNodeID)"
-            unclaimedConfigKeyReporter("⚠️  \(path): key(s) no selector claims: \(unclaimed.joined(separator: ", "))")
+            unclaimedConfigKeyReporter("⚠️  \(path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
         }
     }
 
