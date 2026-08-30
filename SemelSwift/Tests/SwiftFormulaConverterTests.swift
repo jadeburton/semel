@@ -330,7 +330,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertTrue(result.contains("excludedPaths: 'Fixtures,notes.md'"), "got:\n\(result)")
     }
 
-    /// A target with neither list must produce exactly the configuration it did before,
+    /// A target with neither list must add neither key to the compiler's configuration,
     /// or every cached node in every existing project is invalidated for nothing.
     func test_omitsBothListsWhenTheTargetDeclaresNeither() throws {
         let result = try formula(json: """
@@ -342,7 +342,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             }
             """)
 
-        XCTAssertTrue(result.contains("Configuration(moduleName: 'Helper').output"), "got:\n\(result)")
+        XCTAssertTrue(result.contains(
+            "Configuration(moduleName: 'Helper', inherit: ['settings': "
+            + "ConfigSubset(prefix: 'swift.compiler', "
+            + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
+            "got:\n\(result)")
     }
 
     // MARK: - Implicit executable products
@@ -380,8 +384,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             }
             """)
 
-        XCTAssertTrue(result.contains("Configuration(dynamicLibrary: 'false', outputName: 'build_system')"),
-                      "got:\n\(result)")
+        XCTAssertTrue(result.contains(
+            "Configuration(dynamicLibrary: 'false', outputName: 'build_system', inherit: ['settings': "
+            + "ConfigSubset(prefix: 'swift.linker', "
+            + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
+            "got:\n\(result)")
     }
 
     func test_doesNotDuplicateAnExecutableTargetAProductAlreadyDeclares() throws {

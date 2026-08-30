@@ -24,22 +24,8 @@ struct ClangCompilerToolConfiguration {
         std = properties["std"]
     }
 
-    /// How a `semel.config` addresses this tool: `clang.compiler.<key>`.
-    static let settingNamespace = "compiler"
-
-    /// What a `semel.config` may set here.
-    ///
-    /// Narrower than the other two Clang stages: compiling a preprocessed unit needs no SDK
-    /// path and no target, so a file that set either would be adding a property this node
-    /// never reads -- and its properties are its identity.
-    static let acceptedSettings: Set<String> = [
-        "std",
-        "toolDescriptor.name",
-        "toolDescriptor.version",
-        "toolDescriptor.platform",
-        "toolDescriptor.architecture",
-        "toolDescriptor.recursiveHash",
-    ]
+    /// Where this node's settings live in a config file: `clang.compiler.<key>`.
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangCompilerTool")
 }
 
 extension ToolDescriptor {

@@ -2,16 +2,11 @@
 //  ConfigFileTests.swift
 //  SemelSwiftTests
 //
-//  `semel.config` — settings dropped anywhere above a package, in the same key=value
-//  format the wire already carries, so there is no format to convert between.
+//  What the converter emits so a compiled target receives its settings.
 //
-//  Its reason for existing: a setting like the SDK must reach the graph as an ordinary
-//  input. Read from the machine instead, a change to it schedules nothing, so nothing
-//  rebuilds and the stale artifact stays published — see B-29.
-//
-//  Two dimensions of inheritance, one rule for both — most specific wins:
-//    across files    a nearer ancestor overrides a further one, per key
-//    across tools    swift.compiler.X overrides swift.X, for the compiler
+//  The settings themselves are not the converter's business any more. It names a file and a
+//  namespace; what the file says arrives later, on a wire, and never enters a searchKey — which
+//  is what lets a setting change without recreating every node that reads it.
 //
 
 @testable import SemelSwift
@@ -20,10 +15,6 @@ import SemelNodeKit
 import XCTest
 
 final class ConfigFileTests: SemelSwiftTestCase {
-
-    private func makeConverter() throws -> SwiftFormulaConverter {
-        try SwiftFormulaConverter(thisNode: Node(id: 1, kind: SwiftFormulaConverter.kind))
-    }
 
     private let plainManifest = """
         {
@@ -34,218 +25,48 @@ final class ConfigFileTests: SemelSwiftTestCase {
         }
         """
 
-    private func convert(packageFolder: String = "input:/pkg",
-                         configs: [String: String] = [:]) throws -> ProcessOutput {
+    private func formula(packageFolder: String = "input:/pkg") throws -> String {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
-        var configValues = [String: NodeValue]()
-        for (path, text) in configs {
-            configValues[path] = .value(try text.intern())
-        }
-        return try makeConverter().process(input: ProcessInput(inputValues: [
+        let converter = try SwiftFormulaConverter(thisNode: Node(id: 1, kind: SwiftFormulaConverter.kind))
+        let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try plainManifest.intern())],
             SwiftFormulaConverter.externalPackageJSONs: [:],
-            SwiftFormulaConverter.configFiles:          configValues,
         ]))
-    }
-
-    private func formula(_ output: ProcessOutput) throws -> String {
-        try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
+        return try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
             .expectValue().resolveAsString()
     }
 
-    private func infoLog(_ output: ProcessOutput) throws -> String {
-        let hash = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.infoLog]).expectValue()
-        return hash.isEmpty ? "" : try hash.resolveAsString()
+    /// The compiler's settings arrive through a selector naming the compiler's namespace, not
+    /// as literals the converter resolved.
+    func test_theCompilerIsWiredToASelectorForItsOwnNamespace() throws {
+        let result = try formula()
+
+        XCTAssertTrue(result.contains("ConfigSubset(prefix: 'swift.compiler'"), "got:\n\(result)")
     }
 
-    /// The `Configuration(...)` of one emitted node, so an assertion about the compiler
-    /// cannot be satisfied by the linker's configuration or the reverse. Without this the
-    /// broadcasting bug these tests exist to prevent would pass every one of them.
-    private func compilerConfig(in formula: String) throws -> String {
-        try configuration(ofBlockStartingWith: "func compilerLib()", in: formula)
+    func test_theLinkerIsWiredToASelectorForItsOwnNamespace() throws {
+        let result = try formula()
+
+        XCTAssertTrue(result.contains("ConfigSubset(prefix: 'swift.linker'"), "got:\n\(result)")
     }
 
-    private func linkerConfig(in formula: String) throws -> String {
-        try configuration(ofBlockStartingWith: "product ", in: formula)
+    /// The selector reads the config file from the package folder, named in the shape so the
+    /// wire exists whether or not the file has been pushed yet.
+    func test_theSelectorReadsTheConfigFileBesideThePackage() throws {
+        let result = try formula(packageFolder: "input:/a/pkg")
+
+        XCTAssertTrue(result.contains("StaticFile(path: 'input:/a/pkg/semel.config')"), "got:\n\(result)")
     }
 
-    private func configuration(ofBlockStartingWith prefix: String, in formula: String) throws -> String {
-        let block = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix(prefix) },
-                                  "no '\(prefix)' block in:\n\(formula)")
-        let tail = try XCTUnwrap(block.components(separatedBy: "Configuration(").dropFirst().first,
-                                 "no Configuration in:\n\(block)")
-        return try XCTUnwrap(tail.components(separatedBy: ")").first)
-    }
+    /// Manifest-derived values stay literals: they say what the target *is*, so they belong in
+    /// identity. Settings do not appear here at all.
+    func test_theManifestStillSuppliesModuleNameAsALiteral() throws {
+        let result = try formula()
 
-    // MARK: - Where it looks
-
-    /// Asked for at every ancestor, so one file can serve a tree of N packages. The ones
-    /// that do not exist are ghosts with no value — which is what makes dropping the file
-    /// in later light up the wire and re-run the conversion on its own.
-    func test_asksForAConfigFileAtEveryAncestorOfThePackage() throws {
-        let output = try convert(packageFolder: "input:/a/b/pkg")
-        let asked = try XCTUnwrap(output.inputWireExpectations[SwiftFormulaConverter.configFiles]).keys.sorted()
-
-        XCTAssertEqual(asked, ["input:/a/b/pkg/semel.config",
-                               "input:/a/b/semel.config",
-                               "input:/a/semel.config",
-                               "input:/semel.config"])
-    }
-
-    // MARK: - Inheritance across files
-
-    func test_appliesASettingFromAnAncestor() throws {
-        let result = try formula(try convert(
-            packageFolder: "input:/a/b/pkg",
-            configs: ["input:/a/semel.config": "swift.sdkVersion=26.5"]))
-
-        XCTAssertTrue(try compilerConfig(in: result).contains("sdkVersion: '26.5'"), "got:\n\(result)")
-    }
-
-    /// Nearest wins per *key*, so a nearer file overriding one setting does not discard the
-    /// rest — which is what makes these inheritable rather than all-or-nothing.
-    func test_theNearestAncestorWinsPerKey() throws {
-        let result = try formula(try convert(
-            packageFolder: "input:/a/b/pkg",
-            configs: ["input:/semel.config":         "swift.sdkVersion=1.0\nswift.toolDescriptor.name=fromRoot",
-                      "input:/a/b/pkg/semel.config": "swift.sdkVersion=26.5"]))
-        let compiler = try compilerConfig(in: result)
-
-        XCTAssertTrue(compiler.contains("sdkVersion: '26.5'"), "nearest wins, got:\n\(compiler)")
-        XCTAssertTrue(compiler.contains("toolDescriptor.name: 'fromRoot'"),
-                      "a key only the further file sets is still inherited, got:\n\(compiler)")
-    }
-
-    // MARK: - Inheritance across tools
-
-    /// An unqualified setting is the default for every Swift tool — this is what makes a
-    /// master config of defaults possible.
-    func test_anUnqualifiedSettingReachesEveryTool() throws {
-        let result = try formula(try convert(configs: ["input:/semel.config": "swift.sdkVersion=26.5"]))
-
-        XCTAssertTrue(try compilerConfig(in: result).contains("sdkVersion: '26.5'"), "got:\n\(result)")
-        XCTAssertTrue(try linkerConfig(in: result).contains("sdkVersion: '26.5'"), "got:\n\(result)")
-    }
-
-    func test_aToolQualifiedSettingOverridesTheDefaultForThatToolOnly() throws {
-        let result = try formula(try convert(configs: ["input:/semel.config":
-            "swift.sdkVersion=26.5\nswift.compiler.sdkVersion=26.6"]))
-
-        XCTAssertTrue(try compilerConfig(in: result).contains("sdkVersion: '26.6'"), "got:\n\(result)")
-        XCTAssertTrue(try linkerConfig(in: result).contains("sdkVersion: '26.5'"),
-                      "the linker keeps the default, got:\n\(result)")
-    }
-
-    /// The reason tool namespaces exist: a setting reaches the node it names and nothing
-    /// else. Broadcasting every setting to every node put properties on nodes that ignore
-    /// them — and a node's properties are its identity and part of its cache key, so an
-    /// ignored setting still recreated the node and orphaned its cached output.
-    func test_aToolQualifiedSettingDoesNotReachOtherTools() throws {
-        let result = try formula(try convert(configs: ["input:/semel.config":
-            "swift.linker.sdkVersion=26.6"]))
-
-        XCTAssertFalse(try compilerConfig(in: result).contains("sdkVersion"),
-                       "a linker setting must not touch the compiler's identity, got:\n\(result)")
-        XCTAssertTrue(try linkerConfig(in: result).contains("sdkVersion: '26.6'"), "got:\n\(result)")
-    }
-
-    /// A dotted key whose first part is not a tool name is just a key. `toolDescriptor.*`
-    /// has to keep working, or pinning a compiler version becomes impossible.
-    func test_aDottedKeyThatIsNotAToolNameIsJustAKey() throws {
-        let output = try convert(configs: ["input:/semel.config": "swift.toolDescriptor.version=pinned"])
-
-        XCTAssertTrue(try compilerConfig(in: try formula(output)).contains("toolDescriptor.version: 'pinned'"))
-        XCTAssertEqual(try infoLog(output), "", "it is a real setting, not a mistake")
-    }
-
-    /// The payoff, with a real key rather than an invented one: an optimisation level is
-    /// something the compiler acts on and the linker has no flag for. Set unqualified — the
-    /// natural way to write it — it still reaches only the compiler, so editing it rebuilds
-    /// objects without relinking every product in the tree.
-    func test_aCompilerOnlySettingReachesOnlyTheCompiler() throws {
-        let output = try convert(configs: ["input:/semel.config": "swift.optimisationLevel=speed"])
-        let result = try formula(output)
-
-        XCTAssertTrue(try compilerConfig(in: result).contains("optimisationLevel: 'speed'"),
-                      "got:\n\(result)")
-        XCTAssertFalse(try linkerConfig(in: result).contains("optimisationLevel"),
-                       "the linker takes no optimisation flag, got:\n\(result)")
-        XCTAssertEqual(try infoLog(output), "",
-                       "and it is a real setting, so nothing is reported")
-    }
-
-    // MARK: - Keys a tool does not accept
-
-    /// Each tool declares what a file may set; everything else is dropped and *reported*.
-    /// Silently ignoring it is the least helpful outcome, and letting it through would put
-    /// a meaningless property into the node's identity.
-    func test_aKeyTheToolDoesNotAcceptIsDroppedAndReported() throws {
-        let output = try convert(configs: ["input:/semel.config": "swift.compiler.moduleName=Hijacked"])
-        let result = try formula(output)
-
-        XCTAssertTrue(try compilerConfig(in: result).contains("moduleName: 'Lib'"), "got:\n\(result)")
-        XCTAssertFalse(result.contains("Hijacked"), "got:\n\(result)")
-        let report = try infoLog(output)
-        XCTAssertTrue(report.contains("swift.compiler.moduleName"),
-                      "the user must be told, got: \(report)")
-    }
-
-    /// moduleName comes from the manifest, so no tool accepts it — including one that never
-    /// computes it, where it would otherwise land unopposed on the node's identity.
-    func test_aManifestSuppliedKeyIsRejectedForEveryTool() throws {
-        let output = try convert(configs: ["input:/semel.config": "swift.linker.moduleName=Hijacked"])
-
-        let report = try infoLog(output)
-        XCTAssertFalse(try formula(output).contains("Hijacked"))
-        XCTAssertTrue(report.contains("comes from the package manifest"),
-                      "and told why, got: \(report)")
-    }
-
-    /// Unqualified means "a default for every tool", so it is a mistake only when no tool at
-    /// all would take it — otherwise a compiler-only default would be reported by the linker.
-    func test_anUnknownUnqualifiedKeyIsReported() throws {
-        let output = try convert(configs: ["input:/semel.config": "swift.noSuchSetting=1"])
-
-        let report = try infoLog(output)
-        XCTAssertFalse(try formula(output).contains("noSuchSetting"))
-        XCTAssertTrue(report.contains("swift.noSuchSetting"), "got: \(report)")
-    }
-
-    func test_theReportNamesTheFileThatSetIt() throws {
-        let output = try convert(packageFolder: "input:/a/pkg",
-                                 configs: ["input:/a/semel.config": "swift.noSuchSetting=1"])
-
-        let report = try infoLog(output)
-        XCTAssertTrue(report.hasPrefix("input:/a/semel.config:"), "got: \(report)")
-    }
-
-    // MARK: - Other namespaces, and none at all
-
-    func test_ignoresSettingsForOtherToolchains() throws {
-        let output = try convert(configs: ["input:/semel.config": "clang.target=arm64\nunprefixed=x"])
-
-        XCTAssertFalse(try formula(output).contains("target: 'arm64'"))
-        XCTAssertFalse(try formula(output).contains("unprefixed"))
-        XCTAssertEqual(try infoLog(output), "", "another toolchain's settings are not ours to reject")
-    }
-
-    func test_noConfigFileLeavesTheFormulaAsItWas() throws {
-        let output = try convert()
-
-        let result = try formula(output)
-        XCTAssertTrue(result.contains("Configuration(moduleName: 'Lib').output"), "got:\n\(result)")
-        XCTAssertEqual(try infoLog(output), "")
-    }
-
-    /// Comments and blank lines cost nothing: a line with no `=` is already skipped by the
-    /// key=value parser, which is one of the reasons not to introduce a second format.
-    func test_commentsAndBlankLinesAreIgnored() throws {
-        let output = try convert(configs: ["input:/semel.config":
-            "# what this tree builds against\n\nswift.sdkVersion=26.5\n"])
-
-        XCTAssertTrue(try compilerConfig(in: try formula(output)).contains("sdkVersion: '26.5'"))
-        XCTAssertEqual(try infoLog(output), "", "a comment is not an unknown setting")
+        XCTAssertTrue(result.contains("moduleName: 'Lib'"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("sdkVersion:"),
+                       "a setting must not be rendered as a property, got:\n\(result)")
     }
 }
 
