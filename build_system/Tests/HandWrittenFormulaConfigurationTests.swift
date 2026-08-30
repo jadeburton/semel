@@ -134,7 +134,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     /// file — so this stops at the two node types between the file and a tool.
     private func processEveryNode(ofKind kind: UInt) throws {
         for node in try database.node.select(kind: kind) {
-            let function = try node.nodeFunction()
+            let function = try node.makeNode()
             var inputValues: [String: [String: NodeValue]] = [:]
             for port in function.descriptor.inputPorts {
                 inputValues[port.name] = try node.readFromInputPort(port.name)

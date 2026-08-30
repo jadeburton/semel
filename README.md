@@ -99,7 +99,7 @@ build_system/          CLI executable — REPL and command plugins
 SemelCore/       Core library
   BuildEngine          Async process loop, batch scheduling, deferred deletion
   FormulaParser        Reads .fmla text into a graph shape
-  NodeFunctions/
+  Nodes/
     StaticFile         Raw file content node
     Folder             Directory manifest node
     OutputFile         Publishes a built artifact
@@ -109,7 +109,7 @@ SemelCore/       Core library
     ConfigSubset       Selects one node's settings out of a config file
   Database             GRDB-backed persistence layer
 SemelNodeKit/    Node-authoring API — no dependency on the engine
-  NodeFunction         Protocol for all build steps
+  Node                 Protocol for all build steps; wraps a NodeRecord
   ConfigurationText    key=value per line, the shape settings travel in
   SettingNamespace     Where a node's settings live in a config file
   DataObjectStore      Content-addressed blob store

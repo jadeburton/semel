@@ -1014,7 +1014,7 @@ private struct FormulaResolver {
 
     /// Resolves the `_default` output port placeholder to a concrete port name.
     func resolveDefaultOutputPort(forTypeName typeName: String) -> String {
-        guard let nodeType = PolyFactory.nodeType(forTypeName: typeName) as? NodeFunction.Type else {
+        guard let nodeType = PolyFactory.nodeType(forTypeName: typeName) as? Node.Type else {
             return "_default"
         }
         let ports = nodeType.descriptor.outputPorts

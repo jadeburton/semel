@@ -9,7 +9,7 @@ import Foundation
 import SemelNodeKit
 import SemelDatabaseModels
 
-public struct ClangIncludeFinder: NodeFunction {
+public struct ClangIncludeFinder: Node {
     public static let kind: UInt = 15
 
     // MARK: Ports
@@ -17,7 +17,7 @@ public struct ClangIncludeFinder: NodeFunction {
     static let sourceFileInputPort = "sourceFile"
     static let includePathListOutputPort = "includePathList"
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(sourceFileInputPort)],
         outputPorts: [includePathListOutputPort]
     )

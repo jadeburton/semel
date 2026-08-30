@@ -10,7 +10,7 @@ import SemelNodeKit
 
 private let cacheEntryLimit = 500
 
-extension NodeFunction {
+extension Node {
 
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
         // Keying on a partial input set would produce a key that collides with a
@@ -31,13 +31,13 @@ extension NodeFunction {
             .toJSON()
     }
 
-    private var nodeFunctionCacheKey: String {
+    private var nodeCacheKey: String {
         "\(String(describing: type(of: self)))\n\(thisNode.properties.asPlainText())"
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
 
-        var aggregated = nodeFunctionCacheKey
+        var aggregated = nodeCacheKey
 
         for inputPort in descriptor.staticInputPorts.sorted() {
             aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort, input: input))

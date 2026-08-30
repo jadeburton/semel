@@ -1,4 +1,4 @@
-// NodeFunction.swift
+// Node.swift
 // SemelNodeKit
 //
 // What a node function is: the ports it declares, what `process` receives and returns, and
@@ -14,14 +14,14 @@ import SemelDatabaseModels
 // One protocol, whether or not the node has inputs. A node declaring no input ports — a
 // StaticFile, a Folder — is a source: the graph neither schedules nor processes it, because
 // there would be nothing to hand it. `descriptor.hasInputs` is what says which it is.
-public protocol NodeFunction: WithKind, WithChildren {
+public protocol Node: WithKind, WithChildren {
     var thisNode: NodeRecord { get set }
 
     init(thisNode: NodeRecord) throws
 
     func didCreate() throws -> ProcessOutput?
 
-    static var descriptor: NodeFunctionDescriptor { get }
+    static var descriptor: NodeDescriptor { get }
 
     /// A node can be immediately deleted as soon as all of its output wires are deleted AND if this method returns true.
     func canBeDeleted() throws -> Bool
@@ -58,7 +58,7 @@ public protocol WithDefaultInitializer {
     init() throws
 }
 
-extension NodeFunction {
+extension Node {
     /// The node's id, or an integrity error if it has not been persisted yet.
     public func requireID() throws -> ObjectID {
         try thisNode.requireID()
@@ -83,11 +83,11 @@ public protocol WithChildren {
     func onChildDeleted(nodeID: ObjectID) throws
 }
 
-extension NodeFunction {
-    public var descriptor: NodeFunctionDescriptor { Self.descriptor }
+extension Node {
+    public var descriptor: NodeDescriptor { Self.descriptor }
 }
 
-public extension NodeFunction {
+public extension Node {
 
     /// Most nodes have nothing to publish at creation.
     func didCreate() throws -> ProcessOutput? {

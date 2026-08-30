@@ -34,9 +34,9 @@ struct ClangCompilerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangCompilerTool")
 }
 
-// MARK: - NodeFunction
+// MARK: - Node
 
-public struct ClangCompilerTool: NodeFunction {
+public struct ClangCompilerTool: Node {
     public static let kind: UInt = 19
 
     // MARK: Ports
@@ -53,7 +53,7 @@ public struct ClangCompilerTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(configuration), .required(input)],
         outputPorts: [output, errorLog, infoLog]
     )

@@ -15,7 +15,7 @@ import SemelNodeKit
 
 /// A node with the shape the cache cares about: a configuration port, a content port, and
 /// somewhere to put a result. It does nothing when processed — no test here runs it.
-public struct SampleTool: NodeFunction {
+public struct SampleTool: Node {
     public static let kind: UInt = 987_101
 
     static let configuration = "configuration"
@@ -30,7 +30,7 @@ public struct SampleTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(configuration), .dynamic(input)],
         outputPorts: [output, errorLog, infoLog]
     )
@@ -44,7 +44,7 @@ public struct SampleTool: NodeFunction {
 }
 
 /// A second type, for the tests that need two that must not share a cache key or a kind.
-public struct OtherSampleTool: NodeFunction {
+public struct OtherSampleTool: Node {
     public static let kind: UInt = 987_102
 
     public var thisNode: NodeRecord
@@ -53,7 +53,7 @@ public struct OtherSampleTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(SampleTool.configuration)],
         outputPorts: [SampleTool.output]
     )
@@ -69,7 +69,7 @@ public struct OtherSampleTool: NodeFunction {
 /// system. `process` is unreachable in a working graph; it throws rather than trapping,
 /// because enforcing the engine's invariants is not a node's job and a third-party node
 /// should not be able to bring the process down.
-public struct SampleSourceNode: NodeFunction {
+public struct SampleSourceNode: Node {
     public static let kind: UInt = 987_103
 
     static let output = "output"
@@ -80,7 +80,7 @@ public struct SampleSourceNode: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [output])
+    public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [output])
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")

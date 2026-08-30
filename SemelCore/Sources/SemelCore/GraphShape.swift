@@ -71,7 +71,7 @@ struct GraphShapeOutputPort: Equatable {
 
 /// A node in the graph-shape tree.
 public struct GraphShapeNode: Equatable {
-    /// Swift type name of the NodeFunction, e.g. `"StaticFile"`, `"ClangCompilerTool"`.
+    /// Swift type name of the Node, e.g. `"StaticFile"`, `"ClangCompilerTool"`.
     let typeName:   String
     /// Init-time key-value properties (e.g. `path: 'src/hello.c'`).  Ordered.
     let properties: [GraphShapeProperty]

@@ -5,8 +5,8 @@
 
 import Foundation
 
-// Describes the input and output ports of a NodeFunction
-public struct NodeFunctionDescriptor {
+// Describes the input and output ports of a Node
+public struct NodeDescriptor {
 
     public enum InputPort {
         case required(String)  // static, must be wired at creation time

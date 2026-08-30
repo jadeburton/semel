@@ -86,10 +86,10 @@ extension BuildEngine {
 
     public func nudge() throws {
         _ = try database.cacheEntry.deleteAll()
-        // Reset all NodeFunction outputs to pending so downstream nodes block on
+        // Reset all Node outputs to pending so downstream nodes block on
         // stale values and wait for fresh upstream results (correct ordering).
         for node in try database.node.selectAll() {
-            guard let nodeFunction = try? node.nodeFunction(),
+            guard let nodeFunction = try? node.makeNode(),
                   type(of: nodeFunction).descriptor.hasInputs else { continue }
             try node.writePendingToAllOutputsOfNode()
         }
@@ -119,7 +119,7 @@ extension BuildEngine {
             guard let nodeID = rawNode.id else { continue }
             
             let scheduled = rawNode.scheduled ? "⏱ scheduled" : ""
-            print("⬢ \(type(of: try rawNode.nodeFunction())) #\(nodeID)  \(scheduled)")
+            print("⬢ \(type(of: try rawNode.makeNode())) #\(nodeID)  \(scheduled)")
 
             if let name = rawNode.name {
                 print("  name: '\(name)'")
@@ -136,7 +136,7 @@ extension BuildEngine {
                 print("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
             }
 
-            let descriptor    = (try? rawNode.nodeFunction())?.descriptor
+            let descriptor    = (try? rawNode.makeNode())?.descriptor
             let inputPorts    = (descriptor?.staticInputPorts  ?? []) + (descriptor?.dynamicInputPorts ?? [])
             let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
@@ -208,7 +208,7 @@ extension NodeRecord {
 
         // Debug output must never be the thing that takes the process down: an
         // unregistered kind here means the tree prints "kind 27?" rather than crashing.
-        let kindName = (try? nodeFunction()).map { String(describing: type(of: $0)) }
+        let kindName = (try? makeNode()).map { String(describing: type(of: $0)) }
                     ?? "kind \(kind)?"
 
         let nodeName = name ?? ""

@@ -22,7 +22,7 @@
 
 import SemelNodeKit
 
-public struct ConfigSubset: NodeFunction {
+public struct ConfigSubset: Node {
     public static let kind: UInt = 25
 
     static let inputPort = "input"
@@ -37,7 +37,7 @@ public struct ConfigSubset: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(inputPort)],
         outputPorts: [outputPort]
     )

@@ -35,9 +35,9 @@ struct SwiftLinkerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftLinkerTool")
 }
 
-// MARK: - NodeFunction
+// MARK: - Node
 
-struct SwiftLinkerTool: NodeFunction {
+struct SwiftLinkerTool: Node {
     public static let kind: UInt = 21
 
     // MARK: Ports
@@ -64,7 +64,7 @@ struct SwiftLinkerTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
             .required(input),

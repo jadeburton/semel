@@ -7,36 +7,36 @@ final class NodeDescriptorTests: SemelCoreTestCase {
     // MARK: - InputPort.name
 
     func test_requiredPort_name() {
-        XCTAssertEqual(NodeFunctionDescriptor.InputPort.required("foo").name, "foo")
+        XCTAssertEqual(NodeDescriptor.InputPort.required("foo").name, "foo")
     }
 
     func test_optionalPort_name() {
-        XCTAssertEqual(NodeFunctionDescriptor.InputPort.optional("bar").name, "bar")
+        XCTAssertEqual(NodeDescriptor.InputPort.optional("bar").name, "bar")
     }
 
     func test_dynamicPort_name() {
-        XCTAssertEqual(NodeFunctionDescriptor.InputPort.dynamic("baz").name, "baz")
+        XCTAssertEqual(NodeDescriptor.InputPort.dynamic("baz").name, "baz")
     }
 
     // MARK: - staticInputPorts
 
     func test_requiredPort_appearsInStaticInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.required("input")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.required("input")], outputPorts: [])
         XCTAssertEqual(desc.staticInputPorts, ["input"])
     }
 
     func test_optionalPort_appearsInStaticInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.optional("config")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.optional("config")], outputPorts: [])
         XCTAssertEqual(desc.staticInputPorts, ["config"])
     }
 
     func test_dynamicPort_absentFromStaticInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
         XCTAssertTrue(desc.staticInputPorts.isEmpty)
     }
 
     func test_staticInputPorts_includesBothRequiredAndOptional() {
-        let desc = NodeFunctionDescriptor(
+        let desc = NodeDescriptor(
             inputPorts: [.required("input"), .optional("config"), .dynamic("files")],
             outputPorts: ["output"]
         )
@@ -46,7 +46,7 @@ final class NodeDescriptorTests: SemelCoreTestCase {
     }
 
     func test_staticInputPorts_preservesDeclarationOrder() {
-        let desc = NodeFunctionDescriptor(
+        let desc = NodeDescriptor(
             inputPorts: [.required("a"), .required("b"), .optional("c")],
             outputPorts: []
         )
@@ -56,22 +56,22 @@ final class NodeDescriptorTests: SemelCoreTestCase {
     // MARK: - optionalStaticInputPorts
 
     func test_requiredPort_absentFromOptionalStaticInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.required("input")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.required("input")], outputPorts: [])
         XCTAssertTrue(desc.optionalStaticInputPorts.isEmpty)
     }
 
     func test_optionalPort_appearsInOptionalStaticInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.optional("config")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.optional("config")], outputPorts: [])
         XCTAssertEqual(desc.optionalStaticInputPorts, ["config"])
     }
 
     func test_dynamicPort_absentFromOptionalStaticInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
         XCTAssertTrue(desc.optionalStaticInputPorts.isEmpty)
     }
 
     func test_optionalStaticInputPorts_containsOnlyOptionalPorts() {
-        let desc = NodeFunctionDescriptor(
+        let desc = NodeDescriptor(
             inputPorts: [.required("input"), .optional("config"), .dynamic("files")],
             outputPorts: ["output"]
         )
@@ -83,22 +83,22 @@ final class NodeDescriptorTests: SemelCoreTestCase {
     // MARK: - dynamicInputPorts
 
     func test_requiredPort_absentFromDynamicInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.required("input")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.required("input")], outputPorts: [])
         XCTAssertTrue(desc.dynamicInputPorts.isEmpty)
     }
 
     func test_optionalPort_absentFromDynamicInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.optional("config")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.optional("config")], outputPorts: [])
         XCTAssertTrue(desc.dynamicInputPorts.isEmpty)
     }
 
     func test_dynamicPort_appearsInDynamicInputPorts() {
-        let desc = NodeFunctionDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
         XCTAssertEqual(desc.dynamicInputPorts, ["files"])
     }
 
     func test_dynamicInputPorts_containsOnlyDynamicPorts() {
-        let desc = NodeFunctionDescriptor(
+        let desc = NodeDescriptor(
             inputPorts: [.required("input"), .optional("config"), .dynamic("files")],
             outputPorts: ["output"]
         )
@@ -110,7 +110,7 @@ final class NodeDescriptorTests: SemelCoreTestCase {
     // MARK: - Empty descriptor
 
     func test_emptyDescriptor_allPortsEmpty() {
-        let desc = NodeFunctionDescriptor(inputPorts: [], outputPorts: [])
+        let desc = NodeDescriptor(inputPorts: [], outputPorts: [])
         XCTAssertTrue(desc.staticInputPorts.isEmpty)
         XCTAssertTrue(desc.optionalStaticInputPorts.isEmpty)
         XCTAssertTrue(desc.dynamicInputPorts.isEmpty)
@@ -119,7 +119,7 @@ final class NodeDescriptorTests: SemelCoreTestCase {
     // MARK: - Multiple dynamic ports
 
     func test_multipleDynamicPorts_allAppearInDynamicInputPorts() {
-        let desc = NodeFunctionDescriptor(
+        let desc = NodeDescriptor(
             inputPorts: [.dynamic("sources"), .dynamic("headers")],
             outputPorts: []
         )

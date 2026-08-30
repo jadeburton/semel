@@ -51,7 +51,7 @@ extension HasPath {
     }
 }
 
-extension HasPath where Self: NodeFunction {
+extension HasPath where Self: Node {
 
     /// Puts this node in its place in the file-system tree: named after the last component
     /// of its path, parented to the folder that contains it.
@@ -72,7 +72,7 @@ extension HasPath where Self: NodeFunction {
 }
 
 // OutputFile is held alive by a ProjectBuilder, which receives a Wire from its `status` output.
-struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvider {
+struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     public static let kind: UInt = 8
 
@@ -92,7 +92,7 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
         try placeInFileSystem()
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(inputPort), .optional(fileMetadataInputPort)],
         outputPorts: [statusOutputPort]
     )

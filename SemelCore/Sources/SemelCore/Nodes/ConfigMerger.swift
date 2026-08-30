@@ -7,7 +7,7 @@
 
 import SemelNodeKit
 
-public struct ConfigMerger: NodeFunction {
+public struct ConfigMerger: Node {
     public static let kind: UInt = 26
 
     /// The settings to start from.
@@ -31,7 +31,7 @@ public struct ConfigMerger: NodeFunction {
     /// whether or not anyone has pushed it — the wire is simply carrying no value, which
     /// `settings(on:in:)` reads as nothing to add. An override file that may or may not exist
     /// is expressible either way; what required rules out is the formula omitting the input.
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(basePort), .required(overridePort)],
         outputPorts: [outputPort]
     )

@@ -31,12 +31,12 @@ enum GraphShapeApplierError: Error {
 
 // MARK: - graphShapeProperties — extracting init-time properties from a live node
 
-extension NodeFunction {
+extension Node {
     /// Default: delegate to `WithProperties` if the type conforms, else no properties.
     /// Declared in the protocol so Swift dispatches dynamically via the witness table.
 }
 
-extension NodeFunction {
+extension Node {
     func graphShapeProperties() -> [GraphShapeProperty] {
         thisNode.properties
             .sorted(by: { $0.key < $1.key })
@@ -82,7 +82,7 @@ extension GraphShapeNode {
             ? fromSymbolID!.resolveSymbol() : nil
 
         let sourceNode   = try database.node.select(nodeID: fromNodeID)
-        let nodeFunction = try sourceNode.nodeFunction()
+        let nodeFunction = try sourceNode.makeNode()
         let typeName     = String(describing: type(of: nodeFunction))
 
         // Cycle guard — return a stub with no inputs to stop infinite recursion.
@@ -168,7 +168,7 @@ extension GraphShapeNode {
 
     private func matchesNode(nodeID: ObjectID) throws -> Bool {
         let node = try database.node.select(nodeID: nodeID)
-        let nodeFunction = try node.nodeFunction()
+        let nodeFunction = try node.makeNode()
 
         guard String(describing: type(of: nodeFunction)) == typeName else {
             return false
@@ -289,9 +289,9 @@ extension GraphShapeNode {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
 
             for wireSpec in inputPortSpec.wires {
-                let newNodeNodeFunction = try newNode.nodeFunction()
-                if !newNodeNodeFunction.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
-                    throw NodeError.other(message: "The formula refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(newNodeNodeFunction)")
+                let createdNode = try newNode.makeNode()
+                if !createdNode.descriptor.staticInputPorts.contains(inputPortSpec.portName) {
+                    throw NodeError.other(message: "The formula refers to a port, '\(inputPortSpec.portName)', that does not exist in the implementation. Node: \(createdNode)")
                 }
 
                 let (fromNode, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
@@ -314,7 +314,7 @@ extension GraphShapeNode {
         }
 
         // ── Validate: every required port declared in the shape must be wired ─
-        let nodeFunction  = try newNode.nodeFunction()
+        let nodeFunction  = try newNode.makeNode()
         let descriptor    = nodeFunction.descriptor
         let optionalPorts = Set(descriptor.optionalStaticInputPorts)
 

@@ -63,9 +63,9 @@ struct ClangPreprocessorToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessorTool")
 }
 
-// MARK: - NodeFunction
+// MARK: - Node
 
-public struct ClangPreprocessorTool: NodeFunction {
+public struct ClangPreprocessorTool: Node {
     public static let kind: UInt = 17
 
     public var thisNode: NodeRecord
@@ -84,7 +84,7 @@ public struct ClangPreprocessorTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
             .required(sourceFileInput),

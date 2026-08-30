@@ -38,9 +38,9 @@ struct ClangLinkerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangLinkerTool")
 }
 
-// MARK: - NodeFunction
+// MARK: - Node
 
-public struct ClangLinkerTool: NodeFunction {
+public struct ClangLinkerTool: Node {
     public static let kind: UInt = 18
 
     // MARK: Ports
@@ -58,7 +58,7 @@ public struct ClangLinkerTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
             .required(input),

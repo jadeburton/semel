@@ -7,7 +7,9 @@
       "Bash(swift test *)",
       "Bash(swift package describe *)",
       "Bash(swift package dump-package)",
-      "Bash(cd /Users/jadeburton/Semel/build_system && swift test *)"
+      "Bash(cd /Users/jadeburton/Semel/build_system && swift test *)",
+      "Bash(git add -A)",
+      "Bash(git commit -F *)"
     ]
   }
 }

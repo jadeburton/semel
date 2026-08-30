@@ -42,9 +42,9 @@ struct SwiftPackageReaderToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReaderTool")
 }
 
-// MARK: - NodeFunction
+// MARK: - Node
 
-struct SwiftPackageReaderTool: NodeFunction {
+struct SwiftPackageReaderTool: Node {
     public static let kind: UInt = 23
 
     // MARK: Ports
@@ -63,7 +63,7 @@ struct SwiftPackageReaderTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.required(configuration), .required(packageFile)],
         outputPorts: [packageJSON, infoLog]
     )

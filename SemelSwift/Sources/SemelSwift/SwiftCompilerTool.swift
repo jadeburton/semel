@@ -100,9 +100,9 @@ struct SourceScope {
     }
 }
 
-// MARK: - NodeFunction
+// MARK: - Node
 
-struct SwiftCompilerTool: NodeFunction {
+struct SwiftCompilerTool: Node {
     public static let kind: UInt = 20
 
     // MARK: Ports
@@ -134,7 +134,7 @@ struct SwiftCompilerTool: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
             .required(inputFolder),

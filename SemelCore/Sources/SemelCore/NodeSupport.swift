@@ -48,18 +48,18 @@ extension NodeRecord {
         return parent.isEmpty ? Path(name) : parent / name
     }
 
-    func nodeFunctionCast<N: NodeFunction>() throws -> N {
-        try nodeFunction() as! N
+    func makeNodeCast<N: Node>() throws -> N {
+        try makeNode() as! N
     }
 
-    func nodeFunction() throws -> any NodeFunction {
-        try (PolyFactory.type(kind: kind) as! NodeFunction.Type).init(thisNode: self)
+    func makeNode() throws -> any Node {
+        try (PolyFactory.type(kind: kind) as! Node.Type).init(thisNode: self)
     }
 
     /// Returns the node function as `Any` so app-layer callers can pattern-match
     /// against concrete public types (e.g. `as? UserDeletable`, `as? FileType`).
     public func nodeAsAny() throws -> Any {
-        try nodeFunction()
+        try makeNode()
     }
 
     var allChildren: [NodeRecord] {
@@ -79,7 +79,7 @@ extension NodeRecord {
 
         node.id = try database.node.insert(node)
 
-        let nodeFunction = try node.nodeFunction()
+        let nodeFunction = try node.makeNode()
 
         node.name = nodeFunction.thisNode.name
         node.parentNodeID = nodeFunction.thisNode.parentNodeID
@@ -177,12 +177,12 @@ extension NodeRecord {
                 newFolder.parentNodeID = (try currentFolder.requireID())
                 try database.node.update(newFolder)
 
-                try newFolder.nodeFunction().notifyParentThisChildAdded()
+                try newFolder.makeNode().notifyParentThisChildAdded()
                 currentFolder = newFolder
             }
 
             if pinned {
-                if let folder = try currentFolder.nodeFunction() as? Folder, try !folder.isPinned {
+                if let folder = try currentFolder.makeNode() as? Folder, try !folder.isPinned {
                     // setPinned notifies the parent itself, through onChildContentChanged,
                     // and that is the whole notification this needs. Folder answers both that
                     // and onChildAdded with refreshOutputs, so announcing the pin a second
@@ -225,7 +225,7 @@ extension NodeRecord {
     }
 
     func setScheduled(_ scheduled: Bool) throws {
-        let nodeFunction = try self.nodeFunction()
+        let nodeFunction = try self.makeNode()
 
         guard type(of: nodeFunction).descriptor.hasInputs else {
             Debug.warn("ignoring a request to schedule \(self) / \(type(of: nodeFunction)), which declares no inputs")
@@ -275,7 +275,7 @@ extension NodeRecord {
     }
 
     func writePendingToAllOutputsOfNode() throws {
-        for outputPort in try nodeFunction().descriptor.outputPorts {
+        for outputPort in try makeNode().descriptor.outputPorts {
             try writeToOutputPort(outputPort, value: .noValue(reason: .pending))
         }
     }

@@ -5,7 +5,7 @@
 
 import SemelNodeKit
 
-public struct ProjectBuilder: NodeFunction {
+public struct ProjectBuilder: Node {
     public static let kind: UInt = 6
 
     static let projectFileInputPort   = "projectFile"
@@ -17,7 +17,7 @@ public struct ProjectBuilder: NodeFunction {
     static let foldersInputPort       = "folders"
     static let graphImportsInputPort  = "graphImports"
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(projectFileInputPort),
             .dynamic(productInputPort),
@@ -109,7 +109,7 @@ public struct ProjectBuilder: NodeFunction {
                 // If the source node type exposes a "fileMetadata" output port,
                 // wire it into the OutputFile wrapper so chmod can be applied on cp.
                 var metadataWire = ""
-                if let nodeType = PolyFactory.nodeType(forTypeName: shapeNode.typeName) as? NodeFunction.Type,
+                if let nodeType = PolyFactory.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
                    nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
                     let metaShape = GraphShapeNode(typeName: shapeNode.typeName,
                                                    properties: shapeNode.properties,

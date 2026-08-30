@@ -8,7 +8,7 @@
 import Foundation
 import SemelNodeKit
 
-public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
+public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 1
 
     // The values live in SemelNodeKit, where a node function can reach them without
@@ -33,7 +33,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
     func canBePinned() -> Bool {
         // HACK
         containingPath.hasPrefix(.init(Folder.inputFileSystemName))
-//        self.parentNodeFunction?.canBePin
+//        self.parentNode?.canBePin
     }
 
     public func didCreate() throws -> ProcessOutput? {
@@ -100,7 +100,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
         // Descend only into the subfolders that did not already answer for themselves.
         for subfolderID in unpinnedSubfolderIDs {
             let node = try database.node.select(nodeID: subfolderID)
-            guard let subfolder = try node.nodeFunction() as? Folder else { continue }
+            guard let subfolder = try node.makeNode() as? Folder else { continue }
             guard try subfolder.everyChildCanBeDeleted() else { return false }
         }
 
@@ -115,7 +115,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
     static let pinnedOutputPort = "pinned"
 
-    public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
+    public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled,
     /// so nothing asks it to process. An ordinary error rather than a trap — a node is not
@@ -216,7 +216,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
 
         // Delete children or unpin them
         for child in try thisNode.allChildren {
-            if let userDeletableChild = try child.nodeFunction() as? UserDeletable {
+            if let userDeletableChild = try child.makeNode() as? UserDeletable {
                 try userDeletableChild.deleteInInputFileSystem()
             } else {
                 throw NodeError.other(message: "Cannot delete Folder because one or more children are not deletable")

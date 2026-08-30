@@ -67,7 +67,7 @@ final class FolderDeletabilityTests: SemelCoreTestCase {
     /// independent to be checked against.
     private func canBeDeletedPolymorphically(_ folder: Folder) throws -> Bool {
         let childrenOK = try folder.thisNode.allChildren
-            .filter { try !$0.nodeFunction().canBeDeleted() }
+            .filter { try !$0.makeNode().canBeDeleted() }
             .isEmpty
         return try childrenOK && !(folder.canBePinned() && folder.isPinned)
     }

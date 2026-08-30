@@ -339,7 +339,7 @@ public final class BuildEngine {
             for rawNode in rawNodes {
                 group.addTask {
 
-                    guard let nodeFunction = try? rawNode.nodeFunction(),
+                    guard let nodeFunction = try? rawNode.makeNode(),
                           type(of: nodeFunction).descriptor.hasInputs else {
                         return nil
                     }
@@ -386,14 +386,14 @@ public final class BuildEngine {
         for result in computedResults {
             do {
                 // Skip nodes that were cascade-deleted by an earlier phase-2 step.
-                // nodeFunction() constructs from the in-memory NodeRecord struct and does not
+                // makeNode() constructs from the in-memory NodeRecord struct and does not
                 // re-query the DB, so this explicit existence check is required.
                 guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
                     Debug.warn("node \(result.node.id ?? -1) deleted during processing")
                     continue
                 }
 
-                let nodeFunction = try result.node.nodeFunction()
+                let nodeFunction = try result.node.makeNode()
                 guard type(of: nodeFunction).descriptor.hasInputs else {
                     continue
                 }
@@ -429,7 +429,7 @@ public final class BuildEngine {
     func processOneNode(_ node: NodeRecord) throws {
         try node.setScheduled(false)
 
-        let nodeFunction = try node.nodeFunction()
+        let nodeFunction = try node.makeNode()
         guard type(of: nodeFunction).descriptor.hasInputs else {
             Debug.warn("attempted to process a node that declares no inputs")
             return
@@ -472,7 +472,7 @@ extension BuildEngine {
                 continue
             }
 
-            guard let nodeFunction = try? node.nodeFunction() else {
+            guard let nodeFunction = try? node.makeNode() else {
                 continue
             }
 

@@ -18,7 +18,7 @@ public protocol UserDeletable {
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-public struct StaticFile: NodeFunction, FileType, HasPath, Pinnable, UserDeletable {
+public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 3
 
     public var isPinned: Bool {
@@ -45,7 +45,7 @@ public struct StaticFile: NodeFunction, FileType, HasPath, Pinnable, UserDeletab
         try placeInFileSystem()
     }
 
-    public static let descriptor = NodeFunctionDescriptor(inputPorts: [], outputPorts: [outputPort])
+    public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [outputPort])
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled,
     /// so nothing asks it to process. An ordinary error rather than a trap — a node is not

@@ -150,7 +150,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
             switch node.kind {
 
             case Folder.kind:
-                guard let folder = try node.nodeFunction() as? Folder else {
+                guard let folder = try node.makeNode() as? Folder else {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
@@ -163,7 +163,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                                          isUnreferenced: try folder.hasNoOutputWires() && node.allChildren.isEmpty)
 
             default:
-                let nodeFunction = try node.nodeFunction()
+                let nodeFunction = try node.makeNode()
                 guard let pinnable = nodeFunction as? Pinnable else {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")

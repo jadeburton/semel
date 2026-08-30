@@ -104,6 +104,6 @@ final class PolyFactoryTests: SemelCoreTestCase {
             ProjectFinder.kind, ProjectBuilder.kind, StaticFile.kind, Folder.kind,
             OutputFile.kind, Configuration.kind, FolderManifest.kind
         ]
-        XCTAssertEqual(kinds.count, Set(kinds).count, "Each NodeFunction must have a unique kind")
+        XCTAssertEqual(kinds.count, Set(kinds).count, "Each Node must have a unique kind")
     }
 }

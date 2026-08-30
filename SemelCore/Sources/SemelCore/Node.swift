@@ -1,5 +1,5 @@
 //
-//  NodeFunction+Graph.swift
+//  Node+Graph.swift
 //  build_system
 //
 //  The engine's side of the node protocols declared in SemelNodeKit: reading input ports,
@@ -12,7 +12,7 @@ import Foundation
 import SemelDatabaseModels
 import SemelNodeKit
 
-extension NodeFunction {
+extension Node {
 
     private func buildProcessInput() throws -> ProcessInput {
         var inputValues = [String: [String: NodeValue]]()
@@ -135,26 +135,26 @@ extension NodeFunction {
     }
 }
 
-extension NodeFunction {
-    var parentNodeFunction: NodeFunction? {
+extension Node {
+    var parentNode: Node? {
         get throws {
             if let parentNodeID = thisNode.parentNodeID {
-                return try database.node.select(nodeID: parentNodeID).nodeFunction()
+                return try database.node.select(nodeID: parentNodeID).makeNode()
             }
             return nil
         }
     }
 
     func notifyParentThisChildAdded() throws {
-        try parentNodeFunction?.onChildAdded(nodeID: (try thisNode.requireID()))
+        try parentNode?.onChildAdded(nodeID: (try thisNode.requireID()))
     }
 
     func notifyParentOfChildContentChange() throws {
-        try parentNodeFunction?.onChildContentChanged(nodeID: (try thisNode.requireID()), name: thisNode.name!)
+        try parentNode?.onChildContentChanged(nodeID: (try thisNode.requireID()), name: thisNode.name!)
     }
 
     func notifyParentOfChildDeletion() throws {
-        try parentNodeFunction?.onChildDeleted(nodeID: (try thisNode.requireID()))
+        try parentNode?.onChildDeleted(nodeID: (try thisNode.requireID()))
     }
 
     func delete() throws {
@@ -369,7 +369,7 @@ protocol MessageType: AnyObject, Codable, PolySerializable {
 
 // MARK: - NodeError
 
-extension NodeFunction {
+extension Node {
     func description() -> String {
         "\(String(describing: Self.self)) (\(type(of: self))), staticInputPorts: \(descriptor.staticInputPorts.count), outputPorts: \(descriptor.outputPorts.count), dynamicInputPorts: \(descriptor.dynamicInputPorts.count)"
     }

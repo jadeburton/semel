@@ -5,7 +5,7 @@
 //
 // A node has two halves. This is the persisted one — identity, properties, parentage,
 // whether it is scheduled — and it knows nothing about ports, processing, or its own kind
-// beyond an integer. The behaviour lives a layer up, in `NodeFunction`, which wraps one of
+// beyond an integer. The behaviour lives a layer up, in `Node`, which wraps one of
 // these and is what the rest of the system actually works with. Splitting them is what lets
 // the engine load, count and delete nodes without instantiating anything that could run.
 

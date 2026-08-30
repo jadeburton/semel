@@ -8,7 +8,7 @@
 // Like a StaticFile, but it allows you to put configuration directly into the formula.
 import SemelNodeKit
 
-public struct Configuration: NodeFunction {
+public struct Configuration: Node {
     public static let kind: UInt = 9
 
     public var thisNode: NodeRecord
@@ -20,7 +20,7 @@ public struct Configuration: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [.optional(inputPort)],
         outputPorts: [outputPort]
     )

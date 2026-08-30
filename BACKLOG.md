@@ -445,6 +445,13 @@ cheap ones.
   that `process` is impure because it returns wiring requests, does not hold: returning
   expectations is exactly what keeps wiring declarative instead of a side effect. The real
   impurities are elsewhere, and are B-43's subject.)
+  **Settled differently.** `NodeOperator` was rejected: *operator* renames the transform and
+  drops the ports and lifecycle that are the type's actual substance. `NodeType`, `NodeKind`
+  and `NodeDefinition` all mislead for a different reason — the type is instantiated once per
+  node, not once per kind, so a name denoting a category is wrong. What the type is, is a node.
+  So it takes the name outright and the row becomes `NodeRecord`: the thing with ports and a
+  lifecycle *is* the node, and the row is a record of it. `StaticFile: Node` then needs no
+  explanation, where `StaticFile: NodeFunction` needed a sentence.
 - **`ToolExecutor`** collides with Swift's own `Executor`/`SerialExecutor` in a codebase that
   uses `TaskGroup`, so a reader may expect scheduling and isolation where it means "run a
   binary in a sandbox". **`ToolRunner`**, or Bazel's *spawn runner*. The concrete type is
@@ -480,6 +487,24 @@ files and two doc updates. Seven of those for their own sake is a bad trade. The
 worth doing deliberately are the ones with no design question behind them: the `Wildcard`/
 `glob` split and the `DataToken` alias — and `nudge`, which is only 2 occurrences if it should
 ever become `invalidate`.
+
+*Done.* `Wildcard`/`glob` (kept `Wildcard`, eliminated `glob`), the `DataToken` alias
+(deleted, file now `Interning.swift`), and the `Node` swap in two phases: `Node` →
+`NodeRecord`, then `NodeFunction` → `Node` with `NodeFunctionDescriptor` → `NodeDescriptor`,
+`nodeFunction()` → `makeNode()` and `NodeFunctions/` → `Nodes/`.
+
+Cost data point, and the reason the two-phase split was right: the compiler verified every
+type site and caught nothing that mattered, while the damage landed in prose and in compound
+identifiers. Comments went wrong three distinct ways — concept read as type, SQL identifier
+read as a Swift path, grammar notation read as a type reference — and a substring match
+turned `fromNodeFunction` into `fromNode`, colliding with the record already named that. Only
+the collision was a compile error; the rest needed reading. Assume any future rename here
+costs a prose audit, not a sweep.
+
+*Still open.* 45 locals still spell `nodeFunction` while holding a `Node`; renaming them to
+`node` shadows the `NodeRecord` often named `node` in the same scope, which Swift accepts
+silently. `ToolExecutor` → `ToolRunner` and `ConfigSubset` are untouched; `isPinned` is
+deliberately kept.
 
 **B-45** `open` — **Database write failures are not classified as unrecoverable.**
 `UnrecoverableError.swift` used to claim they were; `db5fcb7` corrected the claim rather than

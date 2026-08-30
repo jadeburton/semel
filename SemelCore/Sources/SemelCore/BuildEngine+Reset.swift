@@ -69,7 +69,7 @@ extension BuildEngine {
             // Its manifest is built from the child list, and the bulk delete above
             // bypasses nodeFunction.delete() — the only path that notifies a parent —
             // so refresh it here or it keeps advertising products that are gone.
-            if let outputFolder = try? outputRoot.nodeFunction() as? Folder {
+            if let outputFolder = try? outputRoot.makeNode() as? Folder {
                 try outputFolder.refreshOutputs()
             }
         }

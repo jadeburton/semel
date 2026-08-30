@@ -107,11 +107,10 @@ extension Wire {
             throw WireError.failedToDeleteWire
         }
 
-        let fromNode = try database.node.select(nodeID: fromNodeID)
-        let fromNodeFunction = try fromNode.nodeFunction()
+        let fromNode = try database.node.select(nodeID: fromNodeID).makeNode()
 
-        let noOutputWires = try fromNodeFunction.hasNoOutputWires()
-        let deletable     = try fromNodeFunction.canBeDeleted()
+        let noOutputWires = try fromNode.hasNoOutputWires()
+        let deletable     = try fromNode.canBeDeleted()
 
         if noOutputWires && deletable {
             // fromNode has no remaining consumers — mark it for deferred deletion.

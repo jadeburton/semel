@@ -25,7 +25,7 @@ import Foundation
 import SemelNodeKit
 import SemelDatabaseModels
 
-struct SwiftFormulaConverter: NodeFunction {
+struct SwiftFormulaConverter: Node {
     public static let kind: UInt = 24
 
     static let packageFolder        = "packageFolder"
@@ -40,7 +40,7 @@ struct SwiftFormulaConverter: NodeFunction {
         self.thisNode = thisNode
     }
 
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(packageFolder),
             .required(packageJSON),

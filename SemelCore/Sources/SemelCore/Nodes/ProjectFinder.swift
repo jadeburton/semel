@@ -21,7 +21,7 @@ struct FormulaFilePlugin: ProjectBuilderPlugin {
 
 /// Watches an input file-list and creates a ProjectBuilder child for
 /// every formula.json file that appears, wiring it into the BuildGraph's formulae input.
-public struct ProjectFinder: NodeFunction {
+public struct ProjectFinder: Node {
     public static let kind: UInt = 5
 
     static let rootFolderManifestInputPort = "folderManifest"
@@ -29,7 +29,7 @@ public struct ProjectFinder: NodeFunction {
     static let projectBuildersInputPort = "projectBuilders"
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
-    public static let descriptor = NodeFunctionDescriptor(
+    public static let descriptor = NodeDescriptor(
         inputPorts: [
             .dynamic(rootFolderManifestInputPort),
             .dynamic(watchedFolderManifestInputPort),
