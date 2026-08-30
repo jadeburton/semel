@@ -48,8 +48,64 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
 
     // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
     public func canBeDeleted() throws -> Bool {
-        // TODO: slow
-        try (thisNode.allChildren.filter { try !$0.nodeFunction().canBeDeleted() }).isEmpty && !(canBePinned() && isPinned)
+        // Own state first. It is one port read, it settles the question on its own, and in
+        // the input file system a folder the user made is pinned — so this is the common
+        // answer and it now costs nothing to reach.
+        if try canBePinned() && isPinned {
+            return false
+        }
+        return try everyChildCanBeDeleted()
+    }
+
+    /// Whether anything under this folder objects to being collected.
+    ///
+    /// Reads pinned state per kind in one query, exactly as `buildManifest` does, rather than
+    /// building a node function per child and asking it. The old reading did all four
+    /// expensive things at once: whole `Node` rows with their properties decoded, a node
+    /// function constructed per child, an output-port read inside each `isPinned`, and a
+    /// `filter().isEmpty` that built the entire array instead of stopping at the first
+    /// objection. Then it recursed, so that was the cost *per level* — during a delete
+    /// cascade or a collection sweep, which is exactly when whole trees go through here.
+    ///
+    /// Losing the polymorphism is the price, so the kind-to-port mapping is spelled out and
+    /// `FolderDeletabilityTests` checks it still says what asking each child said. The types
+    /// that can be a folder's children are `Folder`, `StaticFile` and `OutputFile`; only the
+    /// first two override `canBeDeleted`, and the third takes the default `true`.
+    private func everyChildCanBeDeleted() throws -> Bool {
+        let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
+        guard !children.isEmpty else { return true }
+
+        let pinned = try pinnedStates(of: children)
+
+        // `canBePinned()` asks about the *containing* path, which for every one of these
+        // children is this folder's path — so it is one answer, not one per child.
+        let childFolderCanBePinned = path.hasPrefix(.init(Folder.inputFileSystemName))
+
+        var unpinnedSubfolderIDs: [ObjectID] = []
+
+        for child in children {
+            switch child.kind {
+            case StaticFile.kind:
+                // A pushed file is held by the user rather than by the graph.
+                if pinned[child.id] == true { return false }
+
+            case Folder.kind:
+                if childFolderCanBePinned && pinned[child.id] == true { return false }
+                unpinnedSubfolderIDs.append(child.id)
+
+            default:
+                break   // Everything else takes the default `canBeDeleted()`, which is true.
+            }
+        }
+
+        // Descend only into the subfolders that did not already answer for themselves.
+        for subfolderID in unpinnedSubfolderIDs {
+            let node = try database.node.select(nodeID: subfolderID)
+            guard let subfolder = try node.nodeFunction() as? Folder else { continue }
+            guard try subfolder.everyChildCanBeDeleted() else { return false }
+        }
+
+        return true
     }
 
     // The manifest is a non-recursive list of immediate children
