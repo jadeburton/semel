@@ -25,7 +25,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     private func productPaths(projectFile: String,
                               properties: [String: String] = [:],
                               formula: String? = nil) throws -> [String] {
-        let node = Node(id: 1, kind: ProjectBuilder.kind, name: nil,
+        let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
                         properties: properties, scheduled: false, searchKey: nil)
         let builder = try ProjectBuilder(thisNode: node)
         let input = ProcessInput(inputValues: [

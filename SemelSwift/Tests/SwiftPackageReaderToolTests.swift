@@ -28,7 +28,7 @@ final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
     }
 
     private func makeTool() throws -> SwiftPackageReaderTool {
-        try SwiftPackageReaderTool(thisNode: Node(id: 1, kind: SwiftPackageReaderTool.kind))
+        try SwiftPackageReaderTool(thisNode: NodeRecord(id: 1, kind: SwiftPackageReaderTool.kind))
     }
 
     private func makeInput() throws -> ProcessInput {

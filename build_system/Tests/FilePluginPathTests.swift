@@ -188,8 +188,8 @@ final class TestCommandContext: CommandContext {
     }
 
     var buildEngine: BuildEngine { BuildEngine.shared }
-    var inputFileSystem: Node { get throws { try buildEngine.inputFileSystem } }
-    var outputFileSystem: Node { get throws { try buildEngine.outputFileSystem } }
+    var inputFileSystem: NodeRecord { get throws { try buildEngine.inputFileSystem } }
+    var outputFileSystem: NodeRecord { get throws { try buildEngine.outputFileSystem } }
 
     func outputMessage(_ message: String) { messages.append(message) }
     func outputError(_ message: String)   { errors.append(message) }

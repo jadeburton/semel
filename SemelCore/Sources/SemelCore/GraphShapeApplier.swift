@@ -233,7 +233,7 @@ extension GraphShapeNode {
     /// and then both tried to insert the same searchKey.
     ///
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
-    public func findOrCreateMatchingNode() throws -> (fromNode: Node, fromSymbolID: ObjectID?) {
+    public func findOrCreateMatchingNode() throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?) {
         // Fast path: a node that already exists needs no transaction.
         //
         // `withTransaction` is `dbQueue.write`, so every call queued behind GRDB's single
@@ -249,7 +249,7 @@ extension GraphShapeNode {
             return (fromNode: node, fromSymbolID: outputPort?.asSymbolID())
         }
 
-        let newNode: Node = try database.withTransaction {
+        let newNode: NodeRecord = try database.withTransaction {
             // Found again inside, deliberately. Between the read above and here another
             // task may have committed this very node, and find-then-create has to stay in
             // one transaction regardless: two tasks that both see nil and both insert are
@@ -264,7 +264,7 @@ extension GraphShapeNode {
 
     // MARK: Private — node + wire creation (runs inside withTransaction)
 
-    private func createNode() throws -> Node {
+    private func createNode() throws -> NodeRecord {
         let kind: UInt
         do {
             kind = try PolyFactory.kind(forTypeName: typeName)
@@ -277,7 +277,7 @@ extension GraphShapeNode {
 
 //        let startTime = Date.now
 
-        let newNode = try Node.createNode(database: database,
+        let newNode = try NodeRecord.createNode(database: database,
                                           kind: kind,
                                           properties: nodeProperties,
                                           searchKey: asString(omitOutputPort: true))

@@ -31,7 +31,7 @@ extension HasPath {
             throw NodeError.other(message: "Path '\(path)' has no components")
         }
 
-        let rootNode: Node
+        let rootNode: NodeRecord
         switch rootName {
         case Folder.inputFileSystemName:
             rootNode = try Folder.inputFileSystem
@@ -80,13 +80,13 @@ struct OutputFile: NodeFunction, FileType, HasPath, Pinnable, FileMetadataProvid
     static let fileMetadataInputPort = FileMetadata.portName
     static let statusOutputPort = "status"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
     var path: Path {
         Path(thisNode.properties["path"]!)
     }
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
         assert(!path.string.contains(Folder.inputFileSystemName))
         try placeInFileSystem()

@@ -45,7 +45,7 @@ import SemelNodeKit
 /// StaticFile, `moduleName` for a compile.
 ///
 /// Called a property, not an argument, because that is what a node calls it: these are
-/// exactly `Node.properties`, rendered into a shape.
+/// exactly a node's `properties`, rendered into a shape.
 struct GraphShapeProperty: Equatable, Hashable {
     let key: String
     let value: String
@@ -120,7 +120,7 @@ extension GraphShapeNode {
             params.append("\(property.key): '\(property.value)'")
         }
 
-        // Inputs: portName: ["wireName": Node, ...]
+        // Inputs: portName: ["wireName": ShapeNode, ...]
         for input in inputs {
             let wireStrings = input.wires.map { wire in
                 "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
@@ -131,7 +131,7 @@ extension GraphShapeNode {
             params.append("\(input.portName): [\(inner)]")
         }
 
-        // Outputs: portName -> ["wireName": Node, ...] (future use)
+        // Outputs: portName -> ["wireName": ShapeNode, ...] (future use)
         for output in outputs {
             let wireStrings = output.wires.map { wire in
                 "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
@@ -336,7 +336,7 @@ private struct GraphShapeParser {
         return wires
     }
 
-    // ── Wire entry: "name": Node ─────────────────────────────────────────────
+    // ── Wire entry: "name": ShapeNode ─────────────────────────────────────────
 
     mutating func parseWireEntry() throws -> GraphShapeWire {
         skipWhitespace()

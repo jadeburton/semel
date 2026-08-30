@@ -31,9 +31,9 @@ public struct ConfigSubset: NodeFunction {
     /// The namespace this node takes, without a trailing dot: `swift.compiler`.
     static let prefixProperty = "prefix"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

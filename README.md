@@ -124,7 +124,7 @@ SemelClang/      Clang toolchain node types
   ClangLinkerTool      Links Clang object files
   ClangPreprocessorTool   Preprocesses headers
   ClangIncludeFinder   Tracks #include dependencies
-SemelDatabaseModels/        GRDB schema models (Node, Wire, OutputPort, …)
+SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, …)
 ```
 
 The engine runs a two-phase processing loop:

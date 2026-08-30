@@ -53,7 +53,7 @@ extension BuildEngine {
     }
 
     /// Format a wire as "fromNode:fromPort ──▶ toNode:toPort".
-    private func formatWire(_ wire: Wire, nodeByID: [ObjectID: Node], database: DatabaseLayer) -> String {
+    private func formatWire(_ wire: Wire, nodeByID: [ObjectID: NodeRecord], database: DatabaseLayer) -> String {
         let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
         let toNode   = nodeByID[wire.toNodeID]?.name   ?? "?"
         let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
@@ -105,7 +105,7 @@ extension BuildEngine {
         let allWires       = try database.wire.selectAll()
 
         // Indexes built once and reused throughout
-        let nodeByID: [ObjectID: Node] = Dictionary(
+        let nodeByID: [ObjectID: NodeRecord] = Dictionary(
             uniqueKeysWithValues: allNodes.compactMap { node in node.id.map { ($0, node) } })
         let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.toNodeID)
         let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.fromNodeID)
@@ -201,7 +201,7 @@ extension BuildEngine {
     }
 }
 
-extension Node {
+extension NodeRecord {
 
     fileprivate func printDependencyTree(indentLevel: Int) {
         let indent = String(repeating: "  ", count: indentLevel)
@@ -224,7 +224,7 @@ extension Node {
             let incomingWires = try database.wire.select(goingToNodeID: nodeID)
 
             var visitedDependencyNodeIDs = Set<ObjectID>()
-            var dependencyNodes = [Node]()
+            var dependencyNodes = [NodeRecord]()
 
             for wire in incomingWires {
                 guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }

@@ -54,7 +54,7 @@ final class FileSystemRootCacheTests: SemelCoreTestCase {
         // Stand something else on that row: exactly what a fresh database does when it
         // reissues the same rowid for a different node.
         _ = try engine.database.node.delete(nodeID: rootID)
-        let impostor = try Node.createNode(database: engine.database,
+        let impostor = try NodeRecord.createNode(database: engine.database,
                                            kind: Configuration.kind,
                                            properties: ["path": "input:"],
                                            searchKey: "Configuration(path: 'input:')")

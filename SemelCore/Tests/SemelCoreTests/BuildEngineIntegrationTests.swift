@@ -38,13 +38,13 @@ final class CascadeDeletionTests: SemelCoreTestCase {
     // Creates a Configuration node with the given role property so tests can
     // build distinguishable nodes without the file-system plumbing that
     // StaticFile requires.
-    private func makeConfiguration(role: String) throws -> Node {
+    private func makeConfiguration(role: String) throws -> NodeRecord {
         let shape = try GraphShapeNode.parse("Configuration(role: '\(role)').output")
         let (node, _) = try shape.findOrCreateMatchingNode()
         return node
     }
 
-    private func wire(_ source: Node, to consumer: Node, name: String) throws {
+    private func wire(_ source: NodeRecord, to consumer: NodeRecord, name: String) throws {
         try Wire.connectWire(database: engine.database,
                              fromNodeID: source.id!,
                              fromSymbolID: "output".asSymbolID(),
@@ -60,7 +60,7 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         } while processed > 0
     }
 
-    private func nodeExists(_ node: Node) -> Bool {
+    private func nodeExists(_ node: NodeRecord) -> Bool {
         (try? engine.database.node.select(nodeID: node.id!)) != nil
     }
 

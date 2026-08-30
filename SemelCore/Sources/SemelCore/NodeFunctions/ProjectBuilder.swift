@@ -27,9 +27,9 @@ public struct ProjectBuilder: NodeFunction {
         outputPorts: [statusOutputPort, productsOutputPort]
     )
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

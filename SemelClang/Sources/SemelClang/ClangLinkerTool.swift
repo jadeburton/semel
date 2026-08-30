@@ -38,7 +38,7 @@ struct ClangLinkerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangLinkerTool")
 }
 
-// MARK: - Node
+// MARK: - NodeFunction
 
 public struct ClangLinkerTool: NodeFunction {
     public static let kind: UInt = 18
@@ -52,9 +52,9 @@ public struct ClangLinkerTool: NodeFunction {
     static let infoLog = "infoLog"
     static let fileMetadata = FileMetadata.portName
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

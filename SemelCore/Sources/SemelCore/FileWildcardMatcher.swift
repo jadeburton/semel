@@ -135,9 +135,9 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
 
 public final class InternalFileSystemLister: FileWildcardMatcherInput {
     public let rootDirectoryPath = "/"
-    let folder: Node
+    let folder: NodeRecord
 
-    public init(folder: Node) {
+    public init(folder: NodeRecord) {
         self.folder = folder
     }
 

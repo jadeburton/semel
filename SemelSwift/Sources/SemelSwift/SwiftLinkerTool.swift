@@ -35,7 +35,7 @@ struct SwiftLinkerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftLinkerTool")
 }
 
-// MARK: - Node
+// MARK: - NodeFunction
 
 struct SwiftLinkerTool: NodeFunction {
     public static let kind: UInt = 21
@@ -58,9 +58,9 @@ struct SwiftLinkerTool: NodeFunction {
     /// published at the default 0644 and will not run. Same arrangement as ClangLinkerTool.
     static let fileMetadata = FileMetadata.portName
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

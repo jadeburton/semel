@@ -120,13 +120,13 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         return file
     }
 
-    private func makeConfiguration(role: String) throws -> Node {
+    private func makeConfiguration(role: String) throws -> NodeRecord {
         let shape = try GraphShapeNode.parse("Configuration(role: '\(role)').output")
         let (node, _) = try shape.findOrCreateMatchingNode()
         return node
     }
 
-    private func connect(from source: Node, to consumer: Node, name: String) throws {
+    private func connect(from source: NodeRecord, to consumer: NodeRecord, name: String) throws {
         try Wire.connectWire(database: database,
                              fromNodeID: try source.requireID(),
                              fromSymbolID: "output".asSymbolID(),

@@ -30,14 +30,14 @@ final class WireManagementTests: SemelCoreTestCase {
 
     private var database: DatabaseLayer { engine.database }
 
-    private func makeConfiguration(role: String) throws -> Node {
+    private func makeConfiguration(role: String) throws -> NodeRecord {
         let shape = try GraphShapeNode.parse("Configuration(role: '\(role)').output")
         let (node, _) = try shape.findOrCreateMatchingNode()
         return node
     }
 
     @discardableResult
-    private func connect(_ source: Node, to consumer: Node, name: String) throws -> (ObjectID, ObjectID) {
+    private func connect(_ source: NodeRecord, to consumer: NodeRecord, name: String) throws -> (ObjectID, ObjectID) {
         let from = try source.requireID()
         let to   = try consumer.requireID()
         try Wire.connectWire(database: database,
@@ -49,12 +49,12 @@ final class WireManagementTests: SemelCoreTestCase {
         return (from, to)
     }
 
-    private func wires(into node: Node) throws -> [Wire] {
+    private func wires(into node: NodeRecord) throws -> [Wire] {
         try database.wire.select(goingToNodeID: try node.requireID(),
                                  toSymbolID: "inherit".asSymbolID())
     }
 
-    private func isPendingDeletion(_ node: Node) throws -> Bool {
+    private func isPendingDeletion(_ node: NodeRecord) throws -> Bool {
         try XCTUnwrap(database.node.select(nodeID: try node.requireID())).pendingDeletion
     }
 

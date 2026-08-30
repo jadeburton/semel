@@ -16,9 +16,9 @@ public struct ConfigMerger: NodeFunction {
     static let overridePort = "override"
     static let outputPort = "output"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

@@ -210,7 +210,7 @@ is pinned by `test_manifestPinnedStateAgreesWithEachChildsOwn`. See B-18 for wha
 Measured rather than assumed, and the assumption in this item's original text was wrong:
 JSON encoding, hashing and storing the manifest are only 16% of a rebuild. The cost was
 `buildManifest` itself — 84%. Within that, `pinnedStates` was 70%, from binding a folder's
-200 children as an `IN` list; and fetching whole `Node`s decoded every child's properties
+200 children as an `IN` list; and fetching whole `NodeRecord`s decoded every child's properties
 only to discard them. Fixed by projecting child summaries, joining on `parentNodeID`
 instead of an `IN` list, and adding the missing index on `Node.parentNodeID` — which was
 unindexed, so every tree walk in the system was a full table scan.

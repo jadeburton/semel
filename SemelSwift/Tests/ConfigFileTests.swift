@@ -27,7 +27,7 @@ final class ConfigFileTests: SemelSwiftTestCase {
 
     private func formula(packageFolder: String = "input:/pkg") throws -> String {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
-        let converter = try SwiftFormulaConverter(thisNode: Node(id: 1, kind: SwiftFormulaConverter.kind))
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try plainManifest.intern())],

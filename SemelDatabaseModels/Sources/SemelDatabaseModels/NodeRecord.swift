@@ -1,8 +1,24 @@
-// Node model moved into SemelDatabaseModels package
+// NodeRecord.swift
+// SemelDatabaseModels
+//
+// One row of the graph: what a node is, stripped of what it does.
+//
+// A node has two halves. This is the persisted one — identity, properties, parentage,
+// whether it is scheduled — and it knows nothing about ports, processing, or its own kind
+// beyond an integer. The behaviour lives a layer up, in `NodeFunction`, which wraps one of
+// these and is what the rest of the system actually works with. Splitting them is what lets
+// the engine load, count and delete nodes without instantiating anything that could run.
 
 import GRDB
 
-public struct Node: Identifiable, FetchableRecord, PersistableRecord {
+public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
+
+    /// Pinned rather than derived. GRDB's default turns a type name into a table name, so
+    /// renaming this type would rename the table — and `Node` happened to still match the
+    /// created table only because SQLite compares table names case-insensitively. The schema
+    /// should not move because a Swift type did.
+    public static let databaseTableName = "Node"
+
     public enum Columns {
         public static let kind = Column("kind")
         public static let name = Column("name")
@@ -26,7 +42,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
 
     /// The node's id, or an error if it has not been inserted yet.
     ///
-    /// `id` is optional only because a Node exists briefly in memory before its row is
+    /// `id` is optional only because a NodeRecord exists briefly in memory before its row is
     /// written.  Every operation that needs an id needs a *persisted* node, so asking
     /// for one that isn't there is an integrity error to be reported — not a reason to
     /// abort the process, which is what the force unwraps this replaces used to do.
@@ -139,15 +155,15 @@ public struct NodeDataAccess: DataAccessType {
         self.databaseLayer = databaseLayer
     }
 
-    public func selectAllScheduled(limit: Int) throws -> [Node] {
+    public func selectAllScheduled(limit: Int) throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.scheduled == true).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.scheduled == true).fetchAll(db)
         }
     }
 
-    public func selectAllPendingDeletion() throws -> [Node] {
+    public func selectAllPendingDeletion() throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.pendingDeletion == true).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.pendingDeletion == true).fetchAll(db)
         }
     }
 
@@ -191,42 +207,42 @@ public struct NodeDataAccess: DataAccessType {
         }
     }
 
-    public func selectAll() throws -> [Node] {
+    public func selectAll() throws -> [NodeRecord] {
         Debug.warn("expensive selectAllNodes call")
-        return try read { db in try Node.fetchAll(db) }
+        return try read { db in try NodeRecord.fetchAll(db) }
     }
 
-    public func select(nodeID: ObjectID) throws -> Node {
-        guard let node = (try read { db in try Node.fetchOne(db, id: nodeID) }) else {
+    public func select(nodeID: ObjectID) throws -> NodeRecord {
+        guard let node = (try read { db in try NodeRecord.fetchOne(db, id: nodeID) }) else {
             throw DatabaseLayer.DatabaseError.nodeNotFound
         }
         return node
     }
 
-    public func select(parentNodeID: ObjectID) throws -> [Node] {
+    public func select(parentNodeID: ObjectID) throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func select(named name: String, parentNodeID: ObjectID?) throws -> [Node] {
+    public func select(named name: String, parentNodeID: ObjectID?) throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.name == name &&
-                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.name == name &&
+                            NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
-    public func select(searchKey: String) throws -> [Node] {
+    public func select(searchKey: String) throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.searchKey == searchKey).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.searchKey == searchKey).fetchAll(db)
         }
     }
 
-    public func select(kind: UInt, named name: String, parentNodeID: ObjectID?) throws -> [Node] {
+    public func select(kind: UInt, named name: String, parentNodeID: ObjectID?) throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.kind == kind &&
-                            Node.Columns.name == name &&
-                            Node.Columns.parentNodeID == parentNodeID).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.kind == kind &&
+                            NodeRecord.Columns.name == name &&
+                            NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
@@ -234,20 +250,20 @@ public struct NodeDataAccess: DataAccessType {
     ///
     /// `kind` is indexed, so unlike `selectAll()` this does not scan the whole table —
     /// safe to call for a common kind as well as a rare one.
-    public func select(kind: UInt) throws -> [Node] {
+    public func select(kind: UInt) throws -> [NodeRecord] {
         try read { db in
-            try Node.filter(Node.Columns.kind == kind).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.kind == kind).fetchAll(db)
         }
     }
 
-    public func insert(_ node: Node) throws -> ObjectID {
+    public func insert(_ node: NodeRecord) throws -> ObjectID {
         try write { db in
             try node.insert(db)
             return db.lastInsertedRowID
         }
     }
 
-    public func insertOrUpdate(_ node: Node) throws {
+    public func insertOrUpdate(_ node: NodeRecord) throws {
         try write { db in try node.save(db) }
     }
 
@@ -266,7 +282,7 @@ public struct NodeDataAccess: DataAccessType {
 
     /// Updates all columns of the node **except** `scheduled`.
     /// Never use this to change the scheduled flag — use `updateScheduled(nodeID:scheduled:)` instead.
-    public func update(_ node: Node) throws {
+    public func update(_ node: NodeRecord) throws {
         try write { db in
             try db.execute(
                 sql: """
@@ -282,7 +298,7 @@ public struct NodeDataAccess: DataAccessType {
                     node.parentNodeID,
                     node.kind,
                     node.name,
-                    Node.encodeProperties(node.properties),
+                    NodeRecord.encodeProperties(node.properties),
                     node.searchKey,
                     node.id
                 ]
@@ -292,14 +308,14 @@ public struct NodeDataAccess: DataAccessType {
 
     public func delete(nodeID: ObjectID) throws -> Bool {
         try write { db in
-            let result = try Node.deleteOne(db, id: nodeID)
+            let result = try NodeRecord.deleteOne(db, id: nodeID)
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID).deleteAll(db)
             return result
         }
     }
 }
 
-extension Node: CustomStringConvertible {
+extension NodeRecord: CustomStringConvertible {
     public var description: String {
         "Node \(id ?? -1): kind \(kind), name=\(name ?? "nil"), scheduled=\(scheduled)"
     }

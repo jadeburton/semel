@@ -10,8 +10,8 @@ protocol CommandContext: AnyObject {
     var baseDirectory: String { get set }
     var currentFileSystem: FileSystemForCommand { get set }
     var currentDirectoryPath: Path { get set }
-    var inputFileSystem: Node { get throws }
-    var outputFileSystem: Node { get throws }
+    var inputFileSystem: NodeRecord { get throws }
+    var outputFileSystem: NodeRecord { get throws }
     var buildEngine: BuildEngine { get }
     func outputMessage(_ message: String)
     func outputError(_ message: String)
@@ -23,7 +23,7 @@ extension CommandContext {
         return currentDirectoryPath.isEmpty ? fsName : "\(fsName)/\(currentDirectoryPath)"
     }
 
-    func fileSystem(for target: FileSystemForCommand) throws -> Node {
+    func fileSystem(for target: FileSystemForCommand) throws -> NodeRecord {
         switch target {
         case .input:  return try inputFileSystem
         case .output: return try outputFileSystem

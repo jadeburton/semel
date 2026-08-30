@@ -26,7 +26,7 @@ final class ClangLinkerToolTests: SemelClangTestCase {
     // MARK: - Helpers
 
     private func makeTool() throws -> ClangLinkerTool {
-        try ClangLinkerTool(thisNode: Node(id: 1, kind: ClangLinkerTool.kind))
+        try ClangLinkerTool(thisNode: NodeRecord(id: 1, kind: ClangLinkerTool.kind))
     }
 
     private func makeInput(objectFiles: [String],

@@ -31,8 +31,8 @@ final class SourceNodeSchedulingTests: SemelCoreTestCase {
         super.tearDown()
     }
 
-    private func createNode(kind: UInt) throws -> Node {
-        try Node.createNode(database: database, kind: kind, properties: [:], searchKey: nil)
+    private func createNode(kind: UInt) throws -> NodeRecord {
+        try NodeRecord.createNode(database: database, kind: kind, properties: [:], searchKey: nil)
     }
 
     /// A node with no input ports has nothing to be handed, so creating it must not queue

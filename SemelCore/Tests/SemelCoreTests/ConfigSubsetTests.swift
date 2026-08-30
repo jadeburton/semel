@@ -18,7 +18,7 @@ import XCTest
 final class ConfigSubsetTests: SemelCoreTestCase {
 
     private func subset(prefix: String, file: String) throws -> String {
-        let node = try ConfigSubset(thisNode: Node(id: 1, kind: ConfigSubset.kind,
+        let node = try ConfigSubset(thisNode: NodeRecord(id: 1, kind: ConfigSubset.kind,
                                                    properties: ["prefix": prefix]))
         let output = try node.process(input: ProcessInput(inputValues: [
             ConfigSubset.inputPort: ["config": .value(try file.intern())]
@@ -28,7 +28,7 @@ final class ConfigSubsetTests: SemelCoreTestCase {
     }
 
     private func subset(prefix: String, wires: [String: NodeValue]) throws -> String {
-        let node = try ConfigSubset(thisNode: Node(id: 1, kind: ConfigSubset.kind,
+        let node = try ConfigSubset(thisNode: NodeRecord(id: 1, kind: ConfigSubset.kind,
                                                    properties: ["prefix": prefix]))
         let output = try node.process(input: ProcessInput(inputValues: [
             ConfigSubset.inputPort: wires

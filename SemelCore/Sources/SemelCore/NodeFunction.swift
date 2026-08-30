@@ -304,7 +304,7 @@ extension NodeFunction {
     /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
     /// `nil` if the type name in the expectation is not registered in PolyFactory.
-    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: Node, fromSymbolID: ObjectID?)? {
+    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?)? {
         let expectedShape = try GraphShapeNode.parse(expectationString)
         return try expectedShape.findOrCreateMatchingNode()
     }

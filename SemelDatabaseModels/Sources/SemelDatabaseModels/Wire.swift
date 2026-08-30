@@ -13,7 +13,7 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
     public var fromSymbolID: ObjectID
     public var toNodeID: ObjectID
     public var toSymbolID: ObjectID
-    public var name: ObjectID // used by target Node to discern multiple wires going to the same input. Named by the creator of the target Node.
+    public var name: ObjectID // used by the target node to discern multiple wires going to the same input. Named by the creator of the target node.
 
     public init(fromNodeID: ObjectID, fromSymbolID: ObjectID, toNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) {
         self.fromNodeID = fromNodeID

@@ -34,9 +34,9 @@ struct SwiftFormulaConverter: NodeFunction {
     static let infoLog              = "infoLog"
     static let externalPackageJSONs = "externalPackageJSONs"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

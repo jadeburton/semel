@@ -17,7 +17,7 @@ extension String {
     }
 }
 
-extension Node {
+extension NodeRecord {
     var database: DatabaseLayer {
         DatabaseLayer.shared
     }
@@ -62,15 +62,15 @@ extension Node {
         try nodeFunction()
     }
 
-    var allChildren: [Node] {
+    var allChildren: [NodeRecord] {
         get throws {
             try DatabaseLayer.shared.node.select(parentNodeID: (try requireID()))
         }
     }
 
-    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> Node {
+    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> NodeRecord {
 
-        var node = Node(parentNodeID: nil,
+        var node = NodeRecord(parentNodeID: nil,
                         kind: kind,
                         name: nil,
                         properties: properties,
@@ -142,7 +142,7 @@ extension Node {
     /// Walk (creating as needed) the given path of folder nodes beneath `self`.
     /// Returns the deepest folder node.
     @discardableResult
-    public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> Node {
+    public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> NodeRecord {
         guard kind == Folder.kind else {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
@@ -202,12 +202,12 @@ extension Node {
 
     /// Convenience overload accepting a String path.
     @discardableResult
-    public func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> Node {
+    public func ensureEntirePathExistsAsFolders(_ path: String, pinned: Bool) throws -> NodeRecord {
         try ensureEntirePathExistsAsFolders(Path(path), pinned: pinned)
     }
 
     /// Walk the node tree by path segments, returning the node at the given path or `nil` if not found.
-    public func childNode(path: Path) throws -> Node? {
+    public func childNode(path: Path) throws -> NodeRecord? {
         guard !path.isEmpty else { return self }
         var currentNode = self
         for name in path.segments {
@@ -220,7 +220,7 @@ extension Node {
     }
 
     /// Convenience overload accepting a String path.
-    public func childNode(path: String) throws -> Node? {
+    public func childNode(path: String) throws -> NodeRecord? {
         try childNode(path: Path(path))
     }
 
@@ -242,7 +242,7 @@ extension Node {
 
 // MARK: - Port management
 
-extension Node {
+extension NodeRecord {
     func hasOneOrMoreErrorOrPendingOutputs() throws -> Bool {
         try database.outputPort.selectAll(nodeID: (try requireID())).contains { $0.valueKind != .value }
     }

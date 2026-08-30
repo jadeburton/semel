@@ -137,7 +137,7 @@ public final class DatabaseLayer {
     }
 
     private static func createTables(dbQueue: DatabaseQueue) throws {
-        try Node.createTable(dbQueue: dbQueue)
+        try NodeRecord.createTable(dbQueue: dbQueue)
         try Wire.createTable(dbQueue: dbQueue)
         try CacheEntry.createTable(dbQueue: dbQueue)
         try Symbol.createTable(dbQueue: dbQueue)

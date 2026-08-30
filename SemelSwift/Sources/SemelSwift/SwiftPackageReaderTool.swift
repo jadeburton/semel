@@ -42,7 +42,7 @@ struct SwiftPackageReaderToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReaderTool")
 }
 
-// MARK: - Node
+// MARK: - NodeFunction
 
 struct SwiftPackageReaderTool: NodeFunction {
     public static let kind: UInt = 23
@@ -57,9 +57,9 @@ struct SwiftPackageReaderTool: NodeFunction {
     static let packageJSON   = "packageJSON"
     static let infoLog       = "infoLog"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

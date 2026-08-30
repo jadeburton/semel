@@ -63,14 +63,14 @@ struct ClangPreprocessorToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessorTool")
 }
 
-// MARK: - Node
+// MARK: - NodeFunction
 
 public struct ClangPreprocessorTool: NodeFunction {
     public static let kind: UInt = 17
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

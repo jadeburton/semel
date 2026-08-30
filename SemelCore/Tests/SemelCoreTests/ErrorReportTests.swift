@@ -31,7 +31,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     }
 
     private func makeNode(kind: UInt, properties: [String: String] = [:]) throws -> ObjectID {
-        try Node.createNode(database: database, kind: kind,
+        try NodeRecord.createNode(database: database, kind: kind,
                             properties: properties, searchKey: nil).requireID()
     }
 

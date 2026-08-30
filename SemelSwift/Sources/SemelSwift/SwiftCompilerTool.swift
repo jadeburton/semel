@@ -100,7 +100,7 @@ struct SourceScope {
     }
 }
 
-// MARK: - Node
+// MARK: - NodeFunction
 
 struct SwiftCompilerTool: NodeFunction {
     public static let kind: UInt = 20
@@ -128,9 +128,9 @@ struct SwiftCompilerTool: NodeFunction {
     static let outputInterface       = "swiftinterface"
     static let infoLog               = "infoLog"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

@@ -24,7 +24,7 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
     }
 
     private func makeTool() throws -> SwiftLinkerTool {
-        try SwiftLinkerTool(thisNode: Node(id: 1, kind: SwiftLinkerTool.kind))
+        try SwiftLinkerTool(thisNode: NodeRecord(id: 1, kind: SwiftLinkerTool.kind))
     }
 
     private func makeInput(objectFiles: [String],

@@ -25,7 +25,7 @@ final class ConfigMergerTests: SemelCoreTestCase {
     /// would not reach `process` at all — `allInputsAreSatisfied` waits on pending — so a test
     /// using one would assert nothing about how this node behaves.
     private func merge(base: String?, override: String?) throws -> String {
-        let node = try ConfigMerger(thisNode: Node(id: 1, kind: ConfigMerger.kind))
+        let node = try ConfigMerger(thisNode: NodeRecord(id: 1, kind: ConfigMerger.kind))
 
         func wire(_ text: String?) -> [String: NodeValue] {
             guard let text else {

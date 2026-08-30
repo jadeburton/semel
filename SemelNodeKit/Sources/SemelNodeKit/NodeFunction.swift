@@ -8,22 +8,22 @@
 import Foundation
 import SemelDatabaseModels
 
-// A node in the graph. A Node is the raw, database-level entity; this wraps it and adds
+// A node in the graph. A NodeRecord is the raw, database-level entity; this wraps it and adds
 // behaviour.
 //
 // One protocol, whether or not the node has inputs. A node declaring no input ports — a
 // StaticFile, a Folder — is a source: the graph neither schedules nor processes it, because
 // there would be nothing to hand it. `descriptor.hasInputs` is what says which it is.
 public protocol NodeFunction: WithKind, WithChildren {
-    var thisNode: Node { get set }
+    var thisNode: NodeRecord { get set }
 
-    init(thisNode: Node) throws
+    init(thisNode: NodeRecord) throws
 
     func didCreate() throws -> ProcessOutput?
 
     static var descriptor: NodeFunctionDescriptor { get }
 
-    /// A Node can be immediately deleted as soon as all of its output wires are deleted AND if this method returns true.
+    /// A node can be immediately deleted as soon as all of its output wires are deleted AND if this method returns true.
     func canBeDeleted() throws -> Bool
 
     /// Called only when `descriptor.hasInputs`.

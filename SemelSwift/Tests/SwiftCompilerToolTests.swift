@@ -30,7 +30,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
     // MARK: - Helpers
 
     private func makeTool() throws -> SwiftCompilerTool {
-        try SwiftCompilerTool(thisNode: Node(id: 1, kind: SwiftCompilerTool.kind))
+        try SwiftCompilerTool(thisNode: NodeRecord(id: 1, kind: SwiftCompilerTool.kind))
     }
 
     private func file(_ name: String)   -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }

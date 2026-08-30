@@ -49,7 +49,7 @@ public final class BuildEngine {
         ProjectDiscovery.register(FormulaFilePlugin())
     }
 
-    var projectFinder: Node {
+    var projectFinder: NodeRecord {
         get throws {
             let graphShape = GraphShapeNode(typeName: "ProjectFinder", properties: [], inputs: [], outputs: [])
             let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
@@ -59,11 +59,11 @@ public final class BuildEngine {
 
     /// Convenience for callers that already hold an engine. The roots belong to the graph,
     /// not to the engine — `Folder` owns the lookup.
-    public var inputFileSystem: Node {
+    public var inputFileSystem: NodeRecord {
         get throws { try Folder.inputFileSystem }
     }
 
-    public var outputFileSystem: Node {
+    public var outputFileSystem: NodeRecord {
         get throws { try Folder.outputFileSystem }
     }
 
@@ -305,7 +305,7 @@ public final class BuildEngine {
     }
 
     private struct BatchComputeResult {
-        let node: Node
+        let node: NodeRecord
         let output: ProcessOutput
         let cacheKey: String?
         let computeStart: Date
@@ -386,7 +386,7 @@ public final class BuildEngine {
         for result in computedResults {
             do {
                 // Skip nodes that were cascade-deleted by an earlier phase-2 step.
-                // nodeFunction() constructs from the in-memory Node struct and does not
+                // nodeFunction() constructs from the in-memory NodeRecord struct and does not
                 // re-query the DB, so this explicit existence check is required.
                 guard let nodeID = result.node.id, (try? database.node.select(nodeID: nodeID)) != nil else {
                     Debug.warn("node \(result.node.id ?? -1) deleted during processing")
@@ -426,7 +426,7 @@ public final class BuildEngine {
         return true
     }
 
-    func processOneNode(_ node: Node) throws {
+    func processOneNode(_ node: NodeRecord) throws {
         try node.setScheduled(false)
 
         let nodeFunction = try node.nodeFunction()

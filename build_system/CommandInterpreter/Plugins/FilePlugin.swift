@@ -213,7 +213,7 @@ final class FilePlugin: CommandPlugin {
         }
     }
 
-    private func copyOneFile(folder: Node, entry: FileWildcardEntry,
+    private func copyOneFile(folder: NodeRecord, entry: FileWildcardEntry,
                               destinationPath: String, context: any CommandContext) throws {
         guard case .file = entry.kind else { return }
 

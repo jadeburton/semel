@@ -118,7 +118,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     /// expectations it asked for — which is both of the things the engine goes on to build.
     private func convert() throws -> (formula: String, readerExpectations: [String]) {
         let folderManifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
-        let converter = try SwiftFormulaConverter(thisNode: Node(id: 1, kind: SwiftFormulaConverter.kind))
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder: ["folder": .value(try folderManifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:   ["json":   .value(try rootManifest.intern())],
@@ -182,7 +182,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
     /// The merged `key=value` text arriving on one node's `configuration` port — the exact
     /// value the node's own `init(properties:)` is handed at process time.
-    private func settingsReaching(_ node: Node, port: String) throws -> [String: String] {
+    private func settingsReaching(_ node: NodeRecord, port: String) throws -> [String: String] {
         let wires = try node.readFromInputPort(port)
         XCTAssertFalse(wires.isEmpty, "nothing is wired to \(node.kind)'s \(port) port")
 

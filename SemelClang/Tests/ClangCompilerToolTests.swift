@@ -29,7 +29,7 @@ final class ClangCompilerToolTests: SemelClangTestCase {
     // MARK: - Helpers
 
     private func makeTool() throws -> ClangCompilerTool {
-        try ClangCompilerTool(thisNode: Node(id: 1, kind: ClangCompilerTool.kind))
+        try ClangCompilerTool(thisNode: NodeRecord(id: 1, kind: ClangCompilerTool.kind))
     }
 
     private func makeInput(sourcePath: String = "src/hello.c.p",

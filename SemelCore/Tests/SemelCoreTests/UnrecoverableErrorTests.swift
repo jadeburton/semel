@@ -154,7 +154,7 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
                                                    ofItemAtPath: self.storeRoot.path)
         }
 
-        let tool = try SampleTool(thisNode: Node(id: 1, kind: SampleTool.kind))
+        let tool = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
         let output = tool.processWithCatch(input: input)
 
         XCTAssertFalse(reported.isEmpty,

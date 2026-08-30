@@ -31,7 +31,7 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
     // MARK: - Helpers
 
     private func makeTool() throws -> ClangPreprocessorTool {
-        try ClangPreprocessorTool(thisNode: Node(id: 1, kind: ClangPreprocessorTool.kind))
+        try ClangPreprocessorTool(thisNode: NodeRecord(id: 1, kind: ClangPreprocessorTool.kind))
     }
 
     /// No includes: the ClangIncludeFinder result for the source file is present but empty,

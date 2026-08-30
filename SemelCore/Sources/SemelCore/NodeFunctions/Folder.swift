@@ -17,14 +17,14 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
     public static let inputFileSystemName  = FileSystemName.input
     public static let outputFileSystemName = FileSystemName.output
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
         try placeInFileSystem()
     }
 
-    var inputFileSystem: Node {
+    var inputFileSystem: NodeRecord {
         get throws {
             try Folder.inputFileSystem
         }
@@ -46,7 +46,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
         .init(thisNode.properties["path"]!)
     }
 
-    // Ignores the fact that a Node that has wires to/from it should never be deleted; that check needs to happen outside this
+    // Ignores the fact that a node that has wires to/from it should never be deleted; that check needs to happen outside this
     public func canBeDeleted() throws -> Bool {
         // Own state first. It is one port read, it settles the question on its own, and in
         // the input file system a folder the user made is pinned — so this is the common
@@ -61,7 +61,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
     ///
     /// Reads pinned state per kind in one query, exactly as `buildManifest` does, rather than
     /// building a node function per child and asking it. Asking each child directly is
-    /// expensive four ways at once: whole `Node` rows with their properties decoded, a node
+    /// expensive four ways at once: whole `NodeRecord` rows with their properties decoded, a node
     /// function constructed per child, an output-port read inside each `isPinned`, and no way
     /// to stop at the first objection. This recurses, so that is the cost *per level* — during
     /// a delete cascade or a collection sweep, which is when whole trees come through here.
@@ -206,7 +206,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
         return result
     }
 
-    // Folder works outside the cache system and therefore cannot use "process". It is a Node with outputs, however.
+    // Folder works outside the cache system and therefore cannot use "process". It is a node with outputs, however.
     func refreshOutputs() throws {
         try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
                                        value: .value(try buildManifest().toJSON().intern()))
@@ -241,12 +241,12 @@ extension Folder {
     /// node whose path is "input:" or "output:", found or created by shape like any other
     /// node. They live here rather than on BuildEngine so a node function does not have to
     /// reach for the engine — and so the engine is not a dependency of the layer below it.
-    public static var inputFileSystem: Node {
+    public static var inputFileSystem: NodeRecord {
         get throws { try root(named: inputFileSystemName) }
     }
 
     /// The output file system's root Folder.
-    public static var outputFileSystem: Node {
+    public static var outputFileSystem: NodeRecord {
         get throws { try root(named: outputFileSystemName) }
     }
 
@@ -258,7 +258,7 @@ extension Folder {
     /// cheap — `Node.searchKey` is unique-indexed — but `findOrCreateMatchingNode` wraps
     /// find-and-create in a transaction, so the read paid for a write it never did.
     ///
-    /// The ID is cached rather than the Node: `Node` is a mutable value type, and handing
+    /// The ID is cached rather than the NodeRecord: `NodeRecord` is a mutable value type, and handing
     /// out a stale copy invites writing it back.
     ///
     /// Locked because node processing runs in a concurrent TaskGroup, and resolution reaches
@@ -281,7 +281,7 @@ extension Folder {
         cachedRootIDs[name] = id
     }
 
-    private static func root(named name: String) throws -> Node {
+    private static func root(named name: String) throws -> NodeRecord {
         // Verified, not trusted, because a cached ID can be wrong in two ways.
         //
         // It can point at nothing: the roots are *not* permanent. `canBePinned()` asks

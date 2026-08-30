@@ -24,9 +24,9 @@ public struct SampleTool: NodeFunction {
     static let errorLog      = "errorLog"
     static let infoLog       = "infoLog"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 
@@ -47,9 +47,9 @@ public struct SampleTool: NodeFunction {
 public struct OtherSampleTool: NodeFunction {
     public static let kind: UInt = 987_102
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 
@@ -74,9 +74,9 @@ public struct SampleSourceNode: NodeFunction {
 
     static let output = "output"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

@@ -17,8 +17,8 @@ public final class CommandInterpreter: CommandContext {
     var currentDirectoryPath: Path = .empty
 
     let buildEngine: BuildEngine
-    var inputFileSystem: Node     { get throws { try buildEngine.inputFileSystem } }
-    var outputFileSystem: Node    { get throws { try buildEngine.outputFileSystem } }
+    var inputFileSystem: NodeRecord     { get throws { try buildEngine.inputFileSystem } }
+    var outputFileSystem: NodeRecord    { get throws { try buildEngine.outputFileSystem } }
 
     func outputMessage(_ message: String) { print(message) }
     func outputError(_ errorMessage: String) { print(errorMessage) }

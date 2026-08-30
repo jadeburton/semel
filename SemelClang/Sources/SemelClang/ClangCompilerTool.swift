@@ -34,7 +34,7 @@ struct ClangCompilerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangCompilerTool")
 }
 
-// MARK: - Node
+// MARK: - NodeFunction
 
 public struct ClangCompilerTool: NodeFunction {
     public static let kind: UInt = 19
@@ -47,9 +47,9 @@ public struct ClangCompilerTool: NodeFunction {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
-    public var thisNode: Node
+    public var thisNode: NodeRecord
 
-    public init(thisNode: Node) throws {
+    public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode
     }
 

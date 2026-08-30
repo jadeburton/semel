@@ -17,7 +17,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     // MARK: - Helpers
 
     private func makeConverter() throws -> SwiftFormulaConverter {
-        try SwiftFormulaConverter(thisNode: Node(id: 1, kind: SwiftFormulaConverter.kind))
+        try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
     }
 
     private func convert(packageFolder: String = "input:/pkg",
