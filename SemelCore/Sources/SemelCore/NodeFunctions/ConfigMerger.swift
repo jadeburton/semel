@@ -34,14 +34,15 @@ public struct ConfigMerger: NodeFunction {
         self.thisNode = thisNode
     }
 
-    /// Both ports are required, which is about the *wire* existing, not about the file behind
-    /// it having been written. A formula naming a config file creates the wire whether or not
-    /// anyone has pushed that file yet, so an optional override is still expressible — the
-    /// wire is there and carries no value, which `settings(on:in:)` reads as nothing to add.
+    /// Both required, because an optional port means the formula author may leave that input
+    /// out — and a merger written with one side is that side. If a project has one config, it
+    /// wires it directly; reaching for this node says there are two.
     ///
-    /// Optional ports would instead allow a merger with one side unwired, which merges nothing
-    /// and is a node the graph would carry for no reason. Requiring both means a formula that
-    /// names only one config fails when the graph is built, saying which port is unwired.
+    /// Nothing to do with a config file that has not been written yet. Static wires are
+    /// created atomically as the formula is interpreted, so naming a file creates its wire
+    /// whether or not anyone has pushed it — the wire is simply carrying no value, which
+    /// `settings(on:in:)` reads as nothing to add. An override file that may or may not exist
+    /// is expressible either way; what required rules out is the formula omitting the input.
     public static let descriptor = NodeFunctionDescriptor(
         inputPorts: [.required(basePort), .required(overridePort)],
         outputPorts: [outputPort]

@@ -103,13 +103,15 @@ final class ConfigMergerTests: SemelCoreTestCase {
 
     // MARK: - What the ports require
 
-    /// Both ports are required, and that is about the *wire* rather than the file behind it.
-    /// A formula naming a config file creates the wire whether or not anyone has pushed that
-    /// file, so an optional override is still expressible — the wire exists and carries no
-    /// value, which the tests above cover. Optional ports would instead permit a merger with
-    /// one side unwired, which merges nothing and is a node the graph would carry for no
-    /// reason; required means `GraphShapeApplier` rejects it and says which port is missing.
-    func test_bothPortsAreRequiredSoAOneSidedMergerCannotBeBuilt() {
+    /// An optional port means a formula may leave that input out, and a merger written with
+    /// one side is that side — so requiring both is what stops the node being written where
+    /// wiring the config directly is what was meant.
+    ///
+    /// This says nothing about a config file that has not been written yet: naming a file in
+    /// a formula creates its wire regardless, and the tests above cover a wire that carries
+    /// no value. The two are separate, and conflating them is how these ports were optional
+    /// to begin with.
+    func test_bothPortsAreRequiredSoAOneSidedMergerCannotBeWritten() {
         let required = ConfigMerger.descriptor.inputPorts.compactMap {
             if case .required(let name) = $0 { return name } else { return nil }
         }
