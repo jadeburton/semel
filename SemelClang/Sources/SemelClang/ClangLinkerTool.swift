@@ -15,18 +15,21 @@ struct ClangLinkerToolConfiguration {
     let arguments: [String]
     let environment: [String: String]
     let dynamicLibrary: Bool
-    let target: String?  // e.g. "arm64-apple-macos14.0"
+    let target: String  // e.g. "arm64-apple-macos14.0"
     let sdkPath: String?
     /// True when the `std` property starts with `"c++"`, indicating a C++ link
     /// that requires `-lc++` in addition to `-lSystem`.
     let cxx: Bool
 
-    init(properties: [String: String]) {
-        toolDescriptor = .init(properties: properties)
+    init(properties: [String: String]) throws {
+        var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
+        toolDescriptor = .init(required: &required, properties: properties)
+        target = required.value("target")
+        try required.check()
+
         arguments = []
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
-        target = properties["target"]
         sdkPath = properties["sdkPath"]
         cxx = (properties["std"] ?? "").hasPrefix("c++")
     }
@@ -73,7 +76,7 @@ public struct ClangLinkerTool: NodeFunction {
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
-            configuration = .init(properties: [String: String](plainText: configurationString))
+            configuration = try .init(properties: [String: String](plainText: configurationString))
 
             let inputValues = input.inputValues[ClangLinkerTool.input]!
             let libraryValues = input.inputValues[ClangLinkerTool.libraries]!
@@ -124,7 +127,7 @@ public struct ClangLinkerTool: NodeFunction {
         arguments.append(contentsOf: inputs.configuration.arguments)
         
         arguments.append("-target");
-        arguments.append(inputs.configuration.target ?? "arm64-apple-macos14.0") // TODO: no fallback hard coded value, ensure all configs have it
+        arguments.append(inputs.configuration.target)
 
         arguments.append("-L"); arguments.append(".")
 

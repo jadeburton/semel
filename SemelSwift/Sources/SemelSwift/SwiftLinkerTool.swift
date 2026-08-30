@@ -19,18 +19,20 @@ struct SwiftLinkerToolConfiguration {
     let dynamicLibrary: Bool
     let outputName: String
 
-    init(properties: [String: String]) {
-        toolDescriptor = .init(
-            name: properties["toolDescriptor.name"] ?? "swiftc",
-            version: properties["toolDescriptor.version"] ?? "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)",
-            platform: properties["toolDescriptor.platform"] ?? "macOS",
-            architecture: properties["toolDescriptor.architecture"] ?? "arm64",
-            recursiveHash: properties["toolDescriptor.recursiveHash"])
+    init(properties: [String: String]) throws {
+        var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
+        toolDescriptor = .init(name:          required.value("toolDescriptor.name"),
+                               version:       required.value("toolDescriptor.version"),
+                               platform:      required.value("toolDescriptor.platform"),
+                               architecture:  required.value("toolDescriptor.architecture"),
+                               recursiveHash: properties["toolDescriptor.recursiveHash"])
+        outputName = required.value("outputName")
+        try required.check()
+
         arguments = []
         environment = [:]
         sdkVersion  = properties["sdkVersion"]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
-        outputName = properties["outputName"] ?? (dynamicLibrary ? "output.dylib" : "output")
     }
 
     /// Where this node's settings live in a config file: `swift.linker.sdkVersion`.
@@ -87,7 +89,7 @@ struct SwiftLinkerTool: NodeFunction {
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[SwiftLinkerTool.configuration]!.values.first!.expectValue().resolveAsString()
-            configuration = .init(properties: [String: String](plainText: configurationString))
+            configuration = try .init(properties: [String: String](plainText: configurationString))
 
             // Sorted: these go straight onto the command line, and Swift Dictionary
             // iteration order changes from one process to the next.

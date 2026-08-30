@@ -64,6 +64,39 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
     return "\(domain.lowercasedFirst()).\(node)"
 }
 
+/// Reads settings that have no default, reporting every one that is missing rather than the
+/// first. A message naming one of four missing keys costs four build attempts to fix.
+public struct RequiredSettings {
+    private let properties: [String: String]
+    private let namespace: String
+    private var missing: [String] = []
+
+    public init(properties: [String: String], namespace: String) {
+        self.properties = properties
+        self.namespace = namespace
+    }
+
+    public mutating func value(_ key: String) -> String {
+        guard let value = properties[key] else {
+            missing.append("\(namespace).\(key)")
+            return ""
+        }
+        return value
+    }
+
+    public func check() throws {
+        guard !missing.isEmpty else { return }
+        throw NodeError.other(message: """
+            Missing configuration. Add these to a semel.config in the input file system:
+
+            \(missing.sorted().map { "\($0)=…" }.joined(separator: "\n"))
+
+            There are no default values: one baked into Semel would change what this build \
+            means when Semel is upgraded.
+            """)
+    }
+}
+
 private extension String {
     func lowercasedFirst() -> String {
         // All-uppercase words (like "HTTP") become fully lowercase.

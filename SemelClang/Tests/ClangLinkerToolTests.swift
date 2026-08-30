@@ -37,6 +37,7 @@ final class ClangLinkerToolTests: SemelClangTestCase {
             "toolDescriptor.version": descriptor.version,
             "toolDescriptor.platform": descriptor.platform,
             "toolDescriptor.architecture": descriptor.architecture,
+            "target": "arm64-apple-macos14.0",
         ]
         properties.merge(extraConfiguration) { _, new in new }
         let configuration = properties.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")

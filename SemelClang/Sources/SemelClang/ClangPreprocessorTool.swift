@@ -23,8 +23,11 @@ struct ClangPreprocessorToolConfiguration {
     /// Supply via `Configuration(std: 'c++17')` in the formula.
     let std: String?
 
-    init(properties: [String: String]) {
-        toolDescriptor = .init(properties: properties)
+    init(properties: [String: String]) throws {
+        var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
+        toolDescriptor = .init(required: &required, properties: properties)
+        try required.check()
+
         arguments = []
         environment = [:]
         sdkPath = properties["sdkPath"]
@@ -76,7 +79,7 @@ public struct ClangPreprocessorTool: NodeFunction {
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
-            configuration = .init(properties: [String: String](plainText: configurationString))
+            configuration = try .init(properties: [String: String](plainText: configurationString))
 
             let sourceFileInput = input.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
             inputSourceFile = .init(filePath: sourceFileInput.key, hash: try sourceFileInput.value.expectValue())

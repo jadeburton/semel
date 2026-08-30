@@ -17,8 +17,11 @@ struct ClangCompilerToolConfiguration {
     /// Defaults to `"c++17"` for C++ source files when not specified.
     let std: String?
 
-    init(properties: [String: String]) {
-        toolDescriptor = .init(properties: properties)
+    init(properties: [String: String]) throws {
+        var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
+        toolDescriptor = .init(required: &required, properties: properties)
+        try required.check()
+
         arguments = []
         environment = [:]
         std = properties["std"]
@@ -29,11 +32,14 @@ struct ClangCompilerToolConfiguration {
 }
 
 extension ToolDescriptor {
-    init(properties: [String: String]) {
-        self.init(name: properties["toolDescriptor.name"] ?? "",
-                  version: properties["toolDescriptor.version"] ?? "",
-                  platform: properties["toolDescriptor.platform"] ?? "",
-                  architecture: properties["toolDescriptor.architecture"] ?? "",
+    /// Shared by every Clang configuration type, each of which owns the `RequiredSettings`
+    /// its own namespace names -- so a missing key is reported under `clang.compiler...`,
+    /// `clang.linker...` or `clang.preprocessor...` as appropriate, not one shared prefix.
+    init(required: inout RequiredSettings, properties: [String: String]) {
+        self.init(name:          required.value("toolDescriptor.name"),
+                  version:       required.value("toolDescriptor.version"),
+                  platform:      required.value("toolDescriptor.platform"),
+                  architecture:  required.value("toolDescriptor.architecture"),
                   recursiveHash: properties["toolDescriptor.recursiveHash"])
     }
 }
@@ -70,7 +76,7 @@ public struct ClangCompilerTool: NodeFunction {
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
-            configuration = .init(properties: [String: String](plainText: configurationString))
+            configuration = try .init(properties: [String: String](plainText: configurationString))
 
             let input = input.inputValues[ClangCompilerTool.input]!.first!
             inputSourceFile = .init(filePath: input.key, hash: try input.value.expectValue())
