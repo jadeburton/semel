@@ -234,9 +234,26 @@ extension GraphShapeNode {
     ///
     /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
     public func findOrCreateMatchingNode() throws -> (fromNode: Node, fromSymbolID: ObjectID?) {
+        // Fast path: a node that already exists needs no transaction.
+        //
+        // `withTransaction` is `dbQueue.write`, so every call queued behind GRDB's single
+        // writer -- including the overwhelmingly common one that finds an existing node and
+        // writes nothing. That did not merely cost transaction overhead; it serialised
+        // concurrent node resolution against every actual write in the process.
+        //
+        // Safe because this path never inserts, so it cannot be one of the two racing
+        // writers below. The worst it can do is miss a node another task has not committed
+        // yet, which falls through to the transaction, where the second find sees it.
+        if let existing = try findMatchingNode(),
+           let node = try? database.node.select(nodeID: existing.fromNodeID) {
+            return (fromNode: node, fromSymbolID: try outputPort?.asSymbolID())
+        }
+
         let newNode: Node = try database.withTransaction {
-            // Inside the transaction the find is serialized with the create, so
-            // a concurrent task that committed its insert first will be visible here.
+            // Found again inside, deliberately. Between the read above and here another
+            // task may have committed this very node, and find-then-create has to stay in
+            // one transaction regardless: two tasks that both see nil and both insert are
+            // exactly the UNIQUE constraint crash described above.
             if let existing = try findMatchingNode() {
                 return try database.node.select(nodeID: existing.fromNodeID)
             }

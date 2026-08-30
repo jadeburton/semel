@@ -205,7 +205,26 @@ extension Folder {
     ///
     /// The ID is cached rather than the Node: `Node` is a mutable value type, and handing
     /// out a stale copy invites writing it back.
+    ///
+    /// Locked because node processing runs in a concurrent TaskGroup, and resolution reaches
+    /// here from more than one thread. Most writes happen inside a transaction and are
+    /// serialised by GRDB's writer queue, but reads are not — `inputFileSystem` is called
+    /// from plain reads too — and a Dictionary read concurrent with a write is undefined,
+    /// not merely stale.
+    private static let rootCacheLock = NSLock()
     private static var cachedRootIDs: [String: ObjectID] = [:]
+
+    private static func cachedRootID(named name: String) -> ObjectID? {
+        rootCacheLock.lock()
+        defer { rootCacheLock.unlock() }
+        return cachedRootIDs[name]
+    }
+
+    private static func cacheRootID(_ id: ObjectID, named name: String) {
+        rootCacheLock.lock()
+        defer { rootCacheLock.unlock() }
+        cachedRootIDs[name] = id
+    }
 
     private static func root(named name: String) throws -> Node {
         // Verified, not trusted, because a cached ID can be wrong in two ways.
@@ -222,7 +241,7 @@ extension Folder {
         // dictionary lookup on a row already fetched, and makes the cache correct without
         // depending on every test target remembering to clear it — which the CLI target,
         // having no TestGlobals of its own, would not have done.
-        if let cachedID = cachedRootIDs[name],
+        if let cachedID = cachedRootID(named: name),
            let cached = try? DatabaseLayer.shared.node.select(nodeID: cachedID),
            cached.kind == Folder.kind,
            cached.properties["path"] == name {
@@ -234,7 +253,7 @@ extension Folder {
                                         inputs: [],
                                         outputs: [])
         let (rootNode, _) = try graphShape.findOrCreateMatchingNode()
-        cachedRootIDs[name] = try rootNode.requireID()
+        cacheRootID(try rootNode.requireID(), named: name)
         return rootNode
     }
 }
