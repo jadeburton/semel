@@ -571,6 +571,26 @@ independent piece of work.
 noted as unsettled under B-30-SDK. Including the build identifier costs nothing and closes the
 gap that a check can close.
 
+**B-48** `open` — **`clang.*.std` is one key for a whole package, whatever language a file is.**
+`ClangCompilerToolConfiguration.std` is a single value fed from one `clang.compiler.std` key, and
+every `ClangCompilerTool` node in a package selects the same prefix — so there is no way to say
+`c17` for the `.c` files and `c++20` for the `.cpp` ones. It is applied only when the file
+classifies as C++ (`ClangPreprocessorTool.language(for:)`), which is why a mixed project builds at
+all rather than failing on `-std=c++20` against a `.c` file.
+
+That is also why `std` is required *for C++ compilation* rather than unconditionally, which is the
+one place `40e...` departs from "every setting is required". The departure is sound — requiring it
+unconditionally would make a mixed C/C++ project unbuildable — but the underlying shape is wrong:
+a language standard belongs per language, not per package.
+
+*Worth knowing:* the reproducibility argument is not weaker for C. Clang's default C standard has
+moved across releases (gnu99, gnu11, gnu17), so an unspecified C standard carries the same hazard
+as an unspecified C++ one. Both are mitigated only by the pinned `toolDescriptor.version`.
+
+Approach: separate keys — `clang.compiler.cStandard` and `clang.compiler.cxxStandard` — each
+required when a file of that language is compiled. Also worth revisiting `language(for:)`, which
+misclassifies `.C` (uppercase, conventionally C++) and `.mm`.
+
 ## Closed
 
 **B-20** `done` — SDK is in the Swift tools' cache key (`e6ca4cd`).
