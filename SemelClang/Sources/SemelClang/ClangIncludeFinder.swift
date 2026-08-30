@@ -1,4 +1,4 @@
-// IncludeFinder.swift
+// ClangIncludeFinder.swift
 // build_system
 //
 // Takes a .c or .h source file as input and outputs a newline-separated list
@@ -9,7 +9,7 @@ import Foundation
 import SemelNodeKit
 import SemelDatabaseModels
 
-public struct IncludeFinder: NodeFunction {
+public struct ClangIncludeFinder: NodeFunction {
     public static let kind: UInt = 15
 
     // MARK: Ports
@@ -67,11 +67,11 @@ public struct IncludeFinder: NodeFunction {
 
     // MARK: Processing
 
-    struct IncludeFinderInputs {
+    struct ClangIncludeFinderInputs {
         let inputSourceFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let sourceFiles = input.inputValues[IncludeFinder.sourceFileInputPort]!
+            let sourceFiles = input.inputValues[ClangIncludeFinder.sourceFileInputPort]!
 
             var inputSourceFiles: [FileNameAndContent] = []
 
@@ -83,20 +83,20 @@ public struct IncludeFinder: NodeFunction {
         }
     }
 
-    struct IncludeFinderOutputs {
+    struct ClangIncludeFinderOutputs {
         let includePathList: NodeValue
 
         func asProcessOutput() throws -> ProcessOutput {
-            .init(outputValues: [IncludeFinder.includePathListOutputPort: includePathList], inputWireExpectations: [:])
+            .init(outputValues: [ClangIncludeFinder.includePathListOutputPort: includePathList], inputWireExpectations: [:])
         }
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputs = try IncludeFinderInputs(input: input)
+        let inputs = try ClangIncludeFinderInputs(input: input)
         return try process(inputs: inputs).asProcessOutput()
     }
 
-    func process(inputs: IncludeFinderInputs) throws -> IncludeFinderOutputs {
+    func process(inputs: ClangIncludeFinderInputs) throws -> ClangIncludeFinderOutputs {
         var aggregatedIncludePathList = ""
 
         for sourceFileValue in inputs.inputSourceFiles {

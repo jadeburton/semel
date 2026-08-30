@@ -18,7 +18,7 @@ public enum SemelClang {
             ClangCompilerTool.self,
             ClangLinkerTool.self,
             ClangPreprocessorTool.self,
-            IncludeFinder.self,
+            ClangIncludeFinder.self,
         ])
     }
 }

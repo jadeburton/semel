@@ -2,17 +2,17 @@
 import XCTest
 import SemelNodeKit
 
-final class IncludeFinderTests: SemelClangTestCase {
+final class ClangIncludeFinderTests: SemelClangTestCase {
 
     // MARK: - Basic extraction
 
     func test_extractsQuotedInclude() {
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: #"#include "hello.h""#)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: #"#include "hello.h""#)
         XCTAssertEqual(result, ["hello.h"])
     }
 
     func test_ignoresAngleBracketInclude() {
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: "#include <stdio.h>")
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: "#include <stdio.h>")
         XCTAssertTrue(result.isEmpty)
     }
 
@@ -22,7 +22,7 @@ final class IncludeFinderTests: SemelClangTestCase {
             #include "b.h"
             #include "c.h"
             """
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: source)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
         XCTAssertEqual(result, ["a.h", "b.h", "c.h"])
     }
 
@@ -32,7 +32,7 @@ final class IncludeFinderTests: SemelClangTestCase {
             #include "local.h"
             #include <stdlib.h>
             """
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: source)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
         XCTAssertEqual(result, ["local.h"])
     }
 
@@ -43,7 +43,7 @@ final class IncludeFinderTests: SemelClangTestCase {
             #include "hello.h"
             #include "hello.h"
             """
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: source)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first, "hello.h")
     }
@@ -54,21 +54,21 @@ final class IncludeFinderTests: SemelClangTestCase {
             #include "a.h"
             #include "b.h"
             """
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: source)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
         XCTAssertEqual(result, ["b.h", "a.h"])
     }
 
     // MARK: - Comment stripping
 
     func test_includeInLineComment_isIgnored() {
-        let result = IncludeFinder.extractIncludePaths(
+        let result = ClangIncludeFinder.extractIncludePaths(
             sourceFileContent: #"// #include "hidden.h""#
         )
         XCTAssertTrue(result.isEmpty)
     }
 
     func test_includeInBlockComment_isIgnored() {
-        let result = IncludeFinder.extractIncludePaths(
+        let result = ClangIncludeFinder.extractIncludePaths(
             sourceFileContent: #"/* #include "hidden.h" */"#
         )
         XCTAssertTrue(result.isEmpty)
@@ -79,7 +79,7 @@ final class IncludeFinderTests: SemelClangTestCase {
             // this is a comment
             #include "real.h"
             """
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: source)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
         XCTAssertEqual(result, ["real.h"])
     }
 
@@ -90,21 +90,21 @@ final class IncludeFinderTests: SemelClangTestCase {
              */
             #include "outside.h"
             """
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: source)
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
         XCTAssertEqual(result, ["outside.h"])
     }
 
     // MARK: - Whitespace variants
 
     func test_includeWithTabIndent() {
-        let result = IncludeFinder.extractIncludePaths(
+        let result = ClangIncludeFinder.extractIncludePaths(
             sourceFileContent: "\t#include \"indented.h\""
         )
         XCTAssertEqual(result, ["indented.h"])
     }
 
     func test_includeWithSpacesBetweenHashAndKeyword() {
-        let result = IncludeFinder.extractIncludePaths(
+        let result = ClangIncludeFinder.extractIncludePaths(
             sourceFileContent: "#  include \"spaced.h\""
         )
         XCTAssertEqual(result, ["spaced.h"])
@@ -113,7 +113,7 @@ final class IncludeFinderTests: SemelClangTestCase {
     // MARK: - Path in include string
 
     func test_includeWithSubdirectoryPath() {
-        let result = IncludeFinder.extractIncludePaths(
+        let result = ClangIncludeFinder.extractIncludePaths(
             sourceFileContent: #"#include "path/to/types.h""#
         )
         XCTAssertEqual(result, ["path/to/types.h"])
@@ -122,12 +122,12 @@ final class IncludeFinderTests: SemelClangTestCase {
     // MARK: - Empty input
 
     func test_emptySource_returnsEmpty() {
-        let result = IncludeFinder.extractIncludePaths(sourceFileContent: "")
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: "")
         XCTAssertTrue(result.isEmpty)
     }
 
     func test_sourceWithNoIncludes_returnsEmpty() {
-        let result = IncludeFinder.extractIncludePaths(
+        let result = ClangIncludeFinder.extractIncludePaths(
             sourceFileContent: "int main() { return 0; }"
         )
         XCTAssertTrue(result.isEmpty)

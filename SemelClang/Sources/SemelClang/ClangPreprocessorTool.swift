@@ -198,10 +198,10 @@ public struct ClangPreprocessorTool: NodeFunction {
         var includeFileListWireExpections = [String: String]()
 
         for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireExpections[sourcePath] = "IncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
+            includeFileListWireExpections[sourcePath] = "ClangIncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
         }
 
-        // There must be one IncludeFinder attached to the .c file.
+        // There must be one ClangIncludeFinder attached to the .c file.
 
         if inputs.includePathLists[inputs.inputSourceFile.filePath] == nil {
             let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still resolving include files".intern()))
