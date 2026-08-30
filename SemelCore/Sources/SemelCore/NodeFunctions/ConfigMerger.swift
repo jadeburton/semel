@@ -58,11 +58,23 @@ public struct ConfigMerger: NodeFunction {
 
     /// The settings arriving on one port.
     ///
-    /// A wire with no value contributes nothing rather than failing the node — the same
-    /// reading `ConfigSubset` takes. It is what makes an override file optional: a formula can
-    /// name one that has not been written, and until it is, the base passes through whole.
-    /// Failing here instead would make every project that has nothing to override unbuildable
-    /// until someone wrote an empty file.
+    /// A wire carrying no value contributes nothing rather than failing the node — the same
+    /// reading `ConfigSubset` takes. That is what makes an override file optional: a formula
+    /// can name one nobody has written, and until it is, the base passes through whole.
+    /// Failing instead would make every project with nothing to override unbuildable until
+    /// someone wrote an empty file for it.
+    ///
+    /// What arrives is an *error*, not an absence: a `StaticFile` nobody has pushed publishes
+    /// `noValue(.error)` carrying `initializing`. The node still runs, because
+    /// `allInputsAreSatisfied` waits on `pending` but not on `error` — otherwise requiring
+    /// these ports would have made an unwritten override stall the build rather than mean
+    /// "nothing to add".
+    ///
+    /// The cost is that a genuine upstream failure looks the same as a file nobody wrote, so
+    /// a broken base config would leave a partial configuration here and the tool downstream
+    /// would report the setting it is missing rather than the reason it is missing. The two
+    /// are separable — `initializing` is the ghost marker, and `ErrorReport` already keys on
+    /// it — but this does not yet separate them.
     ///
     /// One wire per port is the intent, and both callers of this write exactly one. Wires are
     /// merged in sorted key order anyway, so that two of them cannot resolve differently

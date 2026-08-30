@@ -19,6 +19,11 @@ final class ConfigMergerTests: SemelCoreTestCase {
 
     /// Runs the node over the two ports. `nil` means the wire exists but carries no value —
     /// a file named in the formula that nobody has written yet.
+    ///
+    /// Deliberately an *error* rather than a pending value, because that is what actually
+    /// arrives: a `StaticFile` nobody has pushed publishes `noValue(.error)`. A pending value
+    /// would not reach `process` at all — `allInputsAreSatisfied` waits on pending — so a test
+    /// using one would assert nothing about how this node behaves.
     private func merge(base: String?, override: String?) throws -> String {
         let node = try ConfigMerger(thisNode: Node(id: 1, kind: ConfigMerger.kind))
 
