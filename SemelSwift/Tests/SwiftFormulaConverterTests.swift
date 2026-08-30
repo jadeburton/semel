@@ -293,6 +293,24 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(block.contains("compilerGRDBSQLite"), "got:\n\(block)")
     }
 
+    // MARK: - Where the config selector reads from
+
+    /// Configuration is a property of the build, not of whichever package happens to be
+    /// compiled. A consuming project cannot write a config file inside a vendored dependency
+    /// it does not own, so a target compiled from an external package's checkout must still
+    /// select its settings from the *root* package's semel.config, not its own.
+    func test_anExternalTargetSelectsFromTheRootPackagesConfigFileNotItsOwn() throws {
+        let result = try formula(packageFolder: "input:/repo/DatabaseModels",
+                                 json: sourceControlManifest(),
+                                 externalManifests: ["input:/repo/GRDB.swift": grdbShapedManifest])
+
+        let block = try funcDefinition("compilerGRDB", in: result)
+        XCTAssertTrue(block.contains("StaticFile(path: 'input:/repo/DatabaseModels/semel.config')"),
+                      "an external target must read the consuming project's config file, got:\n\(block)")
+        XCTAssertFalse(block.contains("input:/repo/GRDB.swift/semel.config"),
+                       "not a config file inside the vendored dependency, got:\n\(block)")
+    }
+
     // MARK: - Explicit source lists
 
     /// The converter cannot enumerate files — it only wires folders — so a target's

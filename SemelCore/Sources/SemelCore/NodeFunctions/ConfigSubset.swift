@@ -41,9 +41,17 @@ public struct ConfigSubset: NodeFunction {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let prefix = thisNode.properties[Self.prefixProperty] ?? ""
 
+        // A wire named in the shape before its file exists is a ghost, and one whose file
+        // failed to read is not this node's business to explain — either way it contributes
+        // nothing, rather than failing every tool downstream over a config file nobody wrote
+        // yet. The tool that actually needs a setting is what can say which one is missing
+        // and where to write it; an errored selector output could only ever say "something
+        // upstream is wrong," which helps nobody.
+        let wires = input.inputValues[Self.inputPort] ?? [:]
         var merged: [String: String] = [:]
-        for wireKey in (input.inputValues[Self.inputPort] ?? [:]).keys.sorted() {
-            let text = try input.inputValues[Self.inputPort]![wireKey]!.expectValue().resolveAsString()
+        for wireKey in wires.keys.sorted() {
+            guard let hash = try? wires[wireKey]!.expectValue() else { continue }
+            let text = try hash.resolveAsString()
             merged = merged.mergedWith([String: String](plainText: text))
         }
 

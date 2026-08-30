@@ -63,14 +63,17 @@ func resolveSDKVersion() -> String? {
 /// Deliberately loud rather than accommodating: silently compiling against a different SDK
 /// than the one recorded is how two machines produce different artifacts that look
 /// identical. Mirrors what ToolExecutorRegistry already does for a pinned tool version.
+// Shared by the compiler and the linker, so this cannot name either one's namespace —
+// the setting reaching this function is `swift.compiler.sdkVersion` for one caller and
+// `swift.linker.sdkVersion` for the other.
 func verifySDKVersion(_ declared: String?) throws {
     guard let declared else { return }   // nothing declared: the machine's SDK, as before
     guard let actual = resolveSDKVersion() else {
-        throw NodeError.other(message: "semel.config declares swift.sdkVersion=\(declared) "
+        throw NodeError.other(message: "sdkVersion is declared as \(declared) "
                                      + "but no macOS SDK could be found on this machine")
     }
     guard actual == declared else {
-        throw NodeError.other(message: "semel.config declares swift.sdkVersion=\(declared) "
+        throw NodeError.other(message: "sdkVersion is declared as \(declared) "
                                      + "but this machine has \(actual). Install that SDK, or "
                                      + "change the setting — building against a different one "
                                      + "would produce artifacts that do not match what was declared.")

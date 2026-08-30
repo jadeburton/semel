@@ -665,8 +665,11 @@ struct SwiftFormulaConverter: NodeFunction {
             derived["excludedPaths"] = target.exclude.joined(separator: ",")
         }
 
+        // The root package's own folder, not `pkgRoot`: configuration is a property of the
+        // build, not of whichever package happens to be compiled, and a consuming project
+        // cannot write a config file inside a vendored dependency it does not own.
         let configExpr = configurationExpression(namespace: SwiftCompilerToolConfiguration.settingNamespace,
-                                                  packageFolder: pkgRoot,
+                                                  packageFolder: packageFolder,
                                                   literals: derived)
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 

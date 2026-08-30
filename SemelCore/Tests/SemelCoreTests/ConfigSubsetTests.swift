@@ -27,6 +27,16 @@ final class ConfigSubsetTests: SemelCoreTestCase {
             .expectValue().resolveAsString()
     }
 
+    private func subset(prefix: String, wires: [String: NodeValue]) throws -> String {
+        let node = try ConfigSubset(thisNode: Node(id: 1, kind: ConfigSubset.kind,
+                                                   properties: ["prefix": prefix]))
+        let output = try node.process(input: ProcessInput(inputValues: [
+            ConfigSubset.inputPort: wires
+        ]))
+        return try XCTUnwrap(output.outputValues[ConfigSubset.outputPort])
+            .expectValue().resolveAsString()
+    }
+
     private let everyones = """
         swift.compiler.sdkVersion=26.5
         swift.compiler.optimisationLevel=speed
@@ -87,5 +97,29 @@ final class ConfigSubsetTests: SemelCoreTestCase {
     /// The prefix on its own is not a key — there is nothing left after stripping it.
     func test_ignoresAnExactMatchWithNoRemainder() throws {
         XCTAssertEqual(try subset(prefix: "swift.compiler", file: "swift.compiler=x"), "")
+    }
+
+    // MARK: - A config file that has not arrived
+
+    /// A `StaticFile` for a config file nobody wrote publishes an error, not a pending value —
+    /// and that must not fail this node. The tool that actually needs a setting is what can
+    /// say which one is missing; a selector with no file to read contributes nothing rather
+    /// than failing every node downstream of it.
+    func test_aWireWithNoValueYieldsAnEmptyConfiguration() throws {
+        let result = try subset(prefix: "swift.compiler", wires: [
+            "config": .noValue(reason: .error(messageDataObjectHash: try "absent".intern())),
+        ])
+
+        XCTAssertEqual(result, "")
+    }
+
+    /// One missing file must not blank out a setting a different, present file supplies.
+    func test_aValuedWireStillContributesWhenAnotherIsAbsent() throws {
+        let result = try subset(prefix: "swift.compiler", wires: [
+            "input:/a/semel.config": .value(try "swift.compiler.sdkVersion=26.5".intern()),
+            "input:/semel.config":   .noValue(reason: .error(messageDataObjectHash: try "absent".intern())),
+        ])
+
+        XCTAssertEqual(result, "sdkVersion=26.5")
     }
 }

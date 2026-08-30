@@ -150,11 +150,12 @@ struct SwiftCompilerTool: NodeFunction {
         outputPorts: [outputObject, outputModule, outputInterface, infoLog]
     )
 
-    // The SDK a build declares reaches this node the ordinary way: `swift.sdkVersion` in a
-    // `semel.config` inside the input file system, wired in like anything else, so changing it
-    // reschedules what depends on it. What is *linked against* still does not — `-sdk` is
-    // resolved with `xcrun` at run time, and the SDK's own contents are never an input at all.
-    // A declared version is checked against the machine rather than describing it. See B-47.
+    // The SDK a build declares reaches this node the ordinary way: `swift.compiler.sdkVersion`
+    // in a `semel.config` inside the input file system, wired in like anything else, so
+    // changing it reschedules what depends on it. What is *linked against* still does not —
+    // `-sdk` is resolved with `xcrun` at run time, and the SDK's own contents are never an
+    // input at all. A declared version is checked against the machine rather than describing
+    // it. See B-47.
 
     // MARK: - Inputs / Outputs
 
