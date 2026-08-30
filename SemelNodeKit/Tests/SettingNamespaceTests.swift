@@ -37,4 +37,14 @@ final class SettingNamespaceTests: XCTestCase {
     func test_aSingleWordTypeGivesOnlyADomain() {
         XCTAssertEqual(derivedSettingNamespace(forTypeName: "Configuration"), "configuration")
     }
+
+    /// A run of capitals is treated as one word. This matters because the derived namespace
+    /// becomes a config-file prefix that users type, so `swift.http` (not `swift.hTTP`) is
+    /// what belongs in a file.
+    func test_aRunOfCapitalsIsOneWord() {
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftHTTPTool"), "swift.http")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftHTTPClientTool"), "swift.httpClient")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "HTTPTool"), "http")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "ABTool"), "ab")
+    }
 }

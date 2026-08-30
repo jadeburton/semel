@@ -18,15 +18,29 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
         name.removeLast("Tool".count)
     }
 
-    // Split on capitals: "SwiftPackageReader" → ["Swift", "Package", "Reader"].
+    // Split on capitals, treating a run of capitals as one word, except that a capital
+    // followed by a lowercase letter starts a new word. This yields config-file prefixes
+    // that users will type, so "swift.http" (not "swift.hTTP") matters.
+    // "SwiftHTTPClient" → ["Swift", "HTTP", "Client"]
+    // "SwiftCompiler" → ["Swift", "Compiler"]
     var words: [String] = []
     var current = ""
-    for character in name {
+    let chars = Array(name)
+
+    for (index, character) in chars.enumerated() {
         if character.isUppercase && !current.isEmpty {
-            words.append(current)
-            current = ""
+            let prevIsLowercase = chars[index - 1].isLowercase
+            let nextIsLowercase = index + 1 < chars.count && chars[index + 1].isLowercase
+
+            if prevIsLowercase || nextIsLowercase {
+                words.append(current)
+                current = String(character)
+            } else {
+                current.append(character)
+            }
+        } else {
+            current.append(character)
         }
-        current.append(character)
     }
     if !current.isEmpty { words.append(current) }
 
@@ -36,12 +50,28 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
 
     // The remainder is one segment, not one per word: the namespace is exactly
     // domain-then-node, and splitting further would invent levels the file does not have.
-    let node = rest.joined().lowercasedFirst()
+    // Each word is lower-camelled individually (all-caps words become fully lowercase),
+    // then joined in camel case (first word lowercase, subsequent words capitalized).
+    let node = rest.enumerated().map { (index, word) in
+        let lowered = word.lowercasedFirst()
+        if index == 0 {
+            return lowered
+        } else {
+            guard let first = lowered.first else { return lowered }
+            return first.uppercased() + lowered.dropFirst()
+        }
+    }.joined()
     return "\(domain.lowercasedFirst()).\(node)"
 }
 
 private extension String {
     func lowercasedFirst() -> String {
+        // All-uppercase words (like "HTTP") become fully lowercase.
+        // Mixed-case words get only their first letter lowercased.
+        let letters = self.filter { $0.isLetter }
+        if !letters.isEmpty && letters == letters.uppercased() {
+            return self.lowercased()
+        }
         guard let first else { return self }
         return first.lowercased() + dropFirst()
     }
