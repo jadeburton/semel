@@ -54,6 +54,48 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
         }
     }
 
+    // MARK: - Failures of the machine rather than of a node
+
+    /// Every tool runs inside a temporary sandbox, so a machine with nowhere left to make one
+    /// cannot build anything — the next node hits the same wall. It is a type of its own
+    /// rather than a case of LocalFileSystemToolError precisely so the other cases, which are
+    /// ordinary tool failures, stay per-node.
+    func test_beingUnableToCreateASandboxIsUnrecoverable() {
+        let error = SandboxCreationError(underlying: NodeError.other(message: "No space left on device"))
+
+        FatalErrors.check(error)
+
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertTrue(error.unrecoverableDescription.contains("TMPDIR"),
+                      "should say where to look: \(error.unrecoverableDescription)")
+    }
+
+    /// The other cases of that enum must not have been dragged along with it — a missing tool
+    /// is one node's problem, and another node using another tool still builds.
+    func test_anOrdinaryToolFailureIsStillRecoverable() {
+        FatalErrors.check(LocalFileSystemToolError.toolNotFound(path: "/usr/bin/nonesuch"))
+        FatalErrors.check(LocalFileSystemToolError.failedToReadOutputFile(fileName: "a.o"))
+
+        XCTAssertTrue(reported.isEmpty, "a tool problem must stay a node error")
+    }
+
+    /// Projecting inputs into a sandbox is how every tool receives them, so a destination
+    /// that cannot be written is the same class of failure as a store that cannot be. This is
+    /// the non-APFS path — HFS+, network mounts, Docker bind mounts — where the clone falls
+    /// back to a real copy and the raw Foundation error used to surface as a node failure.
+    func test_beingUnableToProjectAnInputIsUnrecoverable() {
+        let error = ObjectStoreError.cannotProject(destination: "/dev/null/sandbox/a.c",
+                                                   underlying: NodeError.other(message: "No space left on device"))
+
+        FatalErrors.check(error)
+
+        XCTAssertEqual(reported.count, 1)
+        XCTAssertTrue(error.unrecoverableDescription.contains("/dev/null/sandbox/a.c"),
+                      "should name what could not be placed: \(error.unrecoverableDescription)")
+        XCTAssertTrue(error.unrecoverableDescription.contains("free space"),
+                      "should say what to check: \(error.unrecoverableDescription)")
+    }
+
     // An ordinary build failure must not trip the fatal path, or every failed compile
     // would take the process down.
     func test_anOrdinaryNodeErrorIsNotUnrecoverable() {

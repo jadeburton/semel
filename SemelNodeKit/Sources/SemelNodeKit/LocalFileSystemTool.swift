@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import SemelDatabaseModels
 
 /// Runs a tool that lives in the local filesystem (e.g. /usr/bin/clang) inside a
 /// temporary sandbox directory so that the tool cannot accidentally read files
@@ -53,7 +54,7 @@ public class LocalFileSystemTool: ToolExecutor {
             // callers can match against those output paths.
             canonicalSandboxPath = sandboxPath.hasPrefix("/var/") ? "/private" + sandboxPath : sandboxPath
         } catch {
-            throw LocalFileSystemToolError.failedToCreateSandbox(underlying: error)
+            throw SandboxCreationError(underlying: error)
         }
 
         defer { try? fileManager.removeItem(atPath: sandboxPath) }
@@ -159,8 +160,38 @@ public class LocalFileSystemTool: ToolExecutor {
 public enum LocalFileSystemToolError: Error {
     case toolNotFound(path: String)
     case toolNotExecutable(path: String)
-    case failedToCreateSandbox(underlying: Error)
     case failedToWriteInputFile(fileName: String, underlying: Error)
     case failedToReadOutputFile(fileName: String)
     case processLaunchFailed(underlying: Error)
+}
+
+/// The temporary sandbox could not be created.
+///
+/// Its own type rather than a case of `LocalFileSystemToolError`, because conformance to
+/// `UnrecoverableError` is per type and the other cases are ordinary node failures — a tool
+/// that is missing, a tool that produced no output. Another node using another tool can still
+/// build after those. Not after this one: every tool runs inside a sandbox, so if one cannot
+/// be created there is nowhere left to work and the next node hits the same wall.
+///
+/// Stopping is right even once tool execution moves out to a separate runner process, on
+/// another machine or in a container. There the runner dies and recovery becomes the server's
+/// job — switch to another runner, or wait for this one to cycle and reconnect — which is a
+/// decision that belongs a level up, not inside the thing that has run out of room.
+public struct SandboxCreationError: UnrecoverableError {
+    public let underlying: Error
+
+    public init(underlying: Error) {
+        self.underlying = underlying
+    }
+
+    public var unrecoverableDescription: String {
+        """
+        Could not create a temporary directory to run tools in.
+
+        \(underlying.localizedDescription)
+
+        Every tool runs inside one, so nothing can be built until this is fixed. Check free
+        space and permissions on the volume holding TMPDIR.
+        """
+    }
 }

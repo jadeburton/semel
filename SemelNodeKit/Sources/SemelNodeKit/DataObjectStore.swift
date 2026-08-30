@@ -162,7 +162,16 @@ public final class DataObjectStore {
         }
 
         if cloneResult != 0 {
-            try FileManager.default.copyItem(at: source, to: destination)
+            // The clone is an APFS optimisation; this is the path taken on HFS+, network
+            // mounts and Docker bind mounts. Failing here means the destination volume is
+            // full or unwritable, not that anything is wrong with the object — same class as
+            // a failed store write, and every node projecting inputs next hits the same wall.
+            do {
+                try FileManager.default.copyItem(at: source, to: destination)
+            } catch {
+                throw ObjectStoreError.cannotProject(destination: destination.path,
+                                                     underlying: error)
+            }
         }
     }
 
@@ -208,6 +217,7 @@ public enum ObjectStoreReadError: Error, CustomStringConvertible {
 /// build output lives, so if it cannot be written nothing further can succeed.
 public enum ObjectStoreError: UnrecoverableError {
     case cannotWrite(storeRoot: String, underlying: Error)
+    case cannotProject(destination: String, underlying: Error)
 
     public var unrecoverableDescription: String {
         switch self {
@@ -218,6 +228,16 @@ public enum ObjectStoreError: UnrecoverableError {
                 \(underlying.localizedDescription)
 
                 Every build output is stored there, so the build cannot proceed. Check
+                free space and permissions on that volume.
+                """
+
+        case .cannotProject(let destination, let underlying):
+            return """
+                Could not place a build input at \(destination).
+
+                \(underlying.localizedDescription)
+
+                Every tool is given its inputs this way, so the build cannot proceed. Check
                 free space and permissions on that volume.
                 """
         }
