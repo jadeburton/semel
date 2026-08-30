@@ -13,8 +13,7 @@ import SemelDatabaseModels
 //
 // One protocol, whether or not the node has inputs. A node declaring no input ports — a
 // StaticFile, a Folder — is a source: the graph neither schedules nor processes it, because
-// there would be nothing to hand it. That used to be a second protocol; the answer is now
-// `descriptor.hasInputs`, which is where it already lived.
+// there would be nothing to hand it. `descriptor.hasInputs` is what says which it is.
 public protocol NodeFunction: WithKind, WithChildren {
     var thisNode: Node { get set }
 

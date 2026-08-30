@@ -4,10 +4,9 @@
 //
 //  What separates a node the graph processes from one it does not.
 //
-//  This used to be carried by the type system — two protocols, and only a `NodeFunction`
-//  was ever scheduled. Now there is one protocol and the answer comes from
-//  `descriptor.hasInputs`, so nothing checks it at compile time any more. These tests are
-//  what is left holding it.
+//  There is one protocol, and the answer comes from `descriptor.hasInputs` — a runtime check
+//  that nothing verifies at compile time. A second protocol could carry the same distinction
+//  in the type system; it does not, so these tests are what holds it.
 //
 
 @testable import SemelCore

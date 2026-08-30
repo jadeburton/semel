@@ -14,12 +14,11 @@
 // tool at all).  All of them are one thing said three ways — the volume is out of room or
 // out of reach.
 //
-// This header used to claim database write failures too.  It never did classify them, and
-// the claim was harder to make good on than it looks: GRDB reports them all as
-// `DatabaseError`, mixing SQLITE_FULL and SQLITE_IOERR, which are exactly this, with
-// SQLITE_BUSY, which is transient, and SQLITE_CONSTRAINT, which is a bug in the caller.
-// Sorting those out needs a per-*instance* decision, and conformance here is per *type* —
-// see below.  Left undone rather than misdescribed.
+// Database write failures are not classified, though they can be this same failure.  GRDB
+// reports every one as `DatabaseError`, mixing SQLITE_FULL and SQLITE_IOERR with SQLITE_BUSY,
+// which is transient, and SQLITE_CONSTRAINT, which is a bug in the caller.  Telling them
+// apart needs a per-*instance* decision and conformance here is per *type* — see below.
+// Tracked as B-45.
 
 import Foundation
 

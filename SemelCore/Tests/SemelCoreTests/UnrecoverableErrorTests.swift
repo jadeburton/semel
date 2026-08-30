@@ -82,7 +82,8 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
     /// Projecting inputs into a sandbox is how every tool receives them, so a destination
     /// that cannot be written is the same class of failure as a store that cannot be. This is
     /// the non-APFS path — HFS+, network mounts, Docker bind mounts — where the clone falls
-    /// back to a real copy and the raw Foundation error used to surface as a node failure.
+    /// back to a real copy, and where an unclassified Foundation error would surface as a
+    /// node failure instead of naming the volume.
     func test_beingUnableToProjectAnInputIsUnrecoverable() {
         let error = ObjectStoreError.cannotProject(destination: "/dev/null/sandbox/a.c",
                                                    underlying: NodeError.other(message: "No space left on device"))

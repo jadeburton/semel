@@ -4,10 +4,9 @@
 //
 //  Stand-in node types for tests whose subject is the engine, not any particular node.
 //
-//  CacheTests and PolyFactoryTests used to reach for ClangCompilerTool, which read fine
-//  while everything lived in one package and became a dependency on a toolchain the engine
-//  no longer knows exists. Their subjects are the cache-key algorithm and the type
-//  registry; neither has anything to do with C.
+//  CacheTests and PolyFactoryTests would otherwise reach for a real toolchain node, which
+//  the engine's package cannot see and should not need to. Their subjects are the cache-key
+//  algorithm and the type registry; neither has anything to do with C.
 //
 
 @testable import SemelCore

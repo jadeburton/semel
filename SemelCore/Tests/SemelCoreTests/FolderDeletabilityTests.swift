@@ -7,9 +7,9 @@
 //  holding a pushed file and the file goes.
 //
 //  It reads pinned state directly from child output ports, one query per kind, the way
-//  buildManifest does — which is fast but loses the polymorphism it used to get from asking
-//  each child through its own canBeDeleted. These cases pin the behaviour that mapping has
-//  to preserve, and the last one checks the two readings still agree on a mixed tree.
+//  buildManifest does — fast, but without the polymorphism that asking each child through its
+//  own canBeDeleted would give. These cases pin the behaviour that mapping has to preserve,
+//  and the last one checks the two readings agree on a mixed tree.
 //
 
 @testable import SemelCore

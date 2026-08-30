@@ -5,9 +5,9 @@
 //
 // Standalone, and static, because two unrelated things need it: FileWildcardMatcher, which
 // walks a real directory tree, and ProjectBuilder, which globs over a folder manifest that
-// has already arrived on a wire. Neither can reach the other's internals, so the second was
-// written as a copy of the first — and the copy is how one of them came to be rewritten for
-// legibility while the other stayed as it was.
+// has already arrived on a wire. Neither can reach the other's internals, and a glob that
+// means one thing in a formula and another on disk would be its own kind of bug, so they
+// share this rather than each holding a copy.
 
 enum WildcardSegment {
 

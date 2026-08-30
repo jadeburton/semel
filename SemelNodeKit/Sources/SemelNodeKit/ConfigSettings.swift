@@ -13,13 +13,12 @@
 //     across files    swift.sdkVersion in a nearer folder beats one further up
 //     across tools    swift.compiler.sdkVersion beats swift.sdkVersion, for the compiler
 //
-// The tool dimension exists because a setting must reach the node it names and no other.
-// Settings were once broadcast to every node a converter emitted, which put properties on
-// nodes that ignore them — and a node's properties are its searchKey and part of its cache
-// key, so a setting the linker had no use for still gave it a new identity and orphaned its
-// cached output. Namespacing lets a setting be addressed; the per-tool schema of accepted
-// keys is what actually drops the rest, turning a key no tool wants into a reported mistake
-// rather than a silent change of identity.
+// The tool dimension exists because a setting must reach the node it names and no other. A
+// setting landing on a node with no use for it still becomes one of that node's properties —
+// which are its searchKey and part of its cache key — so it gives the node a new identity and
+// orphans its cached output. Namespacing is what lets a setting be addressed; the per-tool
+// schema of accepted keys is what drops the rest, turning a key no tool wants into a reported
+// mistake rather than a silent change of identity.
 //
 // This lives in the node-authoring API rather than in either toolchain package because both
 // need it and neither may depend on the other. Only the toolchain prefix and the schemas

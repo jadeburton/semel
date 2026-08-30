@@ -183,16 +183,15 @@ extension Node {
 
             if pinned {
                 if let folder = try currentFolder.nodeFunction() as? Folder, try !folder.isPinned {
-                    // setPinned notifies the parent itself, through onChildContentChanged.
-                    // A second notifyParentThisChildAdded() used to follow, and since Folder
-                    // answers both callbacks with refreshOutputs it rebuilt the parent's
-                    // manifest again for nothing: three rebuilds per newly created folder,
-                    // two per existing one. The extra pass produced identical JSON, so the
-                    // write was skipped — but buildManifest had already run in full, which is
-                    // the expensive half.
+                    // setPinned notifies the parent itself, through onChildContentChanged,
+                    // and that is the whole notification this needs. Folder answers both that
+                    // and onChildAdded with refreshOutputs, so announcing the pin a second
+                    // time rebuilds the parent's manifest for nothing — buildManifest runs in
+                    // full even when the resulting JSON is identical and the write is skipped.
                     //
-                    // It was also the wrong event. The child exists and has been announced by
-                    // the time we get here, so what changed is its content, not its presence.
+                    // Content is also the accurate event: the child exists and has been
+                    // announced by the time we reach here, so its presence is not what
+                    // changed.
                     try folder.setPinned(true)
                 }
             }

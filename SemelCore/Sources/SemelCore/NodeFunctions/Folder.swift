@@ -60,15 +60,14 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
     /// Whether anything under this folder objects to being collected.
     ///
     /// Reads pinned state per kind in one query, exactly as `buildManifest` does, rather than
-    /// building a node function per child and asking it. The old reading did all four
-    /// expensive things at once: whole `Node` rows with their properties decoded, a node
-    /// function constructed per child, an output-port read inside each `isPinned`, and a
-    /// `filter().isEmpty` that built the entire array instead of stopping at the first
-    /// objection. Then it recursed, so that was the cost *per level* — during a delete
-    /// cascade or a collection sweep, which is exactly when whole trees go through here.
+    /// building a node function per child and asking it. Asking each child directly is
+    /// expensive four ways at once: whole `Node` rows with their properties decoded, a node
+    /// function constructed per child, an output-port read inside each `isPinned`, and no way
+    /// to stop at the first objection. This recurses, so that is the cost *per level* — during
+    /// a delete cascade or a collection sweep, which is when whole trees come through here.
     ///
     /// Losing the polymorphism is the price, so the kind-to-port mapping is spelled out and
-    /// `FolderDeletabilityTests` checks it still says what asking each child said. The types
+    /// `FolderDeletabilityTests` checks it says what asking each child says. The types
     /// that can be a folder's children are `Folder`, `StaticFile` and `OutputFile`; only the
     /// first two override `canBeDeleted`, and the third takes the default `true`.
     private func everyChildCanBeDeleted() throws -> Bool {

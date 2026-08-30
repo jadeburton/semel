@@ -5,10 +5,11 @@
 //  ensureEntirePathExistsAsFolders(pinned:) is how every pushed file gets its folders, so
 //  it runs constantly and its parents' manifests have to be right afterwards.
 //
-//  It used to announce a newly pinned folder to its parent twice — once through setPinned's
-//  own onChildContentChanged and once through an explicit notifyParentThisChildAdded — and
-//  since Folder answers both with refreshOutputs, the parent rebuilt its manifest an extra
-//  time per segment. These tests are what says the surviving notification is enough.
+//  A newly pinned folder is announced to its parent exactly once, through setPinned's
+//  onChildContentChanged. Folder answers that and onChildAdded identically, with
+//  refreshOutputs, so announcing it a second way would rebuild the manifest for nothing —
+//  and one notification carrying both facts is a thinner thread than two. These check it
+//  holds.
 //
 
 @testable import SemelCore
