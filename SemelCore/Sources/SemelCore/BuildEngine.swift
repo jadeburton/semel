@@ -44,6 +44,7 @@ public final class BuildEngine {
             ProjectBuilder.self,
             Configuration.self,
             ConfigSubset.self,
+            ConfigMerger.self,
         ])
         ProjectDiscovery.register(FormulaFilePlugin())
     }
