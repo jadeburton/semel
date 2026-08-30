@@ -13,12 +13,19 @@ public typealias DataToken = DataObjectHash
 extension [UInt8] {
     /// Stores these bytes in the object store and returns their content hash.
     ///
-    /// Throws rather than trapping: the store is on disk, so this fails for ordinary
-    /// reasons — a full volume, a permissions change, a read-only mount.  Those should
-    /// fail the node being processed, not abort the build.
-    /// TODO: revisit this idea, maybe this should crash the process and not throw anything; afterall there
-    /// is no real recovery from such a serious error and it certainly is not the graph's problem.
-    /// Also brings a burden to the code with the explicit try's.
+    /// The `throws` is transport, not a claim that the caller can recover. A store write
+    /// fails for reasons that belong to the volume — full disk, read-only mount, permissions
+    /// — and the next node would hit the same wall, so there is nothing to recover to. That
+    /// is why `ObjectStoreError` is an `UnrecoverableError`: the throw carries it to the
+    /// nearest `FatalErrors.check`, which prints what to do about it and exits 70.
+    ///
+    /// So this does stop the process, and trapping here instead would only make it worse:
+    /// the message would become a Swift crash trace rather than "check free space and
+    /// permissions on that volume", the exit code would be a signal rather than EX_SOFTWARE,
+    /// and `UnrecoverableErrorTests` could not assert the classification without killing the
+    /// test process — the handler is swappable precisely so it can.
+    ///
+    /// The cost is a `try` at every call site, which is real. It buys the message.
     public func intern() throws -> DataToken {
         if isEmpty {
             return ""
