@@ -170,6 +170,11 @@ public final class BuildEngine {
     /// result is not printed again on every idle cycle.
     private var lastReportedUnclaimedKeys: [ObjectID: [String]] = [:]
 
+    /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
+    /// `print` call so a test can capture what would be printed instead of scraping stdout —
+    /// the same shape as `FatalErrors.handler`.
+    var unclaimedConfigKeyReporter: (String) -> Void = { print($0) }
+
     /// Finds every config file feeding a `ConfigSubset` and prints its unclaimed keys, but
     /// only when that file's unclaimed set has changed since the last report — a project
     /// with a standing misspelt prefix would otherwise repeat the same line on every idle
@@ -180,8 +185,15 @@ public final class BuildEngine {
     /// reason a variant is just a different file wired in, with no naming convention of its
     /// own. `ConfigSubset` nodes are also rare (one per prefix), where `StaticFile` is not —
     /// most nodes in a real project are source files, so filtering all of them by name would
-    /// cost about what `selectAll()` does.
-    private func reportUnclaimedConfigKeys() {
+    /// cost about what `selectAll()` does. One consequence of starting here: a config file
+    /// with no `ConfigSubset` wired to it at all is invisible to this pass, and so is a
+    /// generated config file that is not a `StaticFile` — only `StaticFile.read()` is
+    /// understood as a source of config text.
+    ///
+    /// Internal rather than private so a test can call it directly and inspect
+    /// `unclaimedConfigKeyReporter`'s captures — the same reasoning as
+    /// `FileWildcardMatcher`'s internal-for-testing methods.
+    func reportUnclaimedConfigKeys() {
         guard let subsets = try? database.node.select(kind: ConfigSubset.kind) else { return }
 
         var fileNodeIDs: Set<ObjectID> = []
@@ -200,7 +212,7 @@ public final class BuildEngine {
 
             guard !unclaimed.isEmpty else { continue }
             let path = (try? database.node.select(nodeID: fileNodeID))?.properties["path"] ?? "config file \(fileNodeID)"
-            print("⚠️  \(path): key(s) no selector claims: \(unclaimed.joined(separator: ", "))")
+            unclaimedConfigKeyReporter("⚠️  \(path): key(s) no selector claims: \(unclaimed.joined(separator: ", "))")
         }
     }
 

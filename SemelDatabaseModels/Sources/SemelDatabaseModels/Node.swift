@@ -108,7 +108,7 @@ public struct Node: Identifiable, FetchableRecord, PersistableRecord {
             try db.create(table: "Node", options: .ifNotExists) { t in
                 t.autoIncrementedPrimaryKey("id")
                 t.column("parentNodeID", .integer).indexed()
-                t.column("kind", .integer).notNull()
+                t.column("kind", .integer).notNull().indexed()
                 t.column("name", .text)
                 t.column("encodedProperties", .text)
                 t.column("scheduled", .integer).indexed().notNull()
@@ -232,9 +232,8 @@ public struct NodeDataAccess: DataAccessType {
 
     /// Every node of one kind, unqualified by name or parent.
     ///
-    /// Unlike `selectAll()` this is only ever safe to call for a kind that stays rare —
-    /// a handful of nodes, not every source file in the project — since there is no index
-    /// on `kind` and the cost scales with the whole table regardless of how few rows match.
+    /// `kind` is indexed, so unlike `selectAll()` this does not scan the whole table —
+    /// safe to call for a common kind as well as a rare one.
     public func select(kind: UInt) throws -> [Node] {
         try read { db in
             try Node.filter(Node.Columns.kind == kind).fetchAll(db)
