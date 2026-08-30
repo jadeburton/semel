@@ -4,18 +4,6 @@
 // Lays one config file over another, so a shared base can be written once and a project
 // state only what it changes.
 //
-// Killing inheritance removed every implicit way for one config to build on another — no
-// ancestor walk, no cross-tool defaults — which left a project's settings complete where they
-// are written, and left several projects repeating a toolchain description word for word.
-// This gives back composition without giving back inheritance: nothing is found by position
-// or by convention, the formula names both files, and precedence is a port rather than an
-// ordering someone has to know about.
-//
-// `Configuration` can already merge wired text, and its `inherit` port takes any number of
-// wires — but which wins is decided by sorting wire *keys*, which is invisible at the call
-// site and silently wrong the moment someone names their wires `base` and `override`.
-// Precedence here is the port a wire is attached to, and it reads the same way in the formula
-// as it behaves.
 
 import SemelNodeKit
 
@@ -83,11 +71,18 @@ public struct ConfigMerger: NodeFunction {
     private func settings(on port: String, in input: ProcessInput) -> [String: String] {
         let wires = input.inputValues[port] ?? [:]
         var result: [String: String] = [:]
+
         for wireKey in wires.keys.sorted() {
-            guard let hash = try? wires[wireKey]!.expectValue(),
-                  let text = try? hash.resolveAsString() else { continue }
+
+            guard let hash = try? wires[wireKey]?.expectValue(),
+                  let text = try? hash.resolveAsString() else {
+
+                continue
+            }
+
             result = result.mergedWith([String: String](plainText: text))
         }
+
         return result
     }
 }
