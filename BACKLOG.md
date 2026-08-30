@@ -553,6 +553,36 @@ matters. So the decision to make first is which rules are on:
 is in scope at all — `swift-format` is a different tool with a different answer, and adopting
 both is how a repo ends up with two opinions about the same line.
 
+**B-47** `open` — **The SDK is declared but not an input.**
+From a TODO at `SwiftCompilerTool.swift:169`, whose specific ask B-30-SDK already answered:
+the setting does now live in a `semel.config` inside the input file system. What it was
+pointing at does not.
+
+`swift.sdkVersion` is *checked*, not *used*. `verifySDKVersion` compares the declared string
+against what `xcrun` reports and fails loudly on a mismatch, which catches the wrong machine
+but does not make the SDK an input. The path handed to `-sdk` still comes from
+`resolveSDKPath()`, an `xcrun` call resolved once per process, and the thousands of headers
+and stubs behind that path are never hashed, wired or named. Two machines with the same
+version string and different SDK contents produce identical cache keys and different
+artifacts, silently.
+
+So the invariant the TODO stated — every node input must exist inside the input file system or
+be derived from it — is still not true of the largest input a compile has. Worth stating
+somewhere as an invariant, since nothing in `AGENTS.md` currently does; that omission is
+probably why it took a TODO to notice.
+
+*Why this is not simply "hash the SDK".* A macOS SDK is on the order of a gigabyte across tens
+of thousands of files. Hashing it per build is not free, and putting it in the input file
+system as ordinary `StaticFile` nodes would put a graph node per header into the database.
+B-03 is the intended answer — a container digest stands in for the whole environment, and
+`sdk=26.5` becomes `image=sha256:…` — which makes this an argument for B-03 rather than an
+independent piece of work.
+
+*Narrower thing worth doing sooner:* the declared version is compared as a version string only
+(`26.5`, not `26.5 (25F70)`), so two builds of one SDK version are indistinguishable — already
+noted as unsettled under B-30-SDK. Including the build identifier costs nothing and closes the
+gap that a check can close.
+
 ## Closed
 
 **B-20** `done` — SDK is in the Swift tools' cache key (`e6ca4cd`).

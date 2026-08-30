@@ -166,9 +166,11 @@ struct SwiftCompilerTool: NodeFunction {
         outputPorts: [outputObject, outputModule, outputInterface, infoLog]
     )
 
-    // TODO: this is wrong. *all* node inputs must ultimately exist inside the input fs or be derived from it.
-    // this "sdk" setting should therefore exist in a config file somewhere in the input fs; it cannot come
-    // from outside because whenever it changes the graph won't update outputs automatically.
+    // The SDK a build declares reaches this node the ordinary way: `swift.sdkVersion` in a
+    // `semel.config` inside the input file system, wired in like anything else, so changing it
+    // reschedules what depends on it. What is *linked against* still does not — `-sdk` is
+    // resolved with `xcrun` at run time, and the SDK's own contents are never an input at all.
+    // A declared version is checked against the machine rather than describing it. See B-47.
 
     // MARK: - Inputs / Outputs
 
