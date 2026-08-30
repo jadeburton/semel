@@ -34,7 +34,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     /// comments, blank lines, every namespace the Swift tools claim — rather than the
     /// minimum that happens to satisfy today's required keys.
     private let configFile = """
-        # Settings for the tools this package's formula names.
+        // Settings for the tools this package's formula names.
         swift.compiler.toolDescriptor.name=swiftc
         swift.compiler.toolDescriptor.version=test-swiftc
         swift.compiler.toolDescriptor.platform=macOS

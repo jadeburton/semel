@@ -42,6 +42,7 @@ let package = Package(
                 "SemelCLI",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelSwift", package: "SemelSwift"),
+                .product(name: "SemelClang", package: "SemelClang"),
             ],
             path: "build_system/Tests"
         ),
