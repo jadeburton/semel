@@ -311,6 +311,33 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                        "not a config file inside the vendored dependency, got:\n\(block)")
     }
 
+    /// The reader that parses a vendored dependency's manifest shells out to a toolchain, so
+    /// it needs `swift.packageReader.toolDescriptor.*` like every other tool. Wired to an
+    /// empty `Configuration()` it throws before a single target is compiled.
+    func test_theExternalPackageReaderIsWiredToASelectorForItsOwnNamespace() throws {
+        let output = try convert(packageFolder: "input:/repo/DatabaseModels",
+                                 json: sourceControlManifest())
+
+        let expectation = try XCTUnwrap(try externalExpectations(output)["input:/repo/GRDB.swift"])
+        XCTAssertTrue(expectation.contains("ConfigSubset(prefix: 'swift.packageReader'"),
+                      "got:\n\(expectation)")
+        XCTAssertFalse(expectation.contains("Configuration().output"),
+                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(expectation)")
+    }
+
+    /// Same rule as the compiler: the reader is part of *this* build, so it selects from the
+    /// root package's config file rather than one inside the checkout it is reading.
+    func test_theExternalPackageReaderSelectsFromTheRootPackagesConfigFileNotItsOwn() throws {
+        let output = try convert(packageFolder: "input:/repo/DatabaseModels",
+                                 json: sourceControlManifest())
+
+        let expectation = try XCTUnwrap(try externalExpectations(output)["input:/repo/GRDB.swift"])
+        XCTAssertTrue(expectation.contains("StaticFile(path: 'input:/repo/DatabaseModels/semel.config')"),
+                      "got:\n\(expectation)")
+        XCTAssertFalse(expectation.contains("input:/repo/GRDB.swift/semel.config"),
+                       "not a config file inside the vendored dependency, got:\n\(expectation)")
+    }
+
     // MARK: - Explicit source lists
 
     /// The converter cannot enumerate files — it only wires folders — so a target's

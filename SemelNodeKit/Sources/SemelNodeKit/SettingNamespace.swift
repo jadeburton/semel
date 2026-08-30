@@ -97,6 +97,23 @@ public struct RequiredSettings {
     }
 }
 
+public extension ToolDescriptor {
+    /// The four `toolDescriptor.*` settings every tool node needs, read through the caller's
+    /// own `RequiredSettings` so a missing key is reported under that node's namespace --
+    /// `clang.compiler.toolDescriptor.name`, `swift.linker.toolDescriptor.name` -- rather
+    /// than one shared prefix that belongs to nobody.
+    ///
+    /// `recursiveHash` is read directly: it identifies a toolchain by content and is absent
+    /// from every hand-written config file, so it is optional rather than required.
+    init(required: inout RequiredSettings, properties: [String: String]) {
+        self.init(name:          required.value("toolDescriptor.name"),
+                  version:       required.value("toolDescriptor.version"),
+                  platform:      required.value("toolDescriptor.platform"),
+                  architecture:  required.value("toolDescriptor.architecture"),
+                  recursiveHash: properties["toolDescriptor.recursiveHash"])
+    }
+}
+
 private extension String {
     func lowercasedFirst() -> String {
         // All-uppercase words (like "HTTP") become fully lowercase.

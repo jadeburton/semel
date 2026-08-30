@@ -107,7 +107,12 @@ struct SwiftFormulaConverter: NodeFunction {
                 guard extPath.hasPrefix(FileSystemName.input + "/") else { continue }
                 guard !visitedPaths.contains(extPath) else { continue }
                 visitedPaths.insert(extPath)
-                expectations[extPath] = packageReaderExpectation(for: extPath)
+                // The root package's folder, not `extPath`: the reader that parses a vendored
+                // dependency's manifest is still part of *this* build, so it selects its
+                // settings from the config file the consuming project owns.
+                expectations[extPath] = Self.packageReaderExpectation(
+                    packageFilePath: "\(extPath)/Package.swift",
+                    rootPackageFolder: rootPackageFolder)
                 originOfExpectedPath[extPath] = dependency.repositoryURL
                 if let extManifest = availableManifests[extPath] {
                     bfsQueue.append((extPath, extManifest))
@@ -142,18 +147,14 @@ struct SwiftFormulaConverter: NodeFunction {
               inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
     }
 
-    // MARK: - semel.config
-
-    /// The file name a selector looks for beside a package: `semel.config`.
-    static let configFileName = "semel.config"
+    // MARK: - Stalls
 
     /// Explains a stall in terms the user can act on.
     ///
-    /// The old text named only the paths being waited on, which is the least useful part:
-    /// for a git dependency that path is a *convention this build system invented*, so a
-    /// user seeing `input:/repo/GRDB.swift` had no way to connect it to the
-    /// `.package(url:)` line in their manifest, and no hint that nothing was ever going to
-    /// arrive on its own.
+    /// Naming only the paths being waited on is the least useful thing this could say: for a
+    /// git dependency that path is a *convention this build system invented*, so a user
+    /// seeing `input:/repo/GRDB.swift` has no way to connect it to the `.package(url:)` line
+    /// in their manifest, and no hint that nothing is ever going to arrive on its own.
     private func describeStall(missingPaths: [String], origins: [String: String?]) -> String {
         let lines = missingPaths.map { path -> String in
             guard let url = origins[path] ?? nil else {
@@ -168,23 +169,18 @@ struct SwiftFormulaConverter: NodeFunction {
              + "the input file system at the path above, pushed like any other source."
     }
 
-    // Graph-shape expectation string for a SwiftPackageReaderTool that reads
-    // the Package.swift at `extPath` in the input filesystem.
-    private func packageReaderExpectation(for extPath: String) -> String {
-        let pkgFilePath = "\(extPath)/Package.swift"
-        return "SwiftPackageReaderTool(" +
-               "configuration: ['config': Configuration().output], " +
-               "packageFile: ['\(pkgFilePath)': StaticFile(path: '\(pkgFilePath)').output]" +
-               ").packageJSON"
-    }
+    // MARK: - semel.config
+
+    /// The file name a selector looks for beside a package: `semel.config`.
+    static let configFileName = "semel.config"
 
     /// The config file a package is configured by: `semel.config` beside the package.
     ///
     /// Named in the shape rather than looked up, so the wire exists before the file does — an
     /// absent file is a ghost, and pushing it later fills the wire and rebuilds what depends on
     /// it without a rescan.
-    private func configSelector(namespace: String, packageFolder: String) -> String {
-        let configPath = "\(packageFolder)/\(Self.configFileName)"
+    static func configSelector(namespace: String, packageFolder: String) -> String {
+        let configPath = "\(packageFolder)/\(configFileName)"
         return "ConfigSubset(prefix: '\(namespace)', "
              + "input: ['config': StaticFile(path: '\(configPath)').output]).output"
     }
@@ -199,15 +195,39 @@ struct SwiftFormulaConverter: NodeFunction {
     /// Sorted, because these become a formula string that becomes a node's searchKey — and
     /// Dictionary iteration order is seeded per process, so an unsorted render would give
     /// the same package a different node identity on every run.
-    private func configurationExpression(namespace: String,
-                                         packageFolder: String,
-                                         literals: [String: String]) -> String {
+    static func configurationExpression(namespace: String,
+                                        packageFolder: String,
+                                        literals: [String: String]) -> String {
         let rendered = literals.sorted { $0.key < $1.key }
                                .map { "\($0.key): '\($0.value)'" }
                                .joined(separator: ", ")
         let selector = configSelector(namespace: namespace, packageFolder: packageFolder)
         let arguments = rendered.isEmpty ? "" : "\(rendered), "
         return "Configuration(\(arguments)inherit: ['settings': \(selector)]).output"
+    }
+
+    /// Graph-shape expectation string for a `SwiftPackageReaderTool` that reads the
+    /// `Package.swift` at `packageFilePath` in the input filesystem.
+    ///
+    /// The reader is a tool like any other: it shells out to `swift package dump-package`
+    /// and so needs a `toolDescriptor` telling it which toolchain to run. Nothing defaults,
+    /// so a reader wired to an empty `Configuration()` fails before any target is compiled —
+    /// which is why the selector belongs here rather than only on the compiler and linker.
+    ///
+    /// `rootPackageFolder` is where the config file is read from, and it is not always the
+    /// folder holding `packageFilePath`: configuration is a property of the build, not of the
+    /// package being read, and a consuming project cannot write a config file inside a
+    /// vendored dependency it does not own.
+    static func packageReaderExpectation(packageFilePath: String,
+                                         rootPackageFolder: String) -> String {
+        let configExpr = configurationExpression(
+            namespace: SwiftPackageReaderToolConfiguration.settingNamespace,
+            packageFolder: rootPackageFolder,
+            literals: [:])
+        return "SwiftPackageReaderTool(" +
+               "configuration: ['config': \(configExpr)], " +
+               "packageFile: ['\(packageFilePath)': StaticFile(path: '\(packageFilePath)').output]" +
+               ").packageJSON"
     }
 
     // MARK: - SPM JSON model
@@ -513,7 +533,7 @@ struct SwiftFormulaConverter: NodeFunction {
             // file's content and its name disagreed.
             let isLibrary    = (product.productType == .library)
             let outputName   = isLibrary ? "lib\(product.name).dylib" : product.name
-            let linkerConfig = configurationExpression(
+            let linkerConfig = Self.configurationExpression(
                 namespace: SwiftLinkerToolConfiguration.settingNamespace,
                 packageFolder: rootPackageFolder,
                 literals: ["dynamicLibrary": isLibrary ? "true" : "false",
@@ -668,9 +688,9 @@ struct SwiftFormulaConverter: NodeFunction {
         // The root package's own folder, not `pkgRoot`: configuration is a property of the
         // build, not of whichever package happens to be compiled, and a consuming project
         // cannot write a config file inside a vendored dependency it does not own.
-        let configExpr = configurationExpression(namespace: SwiftCompilerToolConfiguration.settingNamespace,
-                                                  packageFolder: packageFolder,
-                                                  literals: derived)
+        let configExpr = Self.configurationExpression(namespace: SwiftCompilerToolConfiguration.settingNamespace,
+                                                      packageFolder: packageFolder,
+                                                      literals: derived)
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 
         // Every transitively reachable Swift target, not just the direct dependencies.

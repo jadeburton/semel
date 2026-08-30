@@ -33,19 +33,6 @@ struct ClangCompilerToolConfiguration {
     static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangCompilerTool")
 }
 
-extension ToolDescriptor {
-    /// Shared by every Clang configuration type, each of which owns the `RequiredSettings`
-    /// its own namespace names -- so a missing key is reported under `clang.compiler...`,
-    /// `clang.linker...` or `clang.preprocessor...` as appropriate, not one shared prefix.
-    init(required: inout RequiredSettings, properties: [String: String]) {
-        self.init(name:          required.value("toolDescriptor.name"),
-                  version:       required.value("toolDescriptor.version"),
-                  platform:      required.value("toolDescriptor.platform"),
-                  architecture:  required.value("toolDescriptor.architecture"),
-                  recursiveHash: properties["toolDescriptor.recursiveHash"])
-    }
-}
-
 // MARK: - Node
 
 public struct ClangCompilerTool: NodeFunction {

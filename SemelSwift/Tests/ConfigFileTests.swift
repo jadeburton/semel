@@ -70,6 +70,36 @@ final class ConfigFileTests: SemelSwiftTestCase {
     }
 }
 
+// MARK: - The first node of every build
+
+/// `SwiftPackagePlugin` writes the graph shape for a discovered `Package.swift`, and the
+/// reader it names is the node everything else waits on. Nothing defaults, so a reader with
+/// no `toolDescriptor` fails the build before the manifest is even parsed.
+final class PackagePluginConfigTests: SemelSwiftTestCase {
+
+    private func shape(entry: String = "Package.swift",
+                       inFolder folder: String = "input:/repo/pkg") throws -> String {
+        let plugin = SwiftPackagePlugin()
+        let manifestEntry = FolderManifestEntry(name: entry, isFolder: false, isPinned: true)
+        return try XCTUnwrap(plugin.expectationString(forEntry: manifestEntry, inFolder: folder),
+                             "the plugin should claim \(entry)")
+    }
+
+    func test_theDiscoveredPackagesReaderIsWiredToASelectorForItsOwnNamespace() throws {
+        let result = try shape()
+
+        XCTAssertTrue(result.contains("ConfigSubset(prefix: 'swift.packageReader'"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("Configuration().output"),
+                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(result)")
+    }
+
+    func test_theDiscoveredPackagesReaderReadsTheConfigFileBesideThePackage() throws {
+        let result = try shape(inFolder: "input:/repo/pkg")
+
+        XCTAssertTrue(result.contains("StaticFile(path: 'input:/repo/pkg/semel.config')"), "got:\n\(result)")
+    }
+}
+
 // MARK: - Honouring a declared SDK
 
 final class DeclaredSDKTests: SemelSwiftTestCase {

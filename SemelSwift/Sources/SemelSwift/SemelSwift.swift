@@ -34,11 +34,12 @@ struct SwiftPackagePlugin: ProjectBuilderPlugin {
         let fullPath      = (Path(folderPath) / entry.name).string
         let packageFolder = Path(fullPath).deletingLastComponent!.string
 
-        let pkgReaderExpr =
-            "SwiftPackageReaderTool(" +
-            "configuration: ['config': Configuration().output], " +
-            "packageFile: ['\(fullPath)': StaticFile(path: '\(fullPath)').output]" +
-            ").packageJSON"
+        // The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
+        // every other tool does. This is the first node of every Swift build: wired to an
+        // empty Configuration it fails before the manifest is ever read.
+        let pkgReaderExpr = SwiftFormulaConverter.packageReaderExpectation(
+            packageFilePath: fullPath,
+            rootPackageFolder: packageFolder)
 
         let converterExpr =
             "SwiftFormulaConverter(" +

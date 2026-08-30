@@ -21,11 +21,7 @@ struct SwiftLinkerToolConfiguration {
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
-        toolDescriptor = .init(name:          required.value("toolDescriptor.name"),
-                               version:       required.value("toolDescriptor.version"),
-                               platform:      required.value("toolDescriptor.platform"),
-                               architecture:  required.value("toolDescriptor.architecture"),
-                               recursiveHash: properties["toolDescriptor.recursiveHash"])
+        toolDescriptor = .init(required: &required, properties: properties)
         outputName = required.value("outputName")
         try required.check()
 
