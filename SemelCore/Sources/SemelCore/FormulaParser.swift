@@ -133,6 +133,7 @@ enum FormulaParseError: Error, LocalizedError {
     case wrongArgumentCount(function: String, expected: Int, got: Int)
     case positionalArgInNodeConstruction(typeName: String)
     case pathEscapesBasePath(path: String)
+    case pathEscapesRoot(path: String)
     case forEachRequiresAtLeastOneItem
 
     var errorDescription: String? {
@@ -155,6 +156,8 @@ enum FormulaParseError: Error, LocalizedError {
             return "Positional argument in node construction '\(t)': use 'key: value' or 'port: [...]'"
         case .pathEscapesBasePath(let p):
             return "Path literal '<\(p)>' escapes the formula base path"
+        case .pathEscapesRoot(let p):
+            return "Path literal '<\(p)>' escapes the root path"
         case .forEachRequiresAtLeastOneItem:
             return "for-each '{...}' requires at least one item"
         }
@@ -359,7 +362,7 @@ enum FormulaLexer {
 
     // Resolves a relative path against basePath, normalising '.' and '..',
     // and errors if the result would escape basePath.
-    private static func resolvePathLiteral(_ raw: String, relativeTo basePath: Path) throws -> String {
+    private static func resolvePathLiteral(_ raw: String, relativeTo basePath: Path, disallowAboveBase: Bool = false) throws -> String {
         // Normalise basePath into components.
         var baseComponents: [String] = []
         for part in basePath.string.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
@@ -378,9 +381,17 @@ enum FormulaLexer {
             switch part {
             case ".":  break
             case "..":
-                guard components.count > baseDepth else {
-                    throw FormulaParseError.pathEscapesBasePath(path: raw)
+                if disallowAboveBase {
+                    guard components.count > baseDepth else {
+                        throw FormulaParseError.pathEscapesBasePath(path: raw)
+                    }
                 }
+
+                // Can't strip first segment
+                guard components.count > 1 else {
+                    throw FormulaParseError.pathEscapesRoot(path: raw)
+                }
+
                 components.removeLast()
             default:
                 components.append(part)

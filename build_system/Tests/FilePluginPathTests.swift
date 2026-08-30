@@ -194,3 +194,94 @@ final class TestCommandContext: CommandContext {
     func outputMessage(_ message: String) { messages.append(message) }
     func outputError(_ message: String)   { errors.append(message) }
 }
+
+// MARK: - Pushing a tree
+
+/// A wildcard that reaches into subdirectories matches the directories *and* their contents.
+/// Pushing a directory means pushing everything under it, so a file matched both ways must
+/// still be pushed once — otherwise the second attempt reports "[no change]" against a file
+/// nothing changed, and the report stops describing what happened.
+final class PushTreeTests: XCTestCase {
+
+    private var context: TestCommandContext!
+    private var externalRoot: URL!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        DataObjectStore.shared = DataObjectStore(storeRoot: makeTempDirectory())
+        externalRoot = makeTempDirectory()
+        try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
+        let database = try DatabaseLayer()
+        BuildEngine.shared = try BuildEngine(database: database, startProcessingLoop: false)
+        context = TestCommandContext(database: database, baseDirectory: externalRoot.path)
+    }
+
+    override func tearDown() {
+        BuildEngine.shared = nil
+        context = nil
+        super.tearDown()
+    }
+
+    private func makeTempDirectory() -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("build_system-cli-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    private func writeExternalFile(_ relativePath: String) throws {
+        let url = externalRoot.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try "int main(){}\n".write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func pushLines(for path: String) -> [String] {
+        context.messages.filter { $0.hasPrefix("Push file:") && $0.contains(path) }
+    }
+
+    func test_aFileMatchedBothDirectlyAndThroughItsFolderIsPushedOnce() throws {
+        try writeExternalFile("c/hello.fmla")
+        try writeExternalFile("c/src/main.c")
+        try writeExternalFile("c/src/common.h")
+
+        try FilePlugin().handle(verb: "push", tokens: ["c/**/*"], context: context)
+
+        XCTAssertEqual(pushLines(for: "c/src/main.c").count, 1,
+                       "got:\n\(context.messages.joined(separator: "\n"))")
+        XCTAssertEqual(pushLines(for: "c/src/common.h").count, 1)
+        XCTAssertEqual(pushLines(for: "c/hello.fmla").count, 1)
+    }
+
+    /// Nothing should report "[no change]" on a first push — every file is new.
+    func test_aFirstPushReportsNoFileAsUnchanged() throws {
+        try writeExternalFile("c/src/main.c")
+
+        try FilePlugin().handle(verb: "push", tokens: ["c/**/*"], context: context)
+
+        XCTAssertFalse(context.messages.contains { $0.contains("[no change]") },
+                       "got:\n\(context.messages.joined(separator: "\n"))")
+    }
+
+    /// A bare directory has no wildcard enumerating its contents, so the recursion into it
+    /// is what pushes them — removing it would silently create an empty folder.
+    func test_pushingABareDirectoryStillPushesItsContents() throws {
+        try writeExternalFile("c/src/main.c")
+
+        try FilePlugin().handle(verb: "push", tokens: ["c"], context: context)
+
+        XCTAssertNotNil(try context.inputFileSystem.childNode(path: Path("c/src/main.c")),
+                        "got:\n\(context.messages.joined(separator: "\n"))")
+    }
+
+    /// A genuine second push is still reported as unchanged — the deduplication is within
+    /// one command, not a memory across commands.
+    func test_pushingTheSameTreeTwiceReportsNoChangeTheSecondTime() throws {
+        try writeExternalFile("c/src/main.c")
+        try FilePlugin().handle(verb: "push", tokens: ["c/**/*"], context: context)
+
+        try FilePlugin().handle(verb: "push", tokens: ["c/**/*"], context: context)
+
+        XCTAssertTrue(context.messages.contains { $0.contains("main.c") && $0.contains("[no change]") },
+                      "got:\n\(context.messages.joined(separator: "\n"))")
+    }
+}

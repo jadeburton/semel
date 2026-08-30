@@ -91,8 +91,6 @@ public struct RequiredSettings {
 
             \(missing.sorted().map { "\($0)=…" }.joined(separator: "\n"))
 
-            There are no default values: one baked into Semel would change what this build \
-            means when Semel is upgraded.
             """)
     }
 }

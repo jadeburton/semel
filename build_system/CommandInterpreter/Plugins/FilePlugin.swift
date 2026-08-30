@@ -68,9 +68,39 @@ final class FilePlugin: CommandPlugin {
             return
         }
 
-        try entries.forEach { entry in
+        // Decide the whole work list before pushing any of it, so a file that is matched
+        // twice is still pushed once. A wildcard reaching into subdirectories matches a
+        // directory *and* the files inside it, and pushing a directory means pushing its
+        // contents — so both readings arrive at the same file. Pushing as we matched would
+        // report the second arrival as "[no change]" against a file nothing had changed,
+        // which makes the report describe the matching rather than what happened.
+        var alreadyQueued = Set<String>()
+        var work: [FileWildcardEntry] = []
+        for entry in entries {
+            for expanded in try expand(entry, baseDirectory: context.baseDirectory) {
+                if alreadyQueued.insert(expanded.path.string).inserted {
+                    work.append(expanded)
+                }
+            }
+        }
+
+        try work.forEach { entry in
             try pushOne(entry, baseDirectory: context.baseDirectory, context: context)
         }
+    }
+
+    /// A matched entry, plus everything pushing it implies.
+    ///
+    /// A directory stands for itself and every file beneath it: a bare `push src` has no
+    /// wildcard enumerating its contents, so without this it would create an empty folder.
+    private func expand(_ entry: FileWildcardEntry,
+                        baseDirectory: String) throws -> [FileWildcardEntry] {
+        guard case .folder = entry.kind else { return [entry] }
+
+        let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
+        let contents = try matcher.findAllMatching(pathOrWildcard: entry.path.string + "/**/*")
+            .filter { if case .file = $0.kind { return true } else { return false } }
+        return [entry] + contents
     }
 
     private func pushOne(_ entry: FileWildcardEntry, baseDirectory: String,
@@ -108,17 +138,11 @@ final class FilePlugin: CommandPlugin {
             context.outputMessage("Push file: \(relativePath) \(didChange ? "" : "[no change]")")
 
         case .folder:
+            // Just the folder. Its contents are separate entries in the work list, put
+            // there by `expand`, so that a file reachable both directly and through its
+            // folder is still pushed once.
             context.outputMessage("Push folder: \(relativePath)")
             _ = try context.inputFileSystem.ensureEntirePathExistsAsFolders(relativePath, pinned: true)
-            // Recursively push every file inside the directory.
-            // Only .file entries are forwarded to pushOne; folder nodes are created
-            // implicitly by ensureEntirePathExistsAsFolders when each file is pushed.
-            let subMatcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
-            try subMatcher.findAllMatching(pathOrWildcard: relativePath.string + "/**/*").forEach { child in
-                if case .file = child.kind {
-                    try pushOne(child, baseDirectory: baseDirectory, context: context)
-                }
-            }
         }
     }
 
