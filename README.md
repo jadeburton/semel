@@ -98,23 +98,32 @@ Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 build_system/          CLI executable — REPL and command plugins
 SemelCore/       Core library
   BuildEngine          Async process loop, batch scheduling, deferred deletion
-  NodeFunction         Protocol for all build steps
+  FormulaParser        Reads .fmla text into a graph shape
   NodeFunctions/
     StaticFile         Raw file content node
     Folder             Directory manifest node
-    SwiftCompilerTool  Compiles .swift → .o + .swiftmodule
-    SwiftLinkerTool    Links object files into an executable
-    SwiftPackageReaderTool  Reads Package.swift manifests
-    ClangCompilerTool  Compiles .c/.cpp → .o
-    ClangLinkerTool    Links Clang object files
-    ClangPreprocessorTool  Preprocesses headers
+    OutputFile         Publishes a built artifact
     ProjectFinder      Discovers project files
     ProjectBuilder     Orchestrates a full project build
-    IncludeFinder      Tracks #include dependencies
     Configuration      Build configuration node
+    ConfigSubset       Selects one node's settings out of a config file
   Database             GRDB-backed persistence layer
+SemelNodeKit/    Node-authoring API — no dependency on the engine
+  NodeFunction         Protocol for all build steps
+  ConfigurationText    key=value per line, the shape settings travel in
+  SettingNamespace     Where a node's settings live in a config file
   DataObjectStore      Content-addressed blob store
   PolyFactory          Deserialises nodes by kind ID
+SemelSwift/      Swift toolchain node types
+  SwiftCompilerTool    Compiles .swift → .o + .swiftmodule
+  SwiftLinkerTool      Links object files into an executable
+  SwiftPackageReaderTool  Reads Package.swift manifests
+  SwiftFormulaConverter   Turns a package manifest into a formula
+SemelClang/      Clang toolchain node types
+  ClangCompilerTool    Compiles .c/.cpp → .o
+  ClangLinkerTool      Links Clang object files
+  ClangPreprocessorTool   Preprocesses headers
+  ClangIncludeFinder   Tracks #include dependencies
 SemelDatabaseModels/        GRDB schema models (Node, Wire, OutputPort, …)
 ```
 

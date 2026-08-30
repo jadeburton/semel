@@ -1,6 +1,6 @@
 # Configuration: one namespace, wired files, prefix selection
 
-**Status:** design agreed, not yet implemented
+**Status:** implemented
 **Date:** 2026-08-30
 **Replaces:** the `semel.config` model shipped in `1bdc601`…`8a9fd0e`, which works for Swift
 and reaches SemelClang not at all. Tracked as B-42.
@@ -109,16 +109,28 @@ Selection is prefix-strip, not parse. `swift.compiler.toolDescriptor.version` wi
 `swift.compiler.` yields `toolDescriptor.version`, and nothing has to know where the namespace
 ended and the key began.
 
-### Why this solves the 10,000-node problem
+### What this does to the 10,000-node problem
 
 A cache key aggregates every input port's wire *values* (`Cache.swift:38`), which is why
 filtering cannot live inside the tool: by the time unfiltered text is on the wire, the node has
-already been rescheduled and its key already changed.
+already been rescheduled and its key already changed. Change `clang.linker.target` with the
+whole file on every tool's wire and all ten thousand compilers get a new key, miss cache, and
+recompile.
 
-With selection upstream, editing the master config reschedules every `ConfigSubset` node —
-cheap, it is string parsing — and each writes its output. `writeToOutputPort` returns `false`
-when the value is unchanged (`NodeSupport.swift:290`) and the cascade stops there. Change
-`clang.linker.target` and the linker rebuilds; the compilers never wake.
+Selection upstream does not stop the cascade, and it is worth being exact about that.
+Writing the config file marks the entire subgraph below it pending before the selector
+reprocesses (`NodeSupport.writeToOutputPort`), so the selector's own write is `pending → value`
+— a change by the engine's test — and everything downstream is rescheduled whether or not the
+slice it selected actually moved.
+
+What the selector holds still is **identity**. The prefix is in the graph shape and the values
+are not, so after the edit the ten thousand compilers are the same ten thousand nodes with the
+same cache keys. They wake, look themselves up, and find their previous result.
+
+So the mitigation is: 10,000 reschedules and 10,000 cache lookups remain, and 10,000 recompiles
+do not. Stopping the reschedule as well would need the engine to compare a node's new output
+against its pre-pending value rather than against `pending`, which is a change to the engine,
+not to this design.
 
 ### It dissolves `acceptedSettings`
 

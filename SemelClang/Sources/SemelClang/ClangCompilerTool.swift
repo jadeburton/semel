@@ -13,8 +13,9 @@ struct ClangCompilerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
-    /// C++ language standard, e.g. `"c++17"` or `"c++20"`.
-    /// Defaults to `"c++17"` for C++ source files when not specified.
+    /// Language standard, e.g. `"c++20"` or `"c17"`. Required for a C++ source file and
+    /// optional for a C one, which `clangStandard(_:forLanguage:namespace:)` decides once
+    /// the file itself is known.
     let std: String?
     let target: String  // e.g. "arm64-apple-macos14.0"
 
@@ -94,12 +95,13 @@ public struct ClangCompilerTool: NodeFunction {
         let outputFilename = inputs.inputSourceFile.filePath + ".o"
 
         let language = ClangPreprocessorTool.language(for: inputs.inputSourceFile.filePath)
-        let effectiveStd = inputs.configuration.std ?? (language == "c++" ? "c++17" : nil)
 
         var arguments = [String]()
         arguments.append("-x");      arguments.append(language)
         arguments.append("-c")
-        if let std = effectiveStd {
+        if let std = try clangStandard(inputs.configuration.std,
+                                       forLanguage: language,
+                                       namespace: ClangCompilerToolConfiguration.settingNamespace) {
             arguments.append("-std=\(std)")
         }
         arguments.append(inputs.inputSourceFile.filePath)

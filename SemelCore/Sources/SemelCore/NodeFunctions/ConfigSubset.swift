@@ -8,13 +8,17 @@
 // the slice under one prefix and strips it, leaving exactly what that node's
 // `init(properties:)` already expects to read.
 //
-// Selecting here rather than inside the tool is what makes an edit local. A cache key
-// aggregates every input port's wire values, so text arriving at a tool has already
-// rescheduled it and changed its key before the tool can decide it does not care. Upstream,
-// an unrelated edit leaves this node's output byte-identical, writeToOutputPort returns false,
-// and nothing below is scheduled. With one of these per prefix and ten thousand compilers
-// sharing it, that is the difference between one node reparsing a file and ten thousand
-// recompiling.
+// Selecting here rather than inside the tool is what keeps an edit cheap. A cache key
+// aggregates every input port's wire values, so unfiltered text arriving at a tool changes
+// that tool's key: every compiler would miss cache and recompile over a setting only the
+// linker reads.
+//
+// What it does not do is stop the cascade. Writing the config file marks the whole subgraph
+// below it pending (`NodeSupport.writeToOutputPort`), so this node's own write is
+// pending -> value, a change, and everything downstream is rescheduled whether or not the
+// selected slice moved. What stays put is node *identity*: the prefix is in the graph shape
+// and the values are not, so the woken compilers are the same nodes as before and hit cache
+// instead of recompiling. Ten thousand reschedules and cache lookups; no recompiles.
 
 import SemelNodeKit
 

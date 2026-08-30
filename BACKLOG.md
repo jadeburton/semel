@@ -9,32 +9,21 @@ their reasoning is findable, then get pruned.
 ## Hermeticity and determinism
 
 **B-30-SDK** `done` — **The SDK is configuration, not ambient machine state.**
-`semel.config`, in the same `key=value` format the wire already carries, dropped anywhere
-above a package. `SwiftFormulaConverter` asks for one at every ancestor; absent ones are
-ghosts, so pushing the file later lights up the wire and re-runs the conversion with no
-rescan.
+`semel.config`, in the same `key=value` format the wire already carries. The file this item
+introduced survives; how a node reaches it does not — B-42 replaced the resolution model
+underneath it, so read that item for the mechanism and this one only for what it settled.
 
-Two dimensions of inheritance and one rule for both — most specific wins. Across files, a
-nearer ancestor beats a further one, per key. Across tools, `swift.compiler.sdkVersion`
-beats `swift.sdkVersion` for the compiler; an unqualified key is a default for every Swift
-tool, which is what makes a master config of defaults possible.
-
-The tool dimension was added second, and it fixed a real defect: every setting used to be
-broadcast to every node the converter emitted, so a key one tool ignored still landed in the
-other's properties — which are its `searchKey` and part of its cache key. An ignored setting
-therefore gave a node a new identity and orphaned its cached output. The first attempt
-patched one symptom of this with a list of manifest-owned keys the file could not set; the
-namespace fixes the cause.
-
-Each tool now declares `acceptedSettings` — what a *file* may set, which deliberately
-excludes what the manifest supplies (`moduleName`, `outputName` and the rest). Anything no
-tool accepts is dropped **and reported** through the converter's `infoLog`, naming the file
-that set it. A silently ignored typo is the worst outcome available: nothing changes and
-nothing is said, so an SDK the user believes is pinned is not.
-
-`SwiftCompilerTool` and `SwiftLinkerTool` fail loudly when the machine's SDK is not the
-declared one, mirroring what `ToolExecutorRegistry` does for a pinned tool version.
+What it settled and what still holds: an SDK version is a setting written in a file, under a
+`<domain>.<node>.<key>` namespace, not something read off whichever machine happens to be
+building. `SwiftCompilerTool` and `SwiftLinkerTool` fail loudly when the machine's SDK is not
+the declared one, mirroring what `ToolExecutorRegistry` does for a pinned tool version.
 Declaring nothing keeps the previous behaviour.
+
+What B-42 replaced: the ancestor walk that asked for a file in every parent folder, the
+merge-by-depth and cross-tool inheritance that resolved it, and the per-tool
+`acceptedSettings` lists that filtered it. A node now takes its settings through a
+`ConfigSubset` selector naming one prefix in one file, and keys nobody selected are reported
+from the graph on idle rather than from a converter's `infoLog`.
 
 *Not settled:* the check compares the version string only, not the build (`26.5`, not
 `26.5 (25F70)`), because a build number is unpleasant to write in a config by hand. Two
@@ -342,34 +331,40 @@ if multiple users might share it, without the full auth apparatus for now.
 Writes its values under `ClangPreprocessorTool.output` and `.infoLog` rather than its own.
 Works only because all four constants are the same strings.
 
-**B-42** `doing` — **How configuration works, across both toolchains.**
-Design settled and written up: `docs/superpowers/specs/2026-08-30-semel-configuration-design.md`.
-Not yet implemented.
+**B-42** `done` — **How configuration works, across both toolchains.**
+Design: `docs/superpowers/specs/2026-08-30-semel-configuration-design.md`.
 
-*The shape.* Inheritance is killed in both dimensions — no ancestor walk, no cross-tool
-defaults. A configuration is one file, copied and edited rather than composed. Every key lives
-under a global `<domain>.<node>.<key>` namespace designed so a single master config can hold
-everything without collision, with `<node>` derived from the node type name and pinnable when
-a rename would otherwise break users.
+*The shape.* Inheritance is dead in both dimensions — no ancestor walk, no cross-tool
+defaults. A configuration is one file, copied and edited rather than composed; this tree
+carries six byte-identical copies, one beside each `Package.swift`, because discovery builds
+each package separately. Every key lives under a global `<domain>.<node>.<key>` namespace
+designed so a single master config can hold everything without collision, with `<node>`
+derived from the node type name and pinnable when a rename would otherwise break users.
 
-A node reads configuration through a selector node that names a prefix and takes the file on a
-wire — so identity is *which file and which slice*, and the values themselves are never in a
-searchKey. That fixes the original defect (settings as identity, orphaning cache on every
-edit), gives SemelClang a route for the first time, and answers the 10,000-compiler problem:
-an unrelated key changing leaves a selector's output byte-identical, and `writeToOutputPort`
-stops the cascade there.
+A node reads configuration through a `ConfigSubset` selector that names a prefix and takes the
+file on a wire — so identity is *which file and which slice*, and the values themselves are
+never in a searchKey. That fixes the original defect (settings as identity, orphaning cache on
+every edit) and gives SemelClang a route to configuration for the first time.
+
+On the 10,000-compiler problem it delivers less than the design first claimed, and the
+difference is worth keeping written down. Editing the file still reschedules everything
+downstream: the write marks the whole subgraph pending before the selector reprocesses, so the
+selector's own write is `pending → value` and the cascade does not stop. What holds still is
+node identity, so the woken compilers are the same nodes and hit cache. 10,000 reschedules and
+cache lookups remain; 10,000 recompiles do not.
 
 It also dissolves `acceptedSettings` — the prefix in the graph is the accepted set — and
 recovers typo reporting in a better form, by asking the graph which prefixes anyone selected
-and reporting the keys nobody claimed.
+and reporting the keys nobody claimed on the engine's idle hook.
 
-*Costs accepted knowingly:* `sdkVersion` written once per node that reads it, and no
-per-target overrides, which would be most-specific-wins and therefore inheritance again.
+*Costs accepted knowingly:* `sdkVersion` written once per node that reads it, no per-target
+overrides (which would be most-specific-wins and therefore inheritance again), and one config
+file per package with nothing but copying to keep them in step.
 
-*Blocked on this:* the hardcoded fallbacks at `ClangLinkerTool.swift:143` and
-`SwiftCompilerTool.swift:29`. They are ambient state entering by another door, and the spec's
-last open question — whether a missing config file means "empty" and lets those literals win
-silently — should be settled with this work rather than after it.
+*Also closed by this:* the hardcoded fallbacks at `ClangLinkerTool.swift`,
+`SwiftCompilerTool.swift` and the `std` default in the two Clang source stages. There are no
+default values anywhere: a missing setting fails naming the key to write, because a literal in
+the binary silently changes what a previous build meant when Semel is upgraded.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
@@ -436,9 +431,10 @@ cheap ones.
   `DataObjectHash`: the *less* descriptive name wrapping the more descriptive one. Neither is
   standard. This is a **digest** (Git calls it an OID, Nix a store hash), and "token" suggests
   lexing or opacity rather than content addressing.
-- **The config vocabulary** — `Configuration` (a node type), `ConfigSettings`, `ToolSchema`,
-  `semel.config`, `NodeFunctionDescriptor`. Five words circling one area. B-42's territory;
-  leave it until that model settles, but it is the largest naming debt here.
+- **The config vocabulary** — `Configuration` (a node type), `ConfigSubset` (another),
+  `ConfigurationText`, `semel.config`, `NodeFunctionDescriptor`. Five words circling one area.
+  B-42 settled the model and deleted `ConfigSettings` and `ToolSchema`, but it added
+  `ConfigSubset` — named as a placeholder, and explicitly left to be renamed here.
 
 *Misleading about mechanism.*
 - **`NodeFunction`** overpromises. It is not a function: it is a stateful wrapper with

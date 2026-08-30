@@ -8,6 +8,29 @@ import Foundation
 import SemelNodeKit
 import SemelDatabaseModels
 
+// MARK: - The language standard
+
+/// The `-std` value to pass for `language`, given what the config file supplied.
+///
+/// C++ has no usable unstated standard — which one clang picks moves between releases — so
+/// `std` is required there, reported through `RequiredSettings` exactly as `target` is, and
+/// naming `clang.compiler.std` or `clang.preprocessor.std` according to who asked. There is
+/// deliberately no fallback: a standard baked into Semel would silently change what a
+/// previous build meant the moment Semel is upgraded.
+///
+/// Checked here rather than in `init(properties:)` because the language is not a setting: it
+/// comes from the source file arriving on a wire. A C file with no `std` is complete; the
+/// same configuration reaching a C++ file is not.
+func clangStandard(_ std: String?, forLanguage language: String, namespace: String) throws -> String? {
+    guard language == "c++" else { return std }
+
+    var required = RequiredSettings(properties: std.map { ["std": $0] } ?? [:],
+                                    namespace: namespace)
+    let value = required.value("std")
+    try required.check()
+    return value
+}
+
 // MARK: - Configuration
 
 struct ClangPreprocessorToolConfiguration {
@@ -18,9 +41,9 @@ struct ClangPreprocessorToolConfiguration {
     /// When set, `-isysroot <sdkPath>` is passed so clang can find system headers.
     /// Supply via `Configuration(sdkPath: '/path/to/MacOSX.sdk')` in the formula.
     let sdkPath: String?
-    /// C++ language standard, e.g. `"c++17"` or `"c++20"`.
-    /// Defaults to `"c++17"` for C++ source files when not specified.
-    /// Supply via `Configuration(std: 'c++17')` in the formula.
+    /// Language standard, e.g. `"c++20"` or `"c17"`. Required for a C++ source file and
+    /// optional for a C one, which `clangStandard(_:forLanguage:namespace:)` decides once
+    /// the file itself is known.
     let std: String?
     let target: String  // e.g. "arm64-apple-macos14.0"
 
@@ -153,8 +176,9 @@ public struct ClangPreprocessorTool: NodeFunction {
         arguments.append("-x"); arguments.append(language)
         arguments.append("-I"); arguments.append(".")
 
-        let effectiveStd = inputs.configuration.std ?? (language == "c++" ? "c++17" : nil)
-        if let std = effectiveStd {
+        if let std = try clangStandard(inputs.configuration.std,
+                                       forLanguage: language,
+                                       namespace: ClangPreprocessorToolConfiguration.settingNamespace) {
             arguments.append("-std=\(std)")
         }
 

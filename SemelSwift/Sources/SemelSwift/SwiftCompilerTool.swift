@@ -14,9 +14,9 @@ struct SwiftCompilerToolConfiguration {
     let environment: [String: String]
     /// Declared in semel.config; nil means whatever this machine has.
     let sdkVersion: String?
-    /// Declared in semel.config; nil means no -O flag at all, as before it existed.
-    /// Compiler-only -- the linker takes no optimisation flag, which is what makes this the
-    /// first setting the per-tool accepted sets actually keep apart.
+    /// Declared in semel.config; nil means no -O flag at all.
+    /// Compiler-only: the linker takes no optimisation flag, so this key lives under
+    /// `swift.compiler` and the linker's selector never sees it.
     let optimisationLevel: String?
     let moduleName: String
     let parseAsLibrary: Bool
