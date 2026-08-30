@@ -6,6 +6,7 @@
 import Foundation
 import SemelDatabaseModels
 
+// TODO: it was noted that this name is misleading as it is not a token but a digest. I think "hash" is more understandable, as a digest sounds more encrypty
 public typealias DataToken = DataObjectHash
 
 // MARK: - Interning bytes / strings as DataObjects

@@ -165,6 +165,35 @@ the engine's idle hook (`BuildEngine.swift:139`), not at parse time.
   *is* — and its `inherit` port still merges wired text, which is how a `ConfigSubset` output
   and manifest literals combine in one value for the tool.
 
+## There are no default values
+
+Settled, and it decides what a missing configuration means.
+
+A setting that falls back to a literal in Swift source is worse than one read from the
+machine. `xcrun` at least reports what is installed; a hardcoded
+`"Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)"` is a claim baked into
+the binary, so **upgrading Semel silently changes what a previous build meant**. A build
+system whose outputs move when the tool that built it is upgraded has given up the property it
+exists for.
+
+So: no defaults anywhere. A tool that needs `toolDescriptor.version` and is not given one
+fails, naming what is missing and where to put it. A missing config file is therefore not an
+empty configuration — it is a build that cannot start.
+
+This applies to the Swift package converter too. A `Package.swift` does not state a toolchain
+or an SDK, so a Swift package alone is not enough to build reproducibly: a config file has to
+exist in the input file system supplying what the manifest cannot. That is a real ergonomic
+cost — no project builds out of the box without one — and it is the price of the guarantee.
+
+Concretely this removes: `?? "swiftc"`, `?? "Apple Swift version 6.3.3 (…)"`, `?? "macOS"`,
+`?? "arm64"` (`SwiftCompilerTool.swift:29`, `SwiftLinkerTool.swift:24`),
+`?? "arm64-apple-macos14.0"` (`ClangLinkerTool.swift:143`), and the `?? "Module"` /
+`?? "output"` fallbacks for values the manifest is supposed to supply. It closes B-42's two
+blocked TODOs.
+
+Sequencing matters: defaults cannot be removed before there is a working way to supply the
+values, so this lands after the selector, not with it.
+
 ## Boundary this establishes
 
 A literal in formula text says what a thing **is**: `moduleName: 'Lib'`, from the package
@@ -180,9 +209,4 @@ owned keys with a rule about where a value came from.
 - Whether the prefix includes its trailing dot in the property (`swift.compiler` vs
   `swift.compiler.`), and whether an exact key with no remainder is legal.
 - Whether `semel.*` engine settings are read through the same node type or a different path,
-  since the engine is not a node.
-- Whether a missing config file is an error or an empty configuration. Today's ghost semantics
-  say empty; with tool defaults still hardcoded in Swift (B-42's blocked TODOs at
-  `ClangLinkerTool.swift:143` and `SwiftCompilerTool.swift:29`), empty means those literals win
-  silently — which is the same ambient-state problem in different clothes, and should be
-  resolved with this rather than after it.
+  since the engine is not a node. Out of scope here; nothing depends on it yet.
