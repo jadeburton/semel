@@ -24,13 +24,13 @@ final class ConfigurationTextTests: XCTestCase {
         XCTAssertEqual(settings, ["a": "1", "b": "2"])
     }
 
-    /// A `#` comment is how a config file explains itself, and this tree's own file is
+    /// A `//` comment is how a config file explains itself, and this tree's own file is
     /// mostly comment. A line with no `=` contributes nothing.
     func test_ignoresCommentLines() {
         let settings = [String: String](plainText: """
-            # what this file is for
+            // what this file is for
             a=1
-            # and why
+            // and why
             b=2
             """)
 
@@ -64,24 +64,31 @@ final class ConfigurationTextTests: XCTestCase {
         XCTAssertEqual(settings["b"], "2")
     }
 
-    /// The case that makes `#` worth recognising rather than merely failing to parse:
+    /// The case that makes `//` worth recognising rather than merely failing to parse:
     /// commenting a setting out is how one gets disabled, and a commented setting still
     /// splits on `=` like any other line.
     func test_aCommentedOutSettingIsNotInForce() {
         let settings = [String: String](plainText: """
-            # swift.compiler.sdkVersion=26.5
+            // swift.compiler.sdkVersion=26.5
             a=1
             """)
 
         XCTAssertEqual(settings, ["a": "1"])
     }
 
-    /// Only a *leading* `#`. There is no trailing-comment form, so a value containing one
-    /// keeps it rather than being silently truncated.
-    func test_aHashInsideAValueIsPartOfTheValue() {
-        let settings = [String: String](plainText: "a=1 # not a comment")
+    /// Only a *leading* `//`. There is no trailing-comment form, so a value containing one
+    /// keeps it — a URL or a network path would otherwise be silently truncated.
+    func test_aDoubleSlashInsideAValueIsPartOfTheValue() {
+        let settings = [String: String](plainText: "a=https://example.com/x")
 
-        XCTAssertEqual(settings["a"], "1 # not a comment")
+        XCTAssertEqual(settings["a"], "https://example.com/x")
+    }
+
+    /// A single leading slash is not a comment; only a pair is.
+    func test_aSingleLeadingSlashIsNotAComment() {
+        let settings = [String: String](plainText: "/a=1")
+
+        XCTAssertEqual(settings["/a"], "1")
     }
 
     // MARK: - Writing
