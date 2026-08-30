@@ -80,7 +80,7 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
 - **No single-character names** — not for variables, parameters, bindings, or loop
   counters. `let currentNode`, not `let n`. `for wire in wires`, not `for w in wires`.
   A few older places still break this — `FormulaParser` (`let c`, `let s`, `var i`),
-  `ProjectBuilder`'s glob matcher (`let p`, `let t`), `NodeDescriptor`'s pattern bindings
+  `ProjectBuilder`'s wildcard matcher (`let p`, `let t`), `NodeDescriptor`'s pattern bindings
   (`let n`). They are legacy, not licence; do not copy them, and tidy them if you are
   editing that code anyway.
 - Spell words out. `nodeFunction`, `inputPortSpec`, `existingWiresByName` — not `nf`,

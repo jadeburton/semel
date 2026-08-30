@@ -127,7 +127,7 @@ func resetSymbolCache() {
     symbolCache.removeAll()
 }
 
-// MARK: - Resolving a DataToken back to bytes
+// MARK: - Resolving a DataObjectHash back to bytes
 
 enum SymbolError: Error {
     case symbolNotFoundByID

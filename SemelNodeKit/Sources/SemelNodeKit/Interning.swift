@@ -1,13 +1,16 @@
 //
-//  DataToken.swift
-//  build_system
+//  Interning.swift
+//  SemelNodeKit
+//
+//  Putting bytes in the object store and getting back the hash that names them.
+//
+//  The hash is the name: identical content interns to the same value from anywhere, which is
+//  what makes a wire carry a reference rather than a copy and what lets two builds recognise
+//  the same result.
 //
 
 import Foundation
 import SemelDatabaseModels
-
-// TODO: it was noted that this name is misleading as it is not a token but a digest. I think "hash" is more understandable, as a digest sounds more encrypty
-public typealias DataToken = DataObjectHash
 
 // MARK: - Interning bytes / strings as DataObjects
 
@@ -27,7 +30,7 @@ extension [UInt8] {
     /// test process — the handler is swappable precisely so it can.
     ///
     /// The cost is a `try` at every call site, which is real. It buys the message.
-    public func intern() throws -> DataToken {
+    public func intern() throws -> DataObjectHash {
         if isEmpty {
             return ""
         }
@@ -40,18 +43,18 @@ extension [UInt8] {
 }
 
 extension String {
-    public func intern() throws -> DataToken {
+    public func intern() throws -> DataObjectHash {
         try [UInt8](Data(utf8)).intern()
     }
 }
 
-// MARK: - Resolving a DataToken back to bytes
+// MARK: - Resolving a DataObjectHash back to bytes
 
 enum DataObjectError: Error {
     case dataObjectNotFoundByHash
 }
 
-extension DataToken {
+extension DataObjectHash {
     /// Reads the bytes for this token directly from the filesystem store —
     /// no database round-trip required.
     public func resolve() throws -> [UInt8] {

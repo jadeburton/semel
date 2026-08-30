@@ -110,7 +110,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     private func buildGraph(configText: String? = nil) throws {
         let products = try FormulaFile.parse(formula,
                                              basePath: Path(projectFolder),
-                                             globber: { _ in [] })
+                                             wildcardExpander: { _ in [] })
         XCTAssertFalse(products.isEmpty, "the formula produced no products")
         for name in products.keys.sorted() {
             _ = try products[name]!.findOrCreateMatchingNode()

@@ -30,7 +30,7 @@ public final class FileWildcardMatcher {
         self.input = input
     }
 
-    /// Find all files and folders matching a glob pattern.
+    /// Find all files and folders matching a wildcard pattern.
     ///
     /// Supports:
     /// - `?`  — matches any single character
@@ -67,7 +67,7 @@ public final class FileWildcardMatcher {
         let segment = segments[segmentIndex]
         let isLastSegment = segmentIndex == segments.count - 1
 
-        // ── ** (globstar) ──────────────────────────────────────────
+        // ── ** (doubleStar) ──────────────────────────────────────────
         if segment == "**" {
             // ** can match zero directories (skip it) …
             try matchSegments(segments: segments, segmentIndex: segmentIndex + 1,

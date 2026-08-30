@@ -143,7 +143,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     private func buildGraph(fromFormula formula: String) throws {
         let products = try FormulaFile.parse(formula,
                                              basePath: Path(packageFolder),
-                                             globber: { _ in [] })
+                                             wildcardExpander: { _ in [] })
         XCTAssertFalse(products.isEmpty, "the converter emitted no products:\n\(formula)")
         for name in products.keys.sorted() {
             _ = try products[name]!.findOrCreateMatchingNode()

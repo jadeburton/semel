@@ -54,7 +54,7 @@ public struct ProjectBuilder: NodeFunction {
         // On the first run these are empty; subsequent runs have real data.
         let folderManifests = decodeFolderManifests(input.inputValues[Self.foldersInputPort] ?? [:])
 
-        // Record every folder path the formula references via a glob and every file
+        // Record every folder path the formula references via a wildcard and every file
         // path it references via import(), so we can wire them and be rescheduled
         // whenever their contents change.
         final class GlobRecord   { var folderPaths = Set<String>() }
@@ -63,10 +63,10 @@ public struct ProjectBuilder: NodeFunction {
         let importRecord = ImportRecord()
         let capture      = self   // value-type copy for use inside @escaping closures
 
-        let globber: (String) throws -> [String] = { pattern in
+        let wildcardExpander: (String) throws -> [String] = { pattern in
             let folder = capture.extractFolderPath(fromGlobPattern: pattern)
             if !folder.isEmpty { record.folderPaths.insert(folder) }
-            return capture.globMatch(pattern: pattern,
+            return capture.wildcardMatch(pattern: pattern,
                                      folderPath: folder,
                                      manifests: folderManifests)
         }
@@ -82,10 +82,10 @@ public struct ProjectBuilder: NodeFunction {
 
         let products = try FormulaFile.parse(projectFileContent,
                                              basePath: parentFolder,
-                                             globber: globber,
+                                             wildcardExpander: wildcardExpander,
                                              fileReader: fileReader)
 
-        // There are two kinds of Formula files: those without globber wildcards, and
+        // There are two kinds of Formula files: those without wildcardExpander wildcards, and
         // those with.  Files with wildcards require multiple passes — the initial passes
         // may not have discovered all files yet, resulting in an empty objectFiles list
         // that would produce bad product expectations.  Similarly, imported .graph files
@@ -96,10 +96,10 @@ public struct ProjectBuilder: NodeFunction {
         // Build output-file expectations for each formula product.
         var productExpectations = [String: String]()
 
-        let globsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
+        let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
         let importsReady = !importRecord.anyMissing
 
-        if globsReady && importsReady {
+        if wildcardsReady && importsReady {
             for (productName, shapeNode) in products {
 
                 let fullPath = Path(Folder.outputFileSystemName)
@@ -127,7 +127,7 @@ public struct ProjectBuilder: NodeFunction {
             }
         }
 
-        // Wire each glob-referenced folder's manifest into our 'folders' port so we
+        // Wire each wildcard-referenced folder's manifest into our 'folders' port so we
         // are automatically rescheduled whenever the folder's contents change.
         var folderExpectations = [String: String]()
         for folderPath in record.folderPaths {
@@ -169,7 +169,7 @@ public struct ProjectBuilder: NodeFunction {
 
     // MARK: - Glob helpers
 
-    /// Extracts the base folder path from a glob pattern — everything before the
+    /// Extracts the base folder path from a wildcard pattern — everything before the
     /// first wildcard character, trimmed to the last '/'.
     /// e.g.  "input:/src/*.c"  →  "input:/src"
     ///        "input:/**/*.c"  →  "input:"
@@ -198,7 +198,7 @@ public struct ProjectBuilder: NodeFunction {
 
     /// Return the sorted list of logical paths that satisfy `pattern`, matched
     /// against the immediate pinned-file children of the relevant folder manifest.
-    private func globMatch(
+    private func wildcardMatch(
         pattern: String,
         folderPath: String,
         manifests: [String: FolderManifest]

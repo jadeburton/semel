@@ -10,7 +10,7 @@ import SemelNodeKit
 final class FormulaParserTests: SemelCoreTestCase {
 
     private func parse(_ source: String) throws -> [String: GraphShapeNode] {
-        try FormulaFile.parse(source, basePath: Path("."), globber: { _ in [] })
+        try FormulaFile.parse(source, basePath: Path("."), wildcardExpander: { _ in [] })
     }
 
     // MARK: - Leaf node construction

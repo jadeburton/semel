@@ -20,7 +20,7 @@
 //               | expr                                    -- positional
 //   wireEntry   = forEachPrefix? (STRING | PATH) ':' expr (',' wireEntry)*
 //   forEachPrefix = '{' IDENT ':' forEachItem (',' forEachItem)* '}'
-//   forEachItem = STRING | PATH                           -- literal or glob pattern
+//   forEachItem = STRING | PATH                           -- literal or wildcard pattern
 //   PATH        = '<' relativePath '>'
 //
 // PATH is resolved by the lexer: <rel/path> → basePath/rel/path, with '.' and
@@ -35,10 +35,10 @@
 //   {var: 'a', 'b'} "%%var%%": NodeType(param: "%%var%%")
 // expands to two wire entries with var='a' and var='b' substituted.
 // Glob patterns in for-each items (e.g. <src/*.c>) are expanded via the
-// globber callback passed to FormulaFile.parse.
+// wildcardExpander callback passed to FormulaFile.parse.
 //
 // %%var%%    — full value of var
-// %%var.N%%  — Nth wildcard capture group (0-based) from a glob pattern
+// %%var.N%%  — Nth wildcard capture group (0-based) from a wildcard pattern
 // %%var.folder%% — containing directory path with trailing slash
 //
 // Disambiguation:  a call 'name(...)' resolves to a user-function call when
@@ -54,7 +54,7 @@ extension FormulaFile {
 
     /// Parse `source` (the text of a .fmla file) and resolve every `product`
     /// declaration to a `GraphShapeNode`.
-    /// `globber` is called for any for-each items that contain glob wildcards
+    /// `wildcardExpander` is called for any for-each items that contain wildcards
     /// ('*' or '?'); it should return the sorted list of matching logical paths.
     /// `fileReader` is called for every `import(path:)` expression; it should
     /// return the file contents, or `nil` if the file is not yet available (which
@@ -65,13 +65,13 @@ extension FormulaFile {
     static func parse(
         _ source: String,
         basePath: Path,
-        globber: @escaping (String) throws -> [String],
+        wildcardExpander: @escaping (String) throws -> [String],
         fileReader: @escaping (String) throws -> String? = { _ in nil }
     ) throws -> [String: GraphShapeNode] {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
         let file   = try parser.parseFile()
-        return try FormulaResolver(file, globber: globber, fileReader: fileReader).resolve()
+        return try FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader).resolve()
     }
 }
 
@@ -110,7 +110,7 @@ enum FormulaCallArg {
 /// A `simple` entry contributes exactly one wire with an explicit key.
 /// An `unnamed` entry contributes one wire whose name is auto-generated
 /// as `"wire0"`, `"wire1"`, … based on its position in the port's wire list.
-/// A `forEach` entry contributes one wire per item (after glob expansion),
+/// A `forEach` entry contributes one wire per item (after wildcard expansion),
 /// with `%%variable%%` substituted into the key template and every string literal.
 enum WireDictEntry {
     case simple(key: FormulaExpr, value: FormulaExpr)
@@ -118,7 +118,7 @@ enum WireDictEntry {
     case forEach(variable: String, items: [FormulaExpr], key: String, value: FormulaExpr)
     // simple.key: any expression that resolves to a String (literal, identifier, or template)
     // forEach.key: template string — may contain %%variable%%
-    // items: string expressions or parameter references — evaluated then glob-expanded if they contain wildcards
+    // items: string expressions or parameter references — evaluated then wildcard-expanded if they contain wildcards
 }
 
 // MARK: - Errors
@@ -688,8 +688,8 @@ private func expandTemplate(_ s: String, templateEnv: [String: ForEachBinding]) 
 
 // MARK: - Glob capture-group extraction
 
-/// Given a glob `pattern` and a confirmed `match`, extract the text captured by
-/// each `*` wildcard in the pattern (left-to-right), excluding `**` globstars.
+/// Given a wildcard `pattern` and a confirmed `match`, extract the text captured by
+/// each `*` wildcard in the pattern (left-to-right), excluding `**` doubleStars.
 /// Use `%%var.folder%%` to access the directory depth captured by `**` instead.
 private func extractCaptureGroups(pattern: String, match: String) -> [String] {
     let patSegs   = pattern.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
@@ -754,15 +754,15 @@ private func extractSegmentCaptures(pattern: String, text: String) -> [String] {
 private struct FormulaResolver {
     let functions:  [String: FuncDef]
     let products:   [ProductDef]
-    let globber:    (String) throws -> [String]
+    let wildcardExpander:    (String) throws -> [String]
     let fileReader: (String) throws -> String?
 
     init(_ file: FormulaFile,
-         globber:    @escaping (String) throws -> [String],
+         wildcardExpander:    @escaping (String) throws -> [String],
          fileReader: @escaping (String) throws -> String?) {
         functions        = Dictionary(uniqueKeysWithValues: file.functions.map { ($0.name, $0) })
         products         = file.products
-        self.globber     = globber
+        self.wildcardExpander     = wildcardExpander
         self.fileReader  = fileReader
     }
 
@@ -1029,7 +1029,7 @@ private struct FormulaResolver {
         var bindings: [ForEachBinding] = []
         for item in items {
             if item.contains("*") || item.contains("?") {
-                let matches = try globber(item)
+                let matches = try wildcardExpander(item)
                 for match in matches {
                     bindings.append(ForEachBinding(
                         variable: variable,

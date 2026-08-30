@@ -4,8 +4,8 @@
 // Matching one path segment against a pattern containing `*` and `?`.
 //
 // Standalone, and static, because two unrelated things need it: FileWildcardMatcher, which
-// walks a real directory tree, and ProjectBuilder, which globs over a folder manifest that
-// has already arrived on a wire. Neither can reach the other's internals, and a glob that
+// walks a real directory tree, and ProjectBuilder, which matches wildcards over a folder manifest that
+// has already arrived on a wire. Neither can reach the other's internals, and a wildcard that
 // means one thing in a formula and another on disk would be its own kind of bug, so they
 // share this rather than each holding a copy.
 

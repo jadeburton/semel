@@ -207,7 +207,7 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 final class FormulaMalformedTests: SemelCoreTestCase {
 
     private func parse(_ source: String) throws -> [String: GraphShapeNode] {
-        try FormulaFile.parse(source, basePath: Path("."), globber: { _ in [] })
+        try FormulaFile.parse(source, basePath: Path("."), wildcardExpander: { _ in [] })
     }
 
     func test_parse_unterminatedString_throws() {
