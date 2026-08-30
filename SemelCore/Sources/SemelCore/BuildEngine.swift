@@ -120,6 +120,7 @@ public final class BuildEngine {
             }
 
             reportIdleTimeErrors()
+            reportUnclaimedConfigKeys()
 
             await workSignal.wait()
         }
@@ -128,6 +129,78 @@ public final class BuildEngine {
     private func cleanUpAllPendingDeletions() throws {
         // Clean up all pending deletions, which are not safe to delete while Nodes are being processed
         while ((try? processPendingDeletions()) ?? 0) > 0 {
+        }
+    }
+
+    // MARK: - Unclaimed config keys
+
+    /// Keys in a config file that no `ConfigSubset` selected.
+    ///
+    /// A selector knows only what it was asked for, so it cannot notice a key nobody wanted.
+    /// The graph can: the wires leaving a config file lead to every node that claimed part of
+    /// it, and their prefixes are properties. Answerable only once the graph has settled, which
+    /// is why this is called from the idle hook rather than at parse time.
+    ///
+    /// This reports a key only when it falls under no selected prefix at all — a misspelt
+    /// prefix. A misspelt key *under* a correct prefix (`swift.compiler.sdkVerison` when
+    /// `swift.compiler` IS selected) is invisible to this check: telling it apart from a real
+    /// key would require knowing which keys each tool actually reads, the per-type key list
+    /// this design deleted.
+    func unclaimedConfigKeys(inFileNodeID fileNodeID: ObjectID) throws -> [String] {
+        let node = try database.node.select(nodeID: fileNodeID)
+        guard let staticFile = try node.nodeAsAny() as? StaticFile,
+              let content = try staticFile.read(),
+              case .value(let hash) = content else { return [] }
+
+        let keys = [String: String](plainText: try hash.resolveAsString()).keys
+
+        var prefixes: [String] = []
+        for wire in try database.wire.select(comingFromNodeID: fileNodeID,
+                                             fromSymbolID: StaticFile.outputPort.asSymbolID()) {
+            let consumer = try database.node.select(nodeID: wire.toNodeID)
+            guard consumer.kind == ConfigSubset.kind,
+                  let prefix = consumer.properties[ConfigSubset.prefixProperty] else { continue }
+            prefixes.append(prefix + ".")
+        }
+
+        return keys.filter { key in !prefixes.contains { key.hasPrefix($0) } }.sorted()
+    }
+
+    /// Tracks the last-reported unclaimed-key set per config-file node so an unchanged
+    /// result is not printed again on every idle cycle.
+    private var lastReportedUnclaimedKeys: [ObjectID: [String]] = [:]
+
+    /// Finds every config file feeding a `ConfigSubset` and prints its unclaimed keys, but
+    /// only when that file's unclaimed set has changed since the last report — a project
+    /// with a standing misspelt prefix would otherwise repeat the same line on every idle
+    /// cycle until it read as background noise rather than something to fix.
+    ///
+    /// Starts from `ConfigSubset` nodes rather than scanning for files named `semel.config`:
+    /// a config file is identified by being wired into a selector, not by its name — the same
+    /// reason a variant is just a different file wired in, with no naming convention of its
+    /// own. `ConfigSubset` nodes are also rare (one per prefix), where `StaticFile` is not —
+    /// most nodes in a real project are source files, so filtering all of them by name would
+    /// cost about what `selectAll()` does.
+    private func reportUnclaimedConfigKeys() {
+        guard let subsets = try? database.node.select(kind: ConfigSubset.kind) else { return }
+
+        var fileNodeIDs: Set<ObjectID> = []
+        for subset in subsets {
+            guard let subsetID = subset.id,
+                  let wires = try? database.wire.select(goingToNodeID: subsetID,
+                                                        toSymbolID: ConfigSubset.inputPort.asSymbolID())
+            else { continue }
+            fileNodeIDs.formUnion(wires.map(\.fromNodeID))
+        }
+
+        for fileNodeID in fileNodeIDs {
+            guard let unclaimed = try? unclaimedConfigKeys(inFileNodeID: fileNodeID) else { continue }
+            guard unclaimed != (lastReportedUnclaimedKeys[fileNodeID] ?? []) else { continue }
+            lastReportedUnclaimedKeys[fileNodeID] = unclaimed
+
+            guard !unclaimed.isEmpty else { continue }
+            let path = (try? database.node.select(nodeID: fileNodeID))?.properties["path"] ?? "config file \(fileNodeID)"
+            print("⚠️  \(path): key(s) no selector claims: \(unclaimed.joined(separator: ", "))")
         }
     }
 

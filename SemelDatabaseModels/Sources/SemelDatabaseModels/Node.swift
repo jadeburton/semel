@@ -230,6 +230,17 @@ public struct NodeDataAccess: DataAccessType {
         }
     }
 
+    /// Every node of one kind, unqualified by name or parent.
+    ///
+    /// Unlike `selectAll()` this is only ever safe to call for a kind that stays rare —
+    /// a handful of nodes, not every source file in the project — since there is no index
+    /// on `kind` and the cost scales with the whole table regardless of how few rows match.
+    public func select(kind: UInt) throws -> [Node] {
+        try read { db in
+            try Node.filter(Node.Columns.kind == kind).fetchAll(db)
+        }
+    }
+
     public func insert(_ node: Node) throws -> ObjectID {
         try write { db in
             try node.insert(db)
