@@ -33,11 +33,15 @@ let package = Package(
             path: "build_system",
             sources: ["main.swift"]
         ),
+        // The only place a test can see the converter and the engine at once. SemelSwift
+        // deliberately does not depend on SemelCore, so nothing inside it can check that
+        // the formula it emits is *complete* — only that it parses. This target can.
         .testTarget(
             name: "SemelCLITests",
             dependencies: [
                 "SemelCLI",
                 .product(name: "SemelCore", package: "SemelCore"),
+                .product(name: "SemelSwift", package: "SemelSwift"),
             ],
             path: "build_system/Tests"
         ),
