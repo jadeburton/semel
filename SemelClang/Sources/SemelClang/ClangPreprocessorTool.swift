@@ -22,10 +22,12 @@ struct ClangPreprocessorToolConfiguration {
     /// Defaults to `"c++17"` for C++ source files when not specified.
     /// Supply via `Configuration(std: 'c++17')` in the formula.
     let std: String?
+    let target: String  // e.g. "arm64-apple-macos14.0"
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
         toolDescriptor = .init(required: &required, properties: properties)
+        target = required.value("target")
         try required.check()
 
         arguments = []
@@ -163,7 +165,7 @@ public struct ClangPreprocessorTool: NodeFunction {
             arguments.append("-isysroot"); arguments.append(sdkPath)
         }
 
-        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        arguments.append("-target"); arguments.append(inputs.configuration.target)
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o"); arguments.append(outputFilename)
         arguments.append(contentsOf: inputs.configuration.arguments)

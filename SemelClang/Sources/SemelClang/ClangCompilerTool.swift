@@ -16,10 +16,12 @@ struct ClangCompilerToolConfiguration {
     /// C++ language standard, e.g. `"c++17"` or `"c++20"`.
     /// Defaults to `"c++17"` for C++ source files when not specified.
     let std: String?
+    let target: String  // e.g. "arm64-apple-macos14.0"
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
         toolDescriptor = .init(required: &required, properties: properties)
+        target = required.value("target")
         try required.check()
 
         arguments = []
@@ -115,7 +117,7 @@ public struct ClangCompilerTool: NodeFunction {
         }
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)
-        arguments.append("-target"); arguments.append("arm64-apple-macos14.0")
+        arguments.append("-target"); arguments.append(inputs.configuration.target)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
         let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)

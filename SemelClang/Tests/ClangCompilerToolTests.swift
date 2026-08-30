@@ -33,12 +33,14 @@ final class ClangCompilerToolTests: SemelClangTestCase {
     }
 
     private func makeInput(sourcePath: String = "src/hello.c.p",
-                           contents: String = "int main(){}") throws -> ProcessInput {
+                           contents: String = "int main(){}",
+                           target: String = "arm64-apple-macos14.0") throws -> ProcessInput {
         let configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
             toolDescriptor.platform=\(descriptor.platform)
             toolDescriptor.architecture=\(descriptor.architecture)
+            target=\(target)
             """
         return ProcessInput(inputValues: [
             ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
@@ -56,6 +58,15 @@ final class ClangCompilerToolTests: SemelClangTestCase {
                         "-c", "src/hello.c.p",
                         "-o", "src/hello.c.p.o",
                         "-target", "arm64-apple-macos14.0"])
+    }
+
+    /// The target triple must come from configuration, not a literal baked into the
+    /// tool: a project pinning a different one has no other way to reach the command line.
+    func test_targetComesFromConfigurationRatherThanALiteral() throws {
+        _ = try makeTool().process(input: try makeInput(target: "x86_64-apple-macos13.0"))
+
+        XCTAssertTrue(executor.lastArguments.contains("x86_64-apple-macos13.0"))
+        XCTAssertFalse(executor.lastArguments.contains("arm64-apple-macos14.0"))
     }
 
     func test_passesTheSourceFileToTheToolAsAnInput() throws {

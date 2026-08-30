@@ -24,13 +24,14 @@ import SemelDatabaseModels
 struct SwiftPackageReaderToolConfiguration {
     let toolDescriptor: ToolDescriptor
 
-    init(properties: [String: String]) {
-        toolDescriptor = .init(
-            name:          properties["toolDescriptor.name"]          ?? "swift",
-            version:       properties["toolDescriptor.version"]       ?? "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)",
-            platform:      properties["toolDescriptor.platform"]      ?? "macOS",
-            architecture:  properties["toolDescriptor.architecture"]  ?? "arm64",
-            recursiveHash: properties["toolDescriptor.recursiveHash"])
+    init(properties: [String: String]) throws {
+        var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
+        toolDescriptor = .init(name:          required.value("toolDescriptor.name"),
+                               version:       required.value("toolDescriptor.version"),
+                               platform:      required.value("toolDescriptor.platform"),
+                               architecture:  required.value("toolDescriptor.architecture"),
+                               recursiveHash: properties["toolDescriptor.recursiveHash"])
+        try required.check()
     }
 
     func asDictionary() -> [String: String] {
@@ -40,6 +41,9 @@ struct SwiftPackageReaderToolConfiguration {
          "toolDescriptor.architecture":  toolDescriptor.architecture,
          "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
     }
+
+    /// Where this node's settings live in a config file: `swift.packageReader.<key>`.
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReaderTool")
 }
 
 // MARK: - Node
@@ -78,7 +82,7 @@ struct SwiftPackageReaderTool: NodeFunction {
             let configString = try input.inputValues[SwiftPackageReaderTool.configuration]!
                 .values.first!.expectValue().resolveAsString()
 
-            configuration = .init(properties: [String: String](plainText: configString))
+            configuration = try .init(properties: [String: String](plainText: configString))
 
             let packageFileNodeValues = input.inputValues[SwiftPackageReaderTool.packageFile]!.values.first!
 

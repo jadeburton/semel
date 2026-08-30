@@ -49,4 +49,15 @@ final class MissingSettingTests: SemelSwiftTestCase {
             }
         }
     }
+
+    /// `SwiftPackageReaderTool` reads the manifest for every package, so a hardcoded
+    /// toolDescriptor here would make "no defaults" false for the very first node a
+    /// build runs.
+    func test_packageReaderNamesItselfAndItsOwnNamespaceWhenMissing() throws {
+        XCTAssertThrowsError(try SwiftPackageReaderToolConfiguration(properties: [:])) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("swift.packageReader.toolDescriptor.version"),
+                          "should name the key to write in the config file, got \(message)")
+        }
+    }
 }
