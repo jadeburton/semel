@@ -240,54 +240,16 @@ public final class BuildEngine {
             if !msgs.isEmpty { current[nodeID] = msgs }
         }
 
-        // Print only nodes with at least one newly-appearing error message.
+        // Only nodes with at least one newly-appearing message. Reporting an error that has
+        // already been reported on every settle is how a report stops being read.
         for (nodeID, msgs) in current {
             let newMsgs = msgs.subtracting(lastReportedErrors[nodeID] ?? [])
             guard !newMsgs.isEmpty else { continue }
 
-            let node = try? database.node.select(nodeID: nodeID)
-            let kindLabel: String
-            if let node, let nf = try? node.nodeAsAny() {
-                let typeName = String(describing: type(of: nf))
-                if let path = node.properties["path"] {
-                    kindLabel = "\(typeName)  '\(path)'"
-                } else if let wires = try? database.wire.select(goingToNodeID: nodeID,
-                                                                 toSymbolID: "projectFile".asSymbolID()),
-                          let wireName = wires.first?.name {
-                    kindLabel = "\(typeName)  '\(wireName.resolveSymbol())'"
-                } else {
-                    kindLabel = typeName
-                }
-            } else {
-                kindLabel = "Node \(nodeID)"
-            }
-
-            print("❌ \(kindLabel)")
-
-            let portsForNode = byNode[nodeID] ?? []
-            for msg in newMsgs.sorted() {
-                let portsForMsg = portsForNode.filter {
-                    ((try? $0.dataObjectHash?.resolveAsString()) ?? "") == msg
-                }
-                let portNames = portsForMsg
-                    .map { $0.nameSymbolID.resolveSymbol() }
-                    .sorted()
-                    .joined(separator: ", ")
-
-                let lines = msg
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .components(separatedBy: "\n")
-                    .map    { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-
-                if lines.count == 1 {
-                    print("   · \(portNames): \(lines[0])")
-                } else {
-                    print("   · \(portNames):")
-                    lines.forEach { print("     \($0)") }
-                }
-            }
-            print("")
+            ErrorReport.lines(forNodeID: nodeID,
+                              ports: byNode[nodeID] ?? [],
+                              messages: newMsgs,
+                              database: database).forEach { print($0) }
         }
 
         lastReportedErrors = current

@@ -48,53 +48,17 @@ final class EnginePlugin: CommandPlugin {
                               "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
 
         for nodeID in sortedNodeIDs {
-            let node = try? context.database.node.select(nodeID: nodeID)
+            let ports = byNode[nodeID] ?? []
 
-            // Build a user-friendly label: TypeName + meaningful identifier.
-            // Internal node IDs (surrogate ints) are not shown to the user.
-            let kindLabel: String
-            if let node, let nf = try? node.nodeAsAny() {
-                let typeName = String(describing: type(of: nf))
-                if let path = node.properties["path"] {
-                    // Nodes with a static path property (Folder, StaticFile, …)
-                    kindLabel = "\(typeName)  '\(path)'"
-                } else if let wires = try? context.database.wire.select(
-                                goingToNodeID: nodeID,
-                                toSymbolID: "projectFile".asSymbolID()),
-                          let wireName = wires.first?.name {
-                    // ProjectBuilder: the projectFile wire name is the .fmla path
-                    kindLabel = "\(typeName)  '\(wireName.resolveSymbol())'"
-                } else {
-                    kindLabel = typeName
-                }
-            } else {
-                kindLabel = "Node \(nodeID)"
-            }
+            // Every distinct message this node is carrying. Asked for explicitly, so unlike
+            // the engine's own reporting there is nothing to suppress — the whole point of
+            // running `errors` is to see what is there, including what was reported before.
+            let messages = Set(ports.compactMap(ErrorReport.reportableMessage))
 
-            context.outputMessage("❌ \(kindLabel)")
-
-            for port in byNode[nodeID]! {
-                let portName     = port.nameSymbolID.resolveSymbol()
-                let errorMessage = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-
-                if errorMessage.isEmpty {
-                    context.outputMessage("   · \(portName): (no details)")
-                } else {
-                    let lines = errorMessage
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .components(separatedBy: "\n")
-                        .map    { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
-
-                    if lines.count == 1 {
-                        context.outputMessage("   · \(portName): \(lines[0])")
-                    } else {
-                        context.outputMessage("   · \(portName):")
-                        lines.forEach { context.outputMessage("     \($0)") }
-                    }
-                }
-            }
-            context.outputMessage("")
+            ErrorReport.lines(forNodeID: nodeID,
+                              ports: ports,
+                              messages: messages,
+                              database: context.database).forEach { context.outputMessage($0) }
         }
     }
 }
