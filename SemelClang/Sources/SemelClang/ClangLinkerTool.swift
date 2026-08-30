@@ -125,7 +125,7 @@ public struct ClangLinkerTool: Node {
         var arguments = [String]()
 
         arguments.append(contentsOf: inputs.configuration.arguments)
-        
+
         arguments.append("-target");
         arguments.append(inputs.configuration.target)
 

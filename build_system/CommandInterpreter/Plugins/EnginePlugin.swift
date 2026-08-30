@@ -32,7 +32,10 @@ final class EnginePlugin: CommandPlugin {
     private func handleErrors(context: any CommandContext) throws {
         let errorPorts = try context.database.outputPort.selectAllErrors()
 
-        if errorPorts.isEmpty { context.outputMessage("No errors."); return }
+        if errorPorts.isEmpty {
+            context.outputMessage("No errors.")
+            return
+        }
 
         let byNode     = Dictionary(grouping: errorPorts, by: \.nodeID)
         let errorCount = errorPorts.count

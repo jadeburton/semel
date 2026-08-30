@@ -60,7 +60,7 @@ extension BuildEngine {
         let toPort   = symbolName(symbolID: wire.toSymbolID,   database: database)
         return "\(fromNode):\(fromPort)  ──▶  \(toNode):\(toPort)"
     }
-    
+
     /// Format an output port value with an emoji status prefix.
     func formatOutputPort(_ outputPort: SemelDatabaseModels.OutputPort) -> String {
         switch outputPort.valueKind {
@@ -75,7 +75,7 @@ extension BuildEngine {
             return "[ ❌ \(message) ]"
         }
     }
-    
+
     /// Print a titled section header.
     private func printSectionHeader(_ title: String) {
         print(title)
@@ -101,8 +101,8 @@ extension BuildEngine {
     // MARK: printAll
 
     public func printAll() throws {
-        let allNodes       = try database.node.selectAll()
-        let allWires       = try database.wire.selectAll()
+        let allNodes = try database.node.selectAll()
+        let allWires = try database.wire.selectAll()
 
         // Indexes built once and reused throughout
         let nodeByID: [ObjectID: NodeRecord] = Dictionary(

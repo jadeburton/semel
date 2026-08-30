@@ -98,8 +98,8 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
     )
 
     public func didCreate() throws -> ProcessOutput? {
-        return .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(messageDataObjectHash: try "Missing".intern()))],
-                     inputWireExpectations: [:])
+        .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(messageDataObjectHash: try "Missing".intern()))],
+              inputWireExpectations: [:])
     }
 
     var isPinned: Bool {
@@ -159,8 +159,11 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
     func readFileMetadata() throws -> FileMetadata? {
         guard let metadataValue = try thisNode.readFromInputPort(Self.fileMetadataInputPort).first?.value,
               case .value(let hash) = metadataValue,
-              let json = try? hash.resolveAsString()
-        else { return nil }
+              let json = try? hash.resolveAsString() else {
+
+            return nil
+        }
+
         return FileMetadata.decode(from: json)
     }
 }

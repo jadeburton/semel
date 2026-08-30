@@ -76,7 +76,6 @@ public struct ConfigMerger: Node {
 
             guard let hash = try? wires[wireKey]?.expectValue(),
                   let text = try? hash.resolveAsString() else {
-
                 continue
             }
 

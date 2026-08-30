@@ -167,10 +167,12 @@ final class FilePlugin: CommandPlugin {
 
     private func removeOne(_ entry: FileWildcardEntry, context: any CommandContext) throws {
         guard let child = try context.inputFileSystem.childNode(path: entry.path) else {
-            context.outputError("Child not found: \(entry.path)"); return
+            context.outputError("Child not found: \(entry.path)")
+            return
         }
         guard let userDeletableChild = try child.nodeAsAny() as? UserDeletable else {
-            context.outputError("Child not deletable: \(entry.path)"); return
+            context.outputError("Child not deletable: \(entry.path)")
+            return
         }
         try userDeletableChild.deleteInInputFileSystem()
     }
@@ -218,10 +220,12 @@ final class FilePlugin: CommandPlugin {
         guard case .file = entry.kind else { return }
 
         guard let fileNode = try folder.childNode(path: entry.path) else {
-            context.outputError("File \(entry.path) not found in internal file system"); return
+            context.outputError("File \(entry.path) not found in internal file system")
+            return
         }
         guard let file = try fileNode.nodeAsAny() as? FileType else {
-            context.outputError("Object \(entry.path) is not a FileType"); return
+            context.outputError("Object \(entry.path) is not a FileType")
+            return
         }
 
         switch try file.read() {

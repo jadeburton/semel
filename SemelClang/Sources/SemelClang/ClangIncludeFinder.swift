@@ -92,8 +92,7 @@ public struct ClangIncludeFinder: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        let inputs = try ClangIncludeFinderInputs(input: input)
-        return try process(inputs: inputs).asProcessOutput()
+        try process(inputs: ClangIncludeFinderInputs(input: input)).asProcessOutput()
     }
 
     func process(inputs: ClangIncludeFinderInputs) throws -> ClangIncludeFinderOutputs {

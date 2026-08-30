@@ -122,5 +122,3 @@ public struct ClangCompilerTool: Node {
                      infoLog: .value(try result.infoOutput.intern()))
     }
 }
-
-

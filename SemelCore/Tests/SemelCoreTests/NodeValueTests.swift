@@ -40,7 +40,8 @@ final class NodeValueTests: SemelCoreTestCase {
         let json = try original.toJSON()
         let decoded = try NodeValue.fromJSON(json)
         guard case .noValue(let reason) = decoded, case .error(let decodedHash) = reason else {
-            XCTFail(); return
+            XCTFail()
+            return
         }
         XCTAssertEqual(try decodedHash.resolveAsString(), "")
     }
@@ -62,7 +63,10 @@ final class NodeValueTests: SemelCoreTestCase {
     func test_value_emptyHash_roundTrip() throws {
         let original = NodeValue.value("")
         let decoded = try NodeValue.fromJSON(try original.toJSON())
-        guard case .value(let h) = decoded else { XCTFail(); return }
+        guard case .value(let h) = decoded else {
+            XCTFail()
+            return
+        }
         XCTAssertEqual(h, "")
     }
 

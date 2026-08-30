@@ -29,7 +29,7 @@ final class NavigationPlugin: CommandPlugin {
     // MARK: - cd
 
     private func handleCd(folder: FileSystemForCommand?, path: String?,
-                           context: any CommandContext) throws {
+                          context: any CommandContext) throws {
         if let folder {
             context.currentFileSystem = folder
             context.currentDirectoryPath = .empty
@@ -37,12 +37,16 @@ final class NavigationPlugin: CommandPlugin {
 
         if let path, !path.isEmpty {
             let newPath = context.resolve(path, relativeTo: context.currentDirectoryPath)
+
             if !newPath.isEmpty {
                 let fs = try context.fileSystem(for: context.currentFileSystem)
+
                 guard let node = try fs.childNode(path: newPath), node.kind == Folder.kind else {
-                    context.outputError("cd: \(path): no such directory"); return
+                    context.outputError("cd: \(path): no such directory")
+                    return
                 }
             }
+
             context.currentDirectoryPath = newPath
         }
 
@@ -52,7 +56,8 @@ final class NavigationPlugin: CommandPlugin {
     // MARK: - ls
 
     private func handleList(folder: FileSystemForCommand?, pathOrWildcard: String?,
-                             context: any CommandContext) throws {
+                            context: any CommandContext) throws {
+
         let targetFS = folder ?? context.currentFileSystem
         let base: Path = folder != nil ? .empty : context.currentDirectoryPath
 
@@ -87,7 +92,10 @@ final class NavigationPlugin: CommandPlugin {
             results = try matcher.findAllMatching(pathOrWildcard: pattern)
         }
 
-        if results.isEmpty { context.outputMessage("(empty)"); return }
+        if results.isEmpty {
+            context.outputMessage("(empty)")
+            return
+        }
 
         let sorted = results.sorted {
             if $0.kind != $1.kind { return $0.kind == .folder }
@@ -115,7 +123,9 @@ final class NavigationPlugin: CommandPlugin {
             if let fileNode = try? fileSystem.childNode(path: entry.path),
                let file     = try? fileNode.nodeAsAny() as? FileType,
                let value    = try? file.read() {
+
                 switch value {
+
                 case .value(let hash):
                     sizeStr = hash.size().map { String(format: "%8d", $0) } ?? Self.noSize
                     if let provider = file as? FileMetadataProvider,
@@ -124,6 +134,7 @@ final class NavigationPlugin: CommandPlugin {
                     } else {
                         modeStr = Self.modeString(FileMetadata.defaultMode)
                     }
+
                 case .noValue(let reason):
                     modeStr = Self.modeString(FileMetadata.defaultMode)
                     if statusNote.isEmpty {
@@ -132,6 +143,7 @@ final class NavigationPlugin: CommandPlugin {
                         case .error:   statusNote = "  [error]"
                         }
                     }
+
                 }
             }
 

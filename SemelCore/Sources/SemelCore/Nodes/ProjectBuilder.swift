@@ -59,6 +59,7 @@ public struct ProjectBuilder: Node {
         // whenever their contents change.
         final class GlobRecord   { var folderPaths = Set<String>() }
         final class ImportRecord { var filePaths = Set<String>(); var anyMissing = false }
+
         let record       = GlobRecord()
         let importRecord = ImportRecord()
         let capture      = self   // value-type copy for use inside @escaping closures
@@ -86,10 +87,10 @@ public struct ProjectBuilder: Node {
                                              fileReader: fileReader)
 
         // There are two kinds of Formula files: those without wildcardExpander wildcards, and
-        // those with.  Files with wildcards require multiple passes — the initial passes
+        // those with. Files with wildcards require multiple passes — the initial passes
         // may not have discovered all files yet, resulting in an empty objectFiles list
-        // that would produce bad product expectations.  Similarly, imported .graph files
-        // may not be wired yet on the first pass.  In both cases we suppress product
+        // that would produce bad product expectations. Similarly, imported .graph files
+        // may not be wired yet on the first pass. In both cases we suppress product
         // expectations until all dependencies are ready, while still emitting the wire
         // expectations that will make the missing dependencies available on the next pass.
 
@@ -187,10 +188,15 @@ public struct ProjectBuilder: Node {
     /// Decode the `FolderManifest` values arriving on the 'folders' dynamic port.
     private func decodeFolderManifests(_ inputs: [String: NodeValue]) -> [String: FolderManifest] {
         var result: [String: FolderManifest] = [:]
+
         for (folderPath, nodeValue) in inputs {
+
             guard let json = try? nodeValue.expectValue().resolveAsString(),
-                  let manifest: FolderManifest = try? PolyFactory.decodeAndCast(encodedJSON: json)
-            else { continue }
+                  let manifest: FolderManifest = try? PolyFactory.decodeAndCast(encodedJSON: json) else {
+
+                continue
+            }
+
             result[folderPath] = manifest
         }
         return result
@@ -203,7 +209,9 @@ public struct ProjectBuilder: Node {
         folderPath: String,
         manifests: [String: FolderManifest]
     ) -> [String] {
-        guard !folderPath.isEmpty, let manifest = manifests[folderPath] else { return [] }
+        guard !folderPath.isEmpty, let manifest = manifests[folderPath] else {
+            return []
+        }
 
         // The segment pattern is whatever follows "folderPath/" in the full pattern.
         let tailPattern = String(pattern.dropFirst(folderPath.count + 1))

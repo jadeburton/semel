@@ -63,7 +63,7 @@ extension BuildEngine {
                 // own if the rebuild wires the node back up.
             }
 
-            print("Reset: removed \(deleteIDs.count) node(s).")
+            Debug.log("Reset: removed \(deleteIDs.count) node(s).")
 
             // The output root is preserved but every child under it was just deleted.
             // Its manifest is built from the child list, and the bulk delete above

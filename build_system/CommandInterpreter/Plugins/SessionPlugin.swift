@@ -36,7 +36,8 @@ final class SessionPlugin: CommandPlugin {
 
         let expandedPath = ExternalPathSanitizer.expandPartialPath(externalPath)
         guard FileManager.default.fileExists(atPath: expandedPath) else {
-            context.outputError("Path refers to nonexistent directory: \(externalPath)"); return
+            context.outputError("Path refers to nonexistent directory: \(externalPath)")
+            return
         }
         context.baseDirectory = expandedPath
         context.outputMessage("Base directory set to \(expandedPath)")

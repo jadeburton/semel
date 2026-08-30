@@ -50,7 +50,7 @@ enum ProductPresence {
             case .value:
                 existsNow = true
             case .noValue(.pending):
-                existsNow = existedBefore          // no news
+                existsNow = existedBefore
             case .noValue(.error):
                 existsNow = false
             case nil:

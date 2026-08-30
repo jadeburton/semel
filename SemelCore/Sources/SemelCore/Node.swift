@@ -201,9 +201,8 @@ extension Node {
                 try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations)
             }
         } catch {
-            #if DEBUG
             Debug.warn("applyExpectationConfiguration failed: \(error)")
-            #endif
+
             for outputPort in descriptor.outputPorts {
                 try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(messageDataObjectHash: "\(error)".intern())))
             }
@@ -264,9 +263,6 @@ extension Node {
                        match.fromSymbolID == existingWire.fromSymbolID {
                         needsReconnection = false
                     } else {
-//                        print("⚠️ topology mismatch on port '\(inputPort)' wire '\(wireName)' of node #\(id ?? -1): \(error)")
-//                        print("   current:  \(currentShapeNode.asString(omitOutputPort: false).truncated(to: 3000))")
-//                        print("   expected: \(expectedShapeNode.asString(omitOutputPort: false).truncated(to: 3000))")
                         _ = try existingWire.deleteWire(database: database)
                     }
                 }
@@ -305,8 +301,7 @@ extension Node {
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
     /// `nil` if the type name in the expectation is not registered in PolyFactory.
     private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?)? {
-        let expectedShape = try GraphShapeNode.parse(expectationString)
-        return try expectedShape.findOrCreateMatchingNode()
+        try GraphShapeNode.parse(expectationString).findOrCreateMatchingNode()
     }
 
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
@@ -323,7 +318,6 @@ extension Node {
                 outputValues[outputPort] = .noValue(reason: .error(messageDataObjectHash: (try? "\(error)".intern()) ?? ""))
             }
         }
-
 
         // Reconstruct existing dynamic wire expectations from the live graph so
         // applyExpectationConfiguration's step 1 doesn't delete them on error.

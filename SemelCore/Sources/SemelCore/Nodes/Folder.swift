@@ -190,7 +190,6 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// with each type's own `isPinned`.
     private func pinnedStates(of children: [NodeChildSummary]) throws -> [ObjectID: Bool] {
         var result: [ObjectID: Bool] = [:]
-
         let parentNodeID = try thisNode.requireID()
 
         for (kind, portName) in [(Folder.kind,     Folder.pinnedOutputPort),
@@ -203,6 +202,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
                 result[child.id] = kinds[child.id] == .value
             }
         }
+
         return result
     }
 

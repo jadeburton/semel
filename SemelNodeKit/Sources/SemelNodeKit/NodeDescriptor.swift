@@ -47,10 +47,20 @@ public struct NodeDescriptor {
     }
 
     public var optionalStaticInputPorts: [String] {
-        inputPorts.compactMap { if case .optional(let name) = $0 { return name }; return nil }
+        inputPorts.compactMap {
+            if case .optional(let name) = $0 {
+                return name
+            }
+            return nil
+        }
     }
 
     public var dynamicInputPorts: [String] {
-        inputPorts.compactMap { if case .dynamic(let name) = $0 { return name }; return nil }
+        inputPorts.compactMap {
+            if case .dynamic(let name) = $0 {
+                return name
+            }
+            return nil
+        }
     }
 }

@@ -71,11 +71,11 @@ extension NodeRecord {
     static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> NodeRecord {
 
         var nodeRecord = NodeRecord(parentNodeID: nil,
-                        kind: kind,
-                        name: nil,
-                        properties: properties,
-                        scheduled: false,
-                        searchKey: searchKey)
+                                    kind: kind,
+                                    name: nil,
+                                    properties: properties,
+                                    scheduled: false,
+                                    searchKey: searchKey)
 
         nodeRecord.id = try database.node.insert(nodeRecord)
 
