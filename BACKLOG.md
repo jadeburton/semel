@@ -425,6 +425,74 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
+**B-44** `open` — **Naming: what the vocabulary calls things, and where it disagrees with
+itself.**
+From a survey of the type inventory and term counts. The counts come from that survey and are
+not independently checked, except where noted; the judgements are worth arguing with.
+
+The useful test turned out not to be "is this term coined?" — coining is cheap to learn once
+— but **"does it disagree with itself, or does it mislead?"** That ranking puts the invented
+names lower than expected and the inconsistent ones higher.
+
+*Self-contradiction: one concept, two names.* No design question attached, so these are the
+cheap ones.
+- **`Wildcard` (47) vs `glob` (46)**, in the same files. Verified firsthand:
+  `ProjectBuilder.globMatch` calls `WildcardSegment.matches`, a mismatch introduced by
+  `bae6a37` while removing a different duplication. `glob` is the standard term and already
+  has equal footing.
+- **`DataToken` (7) vs `DataObjectHash` (52)** — `DataToken` is literally a typealias for
+  `DataObjectHash`: the *less* descriptive name wrapping the more descriptive one. Neither is
+  standard. This is a **digest** (Git calls it an OID, Nix a store hash), and "token" suggests
+  lexing or opacity rather than content addressing.
+- **The config vocabulary** — `Configuration` (a node type), `ConfigSettings`, `ToolSchema`,
+  `semel.config`, `NodeFunctionDescriptor`. Five words circling one area. B-42's territory;
+  leave it until that model settles, but it is the largest naming debt here.
+
+*Misleading about mechanism.*
+- **`NodeFunction`** overpromises. It is not a function: it is a stateful wrapper with
+  lifecycle callbacks (`didCreate`, `canBeDeleted`, `onChildAdded`), and one of its methods
+  happens to be a transform. The dataflow term is *operator*. Note `3a0d68e` already
+  introduced "source" for the no-input case — half of the standard *source / operator / sink*
+  triad — so `NodeOperator` would finish a vocabulary already started. (The weaker argument,
+  that `process` is impure because it returns wiring requests, does not hold: returning
+  expectations is exactly what keeps wiring declarative instead of a side effect. The real
+  impurities are elsewhere, and are B-43's subject.)
+- **`ToolExecutor`** collides with Swift's own `Executor`/`SerialExecutor` in a codebase that
+  uses `TaskGroup`, so a reader may expect scheduling and isolation where it means "run a
+  binary in a sandbox". **`ToolRunner`**, or Bazel's *spawn runner*. The concrete type is
+  already `LocalFileSystemTool` and says nothing about executors, so the protocol is the odd
+  one out.
+- **`isPinned` (26)** — the sharpest catch. In memory management *pinned* means "cannot be
+  moved". The meaning here is "held alive by user intent rather than by references", which in
+  a system with a real collector is exactly a **GC root**. `isRooted` is both standard and
+  more accurate.
+
+*Coined but clear — leave alone.* `GraphShape` is defensible; its nearest standard analogue is
+Nix's **derivation** (a canonical description of a step plus its transitive inputs, whose hash
+is its identity). Worth noting it names two things, the tree (`GraphShapeNode`) and the
+rendered string stored as `searchKey`, a split the code has and the names do not. `Formula`,
+`Wire`, `Port`, `Node`, `intern()` and `ghost` are all fine; `intern()` is exactly its
+standard meaning.
+
+*One argument knocked down.* `Expectation` is the most-used coined term at 198 occurrences,
+and the obvious objection is the XCTest collision — but `expectation(` appears zero times in
+this repo, so that clash is theoretical rather than lived. Bazel's term for an action
+discovering more inputs mid-execution is *discovered inputs*. At 198 uses and no live
+collision this is the worst effort-to-benefit on the list.
+
+*What to do.* A **glossary in `AGENTS.md`, not a rename sweep**: Semel term → nearest standard
+equivalent → *how it differs*. The third column is the point, because a borrowed name imports
+its home semantics — call a `NodeFunction` an "action" and a Bazel reader assumes hermeticity
+and one-shot scheduling, neither of which holds here. False familiarity is worse than
+unfamiliarity.
+
+Then rename opportunistically, when already in the file. Cost data point: renaming
+`GraphShapeArg` to `GraphShapeProperty` (`a8e28cb`) took a full compile-error sweep, two test
+files and two doc updates. Seven of those for their own sake is a bad trade. The exceptions
+worth doing deliberately are the ones with no design question behind them: the `Wildcard`/
+`glob` split and the `DataToken` alias — and `nudge`, which is only 2 occurrences if it should
+ever become `invalidate`.
+
 ## Closed
 
 **B-20** `done` — SDK is in the Swift tools' cache key (`e6ca4cd`).
