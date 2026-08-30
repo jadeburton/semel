@@ -24,5 +24,4 @@
 
 - Rollback of all input file changes if any Node enters an error state as a result, thus guaranteeing the build is always green.
 
-- Set up SwiftLint or similar linter in the repo
 
