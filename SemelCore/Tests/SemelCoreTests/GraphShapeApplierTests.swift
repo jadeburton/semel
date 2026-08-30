@@ -50,7 +50,7 @@ final class GraphShapeApplierTests: SemelCoreTestCase {
         let (consumer, _) = try GraphShapeNode.parse(shape).findOrCreateMatchingNode()
 
         let incoming = try database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                toSymbolID: try "inherit".asSymbolID())
+                                                toSymbolID: "inherit".asSymbolID())
         XCTAssertEqual(incoming.count, 1, "the upstream should have been created and wired")
 
         let upstream = try database.node.select(nodeID: try XCTUnwrap(incoming.first).fromNodeID)
@@ -65,7 +65,7 @@ final class GraphShapeApplierTests: SemelCoreTestCase {
         let (consumer, _) = try GraphShapeNode.parse(shape).findOrCreateMatchingNode()
 
         let incoming = try database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                toSymbolID: try "inherit".asSymbolID())
+                                                toSymbolID: "inherit".asSymbolID())
         XCTAssertEqual(try XCTUnwrap(incoming.first).fromNodeID, try upstream.requireID(),
                        "an identical upstream must be shared, not duplicated")
     }
@@ -146,17 +146,17 @@ final class GraphShapeApplierTests: SemelCoreTestCase {
         // Rewire the static input directly. Note the engine never does this — only
         // dynamic ports are rewired after creation.
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                          toSymbolID: try "inherit".asSymbolID()).first)
+                                                          toSymbolID: "inherit".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
         let (second, _) = try GraphShapeNode.parse("Configuration(role: 'second').output")
             .findOrCreateMatchingNode()
         try Wire.connectWire(database: database,
                              fromNodeID: try second.requireID(),
-                             fromSymbolID: try "output".asSymbolID(),
+                             fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: try "inherit".asSymbolID(),
-                             name: try "w".asSymbolID())
+                             toSymbolID: "inherit".asSymbolID(),
+                             name: "w".asSymbolID())
 
         let liveShape = try GraphShapeNode.buildFromNode(database: database,
                                                          nodeID: try consumer.requireID())
@@ -176,7 +176,7 @@ final class GraphShapeApplierTests: SemelCoreTestCase {
         let (consumer, _) = try GraphShapeNode.parse(originalShape).findOrCreateMatchingNode()
 
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                          toSymbolID: try "inherit".asSymbolID()).first)
+                                                          toSymbolID: "inherit".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
         let match = try GraphShapeNode.parse(originalShape).findMatchingNode()

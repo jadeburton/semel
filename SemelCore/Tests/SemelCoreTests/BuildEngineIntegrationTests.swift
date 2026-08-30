@@ -47,10 +47,10 @@ final class CascadeDeletionTests: SemelCoreTestCase {
     private func wire(_ source: Node, to consumer: Node, name: String) throws {
         try Wire.connectWire(database: engine.database,
                              fromNodeID: source.id!,
-                             fromSymbolID: try "output".asSymbolID(),
+                             fromSymbolID: "output".asSymbolID(),
                              toNodeID:   consumer.id!,
-                             toSymbolID: try "inherit".asSymbolID(),
-                             name: try name.asSymbolID())
+                             toSymbolID: "inherit".asSymbolID(),
+                             name: name.asSymbolID())
     }
 
     private func runCleanup() throws {

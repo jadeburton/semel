@@ -196,7 +196,7 @@ public struct Folder: NodeFunction, HasPath, Pinnable, UserDeletable {
         for (kind, portName) in [(Folder.kind,     Folder.pinnedOutputPort),
                                  (StaticFile.kind, StaticFile.outputPort)] {
             let kinds = try database.node.selectChildPortKinds(parentNodeID: parentNodeID,
-                                                               nameSymbolID: try portName.asSymbolID())
+                                                               nameSymbolID: portName.asSymbolID())
             for child in children where child.kind == kind {
                 // Absent or non-value both mean not pinned — the same reading `isPinned`
                 // gives, where a missing port becomes a noValue.

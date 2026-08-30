@@ -139,11 +139,54 @@ extension String {
     /// Throws rather than trapping: this writes to the database, which fails for
     /// ordinary reasons.  A failed insert should fail the operation that needed the
     /// symbol, not abort the process.
-    public func asSymbolID() throws -> ObjectID {
+    /// The id for this name, recording it if the database has not seen it before.
+    ///
+    /// Does not throw. Every port name, wire name and file name in the graph goes through
+    /// here, so a `try` at each of the forty-odd call sites would suggest a decision the
+    /// caller could make — and there is none. `insertOrGetID` is `INSERT OR IGNORE` followed
+    /// by a `SELECT` that force-unwraps its result: the only ways it fails are the volume
+    /// being full, read-only or unreachable, and the next name looked up hits the same wall.
+    public func asSymbolID() -> ObjectID {
         if let id = symbolCache.id(for: self) { return id }
-        let id = try DatabaseLayer.shared.symbol.insertOrGetID(name: self)
-        symbolCache.store(name: self, id: id)
-        return id
+        do {
+            let id = try DatabaseLayer.shared.symbol.insertOrGetID(name: self)
+            symbolCache.store(name: self, id: id)
+            return id
+        } catch {
+            FatalErrors.fail(SymbolStoreError.cannotRecord(name: self, underlying: error))
+        }
+    }
+}
+
+/// Failures of the symbol table, which sits under everything else in the graph.
+public enum SymbolStoreError: UnrecoverableError {
+    /// A name could not be written to the database.
+    case cannotRecord(name: String, underlying: Error)
+    /// An id that is referenced but has no row — the database disagrees with itself.
+    case unknownSymbolID(ObjectID)
+
+    public var unrecoverableDescription: String {
+        switch self {
+        case .cannotRecord(let name, let underlying):
+            return """
+                Could not record the name '\(name)' in the database.
+
+                \(underlying.localizedDescription)
+
+                Every port, wire and file in the graph is named through this table, so the
+                build cannot proceed. Check free space and permissions on the volume holding
+                the database.
+                """
+
+        case .unknownSymbolID(let id):
+            return """
+                The database refers to name #\(id), which it does not contain.
+
+                Nothing can repair this from inside the build: the graph and the table it is
+                named through disagree. Reset the build system to rebuild both from the input
+                file system.
+                """
+        }
     }
 }
 
@@ -153,7 +196,7 @@ extension ObjectID {
             return Symbol(id: self, name: name)
         }
         guard let symbol = try? DatabaseLayer.shared.symbol.select(symbolID: self) else {
-            fatalError("Invalid SymbolID / failed to load Symbol")
+            FatalErrors.fail(SymbolStoreError.unknownSymbolID(self))
         }
         symbolCache.store(name: symbol.name, id: self)
         return symbol

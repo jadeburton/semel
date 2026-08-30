@@ -219,7 +219,7 @@ extension NodeFunction {
         //    - if identical, skip — the wire is already correct
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
-        let toSymbolID   = try inputPort.asSymbolID()
+        let toSymbolID   = inputPort.asSymbolID()
         let existingWires = try database.wire.select(goingToNodeID: (try requireID()), toSymbolID: toSymbolID)
 
         // Build a lookup from wire name → existing Wire for steps 2 & 3.
@@ -277,7 +277,7 @@ extension NodeFunction {
             // Wrap find-or-create and connectWire in a single transaction so that if
             // connectWire fails the newly-created upstream node is rolled back, preventing
             // it from being left as an orphaned zombie in the database.
-            let wireNameSymbolID = try wireName.asSymbolID()
+            let wireNameSymbolID = wireName.asSymbolID()
             try database.withTransaction {
                 guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) else {
                     print("applyExpectationConfiguration: no node found matching expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
@@ -335,8 +335,8 @@ extension NodeFunction {
         for port in descriptor.dynamicInputPorts {
             // Already building an error result, so a further failure here just means this
             // port's expectations cannot be preserved — skip it rather than escalate.
-            guard let toSymbolID = try? port.asSymbolID(),
-                  let nodeID = try? requireID(),
+            let toSymbolID = port.asSymbolID()
+            guard let nodeID = try? requireID(),
                   let wires = try? database.wire.select(goingToNodeID: nodeID, toSymbolID: toSymbolID),
                   !wires.isEmpty else {
                 continue

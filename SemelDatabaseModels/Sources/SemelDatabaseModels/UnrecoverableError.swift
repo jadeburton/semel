@@ -57,6 +57,22 @@ public enum FatalErrors {
         exit(70) // EX_SOFTWARE
     }
 
+    /// Reports `error` and does not return.
+    ///
+    /// For the call sites that cannot throw and cannot produce a value either — infrastructure
+    /// so low that everything above assumes it works. Going through here rather than calling
+    /// `fatalError` directly is what keeps the message the same one every other unrecoverable
+    /// failure prints.
+    ///
+    /// The `fatalError` is a backstop, not the normal path: the default handler exits first.
+    /// It exists because `handler` is swappable, and a handler that records and returns still
+    /// leaves the caller with nothing to give back. That does make these call sites
+    /// untestable in process — asserting the classification would kill the test.
+    public static func fail(_ error: any UnrecoverableError) -> Never {
+        handler(error)
+        fatalError(error.unrecoverableDescription)
+    }
+
     /// If `error` is unrecoverable, hand it to the handler. Otherwise do nothing, so the
     /// caller can carry on reporting it against whichever node produced it.
     ///

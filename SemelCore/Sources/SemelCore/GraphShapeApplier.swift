@@ -101,7 +101,7 @@ extension GraphShapeNode {
         var inputs: [GraphShapeInputPort] = []
 
         for portName in staticInputPorts {
-            let portSymbolID  = try portName.asSymbolID()
+            let portSymbolID  = portName.asSymbolID()
 
             let incomingWires = try database.wire.select(goingToNodeID: fromNodeID,
                                                          toSymbolID: portSymbolID)
@@ -145,7 +145,7 @@ extension GraphShapeNode {
                                                               fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
 
             if graphShape == asString(omitOutputPort: true) {
-                return (fromNodeID: (try node.requireID()), fromSymbolID: try outputPort?.asSymbolID())
+                return (fromNodeID: (try node.requireID()), fromSymbolID: outputPort?.asSymbolID())
             }
         }
 
@@ -159,7 +159,7 @@ extension GraphShapeNode {
             return nil
         }
 
-        return (fromNodeID: (try node.requireID()), fromSymbolID: try outputPort?.asSymbolID())
+        return (fromNodeID: (try node.requireID()), fromSymbolID: outputPort?.asSymbolID())
     }
 
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
@@ -181,7 +181,7 @@ extension GraphShapeNode {
         }
 
         for expectedPort in inputs {
-            let portSymbolID = try expectedPort.portName.asSymbolID()
+            let portSymbolID = expectedPort.portName.asSymbolID()
             let actualWires  = try database.wire.select(goingToNodeID: nodeID,
                                                                     toSymbolID:    portSymbolID)
 
@@ -246,7 +246,7 @@ extension GraphShapeNode {
         // yet, which falls through to the transaction, where the second find sees it.
         if let existing = try findMatchingNode(),
            let node = try? database.node.select(nodeID: existing.fromNodeID) {
-            return (fromNode: node, fromSymbolID: try outputPort?.asSymbolID())
+            return (fromNode: node, fromSymbolID: outputPort?.asSymbolID())
         }
 
         let newNode: Node = try database.withTransaction {
@@ -259,7 +259,7 @@ extension GraphShapeNode {
             }
             return try createNode()
         }
-        return (fromNode: newNode, fromSymbolID: try outputPort?.asSymbolID())
+        return (fromNode: newNode, fromSymbolID: outputPort?.asSymbolID())
     }
 
     // MARK: Private — node + wire creation (runs inside withTransaction)
@@ -286,7 +286,7 @@ extension GraphShapeNode {
 
         // Wire each input port from the shape using the explicit wire name.
         for inputPortSpec in inputs {
-            let toSymbolID = try inputPortSpec.portName.asSymbolID()
+            let toSymbolID = inputPortSpec.portName.asSymbolID()
 
             for wireSpec in inputPortSpec.wires {
                 let newNodeNodeFunction = try newNode.nodeFunction()
@@ -319,7 +319,7 @@ extension GraphShapeNode {
         let optionalPorts = Set(descriptor.optionalStaticInputPorts)
 
         for portSpec in inputs where !optionalPorts.contains(portSpec.portName) {
-            let portSymbolID   = try portSpec.portName.asSymbolID()
+            let portSymbolID   = portSpec.portName.asSymbolID()
             let connectedWires = try database.wire.select(goingToNodeID: (try newNode.requireID()), toSymbolID: portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.

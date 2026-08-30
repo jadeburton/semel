@@ -42,16 +42,16 @@ final class WireManagementTests: SemelCoreTestCase {
         let to   = try consumer.requireID()
         try Wire.connectWire(database: database,
                              fromNodeID: from,
-                             fromSymbolID: try "output".asSymbolID(),
+                             fromSymbolID: "output".asSymbolID(),
                              toNodeID: to,
-                             toSymbolID: try "inherit".asSymbolID(),
-                             name: try name.asSymbolID())
+                             toSymbolID: "inherit".asSymbolID(),
+                             name: name.asSymbolID())
         return (from, to)
     }
 
     private func wires(into node: Node) throws -> [Wire] {
         try database.wire.select(goingToNodeID: try node.requireID(),
-                                 toSymbolID: try "inherit".asSymbolID())
+                                 toSymbolID: "inherit".asSymbolID())
     }
 
     private func isPendingDeletion(_ node: Node) throws -> Bool {

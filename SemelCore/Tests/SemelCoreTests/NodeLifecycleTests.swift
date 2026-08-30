@@ -129,10 +129,10 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     private func connect(from source: Node, to consumer: Node, name: String) throws {
         try Wire.connectWire(database: database,
                              fromNodeID: try source.requireID(),
-                             fromSymbolID: try "output".asSymbolID(),
+                             fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: try "inherit".asSymbolID(),
-                             name: try name.asSymbolID())
+                             toSymbolID: "inherit".asSymbolID(),
+                             name: name.asSymbolID())
     }
 
     private func runGarbageCollection() throws {
