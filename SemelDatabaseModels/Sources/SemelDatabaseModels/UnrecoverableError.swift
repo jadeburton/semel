@@ -4,15 +4,33 @@
 // Most build failures belong to one node: a compile fails, a formula is malformed, an
 // input is missing.  Those are reported against the node and the build carries on.
 //
-// A few failures are not like that.  If the object store cannot be written or the
-// database rejects a write, nothing the engine does next means anything — every
-// subsequent node would fail for the same reason, and reporting "node 47 failed" hides
-// the fact that the disk is full.  Those are unrecoverable, and the process should say
-// so plainly and stop.
+// A few failures are not like that.  If the object store cannot be written, nothing the
+// engine does next means anything — every subsequent node would fail for the same reason,
+// and reporting "node 47 failed" hides the fact that the disk is full.  Those are
+// unrecoverable, and the process should say so plainly and stop.
+//
+// What is classified today: `ObjectStoreError` (a build output that cannot be stored, an
+// input that cannot be placed in a sandbox) and `SandboxCreationError` (nowhere to run a
+// tool at all).  All of them are one thing said three ways — the volume is out of room or
+// out of reach.
+//
+// This header used to claim database write failures too.  It never did classify them, and
+// the claim was harder to make good on than it looks: GRDB reports them all as
+// `DatabaseError`, mixing SQLITE_FULL and SQLITE_IOERR, which are exactly this, with
+// SQLITE_BUSY, which is transient, and SQLITE_CONSTRAINT, which is a bug in the caller.
+// Sorting those out needs a per-*instance* decision, and conformance here is per *type* —
+// see below.  Left undone rather than misdescribed.
 
 import Foundation
 
 /// Marks an error as one the build cannot continue past.
+///
+/// Conformance is per type, not per case: `check` asks `error as? any UnrecoverableError`,
+/// so every case of a conforming enum becomes fatal.  An error type that mixes the two —
+/// `LocalFileSystemToolError` holds both "the machine has nowhere to run tools" and "that
+/// tool is not installed" — has to be split rather than conformed, which is why
+/// `SandboxCreationError` stands alone.  Take that as the signal it is: a type whose cases
+/// disagree about whether the build can continue is describing two different failures.
 public protocol UnrecoverableError: Error {
     /// What went wrong, in terms the person running the build can act on.
     var unrecoverableDescription: String { get }
