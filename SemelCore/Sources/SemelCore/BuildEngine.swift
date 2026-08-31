@@ -35,7 +35,7 @@ public final class BuildEngine {
     private let workSignal = WorkSignal()
 
     static func registerTypes() throws {
-        try PolyFactory.register(types: [
+        try TypeRegistry.register(types: [
             FolderManifest.self,
             OutputFile.self,
             StaticFile.self,

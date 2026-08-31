@@ -36,7 +36,7 @@ enum TestGlobals {
         ToolExecutorRegistry.instance = ToolExecutorRegistry()
         BuildEngine.shared            = nil
 
-        // Formula parsing resolves a node's default output port through the PolyFactory
+        // Formula parsing resolves a node's default output port through the TypeRegistry
         // registry, so a test that skips this would parse against a different rulebook
         // than production — and would pass or fail depending on which test ran first.
         try BuildEngine.registerTypes()
@@ -44,7 +44,7 @@ enum TestGlobals {
         // The stand-ins these tests use in place of a toolchain node. Registered here for
         // the same reason the engine's own types are: GraphShapeNode.parse resolves a type
         // name through the factory.
-        try PolyFactory.register(types: [SampleTool.self, OtherSampleTool.self])
+        try TypeRegistry.register(types: [SampleTool.self, OtherSampleTool.self])
     }
 
     private static func makeTemporaryStoreRoot() -> URL {

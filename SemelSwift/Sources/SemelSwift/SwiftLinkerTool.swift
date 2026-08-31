@@ -104,7 +104,7 @@ struct SwiftLinkerTool: Node {
             var libraryFolderManifests = [(String, FolderManifest)]()
             for (key, value) in (input.inputValues[SwiftLinkerTool.libraryFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 guard let jsonString = try? value.expectValue().resolveAsString(),
-                      let manifest = try? PolyFactory.decode(encodedJSON: jsonString) as? FolderManifest
+                      let manifest = try? TypeRegistry.decode(encodedJSON: jsonString) as? FolderManifest
                 else { continue }
                 libraryFolderManifests.append((key, manifest))
             }

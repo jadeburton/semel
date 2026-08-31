@@ -17,7 +17,7 @@ import SemelNodeKit
 // MARK: - Errors
 
 enum GraphShapeApplierError: Error {
-    /// The type name in the shape string is not registered in PolyFactory.
+    /// The type name in the shape string is not registered in TypeRegistry.
     case unknownTypeName(String)
     /// A required static input port has no wire connected after node creation.
     case requiredPortUnwired(typeName: String, portName: String)
@@ -267,7 +267,7 @@ extension GraphShapeNode {
     private func createNode() throws -> NodeRecord {
         let kind: UInt
         do {
-            kind = try PolyFactory.kind(forTypeName: typeName)
+            kind = try TypeRegistry.kind(forTypeName: typeName)
         } catch {
             throw GraphShapeApplierError.unknownTypeName(typeName)
         }

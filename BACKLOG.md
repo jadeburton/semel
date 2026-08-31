@@ -256,7 +256,7 @@ looks. Two seams to open — `BuildEngine.registerTypes()` and `ProjectFinder`'s
 live databases.
 
 **Step 1 done** (`b49e2b5`…`435fd5a`). SemelNodeKit exists and holds 13 files: the node
-protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, PolyFactory, Path,
+protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, TypeRegistry, Path,
 DataObjectStore, DataToken, ToolExecutor, Toolchain, FileMetadata, GraphShapeArg and
 FolderManifest. 63 tests; depends only on SemelDatabaseModels.
 

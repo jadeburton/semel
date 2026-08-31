@@ -23,9 +23,9 @@ class SemelSwiftTestCase: XCTestCase {
         DataObjectStore.shared        = DataObjectStore(storeRoot: Self.temporaryStoreRoot())
         ToolExecutorRegistry.instance = ToolExecutorRegistry()
 
-        // FolderManifest is decoded by the compiler node, and PolyFactory resolves it
+        // FolderManifest is decoded by the compiler node, and TypeRegistry resolves it
         // through the same process-global registry production uses.
-        try PolyFactory.register(types: [FolderManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self])
         try SemelSwift.register()
     }
 

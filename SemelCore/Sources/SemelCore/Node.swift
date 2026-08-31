@@ -299,7 +299,7 @@ extension Node {
     /// graph for a node whose type and recursive input wiring matches it,
     /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
-    /// `nil` if the type name in the expectation is not registered in PolyFactory.
+    /// `nil` if the type name in the expectation is not registered in TypeRegistry.
     private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?)? {
         try GraphShapeNode.parse(expectationString).findOrCreateMatchingNode()
     }

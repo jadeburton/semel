@@ -43,7 +43,7 @@ final class PinnedPathCreationTests: SemelCoreTestCase {
     private func publishedManifest(of folder: Folder) throws -> FolderManifest {
         let value = try folder.thisNode.readFromOutputPort(Folder.folderManifestOutputPort)
         let json = try value.expectValue().resolveAsString()
-        return try XCTUnwrap(PolyFactory.decode(encodedJSON: json) as? FolderManifest)
+        return try XCTUnwrap(TypeRegistry.decode(encodedJSON: json) as? FolderManifest)
     }
 
     private func entry(_ name: String, in manifest: FolderManifest) throws -> FolderManifestEntry {

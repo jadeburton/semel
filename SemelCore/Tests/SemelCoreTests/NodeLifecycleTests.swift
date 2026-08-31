@@ -47,7 +47,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: "mixed"))
         let manifestJSON = try folder.readFromOutputPort(Folder.folderManifestOutputPort)
             .expectValue().resolveAsString()
-        let manifest = try XCTUnwrap(try PolyFactory.decode(encodedJSON: manifestJSON) as? FolderManifest)
+        let manifest = try XCTUnwrap(try TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest)
 
         XCTAssertFalse(manifest.entries.isEmpty)
         for entry in manifest.entries {

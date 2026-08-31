@@ -14,7 +14,7 @@ public enum SemelSwift {
     ///
     /// Idempotent, because a host may call it more than once and every test calls it again.
     public static func register() throws {
-        try PolyFactory.register(types: [
+        try TypeRegistry.register(types: [
             SwiftCompilerTool.self,
             SwiftLinkerTool.self,
             SwiftPackageReaderTool.self,

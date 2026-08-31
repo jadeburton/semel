@@ -74,7 +74,7 @@ graph stays a privilege of the engine's own nodes.
 | `FileMetadata`, `FileMetadataProvider` | |
 | `Path` | |
 | `NodeError` | |
-| `PolyFactory`, `PolySerializable` | kind-tagged serialisation |
+| `TypeRegistry`, `PolySerializable` | kind-tagged serialisation |
 | `FolderManifest`, `FolderManifestEntry` | **currently inside `Folder.swift`** — a wire data format, not a node |
 | the `input:` / `output:` name constants | **currently `Folder.inputFileSystemName`** — filesystem vocabulary, not Folder's internals |
 
@@ -104,7 +104,7 @@ expectation. That is toolchain knowledge inside the engine; it becomes a registr
 ## Kind IDs need an allocation rule
 
 `kind: UInt` is a single global numbering, and once types live in separate packages two of
-them can claim the same number. `PolyFactory` already detects this —
+them can claim the same number. `TypeRegistry` already detects this —
 `duplicateKind(kind:existing:duplicate:)` — but detecting a clash at launch is not the same
 as preventing one.
 

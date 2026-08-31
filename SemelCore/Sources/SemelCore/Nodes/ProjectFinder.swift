@@ -77,7 +77,7 @@ public struct ProjectFinder: Node {
         var allFolderManifests = [(String, FolderManifest)]()
 
         for (watchedFolderManifestInputKey, watchedFolderManifestInputValue) in allWatchedFolderManifests ?? [:] {
-            let object = try? PolyFactory.decode(encodedJSON: watchedFolderManifestInputValue.expectValue().resolveAsString())
+            let object = try? TypeRegistry.decode(encodedJSON: watchedFolderManifestInputValue.expectValue().resolveAsString())
 
             guard let folderManifest = object as? FolderManifest else {
                 throw NodeError.other(message: "Could not decode FolderManifest")
@@ -93,7 +93,7 @@ public struct ProjectFinder: Node {
         }
 
         if let folderManifestInputValue = input.inputValues[Self.rootFolderManifestInputPort]?.first {
-            let object = try? PolyFactory.decode(encodedJSON: folderManifestInputValue.value.expectValue().resolveAsString())
+            let object = try? TypeRegistry.decode(encodedJSON: folderManifestInputValue.value.expectValue().resolveAsString())
 
             guard let folderManifest = object as? FolderManifest else {
                 throw NodeError.other(message: "Could not decode FolderManifest")

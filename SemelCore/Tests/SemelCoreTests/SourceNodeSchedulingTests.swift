@@ -23,7 +23,7 @@ final class SourceNodeSchedulingTests: SemelCoreTestCase {
         try super.setUpWithError()
         engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
         BuildEngine.shared = engine
-        try PolyFactory.register(types: [SampleSourceNode.self])
+        try TypeRegistry.register(types: [SampleSourceNode.self])
     }
 
     override func tearDown() {

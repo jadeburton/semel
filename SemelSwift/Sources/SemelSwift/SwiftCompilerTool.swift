@@ -202,7 +202,7 @@ struct SwiftCompilerTool: Node {
             var allModuleMapFolders = [(String, FolderManifest)]()
             for (key, value) in (input.inputValues[SwiftCompilerTool.inputModuleMapFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 guard let jsonStr = try? value.expectValue().resolveAsString(),
-                      let manifest = try? PolyFactory.decode(encodedJSON: jsonStr) as? FolderManifest
+                      let manifest = try? TypeRegistry.decode(encodedJSON: jsonStr) as? FolderManifest
                 else { continue }
                 allModuleMapFolders.append((key, manifest))
             }
@@ -219,7 +219,7 @@ struct SwiftCompilerTool: Node {
     private static func decodeFolderManifests(input: ProcessInput, port: String) throws -> [(String, FolderManifest)] {
         var result = [(String, FolderManifest)]()
         for (key, value) in (input.inputValues[port] ?? [:]).sorted(by: { $0.key < $1.key }) {
-            let object = try? PolyFactory.decode(encodedJSON: value.expectValue().resolveAsString())
+            let object = try? TypeRegistry.decode(encodedJSON: value.expectValue().resolveAsString())
             guard let folderManifest = object as? FolderManifest else {
                 throw NodeError.other(message: "Could not decode FolderManifest on port \(port) for '\(key)'")
             }

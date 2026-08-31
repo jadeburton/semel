@@ -53,7 +53,7 @@ extension NodeRecord {
     }
 
     func makeNode() throws -> any Node {
-        try (PolyFactory.type(kind: kind) as! Node.Type).init(thisNode: self)
+        try (TypeRegistry.type(kind: kind) as! Node.Type).init(thisNode: self)
     }
 
     /// Returns the node as `Any` so app-layer callers can pattern-match

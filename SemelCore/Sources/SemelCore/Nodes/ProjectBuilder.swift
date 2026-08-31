@@ -110,7 +110,7 @@ public struct ProjectBuilder: Node {
                 // If the source node type exposes a "fileMetadata" output port,
                 // wire it into the OutputFile wrapper so chmod can be applied on cp.
                 var metadataWire = ""
-                if let nodeType = PolyFactory.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
+                if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
                    nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
                     let metaShape = GraphShapeNode(typeName: shapeNode.typeName,
                                                    properties: shapeNode.properties,
@@ -192,7 +192,7 @@ public struct ProjectBuilder: Node {
         for (folderPath, nodeValue) in inputs {
 
             guard let json = try? nodeValue.expectValue().resolveAsString(),
-                  let manifest: FolderManifest = try? PolyFactory.decodeAndCast(encodedJSON: json) else {
+                  let manifest: FolderManifest = try? TypeRegistry.decodeAndCast(encodedJSON: json) else {
 
                 continue
             }

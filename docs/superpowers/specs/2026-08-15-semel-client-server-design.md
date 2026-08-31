@@ -100,7 +100,7 @@ offset  size  field
   4      8    correlationID   UInt64, echoed in the response
  12      4    jsonLength      UInt32
  16      8    bodyLength      UInt64
- 24      …    json bytes      PolyFactory-tagged, may be empty
+ 24      …    json bytes      TypeRegistry-tagged, may be empty
   …      …    body bytes      raw, may be empty
 ```
 
@@ -113,13 +113,13 @@ inflation on a multi-megabyte artifact.
 **No magic bytes.** TCP already gives ordered, integrity-checked delivery. A desync would
 be our own framing bug, which a magic number would report only after the fact.
 
-**The message type is not in the header.** It is the PolyFactory `kind` inside the JSON.
-`PolyFactory` already maps `kind` → Codable type and is already hardened against
+**The message type is not in the header.** It is the TypeRegistry `kind` inside the JSON.
+`TypeRegistry` already maps `kind` → Codable type and is already hardened against
 untrusted input. A second discriminator in the header would be two sources of truth for
 one question.
 
 **`kind` reserves server→client events.** Nothing sends one in this round. The byte exists
-so that artifact-change notifications are a new PolyFactory type later, not a new framing.
+so that artifact-change notifications are a new TypeRegistry type later, not a new framing.
 
 **`correlationID` allows several requests in flight.** A REPL typing one command at a time
 does not need it; a file watcher pushing while the user runs `ls` does, and retrofitting
@@ -131,7 +131,7 @@ for chunked bodies is the escape hatch, deliberately not built.
 
 ## Messages
 
-Each is a PolyFactory-registered Codable type. `→` marks a binary body.
+Each is a TypeRegistry-registered Codable type. `→` marks a binary body.
 
 | Request | Payload | Response |
 |---|---|---|
@@ -289,7 +289,7 @@ ask the server to allocate absurd amounts before sending a byte. Both need caps 
 suggested 1 MB for JSON and a configurable ceiling (512 MB) for bodies — enforced *before*
 allocation.
 
-**Message** — unknown PolyFactory kind, undecodable JSON. `ErrorResponse` carrying the
+**Message** — unknown TypeRegistry kind, undecodable JSON. `ErrorResponse` carrying the
 correlationID; the connection survives.
 
 **Semantic** — `ErrorResponse` with enough context to act on, per the house rule that an

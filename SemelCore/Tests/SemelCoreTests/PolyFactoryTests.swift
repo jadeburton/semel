@@ -1,5 +1,5 @@
 //
-//  PolyFactoryTests.swift
+//  TypeRegistryTests.swift
 //  build_system_tests
 //
 
@@ -7,7 +7,7 @@
 import XCTest
 import SemelNodeKit
 
-final class PolyFactoryTests: SemelCoreTestCase {
+final class TypeRegistryTests: SemelCoreTestCase {
 
     // MARK: - JSON helpers (generic Encodable/Decodable extensions)
 
@@ -33,11 +33,11 @@ final class PolyFactoryTests: SemelCoreTestCase {
     }
 
     func test_kindForTypeName_unknownType_throws() {
-        XCTAssertThrowsError(try PolyFactory.kind(forTypeName: "NoSuchType")) { error in
-            if case PolyFactoryError.unknownTypeName(let name) = error {
+        XCTAssertThrowsError(try TypeRegistry.kind(forTypeName: "NoSuchType")) { error in
+            if case TypeRegistryError.unknownTypeName(let name) = error {
                 XCTAssertEqual(name, "NoSuchType")
             } else {
-                XCTFail("Expected PolyFactoryError.unknownTypeName")
+                XCTFail("Expected TypeRegistryError.unknownTypeName")
             }
         }
     }
@@ -51,8 +51,8 @@ final class PolyFactoryTests: SemelCoreTestCase {
     func test_decodingAnUnregisteredKindThrows() {
         let json = #"{"kind": 999999, "object": {}}"#
 
-        XCTAssertThrowsError(try PolyFactory.decode(encodedJSON: json)) { error in
-            guard case PolyFactoryError.unknownKind(let kind) = error else {
+        XCTAssertThrowsError(try TypeRegistry.decode(encodedJSON: json)) { error in
+            guard case TypeRegistryError.unknownKind(let kind) = error else {
                 return XCTFail("expected unknownKind, got \(error)")
             }
             XCTAssertEqual(kind, 999999)
@@ -60,8 +60,8 @@ final class PolyFactoryTests: SemelCoreTestCase {
     }
 
     func test_lookingUpAnUnregisteredKindThrows() {
-        XCTAssertThrowsError(try PolyFactory.type(kind: 999999))
-        XCTAssertThrowsError(try PolyFactory.decodableType(kind: 999999))
+        XCTAssertThrowsError(try TypeRegistry.type(kind: 999999))
+        XCTAssertThrowsError(try TypeRegistry.decodableType(kind: 999999))
     }
 
     // MARK: - Kind collisions
@@ -81,10 +81,10 @@ final class PolyFactoryTests: SemelCoreTestCase {
     }
 
     func test_registeringADuplicateKindIsRejected() throws {
-        try PolyFactory.register(types: [FirstClaimant.self])
+        try TypeRegistry.register(types: [FirstClaimant.self])
 
-        XCTAssertThrowsError(try PolyFactory.register(types: [SecondClaimant.self])) { error in
-            guard case PolyFactoryError.duplicateKind(let kind, _, _) = error else {
+        XCTAssertThrowsError(try TypeRegistry.register(types: [SecondClaimant.self])) { error in
+            guard case TypeRegistryError.duplicateKind(let kind, _, _) = error else {
                 return XCTFail("expected duplicateKind, got \(error)")
             }
             XCTAssertEqual(kind, 987_001)
@@ -92,8 +92,8 @@ final class PolyFactoryTests: SemelCoreTestCase {
     }
 
     func test_registeringTheSameTypeTwiceIsFine() throws {
-        try PolyFactory.register(types: [FirstClaimant.self])
-        XCTAssertNoThrow(try PolyFactory.register(types: [FirstClaimant.self]),
+        try TypeRegistry.register(types: [FirstClaimant.self])
+        XCTAssertNoThrow(try TypeRegistry.register(types: [FirstClaimant.self]),
                          "re-registering an identical type is idempotent, not a collision")
     }
 

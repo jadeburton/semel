@@ -56,7 +56,7 @@ struct SwiftFormulaConverter: Node {
         // ── packageFolder ─────────────────────────────────────────────────────
         let manifestJSON = try input.inputValues[Self.packageFolder]!.values.first!.expectValue().resolveAsString()
 
-        guard let folderManifest = try? PolyFactory.decode(encodedJSON: manifestJSON) as? FolderManifest else {
+        guard let folderManifest = try? TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest else {
             return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
                                  externalExpectations: [:])
         }

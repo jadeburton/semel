@@ -127,14 +127,14 @@ final class ConfigMergerTests: SemelCoreTestCase {
     // MARK: - Reachable from a formula
 
     /// A node type is useless until the factory knows its name: `GraphShapeApplier` resolves a
-    /// formula's type names through `PolyFactory`, so a type that compiles, has a kind and is
+    /// formula's type names through `TypeRegistry`, so a type that compiles, has a kind and is
     /// never registered fails at graph-build time with `unknownTypeName` — after the formula
     /// has parsed, which makes it read like a language problem rather than a missing
     /// registration.
     func test_theFactoryKnowsThisTypeByName() throws {
         try BuildEngine.registerTypes()
 
-        XCTAssertEqual(try PolyFactory.kind(forTypeName: "ConfigMerger"), ConfigMerger.kind)
+        XCTAssertEqual(try TypeRegistry.kind(forTypeName: "ConfigMerger"), ConfigMerger.kind)
     }
 
     /// The whole way round: a formula naming this node builds a real graph node.

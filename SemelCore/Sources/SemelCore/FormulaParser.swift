@@ -821,7 +821,7 @@ private struct FormulaResolver {
             } else {
                 // Node constructor: no .port suffix → resolved here against the registered
                 // type's descriptor.  Nothing downstream understands "_default", so it only
-                // survives for a type PolyFactory does not know about.
+                // survives for a type TypeRegistry does not know about.
                 let base = try evalNodeConstruct(typeName: name, args: args, env: env, templateEnv: templateEnv)
                 guard case .node(let node) = base else {
                     throw FormulaParseError.typeMismatch(
@@ -1014,7 +1014,7 @@ private struct FormulaResolver {
 
     /// Resolves the `_default` output port placeholder to a concrete port name.
     func resolveDefaultOutputPort(forTypeName typeName: String) -> String {
-        guard let nodeType = PolyFactory.nodeType(forTypeName: typeName) as? Node.Type else {
+        guard let nodeType = TypeRegistry.nodeType(forTypeName: typeName) as? Node.Type else {
             return "_default"
         }
         let ports = nodeType.descriptor.outputPorts

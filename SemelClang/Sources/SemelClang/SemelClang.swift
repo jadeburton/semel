@@ -14,7 +14,7 @@ public enum SemelClang {
     /// Installs this toolchain's node types. Idempotent, so a host may call it more than
     /// once and every test calls it again.
     public static func register() throws {
-        try PolyFactory.register(types: [
+        try TypeRegistry.register(types: [
             ClangCompilerTool.self,
             ClangLinkerTool.self,
             ClangPreprocessorTool.self,

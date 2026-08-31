@@ -1,5 +1,5 @@
 //
-//  PolyFactory.swift
+//  TypeRegistry.swift
 //  build_system
 //
 //  Created by Jade Burton on 22.02.26.
@@ -21,7 +21,7 @@ public protocol PolySerializable: Codable, WithKind {
 // MARK: - Factory
 
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
-public enum PolyFactory {
+public enum TypeRegistry {
 
     private static var kindCache = [UInt: WithKind.Type]()
     private static var nameCache = [String: WithKind.Type]()
@@ -35,7 +35,7 @@ public enum PolyFactory {
     public static func register(types: [WithKind.Type]) throws {
         for type in types {
             if let existing = kindCache[type.kind], existing != type {
-                throw PolyFactoryError.duplicateKind(kind: type.kind,
+                throw TypeRegistryError.duplicateKind(kind: type.kind,
                                                      existing: String(describing: existing),
                                                      duplicate: String(describing: type))
             }
@@ -50,14 +50,14 @@ public enum PolyFactory {
 
     public static func type(kind: UInt) throws -> WithKind.Type {
         guard let type = kindCache[kind] else {
-            throw PolyFactoryError.unknownKind(kind)
+            throw TypeRegistryError.unknownKind(kind)
         }
         return type
     }
 
     public static func decodableType(kind: UInt) throws -> PolySerializable.Type {
         guard let type = try type(kind: kind) as? PolySerializable.Type else {
-            throw PolyFactoryError.notPolySerializable(kind)
+            throw TypeRegistryError.notPolySerializable(kind)
         }
         return type
     }
@@ -66,7 +66,7 @@ public enum PolyFactory {
     /// Used when reconstructing a node from a `GraphShapeNode` string.
     public static func kind(forTypeName typeName: String) throws -> UInt {
         guard let type = nameCache[typeName] else {
-            throw PolyFactoryError.unknownTypeName(typeName)
+            throw TypeRegistryError.unknownTypeName(typeName)
         }
         return type.kind
     }
@@ -84,11 +84,11 @@ public enum PolyFactory {
         }
 
         Debug.warn("expected type \(P.self), got \(Swift.type(of: decoded))")
-        throw PolyFactoryError.unexpectedType
+        throw TypeRegistryError.unexpectedType
     }
 }
 
-public enum PolyFactoryError: Error, CustomStringConvertible {
+public enum TypeRegistryError: Error, CustomStringConvertible {
     case unexpectedType
     case unknownTypeName(String)
     /// A kind arrived that nothing is registered for — most likely a peer built against a
@@ -120,7 +120,7 @@ extension PolySerializable {
     /// no `kind` wrapper. While both lived in one module Swift picked this, more specific,
     /// overload — but an `internal` overload is simply invisible from another module, so
     /// callers outside silently resolved to the *other* one and produced JSON that
-    /// PolyFactory could not decode. It failed at runtime, not at compile time.
+    /// TypeRegistry could not decode. It failed at runtime, not at compile time.
     public func toJSON() throws -> String {
         try Caddy(object: self).toJSON()
     }
@@ -147,7 +147,7 @@ private struct Caddy: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decode(UInt.self, forKey: .kind)
-        let concreteType = try PolyFactory.decodableType(kind: kind)
+        let concreteType = try TypeRegistry.decodableType(kind: kind)
         object = try container.decode(concreteType, forKey: .object)
     }
 

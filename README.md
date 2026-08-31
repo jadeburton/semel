@@ -113,7 +113,7 @@ SemelNodeKit/    Node-authoring API — no dependency on the engine
   ConfigurationText    key=value per line, the shape settings travel in
   SettingNamespace     Where a node's settings live in a config file
   DataObjectStore      Content-addressed blob store
-  PolyFactory          Deserialises nodes by kind ID
+  TypeRegistry          Deserialises nodes by kind ID
 SemelSwift/      Swift toolchain node types
   SwiftCompilerTool    Compiles .swift → .o + .swiftmodule
   SwiftLinkerTool      Links object files into an executable

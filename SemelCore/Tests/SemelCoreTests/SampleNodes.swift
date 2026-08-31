@@ -4,7 +4,7 @@
 //
 //  Stand-in node types for tests whose subject is the engine, not any particular node.
 //
-//  CacheTests and PolyFactoryTests would otherwise reach for a real toolchain node, which
+//  CacheTests and TypeRegistryTests would otherwise reach for a real toolchain node, which
 //  the engine's package cannot see and should not need to. Their subjects are the cache-key
 //  algorithm and the type registry; neither has anything to do with C.
 //

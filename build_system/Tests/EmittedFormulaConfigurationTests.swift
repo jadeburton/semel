@@ -94,7 +94,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         BuildEngine.shared            = nil
 
         // Both halves of the rulebook. The parser resolves a type name and its default
-        // output port through PolyFactory, so a graph built without SemelSwift registered
+        // output port through TypeRegistry, so a graph built without SemelSwift registered
         // would fail for a reason that has nothing to do with configuration.
         database = try DatabaseLayer()
         try BuildEngine.registerTypes()
