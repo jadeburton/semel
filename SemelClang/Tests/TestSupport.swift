@@ -21,7 +21,7 @@ class SemelClangTestCase: XCTestCase {
         try super.setUpWithError()
 
         DataObjectStore.shared        = DataObjectStore(storeRoot: Self.temporaryStoreRoot())
-        ToolExecutorRegistry.instance = ToolExecutorRegistry()
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
 
         // FolderManifest is decoded by the compiler node, and TypeRegistry resolves it
         // through the same process-global registry production uses.
@@ -36,12 +36,12 @@ class SemelClangTestCase: XCTestCase {
     }
 }
 
-/// A `ToolExecutor` that runs nothing, recording what it was asked to do so a test can
+/// A `ToolRunner` that runs nothing, recording what it was asked to do so a test can
 /// assert on the command line a node built.
 ///
 /// Duplicated from the engine's test target rather than shared: a testing-support module
 /// for SemelNodeKit would be the tidier answer once a second toolchain package wants one.
-final class RecordingToolExecutor: ToolExecutor {
+final class RecordingToolRunner: ToolRunner {
 
     struct Invocation {
         let arguments: [String]

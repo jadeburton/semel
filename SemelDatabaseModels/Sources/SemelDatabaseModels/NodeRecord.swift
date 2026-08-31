@@ -72,7 +72,9 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
     // MARK: - Serialisation helpers (key=value\n format, stored in "encodedProperties" column)
 
     static func encodeProperties(_ dict: [String: String]) -> String? {
-        guard !dict.isEmpty else { return nil }
+        guard !dict.isEmpty else {
+            return nil
+        }
         return dict.sorted { $0.key < $1.key }
                    .map { "\($0.key)=\($0.value)" }
                    .joined(separator: "\n")

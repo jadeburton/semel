@@ -62,7 +62,7 @@ final class AppleClangSwiftToolchainHelperTests: SemelCoreTestCase {
     /// The descriptor has to describe the binary that will actually run, or the cache is
     /// keyed to a compiler that is not the one producing the output.
     func test_toolsAreRegisteredUnderTheVersionTheyActuallyReport() throws {
-        let registry = ToolExecutorRegistry()
+        let registry = ToolRunnerRegistry()
         try DefaultTools.setup(toolExecutorRegistry: registry)
 
         let clangPath = try XCTUnwrap(AppleClangSwiftToolchainHelper.find("clang"))
@@ -74,7 +74,7 @@ final class AppleClangSwiftToolchainHelperTests: SemelCoreTestCase {
     }
 
     func test_setupRegistersEveryToolItCanFind() throws {
-        let registry = ToolExecutorRegistry()
+        let registry = ToolRunnerRegistry()
         try DefaultTools.setup(toolExecutorRegistry: registry)
 
         XCTAssertEqual(Set(registry.registeredDescriptors.map(\.name)), ["clang", "swiftc", "swift"])
@@ -83,7 +83,7 @@ final class AppleClangSwiftToolchainHelperTests: SemelCoreTestCase {
     /// A node pinned to a version that is no longer installed must fail with something the
     /// user can act on — it names what was asked for and what is available.
     func test_aVersionThatIsNoLongerInstalledFailsWithAnActionableMessage() throws {
-        let registry = ToolExecutorRegistry()
+        let registry = ToolRunnerRegistry()
         try DefaultTools.setup(toolExecutorRegistry: registry)
 
         let stale = ToolDescriptor(name: "clang", version: "Apple clang version 1.0.0",

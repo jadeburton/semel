@@ -96,7 +96,7 @@ struct SwiftPackageReaderTool: Node {
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftPackageReaderTool.packageJSON: packageJSON,
-                                 SwiftPackageReaderTool.infoLog:     infoLog],
+                                 SwiftPackageReaderTool.infoLog: infoLog],
                   inputWireExpectations: [:])
         }
     }
@@ -108,7 +108,7 @@ struct SwiftPackageReaderTool: Node {
     }
 
     func process(inputs: SwiftPackageReaderInputs) throws -> SwiftPackageReaderOutputs {
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         var jsonOutput   = ""
         var stderrOutput = ""
@@ -120,7 +120,7 @@ struct SwiftPackageReaderTool: Node {
             expectedOutputFileNames: [],   // JSON is emitted to stdout, not a file
             output: .init(
                 logError:   { message in stderrOutput += message },
-                logMessage: { message in jsonOutput   += message },  // stdout → JSON
+                logMessage: { message in jsonOutput += message },  // stdout → JSON
                 write:      { _, _ in }))
 
         guard result.exitCode == 0 else {
@@ -141,7 +141,7 @@ struct SwiftPackageReaderTool: Node {
 
         return .init(
             packageJSON: .value(try jsonOutput.intern()),
-            infoLog:     .value(try stderrOutput.intern()))
+            infoLog: .value(try stderrOutput.intern()))
     }
 
     /// Parses `jsonOutput`, replaces every string value that starts with a
@@ -153,6 +153,7 @@ struct SwiftPackageReaderTool: Node {
         var ancestors: [(abs: String, rel: String)] = [(sandboxPath, "")]
         var current = sandboxPath
         var upPrefix = "../"
+
         for _ in 0..<6 {
             guard let parent = Path(current).deletingLastComponent else { break }
             current = "/" + parent.string
@@ -181,8 +182,10 @@ struct SwiftPackageReaderTool: Node {
               let outputData = try? JSONSerialization.data(withJSONObject: transformValue(parsed),
                                                           options: [.sortedKeys]),
               let result = String(data: outputData, encoding: .utf8) else {
+
             return jsonOutput
         }
+
         return result
     }
 }

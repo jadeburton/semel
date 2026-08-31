@@ -27,7 +27,7 @@ struct SwiftLinkerToolConfiguration {
 
         arguments = []
         environment = [:]
-        sdkVersion  = properties["sdkVersion"]
+        sdkVersion = properties["sdkVersion"]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
     }
 
@@ -90,24 +90,33 @@ struct SwiftLinkerTool: Node {
             // Sorted: these go straight onto the command line, and Swift Dictionary
             // iteration order changes from one process to the next.
             var objectFiles: [FileNameAndContent] = []
+
             for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.input]!.sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
+
             self.objectFiles = objectFiles
 
             var libraryFiles: [FileNameAndContent] = []
+
             for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.libraries]!.sorted(by: { $0.key < $1.key }) {
                 libraryFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
+
             self.libraryFiles = libraryFiles
 
             var libraryFolderManifests = [(String, FolderManifest)]()
+
             for (key, value) in (input.inputValues[SwiftLinkerTool.libraryFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
+
                 guard let jsonString = try? value.expectValue().resolveAsString(),
-                      let manifest = try? TypeRegistry.decode(encodedJSON: jsonString) as? FolderManifest
-                else { continue }
+                      let manifest = try? TypeRegistry.decode(encodedJSON: jsonString) as? FolderManifest else {
+                    continue
+                }
+
                 libraryFolderManifests.append((key, manifest))
             }
+
             self.libraryFolderManifests = libraryFolderManifests
         }
     }
@@ -138,12 +147,14 @@ struct SwiftLinkerTool: Node {
     /// "link against the system library" default.
     private func buildLibrariesExpectations(libraryFolderManifests: [(String, FolderManifest)]) -> [String: String] {
         var result: [String: String] = [:]
+
         for (_, manifest) in libraryFolderManifests {
             for entry in manifest.entries where entry.isPinned && !entry.isFolder && entry.name.hasSuffix(".a") {
                 let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
                 result[fullPath] = "StaticFile(path: '\(fullPath)').output"
             }
         }
+
         return result
     }
 
@@ -179,7 +190,7 @@ struct SwiftLinkerTool: Node {
         arguments.append("-o"); arguments.append(outputName)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         var inputFiles: [FileNameAndContent] = []
         inputFiles.append(contentsOf: inputs.objectFiles)

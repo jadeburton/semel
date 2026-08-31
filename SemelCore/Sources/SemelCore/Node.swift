@@ -120,9 +120,15 @@ extension Node {
     /// other nodes.  Returns nil if this node is not ready to process (no input
     /// ports, inputs pending, required wires missing, etc.).
     func tryComputeOutput() -> (output: ProcessOutput, cacheKey: String?, fromCache: Bool, computeStart: Date)? {
-        guard hasInputPorts() else { return nil }
-        guard let input = try? buildProcessInput() else { return nil }
-        guard (try? allInputsAreSatisfied(input: input)) == true else { return nil }
+        guard hasInputPorts() else {
+            return nil
+        }
+        guard let input = try? buildProcessInput() else {
+            return nil
+        }
+        guard (try? allInputsAreSatisfied(input: input)) == true else {
+            return nil
+        }
 
         let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
 

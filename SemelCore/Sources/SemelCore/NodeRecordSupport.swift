@@ -208,7 +208,9 @@ extension NodeRecord {
 
     /// Walk the node tree by path segments, returning the node at the given path or `nil` if not found.
     public func childNode(path: Path) throws -> NodeRecord? {
-        guard !path.isEmpty else { return self }
+        guard !path.isEmpty else {
+            return self
+        }
         var currentNode = self
         for name in path.segments {
             guard let child = try database.node.select(named: name, parentNodeID: (try currentNode.requireID())).first else {

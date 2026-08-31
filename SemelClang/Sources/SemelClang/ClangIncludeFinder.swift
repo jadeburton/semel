@@ -49,19 +49,24 @@ public struct ClangIncludeFinder: Node {
 
         // Match:  #include "file.h"  (quoted only; angle-bracket includes are ignored)
         let pattern = #"(?m)^[ \t]*#[ \t]*include[ \t]*"([^"]+)""#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
 
         let ns = text as NSString
         let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
 
         var results: [String] = []
         var seen = Set<String>()
+
         for match in matches where match.numberOfRanges >= 2 {
             let path = ns.substring(with: match.range(at: 1))
             if seen.insert(path).inserted {
                 results.append(path)
             }
         }
+
         return results
     }
 

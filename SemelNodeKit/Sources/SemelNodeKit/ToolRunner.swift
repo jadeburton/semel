@@ -1,4 +1,4 @@
-// ToolExecutor.swift
+// ToolRunner.swift
 // build_system
 //
 // Infrastructure for executing hermetic build tools (compiler, linker, etc.)
@@ -40,7 +40,7 @@ public struct ToolExecuteResult {
 
 /// A tool that can be executed with a set of arguments and input files,
 /// producing output files and log messages via a ToolOutput callback object.
-public protocol ToolExecutor {
+public protocol ToolRunner {
     func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
@@ -66,7 +66,7 @@ public struct ToolOutput {
     }
 }
 
-/// A file entry passed to a `ToolExecutor`.
+/// A file entry passed to a `ToolRunner`.
 ///
 /// The content is never held in memory here — it must already be stored in
 /// `DataObjectStore` before the tool is invoked.  `LocalFileSystemTool`
@@ -87,7 +87,9 @@ extension FileNameAndContent {
     /// Reads the content from `DataObjectStore` and decodes it as UTF-8.
     public var contentAsString: String {
         get throws {
-            guard let bytes = try DataObjectStore.shared.read(hash: hash) else { return "" }
+            guard let bytes = try DataObjectStore.shared.read(hash: hash) else {
+                return ""
+            }
             return String(decoding: bytes, as: Unicode.UTF8.self)
         }
     }
@@ -111,26 +113,26 @@ public enum ToolError: Error, CustomStringConvertible {
 
 // MARK: - Registry
 
-/// A registry that maps ToolDescriptors to their concrete ToolExecutor implementations.
-public class ToolExecutorRegistry {
+/// A registry that maps ToolDescriptors to their concrete ToolRunner implementations.
+public class ToolRunnerRegistry {
 
     public init() {
     }
 
     /// Swappable so a test can install a registry holding fake executors without
     /// threading a registry through every node.
-    public static var instance = ToolExecutorRegistry()
+    public static var instance = ToolRunnerRegistry()
 
-    private var toolsByDescriptor: [ToolDescriptor: ToolExecutor] = [:]
+    private var toolsByDescriptor: [ToolDescriptor: ToolRunner] = [:]
 
     /// Every tool currently available to build with.  This is what a formula has to name.
     public var registeredDescriptors: [ToolDescriptor] { Array(toolsByDescriptor.keys) }
 
-    public func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolExecutor) {
+    public func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolRunner) {
         toolsByDescriptor[descriptor] = toolExecutor
     }
 
-    public func tool(descriptor: ToolDescriptor) throws -> ToolExecutor {
+    public func tool(descriptor: ToolDescriptor) throws -> ToolRunner {
         guard let tool = toolsByDescriptor[descriptor] else {
             throw ToolError.noMatchingToolFound(requested: descriptor,
                                                 available: registeredDescriptors)
@@ -139,7 +141,7 @@ public class ToolExecutorRegistry {
     }
 }
 
-// ToolExecutor supports output streams, however we don't actually use this feature.
+// ToolRunner supports output streams, however we don't actually use this feature.
 // To simplify the call sites we read the streams into simple strings.
 public struct SimplifiedToolExecuteResult {
     public let exitCode: Int32
@@ -149,7 +151,7 @@ public struct SimplifiedToolExecuteResult {
     public let outputFiles: [String: [UInt8]]
 }
 
-extension ToolExecutor {
+extension ToolRunner {
     // Simplified version of execute that does not stream the outputs
     public func execute(arguments: [String],
                         environment: [String: String],

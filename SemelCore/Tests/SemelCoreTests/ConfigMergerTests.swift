@@ -118,7 +118,11 @@ final class ConfigMergerTests: SemelCoreTestCase {
     /// to begin with.
     func test_bothPortsAreRequiredSoAOneSidedMergerCannotBeWritten() {
         let required = ConfigMerger.descriptor.inputPorts.compactMap {
-            if case .required(let name) = $0 { return name } else { return nil }
+            if case .required(let name) = $0 {
+                return name
+            } else {
+                return nil
+            }
         }
 
         XCTAssertEqual(required.sorted(), [ConfigMerger.basePort, ConfigMerger.overridePort].sorted())

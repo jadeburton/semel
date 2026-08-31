@@ -79,7 +79,9 @@ public enum FatalErrors {
     /// Call this at every boundary that turns a thrown error into a recorded one —
     /// otherwise an unrecoverable failure gets filed as a per-node build error.
     public static func check(_ error: Error) {
-        guard let unrecoverable = error as? any UnrecoverableError else { return }
+        guard let unrecoverable = error as? any UnrecoverableError else {
+            return
+        }
         handler(unrecoverable)
     }
 }

@@ -12,6 +12,8 @@
 // namespace is public.
 
 /// `SwiftCompilerTool` → `swift.compiler`. The first word is the domain, the rest is the node.
+// TODO: we don't want configs to break if someone renames the type. so types should be asked what prefix they
+// want to use, but it should essentially be hard-coded and never change.
 public func derivedSettingNamespace(forTypeName typeName: String) -> String {
     var name = typeName
     if name.hasSuffix("Tool") {
@@ -44,9 +46,14 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
     }
     if !current.isEmpty { words.append(current) }
 
-    guard let domain = words.first else { return "" }
+    guard let domain = words.first else {
+        return ""
+    }
+
     let rest = words.dropFirst()
-    guard !rest.isEmpty else { return domain.lowercasedFirst() }
+    guard !rest.isEmpty else {
+        return domain.lowercasedFirst()
+    }
 
     // The remainder is one segment, not one per word: the namespace is exactly
     // domain-then-node, and splitting further would invent levels the file does not have.
@@ -57,7 +64,9 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
         if index == 0 {
             return lowered
         } else {
-            guard let first = lowered.first else { return lowered }
+            guard let first = lowered.first else {
+                return lowered
+            }
             return first.uppercased() + lowered.dropFirst()
         }
     }.joined()
@@ -85,7 +94,10 @@ public struct RequiredSettings {
     }
 
     public func check() throws {
-        guard !missing.isEmpty else { return }
+        guard !missing.isEmpty else {
+            return
+        }
+
         throw NodeError.other(message: """
             Missing configuration. Add these to a semel.config in the input file system:
 
@@ -120,7 +132,9 @@ private extension String {
         if !letters.isEmpty && letters == letters.uppercased() {
             return self.lowercased()
         }
-        guard let first else { return self }
+        guard let first else {
+            return self
+        }
         return first.lowercased() + dropFirst()
     }
 }

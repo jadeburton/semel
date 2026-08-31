@@ -40,7 +40,9 @@ public enum Debug {
     public static func log(_ message: @autoclosure () -> String,
                            function: StaticString = #function) {
         #if DEBUG
-        guard isEnabled else { return }
+        guard isEnabled else {
+            return
+        }
         print("\(function): \(message())")
         #endif
     }
@@ -60,7 +62,9 @@ public enum Debug {
     public static func warn(_ message: @autoclosure () -> String,
                             function: StaticString = #function) {
         #if DEBUG
-        guard isEnabled else { return }
+        guard isEnabled else {
+            return
+        }
         print("WARNING: \(function): \(message())")
         #endif
     }

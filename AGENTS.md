@@ -150,7 +150,7 @@ is genuinely impossible, and then it wants a comment saying why.
 ## Deliberate choices — do not "fix" these
 
 - **Process-global singletons** (`DatabaseLayer.shared`, `BuildEngine.shared`,
-  `DataObjectStore.shared`, `ToolExecutorRegistry.instance`, the symbol cache). Threading
+  `DataObjectStore.shared`, `ToolRunnerRegistry.instance`, the symbol cache). Threading
   these through every `intern()` and every node function would cost far more plumbing than
   it saves. They are *swappable* instead, which is what makes them testable.
 - **Tool versions come from the machine, not from a pinned list.** `DefaultTools` locates
@@ -165,7 +165,7 @@ is genuinely impossible, and then it wants a comment saying why.
 - Name tests `test_whatItDoes` — snake after the prefix, describing behaviour not method
   names. That is the dominant convention (~242 to 64).
 - Prefer a real in-memory `DatabaseLayer()` over a mock. The only boundaries worth faking
-  are process execution (`RecordingToolExecutor`) and the object store.
+  are process execution (`RecordingToolRunner`) and the object store.
 - Never let a test write to the user's real object store. `TestGlobals.isolate()` handles
   this; do not bypass it.
 - When adding a regression test for a bug already fixed, verify it actually fails against

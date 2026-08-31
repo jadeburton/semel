@@ -16,9 +16,12 @@ private func xcrun(_ arguments: [String]) -> String? {
     process.standardOutput = stdoutPipe
     process.standardError = Pipe()   // suppress any xcrun warnings from leaking into our output
     do {
+        // TODO: all runs of external processes should go through a single bottleneck method/helper, so we can uniformly log and track these
         try process.run()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
         let raw = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let text = String(data: raw, encoding: .utf8)?
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
@@ -62,12 +65,15 @@ func resolveSDKVersion() -> String? {
 ///
 /// Deliberately loud rather than accommodating: silently compiling against a different SDK
 /// than the one recorded is how two machines produce different artifacts that look
-/// identical. Mirrors what ToolExecutorRegistry already does for a pinned tool version.
+/// identical. Mirrors what ToolRunnerRegistry already does for a pinned tool version.
 // Shared by the compiler and the linker, so this cannot name either one's namespace —
 // the setting reaching this function is `swift.compiler.sdkVersion` for one caller and
 // `swift.linker.sdkVersion` for the other.
 func verifySDKVersion(_ declared: String?) throws {
-    guard let declared else { return }   // nothing declared: the machine's SDK, as before
+    guard let declared else {
+        return // nothing declared: the machine's SDK, as before
+    }
+
     guard let actual = resolveSDKVersion() else {
         throw NodeError.other(message: "sdkVersion is declared as \(declared) "
                                      + "but no macOS SDK could be found on this machine")
@@ -89,7 +95,9 @@ func verifySDKVersion(_ declared: String?) throws {
 /// Nothing declared emits no flag at all, which is what keeps every existing tree building
 /// exactly the arguments it built before this setting existed.
 func swiftOptimisationFlag(_ declared: String?) throws -> String? {
-    guard let declared else { return nil }
+    guard let declared else {
+        return nil
+    }
     switch declared {
     case "none":  return "-Onone"
     case "speed": return "-O"

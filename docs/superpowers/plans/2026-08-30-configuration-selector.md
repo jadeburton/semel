@@ -324,11 +324,20 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
         }
         current.append(character)
     }
-    if !current.isEmpty { words.append(current) }
 
-    guard let domain = words.first else { return "" }
+    if !current.isEmpty { 
+        words.append(current) 
+    }
+
+    guard let domain = words.first else { 
+        return "" 
+    }
+
     let rest = words.dropFirst()
-    guard !rest.isEmpty else { return domain.lowercasedFirst() }
+
+    guard !rest.isEmpty else { 
+        return domain.lowercasedFirst() 
+    }
 
     // The remainder is one segment, not one per word: the namespace is exactly
     // domain-then-node, and splitting further would invent levels the file does not have.
@@ -338,7 +347,9 @@ public func derivedSettingNamespace(forTypeName typeName: String) -> String {
 
 private extension String {
     func lowercasedFirst() -> String {
-        guard let first else { return self }
+        guard let first else { 
+            return self 
+        }
         return first.lowercased() + dropFirst()
     }
 }
@@ -680,7 +691,9 @@ public struct RequiredSettings {
     }
 
     public func check() throws {
-        guard !missing.isEmpty else { return }
+        guard !missing.isEmpty else { 
+            return 
+        }
         throw NodeError.other(message: """
             Missing configuration. Add these to a semel.config in the input file system:
 
@@ -891,18 +904,26 @@ Add to `BuildEngine`:
     /// is why this is called from the idle hook rather than at parse time.
     func unclaimedConfigKeys(inFileNodeID fileNodeID: ObjectID) throws -> [String] {
         let node = try database.node.select(nodeID: fileNodeID)
+
         guard let staticFile = try node.nodeAsAny() as? StaticFile,
               let content = try staticFile.read(),
-              case .value(let hash) = content else { return [] }
+              case .value(let hash) = content else { 
+            return []
+        }
 
         let keys = [String: String](plainText: try hash.resolveAsString()).keys
 
         var prefixes: [String] = []
+
         for wire in try database.wire.select(comingFromNodeID: fileNodeID,
                                              fromSymbolID: StaticFile.outputPort.asSymbolID()) {
             let consumer = try database.node.select(nodeID: wire.toNodeID)
+
             guard consumer.kind == ConfigSubset.kind,
-                  let prefix = consumer.properties[ConfigSubset.prefixProperty] else { continue }
+                  let prefix = consumer.properties[ConfigSubset.prefixProperty] else { 
+                continue 
+            }
+
             prefixes.append(prefix + ".")
         }
 

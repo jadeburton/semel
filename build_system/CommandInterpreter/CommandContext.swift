@@ -64,7 +64,9 @@ protocol CommandPlugin {
 extension CommandPlugin {
     /// Consume a required `-i`/`-o` flag. Defaults to `.input` when absent.
     func parseFileSystemFlag(tokens: [String]) -> (FileSystemForCommand, [String]) {
-        guard let first = tokens.first else { return (.input, tokens) }
+        guard let first = tokens.first else {
+            return (.input, tokens)
+        }
         switch first {
         case "-i", "--input":  return (.input,  Array(tokens.dropFirst()))
         case "-o", "--output": return (.output, Array(tokens.dropFirst()))
@@ -75,7 +77,9 @@ extension CommandPlugin {
     /// Consume an optional `-i`/`-o` flag, returning `nil` when absent so callers
     /// can distinguish an explicit choice from "use current file system".
     func parseOptionalFileSystemFlag(tokens: [String]) -> (FileSystemForCommand?, [String]) {
-        guard let first = tokens.first else { return (nil, tokens) }
+        guard let first = tokens.first else {
+            return (nil, tokens)
+        }
         switch first {
         case "-i", "--input":  return (.input,  Array(tokens.dropFirst()))
         case "-o", "--output": return (.output, Array(tokens.dropFirst()))

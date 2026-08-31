@@ -19,12 +19,12 @@ final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
                                             platform: "macOS",
                                             architecture: "arm64",
                                             recursiveHash: nil)
-    private var executor: RecordingToolExecutor!
+    private var executor: RecordingToolRunner!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        executor = RecordingToolExecutor()
-        ToolExecutorRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
+        executor = RecordingToolRunner()
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
     }
 
     private func makeTool() throws -> SwiftPackageReaderTool {
@@ -47,7 +47,7 @@ final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
 
     // MARK: - Hermeticity
 
-    /// `ToolExecutor` deliberately replaces the environment rather than inheriting it —
+    /// `ToolRunner` deliberately replaces the environment rather than inheriting it —
     /// fixed PATH, and HOME and TMPDIR inside the per-run sandbox — so a manifest that
     /// reads an environment variable (GRDB's own reads SQLITE_ENABLE_PREUPDATE_HOOK) sees
     /// it unset identically on every machine.

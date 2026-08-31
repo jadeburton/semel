@@ -72,7 +72,7 @@ semel                REPL, command parsing, session state, local disk I/O
 ```
 
 The process-global singletons (`DatabaseLayer.shared`, `BuildEngine.shared`,
-`DataObjectStore.shared`, `ToolExecutorRegistry.instance`) become an asset rather than a
+`DataObjectStore.shared`, `ToolRunnerRegistry.instance`) become an asset rather than a
 liability here: one engine, one graph, one store, resolved once in `semelserv`'s
 composition root. That is the shape they were always suited to.
 

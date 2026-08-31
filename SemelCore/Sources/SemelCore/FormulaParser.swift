@@ -635,7 +635,9 @@ private struct FormulaParser {
 
     // ('.' IDENT)?
     private mutating func parseOptionalPort() throws -> String? {
-        guard current == .dot else { return nil }
+        guard current == .dot else {
+            return nil
+        }
         advance()
         guard case .ident(let port) = current else {
             throw located(FormulaParseError.unexpectedToken(current, expected: "port name after '.'"))
@@ -666,14 +668,18 @@ private struct ForEachBinding {
     /// e.g.  "src/hello.c" → "src/"
     ///        "hello.c"    → ""
     var folder: String {
-        guard let slash = full.lastIndex(of: "/") else { return "" }
+        guard let slash = full.lastIndex(of: "/") else {
+            return ""
+        }
         return String(full[...slash])
     }
 }
 
 /// Expand all `%%var%%`, `%%var.N%%`, and `%%var.folder%%` markers in `s`.
 private func expandTemplate(_ s: String, templateEnv: [String: ForEachBinding]) -> String {
-    guard s.contains("%%") else { return s }
+    guard s.contains("%%") else {
+        return s
+    }
     var result = s
     for (_, binding) in templateEnv {
         let v = binding.variable
@@ -742,7 +748,9 @@ private func extractSegmentCaptures(pattern: String, text: String) -> [String] {
             pi += 1; ti += 1
         default:
             guard pi < patChars.count && ti < textChars.count,
-                  patChars[pi] == textChars[ti] else { return groups }
+                  patChars[pi] == textChars[ti] else {
+                return groups
+            }
             pi += 1; ti += 1
         }
     }
@@ -807,7 +815,9 @@ private struct FormulaResolver {
             if let funcDef = functions[name] {
                 // User-defined function: no .port suffix → preserve the function's own return port.
                 let base = try evalFuncCall(funcDef, args: args, env: env, templateEnv: templateEnv)
-                guard let port else { return base }
+                guard let port else {
+                    return base
+                }
                 guard case .node(let node) = base else {
                     throw FormulaParseError.typeMismatch(
                         expected: "node (for port access '.\(port)')", got: base.typeName,

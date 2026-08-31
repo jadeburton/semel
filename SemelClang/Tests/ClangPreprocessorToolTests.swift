@@ -20,12 +20,12 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
                                             platform: "macOS",
                                             architecture: "arm64",
                                             recursiveHash: nil)
-    private var executor: RecordingToolExecutor!
+    private var executor: RecordingToolRunner!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        executor = RecordingToolExecutor()
-        ToolExecutorRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
+        executor = RecordingToolRunner()
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
     }
 
     // MARK: - Helpers

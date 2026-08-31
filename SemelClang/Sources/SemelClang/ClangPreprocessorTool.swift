@@ -22,7 +22,9 @@ import SemelDatabaseModels
 /// comes from the source file arriving on a wire. A C file with no `std` is complete; the
 /// same configuration reaching a C++ file is not.
 func clangStandard(_ std: String?, forLanguage language: String, namespace: String) throws -> String? {
-    guard language == "c++" else { return std }
+    guard language == "c++" else {
+        return std
+    }
 
     var required = RequiredSettings(properties: std.map { ["std": $0] } ?? [:],
                                     namespace: namespace)
@@ -194,7 +196,7 @@ public struct ClangPreprocessorTool: Node {
         arguments.append("-o"); arguments.append(outputFilename)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         var inputFiles: [FileNameAndContent] = [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)]
 

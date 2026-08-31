@@ -25,7 +25,9 @@ public struct FileMetadata: Codable {
     }
 
     public static func decode(from json: String) -> FileMetadata? {
-        guard let data = json.data(using: .utf8) else { return nil }
+        guard let data = json.data(using: .utf8) else {
+            return nil
+        }
         return try? JSONDecoder().decode(FileMetadata.self, from: data)
     }
 }

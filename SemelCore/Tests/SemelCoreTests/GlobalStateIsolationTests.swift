@@ -34,12 +34,12 @@ final class GlobalStateIsolationTests: SemelCoreTestCase {
     func test_toolRegistryStartsEmptyInEachTest() throws {
         let descriptor = ToolDescriptor(name: "fake", version: "1", platform: "test",
                                         architecture: "test", recursiveHash: nil)
-        ToolExecutorRegistry.instance.registerTool(descriptor: descriptor,
-                                                   toolExecutor: RecordingToolExecutor())
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor,
+                                                   toolExecutor: RecordingToolRunner())
 
         try TestGlobals.isolate()
 
-        XCTAssertThrowsError(try ToolExecutorRegistry.instance.tool(descriptor: descriptor),
+        XCTAssertThrowsError(try ToolRunnerRegistry.instance.tool(descriptor: descriptor),
                              "isolate() must hand back a registry with no leftover registrations")
     }
 }

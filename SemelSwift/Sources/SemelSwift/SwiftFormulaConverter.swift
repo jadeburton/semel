@@ -58,7 +58,7 @@ struct SwiftFormulaConverter: Node {
 
         guard let folderManifest = try? TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest else {
             return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
-                                 externalExpectations: [:])
+                                     externalExpectations: [:])
         }
 
         let rootPackageFolder = folderManifest.baseFolderPath
@@ -77,9 +77,14 @@ struct SwiftFormulaConverter: Node {
         // ── already-received external manifests ───────────────────────────────
         // Wire key = resolved input-filesystem path of the external package root.
         var availableManifests: [String: SPMManifest] = [:]
+
         for (extPath, nodeValue) in input.inputValues[Self.externalPackageJSONs] ?? [:] {
+
             guard let jsonStr  = try? nodeValue.expectValue().resolveAsString(),
-                  let manifest = try? SPMManifest.decode(jsonStr) else { continue }
+                  let manifest = try? SPMManifest.decode(jsonStr) else {
+                continue
+            }
+
             availableManifests[extPath] = manifest
         }
 
@@ -96,6 +101,7 @@ struct SwiftFormulaConverter: Node {
 
         while bfsIndex < bfsQueue.count {
             let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
+
             for dependency in manifest.packageDependencies {
                 // Resolved against the manifest that declared it, not the root: a vendored
                 // checkout sits beside whichever package named it, and that package may
@@ -104,8 +110,14 @@ struct SwiftFormulaConverter: Node {
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
                 // that cannot be read through the build graph.
-                guard extPath.hasPrefix(FileSystemName.input + "/") else { continue }
-                guard !visitedPaths.contains(extPath) else { continue }
+                guard extPath.hasPrefix(FileSystemName.input + "/") else {
+                    continue
+                }
+
+                guard !visitedPaths.contains(extPath) else {
+                    continue
+                }
+
                 visitedPaths.insert(extPath)
                 // The root package's folder, not `extPath`: the reader that parses a vendored
                 // dependency's manifest is still part of *this* build, so it selects its
@@ -114,6 +126,7 @@ struct SwiftFormulaConverter: Node {
                     packageFilePath: "\(extPath)/Package.swift",
                     rootPackageFolder: rootPackageFolder)
                 originOfExpectedPath[extPath] = dependency.repositoryURL
+
                 if let extManifest = availableManifests[extPath] {
                     bfsQueue.append((extPath, extManifest))
                 }
@@ -122,6 +135,7 @@ struct SwiftFormulaConverter: Node {
 
         // ── wait until every expected manifest has been received ──────────────
         let missing = expectations.keys.filter { availableManifests[$0] == nil }
+
         guard missing.isEmpty else {
             return try pendingOutput(
                 reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
@@ -134,7 +148,7 @@ struct SwiftFormulaConverter: Node {
                                       rootPackageFolder: rootPackageFolder)
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
-                           Self.infoLog:       .value("")],
+                           Self.infoLog: .value("")],
             inputWireExpectations: [Self.externalPackageJSONs: expectations])
     }
 
@@ -143,7 +157,7 @@ struct SwiftFormulaConverter: Node {
     private func pendingOutput(reason: String,
                                externalExpectations: [String: String]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
-                             Self.infoLog:       .value("")],
+                             Self.infoLog: .value("")],
               inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
     }
 
@@ -245,11 +259,11 @@ struct SwiftFormulaConverter: Node {
         }
 
         init(from decoder: Decoder) throws {
-            let c        = try decoder.container(keyedBy: CodingKeys.self)
-            name         = try c.decode(String.self,      forKey: .name)
-            targets      = try c.decode([SPMTarget].self,  forKey: .targets)
-            products     = try c.decode([SPMProduct].self, forKey: .products)
-            let rawDeps  = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try c.decode(String.self,      forKey: .name)
+            targets = try c.decode([SPMTarget].self,  forKey: .targets)
+            products = try c.decode([SPMProduct].self, forKey: .products)
+            let rawDeps = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
             packageDependencies = rawDeps.flatMap { $0.dependencies }
         }
 
@@ -607,12 +621,20 @@ struct SwiftFormulaConverter: Node {
         var visited  = Set<String>()
 
         func visit(_ target: SPMTarget) {
-            guard !visited.contains(target.name) else { return }
+
+            guard !visited.contains(target.name) else {
+                return
+            }
+
             // System-library targets (module.modulemap wrappers) have no Swift
             // sources.  Skip them here; buildFuncDef handles them separately via
             // inputModuleMapFolders when they appear as a dependency.
-            guard !target.isSystemLibrary else { return }
+            guard !target.isSystemLibrary else {
+                return
+            }
+
             visited.insert(target.name)
+
             for dep in target.dependencies {
                 if let depName = dep.targetName {
                     for depTarget in lookupAll(depName) {
@@ -620,6 +642,7 @@ struct SwiftFormulaConverter: Node {
                     }
                 }
             }
+
             ordered.append(target)
         }
 
@@ -637,9 +660,16 @@ struct SwiftFormulaConverter: Node {
         var collected = Set<String>()
 
         func visit(_ target: SPMTarget) {
-            guard visited.insert(target.name).inserted else { return }
+
+            guard visited.insert(target.name).inserted else {
+                return
+            }
+
             for dep in target.dependencies {
-                guard let depName = dep.targetName else { continue }
+                guard let depName = dep.targetName else {
+                    continue
+                }
+
                 for depTarget in lookupAll(depName) {
                     guard depTarget.isSystemLibrary else {
                         visit(depTarget)

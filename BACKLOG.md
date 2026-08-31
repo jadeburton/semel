@@ -16,7 +16,7 @@ underneath it, so read that item for the mechanism and this one only for what it
 What it settled and what still holds: an SDK version is a setting written in a file, under a
 `<domain>.<node>.<key>` namespace, not something read off whichever machine happens to be
 building. `SwiftCompilerTool` and `SwiftLinkerTool` fail loudly when the machine's SDK is not
-the declared one, mirroring what `ToolExecutorRegistry` does for a pinned tool version.
+the declared one, mirroring what `ToolRunnerRegistry` does for a pinned tool version.
 Declaring nothing keeps the previous behaviour.
 
 What B-42 replaced: the ancestor walk that asked for a file in every parent folder, the
@@ -35,7 +35,7 @@ a class. `DefaultTools` deliberately takes tool versions from the machine; envir
 variables, locale, working directory and hostname were never examined. An input that
 influences output but not the key makes two different builds collide on one entry — locally
 a stale result, on a shared cache a wrong build handed to everyone.
-*Outcome:* the engine was already hermetic by construction — `ToolExecutor` replaces
+*Outcome:* the engine was already hermetic by construction — `ToolRunner` replaces
 the environment rather than inheriting it, giving a fixed PATH with HOME and TMPDIR inside
 the per-run sandbox and cwd there too. Exactly one node punched through it, and does no
 longer (`SwiftPackageReaderTool`). Tool versions turned out fail-safe rather than silently
@@ -50,12 +50,12 @@ one, because an unscheduled node never recomputes its key. See B-29 and B-30-SDK
 **B-02** `open` — **Make it hard to read outside a node's declared inputs.**
 Hermeticity is load-bearing for the whole design, and nothing currently prevents a node
 function from calling `xcrun`, reading an environment variable or touching the filesystem.
-Ideas: route all subprocess execution through `ToolExecutor` and forbid `Process` elsewhere;
+Ideas: route all subprocess execution through `ToolRunner` and forbid `Process` elsewhere;
 scrub the environment before exec; run with a working directory that contains only declared
 inputs.
 
 **B-03** `open` — **Run tool execution in a container.**
-`ToolExecutor` runs inside a dedicated process wrapping a Docker container configured with
+`ToolRunner` runs inside a dedicated process wrapping a Docker container configured with
 the toolchain, SDK and system libraries, reset between builds. The container digest then
 *is* the environment: `sdk=26.5 (25F70)` becomes `image=sha256:…`, and "did we miss an
 input?" stops being a question only an audit can answer. Also the natural home for the
@@ -257,7 +257,7 @@ live databases.
 
 **Step 1 done** (`b49e2b5`…`435fd5a`). SemelNodeKit exists and holds 13 files: the node
 protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, TypeRegistry, Path,
-DataObjectStore, DataToken, ToolExecutor, Toolchain, FileMetadata, GraphShapeArg and
+DataObjectStore, DataToken, ToolRunner, Toolchain, FileMetadata, GraphShapeArg and
 FolderManifest. 63 tests; depends only on SemelDatabaseModels.
 
 *Since:* `GraphShapeArg` has gone back to SemelCore as `GraphShapeProperty`. It was moved
@@ -290,7 +290,7 @@ module boundary, so every requirement came back as "does not conform"), the
 `FileSystemName` replacing the single `Folder.inputFileSystemName` reference.
 
 SemelSwift has its own test harness — no database, no BuildEngine, no graph — which is the
-evidence the seam is in the right place. `RecordingToolExecutor` is duplicated from the
+evidence the seam is in the right place. `RecordingToolRunner` is duplicated from the
 engine's tests; a testing-support module for SemelNodeKit is the tidier answer once
 SemelClang wants one too.
 
@@ -452,7 +452,7 @@ cheap ones.
   So it takes the name outright and the row becomes `NodeRecord`: the thing with ports and a
   lifecycle *is* the node, and the row is a record of it. `StaticFile: Node` then needs no
   explanation, where `StaticFile: NodeFunction` needed a sentence.
-- **`ToolExecutor`** collides with Swift's own `Executor`/`SerialExecutor` in a codebase that
+- **`ToolRunner`** collides with Swift's own `Executor`/`SerialExecutor` in a codebase that
   uses `TaskGroup`, so a reader may expect scheduling and isolation where it means "run a
   binary in a sandbox". **`ToolRunner`**, or Bazel's *spawn runner*. The concrete type is
   already `LocalFileSystemTool` and says nothing about executors, so the protocol is the odd
@@ -505,7 +505,7 @@ Locals follow the type: a `NodeRecord` is `nodeRecord`, a `Node` is `node`. Name
 *which* node — `toNode`, `fromNode`, `child`, `consumer`, `sourceNode`, `folder` — keep their
 role name, which is the divergence the convention allows for.
 
-*Still open.* `ToolExecutor` → `ToolRunner` and `ConfigSubset` are untouched; `isPinned` is
+*Still open.* `ToolRunner` → `ToolRunner` and `ConfigSubset` are untouched; `isPinned` is
 deliberately kept. `makeNodeCast` (`NodeSupport.swift`) has no callers.
 
 **B-45** `open` — **Database write failures are not classified as unrecoverable.**

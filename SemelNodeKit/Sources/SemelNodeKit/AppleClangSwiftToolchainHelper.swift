@@ -15,16 +15,22 @@ public enum AppleClangSwiftToolchainHelper {
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`,
     /// or `nil` if there is no such tool.
     public static func find(_ toolName: String) -> String? {
-        guard let output = run("/usr/bin/xcrun", ["--find", toolName]) else { return nil }
+        guard let output = run("/usr/bin/xcrun", ["--find", toolName]) else {
+            return nil
+        }
         let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        guard !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else {
+            return nil
+        }
         return path
     }
 
     /// The canonical version string the tool at `path` reports, e.g.
     /// `Apple clang version 21.0.0`, or `nil` if it reports nothing recognisable.
     public static func version(ofToolAt path: String) -> String? {
-        guard let output = run(path, ["--version"]) else { return nil }
+        guard let output = run(path, ["--version"]) else {
+            return nil
+        }
         return parseVersion(from: output)
     }
 
@@ -40,14 +46,18 @@ public enum AppleClangSwiftToolchainHelper {
     /// driver version first — that part is not the tool's version and is skipped.
     public static func parseVersion(from output: String) -> String? {
         let pattern = #"Apple [A-Za-z]+ version [0-9]+(\.[0-9]+)*( \([^)]*\))?"#
-        guard let range = output.range(of: pattern, options: .regularExpression) else { return nil }
+        guard let range = output.range(of: pattern, options: .regularExpression) else {
+            return nil
+        }
         return String(output[range])
     }
 
     // MARK: - Process
 
     private static func run(_ launchPath: String, _ arguments: [String]) -> String? {
-        guard FileManager.default.isExecutableFile(atPath: launchPath) else { return nil }
+        guard FileManager.default.isExecutableFile(atPath: launchPath) else {
+            return nil
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)
@@ -66,7 +76,9 @@ public enum AppleClangSwiftToolchainHelper {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
         return String(data: data, encoding: .utf8)
     }
 }

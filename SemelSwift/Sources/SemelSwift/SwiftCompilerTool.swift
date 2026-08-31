@@ -31,12 +31,12 @@ struct SwiftCompilerToolConfiguration {
         moduleName = required.value("moduleName")
         try required.check()
 
-        arguments   = []
+        arguments = []
         environment = [:]
-        sdkVersion  = properties["sdkVersion"]
+        sdkVersion = properties["sdkVersion"]
         optimisationLevel = properties["optimisationLevel"]
         parseAsLibrary = properties["parseAsLibrary"] != "false"
-        sourcePaths   = Self.pathList(properties["sourcePaths"])
+        sourcePaths = Self.pathList(properties["sourcePaths"])
         excludedPaths = Self.pathList(properties["excludedPaths"])
     }
 
@@ -66,16 +66,28 @@ struct SourceScope {
     /// A file belongs to the target when it sits under one of the listed source paths
     /// (or none were listed) and under none of the excluded ones.
     func includesFile(_ fullPath: String) -> Bool {
-        guard let relative = relativePath(of: fullPath) else { return sourcePaths.isEmpty }
-        guard !isExcluded(relative) else { return false }
+        guard let relative = relativePath(of: fullPath) else {
+            return sourcePaths.isEmpty
+        }
+
+        guard !isExcluded(relative) else {
+            return false
+        }
+
         return sourcePaths.isEmpty || sourcePaths.contains { Self.isAtOrUnder(relative, $0) }
     }
 
     /// A folder is worth walking when it is under a listed source path *or* an ancestor
     /// of one — `sources: ["Core/Thing.swift"]` still has to descend through `Core`.
     func includesFolder(_ fullPath: String) -> Bool {
-        guard let relative = relativePath(of: fullPath) else { return sourcePaths.isEmpty }
-        guard !isExcluded(relative) else { return false }
+        guard let relative = relativePath(of: fullPath) else {
+            return sourcePaths.isEmpty
+        }
+
+        guard !isExcluded(relative) else {
+            return false
+        }
+
         return sourcePaths.isEmpty || sourcePaths.contains {
             Self.isAtOrUnder(relative, $0) || Self.isAtOrUnder($0, relative)
         }
@@ -371,7 +383,7 @@ struct SwiftCompilerTool: Node {
 
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         let result = try tool.execute(
             arguments: arguments,

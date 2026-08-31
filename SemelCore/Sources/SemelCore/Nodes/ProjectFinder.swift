@@ -9,7 +9,9 @@ import SemelNodeKit
 
 struct FormulaFilePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
-        guard entry.isPinned, entry.name.hasSuffix(".fmla") else { return nil }
+        guard entry.isPinned, entry.name.hasSuffix(".fmla") else {
+            return nil
+        }
         let fullPath = (Path(folderPath) / entry.name).string
         // The .fmla file sits *in* the project's directory, so products go beside it.
         return "ProjectBuilder(outputFolder: '\(folderPath)', projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status"

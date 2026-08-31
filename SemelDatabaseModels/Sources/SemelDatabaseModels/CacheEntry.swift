@@ -80,7 +80,9 @@ public struct CacheEntryDataAccess: DataAccessType {
         try write { db in
             let total = try CacheEntry.fetchCount(db)
             let excess = total - limit
-            guard excess > 0 else { return 0 }
+            guard excess > 0 else {
+                return 0
+            }
             try db.execute(
                 sql: """
                      DELETE FROM CacheEntry

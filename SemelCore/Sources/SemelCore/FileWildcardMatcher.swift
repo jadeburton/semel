@@ -62,7 +62,9 @@ public final class FileWildcardMatcher {
         currentLogicalPath: Path,
         results: inout [FileWildcardEntry]
     ) throws {
-        guard segmentIndex < segments.count else { return }
+        guard segmentIndex < segments.count else {
+            return
+        }
 
         let segment = segments[segmentIndex]
         let isLastSegment = segmentIndex == segments.count - 1
@@ -76,20 +78,26 @@ public final class FileWildcardMatcher {
 
             // … or one-or-more directories (recurse into each child dir).
             let children = try input.allFiles(inDirectoryPath: currentDirectory)
+
             for child in children where child.kind == .folder {
                 let childLogicalPath  = currentLogicalPath / child.path
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path.string)
+
                 try matchSegments(segments: segments, segmentIndex: segmentIndex,
                                   currentDirectory: childPhysicalPath,
                                   currentLogicalPath: childLogicalPath, results: &results)
             }
+
             return
         }
 
         // ── Normal or single-star segment ─────────────────────────
         let children = try input.allFiles(inDirectoryPath: currentDirectory)
+
         for child in children {
-            guard WildcardSegment.matches(pattern: segment, name: child.path.string) else { continue }
+            guard WildcardSegment.matches(pattern: segment, name: child.path.string) else {
+                continue
+            }
 
             let childLogicalPath = currentLogicalPath / child.path
 
@@ -118,12 +126,18 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
 
     public func allFiles(inDirectoryPath path: String) -> [FileWildcardEntry] {
         let fm = FileManager.default
-        guard let children = try? fm.contentsOfDirectory(atPath: path) else { return [] }
+        guard let children = try? fm.contentsOfDirectory(atPath: path) else {
+            return []
+        }
         return children.compactMap { name -> FileWildcardEntry? in
-            guard !name.hasPrefix(".") else { return nil }
+            guard !name.hasPrefix(".") else {
+                return nil
+            }
             let fullPath = (path as NSString).appendingPathComponent(name)
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { return nil }
+            guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else {
+                return nil
+            }
             return FileWildcardEntry(path: Path(name),
                                      kind: isDir.boolValue ? .folder : .file,
                                      isMissing: false, isUnreferenced: false)

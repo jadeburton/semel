@@ -99,17 +99,19 @@ public struct ClangCompilerTool: Node {
         var arguments = [String]()
         arguments.append("-x");      arguments.append(language)
         arguments.append("-c")
+
         if let std = try clangStandard(inputs.configuration.std,
                                        forLanguage: language,
                                        namespace: ClangCompilerToolConfiguration.settingNamespace) {
             arguments.append("-std=\(std)")
         }
+
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)
         arguments.append("-target"); arguments.append(inputs.configuration.target)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         let result = try tool.execute(
             arguments: arguments,

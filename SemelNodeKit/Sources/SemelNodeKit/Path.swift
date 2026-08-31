@@ -49,13 +49,17 @@ public struct Path {
 
     /// Path with the last segment removed.  Returns `nil` for single-segment or empty paths.
     public var deletingLastComponent: Path? {
-        guard segments.count > 1 else { return nil }
+        guard segments.count > 1 else {
+            return nil
+        }
         return Path(segments: Array(segments.dropLast()))
     }
 
     /// Path with the first segment removed.  Returns `nil` for single-segment or empty paths.
     public var deletingFirstComponent: Path? {
-        guard segments.count > 1 else { return nil }
+        guard segments.count > 1 else {
+            return nil
+        }
         return Path(segments: Array(segments.dropFirst()))
     }
 
@@ -83,14 +87,18 @@ public struct Path {
 
     /// Returns `true` when this path starts with all segments of `prefix`.
     public func hasPrefix(_ prefix: Path) -> Bool {
-        guard segments.count >= prefix.segments.count else { return false }
+        guard segments.count >= prefix.segments.count else {
+            return false
+        }
         return Array(segments.prefix(prefix.segments.count)) == prefix.segments
     }
 
     /// Returns the portion of this path after `base`, or `nil` if `base` is not a prefix.
     /// e.g. Path("input:/src/hello.c").relative(to: Path(Folder.inputFileSystemName)) → Path("src/hello.c")
     public func relative(to base: Path) -> Path? {
-        guard hasPrefix(base) else { return nil }
+        guard hasPrefix(base) else {
+            return nil
+        }
         return Path(segments: Array(segments.dropFirst(base.segments.count)))
     }
 

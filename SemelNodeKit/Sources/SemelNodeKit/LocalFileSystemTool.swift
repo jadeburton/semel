@@ -14,7 +14,7 @@ import SemelDatabaseModels
 /// an APFS copy-on-write clone (essentially free) when available.
 /// All input bytes must already be stored in `DataObjectStore` before calling
 /// `execute` — `FileNameAndContent` carries only the path and the hash.
-public class LocalFileSystemTool: ToolExecutor {
+public class LocalFileSystemTool: ToolRunner {
     private let localPath: String
 
     public init(localPath: String) throws {
@@ -22,10 +22,12 @@ public class LocalFileSystemTool: ToolExecutor {
 
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
+
         guard fileManager.fileExists(atPath: localPath, isDirectory: &isDirectory),
               !isDirectory.boolValue else {
             throw LocalFileSystemToolError.toolNotFound(path: localPath)
         }
+
         guard fileManager.isExecutableFile(atPath: localPath) else {
             throw LocalFileSystemToolError.toolNotExecutable(path: localPath)
         }

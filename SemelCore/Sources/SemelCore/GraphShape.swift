@@ -365,7 +365,9 @@ private struct GraphShapeParser {
 
     mutating func parseOptionalOutputPort() throws -> String? {
         skipWhitespace()
-        guard peek() == "." else { return nil }
+        guard peek() == "." else {
+            return nil
+        }
         advance()
         return try parseIdentifier()
     }

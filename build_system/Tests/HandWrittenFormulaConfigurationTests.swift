@@ -86,7 +86,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         try super.setUpWithError()
 
         DataObjectStore.shared = DataObjectStore(storeRoot: makeTemporaryStoreRoot())
-        ToolExecutorRegistry.instance = ToolExecutorRegistry()
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
         BuildEngine.shared = nil
 
         database = try DatabaseLayer()
@@ -116,7 +116,9 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
             _ = try products[name]!.findOrCreateMatchingNode()
         }
 
-        guard let configText else { return }
+        guard let configText else {
+            return
+        }
 
         var found = 0
         for nodeRecord in try database.node.select(kind: StaticFile.kind)

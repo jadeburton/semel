@@ -72,7 +72,9 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// first two override `canBeDeleted`, and the third takes the default `true`.
     private func everyChildCanBeDeleted() throws -> Bool {
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
-        guard !children.isEmpty else { return true }
+        guard !children.isEmpty else {
+            return true
+        }
 
         let pinned = try pinnedStates(of: children)
 
@@ -86,10 +88,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             switch child.kind {
             case StaticFile.kind:
                 // A pushed file is held by the user rather than by the graph.
-                if pinned[child.id] == true { return false }
+                if pinned[child.id] == true {
+                    return false
+                }
 
             case Folder.kind:
-                if childFolderCanBePinned && pinned[child.id] == true { return false }
+                if childFolderCanBePinned && pinned[child.id] == true {
+                    return false
+                }
                 unpinnedSubfolderIDs.append(child.id)
 
             default:
@@ -100,8 +106,12 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         // Descend only into the subfolders that did not already answer for themselves.
         for subfolderID in unpinnedSubfolderIDs {
             let nodeRecord = try database.node.select(nodeID: subfolderID)
-            guard let subfolder = try nodeRecord.makeNode() as? Folder else { continue }
-            guard try subfolder.everyChildCanBeDeleted() else { return false }
+            guard let subfolder = try nodeRecord.makeNode() as? Folder else {
+                continue
+            }
+            guard try subfolder.everyChildCanBeDeleted() else {
+                return false
+            }
         }
 
         return true

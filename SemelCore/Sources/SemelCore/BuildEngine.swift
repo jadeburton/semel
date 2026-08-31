@@ -79,7 +79,9 @@ public final class BuildEngine {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
 
-        guard startProcessingLoop else { return }
+        guard startProcessingLoop else {
+            return
+        }
 
         // Capture the fully-initialised self before starting the task.
         let engine = self
@@ -151,16 +153,21 @@ public final class BuildEngine {
         let nodeRecord = try database.node.select(nodeID: fileNodeID)
         guard let staticFile = try nodeRecord.nodeAsAny() as? StaticFile,
               let content = try staticFile.read(),
-              case .value(let hash) = content else { return [] }
+              case .value(let hash) = content else {
+            return []
+        }
 
         let keys = [String: String](plainText: try hash.resolveAsString()).keys
 
         var prefixes: [String] = []
+
         for wire in try database.wire.select(comingFromNodeID: fileNodeID,
                                              fromSymbolID: StaticFile.outputPort.asSymbolID()) {
             let consumer = try database.node.select(nodeID: wire.toNodeID)
             guard consumer.kind == ConfigSubset.kind,
-                  let prefix = consumer.properties[ConfigSubset.prefixProperty] else { continue }
+                  let prefix = consumer.properties[ConfigSubset.prefixProperty] else {
+                continue
+            }
             prefixes.append(prefix + ".")
         }
 
@@ -195,23 +202,38 @@ public final class BuildEngine {
     /// `unclaimedConfigKeyReporter`'s captures — the same reasoning as
     /// `FileWildcardMatcher`'s internal-for-testing methods.
     func reportUnclaimedConfigKeys() {
-        guard let subsets = try? database.node.select(kind: ConfigSubset.kind) else { return }
+        guard let subsets = try? database.node.select(kind: ConfigSubset.kind) else {
+            return
+        }
 
         var fileNodeIDs: Set<ObjectID> = []
+
         for subset in subsets {
+
             guard let subsetID = subset.id,
                   let wires = try? database.wire.select(goingToNodeID: subsetID,
-                                                        toSymbolID: ConfigSubset.inputPort.asSymbolID())
-            else { continue }
+                                                        toSymbolID: ConfigSubset.inputPort.asSymbolID()) else {
+                continue
+            }
+
             fileNodeIDs.formUnion(wires.map(\.fromNodeID))
         }
 
         for fileNodeID in fileNodeIDs {
-            guard let unclaimed = try? unclaimedConfigKeys(inFileNodeID: fileNodeID) else { continue }
-            guard unclaimed != (lastReportedUnclaimedKeys[fileNodeID] ?? []) else { continue }
+            guard let unclaimed = try? unclaimedConfigKeys(inFileNodeID: fileNodeID) else {
+                continue
+            }
+
+            guard unclaimed != (lastReportedUnclaimedKeys[fileNodeID] ?? []) else {
+                continue
+            }
+
             lastReportedUnclaimedKeys[fileNodeID] = unclaimed
 
-            guard !unclaimed.isEmpty else { continue }
+            guard !unclaimed.isEmpty else {
+                continue
+            }
+
             let path = (try? database.node.select(nodeID: fileNodeID))?.properties["path"] ?? "config file \(fileNodeID)"
             unclaimedConfigKeyReporter("⚠️  \(path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
         }
@@ -227,7 +249,9 @@ public final class BuildEngine {
     /// Compares current error state against the last-reported state and prints only
     /// newly-appearing errors, using the same format as the `errors` command.
     private func reportIdleTimeErrors() {
-        guard let errorPorts = try? database.outputPort.selectAllErrors() else { return }
+        guard let errorPorts = try? database.outputPort.selectAllErrors() else {
+            return
+        }
 
         let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
 
@@ -273,7 +297,9 @@ public final class BuildEngine {
     public func endBatch() {
         let shouldSignal = batchLock.withLock { () -> Bool in
             batchDepth -= 1
-            guard batchDepth == 0, signalPendingInBatch else { return false }
+            guard batchDepth == 0, signalPendingInBatch else {
+                return false
+            }
             signalPendingInBatch = false
             return true
         }
@@ -290,12 +316,18 @@ public final class BuildEngine {
     /// When a batch is active, the signal is deferred until `endBatch()`.
     func signalWorkAvailable() {
         let inBatch = batchLock.withLock { () -> Bool in
-            guard batchDepth > 0 else { return false }
+            guard batchDepth > 0 else {
+                return false
+            }
             signalPendingInBatch = true
             return true
         }
-        guard !inBatch else { return }
-        Task { await workSignal.signal() }
+        guard !inBatch else {
+            return
+        }
+        Task {
+            await workSignal.signal()
+        }
     }
 
     // MARK: - Processing

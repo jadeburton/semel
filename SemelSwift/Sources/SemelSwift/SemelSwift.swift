@@ -30,8 +30,12 @@ public enum SemelSwift {
 /// formula the engine can build.
 struct SwiftPackagePlugin: ProjectBuilderPlugin {
     func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
-        guard entry.isPinned, entry.name == "Package.swift" else { return nil }
-        let fullPath      = (Path(folderPath) / entry.name).string
+
+        guard entry.isPinned, entry.name == "Package.swift" else {
+            return nil
+        }
+
+        let fullPath = (Path(folderPath) / entry.name).string
         let packageFolder = Path(fullPath).deletingLastComponent!.string
 
         // The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings

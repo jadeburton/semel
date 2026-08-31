@@ -127,11 +127,11 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
         let descriptor = ToolDescriptor(name: "clang", version: "test-clang",
                                         platform: "macOS", architecture: "arm64",
                                         recursiveHash: nil)
-        let executor = RecordingToolExecutor()
+        let executor = RecordingToolRunner()
         // Non-empty, or the result never reaches the store: interning empty content
         // short-circuits before any write.
         executor.producedFiles = ["src/hello.c.p.o": Array("OBJECT-BYTES".utf8)]
-        ToolExecutorRegistry.instance.registerTool(descriptor: descriptor,
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor,
                                                    toolExecutor: executor)
 
         let configuration = """

@@ -95,19 +95,32 @@ final class FilePlugin: CommandPlugin {
     /// wildcard enumerating its contents, so without this it would create an empty folder.
     private func expand(_ entry: FileWildcardEntry,
                         baseDirectory: String) throws -> [FileWildcardEntry] {
-        guard case .folder = entry.kind else { return [entry] }
+
+        guard case .folder = entry.kind else {
+            return [entry]
+        }
 
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: baseDirectory))
+
         let contents = try matcher.findAllMatching(pathOrWildcard: entry.path.string + "/**/*")
-            .filter { if case .file = $0.kind { return true } else { return false } }
+            .filter {
+                if case .file = $0.kind {
+                    return true
+                } else {
+                    return false
+                }
+            }
+
         return [entry] + contents
     }
 
     private func pushOne(_ entry: FileWildcardEntry, baseDirectory: String,
-                          context: any CommandContext) throws {
+                         context: any CommandContext) throws {
+
         let relativePath = entry.path
 
         switch entry.kind {
+
         case .file:
             let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath.string)
 
@@ -217,7 +230,9 @@ final class FilePlugin: CommandPlugin {
 
     private func copyOneFile(folder: NodeRecord, entry: FileWildcardEntry,
                               destinationPath: String, context: any CommandContext) throws {
-        guard case .file = entry.kind else { return }
+        guard case .file = entry.kind else {
+            return
+        }
 
         guard let fileNode = try folder.childNode(path: entry.path) else {
             context.outputError("File \(entry.path) not found in internal file system")

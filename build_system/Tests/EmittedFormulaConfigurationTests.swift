@@ -90,7 +90,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         try super.setUpWithError()
 
         DataObjectStore.shared        = DataObjectStore(storeRoot: makeTemporaryStoreRoot())
-        ToolExecutorRegistry.instance = ToolExecutorRegistry()
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
         BuildEngine.shared            = nil
 
         // Both halves of the rulebook. The parser resolves a type name and its default

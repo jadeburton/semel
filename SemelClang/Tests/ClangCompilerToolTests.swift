@@ -18,12 +18,12 @@ final class ClangCompilerToolTests: SemelClangTestCase {
                                             platform: "macOS",
                                             architecture: "arm64",
                                             recursiveHash: nil)
-    private var executor: RecordingToolExecutor!
+    private var executor: RecordingToolRunner!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        executor = RecordingToolExecutor()
-        ToolExecutorRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
+        executor = RecordingToolRunner()
+        ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
     }
 
     // MARK: - Helpers
@@ -119,7 +119,7 @@ final class ClangCompilerToolTests: SemelClangTestCase {
     }
 
     func test_missingToolNamesWhatWasRequestedAndWhatIsRegistered() throws {
-        ToolExecutorRegistry.instance = ToolExecutorRegistry()
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
 
         XCTAssertThrowsError(try makeTool().process(input: try makeInput())) { error in
             let message = String(describing: error)

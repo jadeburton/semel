@@ -33,7 +33,7 @@ enum TestGlobals {
     /// already resets `DatabaseLayer.shared` and the symbol cache.
     static func isolate() throws {
         DataObjectStore.shared        = DataObjectStore(storeRoot: makeTemporaryStoreRoot())
-        ToolExecutorRegistry.instance = ToolExecutorRegistry()
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
         BuildEngine.shared            = nil
 
         // Formula parsing resolves a node's default output port through the TypeRegistry
@@ -54,10 +54,10 @@ enum TestGlobals {
     }
 }
 
-/// A `ToolExecutor` that runs nothing.  It records what it was asked to do so a test can
+/// A `ToolRunner` that runs nothing.  It records what it was asked to do so a test can
 /// assert on the command line a tool wrapper built, and reports whatever exit code the
 /// test asked for.
-final class RecordingToolExecutor: ToolExecutor {
+final class RecordingToolRunner: ToolRunner {
 
     struct Invocation {
         let arguments: [String]

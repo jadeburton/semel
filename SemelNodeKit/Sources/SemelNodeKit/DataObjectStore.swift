@@ -80,20 +80,23 @@ public final class DataObjectStore {
     /// silently, which is exactly the wrong response to a damaged store.
     public func read(hash: String) throws -> [UInt8]? {
         let url = objectURL(hash: hash)
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
         let bytes = [UInt8](data)
 
         let actual = Sha256.hash(bytes)
+
         guard actual == hash else {
             throw ObjectStoreReadError.corrupted(expected: hash, actual: actual, path: url.path)
         }
+
         return bytes
     }
 
     /// Returns the on-disk byte count for `hash`, or `nil` if not present.
     public func size(hash: String) -> Int? {
-        let url = objectURL(hash: hash)
-        return (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+        (try? objectURL(hash: hash).resourceValues(forKeys: [.fileSizeKey]))?.fileSize
     }
 
     // MARK: - Writing
@@ -106,7 +109,10 @@ public final class DataObjectStore {
     /// subsequent writers silently leave the existing entry untouched.
     public func store(hash: String, content: [UInt8]) throws {
         let url = objectURL(hash: hash)
-        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
 
         // Every failure here is a property of the volume, not of the content being
         // stored: out of space, read-only mount, permissions. The next node would hit
@@ -131,7 +137,9 @@ public final class DataObjectStore {
     public func allHashes() -> [String] {
         var hashes: [String] = []
         let fm = FileManager.default
-        guard let shards = try? fm.contentsOfDirectory(atPath: storeRoot.path) else { return [] }
+        guard let shards = try? fm.contentsOfDirectory(atPath: storeRoot.path) else {
+            return []
+        }
         for shard in shards {
             let shardURL = storeRoot.appendingPathComponent(shard)
             guard let entries = try? fm.contentsOfDirectory(atPath: shardURL.path) else { continue }

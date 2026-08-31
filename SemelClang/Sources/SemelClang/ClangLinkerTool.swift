@@ -136,11 +136,13 @@ public struct ClangLinkerTool: Node {
         }
 
         arguments.append("-lSystem")
+
         // Link against libc++ if any object file was compiled from C++ source, or if
         // the configuration explicitly declares a C++ standard (std: 'c++17' etc.).
         let hasCxxObjects = inputs.objectFiles.contains {
             ClangPreprocessorTool.language(for: $0.filePath) == "c++"
         }
+
         if hasCxxObjects || inputs.configuration.cxx {
             arguments.append("-lc++")
         }
@@ -162,7 +164,7 @@ public struct ClangLinkerTool: Node {
         arguments.append("-o"); arguments.append("output.dylib")
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolExecutorRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         var inputFiles: [FileNameAndContent] = []
         inputFiles.append(contentsOf: inputs.libraryFiles)

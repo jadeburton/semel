@@ -57,9 +57,13 @@ public final class CommandInterpreter: CommandContext {
 
     public func handleCommand(_ command: String) throws {
         var tokens = tokenize(command)
-        guard !tokens.isEmpty else { return }
+        guard !tokens.isEmpty else {
+            return
+        }
         if tokens.first == "semel" { tokens.removeFirst() }
-        guard let verb = tokens.first else { return }
+        guard let verb = tokens.first else {
+            return
+        }
         let remaining = Array(tokens.dropFirst())
 
         do {

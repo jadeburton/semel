@@ -70,7 +70,7 @@ graph stays a privilege of the engine's own nodes.
 | `NodeValue`, `NoValueReason` | already public |
 | `DataObjectStore`, `DataToken`, `intern`/`resolve` | content-addressed storage; no graph knowledge |
 | `FileNameAndContent` | |
-| `ToolExecutor`, `ToolDescriptor`, `ToolExecutorRegistry`, `ToolOutput` | running an external tool |
+| `ToolRunner`, `ToolDescriptor`, `ToolRunnerRegistry`, `ToolOutput` | running an external tool |
 | `FileMetadata`, `FileMetadataProvider` | |
 | `Path` | |
 | `NodeError` | |

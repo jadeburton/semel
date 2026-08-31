@@ -22,7 +22,7 @@ public class DefaultTools {
     /// node's configuration.  Keeping the version in the configuration rather than
     /// following the machine is deliberate: it is what makes a toolchain upgrade
     /// invalidate the cache instead of silently reusing objects built by another compiler.
-    public static func setup(toolExecutorRegistry: ToolExecutorRegistry) throws {
+    public static func setup(toolExecutorRegistry: ToolRunnerRegistry) throws {
         for name in knownToolNames {
             guard let path = AppleClangSwiftToolchainHelper.find(name),
                   let version = AppleClangSwiftToolchainHelper.version(ofToolAt: path) else {
