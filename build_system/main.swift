@@ -14,7 +14,7 @@ import SemelClang
 var commandInterpreter: CommandInterpreter?
 
 func main() throws {
-    print("Semel 1.0 (C) 2026 Jade Burton. All rights reserved.")
+    print("Semel 0.1 (C) 2026 Jade Burton. All rights reserved.")
 
     // Composition root: the engine knows no toolchains, so this is where the ones this
     // binary ships are installed. Before start(), so discovery sees them on its first pass.
