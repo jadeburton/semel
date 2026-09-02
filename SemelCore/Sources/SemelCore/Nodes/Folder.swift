@@ -61,9 +61,9 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     ///
     /// Reads pinned state per kind in one query, exactly as `buildManifest` does, rather than
     /// building a node per child and asking it. Asking each child directly is
-    /// expensive four ways at once: whole `NodeRecord` rows with their properties decoded, a node
-    /// function constructed per child, an output-port read inside each `isPinned`, and no way
-    /// to stop at the first objection. This recurses, so that is the cost *per level* — during
+    /// expensive four ways at once: whole `NodeRecord` rows with their properties decoded, a
+    /// node constructed per child, an output-port read inside each `isPinned`, and no way to
+    /// stop at the first objection. This recurses, so that is the cost *per level* — during
     /// a delete cascade or a collection sweep, which is when whole trees come through here.
     ///
     /// Losing the polymorphism is the price, so the kind-to-port mapping is spelled out and

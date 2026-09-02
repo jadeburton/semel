@@ -3,49 +3,11 @@
 Concrete open items. `FUTURE.md` is for direction; this is for what is broken or owed.
 
 IDs are stable and never reused — reference them in commits (`closes B-07`) and in
-discussion. Status is `open`, `doing`, `done` or `dropped`; done items stay for a while so
-their reasoning is findable, then get pruned.
+discussion. Status is `open`, `doing` or `dropped`. Finished items are removed rather than
+marked done: the commit that closed one carries its reasoning, and `git log --grep=B-07`
+finds it. `Not doing` keeps the decisions that would otherwise be raised again.
 
 ## Hermeticity and determinism
-
-**B-30-SDK** `done` — **The SDK is configuration, not ambient machine state.**
-`semel.config`, in the same `key=value` format the wire already carries. The file this item
-introduced survives; how a node reaches it does not — B-42 replaced the resolution model
-underneath it, so read that item for the mechanism and this one only for what it settled.
-
-What it settled and what still holds: an SDK version is a setting written in a file, under a
-`<domain>.<node>.<key>` namespace, not something read off whichever machine happens to be
-building. `SwiftCompilerTool` and `SwiftLinkerTool` fail loudly when the machine's SDK is not
-the declared one, mirroring what `ToolRunnerRegistry` does for a pinned tool version.
-Declaring nothing keeps the previous behaviour.
-
-What B-42 replaced: the ancestor walk that asked for a file in every parent folder, the
-merge-by-depth and cross-tool inheritance that resolved it, and the per-tool
-`acceptedSettings` lists that filtered it. A node now takes its settings through a
-`ConfigSubset` selector naming one prefix in one file, and keys nobody selected are reported
-from the graph on idle rather than from a converter's `infoLog`.
-
-*Not settled:* the check compares the version string only, not the build (`26.5`, not
-`26.5 (25F70)`), because a build number is unpleasant to write in a config by hand. Two
-different builds of one SDK version are still indistinguishable.
-
-**B-01** `done` — **Audit every machine-derived input into the cache key.**
-`cacheKeyEnvironment` now records the SDK for the Swift tools, but that was one instance of
-a class. `DefaultTools` deliberately takes tool versions from the machine; environment
-variables, locale, working directory and hostname were never examined. An input that
-influences output but not the key makes two different builds collide on one entry — locally
-a stale result, on a shared cache a wrong build handed to everyone.
-*Outcome:* the engine was already hermetic by construction — `ToolRunner` replaces
-the environment rather than inheriting it, giving a fixed PATH with HOME and TMPDIR inside
-the per-run sandbox and cwd there too. Exactly one node punched through it, and does no
-longer (`SwiftPackageReaderTool`). Tool versions turned out fail-safe rather than silently
-wrong: `Toolchain.parseVersion` keeps the build id deliberately, and the registry refuses a
-tool whose reported version differs from the key's claim. Remaining gap tracked as B-17.
-Superseded in the long run by B-03, which replaces enumeration with one value.
-
-*Correction, later:* `cacheKeyEnvironment` was the wrong instrument and has been removed. It
-could stop a wrong cache *hit* but could never trigger the rebuild that produces a right
-one, because an unscheduled node never recomputes its key. See B-29 and B-30-SDK.*
 
 **B-02** `open` — **Make it hard to read outside a node's declared inputs.**
 Hermeticity is load-bearing for the whole design, and nothing currently prevents a node
@@ -80,8 +42,8 @@ version of how the SDK bug was found; belongs in the test suite, run once per no
 **B-17** `open` — **`ToolDescriptor.recursiveHash` is designed but never populated.**
 The slot exists on every tool descriptor and is read from
 `properties["toolDescriptor.recursiveHash"]`, but nothing ever sets it, so it is always nil.
-It is the intended place for a hash of the tool binary itself, which would close the
-remaining gap after B-01: two different binaries reporting the same version string
+It is the intended place for a hash of the tool binary itself, which would close the last
+gap in the cache-key audit: two different binaries reporting the same version string
 currently share a cache key. Narrow, and B-03 subsumes it.
 
 ## Swift package conversion
@@ -127,10 +89,6 @@ Depends on B-26.
 
 **B-07** `open` — **Registry dependencies are ignored.**
 `TODO:` at `SwiftFormulaConverter.swift:189`. Neither resolved nor reported.
-
-**B-08** `done` — **Unhelpful stall when a vendored package is missing.**
-The converter reports `awaiting external packages: input:/…/GRDB.swift` without naming the
-originating URL or saying that the package must be vendored there.
 
 **B-09** `open` — **`.library(type: .automatic)` is always built dynamic.**
 No static archive support; every library product becomes a `.dylib` by assumption rather
@@ -199,33 +157,6 @@ entirely in-process.
 
 ## Performance
 
-**B-16** `done` — **Folder manifest rebuilt a database query per child.**
-Measured: pushing N files into one folder was O(N²) queries, because a manifest is rebuilt
-on *every* child change and each rebuild asked every child for its pinned state
-individually. Now one query per kind. 50/100/200 files went 0.30/0.99/3.39s → 0.14/0.34/0.84s,
-and growth per doubling fell from ~3.4× to ~2.4×. Agreement with each type's own `isPinned`
-is pinned by `test_manifestPinnedStateAgreesWithEachChildsOwn`. See B-18 for what remains.
-
-**B-18** `done` — **Manifest rebuilds were dominated by two avoidable costs.**
-Measured rather than assumed, and the assumption in this item's original text was wrong:
-JSON encoding, hashing and storing the manifest are only 16% of a rebuild. The cost was
-`buildManifest` itself — 84%. Within that, `pinnedStates` was 70%, from binding a folder's
-200 children as an `IN` list; and fetching whole `NodeRecord`s decoded every child's properties
-only to discard them. Fixed by projecting child summaries, joining on `parentNodeID`
-instead of an `IN` list, and adding the missing index on `Node.parentNodeID` — which was
-unindexed, so every tree walk in the system was a full table scan.
-
-Pushing into one folder, cumulative across B-16 and B-18:
-
-| files | original | after B-16 | after B-18 |
-|-------|----------|-----------|-----------|
-| 50    | 0.30s    | 0.14s     | 0.13s     |
-| 100   | 0.99s    | 0.34s     | 0.28s     |
-| 200   | 3.39s    | 0.84s     | 0.63s     |
-| 400   | —        | —         | 1.58s     |
-
-Still super-linear at ~2.3× per doubling. See B-25.
-
 **B-25** `open` — **A folder manifest is still rebuilt on every child change.**
 Each rebuild is O(children) and there are O(children) of them, so a single-folder push stays
 quadratic no matter how cheap each rebuild gets — and it is 2 rebuilds per file, since both
@@ -240,80 +171,12 @@ change here that can actually break correctness rather than just speed.
 cache must key on the current `DatabaseLayer` identity, or it goes stale when the database
 is swapped — which every test does. Not measured yet; measure before optimising.
 
-**B-24** `open` — **`Folder.canBeDeleted` instantiates every child's node function.**
-`TODO: slow` at `Folder.swift:63`. Same shape as B-16 but on the delete path.
-
-**B-28** `done` — **Split the toolchains out of the engine.**
-`SemelNodeKit` (the node-authoring API), `SemelSwift` and `SemelClang`, with the toolchain
-packages depending on NodeKit and *not* on the engine — the absent arrow is what makes the
-engine agnostic. Design and phasing in
-`docs/superpowers/specs/2026-08-15-semel-package-split-design.md`.
-
-Measured first: across all nine toolchain nodes there is exactly one reach into the graph
-(`Folder.inputFileSystemName`), so the API needs no graph access and is smaller than it
-looks. Two seams to open — `BuildEngine.registerTypes()` and `ProjectFinder`'s plugin array
-— plus a kind-ID allocation rule, since existing IDs cannot be renumbered without orphaning
-live databases.
-
-**Step 1 done** (`b49e2b5`…`435fd5a`). SemelNodeKit exists and holds 13 files: the node
-protocols, ProcessInput/Output, NodeValue, NodeDescriptor, NodeError, TypeRegistry, Path,
-DataObjectStore, DataToken, ToolRunner, Toolchain, FileMetadata, GraphShapeArg and
-FolderManifest. 63 tests; depends only on SemelDatabaseModels.
-
-*Since:* `GraphShapeArg` has gone back to SemelCore as `GraphShapeProperty`. It was moved
-here because `InputlessNodeFunction.graphShapeArgs` named it in the protocol, so a node
-function could not be declared without it; that requirement no longer exists, and NodeKit
-now exports no GraphShape type at all.
-
-Two traps worth knowing before step 3. An `internal` overload becomes *invisible* rather
-than ambiguous across modules, so `PolySerializable.toJSON` silently lost to
-`Encodable.toJSON` and produced JSON with no `kind` — 51 runtime failures, no compile
-error. And a stale build plan makes a dependency package's new or changed files invisible;
-`rm -f <pkg>/.build/build.db <pkg>/.build/plan.json` when errors contradict a fix.
-
-**Step 2 done.** `ProjectBuilderPlugin` and a `ProjectDiscovery` registry now live in
-SemelNodeKit — not the engine — because a toolchain package must be able to contribute a
-project kind without depending on the engine, which is the whole direction of the split.
-`ProjectFinder` reads the registry instead of a hardcoded array. `registerTypes()` is split
-into `registerEngineTypes()` and a `registerBuiltInToolchains()` whose existence measures
-how far the split has got: it disappears when steps 3 and 4 land.
-
-**Step 3 done.** SemelSwift holds the four Swift node types, SwiftToolSupport and
-SwiftPackagePlugin, and depends on SemelNodeKit but *not* on the engine — which is now
-provable: no Swift symbol appears anywhere in SemelCore's sources. `semel`'s
-main.swift is the composition root and calls `SemelSwift.register()`.
-
-Four more things turned out to be API rather than engine, each found by SemelSwift failing
-to compile without them: the protocol's *default implementations* (invisible across a
-module boundary, so every requirement came back as "does not conform"), the
-`[String: String](plainText:)` configuration format, `asOutputNodeValue`, and
-`FileSystemName` replacing the single `Folder.inputFileSystemName` reference.
-
-SemelSwift has its own test harness — no database, no BuildEngine, no graph — which is the
-evidence the seam is in the right place. `RecordingToolRunner` is duplicated from the
-engine's tests; a testing-support module for SemelNodeKit is the tidier answer once
-SemelClang wants one too.
-
-**Step 4 done.** SemelClang holds the three Clang nodes and IncludeFinder. It contributes
-no project kind — a C project is described by a `.fmla` file, which the engine recognises
-itself because a formula names no toolchain. `registerBuiltInToolchains()` is deleted: the
-engine now registers only its own types and cannot name a toolchain at all.
-
-Three of the engine's own test files had been reaching for `ClangCompilerTool` as a
-convenient sample node. They now use `SampleTool`/`OtherSampleTool` from `SampleNodes.swift`,
-which is what they should always have used — their subjects are the cache-key algorithm,
-the type registry and unrecoverable-error handling, none of which has anything to do with C.
-The golden cache-key value had to be re-recorded, since a node's type name is part of its
-key.
-
-**Step 5 done.** `BuildSystemCore` → `SemelCore`, `DatabaseModels` → `SemelDatabaseModels`,
-`BuildSystemCLI` → `SemelCLI`, `BuildSystemTestCase` → `SemelCoreTestCase`. 80 files
-rewritten.
-
-Still carrying the old vocabulary, deliberately out of scope: the root package is named
-`build_system` and the CLI's sources live in `build_system/`. Renaming those changes the
-repository's own layout and the C1 test fixtures that reference those paths, which is a
-wider blast radius than a module rename.
+**B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
+Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
+stops at the first objection, so leaf children cost no instantiation at all. What remains is
+the recursion — each unpinned subfolder is built as a `Folder` to descend into it, so a deep
+tree still pays one node per level. Small next to what it replaced; possibly not worth
+fixing. Verify against a deep tree before spending anything here.
 
 ## Server
 
@@ -327,44 +190,7 @@ Role 3 is still wanted even with local building, because the point is a build th
 in the background regardless of which CLIs are open — local CLI to local server. Write it as
 if multiple users might share it, without the full auth apparatus for now.
 
-**B-31** `done` — **Fix `ClangLinkerTool.asProcessOutput` port constants.**
-Writes its values under `ClangPreprocessorTool.output` and `.infoLog` rather than its own.
-Works only because all four constants are the same strings.
-
-**B-42** `done` — **How configuration works, across both toolchains.**
-Design: `docs/superpowers/specs/2026-08-30-semel-configuration-design.md`.
-
-*The shape.* Inheritance is dead in both dimensions — no ancestor walk, no cross-tool
-defaults. A configuration is one file, copied and edited rather than composed; this tree
-carries six byte-identical copies, one beside each `Package.swift`, because discovery builds
-each package separately. Every key lives under a global `<domain>.<node>.<key>` namespace
-designed so a single master config can hold everything without collision, with `<node>`
-derived from the node type name and pinnable when a rename would otherwise break users.
-
-A node reads configuration through a `ConfigSubset` selector that names a prefix and takes the
-file on a wire — so identity is *which file and which slice*, and the values themselves are
-never in a searchKey. That fixes the original defect (settings as identity, orphaning cache on
-every edit) and gives SemelClang a route to configuration for the first time.
-
-On the 10,000-compiler problem it delivers less than the design first claimed, and the
-difference is worth keeping written down. Editing the file still reschedules everything
-downstream: the write marks the whole subgraph pending before the selector reprocesses, so the
-selector's own write is `pending → value` and the cascade does not stop. What holds still is
-node identity, so the woken compilers are the same nodes and hit cache. 10,000 reschedules and
-cache lookups remain; 10,000 recompiles do not.
-
-It also dissolves `acceptedSettings` — the prefix in the graph is the accepted set — and
-recovers typo reporting in a better form, by asking the graph which prefixes anyone selected
-and reporting the keys nobody claimed on the engine's idle hook.
-
-*Costs accepted knowingly:* `sdkVersion` written once per node that reads it, no per-target
-overrides (which would be most-specific-wins and therefore inheritance again), and one config
-file per package with nothing but copying to keep them in step.
-
-*Also closed by this:* the hardcoded fallbacks at `ClangLinkerTool.swift`,
-`SwiftCompilerTool.swift` and the `std` default in the two Clang source stages. There are no
-default values anywhere: a missing setting fails naming the key to write, because a literal in
-the binary silently changes what a previous build meant when Semel is upgraded.
+## Design, correctness and code quality
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
@@ -412,101 +238,49 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
-**B-44** `open` — **Naming: what the vocabulary calls things, and where it disagrees with
-itself.**
-From a survey of the type inventory and term counts. The counts come from that survey and are
-not independently checked, except where noted; the judgements are worth arguing with.
+**B-44** `open` — **Naming: where the vocabulary still disagrees with itself.**
+The useful test is not "is this term coined?" — coining is cheap to learn once — but **"does
+it disagree with itself, or does it mislead?"** That ranks invented-but-consistent names low
+and inconsistent ones high.
 
-The useful test turned out not to be "is this term coined?" — coining is cheap to learn once
-— but **"does it disagree with itself, or does it mislead?"** That ranking puts the invented
-names lower than expected and the inconsistent ones higher.
-
-*Self-contradiction: one concept, two names.* No design question attached, so these are the
-cheap ones.
-- **`Wildcard` (47) vs `glob` (46)**, in the same files. Verified firsthand:
-  `ProjectBuilder.globMatch` calls `WildcardSegment.matches`, a mismatch introduced by
-  `bae6a37` while removing a different duplication. `glob` is the standard term and already
-  has equal footing.
-- **`DataToken` (7) vs `DataObjectHash` (52)** — `DataToken` is literally a typealias for
-  `DataObjectHash`: the *less* descriptive name wrapping the more descriptive one. Neither is
-  standard. This is a **digest** (Git calls it an OID, Nix a store hash), and "token" suggests
-  lexing or opacity rather than content addressing.
+*What is left.*
 - **The config vocabulary** — `Configuration` (a node type), `ConfigSubset` (another),
-  `ConfigurationText`, `semel.config`, `NodeFunctionDescriptor`. Five words circling one area.
-  B-42 settled the model and deleted `ConfigSettings` and `ToolSchema`, but it added
-  `ConfigSubset` — named as a placeholder, and explicitly left to be renamed here.
+  `ConfigurationText`, `semel.config`. Four words circling one area. `ConfigSubset` was named
+  as a placeholder and explicitly left to be renamed; the `-er` family (`ConfigSelector`)
+  would match `ConfigMerger`, `ProjectBuilder`, `ProjectFinder`. Renaming it now costs users
+  an edit, since both example projects name it in their `.fmla` — so it gets cheaper never.
+- **`isPinned` (26)** — the sharpest catch and deliberately declined. *Pinned* means "cannot
+  be moved" in memory management, where the meaning here is "held alive by user intent rather
+  than by references" — a **GC root**. `isRooted` is more accurate, but only to a reader
+  already thinking in collector terms, and the current name is internally consistent and well
+  explained. Revisit only if a real collector lands.
 
-*Misleading about mechanism.*
-- **`NodeFunction`** overpromises. It is not a function: it is a stateful wrapper with
-  lifecycle callbacks (`didCreate`, `canBeDeleted`, `onChildAdded`), and one of its methods
-  happens to be a transform. The dataflow term is *operator*. Note `3a0d68e` already
-  introduced "source" for the no-input case — half of the standard *source / operator / sink*
-  triad — so `NodeOperator` would finish a vocabulary already started. (The weaker argument,
-  that `process` is impure because it returns wiring requests, does not hold: returning
-  expectations is exactly what keeps wiring declarative instead of a side effect. The real
-  impurities are elsewhere, and are B-43's subject.)
-  **Settled differently.** `NodeOperator` was rejected: *operator* renames the transform and
-  drops the ports and lifecycle that are the type's actual substance. `NodeType`, `NodeKind`
-  and `NodeDefinition` all mislead for a different reason — the type is instantiated once per
-  node, not once per kind, so a name denoting a category is wrong. What the type is, is a node.
-  So it takes the name outright and the row becomes `NodeRecord`: the thing with ports and a
-  lifecycle *is* the node, and the row is a record of it. `StaticFile: Node` then needs no
-  explanation, where `StaticFile: NodeFunction` needed a sentence.
-- **`ToolRunner`** collides with Swift's own `Executor`/`SerialExecutor` in a codebase that
-  uses `TaskGroup`, so a reader may expect scheduling and isolation where it means "run a
-  binary in a sandbox". **`ToolRunner`**, or Bazel's *spawn runner*. The concrete type is
-  already `LocalFileSystemTool` and says nothing about executors, so the protocol is the odd
-  one out.
-- **`isPinned` (26)** — the sharpest catch. In memory management *pinned* means "cannot be
-  moved". The meaning here is "held alive by user intent rather than by references", which in
-  a system with a real collector is exactly a **GC root**. `isRooted` is both standard and
-  more accurate.
-
-*Coined but clear — leave alone.* `GraphShape` is defensible; its nearest standard analogue is
-Nix's **derivation** (a canonical description of a step plus its transitive inputs, whose hash
-is its identity). Worth noting it names two things, the tree (`GraphShapeNode`) and the
-rendered string stored as `searchKey`, a split the code has and the names do not. `Formula`,
-`Wire`, `Port`, `Node`, `intern()` and `ghost` are all fine; `intern()` is exactly its
-standard meaning.
-
-*One argument knocked down.* `Expectation` is the most-used coined term at 198 occurrences,
-and the obvious objection is the XCTest collision — but `expectation(` appears zero times in
-this repo, so that clash is theoretical rather than lived. Bazel's term for an action
-discovering more inputs mid-execution is *discovered inputs*. At 198 uses and no live
-collision this is the worst effort-to-benefit on the list.
+*Two arguments already knocked down, so they are not re-raised.* `Expectation` (198 uses)
+looks like it collides with XCTest, but `expectation(` appears zero times here, so the clash
+is theoretical; at that many uses it is the worst effort-to-benefit on the list. `GraphShape`
+is defensible — its nearest standard analogue is Nix's **derivation** — though it does name
+two things, the tree (`GraphShapeNode`) and the rendered string stored as `searchKey`, a split
+the code has and the names do not.
 
 *What to do.* A **glossary in `AGENTS.md`, not a rename sweep**: Semel term → nearest standard
 equivalent → *how it differs*. The third column is the point, because a borrowed name imports
-its home semantics — call a `NodeFunction` an "action" and a Bazel reader assumes hermeticity
-and one-shot scheduling, neither of which holds here. False familiarity is worse than
-unfamiliarity.
+its home semantics — call a node an "action" and a Bazel reader assumes hermeticity and
+one-shot scheduling, neither of which holds here. False familiarity is worse than
+unfamiliarity. Then rename opportunistically, when already in the file.
 
-Then rename opportunistically, when already in the file. Cost data point: renaming
-`GraphShapeArg` to `GraphShapeProperty` (`a8e28cb`) took a full compile-error sweep, two test
-files and two doc updates. Seven of those for their own sake is a bad trade. The exceptions
-worth doing deliberately are the ones with no design question behind them: the `Wildcard`/
-`glob` split and the `DataToken` alias — and `nudge`, which is only 2 occurrences if it should
-ever become `invalidate`.
+*Cost data, from the renames already done.* The compiler verifies every type site and catches
+almost nothing; the damage lands in prose and in compound identifiers. Comments went wrong
+three distinct ways — concept read as type, SQL identifier read as a Swift path, grammar
+notation read as a type reference — and a substring match turned `fromNodeFunction` into
+`fromNode`, colliding with a variable already named that. Inside a quoted string, prose must
+be left alone while `\(interpolations)` must be renamed, so no single rule gets both right.
+Budget a reading pass, not a sweep.
 
-*Done.* `Wildcard`/`glob` (kept `Wildcard`, eliminated `glob`), the `DataToken` alias
-(deleted, file now `Interning.swift`), and the `Node` swap in two phases: `Node` →
-`NodeRecord`, then `NodeFunction` → `Node` with `NodeFunctionDescriptor` → `NodeDescriptor`,
-`nodeFunction()` → `makeNode()` and `NodeFunctions/` → `Nodes/`.
+*Convention in force.* Locals are named after their type in camelCase — a `NodeRecord` is
+`nodeRecord`, a `Node` is `node` — except where a name says *which* one (`toNode`, `fromNode`,
+`child`, `consumer`, `folder`), which is the divergence worth keeping.
 
-Cost data point, and the reason the two-phase split was right: the compiler verified every
-type site and caught nothing that mattered, while the damage landed in prose and in compound
-identifiers. Comments went wrong three distinct ways — concept read as type, SQL identifier
-read as a Swift path, grammar notation read as a type reference — and a substring match
-turned `fromNodeFunction` into `fromNode`, colliding with the record already named that. Only
-the collision was a compile error; the rest needed reading. Assume any future rename here
-costs a prose audit, not a sweep.
-
-Locals follow the type: a `NodeRecord` is `nodeRecord`, a `Node` is `node`. Names that say
-*which* node — `toNode`, `fromNode`, `child`, `consumer`, `sourceNode`, `folder` — keep their
-role name, which is the divergence the convention allows for.
-
-*Still open.* `ToolRunner` → `ToolRunner` and `ConfigSubset` are untouched; `isPinned` is
-deliberately kept. `makeNodeCast` (`NodeSupport.swift`) has no callers.
+*Loose end:* `makeNodeCast` (`NodeSupport.swift`) has no callers.
 
 **B-45** `open` — **Database write failures are not classified as unrecoverable.**
 `UnrecoverableError.swift` used to claim they were; `db5fcb7` corrected the claim rather than
@@ -569,9 +343,9 @@ is in scope at all — `swift-format` is a different tool with a different answe
 both is how a repo ends up with two opinions about the same line.
 
 **B-47** `open` — **The SDK is declared but not an input.**
-From a TODO at `SwiftCompilerTool.swift:169`, whose specific ask B-30-SDK already answered:
-the setting does now live in a `semel.config` inside the input file system. What it was
-pointing at does not.
+From a TODO at `SwiftCompilerTool.swift:169`, whose specific ask is already answered — the
+setting does now live in a `semel.config` inside the input file system. What it was pointing
+at does not.
 
 `swift.sdkVersion` is *checked*, not *used*. `verifySDKVersion` compares the declared string
 against what `xcrun` reports and fails loudly on a mismatch, which catches the wrong machine
@@ -594,9 +368,9 @@ B-03 is the intended answer — a container digest stands in for the whole envir
 independent piece of work.
 
 *Narrower thing worth doing sooner:* the declared version is compared as a version string only
-(`26.5`, not `26.5 (25F70)`), so two builds of one SDK version are indistinguishable — already
-noted as unsettled under B-30-SDK. Including the build identifier costs nothing and closes the
-gap that a check can close.
+(`26.5`, not `26.5 (25F70)`), so two builds of one SDK version are indistinguishable. The build
+number was left out because it is unpleasant to write into a config by hand; including it costs
+nothing and closes the gap that a check can close.
 
 **B-48** `open` — **`clang.*.std` is one key for a whole package, whatever language a file is.**
 `ClangCompilerToolConfiguration.std` is a single value fed from one `clang.compiler.std` key, and
@@ -617,19 +391,6 @@ as an unspecified C++ one. Both are mitigated only by the pinned `toolDescriptor
 Approach: separate keys — `clang.compiler.cStandard` and `clang.compiler.cxxStandard` — each
 required when a file of that language is compiled. Also worth revisiting `language(for:)`, which
 misclassifies `.C` (uppercase, conventionally C++) and `.mm`.
-
-## Closed
-
-**B-20** `done` — SDK is in the Swift tools' cache key (`e6ca4cd`).
-**B-21** `done` — Object hashes verified on read (`7f59a92`).
-**B-22** `done` — Vendored static archive linked into the product; `libsqlite3.dylib`
-removed from the tree.
-**B-23** `done` — `SwiftPackageReaderTool` no longer overrides HOME and TMPDIR back to the
-real machine, closing the only hole in the executor's sandbox.
-**B-27** `done` — Product created/deleted events are decided by path in ProjectBuilder
-(`ProductPresence`), not by OutputFile node lifecycle. Node identity includes static wiring,
-so an OutputFile is deleted and recreated whenever anything upstream changes; reporting from
-there announced a deletion every time a file was merely rebuilt.
 
 ## Not doing
 
