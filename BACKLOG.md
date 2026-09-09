@@ -119,15 +119,42 @@ Depends on B-26.
 No static archive support; every library product becomes a `.dylib` by assumption rather
 than by choice.
 
-**B-10** `open` — **Publish only final products.**
+**B-10** `open` — **Publish only final products.** *Do after B-50.*
 `libSemelCore.dylib` and friends appear in `output:` though they are internal. A
 product is an intermediate iff another discovered package consumes it — roots of the
 dependency DAG are the deliverables. Nesting is *not* the right test: it misclassifies
-`MyLibrary`, a sibling of `MyApp` consumed by it. Implementation is one boolean:
-`SwiftFormulaConverter` already resolves its external package paths during its BFS, so it
-can expose them; `ProjectFinder` unions them into an "is depended upon" set and sets
-`publishProducts: false` on those `ProjectBuilder`s. Products still build and cache; they
-just get no `OutputFile`.
+`MyLibrary`, a sibling of `MyApp` consumed by it.
+
+Plan, agreed 2026-09:
+1. `SwiftFormulaConverter` gains a `dependencies` output port. Its BFS already accumulates
+   `visitedPaths`; publish it (sorted, minus the root) instead of dropping it.
+2. `ProjectBuilderPlugin` gains `dependencyListExpectation(forEntry:inFolder:)`, default
+   nil — a `.fmla` project declares no package dependencies. `expectationString` gains a
+   `publishesProducts: Bool` parameter so the *plugin* renders the property into the
+   `ProjectBuilder` shape; `ProjectFinder` cannot inject a property into an expectation
+   string it treats as opaque.
+3. `ProjectFinder` wires the dependency lists into a new dynamic port, unions them, and
+   re-emits builder expectations with `publishProducts: 'false'` for any builder whose
+   folder is in the union.
+4. `ProjectBuilder.process` skips building `productExpectations` when the property is
+   false.
+
+Corrections to what this item used to claim. The depended-upon package's products do not
+"still build" — the `OutputFile` wrappers lose their consumer and are collected, and so are
+that package's own linker nodes. Its *targets* still compile, because the consumer's
+formula names the same compiler shapes and searchKey matching shares the nodes; only the
+separate artifacts stop existing, which is the point.
+
+`publishProducts` is a property, so it is part of the searchKey and flipping it *replaces*
+the builder node. On a cold graph, builders are created publishing and replaced when the
+converters report their dependencies — all inside one drain, before the first settle. With
+B-50, the flap is therefore invisible by construction: the settle diff never contains the
+retracted files. That is the reason for the ordering, and why the publish-then-retract
+design (chosen over withholding builders until dependencies are known, which couples every
+package's discovery to the health of every other) is acceptable at all.
+
+Granularity is per package, not per product: a depended-upon package that also vends an
+executable loses that too. Acceptable until a real case shows up.
 
 **B-26** `open` — **Recursive content hash for a folder tree.**
 `FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
@@ -213,7 +240,9 @@ One binary, three modes, sharing a wire protocol:
    `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`
 Role 3 is still wanted even with local building, because the point is a build that continues
 in the background regardless of which CLIs are open — local CLI to local server. Write it as
-if multiple users might share it, without the full auth apparatus for now.
+if multiple users might share it, without the full auth apparatus for now. The artifact
+events clients subscribe to are B-50's settle diffs; per-user output subtrees (FUTURE.md)
+make a subscription a path prefix.
 
 ## Design, correctness and code quality
 
@@ -249,6 +278,7 @@ decide whether to print a status change. The engine already computes exactly tha
 `writeToOutputPort` returns false when the value is unchanged. Move change-notification to the
 engine — which has to happen anyway when printing becomes structured logging aimed at showing
 system *state* rather than a flowing event log — and the self-read has no reason to exist.
+B-50 is exactly that move; this case needs no work of its own.
 
 *A correction to our own comment.* `Folder.pinnedOutputPort` is marked HACK for storing state
 in a "fake" output. That is too harsh. Putting the state in an output port is what keeps it
@@ -416,6 +446,45 @@ as an unspecified C++ one. Both are mitigated only by the pinned `toolDescriptor
 Approach: separate keys — `clang.compiler.cStandard` and `clang.compiler.cxxStandard` — each
 required when a file of that language is compiled. Also worth revisiting `language(for:)`, which
 misclassifies `.C` (uppercase, conventionally C++) and `.mm`.
+
+**B-50** `open` — **Report artifact changes at idle, as the difference between settles.**
+The system is functional, so the internal steps are hidden and the user-visible story of a
+push is: *the graph settled; these artifacts appeared, changed, disappeared*. Today the only
+artifact report is `OutputFile` printing its own status transitions mid-flight — it reads
+its previous output port to decide whether to print (the self-read B-43 wants dissolved),
+reports intermediate mutations a functional system should hide, and formats differently
+from the error report.
+
+Semantics: only the diff between the last settle and this one. An artifact that went
+`value → pending → same value` reports nothing. Appeared / content-changed / disappeared
+only; error states stay with the existing idle error report.
+
+Mechanism — designed for thousands of artifacts, never O(all) on the steady path:
+- An `ArtifactSnapshot` table (path, last-reported content hash) in the *same* database as
+  the graph, deliberately: a client told "appeared" must find the artifact, so the report
+  and the state it describes commit together. This is the durable "last conceptual
+  snapshot".
+- Candidates at settle come from the write path: a small locked in-memory set of touched
+  `OutputFile` paths. Touched is not changed — `writePendingToAllOutputsOfNode` means every
+  woken node touches — so each candidate is compared against its snapshot hash, which is
+  what makes an identical rebuild silent. The first settle after launch reconciles the
+  whole table once, since a restart loses the set.
+- Disappeared is captured where `OutputFile` nodes die (`processPendingDeletions`); no row
+  survives to be compared, so it is the one genuinely event-shaped case.
+- Output goes through one reporter closure (test-capturable, like
+  `unclaimedConfigKeyReporter`). `OutputFile.process` stops printing entirely, which
+  dissolves the third B-43 case and closes the old two-formats complaint for artifacts the
+  way `ErrorReport` closed it for errors.
+
+Deliberately not built yet, but shaped for it: these settle diffs are the events `semelserv`
+(B-30) will stream to subscribed clients — `(generation, path, kind, hash)` with a retention
+window, full resync from the snapshot table for a client beyond the window. Per-user output
+subtrees (FUTURE.md, settled direction) make a subscription a path prefix, which is what
+makes "the outcome of *your* push" well-defined with concurrent users.
+
+Presentation at scale is the one open question: a cold build of a 10,000-file project
+produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
+the threshold when wiring the terminal reporter; the mechanism is indifferent to it.
 
 ## Not doing
 
