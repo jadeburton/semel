@@ -24,4 +24,23 @@
 
 - Rollback of all input file changes if any Node enters an error state as a result, thus guaranteeing the build is always green.
 
+## Settled direction
+
+- Multi-user: each user (and branch) gets a subtree of the one input/output file system —
+  `input:/jade/my-branch/src/…` — and the graph keeps one node per path. Deduplication
+  across users happens at the *cache*, not at node identity: same content, same
+  project-relative path, same settings → same cache key → one compilation. Prerequisites,
+  in order: canonical sandbox layout plus `-ffile-prefix-map`/`-debug-prefix-map` so
+  outputs are mount-independent; mount prefix stripped from cache-key wire names (the
+  project-relative part stays — that distinction is the Cache.swift path-collision lesson);
+  a shared cache with real eviction and GC (B-14, B-15, B-30 role 1).
+
+- A fully content-addressed graph (immutable nodes, git-style blobs/trees/refs, graph
+  doubling as its own cache — the Nix/Buck2 model) was considered for multi-user dedup and
+  declined. It shares bookkeeping as well as compute, but every edit appends nodes forever
+  where the mutable graph updates in place, and it moves incrementality out of the resident
+  graph into an evaluation phase — against the core vision of a living graph that reacts to
+  pushes. Revisit only if per-user node counts actually hurt after the cache-level dedup
+  exists.
+
 

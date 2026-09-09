@@ -46,6 +46,31 @@ It is the intended place for a hash of the tool binary itself, which would close
 gap in the cache-key audit: two different binaries reporting the same version string
 currently share a cache key. Narrow, and B-03 subsumes it.
 
+**B-49** `open` — **Tool outputs must not depend on where the inputs are mounted.**
+Compilers embed the invocation path in what they produce — DWARF debug info, `__FILE__`
+expansions, the output filename derived from the source path, diagnostics on the log ports.
+That is why the cache deliberately keys on wire *names* as well as values (`Cache.swift`:
+content-only keys once returned another file's build), and it is what blocks cache reuse
+across users once the input file system is subdivided per user and branch
+(`input:/jade/my-branch/src/…`, see FUTURE.md "Settled direction"): identical trees at
+different mounts produce byte-different artifacts, so they can never share an entry.
+
+The distinction that preserves the old lesson: the *project-relative* path is a real input
+(module names, includes, output filenames) and stays everywhere; only the *mount prefix* is
+noise and must go. Three parts, in order:
+1. **Canonical sandbox layout.** Materialise inputs in the per-run sandbox at a fixed root
+   rather than under the full `input:` path, so the mount prefix never reaches the tool's
+   command line. Needs a survey of how `LocalFileSystemTool` lays paths out today.
+2. **Prefix maps for what still leaks**: `-ffile-prefix-map`/`-fdebug-prefix-map` (clang),
+   `-debug-prefix-map` (swiftc), mapping the sandbox root to a stable name.
+3. **Mount-independent cache keys.** Strip the mount prefix from wire names in
+   `buildCacheKeyPartFromOneInput`, keeping the project-relative remainder. Open design
+   question: where a node learns its project root — likely the same channel as
+   `outputFolder`.
+Verification is a B-05-shaped test: build one tree at two mounts, require byte-identical
+artifacts and equal cache keys. Do 1–2 before 3 — mount-independent keys with
+mount-dependent outputs is exactly the wrong-hit bug reintroduced.
+
 ## Swift package conversion
 
 **B-06** `open` — **Lock vendored dependencies by content hash.**
