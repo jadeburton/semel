@@ -459,6 +459,32 @@ Semantics: only the diff between the last settle and this one. An artifact that 
 `value → pending → same value` reports nothing. Appeared / content-changed / disappeared
 only; error states stay with the existing idle error report.
 
+Trigger — quiescence of a *scope*, not global idle. In a multi-user graph (FUTURE.md) the
+graph may never be globally idle: other users' pushes keep it busy continuously, and a
+report gated on global settle would starve. The trigger is per output subtree: snapshot
+`output:/jade/…` once no more changes can flow into it — no scheduled node (nor one in the
+current processing batch) can reach it, and no pending deletion targets it. That is
+decidable because in-flight work is explicit, and a conservative answer errs safely: it can
+only delay a report, never produce a wrong one. Global idle is the single-user degenerate
+case — so build the report against a scope (path prefix + quiescence signal), wire it to
+the global settle today, and multi-user later supplies partitioned scopes without the
+report changing.
+
+Sketch for the partitioned signal, recorded so it is not re-derived: reachability tags
+propagated along the cascade. Per-user paths make partitions structurally disjoint — every
+shape from `input:/jade/…` to `output:/jade/…` carries the prefix — except nodes whose
+shapes coincide across users (a selector over a shared config file is *one* node, by
+searchKey), which conservatively tag as all partitions. A push tags its targets with the
+partitions they can reach, every schedule caused by a write inherits tags, and a
+per-partition counter of in-flight tagged nodes hitting zero is that partition's settle.
+O(1) per schedule; counters in memory; a restart marks every partition dirty, which the
+first-quiescence reconciliation below already absorbs.
+
+Same starvation, noted while here: deferred deletions also wait for global idle
+(`processPendingDeletions` runs between drains), so under continuous load the *disappeared*
+half of this report starves with them. Whether deletions can run per-partition is open —
+safe only where partitions share no nodes, which a shared config area breaks.
+
 Mechanism — designed for thousands of artifacts, never O(all) on the steady path:
 - An `ArtifactSnapshot` table (path, last-reported content hash) in the *same* database as
   the graph, deliberately: a client told "appeared" must find the artifact, so the report
