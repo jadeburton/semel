@@ -41,6 +41,14 @@ public struct SampleTool: Node {
         .init(outputValues: [Self.output: .value(try "result".intern())],
               inputWireSpecs: [:])
     }
+
+    /// What this tool claims to read from outside its inputs. Nil, as for most nodes,
+    /// unless a test sets it — CacheTests uses it to pin how the hook reaches the key.
+    static var cacheKeyMaterialForTests: String?
+
+    public func cacheKeyMaterial() throws -> String? {
+        Self.cacheKeyMaterialForTests
+    }
 }
 
 /// A second type, for the tests that need two that must not share a cache key or a kind.

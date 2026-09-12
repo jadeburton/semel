@@ -145,6 +145,34 @@ final class CacheTests: SemelCoreTestCase {
                           "the node type is part of the key")
     }
 
+    // MARK: - What a node reads from outside its inputs
+
+    /// B-47. A tool that reads the machine — the Swift tools compile against whatever is
+    /// behind `-sdk` — declares a fingerprint of what it read through `cacheKeyMaterial`,
+    /// and the key changes with it. Nil, the default, adds nothing, which is what keeps
+    /// the pinned key format above intact for every node that has no such material.
+    func test_aNodesCacheKeyMaterialIsPartOfTheKey() throws {
+        let tool = try makeCompilerNode()
+        let input = try makeInput()
+        defer { SampleTool.cacheKeyMaterialForTests = nil }
+
+        SampleTool.cacheKeyMaterialForTests = nil
+        let without = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        SampleTool.cacheKeyMaterialForTests = "sdk=abc"
+        let withOne = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        SampleTool.cacheKeyMaterialForTests = "sdk=def"
+        let withAnother = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        SampleTool.cacheKeyMaterialForTests = "sdk=abc"
+        let withOneAgain = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        XCTAssertNotEqual(without, withOne, "material the node reads belongs in the key")
+        XCTAssertNotEqual(withOne, withAnother, "different material, different key")
+        XCTAssertEqual(withOne, withOneAgain, "the same material gives the same key")
+    }
+
     // MARK: - Round trip
 
     func test_savedOutputsComeBackForTheSameKey() throws {
