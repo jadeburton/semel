@@ -197,13 +197,12 @@ entirely in-process.
 
 ## Performance
 
-**B-25** `open` — **A folder manifest is still rebuilt on every child change.**
-Each rebuild is O(children) and there are O(children) of them, so a single-folder push stays
-quadratic no matter how cheap each rebuild gets — and it is 2 rebuilds per file, since both
-`onChildAdded` and `onChildContentChanged` fire. The fix is to stop rebuilding per change:
-mark the folder dirty and flush before the next processing pass. Deliberately not attempted
-yet — manifest freshness is relied on between mutation and processing, so this is the one
-change here that can actually break correctness rather than just speed.
+**B-53** `open` — **`rm` of a large folder is still quadratic.**
+B-25 made a push mark the folder dirty and rebuild its manifest once (3000 files: 45 s to
+5 s), but `onChildDeleted` still rebuilds at once, because the folder's self-delete check
+follows it — so a large `rm` rebuilds the parent manifest per deleted child, the way push
+used to. Same fix shape if it ever matters: mark dirty, and move the self-delete check to
+the flush.
 
 **B-19** `open` — **`Folder.root(named:)` builds a graph spec on every call.**
 `BUG:` at `Folder.swift` ("extremely slow. TODO cache"). Every `Folder.inputFileSystem` /
