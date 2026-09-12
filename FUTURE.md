@@ -16,11 +16,13 @@
 
 - Remote execution of tools. Ideally in docker containers running wherever.
 
-- Solve the problem of code changes invalidating the entire cache and database. I.e. Semel code itself should have some kind of hash over it and this is used to invalidate caches. 
-
 - Periodic cache integrity check: randomly compare the cache with computed output and if they differ, reset the entire cache.
 
-- Database migration: probably just clear all caches and rebuild everything. Maybe the program could dump the SQL schema as a blob of text on launch and compare with previous to detect schema change.
+- Done (B-29): a Semel version marker in the database resets the graph on mismatch, and the
+  schema is fingerprinted from `sqlite_master` against what the code would create — a
+  mismatch stops the launch and names the file to delete. A hash over the Semel code was
+  considered and declined: it would reset on every rebuild of Semel, comment changes
+  included, so nobody developing Semel would ever see a cache hit.
 
 - Rollback of all input file changes if any Node enters an error state as a result, thus guaranteeing the build is always green.
 

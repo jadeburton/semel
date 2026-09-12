@@ -179,23 +179,6 @@ hash over the sorted `(name, contentHash)` pairs, folded up the tree. Wanted by 
 locking a vendored dependency, and by the client/server design for making reconciliation
 O(changed) rather than O(tree) — the same piece of work, worth building once.
 
-**B-29** `open` — **Invalidate everything when Semel or the schema changes.**
-A cache key can prevent a *wrong reuse*; it cannot cause a *recomputation*. Nodes are
-scheduled only on creation, on a wire change, on `nudge()` or after `reset` — so anything
-that changes outputs without changing a wire leaves stale artifacts published indefinitely,
-whatever the key says. Upgrading Semel is exactly that.
-
-So the marker has to trigger, not merely compare: record schema version and Semel version at
-launch, and `reset` on mismatch — which preserves the input file system and rebuilds
-everything derived. FUTURE.md already proposes the schema half ("dump the SQL schema as a
-blob of text on launch and compare"); the Semel version is a second field in the same marker.
-
-Deliberately *not* a hash of the binary in the cache key. It would be automatic where
-`codeVersion` is manual, and the discrimination is the point: hashing the binary means every
-rebuild of Semel — including a comment change — invalidates every entry for every project,
-so nobody developing Semel would ever see a cache hit. (Update: `codeVersion` was deleted, 
-as this is not a reliable enough mechanism.)
-
 ## Cache
 
 **B-11** `open` — **Probe determinism at write.**

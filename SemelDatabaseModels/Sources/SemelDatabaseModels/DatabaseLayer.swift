@@ -29,10 +29,15 @@ public final class DatabaseLayer {
     public lazy var symbol     = SymbolDataAccess(databaseLayer: self)
     public lazy var outputPort = OutputPortDataAccess(databaseLayer: self)
     public lazy var cacheEntry = CacheEntryDataAccess(databaseLayer: self)
+    public lazy var metadata   = MetadataDataAccess(databaseLayer: self)
 
     public static var shared: DatabaseLayer!
 
     public let dbQueue: DatabaseQueue
+
+    /// Where the database lives on disk; nil for an in-memory one. Reported to the user when
+    /// the file has to be deleted by hand.
+    public let filePath: String?
 
     // ── Current transaction connection ──────────────────────────────────────
     //
@@ -115,6 +120,7 @@ public final class DatabaseLayer {
             try db.execute(sql: "PRAGMA foreign_keys=ON")
         }
         dbQueue = try DatabaseQueue(path: filePath, configuration: config)
+        self.filePath = filePath
 
         try DatabaseLayer.createTables(dbQueue: dbQueue)
 
@@ -129,6 +135,7 @@ public final class DatabaseLayer {
             try db.execute(sql: "PRAGMA foreign_keys=ON")
         }
         dbQueue = try DatabaseQueue(configuration: config)
+        filePath = nil
 
         try DatabaseLayer.createTables(dbQueue: dbQueue)
 
@@ -142,6 +149,37 @@ public final class DatabaseLayer {
         try CacheEntry.createTable(dbQueue: dbQueue)
         try Symbol.createTable(dbQueue: dbQueue)
         try OutputPort.createTable(dbQueue: dbQueue)
+        try Metadata.createTable(dbQueue: dbQueue)
+    }
+
+    // ── Schema fingerprint ───────────────────────────────────────────────────
+    //
+    // `createTables` is IF NOT EXISTS, so an existing database keeps the tables it was
+    // created with whatever the code now says. The only honest comparison is between what
+    // the file holds and what the code would create from nothing.
+
+    /// The schema this database actually has: every CREATE statement SQLite recorded,
+    /// in a fixed order. SQLite's own bookkeeping tables (`sqlite_sequence` appears on the
+    /// first AUTOINCREMENT insert) are left out — they are not part of the schema.
+    public func schemaFingerprint() throws -> String {
+        try Self.schemaFingerprint(of: dbQueue)
+    }
+
+    /// The schema this build of Semel creates, taken from a throwaway in-memory database.
+    public static func expectedSchemaFingerprint() throws -> String {
+        let scratch = try DatabaseQueue()
+        try createTables(dbQueue: scratch)
+        return try schemaFingerprint(of: scratch)
+    }
+
+    private static func schemaFingerprint(of dbQueue: DatabaseQueue) throws -> String {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT sql FROM sqlite_master
+                WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+                ORDER BY type, name
+                """).joined(separator: "\n")
+        }
     }
 
     /// Legacy helper kept for compatibility; prefer `withTransaction`.

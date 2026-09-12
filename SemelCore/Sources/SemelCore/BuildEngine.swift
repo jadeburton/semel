@@ -14,8 +14,22 @@ public final class BuildEngine {
     public static var shared: BuildEngine! = nil
 
     /// Creates and starts the engine. Must be called once before using `shared`.
+    ///
+    /// Launch, not construction, is where the database is checked against this Semel: a
+    /// graph another version built is reset here, and a database with the wrong schema
+    /// never gets as far as processing. Tests construct engines over prepared databases
+    /// all the time, so the constructor must not have that side effect.
     public static func start() throws {
-        shared = try BuildEngine(database: DatabaseLayer(filePath: "database352.sqlite"))
+        let engine = try BuildEngine(database: DatabaseLayer(filePath: "database352.sqlite"),
+                                     startProcessingLoop: false)
+        shared = engine
+        do {
+            try engine.reconcileVersionMarkers()
+        } catch {
+            FatalErrors.check(error)
+            throw error
+        }
+        engine.startProcessingLoop()
     }
 
     // MARK: - Constants
@@ -79,11 +93,14 @@ public final class BuildEngine {
         try DefaultTools.setup(toolExecutorRegistry: .instance)
         self.database = database
 
-        guard startProcessingLoop else {
-            return
+        if startProcessingLoop {
+            self.startProcessingLoop()
         }
+    }
 
-        // Capture the fully-initialised self before starting the task.
+    /// Starts the background processing loop. `start()` calls this after the launch checks;
+    /// the initialiser calls it directly unless asked not to.
+    func startProcessingLoop() {
         let engine = self
 
         Task {
