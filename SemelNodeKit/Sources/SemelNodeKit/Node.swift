@@ -32,6 +32,18 @@ public protocol Node: WithKind, WithChildren {
     /// would also cover a node that *does* take inputs and forgot to implement it,
     /// turning a compile error into a surprise at run time.
     func process(input: ProcessInput) throws -> ProcessOutput
+
+    /// Anything the node's output depends on that is neither its type, its properties nor
+    /// what arrives on its wires — and so would otherwise be missing from its cache key.
+    ///
+    /// The cache key must cover everything that can change a node's output (AGENTS.md).
+    /// A tool that reads the machine — the Swift tools pass `-sdk` and compile against
+    /// whatever is behind that path — contributes a fingerprint of what it read, so two
+    /// machines with the same declared settings and different SDK contents do not share
+    /// an entry. Most nodes read nothing outside their inputs and return nil. Note what
+    /// this cannot do: a key only stops a wrong reuse; a change here never causes a
+    /// recomputation, because an unscheduled node never rebuilds its key.
+    func cacheKeyMaterial() throws -> String?
 }
 
 public struct ProcessInput {
@@ -91,6 +103,11 @@ public extension Node {
 
     /// Most nodes have nothing to publish at creation.
     func didCreate() throws -> ProcessOutput? {
+        nil
+    }
+
+    /// Most nodes read nothing outside their inputs.
+    func cacheKeyMaterial() throws -> String? {
         nil
     }
 
