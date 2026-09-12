@@ -89,13 +89,13 @@ public struct ProjectBuilder: Node {
         // There are two kinds of Formula files: those without wildcardExpander wildcards, and
         // those with. Files with wildcards require multiple passes — the initial passes
         // may not have discovered all files yet, resulting in an empty objectFiles list
-        // that would produce bad product expectations. Similarly, imported .graph files
+        // that would produce bad product specs. Similarly, imported .graph files
         // may not be wired yet on the first pass. In both cases we suppress product
-        // expectations until all dependencies are ready, while still emitting the wire
-        // expectations that will make the missing dependencies available on the next pass.
+        // specs until all dependencies are ready, while still emitting the wire
+        // specs that will make the missing dependencies available on the next pass.
 
-        // Build output-file expectations for each formula product.
-        var productExpectations = [String: String]()
+        // Build output-file specs for each formula product.
+        var productSpecs = [String: String]()
 
         let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
         let importsReady = !importRecord.anyMissing
@@ -112,7 +112,7 @@ public struct ProjectBuilder: Node {
                 var metadataWire = ""
                 if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
                    nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
-                    let metaShape = GraphShapeNode(typeName: shapeNode.typeName,
+                    let metaShape = GraphSpecNode(typeName: shapeNode.typeName,
                                                    properties: shapeNode.properties,
                                                    inputs: shapeNode.inputs,
                                                    outputs: shapeNode.outputs,
@@ -120,26 +120,26 @@ public struct ProjectBuilder: Node {
                     metadataWire = ", \(FileMetadata.portName): ['metadata': \(metaShape.asString(omitOutputPort: false))]"
                 }
 
-                let wrapper = try GraphShapeNode.parse(
+                let wrapper = try GraphSpecNode.parse(
                     "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]\(metadataWire)).status"
                 )
 
-                productExpectations[fullPath.string] = wrapper.asString(omitOutputPort: false)
+                productSpecs[fullPath.string] = wrapper.asString(omitOutputPort: false)
             }
         }
 
         // Wire each wildcard-referenced folder's manifest into our 'folders' port so we
         // are automatically rescheduled whenever the folder's contents change.
-        var folderExpectations = [String: String]()
+        var folderSpecs = [String: String]()
         for folderPath in record.folderPaths {
-            folderExpectations[folderPath] = "Folder(path: '\(folderPath)').manifest"
+            folderSpecs[folderPath] = "Folder(path: '\(folderPath)').manifest"
         }
 
         // Wire each imported .graph file into our 'graphImports' port so we are
         // automatically rescheduled whenever its content changes.
-        var importExpectations = [String: String]()
+        var importSpecs = [String: String]()
         for importPath in importRecord.filePaths {
-            importExpectations[importPath] = "StaticFile(path: '\(importPath)').output"
+            importSpecs[importPath] = "StaticFile(path: '\(importPath)').output"
         }
 
         // Which products exist, and what that means happened. The decision lives in
@@ -160,10 +160,10 @@ public struct ProjectBuilder: Node {
         return .init(
             outputValues: [Self.statusOutputPort:   .value(try "OK".intern()),
                            Self.productsOutputPort: .value(try ProductPresence.encode(existingProducts).intern())],
-            inputWireExpectations: [
-                Self.productInputPort:      productExpectations,
-                Self.foldersInputPort:      folderExpectations,
-                Self.graphImportsInputPort: importExpectations,
+            inputWireSpecs: [
+                Self.productInputPort:      productSpecs,
+                Self.foldersInputPort:      folderSpecs,
+                Self.graphImportsInputPort: importSpecs,
             ]
         )
     }

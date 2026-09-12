@@ -1,7 +1,7 @@
 // SwiftToolSupport.swift
 // semel
 //
-// Shared helpers for Swift-based tool nodes (SwiftCompilerTool, SwiftLinkerTool).
+// Shared helpers for Swift-based tool nodes (SwiftCompiler, SwiftLinker).
 
 import Foundation
 import SemelNodeKit

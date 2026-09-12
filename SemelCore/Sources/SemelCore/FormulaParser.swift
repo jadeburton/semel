@@ -2,8 +2,8 @@
 // semel
 //
 // Parser for the human-friendly .fmla formula format.
-// Produces a [productName: GraphShapeNode] map compatible with the existing
-// GraphShapeApplier find-or-create machinery.
+// Produces a [productName: GraphSpecNode] map compatible with the existing
+// GraphSpecApplier find-or-create machinery.
 //
 // Grammar (informal):
 //
@@ -53,7 +53,7 @@ import SemelNodeKit
 extension FormulaFile {
 
     /// Parse `source` (the text of a .fmla file) and resolve every `product`
-    /// declaration to a `GraphShapeNode`.
+    /// declaration to a `GraphSpecNode`.
     /// `wildcardExpander` is called for any for-each items that contain wildcards
     /// ('*' or '?'); it should return the sorted list of matching logical paths.
     /// `fileReader` is called for every `import(path:)` expression; it should
@@ -61,13 +61,13 @@ extension FormulaFile {
     /// causes the resolver to substitute a placeholder node so that dependency
     /// discovery continues — the caller is responsible for checking whether any
     /// import was unavailable before using the returned products).
-    /// Returns a mapping of product name → node, ready for `GraphShapeApplier`.
+    /// Returns a mapping of product name → node, ready for `GraphSpecApplier`.
     static func parse(
         _ source: String,
         basePath: Path,
         wildcardExpander: @escaping (String) throws -> [String],
         fileReader: @escaping (String) throws -> String? = { _ in nil }
-    ) throws -> [String: GraphShapeNode] {
+    ) throws -> [String: GraphSpecNode] {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
         let file   = try parser.parseFile()
@@ -650,7 +650,7 @@ private struct FormulaParser {
 // MARK: - Resolver
 
 private enum FormulaValue {
-    case node(GraphShapeNode)
+    case node(GraphSpecNode)
     case string(String)
 
     var typeName: String { switch self { case .node: return "node"; case .string: return "string" } }
@@ -774,8 +774,8 @@ private struct FormulaResolver {
         self.fileReader  = fileReader
     }
 
-    func resolve() throws -> [String: GraphShapeNode] {
-        var result: [String: GraphShapeNode] = [:]
+    func resolve() throws -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
         for product in products {
             let value = try eval(product.body, env: [:], templateEnv: [:])
             guard case .node(let node) = value else {
@@ -823,7 +823,7 @@ private struct FormulaResolver {
                         expected: "node (for port access '.\(port)')", got: base.typeName,
                         context: "cannot access an output port on a string value")
                 }
-                return .node(GraphShapeNode(typeName: node.typeName,
+                return .node(GraphSpecNode(typeName: node.typeName,
                                              properties: node.properties,
                                              inputs:  node.inputs,
                                              outputs: node.outputs,
@@ -838,7 +838,7 @@ private struct FormulaResolver {
                         expected: "node", got: base.typeName,
                         context: "node constructor '\(name)' did not return a node")
                 }
-                return .node(GraphShapeNode(typeName: node.typeName,
+                return .node(GraphSpecNode(typeName: node.typeName,
                                              properties: node.properties,
                                              inputs:  node.inputs,
                                              outputs: node.outputs,
@@ -888,7 +888,7 @@ private struct FormulaResolver {
     // If the file is not yet available the fileReader returns nil; we substitute a
     // placeholder node so that the rest of the formula continues to evaluate (allowing
     // all other dependency paths — globs, other imports — to be recorded).  The caller
-    // is responsible for suppressing product expectations when anyImportMissing is set.
+    // is responsible for suppressing product specs when anyImportMissing is set.
     private func evalImport(
         args: [FormulaCallArg],
         port: String?,
@@ -915,27 +915,27 @@ private struct FormulaResolver {
 
         guard let content = try fileReader(path) else {
             // File not yet wired — return a placeholder so dependency recording continues.
-            return .node(GraphShapeNode(typeName: "__ImportPending__"))
+            return .node(GraphSpecNode(typeName: "__ImportPending__"))
         }
 
-        let baseNode       = try GraphShapeNode.parse(content)
+        let baseNode       = try GraphSpecNode.parse(content)
         let effectivePort  = port ?? baseNode.outputPort ?? resolveDefaultOutputPort(forTypeName: baseNode.typeName)
-        return .node(GraphShapeNode(typeName:   baseNode.typeName,
+        return .node(GraphSpecNode(typeName:   baseNode.typeName,
                                      properties: baseNode.properties,
                                      inputs:     baseNode.inputs,
                                      outputs:    baseNode.outputs,
                                      outputPort: effectivePort))
     }
 
-    // Node construction: map labeled args → GraphShapeProperty, wires → GraphShapeInputPort.
+    // Node construction: map labeled args → GraphSpecProperty, wires → GraphSpecInputPort.
     func evalNodeConstruct(
         typeName: String,
         args: [FormulaCallArg],
         env: [String: FormulaValue],
         templateEnv: [String: ForEachBinding]
     ) throws -> FormulaValue {
-        var nodeProps:  [GraphShapeProperty]  = []
-        var inputPorts: [GraphShapeInputPort] = []
+        var nodeProps:  [GraphSpecProperty]  = []
+        var inputPorts: [GraphSpecInputPort] = []
 
         for arg in args {
             switch arg {
@@ -947,10 +947,10 @@ private struct FormulaResolver {
                         got: value.typeName,
                         context: "node property values must be string expressions")
                 }
-                nodeProps.append(GraphShapeProperty(key: key, value: s))
+                nodeProps.append(GraphSpecProperty(key: key, value: s))
 
             case .inputWire(let portName, let entries):
-                var graphWires: [GraphShapeWire] = []
+                var graphWires: [GraphSpecWire] = []
                 for entry in entries {
                     switch entry {
                     case .simple(let keyExpr, let expr):
@@ -968,7 +968,7 @@ private struct FormulaResolver {
                                 got: value.typeName,
                                 context: "wire values must be node expressions")
                         }
-                        graphWires.append(GraphShapeWire(name: key, node: node))
+                        graphWires.append(GraphSpecWire(name: key, node: node))
 
                     case .unnamed(let expr):
                         let value = try eval(expr, env: env, templateEnv: templateEnv)
@@ -978,7 +978,7 @@ private struct FormulaResolver {
                                 got: value.typeName,
                                 context: "wire values must be node expressions")
                         }
-                        graphWires.append(GraphShapeWire(name: "wire\(graphWires.count)", node: node))
+                        graphWires.append(GraphSpecWire(name: "wire\(graphWires.count)", node: node))
 
                     case .forEach(let variable, let itemExprs, let key, let expr):
                         var resolvedItems: [String] = []
@@ -1006,18 +1006,18 @@ private struct FormulaResolver {
                                     got: value.typeName,
                                     context: "wire values must be node expressions")
                             }
-                            graphWires.append(GraphShapeWire(name: expandedKey, node: node))
+                            graphWires.append(GraphSpecWire(name: expandedKey, node: node))
                         }
                     }
                 }
-                inputPorts.append(GraphShapeInputPort(portName: portName, wires: graphWires))
+                inputPorts.append(GraphSpecInputPort(portName: portName, wires: graphWires))
 
             case .positional:
                 throw FormulaParseError.positionalArgInNodeConstruction(typeName: typeName)
             }
         }
 
-        return .node(GraphShapeNode(typeName: typeName, properties: nodeProps, inputs: inputPorts))
+        return .node(GraphSpecNode(typeName: typeName, properties: nodeProps, inputs: inputPorts))
     }
 
     // MARK: Output port resolution

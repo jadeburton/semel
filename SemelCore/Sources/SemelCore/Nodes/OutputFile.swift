@@ -99,7 +99,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(messageDataObjectHash: try "Missing".intern()))],
-              inputWireExpectations: [:])
+              inputWireSpecs: [:])
     }
 
     var isPinned: Bool {
@@ -149,7 +149,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
             print("\(path): \(newDescription)")
         }
 
-        return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireExpectations: [:])
+        return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireSpecs: [:])
     }
 
     func read() throws -> NodeValue? {

@@ -69,7 +69,7 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
     }
 
     /// Selects one namespace out of the whole file, stripping the prefix exactly the way
-    /// `ConfigSubset` does: a whole dot-delimited segment, not a raw string prefix, so
+    /// `ConfigFilter` does: a whole dot-delimited segment, not a raw string prefix, so
     /// `swift.compiler` cannot also claim `swift.compilerPlugin`.
     private func subset(_ all: [String: String], under prefix: String) -> [String: String] {
         let qualifier = prefix + "."
@@ -122,27 +122,27 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
     /// literal, merged in beside the selector's output (see SwiftFormulaConverter). That
     /// merge is stood in for here, so this test checks exactly what the file owes: every
     /// other required key in `swift.compiler`.
-    func test_swiftCompilerNamespaceSatisfiesSwiftCompilerToolConfiguration() throws {
-        try forEachConfigFile(namespace: SwiftCompilerToolConfiguration.settingNamespace,
+    func test_swiftCompilerNamespaceSatisfiesSwiftCompilerConfiguration() throws {
+        try forEachConfigFile(namespace: SwiftCompilerConfiguration.settingNamespace,
                               literals: ["moduleName": "Test"]) { path, settings in
-            XCTAssertNoThrow(try SwiftCompilerToolConfiguration(properties: settings), path)
+            XCTAssertNoThrow(try SwiftCompilerConfiguration(properties: settings), path)
         }
     }
 
     /// Same reasoning as the compiler above, but for `outputName` and `linkage`, the
     /// linker's own manifest-derived literals.
-    func test_swiftLinkerNamespaceSatisfiesSwiftLinkerToolConfiguration() throws {
-        try forEachConfigFile(namespace: SwiftLinkerToolConfiguration.settingNamespace,
+    func test_swiftLinkerNamespaceSatisfiesSwiftLinkerConfiguration() throws {
+        try forEachConfigFile(namespace: SwiftLinkerConfiguration.settingNamespace,
                               literals: ["outputName": "Test", "linkage": "executable"]) { path, settings in
-            XCTAssertNoThrow(try SwiftLinkerToolConfiguration(properties: settings), path)
+            XCTAssertNoThrow(try SwiftLinkerConfiguration(properties: settings), path)
         }
     }
 
-    /// No literals here: every setting `SwiftPackageReaderToolConfiguration` requires is a
+    /// No literals here: every setting `SwiftPackageReaderConfiguration` requires is a
     /// toolDescriptor field, and all of those come from the file.
-    func test_swiftPackageReaderNamespaceSatisfiesSwiftPackageReaderToolConfiguration() throws {
-        try forEachConfigFile(namespace: SwiftPackageReaderToolConfiguration.settingNamespace) { path, settings in
-            XCTAssertNoThrow(try SwiftPackageReaderToolConfiguration(properties: settings), path)
+    func test_swiftPackageReaderNamespaceSatisfiesSwiftPackageReaderConfiguration() throws {
+        try forEachConfigFile(namespace: SwiftPackageReaderConfiguration.settingNamespace) { path, settings in
+            XCTAssertNoThrow(try SwiftPackageReaderConfiguration(properties: settings), path)
         }
     }
 }

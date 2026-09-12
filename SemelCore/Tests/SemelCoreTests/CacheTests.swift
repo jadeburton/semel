@@ -29,8 +29,8 @@ final class CacheTests: SemelCoreTestCase {
     // MARK: - Helpers
 
     private func makeCompilerNode() throws -> SampleTool {
-        let shape = try GraphShapeNode.parse("SampleTool()")
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let spec = try GraphSpecNode.parse("SampleTool()")
+        let (node, _) = try spec.findOrCreateMatchingNode()
         return try SampleTool(thisNode: node)
     }
 
@@ -63,7 +63,7 @@ final class CacheTests: SemelCoreTestCase {
     /// identical build, so an unintended change to how it is composed silently discards
     /// every existing entry — and, on a shared cache, does it for everyone.
     ///
-    /// Re-recorded when this test's subject moved from ClangCompilerTool to SampleTool:
+    /// Re-recorded when this test's subject moved from ClangCompiler to SampleTool:
     /// the node type's name is part of the key, so the value had to change even though the
     /// format did not. That cost the original provenance — it no longer proves the
     /// environment hook left keys untouched — but it buys something better going forward,
@@ -129,9 +129,9 @@ final class CacheTests: SemelCoreTestCase {
     }
 
     func test_differentNodeTypesDoNotShareAKey() throws {
-        let compilerShape = try GraphShapeNode.parse("SampleTool()")
+        let compilerShape = try GraphSpecNode.parse("SampleTool()")
         let (compilerNode, _) = try compilerShape.findOrCreateMatchingNode()
-        let preprocessorShape = try GraphShapeNode.parse("OtherSampleTool()")
+        let preprocessorShape = try GraphSpecNode.parse("OtherSampleTool()")
         let (preprocessorNode, _) = try preprocessorShape.findOrCreateMatchingNode()
 
         let compiler = try SampleTool(thisNode: compilerNode)
@@ -156,7 +156,7 @@ final class CacheTests: SemelCoreTestCase {
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
-            inputWireExpectations: [:])
+            inputWireSpecs: [:])
         try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
@@ -172,7 +172,7 @@ final class CacheTests: SemelCoreTestCase {
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
-            inputWireExpectations: [:])
+            inputWireSpecs: [:])
         try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
 
         let otherKey = try XCTUnwrap(

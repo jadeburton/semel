@@ -37,7 +37,7 @@ public struct Configuration: Node {
         }
 
         return .init(outputValues: [Self.outputPort: .value(try aggregatedConfig.mergedWith(thisNode.properties).asPlainText().intern())],
-                     inputWireExpectations: [:])
+                     inputWireSpecs: [:])
     }
 }
 

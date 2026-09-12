@@ -48,10 +48,6 @@ extension NodeRecord {
         return parent.isEmpty ? Path(name) : parent / name
     }
 
-    func makeNodeCast<N: Node>() throws -> N {
-        try makeNode() as! N
-    }
-
     func makeNode() throws -> any Node {
         try (TypeRegistry.type(kind: kind) as! Node.Type).init(thisNode: self)
     }
@@ -68,14 +64,14 @@ extension NodeRecord {
         }
     }
 
-    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], searchKey: String?) throws -> NodeRecord {
+    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], graphSpec: String?) throws -> NodeRecord {
 
         var nodeRecord = NodeRecord(parentNodeID: nil,
                                     kind: kind,
                                     name: nil,
                                     properties: properties,
                                     scheduled: false,
-                                    searchKey: searchKey)
+                                    graphSpec: graphSpec)
 
         nodeRecord.id = try database.node.insert(nodeRecord)
 
@@ -111,18 +107,18 @@ extension NodeRecord {
             try nodeRecord.setScheduled(true)
         }
 
-        if searchKey == nil {
+        if graphSpec == nil {
             do {
-                nodeRecord.searchKey = try GraphShapeNode.buildFromNode(database: database, nodeID: (try nodeRecord.requireID())).asString(omitOutputPort: true)
+                nodeRecord.graphSpec = try GraphSpecNode.buildFromNode(database: database, nodeID: (try nodeRecord.requireID())).asString(omitOutputPort: true)
             } catch {
-                Debug.warn("failed to patch in searchKey (\(error)) — a duplicate node? searchKey = \(nodeRecord.searchKey ?? "(null)")")
+                Debug.warn("failed to patch in graphSpec (\(error)) — a duplicate node? graphSpec = \(nodeRecord.graphSpec ?? "(null)")")
                 throw error
             }
         }
 
         try database.node.update(nodeRecord)
 
-        assert(nodeRecord.searchKey != nil)
+        assert(nodeRecord.graphSpec != nil)
 
         try node.notifyParentThisChildAdded()
 
@@ -171,8 +167,8 @@ extension NodeRecord {
                 assert(!pathSoFar.string.hasSuffix("/"))
                 assert(!pathSoFar.string.hasPrefix("/"))
 
-                let graphShape = try GraphShapeNode.parse("Folder(path: '\(pathSoFar.string)')")
-                let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+                let specNode = try GraphSpecNode.parse("Folder(path: '\(pathSoFar.string)')")
+                let (fromNode, _) = try specNode.findOrCreateMatchingNode()
                 var newFolder = fromNode
                 newFolder.parentNodeID = (try currentFolder.requireID())
                 try database.node.update(newFolder)

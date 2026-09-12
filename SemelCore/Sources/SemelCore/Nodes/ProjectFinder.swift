@@ -8,7 +8,7 @@ import SemelNodeKit
 // MARK: - Project kinds
 
 struct FormulaFilePlugin: ProjectBuilderPlugin {
-    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+    func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
         guard entry.isPinned, entry.name.hasSuffix(".fmla") else {
             return nil
         }
@@ -51,15 +51,15 @@ public struct ProjectFinder: Node {
         false
     }
 
-    private func buildProjectBuildersExpectationFromFolderManifest(folderManifests: [(String, FolderManifest)]) throws -> [String: String] {
+    private func buildProjectBuildersSpecsFromFolderManifest(folderManifests: [(String, FolderManifest)]) throws -> [String: String] {
         var result: [String: String] = [:]
 
         for (folderPath, folderManifest) in folderManifests {
             for entry in folderManifest.entries {
                 let fullPath = (Path(folderPath) / entry.name).string
                 for plugin in ProjectDiscovery.plugins {
-                    if let expectation = plugin.expectationString(forEntry: entry, inFolder: folderPath) {
-                        result[fullPath] = expectation
+                    if let spec = plugin.specString(forEntry: entry, inFolder: folderPath) {
+                        result[fullPath] = spec
                         break
                     }
                 }
@@ -70,7 +70,7 @@ public struct ProjectFinder: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        var projectBuildersExpectations = [String: String]()
+        var projectBuildersSpecs = [String: String]()
 
         let allWatchedFolderManifests = input.inputValues[Self.watchedFolderManifestInputPort]
 
@@ -110,17 +110,17 @@ public struct ProjectFinder: Node {
             }
         }
 
-        projectBuildersExpectations = try buildProjectBuildersExpectationFromFolderManifest(folderManifests: allFolderManifests)
+        projectBuildersSpecs = try buildProjectBuildersSpecsFromFolderManifest(folderManifests: allFolderManifests)
 
-        var watchedFolderExpectations = [String: String]()
+        var watchedFolderSpecs = [String: String]()
 
         for watchedPath in watchedPaths {
-            watchedFolderExpectations[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
+            watchedFolderSpecs[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
         }
 
         return .init(outputValues: [:],
-                     inputWireExpectations: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: "Folder(path: 'input:').manifest"],
-                                             Self.watchedFolderManifestInputPort: watchedFolderExpectations,
-                                             Self.projectBuildersInputPort: projectBuildersExpectations])
+                     inputWireSpecs: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: "Folder(path: 'input:').manifest"],
+                                             Self.watchedFolderManifestInputPort: watchedFolderSpecs,
+                                             Self.projectBuildersInputPort: projectBuildersSpecs])
     }
 }

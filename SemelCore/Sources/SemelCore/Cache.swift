@@ -79,7 +79,7 @@ extension Node {
         Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
 
         return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
-                             inputWireExpectations: decodedCacheEntry.inputWireExpectations)
+                             inputWireSpecs: decodedCacheEntry.inputWireSpecs)
     }
 
     func saveCacheForAllInputsAndOutputs(cacheKey: String?, processingDuration: TimeInterval, output: ProcessOutput) throws {
@@ -105,7 +105,7 @@ extension Node {
 
         //Debug.log("Saving cache entry..")
 
-        let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireExpectations: output.inputWireExpectations)
+        let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireSpecs: output.inputWireSpecs)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
 
         try database.cacheEntry.insert(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
@@ -126,5 +126,5 @@ struct CacheKeyEntry: Codable {
 /// protocol, which is what it was filed under by accident of history.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
-    let inputWireExpectations: [String: [String: String]]
+    let inputWireSpecs: [String: [String: String]]
 }

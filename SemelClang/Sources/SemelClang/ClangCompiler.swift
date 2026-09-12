@@ -1,4 +1,4 @@
-// ClangCompilerTool.swift
+// ClangCompiler.swift
 // semel
 //
 // Clang compiler stage: compiles a preprocessed .p file into a .o object file.
@@ -9,7 +9,7 @@ import SemelDatabaseModels
 
 // MARK: - Configuration
 
-struct ClangCompilerToolConfiguration {
+struct ClangCompilerConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
@@ -31,12 +31,12 @@ struct ClangCompilerToolConfiguration {
     }
 
     /// Where this node's settings live in a config file: `clang.compiler.<key>`.
-    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangCompilerTool")
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangCompiler")
 }
 
 // MARK: - Node
 
-public struct ClangCompilerTool: Node {
+public struct ClangCompiler: Node {
     public static let kind: UInt = 19
 
     // MARK: Ports
@@ -60,29 +60,29 @@ public struct ClangCompilerTool: Node {
 
     // MARK: Processing
 
-    struct ClangCompilerToolInputs {
-        let configuration: ClangCompilerToolConfiguration
+    struct ClangCompilerInputs {
+        let configuration: ClangCompilerConfiguration
         let inputSourceFile: FileNameAndContent
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let input = input.inputValues[ClangCompilerTool.input]!.first!
+            let input = input.inputValues[ClangCompiler.input]!.first!
             inputSourceFile = .init(filePath: input.key, hash: try input.value.expectValue())
         }
     }
 
-    struct ClangCompilerToolOutputs {
+    struct ClangCompilerOutputs {
         let output: NodeValue
         let errorLog: NodeValue
         let infoLog: NodeValue
 
         func asProcessOutput() throws -> ProcessOutput {
-            .init(outputValues: [ClangCompilerTool.output: output,
-                                 ClangCompilerTool.errorLog: errorLog,
-                                 ClangCompilerTool.infoLog: infoLog],
-                  inputWireExpectations: [:])
+            .init(outputValues: [ClangCompiler.output: output,
+                                 ClangCompiler.errorLog: errorLog,
+                                 ClangCompiler.infoLog: infoLog],
+                  inputWireSpecs: [:])
         }
     }
 
@@ -90,11 +90,11 @@ public struct ClangCompilerTool: Node {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
-    func process(inputs: ClangCompilerToolInputs) throws -> ClangCompilerToolOutputs {
+    func process(inputs: ClangCompilerInputs) throws -> ClangCompilerOutputs {
 
         let outputFilename = inputs.inputSourceFile.filePath + ".o"
 
-        let language = ClangPreprocessorTool.language(for: inputs.inputSourceFile.filePath)
+        let language = ClangPreprocessor.language(for: inputs.inputSourceFile.filePath)
 
         var arguments = [String]()
         arguments.append("-x");      arguments.append(language)
@@ -102,7 +102,7 @@ public struct ClangCompilerTool: Node {
 
         if let std = try clangStandard(inputs.configuration.std,
                                        forLanguage: language,
-                                       namespace: ClangCompilerToolConfiguration.settingNamespace) {
+                                       namespace: ClangCompilerConfiguration.settingNamespace) {
             arguments.append("-std=\(std)")
         }
 

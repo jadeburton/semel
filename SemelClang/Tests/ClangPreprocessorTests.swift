@@ -1,5 +1,5 @@
 //
-//  ClangPreprocessorToolTests.swift
+//  ClangPreprocessorTests.swift
 //  semel_tests
 //
 //  The preprocessor's work is a command line, so a recording executor is enough to see all
@@ -13,7 +13,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class ClangPreprocessorToolTests: SemelClangTestCase {
+final class ClangPreprocessorTests: SemelClangTestCase {
 
     private let descriptor = ToolDescriptor(name: "clang",
                                             version: "test-clang",
@@ -30,8 +30,8 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
 
     // MARK: - Helpers
 
-    private func makeTool() throws -> ClangPreprocessorTool {
-        try ClangPreprocessorTool(thisNode: NodeRecord(id: 1, kind: ClangPreprocessorTool.kind))
+    private func makeTool() throws -> ClangPreprocessor {
+        try ClangPreprocessor(thisNode: NodeRecord(id: 1, kind: ClangPreprocessor.kind))
     }
 
     /// No includes: the ClangIncludeFinder result for the source file is present but empty,
@@ -48,10 +48,10 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
             """
         if let std { configuration += "\nstd=\(std)" }
         return ProcessInput(inputValues: [
-            ClangPreprocessorTool.configuration:    ["configuration": .value(try configuration.intern())],
-            ClangPreprocessorTool.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
-            ClangPreprocessorTool.includeFileLists:  [sourcePath: .value(try "".intern())],
-            ClangPreprocessorTool.headerInputFiles:  [:],
+            ClangPreprocessor.configuration:    ["configuration": .value(try configuration.intern())],
+            ClangPreprocessor.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
+            ClangPreprocessor.includeFileLists:  [sourcePath: .value(try "".intern())],
+            ClangPreprocessor.headerInputFiles:  [:],
         ])
     }
 

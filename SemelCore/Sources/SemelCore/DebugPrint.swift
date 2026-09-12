@@ -125,11 +125,11 @@ extension BuildEngine {
                 print("  name: '\(name)'")
             }
 
-            if let searchKey = nodeRecord.searchKey {
-                let graphShapeNode = try GraphShapeNode.parse(searchKey)
-                print("  searchKey:\n\(graphShapeNode.asString(pretty: true, omitOutputPort: true))\n")
+            if let graphSpec = nodeRecord.graphSpec {
+                let graphSpecNode = try GraphSpecNode.parse(graphSpec)
+                print("  graphSpec:\n\(graphSpecNode.asString(pretty: true, omitOutputPort: true))\n")
             } else {
-                print("  searchKey: nil")
+                print("  graphSpec: nil")
             }
 
             if let parentNodeID = nodeRecord.parentNodeID {

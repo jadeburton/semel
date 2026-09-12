@@ -26,7 +26,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
                               properties: [String: String] = [:],
                               formula: String? = nil) throws -> [String] {
         let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
-                        properties: properties, scheduled: false, searchKey: nil)
+                        properties: properties, scheduled: false, graphSpec: nil)
         let builder = try ProjectBuilder(thisNode: node)
         let input = ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  [projectFile: .value(try (formula ?? oneProduct).intern())],
@@ -35,7 +35,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
             ProjectBuilder.graphImportsInputPort: [:],
         ])
         let output = try builder.process(input: input)
-        return try XCTUnwrap(output.inputWireExpectations[ProjectBuilder.productInputPort]).keys.sorted()
+        return try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]).keys.sorted()
     }
 
     // MARK: - Product placement

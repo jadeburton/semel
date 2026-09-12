@@ -1,4 +1,4 @@
-// ClangLinkerTool.swift
+// ClangLinker.swift
 // semel
 //
 // Clang linker stage: links one or more .o object files (and optional .dylib
@@ -10,7 +10,7 @@ import SemelDatabaseModels
 
 // MARK: - Configuration
 
-struct ClangLinkerToolConfiguration {
+struct ClangLinkerConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
@@ -35,12 +35,12 @@ struct ClangLinkerToolConfiguration {
     }
 
     /// Where this node's settings live in a config file: `clang.linker.<key>`.
-    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangLinkerTool")
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangLinker")
 }
 
 // MARK: - Node
 
-public struct ClangLinkerTool: Node {
+public struct ClangLinker: Node {
     public static let kind: UInt = 18
 
     // MARK: Ports
@@ -69,17 +69,17 @@ public struct ClangLinkerTool: Node {
 
     // MARK: Processing
 
-    struct ClangLinkerToolInputs {
-        let configuration: ClangLinkerToolConfiguration
+    struct ClangLinkerInputs {
+        let configuration: ClangLinkerConfiguration
         let libraryFiles: [FileNameAndContent]
         let objectFiles: [FileNameAndContent]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let inputValues = input.inputValues[ClangLinkerTool.input]!
-            let libraryValues = input.inputValues[ClangLinkerTool.libraries]!
+            let inputValues = input.inputValues[ClangLinker.input]!
+            let libraryValues = input.inputValues[ClangLinker.libraries]!
 
             // Sorted, not straight out of the dictionary: iteration order for a Swift
             // Dictionary varies from one process to the next, which would put the object
@@ -103,16 +103,16 @@ public struct ClangLinkerTool: Node {
         }
     }
 
-    struct ClangLinkerToolOutputs {
+    struct ClangLinkerOutputs {
         let output: NodeValue
         let infoLog: NodeValue
         let fileMetadata: NodeValue
 
         func asProcessOutput() -> ProcessOutput {
-            .init(outputValues: [ClangLinkerTool.output: output,
-                                 ClangLinkerTool.infoLog: infoLog,
-                                 ClangLinkerTool.fileMetadata: fileMetadata],
-                  inputWireExpectations: [:])
+            .init(outputValues: [ClangLinker.output: output,
+                                 ClangLinker.infoLog: infoLog,
+                                 ClangLinker.fileMetadata: fileMetadata],
+                  inputWireSpecs: [:])
         }
     }
 
@@ -120,7 +120,7 @@ public struct ClangLinkerTool: Node {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
-    func process(inputs: ClangLinkerToolInputs) throws -> ClangLinkerToolOutputs {
+    func process(inputs: ClangLinkerInputs) throws -> ClangLinkerOutputs {
 
         var arguments = [String]()
 
@@ -140,7 +140,7 @@ public struct ClangLinkerTool: Node {
         // Link against libc++ if any object file was compiled from C++ source, or if
         // the configuration explicitly declares a C++ standard (std: 'c++17' etc.).
         let hasCxxObjects = inputs.objectFiles.contains {
-            ClangPreprocessorTool.language(for: $0.filePath) == "c++"
+            ClangPreprocessor.language(for: $0.filePath) == "c++"
         }
 
         if hasCxxObjects || inputs.configuration.cxx {

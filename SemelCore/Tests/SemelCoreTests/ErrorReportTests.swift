@@ -32,7 +32,7 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     private func makeNode(kind: UInt, properties: [String: String] = [:]) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: kind,
-                            properties: properties, searchKey: nil).requireID()
+                            properties: properties, graphSpec: nil).requireID()
     }
 
     private func port(_ nodeID: ObjectID, _ name: String, _ message: String) throws -> OutputPort {

@@ -55,7 +55,7 @@ enum ProductPresence {
                 existsNow = false
             case nil:
                 // No wire at all: the product left the formula. Note this arrives a pass
-                // late, because a dropped expectation is unwired only after process()
+                // late, because a dropped spec is unwired only after process()
                 // returns, so its old value is still on the port during that pass.
                 existsNow = false
             }
@@ -74,7 +74,7 @@ enum ProductPresence {
     // MARK: - Carrying the set between passes
 
     /// Stored on an output port rather than in a property: it is data, not identity, and a
-    /// property would land in the node's searchKey. Being in the database also means the
+    /// property would land in the node's graphSpec. Being in the database also means the
     /// set survives a restart, so the first pass after launch reports only real changes.
     static func encode(_ paths: Set<String>) throws -> String {
         // Sorted so the stored value is stable for an unchanged set.

@@ -26,7 +26,7 @@ byte-for-byte, since hashing is seeded per process — this catches every order 
 at once, and doubles as the determinism probe in B-11; (c) a source-scanning test as a
 backstop. A wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
 dictionaries here are accumulated into, which is safe. Two sites worth a look under (c):
-`ClangPreprocessorTool` and `ClangIncludeFinder` build file lists straight from input
+`ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
 dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
 command line.
 
@@ -123,12 +123,12 @@ Plan, agreed 2026-09-12, replacing the inferred-roots plan:
    `ProjectFinder`; only `.fmla` files create a `ProjectBuilder`. Dependency packages then
    have no builder of their own, so no separate artifacts, no `publishProducts` property,
    no publish-then-retract flap, and no ordering against B-50. Their targets still compile
-   exactly as now — the consumer's formula names the same compiler shapes and searchKey
+   exactly as now — the consumer's formula names the same compiler specs and graphSpec
    matching shares the nodes.
 2. **A formula references a package.** Grammar gains a `package <path>` reference to a
    `Package.swift`. `ProjectBuilder` resolves it by wiring a `SwiftFormulaConverter`
-   expectation on a new dynamic port keyed by package folder and returning pending until
-   the converter's formula arrives — the same expectation-and-wait pattern the converter
+   spec on a new dynamic port keyed by package folder and returning pending until
+   the converter's formula arrives — the same spec-and-wait pattern the converter
    uses for external manifests. The converter already emits one formula for the root and
    every dependency it can reach, so this is splicing, not new generation. The formula's
    own `product` definitions name that package's products.
@@ -205,7 +205,7 @@ mark the folder dirty and flush before the next processing pass. Deliberately no
 yet — manifest freshness is relied on between mutation and processing, so this is the one
 change here that can actually break correctness rather than just speed.
 
-**B-19** `open` — **`Folder.root(named:)` builds a graph shape on every call.**
+**B-19** `open` — **`Folder.root(named:)` builds a graph spec on every call.**
 `BUG:` at `Folder.swift` ("extremely slow. TODO cache"). Every `Folder.inputFileSystem` /
 `outputFileSystem` does a `findOrCreateMatchingNode`, and those are called constantly. A
 cache must key on the current `DatabaseLayer` identity, or it goes stale when the database
@@ -283,49 +283,22 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
-**B-44** `open` — **Naming: where the vocabulary still disagrees with itself.**
-The useful test is not "is this term coined?" — coining is cheap to learn once — but **"does
-it disagree with itself, or does it mislead?"** That ranks invented-but-consistent names low
-and inconsistent ones high.
+**B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
+Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFilter`,
+`GraphShape` is `GraphSpec`, "expectation" is "spec" everywhere, and `searchKey` is
+`graphSpec` (column included — an older database fails the B-29 schema check and has to be
+deleted). The glossary and the naming rule live in `AGENTS.md`; the rename cost data moved
+there too.
 
-*What is left.*
-- **The config vocabulary** — `Configuration` (a node type), `ConfigSubset` (another),
-  `ConfigurationText`, `semel.config`. Four words circling one area. `ConfigSubset` was named
-  as a placeholder and explicitly left to be renamed; the `-er` family (`ConfigSelector`)
-  would match `ConfigMerger`, `ProjectBuilder`, `ProjectFinder`. Renaming it now costs users
-  an edit, since both example projects name it in their `.fmla` — so it gets cheaper never.
-- **`isPinned` (26)** — the sharpest catch and deliberately declined. *Pinned* means "cannot
-  be moved" in memory management, where the meaning here is "held alive by user intent rather
-  than by references" — a **GC root**. `isRooted` is more accurate, but only to a reader
-  already thinking in collector terms, and the current name is internally consistent and well
-  explained. Revisit only if a real collector lands.
+*Still open.* The config vocabulary — `Configuration` (a node type), `ConfigurationText`,
+`semel.config`, `config namespace` — is four words circling one area. Not misleading, just
+crowded; rename opportunistically, when already in the file.
 
-*Two arguments already knocked down, so they are not re-raised.* `Expectation` (198 uses)
-looks like it collides with XCTest, but `expectation(` appears zero times here, so the clash
-is theoretical; at that many uses it is the worst effort-to-benefit on the list. `GraphShape`
-is defensible — its nearest standard analogue is Nix's **derivation** — though it does name
-two things, the tree (`GraphShapeNode`) and the rendered string stored as `searchKey`, a split
-the code has and the names do not.
-
-*What to do.* A **glossary in `AGENTS.md`, not a rename sweep**: Semel term → nearest standard
-equivalent → *how it differs*. The third column is the point, because a borrowed name imports
-its home semantics — call a node an "action" and a Bazel reader assumes hermeticity and
-one-shot scheduling, neither of which holds here. False familiarity is worse than
-unfamiliarity. Then rename opportunistically, when already in the file.
-
-*Cost data, from the renames already done.* The compiler verifies every type site and catches
-almost nothing; the damage lands in prose and in compound identifiers. Comments went wrong
-three distinct ways — concept read as type, SQL identifier read as a Swift path, grammar
-notation read as a type reference — and a substring match turned `fromNodeFunction` into
-`fromNode`, colliding with a variable already named that. Inside a quoted string, prose must
-be left alone while `\(interpolations)` must be renamed, so no single rule gets both right.
-Budget a reading pass, not a sweep.
-
-*Convention in force.* Locals are named after their type in camelCase — a `NodeRecord` is
-`nodeRecord`, a `Node` is `node` — except where a name says *which* one (`toNode`, `fromNode`,
-`child`, `consumer`, `folder`), which is the divergence worth keeping.
-
-*Loose end:* `makeNodeCast` (`NodeSupport.swift`) has no callers.
+*Decided, so it is not re-raised.* `isPinned` stays. *Pinned* means "cannot be moved" in
+memory management, where the meaning here is "held alive by user intent rather than by
+references" — a **GC root**. `isRooted` is more accurate only to a reader already thinking in
+collector terms, and would read as "the root of the file system" to everyone else. Revisit
+only if a real collector lands.
 
 **B-45** `open` — **Database write failures are not classified as unrecoverable.**
 `UnrecoverableError.swift` used to claim they were; `db5fcb7` corrected the claim rather than
@@ -388,7 +361,7 @@ is in scope at all — `swift-format` is a different tool with a different answe
 both is how a repo ends up with two opinions about the same line.
 
 **B-47** `open` — **The SDK is declared but not an input.**
-From a TODO at `SwiftCompilerTool.swift:169`, whose specific ask is already answered — the
+From a TODO at `SwiftCompiler.swift:169`, whose specific ask is already answered — the
 setting does now live in a `semel.config` inside the input file system. What it was pointing
 at does not.
 
@@ -418,10 +391,10 @@ them, so two builds of one SDK version no longer pass the same check. A bare ver
 with the full string to paste. What is left is the wide half above.
 
 **B-48** `open` — **`clang.*.std` is one key for a whole package, whatever language a file is.**
-`ClangCompilerToolConfiguration.std` is a single value fed from one `clang.compiler.std` key, and
-every `ClangCompilerTool` node in a package selects the same prefix — so there is no way to say
+`ClangCompilerConfiguration.std` is a single value fed from one `clang.compiler.std` key, and
+every `ClangCompiler` node in a package selects the same prefix — so there is no way to say
 `c17` for the `.c` files and `c++20` for the `.cpp` ones. It is applied only when the file
-classifies as C++ (`ClangPreprocessorTool.language(for:)`), which is why a mixed project builds at
+classifies as C++ (`ClangPreprocessor.language(for:)`), which is why a mixed project builds at
 all rather than failing on `-std=c++20` against a `.c` file.
 
 That is also why `std` is required *for C++ compilation* rather than unconditionally, which is the

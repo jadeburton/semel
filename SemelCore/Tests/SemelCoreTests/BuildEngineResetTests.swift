@@ -47,7 +47,7 @@ final class BuildEngineResetTests: SemelCoreTestCase {
         try engine.database.node.updatePendingDeletion(nodeID: inputChild.id!, pendingDeletion: true)
 
         // Give reset something to delete, so it reaches the bulk-delete transaction.
-        _ = try GraphShapeNode.parse("Configuration(role: 'doomed').output").findOrCreateMatchingNode()
+        _ = try GraphSpecNode.parse("Configuration(role: 'doomed').output").findOrCreateMatchingNode()
 
         try engine.reset()
 

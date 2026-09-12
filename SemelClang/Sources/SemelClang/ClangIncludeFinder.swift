@@ -92,7 +92,7 @@ public struct ClangIncludeFinder: Node {
         let includePathList: NodeValue
 
         func asProcessOutput() throws -> ProcessOutput {
-            .init(outputValues: [ClangIncludeFinder.includePathListOutputPort: includePathList], inputWireExpectations: [:])
+            .init(outputValues: [ClangIncludeFinder.includePathListOutputPort: includePathList], inputWireSpecs: [:])
         }
     }
 

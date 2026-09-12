@@ -63,7 +63,7 @@ public enum TypeRegistry {
     }
 
     /// Look up the `kind` discriminator for a type identified by its Swift type name.
-    /// Used when reconstructing a node from a `GraphShapeNode` string.
+    /// Used when reconstructing a node from a `GraphSpecNode` string.
     public static func kind(forTypeName typeName: String) throws -> UInt {
         guard let type = nameCache[typeName] else {
             throw TypeRegistryError.unknownTypeName(typeName)

@@ -1,14 +1,14 @@
 //
-//  GraphShapeApplier.swift
+//  GraphSpecApplier.swift
 //  semel
 //
-//  Live-graph operations for GraphShapeNode:
-//    • Building a shape from the database (build)
+//  Live-graph operations for GraphSpecNode:
+//    • Building a spec from the database (build)
 //    • Searching the database for a matching node (find)
 //    • Creating missing nodes and wires atomically (create)
-//    • Recomputing Node.searchKey for all nodes
+//    • Recomputing Node.graphSpec for all nodes
 //
-//  Pure model, serialisation, and parsing live in GraphShape.swift.
+//  Pure model, serialisation, and parsing live in GraphSpec.swift.
 //
 
 import Foundation
@@ -16,20 +16,20 @@ import SemelNodeKit
 
 // MARK: - Errors
 
-enum GraphShapeApplierError: Error {
-    /// The type name in the shape string is not registered in TypeRegistry.
+enum GraphSpecApplierError: Error {
+    /// The type name in the spec string is not registered in TypeRegistry.
     case unknownTypeName(String)
     /// A required static input port has no wire connected after node creation.
     case requiredPortUnwired(typeName: String, portName: String)
-    /// `findOrCreateMatchingNode` was called on a shape that could not be resolved.
+    /// `findOrCreateMatchingNode` was called on a spec that could not be resolved.
     case couldNotResolveShape(typeName: String)
-    /// A child shape returned a nil fromSymbolID when one was required for wiring.
+    /// A child spec returned a nil fromSymbolID when one was required for wiring.
     case missingOutputPortInChildShape(typeName: String)
 
     case emtpyStringWireName
 }
 
-// MARK: - graphShapeProperties — extracting init-time properties from a live node
+// MARK: - graphSpecProperties — extracting init-time properties from a live node
 
 extension Node {
     /// Default: delegate to `WithProperties` if the type conforms, else no properties.
@@ -37,20 +37,20 @@ extension Node {
 }
 
 extension Node {
-    func graphShapeProperties() -> [GraphShapeProperty] {
+    func graphSpecProperties() -> [GraphSpecProperty] {
         thisNode.properties
             .sorted(by: { $0.key < $1.key })
-            .map { GraphShapeProperty(key: $0.key, value: $0.value) }
+            .map { GraphSpecProperty(key: $0.key, value: $0.value) }
     }
 }
 
-// MARK: - Build shape from the live graph
+// MARK: - Build spec from the live graph
 
-extension GraphShapeNode {
+extension GraphSpecNode {
 
     /// Wire-endpoint form: includes the `.outputPort` suffix.
-    /// Used when building expectation strings or comparing wires.
-    static func buildFromWire(_ wire: Wire, database: DatabaseLayer) throws -> GraphShapeNode {
+    /// Used when building spec strings or comparing wires.
+    static func buildFromWire(_ wire: Wire, database: DatabaseLayer) throws -> GraphSpecNode {
         var visited = Set<ObjectID>()
         return try buildFromOrigin(database: database,
                                    fromNodeID: wire.fromNodeID,
@@ -60,9 +60,9 @@ extension GraphShapeNode {
     }
 
     /// Node-identity form: no `.outputPort` suffix.
-    /// Used when computing `Node.searchKey`.
+    /// Used when computing `Node.graphSpec`.
     static func buildFromNode(database: DatabaseLayer, nodeID: ObjectID,
-                              fromSymbolID: ObjectID? = nil) throws -> GraphShapeNode {
+                              fromSymbolID: ObjectID? = nil) throws -> GraphSpecNode {
 
         var visited = Set<ObjectID>()
         return try buildFromOrigin(database: database,
@@ -76,7 +76,7 @@ extension GraphShapeNode {
                                 fromNodeID: ObjectID,
                                 fromSymbolID: ObjectID?,
                                 includeOutputPort: Bool,
-                                visited: inout Set<ObjectID>) throws -> GraphShapeNode {
+                                visited: inout Set<ObjectID>) throws -> GraphSpecNode {
 
         let outputPortName: String? = (includeOutputPort && fromSymbolID != nil)
             ? fromSymbolID!.resolveSymbol() : nil
@@ -87,18 +87,18 @@ extension GraphShapeNode {
 
         // Cycle guard — return a stub with no inputs to stop infinite recursion.
         guard !visited.contains(fromNodeID) else {
-            return GraphShapeNode(typeName: typeName, outputPort: outputPortName)
+            return GraphSpecNode(typeName: typeName, outputPort: outputPortName)
         }
         visited.insert(fromNodeID)
 
-        let properties = node.graphShapeProperties()
+        let properties = node.graphSpecProperties()
 
         // Only static ports are included.  Dynamic ports (e.g. includeFileLists)
         // are managed by the engine after the schema is laid down; including them
-        // would make searchKey change on every cycle, breaking topology matching.
+        // would make graphSpec change on every cycle, breaking topology matching.
         let staticInputPorts = node.descriptor.staticInputPorts
 
-        var inputs: [GraphShapeInputPort] = []
+        var inputs: [GraphSpecInputPort] = []
 
         for portName in staticInputPorts {
             let portSymbolID  = portName.asSymbolID()
@@ -110,7 +110,7 @@ extension GraphShapeNode {
                 continue
             }
 
-            var wires: [GraphShapeWire] = []
+            var wires: [GraphSpecWire] = []
             for wire in incomingWires {
                 var branchVisited = visited          // each branch gets its own copy
                 let childNode = try buildFromOrigin(database: database,
@@ -119,18 +119,18 @@ extension GraphShapeNode {
                                                     includeOutputPort: true,
                                                     visited: &branchVisited)
                 let wireName  = wire.name.resolveSymbol()
-                wires.append(GraphShapeWire(name: wireName, node: childNode))
+                wires.append(GraphSpecWire(name: wireName, node: childNode))
             }
-            inputs.append(GraphShapeInputPort(portName: portName, wires: wires))
+            inputs.append(GraphSpecInputPort(portName: portName, wires: wires))
         }
 
-        return GraphShapeNode(typeName: typeName, properties: properties, inputs: inputs, outputPort: outputPortName)
+        return GraphSpecNode(typeName: typeName, properties: properties, inputs: inputs, outputPort: outputPortName)
     }
 }
 
 // MARK: - Search for a matching node in the live graph
 
-extension GraphShapeNode {
+extension GraphSpecNode {
 
     var database: DatabaseLayer {
         DatabaseLayer.shared
@@ -140,11 +140,11 @@ extension GraphShapeNode {
     /// matches `self`, or `nil` if no match exists.
     private func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         for nodeRecord in try database.node.selectAll() {
-            let graphShape = try GraphShapeNode.buildFromNode(database: database,
+            let graphSpec = try GraphSpecNode.buildFromNode(database: database,
                                                               nodeID: (try nodeRecord.requireID()),
                                                               fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
 
-            if graphShape == asString(omitOutputPort: true) {
+            if graphSpec == asString(omitOutputPort: true) {
                 return (fromNodeID: (try nodeRecord.requireID()), fromSymbolID: outputPort?.asSymbolID())
             }
         }
@@ -152,10 +152,10 @@ extension GraphShapeNode {
         return nil
     }
 
-    private func findMatchingNodeUsingSearchKey() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        let thisGraphShape = asString(omitOutputPort: true)
+    private func findMatchingNodeUsingGraphSpec() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
+        let thisGraphSpec = asString(omitOutputPort: true)
 
-        guard let nodeRecord = try database.node.select(searchKey: thisGraphShape).first else {
+        guard let nodeRecord = try database.node.select(graphSpec: thisGraphSpec).first else {
             return nil
         }
 
@@ -163,7 +163,7 @@ extension GraphShapeNode {
     }
 
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        try findMatchingNodeUsingSearchKey()
+        try findMatchingNodeUsingGraphSpec()
     }
 
     private func matchesNode(nodeID: ObjectID) throws -> Bool {
@@ -174,7 +174,7 @@ extension GraphShapeNode {
             return false
         }
 
-        let actualProperties = node.graphShapeProperties()
+        let actualProperties = node.graphSpecProperties()
 
         guard Set(actualProperties) == Set(properties) else {
             return false
@@ -200,7 +200,7 @@ extension GraphShapeNode {
 
                 var visited: Set<ObjectID> = []
 
-                let actualChild = try GraphShapeNode.buildFromOrigin(database: database,
+                let actualChild = try GraphSpecNode.buildFromOrigin(database: database,
                                                                      fromNodeID: actualWire.fromNodeID,
                                                                      fromSymbolID: actualWire.fromSymbolID,
                                                                      includeOutputPort: true,
@@ -217,7 +217,7 @@ extension GraphShapeNode {
 
 // MARK: - Find or create a matching node in the live graph
 
-extension GraphShapeNode {
+extension GraphSpecNode {
 
     /// Returns `(fromNodeID, fromSymbolID)` of the matching node, creating it
     /// (and all missing upstream nodes and wires) if none exists.
@@ -228,11 +228,11 @@ extension GraphShapeNode {
     ///   • Task A's transaction: find → nil  → insert → commit
     ///   • Task B's transaction: find → hit! → return Task A's node (no insert)
     ///
-    /// This eliminates the `UNIQUE constraint failed: Node.searchKey` crash that
+    /// This eliminates the `UNIQUE constraint failed: Node.graphSpec` crash that
     /// occurred when both tasks ran the find outside a transaction, both saw nil,
-    /// and then both tried to insert the same searchKey.
+    /// and then both tried to insert the same graphSpec.
     ///
-    /// Throws `GraphShapeApplierError` for all failure cases; never returns nil.
+    /// Throws `GraphSpecApplierError` for all failure cases; never returns nil.
     public func findOrCreateMatchingNode() throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?) {
         // Fast path: a node that already exists needs no transaction.
         //
@@ -269,7 +269,7 @@ extension GraphShapeNode {
         do {
             kind = try TypeRegistry.kind(forTypeName: typeName)
         } catch {
-            throw GraphShapeApplierError.unknownTypeName(typeName)
+            throw GraphSpecApplierError.unknownTypeName(typeName)
         }
 
         // ── All other node types ───────────────────────────────────────────────
@@ -280,11 +280,11 @@ extension GraphShapeNode {
         let newNode = try NodeRecord.createNode(database: database,
                                           kind: kind,
                                           properties: nodeProperties,
-                                          searchKey: asString(omitOutputPort: true))
+                                          graphSpec: asString(omitOutputPort: true))
 
 //        print("createNode time elapsed: \(Date.now.timeIntervalSince(startTime))")
 
-        // Wire each input port from the shape using the explicit wire name.
+        // Wire each input port from the spec using the explicit wire name.
         for inputPortSpec in inputs {
             let toSymbolID = inputPortSpec.portName.asSymbolID()
 
@@ -297,11 +297,11 @@ extension GraphShapeNode {
                 let (fromNode, fromSymbolID) = try wireSpec.node.findOrCreateMatchingNode()
 
                 guard let fromSymbolID else {
-                    throw GraphShapeApplierError.missingOutputPortInChildShape(typeName: wireSpec.node.typeName)
+                    throw GraphSpecApplierError.missingOutputPortInChildShape(typeName: wireSpec.node.typeName)
                 }
 
                 if wireSpec.name.isEmpty {
-                    throw GraphShapeApplierError.emtpyStringWireName
+                    throw GraphSpecApplierError.emtpyStringWireName
                 }
 
                 try Wire.connectWire(database: database,
@@ -313,7 +313,7 @@ extension GraphShapeNode {
             }
         }
 
-        // ── Validate: every required port declared in the shape must be wired ─
+        // ── Validate: every required port declared in the spec must be wired ─
         let node  = try newNode.makeNode()
         let descriptor    = node.descriptor
         let optionalPorts = Set(descriptor.optionalStaticInputPorts)
@@ -323,7 +323,7 @@ extension GraphShapeNode {
             let connectedWires = try database.wire.select(goingToNodeID: (try newNode.requireID()), toSymbolID: portSymbolID)
             if connectedWires.isEmpty {
                 // Throwing here causes withTransaction to roll back everything.
-                throw GraphShapeApplierError.requiredPortUnwired(typeName: typeName,
+                throw GraphSpecApplierError.requiredPortUnwired(typeName: typeName,
                                                                  portName: portSpec.portName)
             }
         }

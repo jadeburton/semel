@@ -39,8 +39,8 @@ final class CascadeDeletionTests: SemelCoreTestCase {
     // build distinguishable nodes without the file-system plumbing that
     // StaticFile requires.
     private func makeConfiguration(role: String) throws -> NodeRecord {
-        let shape = try GraphShapeNode.parse("Configuration(role: '\(role)').output")
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+        let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
 
@@ -135,8 +135,8 @@ final class CascadeDeletionTests: SemelCoreTestCase {
 
 // MARK: - findMatchingNode invariant
 //
-// The false-positive topology fix in applyExpectationConfiguration relies on a
-// guarantee: parsing the same expectation string twice must produce a shape
+// The false-positive topology fix in applySpecs relies on a
+// guarantee: parsing the same spec string twice must produce a spec
 // whose findMatchingNode() returns the node that was created the first time.
 // These tests verify that guarantee holds.
 
@@ -155,27 +155,27 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
         super.tearDown()
     }
 
-    // Parsing the same expectation string twice must return the same node.
+    // Parsing the same spec string twice must return the same node.
     func test_findMatchingNode_sameString_returnsSameNode() throws {
-        let expectation = "Configuration(env: 'test').output"
-        let (node, portID) = try GraphShapeNode.parse(expectation).findOrCreateMatchingNode()
+        let spec = "Configuration(env: 'test').output"
+        let (node, portID) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
-        let match = try GraphShapeNode.parse(expectation).findMatchingNode()
+        let match = try GraphSpecNode.parse(spec).findMatchingNode()
 
         XCTAssertEqual(match?.fromNodeID,    node.id!, "findMatchingNode must return the same node")
         XCTAssertEqual(match?.fromSymbolID,  portID,   "output port symbol must match")
     }
 
-    // Two nodes with different args must produce different search keys and
+    // Two nodes with different args must produce different graph specs and
     // therefore not collide.
     func test_findMatchingNode_differentArgs_returnsDifferentNodes() throws {
-        let (nodeA, _) = try GraphShapeNode.parse("Configuration(env: 'debug').output").findOrCreateMatchingNode()
-        let (nodeB, _) = try GraphShapeNode.parse("Configuration(env: 'release').output").findOrCreateMatchingNode()
+        let (nodeA, _) = try GraphSpecNode.parse("Configuration(env: 'debug').output").findOrCreateMatchingNode()
+        let (nodeB, _) = try GraphSpecNode.parse("Configuration(env: 'release').output").findOrCreateMatchingNode()
 
         XCTAssertNotEqual(nodeA.id!, nodeB.id!)
 
-        let matchA = try GraphShapeNode.parse("Configuration(env: 'debug').output").findMatchingNode()
-        let matchB = try GraphShapeNode.parse("Configuration(env: 'release').output").findMatchingNode()
+        let matchA = try GraphSpecNode.parse("Configuration(env: 'debug').output").findMatchingNode()
+        let matchB = try GraphSpecNode.parse("Configuration(env: 'release').output").findMatchingNode()
 
         XCTAssertEqual(matchA?.fromNodeID, nodeA.id!)
         XCTAssertEqual(matchB?.fromNodeID, nodeB.id!)
@@ -183,21 +183,21 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 
     // A node that has not been created yet must not be found.
     func test_findMatchingNode_unknownNode_returnsNil() throws {
-        let match = try GraphShapeNode.parse("Configuration(env: 'nonexistent').output").findMatchingNode()
+        let match = try GraphSpecNode.parse("Configuration(env: 'nonexistent').output").findMatchingNode()
         XCTAssertNil(match)
     }
 
     // After a node is cascade-deleted it must no longer be findable.
     func test_findMatchingNode_deletedNode_returnsNil() throws {
-        let expectation = "Configuration(env: 'temporary').output"
-        let (node, _) = try GraphShapeNode.parse(expectation).findOrCreateMatchingNode()
+        let spec = "Configuration(env: 'temporary').output"
+        let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         // Mark the node pendingDeletion and run cleanup.
         try engine.database.node.updatePendingDeletion(nodeID: node.id!, pendingDeletion: true)
         var processed = 0
         repeat { processed = try engine.processPendingDeletions() } while processed > 0
 
-        let match = try GraphShapeNode.parse(expectation).findMatchingNode()
+        let match = try GraphSpecNode.parse(spec).findMatchingNode()
         XCTAssertNil(match, "deleted node must not be found by findMatchingNode")
     }
 }
@@ -206,7 +206,7 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 
 final class FormulaMalformedTests: SemelCoreTestCase {
 
-    private func parse(_ source: String) throws -> [String: GraphShapeNode] {
+    private func parse(_ source: String) throws -> [String: GraphSpecNode] {
         try FormulaFile.parse(source, basePath: Path("."), wildcardExpander: { _ in [] })
     }
 

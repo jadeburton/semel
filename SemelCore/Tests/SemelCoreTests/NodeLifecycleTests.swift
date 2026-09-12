@@ -67,7 +67,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     func test_aFileCannotTakeTheNameOfAnExistingSiblingFolder() throws {
         _ = try engine.outputFileSystem.ensureEntirePathExistsAsFolders(Path("semel"), pinned: false)
 
-        XCTAssertThrowsError(try GraphShapeNode.parse("OutputFile(path: 'output:/semel')")
+        XCTAssertThrowsError(try GraphSpecNode.parse("OutputFile(path: 'output:/semel')")
                                 .findOrCreateMatchingNode()) { error in
             let message = String(describing: error)
             XCTAssertTrue(message.contains("semel"), "should name the collision, got \(message)")
@@ -75,7 +75,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     }
 
     func test_aFolderCannotTakeTheNameOfAnExistingSiblingFile() throws {
-        _ = try GraphShapeNode.parse("OutputFile(path: 'output:/product')").findOrCreateMatchingNode()
+        _ = try GraphSpecNode.parse("OutputFile(path: 'output:/product')").findOrCreateMatchingNode()
 
         XCTAssertThrowsError(try engine.outputFileSystem.ensureEntirePathExistsAsFolders(
             Path("product/nested"), pinned: false))
@@ -87,7 +87,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         _ = try engine.outputFileSystem.ensureEntirePathExistsAsFolders(Path("collide"), pinned: false)
         let before = try database.node.selectAll().count
 
-        _ = try? GraphShapeNode.parse("OutputFile(path: 'output:/collide')").findOrCreateMatchingNode()
+        _ = try? GraphSpecNode.parse("OutputFile(path: 'output:/collide')").findOrCreateMatchingNode()
 
         XCTAssertEqual(try database.node.selectAll().count, before)
     }
@@ -95,8 +95,8 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     /// Nameless nodes (compilers, linkers — everything that is not a file-system entry)
     /// share a nil name by design and must not be caught by the check.
     func test_namelessNodesAreNotTreatedAsColliding() throws {
-        let first  = try GraphShapeNode.parse("Configuration(moduleName: 'A')").findOrCreateMatchingNode()
-        let second = try GraphShapeNode.parse("Configuration(moduleName: 'B')").findOrCreateMatchingNode()
+        let first  = try GraphSpecNode.parse("Configuration(moduleName: 'A')").findOrCreateMatchingNode()
+        let second = try GraphSpecNode.parse("Configuration(moduleName: 'B')").findOrCreateMatchingNode()
 
         XCTAssertNotEqual(try first.0.requireID(), try second.0.requireID())
     }
@@ -110,8 +110,8 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(
                 Path(relativePath).deletingLastComponent ?? .empty, pinned: true)
 
-        let shape = try GraphShapeNode.parse("StaticFile(path: '\(fullPath.string)')")
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let spec = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')")
+        let (node, _) = try spec.findOrCreateMatchingNode()
         let file = try XCTUnwrap(node.nodeAsAny() as? StaticFile)
 
         if let contents {
@@ -121,8 +121,8 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     }
 
     private func makeConfiguration(role: String) throws -> NodeRecord {
-        let shape = try GraphShapeNode.parse("Configuration(role: '\(role)').output")
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+        let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
 

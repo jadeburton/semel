@@ -34,18 +34,18 @@ final class UnclaimedConfigKeyReportingTests: SemelCoreTestCase {
 
     /// Writes (or rewrites) a config file at `path` and wires `prefixes` to it. Calling this
     /// again for a path already in the graph finds the same `StaticFile` node — the same
-    /// shape-matching `findOrCreateMatchingNode` uses everywhere else — so a second call is
+    /// spec-matching `findOrCreateMatchingNode` uses everywhere else — so a second call is
     /// how a test simulates editing the file rather than creating an unrelated one.
     private func writeConfigFile(path: String, content: String, prefixes: [String]) throws {
-        let fileShape = try GraphShapeNode.parse("StaticFile(path: '\(path)')")
+        let fileShape = try GraphSpecNode.parse("StaticFile(path: '\(path)')")
         let (fileNode, _) = try fileShape.findOrCreateMatchingNode()
         let staticFile = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile)
         _ = try staticFile.replaceContent(try content.intern())
 
         for prefix in prefixes {
-            let shape = try GraphShapeNode.parse(
-                "ConfigSubset(prefix: '\(prefix)', input: ['config': StaticFile(path: '\(path)').output]).output")
-            _ = try shape.findOrCreateMatchingNode()
+            let spec = try GraphSpecNode.parse(
+                "ConfigFilter(prefix: '\(prefix)', input: ['config': StaticFile(path: '\(path)').output]).output")
+            _ = try spec.findOrCreateMatchingNode()
         }
     }
 

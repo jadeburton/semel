@@ -15,9 +15,9 @@ public enum SemelSwift {
     /// Idempotent, because a host may call it more than once and every test calls it again.
     public static func register() throws {
         try TypeRegistry.register(types: [
-            SwiftCompilerTool.self,
-            SwiftLinkerTool.self,
-            SwiftPackageReaderTool.self,
+            SwiftCompiler.self,
+            SwiftLinker.self,
+            SwiftPackageReader.self,
             SwiftFormulaConverter.self,
         ])
         ProjectDiscovery.register(SwiftPackagePlugin())
@@ -28,11 +28,11 @@ public enum SemelSwift {
         let sdk: () -> [String: String] = {
             resolveSDKVersion().map { ["sdkVersion": $0] } ?? [:]
         }
-        ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerToolConfiguration.settingNamespace,
+        ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerConfiguration.settingNamespace,
                                              toolName: "swiftc", machineSettings: sdk))
-        ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerToolConfiguration.settingNamespace,
+        ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerConfiguration.settingNamespace,
                                              toolName: "swiftc", machineSettings: sdk))
-        ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderToolConfiguration.settingNamespace,
+        ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                              toolName: "swift"))
     }
 }
@@ -42,7 +42,7 @@ public enum SemelSwift {
 /// Recognises a `Package.swift` and wires the reader and converter that turn it into a
 /// formula the engine can build.
 struct SwiftPackagePlugin: ProjectBuilderPlugin {
-    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+    func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
 
         guard entry.isPinned, entry.name == "Package.swift" else {
             return nil
@@ -54,7 +54,7 @@ struct SwiftPackagePlugin: ProjectBuilderPlugin {
         // The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
         // every other tool does. This is the first node of every Swift build: wired to an
         // empty Configuration it fails before the manifest is ever read.
-        let pkgReaderExpr = SwiftFormulaConverter.packageReaderExpectation(
+        let pkgReaderExpr = SwiftFormulaConverter.packageReaderSpec(
             packageFilePath: fullPath,
             rootPackageFolder: packageFolder)
 

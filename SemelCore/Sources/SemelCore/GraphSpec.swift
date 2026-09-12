@@ -1,9 +1,9 @@
 //
-//  GraphShape.swift
+//  GraphSpec.swift
 //  semel
 //
-//  Pure model, serialisation, topology comparison, and parser for graph shapes.
-//  No database or live-graph access — see GraphShapeApplier.swift for that.
+//  Pure model, serialisation, topology comparison, and parser for graph specs.
+//  No database or live-graph access — see GraphSpecApplier.swift for that.
 //
 //  String format
 //  ─────────────
@@ -13,7 +13,7 @@
 //  Parameters inside the parentheses are a flat, ordered list.  Three kinds:
 //    • Arg    — init-time quoted value    e.g.  path: 'src/hello.c'
 //    • Input  — named-wire array         e.g.  input: ["hello.c": StaticFile(...).output]
-//    • Output — output expectation       e.g.  output -> ["result": StaticFile(...)]
+//    • Output — output spec       e.g.  output -> ["result": StaticFile(...)]
 //               (parsed and stored; not yet used in topology matching)
 //
 //  Each element inside an input/output array is a named wire entry:
@@ -22,18 +22,18 @@
 //  each wire feeding a given port when multiple wires are present.
 //
 //  The trailing `.outputPort` suffix is optional:
-//    • Present  → wire-endpoint form, used in expectation strings
-//    • Absent   → node-identity form, stored in Node.searchKey
+//    • Present  → wire-endpoint form, used in spec strings
+//    • Absent   → node-identity form, stored in Node.graphSpec
 //
 //
 //  Examples:
 //      StaticFile(path: 'src/hello.c').output
-//      ClangPreprocessorTool(
+//      ClangPreprocessor(
 //          configuration: ["config": Configuration(tool: 'preprocessor').output],
 //          input: ["hello.c": StaticFile(path: 'hello.c').output]).output
-//      ClangLinkerTool(
-//          objectFiles: ["compiler_hello": ClangCompilerTool(...).output,
-//                        "compiler_main":  ClangCompilerTool(...).output]).output
+//      ClangLinker(
+//          objectFiles: ["compiler_hello": ClangCompiler(...).output,
+//                        "compiler_main":  ClangCompiler(...).output]).output
 //
 
 import Foundation
@@ -45,47 +45,47 @@ import SemelNodeKit
 /// StaticFile, `moduleName` for a compile.
 ///
 /// Called a property, not an argument, because that is what a node calls it: these are
-/// exactly a node's `properties`, rendered into a shape.
-struct GraphShapeProperty: Equatable, Hashable {
+/// exactly a node's `properties`, rendered into a spec.
+struct GraphSpecProperty: Equatable, Hashable {
     let key: String
     let value: String
 }
 
 /// A single named wire feeding an input port.
-struct GraphShapeWire: Equatable {
+struct GraphSpecWire: Equatable {
     let name: String          // wire name, e.g. "src/hello.c"
-    let node: GraphShapeNode  // the upstream node
+    let node: GraphSpecNode  // the upstream node
 }
 
 /// A wired input port.  `wires` holds all named wires feeding this port.
-struct GraphShapeInputPort: Equatable {
+struct GraphSpecInputPort: Equatable {
     let portName: String
-    let wires:    [GraphShapeWire]
+    let wires:    [GraphSpecWire]
 }
 
 /// An expected output port entry (future use — parsed but not yet matched).
-struct GraphShapeOutputPort: Equatable {
+struct GraphSpecOutputPort: Equatable {
     let portName: String
-    let wires:    [GraphShapeWire]
+    let wires:    [GraphSpecWire]
 }
 
-/// A node in the graph-shape tree.
-public struct GraphShapeNode: Equatable {
-    /// Swift type name of the Node, e.g. `"StaticFile"`, `"ClangCompilerTool"`.
+/// A node in the graph-spec tree.
+public struct GraphSpecNode: Equatable {
+    /// Swift type name of the Node, e.g. `"StaticFile"`, `"ClangCompiler"`.
     let typeName:   String
     /// Init-time key-value properties (e.g. `path: 'src/hello.c'`).  Ordered.
-    let properties: [GraphShapeProperty]
+    let properties: [GraphSpecProperty]
     /// Wired input ports.  Ordered.
-    let inputs:     [GraphShapeInputPort]
+    let inputs:     [GraphSpecInputPort]
     /// Expected output ports (future use — stored but not yet matched).
-    let outputs:    [GraphShapeOutputPort]
-    /// Output port consumed downstream, or `nil` for the node-identity / searchKey form.
+    let outputs:    [GraphSpecOutputPort]
+    /// Output port consumed downstream, or `nil` for the node-identity / graphSpec form.
     let outputPort: String?
 
     init(typeName:   String,
-         properties: [GraphShapeProperty]   = [],
-         inputs:     [GraphShapeInputPort]  = [],
-         outputs:    [GraphShapeOutputPort] = [],
+         properties: [GraphSpecProperty]   = [],
+         inputs:     [GraphSpecInputPort]  = [],
+         outputs:    [GraphSpecOutputPort] = [],
          outputPort: String?                = nil) {
         self.typeName   = typeName
         self.properties = properties
@@ -97,7 +97,7 @@ public struct GraphShapeNode: Equatable {
 
 // MARK: - Serialisation
 
-extension GraphShapeNode {
+extension GraphSpecNode {
 
     /// Renders the node to a string.
     /// - Parameter pretty: When `true`, output is indented for human readability.
@@ -154,13 +154,13 @@ extension GraphShapeNode {
 
 // MARK: - Topology comparison (structural, port-order-independent)
 
-extension GraphShapeNode {
+extension GraphSpecNode {
 
     enum TopologyMatchError: Error {
         case noMatch(reason: String)
     }
 
-    func expectTopologyMatch(_ other: GraphShapeNode) throws {
+    func expectTopologyMatch(_ other: GraphSpecNode) throws {
         guard typeName == other.typeName else {
             throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
         }
@@ -176,7 +176,7 @@ extension GraphShapeNode {
 
         // Ports that are ONLY in `self` (current) are allowed to be extra — they are
         // dynamic ports added by the engine after node creation (e.g.
-        // ClangPreprocessorTool's `includeFileLists` / `headerInputFiles`).
+        // ClangPreprocessor's `includeFileLists` / `headerInputFiles`).
         //
         // For ports that appear in BOTH `self` and `other` (i.e. ports the formula
         // explicitly specifies), the wire sets must match exactly: same count and
@@ -189,7 +189,7 @@ extension GraphShapeNode {
         // positional zip would produce false mismatches.
         for (portName, otherWires) in otherPorts {
             guard let selfWires = selfPorts[portName] else {
-                throw TopologyMatchError.noMatch(reason: "Expected port '\(portName)' is absent in the current graph shape")
+                throw TopologyMatchError.noMatch(reason: "Expected port '\(portName)' is absent in the current graph spec")
             }
             guard selfWires.count == otherWires.count else {
                 throw TopologyMatchError.noMatch(reason: "Wire count mismatch on port '\(portName)': current=\(selfWires.count), expected=\(otherWires.count)")
@@ -198,7 +198,7 @@ extension GraphShapeNode {
                                              uniquingKeysWith: { first, _ in first })
             for otherWire in otherWires {
                 guard let selfWireNode = selfWiresByName[otherWire.name] else {
-                    throw TopologyMatchError.noMatch(reason: "Expected wire '\(otherWire.name)' on port '\(portName)' is absent in the current graph shape")
+                    throw TopologyMatchError.noMatch(reason: "Expected wire '\(otherWire.name)' on port '\(portName)' is absent in the current graph spec")
                 }
                 do {
                     try selfWireNode.expectTopologyMatch(otherWire.node)
@@ -212,24 +212,24 @@ extension GraphShapeNode {
 
 // MARK: - Parser
 
-enum GraphShapeParseError: Error {
+enum GraphSpecParseError: Error {
     case unexpectedCharacter(Character?, context: String)
     case unexpectedEndOfInput(context: String)
     case emptyIdentifier
 }
 
-extension GraphShapeNode {
+extension GraphSpecNode {
 
-    /// Parses a string produced by `asString()` back into a `GraphShapeNode`.
-    public static func parse(_ string: String) throws -> GraphShapeNode {
-        var parser = GraphShapeParser(string)
+    /// Parses a string produced by `asString()` back into a `GraphSpecNode`.
+    public static func parse(_ string: String) throws -> GraphSpecNode {
+        var parser = GraphSpecParser(string)
         return try parser.parseNode()
     }
 }
 
 // MARK: - Recursive-descent parser
 
-private struct GraphShapeParser {
+private struct GraphSpecParser {
 
     private let chars: [Character]
     private var position: Int = 0
@@ -238,15 +238,15 @@ private struct GraphShapeParser {
 
     // ── Entry ─────────────────────────────────────────────────────────────────
 
-    mutating func parseNode() throws -> GraphShapeNode {
+    mutating func parseNode() throws -> GraphSpecNode {
         skipWhitespace()
         let typeName = try parseIdentifier()
         try consume("(")
         skipWhitespace()
 
-        var properties: [GraphShapeProperty]   = []
-        var inputs:     [GraphShapeInputPort]  = []
-        var outputs:    [GraphShapeOutputPort] = []
+        var properties: [GraphSpecProperty]   = []
+        var inputs:     [GraphSpecInputPort]  = []
+        var outputs:    [GraphSpecOutputPort] = []
 
         if peek() != ")" {
             try parseParamList(properties: &properties, inputs: &inputs, outputs: &outputs)
@@ -255,7 +255,7 @@ private struct GraphShapeParser {
         try consume(")")
 
         let outputPort = try parseOptionalOutputPort()
-        return GraphShapeNode(typeName:   typeName,
+        return GraphSpecNode(typeName:   typeName,
                               properties: properties,
                               inputs:     inputs,
                               outputs:    outputs,
@@ -264,9 +264,9 @@ private struct GraphShapeParser {
 
     // ── Parameter list ────────────────────────────────────────────────────────
 
-    mutating func parseParamList(properties: inout [GraphShapeProperty],
-                                 inputs:     inout [GraphShapeInputPort],
-                                 outputs:    inout [GraphShapeOutputPort]) throws {
+    mutating func parseParamList(properties: inout [GraphSpecProperty],
+                                 inputs:     inout [GraphSpecInputPort],
+                                 outputs:    inout [GraphSpecOutputPort]) throws {
         try parseOneParam(properties: &properties, inputs: &inputs, outputs: &outputs)
         while peek() == "," {
             advance()
@@ -282,9 +282,9 @@ private struct GraphShapeParser {
     ///   `key.dotted: 'value'`       → property (dotted key, e.g. toolDescriptor.name)
     ///   `key: [...]`                → input (wire array after `:`)
     ///   `key -> [...]`              → output (future use)
-    mutating func parseOneParam(properties: inout [GraphShapeProperty],
-                                inputs:     inout [GraphShapeInputPort],
-                                outputs:    inout [GraphShapeOutputPort]) throws {
+    mutating func parseOneParam(properties: inout [GraphSpecProperty],
+                                inputs:     inout [GraphSpecInputPort],
+                                outputs:    inout [GraphSpecOutputPort]) throws {
         skipWhitespace()
         let key = try parseDottedKey()
         skipWhitespace()
@@ -295,11 +295,11 @@ private struct GraphShapeParser {
             if peek() == "[" {
                 // input wire port:  key: [...]
                 let wires = try parseWireArray()
-                inputs.append(GraphShapeInputPort(portName: key, wires: wires))
+                inputs.append(GraphSpecInputPort(portName: key, wires: wires))
             } else {
                 // property:  key: 'value'
                 let value = try parseQuotedString()
-                properties.append(GraphShapeProperty(key: key, value: value))
+                properties.append(GraphSpecProperty(key: key, value: value))
             }
 
         } else if peek() == "-" {
@@ -308,20 +308,20 @@ private struct GraphShapeParser {
             try consume(">")   // consume '>'
             skipWhitespace()
             let wires = try parseWireArray()
-            outputs.append(GraphShapeOutputPort(portName: key, wires: wires))
+            outputs.append(GraphSpecOutputPort(portName: key, wires: wires))
 
         } else {
-            throw GraphShapeParseError.unexpectedCharacter(
+            throw GraphSpecParseError.unexpectedCharacter(
                 peek(), context: "expected ':' or '->' after key '\(key)'. Parsing: \(String(chars))")
         }
     }
 
     // ── Wire array: [ entry, entry, ... ] ────────────────────────────────────
 
-    mutating func parseWireArray() throws -> [GraphShapeWire] {
+    mutating func parseWireArray() throws -> [GraphSpecWire] {
         try consume("[")
         skipWhitespace()
-        var wires: [GraphShapeWire] = []
+        var wires: [GraphSpecWire] = []
         if peek() != "]" {
             wires.append(try parseWireEntry())
             skipWhitespace()
@@ -338,21 +338,21 @@ private struct GraphShapeParser {
 
     // ── Wire entry: "name": ShapeNode ─────────────────────────────────────────
 
-    mutating func parseWireEntry() throws -> GraphShapeWire {
+    mutating func parseWireEntry() throws -> GraphSpecWire {
         skipWhitespace()
         let wireName = try parseQuotedString()
         skipWhitespace()
         try consume(":")
         skipWhitespace()
         let node = try parseNode()
-        return GraphShapeWire(name: wireName, node: node)
+        return GraphSpecWire(name: wireName, node: node)
     }
 
     // ── Quoted string (single or double quotes) ───────────────────────────────
 
     mutating func parseQuotedString() throws -> String {
         guard let quote = peek(), quote == "'" || quote == "\"" else {
-            throw GraphShapeParseError.unexpectedCharacter(
+            throw GraphSpecParseError.unexpectedCharacter(
                 peek(), context: "expected quoted string. Parsing: \(String(chars))")
         }
         advance()
@@ -381,7 +381,7 @@ private struct GraphShapeParser {
             result.append(c); advance()
         }
         if result.isEmpty {
-            throw GraphShapeParseError.emptyIdentifier
+            throw GraphSpecParseError.emptyIdentifier
         }
         return result
     }
@@ -413,11 +413,11 @@ private struct GraphShapeParser {
 
     mutating func consume(_ expected: Character) throws {
         guard let c = peek() else {
-            throw GraphShapeParseError.unexpectedEndOfInput(
+            throw GraphSpecParseError.unexpectedEndOfInput(
                 context: "expected '\(expected)'. Parsing: \(String(chars))")
         }
         guard c == expected else {
-            throw GraphShapeParseError.unexpectedCharacter(
+            throw GraphSpecParseError.unexpectedCharacter(
                 c, context: "expected '\(expected)'. Parsing: \(String(chars))")
         }
         advance()

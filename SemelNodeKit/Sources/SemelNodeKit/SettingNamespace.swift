@@ -11,7 +11,7 @@
 // So a type may pin its namespace instead, which is what lets it be renamed after its
 // namespace is public.
 
-/// `SwiftCompilerTool` → `swift.compiler`. The first word is the domain, the rest is the node.
+/// `SwiftCompiler` → `swift.compiler`. The first word is the domain, the rest is the node.
 // TODO: we don't want configs to break if someone renames the type. so types should be asked what prefix they
 // want to use, but it should essentially be hard-coded and never change.
 public func derivedSettingNamespace(forTypeName typeName: String) -> String {

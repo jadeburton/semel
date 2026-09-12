@@ -3,7 +3,7 @@
 //  semel
 //
 //  The engine's side of the node protocols declared in SemelNodeKit: reading input ports,
-//  deciding whether a node is ready, applying wire expectations, writing outputs and
+//  deciding whether a node is ready, applying wire specs, writing outputs and
 //  notifying parents. All of it touches the graph, which is why it is here and not in the
 //  node-authoring API.
 //
@@ -30,7 +30,7 @@ extension Node {
             }
 
             guard !values.isEmpty else {
-                // GraphShapeApplier.createNode() validates this at creation time (requiredPortUnwired),
+                // GraphSpecApplier.createNode() validates this at creation time (requiredPortUnwired),
                 // so reaching here means a wire was removed after the node was built — a real integrity error.
                 throw NodeError.other(message: "Non-optional input port '\(inputPort)' has no connected wires for \(self)")
             }
@@ -203,11 +203,11 @@ extension Node {
         }
 
         do {
-            for (inputPort, wireExpectations) in output.inputWireExpectations {
-                try applyExpectationConfiguration(inputPort: inputPort, wireExpectations: wireExpectations)
+            for (inputPort, wireSpecs) in output.inputWireSpecs {
+                try applySpecs(inputPort: inputPort, wireSpecs: wireSpecs)
             }
         } catch {
-            Debug.warn("applyExpectationConfiguration failed: \(error)")
+            Debug.warn("applySpecs failed: \(error)")
 
             for outputPort in descriptor.outputPorts {
                 try thisNode.writeToOutputPort(outputPort, value: .noValue(reason: .error(messageDataObjectHash: "\(error)".intern())))
@@ -216,11 +216,11 @@ extension Node {
         }
     }
 
-    private func applyExpectationConfiguration(inputPort: String, wireExpectations: [String: String]) throws {
+    private func applySpecs(inputPort: String, wireSpecs: [String: String]) throws {
         // 1. remove any wires that exist but are not in the new configuration (by name)
         // 2. add any wires that are in the new configuration but do not exist yet (by name)
-        // 3. update expectation on wires that exist in both old and new configuration (by name)
-        //    - obtain the current graph shape and compare against the configuration shape
+        // 3. update spec on wires that exist in both old and new configuration (by name)
+        //    - obtain the current graph spec and compare against the configured spec
         //    - if identical, skip — the wire is already correct
         //    - otherwise, disconnect the wire and treat it like a new connection (2)
 
@@ -234,33 +234,33 @@ extension Node {
 
         // Step 1 — delete wires whose name is absent from the new configuration.
         for (wireName, existingWire) in existingWiresByName {
-            if wireExpectations[wireName] == nil {
+            if wireSpecs[wireName] == nil {
                 _ = try existingWire.deleteWire(database: database)
             }
         }
 
         // Steps 2 & 3 — iterate over the desired configuration.
-        for (wireName, expectationString) in wireExpectations {
+        for (wireName, specString) in wireSpecs {
             var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
-                // Step 3 — wire already exists; check whether its current graph shape
-                // still satisfies the expectation.  Compare parsed shapes structurally
+                // Step 3 — wire already exists; check whether its current graph spec
+                // still satisfies the spec.  Compare parsed specs structurally
                 // (port-order-independent, bracket-format-independent) rather than as
                 // raw strings to avoid spurious mismatches.
-                let currentShapeNode  = try GraphShapeNode.buildFromWire(existingWire, database: database)
-                let expectedShapeNode = try GraphShapeNode.parse(expectationString)
+                let currentShapeNode  = try GraphSpecNode.buildFromWire(existingWire, database: database)
+                let expectedShapeNode = try GraphSpecNode.parse(specString)
 
                 do {
                     try currentShapeNode.expectTopologyMatch(expectedShapeNode)
                     // Topology matches — the existing wire already connects the correct
                     // node. Skip reconnection entirely: calling findOrCreate here risks
-                    // picking up a zombie node that shares the same searchKey and then
+                    // picking up a zombie node that shares the same graphSpec and then
                     // failing with attemptToCreateWireWithDuplicateName.
                     needsReconnection = false
                 } catch {
                     // Topology changed (e.g. a formula was updated to add/remove a dependency).
-                    // Before deleting, check whether the expected shape's searchKey already
+                    // Before deleting, check whether the demanded spec's graphSpec already
                     // matches the node the wire connects to.  If so, expectTopologyMatch
                     // produced a false positive — reconnecting would reschedule this node every
                     // pass and cause an infinite loop.
@@ -281,14 +281,14 @@ extension Node {
             // it from being left as an orphaned zombie in the database.
             let wireNameSymbolID = wireName.asSymbolID()
             try database.withTransaction {
-                guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingExpectation(expectationString) else {
-                    Debug.warn("no node matches expectation '\(expectationString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
+                guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingSpec(specString) else {
+                    Debug.warn("no node matches spec '\(specString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
                     return
                 }
-                // fromSymbolID is nil when the expectation string has no .outputPort suffix,
-                // which is invalid for wiring — expectation strings must include a port.
+                // fromSymbolID is nil when the spec string has no .outputPort suffix,
+                // which is invalid for wiring — spec strings must include a port.
                 guard let fromSymbolID else {
-                    Debug.warn("expectation '\(expectationString)' has no output port — cannot wire")
+                    Debug.warn("spec '\(specString)' has no output port — cannot wire")
                     return
                 }
                 try Wire.connectWire(database: database,
@@ -301,13 +301,13 @@ extension Node {
         }
     }
 
-    /// Parses `expectationString` into a `GraphShapeNode` and searches the live
+    /// Parses `specString` into a `GraphSpecNode` and searches the live
     /// graph for a node whose type and recursive input wiring matches it,
     /// creating the required nodes and wires if none is found.
     /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
-    /// `nil` if the type name in the expectation is not registered in TypeRegistry.
-    private func findExistingOrCreateNodeMatchingExpectation(_ expectationString: String) throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?)? {
-        try GraphShapeNode.parse(expectationString).findOrCreateMatchingNode()
+    /// `nil` if the type name in the spec is not registered in TypeRegistry.
+    private func findExistingOrCreateNodeMatchingSpec(_ specString: String) throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?)? {
+        try GraphSpecNode.parse(specString).findOrCreateMatchingNode()
     }
 
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
@@ -325,16 +325,16 @@ extension Node {
             }
         }
 
-        // Reconstruct existing dynamic wire expectations from the live graph so
-        // applyExpectationConfiguration's step 1 doesn't delete them on error.
+        // Reconstruct existing dynamic wire specs from the live graph so
+        // applySpecs's step 1 doesn't delete them on error.
         // A brand-new node that errors on first run has no wires yet, so the
         // dict is empty for it — which is also correct (nothing to preserve).
 
-        var wireExpectations = [String: [String: String]]()
+        var wireSpecs = [String: [String: String]]()
 
         for port in descriptor.dynamicInputPorts {
             // Already building an error result, so a further failure here just means this
-            // port's expectations cannot be preserved — skip it rather than escalate.
+            // port's specs cannot be preserved — skip it rather than escalate.
             let toSymbolID = port.asSymbolID()
             guard let nodeID = try? requireID(),
                   let wires = try? database.wire.select(goingToNodeID: nodeID, toSymbolID: toSymbolID),
@@ -342,21 +342,21 @@ extension Node {
                 continue
             }
 
-            var portExpectations = [String: String]()
+            var portSpecs = [String: String]()
 
             for wire in wires {
                 let wireName = wire.name.resolveSymbol()
 
-                if let shapeNode = try? GraphShapeNode.buildFromWire(wire, database: database) {
-                    portExpectations[wireName] = shapeNode.asString(omitOutputPort: false)
+                if let shapeNode = try? GraphSpecNode.buildFromWire(wire, database: database) {
+                    portSpecs[wireName] = shapeNode.asString(omitOutputPort: false)
                 }
             }
 
-            if !portExpectations.isEmpty {
-                wireExpectations[port] = portExpectations
+            if !portSpecs.isEmpty {
+                wireSpecs[port] = portSpecs
             }
         }
-        return .init(outputValues: outputValues, inputWireExpectations: wireExpectations)
+        return .init(outputValues: outputValues, inputWireSpecs: wireSpecs)
     }
 
     fileprivate func hasInputPorts() -> Bool {

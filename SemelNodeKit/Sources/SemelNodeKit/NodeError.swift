@@ -14,7 +14,7 @@ public enum NodeError: Error {
     case cannotHaveProperties
     case cannotDeleteNodeWithOutputs
     case initializing
-    case searchKeyBadIntegrity(currentShapeNode: String, expectedShapeNode: String, log: String)
+    case graphSpecBadIntegrity(currentShapeNode: String, expectedShapeNode: String, log: String)
     /// Two children of one folder may never share a name. The tree is walked by name, so
     /// a duplicate makes every path through that folder ambiguous — `childNode` would
     /// take whichever the database returned first.

@@ -7,7 +7,7 @@
 //
 //  Because a human writes that file, the parser has to tolerate what a human puts in one --
 //  comments, blank lines, a value with an `=` in it -- and it has to be the *same* parser
-//  either way, since `ConfigSubset` reads the file with it and the tool reads the wire with
+//  either way, since `ConfigFilter` reads the file with it and the tool reads the wire with
 //  it. A rule that held for only one of those would make a file mean two things.
 //
 

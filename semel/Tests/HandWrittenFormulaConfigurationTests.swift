@@ -2,7 +2,7 @@
 //  HandWrittenFormulaConfigurationTests.swift
 //  SemelCLITests
 //
-//  A `.fmla` that wires its own `ConfigSubset` — the only route a Clang project has to
+//  A `.fmla` that wires its own `ConfigFilter` — the only route a Clang project has to
 //  configuration.
 //
 //  A Swift package gets its selectors written for it by `SwiftFormulaConverter`, and
@@ -64,16 +64,16 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     private let formula = """
         func rawConfig() = StaticFile(path: <clang.cfg>)
 
-        func config(prefix) = ConfigSubset(prefix: prefix, input: [rawConfig()])
+        func config(prefix) = ConfigFilter(prefix: prefix, input: [rawConfig()])
 
-        func preprocessor(path) = ClangPreprocessorTool(
+        func preprocessor(path) = ClangPreprocessor(
           configuration: [config(prefix: 'clang.preprocessor')],
           input: [path: StaticFile(path: path)]
         )
 
-        func make(dynamicLibrary) = ClangLinkerTool(
+        func make(dynamicLibrary) = ClangLinker(
           configuration: [Configuration(inherit: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
-          objectFiles: ["main.c.o": ClangCompilerTool(
+          objectFiles: ["main.c.o": ClangCompiler(
             configuration: [config(prefix: 'clang.compiler')],
             input: ["main.c.p": preprocessor(path: 'main.c')])]
         )
@@ -128,7 +128,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         }
         XCTAssertGreaterThan(found, 0, "nothing in the graph reads the config file")
 
-        try processEveryNode(ofKind: ConfigSubset.kind)
+        try processEveryNode(ofKind: ConfigFilter.kind)
         try processEveryNode(ofKind: Configuration.kind)
     }
 
@@ -169,20 +169,20 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     func test_aPrefixPassedAsAFuncParameterReachesTheNodesProperties() throws {
         try buildGraph()
 
-        let prefixes = try database.node.select(kind: ConfigSubset.kind)
-            .compactMap { $0.properties[ConfigSubset.prefixProperty] }
+        let prefixes = try database.node.select(kind: ConfigFilter.kind)
+            .compactMap { $0.properties[ConfigFilter.prefixProperty] }
             .sorted()
 
         XCTAssertEqual(prefixes, ["clang.compiler", "clang.linker", "clang.preprocessor"])
     }
 
-    /// Two products sharing one config file share its selectors too: the shape names the same
+    /// Two products sharing one config file share its selectors too: the spec names the same
     /// file and the same prefix, so the graph holds one node per prefix rather than one per
     /// product. That sharing is what makes a config edit cheap.
     func test_twoProductsShareOneSelectorPerPrefix() throws {
         try buildGraph()
 
-        XCTAssertEqual(try database.node.select(kind: ConfigSubset.kind).count, 3)
+        XCTAssertEqual(try database.node.select(kind: ConfigFilter.kind).count, 3)
     }
 
     // MARK: - Each tool gets its own settings, and only its own
@@ -190,7 +190,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     func test_theCompilerReceivesItsOwnNamespaceStripped() throws {
         try buildGraph(configText: configFile)
 
-        let settings = try settingsReaching(kind: ClangCompilerTool.kind)
+        let settings = try settingsReaching(kind: ClangCompiler.kind)
 
         XCTAssertEqual(settings["target"], "arm64-apple-macos14.0")
         XCTAssertEqual(settings["std"], "c++17")
@@ -203,8 +203,8 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     func test_aKeyOneToolNeedsDoesNotReachAnother() throws {
         try buildGraph(configText: configFile)
 
-        XCTAssertEqual(try settingsReaching(kind: ClangPreprocessorTool.kind)["sdkPath"], "/test/MacOSX.sdk")
-        XCTAssertNil(try settingsReaching(kind: ClangCompilerTool.kind)["sdkPath"],
+        XCTAssertEqual(try settingsReaching(kind: ClangPreprocessor.kind)["sdkPath"], "/test/MacOSX.sdk")
+        XCTAssertNil(try settingsReaching(kind: ClangCompiler.kind)["sdkPath"],
                      "the compiler does not read sdkPath and must not be given it")
     }
 
@@ -213,7 +213,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     func test_anotherToolchainsSettingsReachNothing() throws {
         try buildGraph(configText: configFile)
 
-        for kind in [ClangCompilerTool.kind, ClangLinkerTool.kind, ClangPreprocessorTool.kind] {
+        for kind in [ClangCompiler.kind, ClangLinker.kind, ClangPreprocessor.kind] {
             let settings = try settingsReaching(kind: kind)
             XCTAssertNil(settings["sdkVersion"], "swift.compiler.sdkVersion leaked into kind \(kind)")
             XCTAssertFalse(settings.keys.contains { $0.hasPrefix("swift.") })
@@ -226,7 +226,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
     func test_aLiteralInTheFormulaAndTheFileBothReachTheLinker() throws {
         try buildGraph(configText: configFile)
 
-        let settings = try settingsReaching(kind: ClangLinkerTool.kind)
+        let settings = try settingsReaching(kind: ClangLinker.kind)
 
         XCTAssertEqual(settings["target"], "arm64-apple-macos14.0", "from the file")
         XCTAssertNotNil(settings["dynamicLibrary"], "from the formula")
@@ -242,15 +242,15 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         try buildGraph(configText: configFile)
 
         var checked = 0
-        for kind in [ClangCompilerTool.kind, ClangLinkerTool.kind, ClangPreprocessorTool.kind] {
+        for kind in [ClangCompiler.kind, ClangLinker.kind, ClangPreprocessor.kind] {
             let properties = try settingsReaching(kind: kind)
             switch kind {
-            case ClangCompilerTool.kind:
-                XCTAssertNoThrow(try ClangCompilerToolConfiguration(properties: properties))
-            case ClangLinkerTool.kind:
-                XCTAssertNoThrow(try ClangLinkerToolConfiguration(properties: properties))
+            case ClangCompiler.kind:
+                XCTAssertNoThrow(try ClangCompilerConfiguration(properties: properties))
+            case ClangLinker.kind:
+                XCTAssertNoThrow(try ClangLinkerConfiguration(properties: properties))
             default:
-                XCTAssertNoThrow(try ClangPreprocessorToolConfiguration(properties: properties))
+                XCTAssertNoThrow(try ClangPreprocessorConfiguration(properties: properties))
             }
             checked += 1
         }
@@ -264,7 +264,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         try buildGraph(configText: "")
 
         XCTAssertThrowsError(
-            try ClangCompilerToolConfiguration(properties: try settingsReaching(kind: ClangCompilerTool.kind))
+            try ClangCompilerConfiguration(properties: try settingsReaching(kind: ClangCompiler.kind))
         ) { error in
             let message = String(describing: error)
             XCTAssertTrue(message.contains("clang.compiler.target"), "got \(message)")

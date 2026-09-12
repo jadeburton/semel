@@ -5,7 +5,7 @@
 //
 // The engine walks the input file system and, for each entry it finds, asks the registered
 // plugins whether any of them claims it — a `.fmla` file, a `Package.swift`, a
-// `CMakeLists.txt` later. Whichever claims it returns the graph shape that builds it.
+// `CMakeLists.txt` later. Whichever claims it returns the graph spec that builds it.
 //
 // This lives in the node-authoring API rather than the engine for the same reason the node
 // protocols do: a toolchain package has to be able to contribute one without depending on
@@ -13,9 +13,9 @@
 
 /// Recognises one kind of project file and says how to build it.
 public protocol ProjectBuilderPlugin {
-    /// The `ProjectBuilder` expectation string for `entry` inside `folderPath`, or nil if
+    /// The `ProjectBuilder` spec string for `entry` inside `folderPath`, or nil if
     /// this plugin does not claim the entry.
-    func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String?
+    func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String?
 }
 
 /// The set of registered project kinds.
