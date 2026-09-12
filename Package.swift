@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "build_system",
+    name: "semel",
     platforms: [
         .macOS(.v13),
     ],
@@ -20,7 +20,7 @@ let package = Package(
             dependencies: [
                 .product(name: "SemelCore", package: "SemelCore"),
             ],
-            path: "build_system/CommandInterpreter"
+            path: "semel/CommandInterpreter"
         ),
         .executableTarget(
             name: "semel",
@@ -30,7 +30,7 @@ let package = Package(
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
             ],
-            path: "build_system",
+            path: "semel",
             sources: ["main.swift"]
         ),
         // The only place a test can see the converter and the engine at once. SemelSwift
@@ -44,7 +44,7 @@ let package = Package(
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
             ],
-            path: "build_system/Tests"
+            path: "semel/Tests"
         ),
     ]
 )
