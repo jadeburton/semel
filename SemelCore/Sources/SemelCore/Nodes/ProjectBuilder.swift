@@ -16,6 +16,9 @@ public struct ProjectBuilder: Node {
     static let productsOutputPort     = "products"
     static let foldersInputPort       = "folders"
     static let graphImportsInputPort  = "graphImports"
+    /// The generated formula of the package a `package <folder>` statement names, keyed
+    /// by the folder. Wired from whatever a registered `PackageFormulaProvider` builds.
+    static let packageFormulasInputPort = "packageFormulas"
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [
@@ -23,6 +26,7 @@ public struct ProjectBuilder: Node {
             .dynamic(productInputPort),
             .dynamic(foldersInputPort),
             .dynamic(graphImportsInputPort),
+            .dynamic(packageFormulasInputPort),
         ],
         outputPorts: [statusOutputPort, productsOutputPort]
     )
@@ -81,10 +85,27 @@ public struct ProjectBuilder: Node {
             return try nodeValue.expectValue().resolveAsString()
         }
 
+        // A package's generated formula arrives on a wire of its own, the same way an
+        // imported file does: recorded so it can be wired, absent or still pending on the
+        // first passes, present once the converter behind it has run.
+        final class PackageRecord { var folders = Set<String>(); var anyMissing = false }
+        let packageRecord = PackageRecord()
+
+        let packageFormulaReader: (String) throws -> String? = { folder in
+            packageRecord.folders.insert(folder)
+            guard let nodeValue = input.inputValues[Self.packageFormulasInputPort]?[folder],
+                  let hash = try? nodeValue.expectValue() else {
+                packageRecord.anyMissing = true
+                return nil
+            }
+            return try hash.resolveAsString()
+        }
+
         let products = try FormulaFile.parse(projectFileContent,
                                              basePath: parentFolder,
                                              wildcardExpander: wildcardExpander,
-                                             fileReader: fileReader)
+                                             fileReader: fileReader,
+                                             packageFormulaReader: packageFormulaReader)
 
         // There are two kinds of Formula files: those without wildcardExpander wildcards, and
         // those with. Files with wildcards require multiple passes — the initial passes
@@ -99,8 +120,9 @@ public struct ProjectBuilder: Node {
 
         let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
         let importsReady = !importRecord.anyMissing
+        let packagesReady = !packageRecord.anyMissing
 
-        if wildcardsReady && importsReady {
+        if wildcardsReady && importsReady && packagesReady {
             for (productName, shapeNode) in products {
 
                 let fullPath = Path(Folder.outputFileSystemName)
@@ -142,6 +164,17 @@ public struct ProjectBuilder: Node {
             importSpecs[importPath] = "StaticFile(path: '\(importPath)').output"
         }
 
+        // Wire the generated formula of the package this formula names. Which toolchain
+        // reads a package folder is a registered provider's business, not the engine's.
+        var packageSpecs = [String: String]()
+        for packageFolder in packageRecord.folders {
+            guard let provider = ProjectDiscovery.packageFormulaProviders.first else {
+                throw NodeError.other(message: "\(projectFileName) references the package at \(packageFolder), "
+                                             + "but no toolchain that reads packages is registered.")
+            }
+            packageSpecs[packageFolder] = provider.formulaSpec(forPackageFolder: packageFolder)
+        }
+
         // Which products exist, and what that means happened. The decision lives in
         // ProductPresence; all this does is hand it the previous set and the statuses
         // arriving on the product port, and report what comes back.
@@ -161,9 +194,10 @@ public struct ProjectBuilder: Node {
             outputValues: [Self.statusOutputPort:   .value(try "OK".intern()),
                            Self.productsOutputPort: .value(try ProductPresence.encode(existingProducts).intern())],
             inputWireSpecs: [
-                Self.productInputPort:      productSpecs,
-                Self.foldersInputPort:      folderSpecs,
-                Self.graphImportsInputPort: importSpecs,
+                Self.productInputPort:         productSpecs,
+                Self.foldersInputPort:         folderSpecs,
+                Self.graphImportsInputPort:    importSpecs,
+                Self.packageFormulasInputPort: packageSpecs,
             ]
         )
     }

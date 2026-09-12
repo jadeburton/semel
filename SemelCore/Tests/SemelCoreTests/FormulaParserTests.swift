@@ -431,4 +431,80 @@ final class FormulaParserTests: SemelCoreTestCase {
             "StaticFile(path: 'hello')"
         ))
     }
+
+    // MARK: - package <folder>
+
+    /// B-10. A formula names the package it builds; the package's generated formula is
+    /// merged in before resolution, so its products are the formula's products and its
+    /// funcs are callable from the formula's own definitions.
+    private func parse(_ source: String, packageFormulas: [String: String]) throws -> [String: GraphSpecNode] {
+        try FormulaFile.parse(source, basePath: Path("input:/repo"),
+                              wildcardExpander: { _ in [] },
+                              packageFormulaReader: { packageFormulas[$0] })
+    }
+
+    func test_aPackagesProductsBecomeTheFormulasProducts() throws {
+        let result = try parse("package <.>", packageFormulas: [
+            "input:/repo": "product 'libX.a' = StaticFile(path: 'input:/repo/x').output",
+        ])
+
+        XCTAssertEqual(result["libX.a"]?.typeName, "StaticFile")
+    }
+
+    func test_theFormulaCanCallThePackagesFuncsAndAddProducts() throws {
+        let result = try parse("""
+            package <.>
+            product 'extra' = compilerX()
+            """, packageFormulas: [
+            "input:/repo": """
+                func compilerX() = StaticFile(path: 'input:/repo/x').output
+                product 'libX.a' = compilerX()
+                """,
+        ])
+
+        XCTAssertEqual(Set(result.keys), ["libX.a", "extra"])
+        XCTAssertEqual(result["extra"]?.typeName, "StaticFile")
+    }
+
+    /// The package folder is a path literal, resolved like every other: `<pkg>` under the
+    /// formula's folder, `<.>` the folder itself.
+    func test_thePackageFolderIsResolvedAgainstTheFormulasFolder() throws {
+        var asked: [String] = []
+        _ = try FormulaFile.parse("package <Sub/pkg>", basePath: Path("input:/repo"),
+                                  wildcardExpander: { _ in [] },
+                                  packageFormulaReader: { asked.append($0); return nil })
+
+        XCTAssertEqual(asked, ["input:/repo/Sub/pkg"])
+    }
+
+    /// Until the package's formula is on the wire nothing can be resolved — the formula's
+    /// own products may call the package's funcs — so the result is empty and the caller,
+    /// having been asked for the folder, wires it and returns later.
+    func test_aPackageWhoseFormulaIsNotYetAvailableYieldsNoProducts() throws {
+        let result = try parse("""
+            package <.>
+            product 'extra' = compilerX()
+            """, packageFormulas: [:])
+
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func test_twoPackageReferencesAreRejected() {
+        XCTAssertThrowsError(try parse("package <a>\npackage <b>", packageFormulas: [:])) { error in
+            XCTAssertTrue(String(describing: error).contains("one package"), "got \(error)")
+        }
+    }
+
+    /// A func or product the formula defines under a generated name is an error, not a
+    /// silent override: the author cannot see the names the package generates.
+    func test_aNameDefinedByBothTheFormulaAndThePackageIsRejected() {
+        XCTAssertThrowsError(try parse("""
+            package <.>
+            func compilerX() = StaticFile(path: 'input:/repo/y').output
+            """, packageFormulas: [
+            "input:/repo": "func compilerX() = StaticFile(path: 'input:/repo/x').output",
+        ])) { error in
+            XCTAssertTrue(String(describing: error).contains("compilerX"), "got \(error)")
+        }
+    }
 }

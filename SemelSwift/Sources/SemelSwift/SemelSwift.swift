@@ -20,7 +20,9 @@ public enum SemelSwift {
             SwiftPackageReader.self,
             SwiftFormulaConverter.self,
         ])
-        ProjectDiscovery.register(SwiftPackagePlugin())
+        // A Package.swift is not discovered: a formula names the package it builds
+        // (`package <.>`), and this is how the engine turns that folder into a formula.
+        ProjectDiscovery.register(packageFormulaProvider: SwiftPackageFormulaProvider())
 
         // What `tools` prints under each namespace. The compiler and linker check the
         // declared SDK against the machine, so the default SDK's name and the machine's
@@ -39,41 +41,27 @@ public enum SemelSwift {
     }
 }
 
-// MARK: - Project kind
+// MARK: - Packages named by a formula
 
-/// Recognises a `Package.swift` and wires the reader and converter that turn it into a
-/// formula the engine can build.
-struct SwiftPackagePlugin: ProjectBuilderPlugin {
-    func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
-
-        guard entry.isPinned, entry.name == "Package.swift" else {
-            return nil
-        }
-
-        let fullPath = (Path(folderPath) / entry.name).string
-        let packageFolder = Path(fullPath).deletingLastComponent!.string
+/// Turns the folder a formula's `package <folder>` names into the reader-and-converter
+/// chain whose output is that package's formula. Only a formula creates a ProjectBuilder,
+/// so only the formula's products — which are the master package's, merged in — are
+/// published; a dependency package has no builder and no artifacts of its own (B-10).
+struct SwiftPackageFormulaProvider: PackageFormulaProvider {
+    func formulaSpec(forPackageFolder packageFolder: String) -> String {
+        let manifestPath = "\(packageFolder)/Package.swift"
 
         // The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
         // every other tool does. This is the first node of every Swift build: wired to an
-        // empty Configuration it fails before the manifest is ever read.
+        // empty Configuration it fails before the manifest is ever read. It selects from the
+        // config file beside the package, as every node of the build does.
         let pkgReaderExpr = SwiftFormulaConverter.packageReaderSpec(
-            packageFilePath: fullPath,
+            packageFilePath: manifestPath,
             rootPackageFolder: packageFolder)
 
-        let converterExpr =
-            "SwiftFormulaConverter(" +
-            "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
-            "packageJSON: ['\(fullPath)': \(pkgReaderExpr)]" +
-            ").formula"
-
-        // Products go *inside* the package folder, not beside it.  A package directory may
-        // contain other packages — this repository's root package holds SemelCore,
-        // SemelDatabaseModels and GRDB.swift — and placing its product one level up collides
-        // with the folder holding theirs.
-        return
-            "ProjectBuilder(" +
-            "outputFolder: '\(packageFolder)', " +
-            "projectFile: ['\(packageFolder)': \(converterExpr)]" +
-            ").status"
+        return "SwiftFormulaConverter(" +
+               "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
+               "packageJSON: ['\(manifestPath)': \(pkgReaderExpr)]" +
+               ").formula"
     }
 }

@@ -77,26 +77,38 @@ final class ConfigFileTests: SemelSwiftTestCase {
 /// no `toolDescriptor` fails the build before the manifest is even parsed.
 final class PackagePluginConfigTests: SemelSwiftTestCase {
 
-    private func spec(entry: String = "Package.swift",
-                       inFolder folder: String = "input:/repo/pkg") throws -> String {
-        let plugin = SwiftPackagePlugin()
-        let manifestEntry = FolderManifestEntry(name: entry, isFolder: false, isPinned: true)
-        return try XCTUnwrap(plugin.specString(forEntry: manifestEntry, inFolder: folder),
-                             "the plugin should claim \(entry)")
+    private func spec(forPackageFolder folder: String = "input:/repo/pkg") -> String {
+        SwiftPackageFormulaProvider().formulaSpec(forPackageFolder: folder)
     }
 
-    func test_theDiscoveredPackagesReaderIsWiredToASelectorForItsOwnNamespace() throws {
-        let result = try spec()
+    func test_theNamedPackagesReaderIsWiredToASelectorForItsOwnNamespace() throws {
+        let result = spec()
 
         XCTAssertTrue(result.contains("ConfigFilter(prefix: 'swift.packageReader'"), "got:\n\(result)")
         XCTAssertFalse(result.contains("Configuration().output"),
                        "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(result)")
     }
 
-    func test_theDiscoveredPackagesReaderReadsTheConfigFileBesideThePackage() throws {
-        let result = try spec(inFolder: "input:/repo/pkg")
+    func test_theNamedPackagesReaderReadsTheConfigFileBesideThePackage() throws {
+        let result = spec(forPackageFolder: "input:/repo/pkg")
 
         XCTAssertTrue(result.contains("StaticFile(path: 'input:/repo/pkg/semel.config')"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("input:/repo/pkg/Package.swift"), "got:\n\(result)")
+    }
+
+    /// B-10: a Package.swift on its own creates no builder. Only a formula does, and the
+    /// package's formula reaches it through the provider — so the spec is a converter, not a
+    /// ProjectBuilder, and nothing is registered as a project kind for `Package.swift`.
+    func test_aPackageIsNotDiscoveredAsAProjectOfItsOwn() throws {
+        try SemelSwift.register()
+
+        XCTAssertFalse(spec().hasPrefix("ProjectBuilder("), "got:\n\(spec())")
+        let entry = FolderManifestEntry(name: "Package.swift", isFolder: false, isPinned: true)
+        for plugin in ProjectDiscovery.plugins {
+            XCTAssertNil(plugin.specString(forEntry: entry, inFolder: "input:/repo/pkg"),
+                         "\(type(of: plugin)) still claims Package.swift")
+        }
+        XCTAssertFalse(ProjectDiscovery.packageFormulaProviders.isEmpty, "the Swift toolchain provides package formulas")
     }
 }
 

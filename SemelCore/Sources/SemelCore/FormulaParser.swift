@@ -61,16 +61,33 @@ extension FormulaFile {
     /// causes the resolver to substitute a placeholder node so that dependency
     /// discovery continues — the caller is responsible for checking whether any
     /// import was unavailable before using the returned products).
+    /// `packageFormulaReader` is called for the folder a `package <folder>` statement
+    /// names; it should return that package's generated formula text, or `nil` if it is
+    /// not yet available — in which case nothing can be resolved (the file's own products
+    /// may call the package's funcs) and the result is empty. The caller records the
+    /// folder in the same call, so it can wire the package's formula and try again.
     /// Returns a mapping of product name → node, ready for `GraphSpecApplier`.
     static func parse(
         _ source: String,
         basePath: Path,
         wildcardExpander: @escaping (String) throws -> [String],
-        fileReader: @escaping (String) throws -> String? = { _ in nil }
+        fileReader: @escaping (String) throws -> String? = { _ in nil },
+        packageFormulaReader: @escaping (String) throws -> String? = { _ in nil }
     ) throws -> [String: GraphSpecNode] {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
-        let file   = try parser.parseFile()
+        var file   = try parser.parseFile()
+
+        for packageFolder in file.packages {
+            guard let packageFormula = try packageFormulaReader(packageFolder) else {
+                return [:]
+            }
+            // The generated formula names every path absolutely, so its base path is
+            // only nominal — but it is the package's, not this file's.
+            var packageParser = FormulaParser(try FormulaLexer.tokenize(packageFormula, basePath: Path(packageFolder)))
+            file = try file.merging(try packageParser.parseFile())
+        }
+
         return try FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader).resolve()
     }
 }
@@ -80,6 +97,27 @@ extension FormulaFile {
 struct FormulaFile {
     let functions: [FuncDef]
     let products:  [ProductDef]
+    /// The package folders named by `package <folder>` statements — at most one. The
+    /// package's own formula (generated from its manifest) is merged into this file before
+    /// resolution, so its products are this file's products and its funcs are callable.
+    let packages:  [String]
+
+    /// This file with `other`'s functions and products added. A name defined by both is an
+    /// error rather than a silent override: the resolver keys functions by name, and the
+    /// formula author has no way to see the generated names they might shadow.
+    func merging(_ other: FormulaFile) throws -> FormulaFile {
+        let ownFunctions = Set(functions.map(\.name))
+        if let clash = other.functions.first(where: { ownFunctions.contains($0.name) }) {
+            throw FormulaParseError.duplicateDefinition(kind: "func", name: clash.name)
+        }
+        let ownProducts = Set(products.map(\.name))
+        if let clash = other.products.first(where: { ownProducts.contains($0.name) }) {
+            throw FormulaParseError.duplicateDefinition(kind: "product", name: clash.name)
+        }
+        return FormulaFile(functions: other.functions + functions,
+                           products: other.products + products,
+                           packages: packages)
+    }
 }
 
 struct FuncDef {
@@ -135,6 +173,8 @@ enum FormulaParseError: Error, LocalizedError {
     case pathEscapesBasePath(path: String)
     case pathEscapesRoot(path: String)
     case forEachRequiresAtLeastOneItem
+    case multiplePackageReferences
+    case duplicateDefinition(kind: String, name: String)
 
     var errorDescription: String? {
         switch self {
@@ -160,6 +200,10 @@ enum FormulaParseError: Error, LocalizedError {
             return "Path literal '<\(p)>' escapes the root path"
         case .forEachRequiresAtLeastOneItem:
             return "for-each '{...}' requires at least one item"
+        case .multiplePackageReferences:
+            return "A formula may reference one package: make the others dependencies of it"
+        case .duplicateDefinition(let kind, let name):
+            return "\(kind) '\(name)' is defined both by the formula and by the package it references"
         }
     }
 }
@@ -185,7 +229,7 @@ struct FormulaLexerError: Error, CustomStringConvertible {
 // MARK: - Tokens
 
 enum FormulaToken: Equatable, CustomStringConvertible {
-    case kwFunc, kwProduct
+    case kwFunc, kwProduct, kwPackage
     case lparen, rparen
     case lbracket, rbracket
     case lbrace, rbrace
@@ -198,6 +242,7 @@ enum FormulaToken: Equatable, CustomStringConvertible {
         switch self {
         case .kwFunc:        return "'func'"
         case .kwProduct:     return "'product'"
+        case .kwPackage:     return "'package'"
         case .lparen:        return "'('"
         case .rparen:        return "')'"
         case .lbracket:      return "'['"
@@ -345,6 +390,7 @@ enum FormulaLexer {
                     switch s {
                     case "func":    add(.kwFunc)
                     case "product": add(.kwProduct)
+                    case "package": add(.kwPackage)
                     default:        add(.ident(s))
                     }
                 } else {
@@ -433,6 +479,7 @@ private struct FormulaParser {
     mutating func parseFile() throws -> FormulaFile {
         var functions: [FuncDef]    = []
         var products:  [ProductDef] = []
+        var packages:  [String]     = []
 
         while current != .eof {
             switch current {
@@ -440,12 +487,31 @@ private struct FormulaParser {
                 functions.append(try parseFuncDef())
             case .kwProduct:
                 products.append(try parseProductDef())
+            case .kwPackage:
+                let folder = try parsePackageReference()
+                // One package per formula: the one it references is the master, and the
+                // others are its dependencies. Two would also have to agree on every
+                // generated func name, which nobody can see.
+                guard packages.isEmpty else {
+                    throw located(FormulaParseError.multiplePackageReferences)
+                }
+                packages.append(folder)
             default:
-                throw located(FormulaParseError.unexpectedToken(current, expected: "'func' or 'product'"))
+                throw located(FormulaParseError.unexpectedToken(current, expected: "'func', 'product' or 'package'"))
             }
         }
 
-        return FormulaFile(functions: functions, products: products)
+        return FormulaFile(functions: functions, products: products, packages: packages)
+    }
+
+    // package <folder>
+    private mutating func parsePackageReference() throws -> String {
+        try expect(.kwPackage)
+        guard case .string(let folder) = current else {
+            throw located(FormulaParseError.unexpectedToken(current, expected: "a package folder path literal after 'package', such as <.>"))
+        }
+        advance()
+        return folder
     }
 
     // func name(p1, p2, ...) = expr

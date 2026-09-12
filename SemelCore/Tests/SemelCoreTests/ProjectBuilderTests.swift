@@ -83,4 +83,72 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertFalse(inner[0].hasPrefix(outer[0] + "/"),
                        "the outer product must not be a folder on the inner product's path")
     }
+
+    // MARK: - A formula that names a package (B-10)
+
+    /// Stands in for the Swift toolchain: the spec of a node whose output is the package's
+    /// formula. Here a Configuration, so the spec parses without a real converter.
+    private struct StubPackageFormulaProvider: PackageFormulaProvider {
+        func formulaSpec(forPackageFolder folder: String) -> String {
+            "Configuration(role: 'formula of \(folder)').output"
+        }
+    }
+
+    private func process(formula: String,
+                         packageFormulas: [String: NodeValue] = [:]) throws -> ProcessOutput {
+        let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
+                              properties: ["outputFolder": "input:/repo"], scheduled: false, graphSpec: nil)
+        return try ProjectBuilder(thisNode: node).process(input: ProcessInput(inputValues: [
+            ProjectBuilder.projectFileInputPort:     ["input:/repo/semel.fmla": .value(try formula.intern())],
+            ProjectBuilder.productInputPort:         [:],
+            ProjectBuilder.foldersInputPort:         [:],
+            ProjectBuilder.graphImportsInputPort:    [:],
+            ProjectBuilder.packageFormulasInputPort: packageFormulas,
+        ]))
+    }
+
+    /// First pass: the package's formula is not on the wire yet, so the builder asks for
+    /// it — through the registered provider — and publishes nothing.
+    func test_asksTheProviderForThePackagesFormulaBeforePublishingAnything() throws {
+        ProjectDiscovery.register(packageFormulaProvider: StubPackageFormulaProvider())
+
+        let output = try process(formula: "package <.>")
+
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.packageFormulasInputPort],
+                       ["input:/repo": "Configuration(role: 'formula of input:/repo').output"])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
+    }
+
+    /// Later pass: the formula has arrived, and the package's products are published beside
+    /// the formula file — the formula's folder, not somewhere the package chose.
+    func test_publishesThePackagesProductsBesideTheFormula() throws {
+        ProjectDiscovery.register(packageFormulaProvider: StubPackageFormulaProvider())
+        let packageFormula = "product 'libX.a' = Configuration(moduleName: 'X').output"
+
+        let output = try process(formula: "package <.>",
+                                 packageFormulas: ["input:/repo": .value(try packageFormula.intern())])
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]).keys.sorted(),
+                       ["output:/repo/libX.a"])
+    }
+
+    /// A pending value on the wire — the converter is still waiting for a manifest — is the
+    /// same as no value: nothing is published, and the wire is kept.
+    func test_aPendingPackageFormulaPublishesNothingYet() throws {
+        ProjectDiscovery.register(packageFormulaProvider: StubPackageFormulaProvider())
+
+        let output = try process(formula: "package <.>",
+                                 packageFormulas: ["input:/repo": .noValue(reason: .pending)])
+
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.packageFormulasInputPort]?.keys.sorted(), ["input:/repo"])
+    }
+
+    func test_withNoProviderRegisteredTheFormulaFailsNamingThePackage() throws {
+        ProjectDiscovery.removeAll()
+
+        XCTAssertThrowsError(try process(formula: "package <.>")) { error in
+            XCTAssertTrue(String(describing: error).contains("input:/repo"), "got \(error)")
+        }
+    }
 }

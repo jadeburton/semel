@@ -96,6 +96,22 @@ rm build/**
 
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 
+### Building a Swift package
+
+A `Package.swift` is not built on its own. A formula names the package it builds, and only
+a formula's products are published — so a dependency package, reached through the one the
+formula names, produces no artifacts of its own:
+
+```
+// semel.fmla, beside Package.swift
+package <.>
+```
+
+The package's generated formula is merged into the file, so its products are the file's
+products and its funcs can be called from further `product` definitions. One `package` per
+formula; the packages it depends on are reached through it. Every node of the build,
+dependencies included, reads its settings from the `semel.config` beside the named package.
+
 ### Dependencies
 
 Semel never fetches anything: every file a build needs has to be inside the input file

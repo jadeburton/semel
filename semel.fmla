@@ -1,0 +1,3 @@
+// What this tree builds: the root package. Its nested packages are dependencies reached
+// through it, and the config beside it configures every node of the build.
+package <.>

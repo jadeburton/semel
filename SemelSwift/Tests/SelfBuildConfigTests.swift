@@ -2,16 +2,16 @@
 //  SelfBuildConfigTests.swift
 //  SemelSwiftTests
 //
-//  Guards this repository's own semel.config files against what its Swift tools actually
+//  Guards this repository's own semel.config against what its Swift tools actually
 //  require. Nothing defaults any more, so the moment one of the RequiredSettings types
-//  grows a new key, every self-build fails until someone edits the files by hand -- this is
+//  grows a new key, every self-build fails until someone edits the file by hand -- this is
 //  what makes that discovery happen here, in CI, instead of on whoever next tries to build
 //  this tree with Semel.
 //
-//  There is one config file per package rather than one for the tree. Discovery creates a
-//  ProjectBuilder for every pinned Package.swift it finds, each selecting from the file
-//  beside it, and configuration does not inherit -- so every package needs its own copy.
-//  Copies drift, which is why the first test here compares them byte for byte.
+//  One config file for the tree, beside the root Package.swift that semel.fmla names. Every
+//  node of the build -- the dependency packages' readers and compilers included -- selects
+//  from the config file the root package owns (B-10), so the copies that once sat beside
+//  each nested package are gone and nothing reads a config from anywhere else.
 //
 
 @testable import SemelSwift
@@ -31,26 +31,11 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
             .deletingLastPathComponent()   // semel
     }
 
-    /// Every folder in this tree holding a `Package.swift`, which is exactly the set
-    /// discovery turns into a ProjectBuilder and so exactly the set that needs a config
-    /// file. Derived rather than listed, so adding a package to the tree makes these tests
-    /// fail rather than quietly leaving the new package unconfigured.
+    /// The folders whose config file a build of this tree reads: only the root package's,
+    /// the one `semel.fmla` names. The nested packages are its dependencies and select from
+    /// the same file.
     private static func packageFolders() throws -> [URL] {
-        let root = repositoryRoot
-        var found: [URL] = []
-        // `.skipsHiddenFiles` is what keeps `.build` out, and it has to: a build directory
-        // holds a checked-out copy of every dependency's manifest, none of which are
-        // packages this repository configures.
-        let enumerator = try XCTUnwrap(FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]))
-
-        for case let url as URL in enumerator {
-            guard url.lastPathComponent == "Package.swift" else { continue }
-            found.append(url.deletingLastPathComponent())
-        }
-        return found.sorted { $0.path < $1.path }
+        [repositoryRoot]
     }
 
     private static func configText(inPackageFolder folder: URL) throws -> String {
@@ -82,27 +67,26 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
         return selected
     }
 
-    // MARK: - Every package has one, and they all say the same thing
+    // MARK: - The root has one, and it is the only one
 
-    func test_everyPackageInThisTreeHasAConfigFileBesideItsManifest() throws {
-        let folders = try Self.packageFolders()
-
-        XCTAssertFalse(folders.isEmpty, "no Package.swift found under \(Self.repositoryRoot.path)")
-        for folder in folders {
-            _ = try Self.configText(inPackageFolder: folder)  // fails, naming the folder, if absent
-        }
+    func test_theRootPackageHasAConfigFileBesideItsManifest() throws {
+        _ = try Self.configText(inPackageFolder: Self.repositoryRoot)  // fails, naming the folder, if absent
     }
 
-    /// Six copies of one file drift the moment somebody edits the one they happened to open.
-    /// Compared as text rather than as parsed settings, so a divergent comment -- which is
-    /// how the explanation of *why* there are six goes stale -- fails too.
-    func test_everyConfigFileInThisTreeIsIdenticalToTheRootsOne() throws {
-        let rootText = try Self.configText(inPackageFolder: Self.repositoryRoot)
+    /// A config beside a nested package is dead: nothing selects from it, and a copy that
+    /// nobody reads is the one that drifts. The formula at the root names the package it
+    /// builds, so a nested `Package.swift` on its own creates no builder either.
+    func test_noNestedPackageCarriesAConfigFileOfItsOwn() throws {
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(
+            at: Self.repositoryRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))
 
-        for folder in try Self.packageFolders() where folder.path != Self.repositoryRoot.path {
-            XCTAssertEqual(try Self.configText(inPackageFolder: folder), rootText,
-                           "\(folder.path)/semel.config has drifted from the repository root's")
+        for case let url as URL in enumerator
+        where url.lastPathComponent == SwiftFormulaConverter.configFileName
+            && url.deletingLastPathComponent().path != Self.repositoryRoot.path {
+            XCTFail("\(url.path) is a config file nothing reads; the root's is the only one")
         }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: Self.repositoryRoot.appendingPathComponent("semel.fmla").path),
+                      "the root formula that names this tree's package is missing")
     }
 
     // MARK: - What the types require

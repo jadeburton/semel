@@ -48,5 +48,30 @@ public enum ProjectDiscovery {
     /// Drops every registration. For tests that need a known-empty registry.
     public static func removeAll() {
         pluginsByTypeName.removeAll()
+        packageFormulaProvidersByTypeName.removeAll()
     }
+
+    // MARK: - Packages named by a formula
+
+    // A `.fmla` names the package it builds with `package <folder>`; only a formula creates
+    // a ProjectBuilder, so only a formula's products are published — a dependency package
+    // has no builder and no artifacts of its own. Which toolchain turns that folder into a
+    // formula is not the engine's to know, so it asks a registered provider.
+
+    private static var packageFormulaProvidersByTypeName: [String: any PackageFormulaProvider] = [:]
+
+    public static func register(packageFormulaProvider provider: any PackageFormulaProvider) {
+        packageFormulaProvidersByTypeName[String(describing: type(of: provider))] = provider
+    }
+
+    /// Every registered provider, in a stable order (see `plugins`).
+    public static var packageFormulaProviders: [any PackageFormulaProvider] {
+        packageFormulaProvidersByTypeName.keys.sorted().compactMap { packageFormulaProvidersByTypeName[$0] }
+    }
+}
+
+/// Turns a package folder into the spec of a node whose output is that package's formula
+/// text — for Swift, a `SwiftFormulaConverter` over the folder's `Package.swift`.
+public protocol PackageFormulaProvider {
+    func formulaSpec(forPackageFolder folder: String) -> String
 }
