@@ -6,10 +6,9 @@
 // every switch, and a server that does not offer a role rejects the whole group with one
 // error case. Only `daemon` exists today; `cache` (B-30 role 1) and `runner` (role 2)
 // arrive as new cases here and new files beside DaemonMessages.swift.
-
 //
 // The roots hand-write their Codable conformance. Their payloads are single values with no
-// natural field name, and synthesis would key an unlabelled value as `_0`; labelling it
+// natural field name, and synthesis would key an unlabeled value as `_0`; labeling it
 // would put a meaningless word (`{"daemon":{"request":…}}`) on every message. The
 // hand-written form is `{"daemon":{"list":…}}` — the role wrapping the message, nothing
 // else — and it is short enough to read in full here.

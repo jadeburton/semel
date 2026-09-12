@@ -5,7 +5,7 @@
 // operation, structured replies, the client does the formatting. Paths are absolute within
 // the named file system and already resolved by the client, so the server never sees `..`.
 //
-// Every associated value is labelled. Swift's synthesized Codable turns a label into the
+// Every associated value is labeled. Swift's synthesized Codable turns a label into the
 // JSON key, so this is what keeps `_0` off the wire; a case that adds a field disturbs
 // only its own object.
 
@@ -25,7 +25,7 @@ public enum EntryKind: String, Codable, Equatable {
 
 /// What `ls` prints beside a name today. `missing` and `unreferenced` are the engine's
 /// "ghost" entries — referenced but deleted, or the reverse — and hiding them would be a
-/// behaviour change.
+/// behavior change.
 public enum EntryStatus: String, Codable, Equatable {
     case none
     case missing
