@@ -25,6 +25,10 @@ struct SwiftLinkerConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    /// Which SDK, as `xcrun --sdk` names it: `macosx` unless declared. See SwiftCompiler.
+    let sdk: String
+    /// The `-target` triple; nil passes none, which is the host.
+    let target: String?
     /// Declared in semel.config; nil means whatever this machine has.
     let sdkVersion: String?
     let linkage: SwiftLinkage
@@ -46,6 +50,8 @@ struct SwiftLinkerConfiguration {
 
         arguments = []
         environment = [:]
+        sdk = properties["sdk"] ?? defaultSDKName
+        target = properties["target"]
         sdkVersion = properties["sdkVersion"]
     }
 
@@ -192,11 +198,19 @@ struct SwiftLinker: Node {
 
         // Pass the SDK path so swiftc's linker driver can find libSystem and
         // other system libraries when invoked directly (outside of xcodebuild).
-        try verifySDKVersion(inputs.configuration.sdkVersion)
+        let sdk = inputs.configuration.sdk
+        try verifySDKVersion(inputs.configuration.sdkVersion, sdk: sdk)
 
-        if let sdkPath = resolveSDKPath() {
-            arguments.append("-sdk")
-            arguments.append(sdkPath)
+        guard let sdkPath = resolveSDKPath(sdk: sdk) else {
+            throw NodeError.other(message: "no SDK named \(sdk) could be found on this machine "
+                                         + "(swift.linker.sdk names it as `xcrun --sdk` would)")
+        }
+        arguments.append("-sdk")
+        arguments.append(sdkPath)
+
+        if let target = inputs.configuration.target {
+            arguments.append("-target")
+            arguments.append(target)
         }
 
         for objectFile in inputs.objectFiles {

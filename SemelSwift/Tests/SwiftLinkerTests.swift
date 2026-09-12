@@ -29,15 +29,16 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
 
     private func makeInput(objectFiles: [String],
                            libraries: [String] = [],
-                           linkage: String = "executable") throws -> ProcessInput {
-        let configuration = """
-            toolDescriptor.name=\(descriptor.name)
-            toolDescriptor.version=\(descriptor.version)
-            toolDescriptor.platform=\(descriptor.platform)
-            toolDescriptor.architecture=\(descriptor.architecture)
-            outputName=product
-            linkage=\(linkage)
-            """
+                           linkage: String = "executable",
+                           extraConfiguration: [String] = []) throws -> ProcessInput {
+        let configuration = ([
+            "toolDescriptor.name=\(descriptor.name)",
+            "toolDescriptor.version=\(descriptor.version)",
+            "toolDescriptor.platform=\(descriptor.platform)",
+            "toolDescriptor.architecture=\(descriptor.architecture)",
+            "outputName=product",
+            "linkage=\(linkage)",
+        ] + extraConfiguration).joined(separator: "\n")
 
         var objects: [String: NodeValue] = [:]
         for path in objectFiles { objects[path] = .value(try "object \(path)".intern()) }
@@ -50,6 +51,32 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
             SwiftLinker.input: objects,
             SwiftLinker.libraries: libraryValues,
         ])
+    }
+
+    // MARK: - Which SDK and target
+
+    /// Nothing declared links against the machine's macOS SDK with no `-target`, as every
+    /// existing tree did.
+    func test_linksAgainstTheMacOSSDKByDefault() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
+
+        let arguments = executor.lastArguments
+        let sdkPath = try XCTUnwrap(arguments.firstIndex(of: "-sdk").map { arguments[$0 + 1] })
+        XCTAssertTrue(sdkPath.contains("MacOSX"), "got \(sdkPath)")
+        XCTAssertFalse(arguments.contains("-target"), "got \(arguments)")
+    }
+
+    /// An iOS package names its SDK and target, and both reach the link line.
+    func test_linksAgainstTheDeclaredSDKAndTarget() throws {
+        _ = try makeTool().process(input: try makeInput(
+            objectFiles: ["a.o"],
+            extraConfiguration: ["sdk=iphonesimulator", "target=arm64-apple-ios18.0-simulator"]))
+
+        let arguments = executor.lastArguments
+        let sdkPath = try XCTUnwrap(arguments.firstIndex(of: "-sdk").map { arguments[$0 + 1] })
+        XCTAssertTrue(sdkPath.contains("iPhoneSimulator"), "got \(sdkPath)")
+        let target = try XCTUnwrap(arguments.firstIndex(of: "-target").map { arguments[$0 + 1] })
+        XCTAssertEqual(target, "arm64-apple-ios18.0-simulator")
     }
 
     // Same reproducibility requirement as the Clang linker: identical inputs must produce

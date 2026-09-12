@@ -12,33 +12,61 @@ private func xcrun(_ arguments: [String]) -> String? {
     AppleClangSwiftToolchainHelper.xcrun(arguments)
 }
 
-// Resolved once per process rather than once per node: every Swift compile and link
-// asked xcrun the same question, which on a few-hundred-node build is a few hundred
-// subprocesses for an answer that cannot change mid-build.
-private let cachedSDKPath: String? = xcrun(["--show-sdk-path", "--sdk", "macosx"])
+// MARK: - Which SDK
 
+/// The SDK the Swift tools use when a configuration names none: the machine's macOS SDK,
+/// which is all they ever built against before `sdk` became a setting. An iOS package
+/// declares `swift.compiler.sdk=iphonesimulator` (a name as `xcrun --sdk` knows it) and a
+/// `target` triple beside it.
+let defaultSDKName = "macosx"
 
-/// The current macOS SDK path.
+/// What xcrun knows about one SDK, asked once per process per name: every Swift compile
+/// and link asks the same questions, which on a few-hundred-node build is a few hundred
+/// subprocesses for answers that cannot change mid-build. Nodes process concurrently in
+/// phase 1, so the memo is locked.
+private final class SDKQueries {
+    static let shared = SDKQueries()
+
+    private let lock = NSLock()
+    private var paths: [String: String?] = [:]
+    private var identities: [String: String?] = [:]
+
+    func path(sdk: String) -> String? {
+        memoized(&paths, sdk) { xcrun(["--show-sdk-path", "--sdk", sdk]) }
+    }
+
+    func identity(sdk: String) -> String? {
+        memoized(&identities, sdk) {
+            guard let version = xcrun(["--show-sdk-version", "--sdk", sdk]),
+                  let build   = xcrun(["--show-sdk-build-version", "--sdk", sdk]) else {
+                return nil
+            }
+            return "\(version) (\(build))"
+        }
+    }
+
+    private func memoized(_ table: inout [String: String?], _ sdk: String, _ query: () -> String?) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        if let known = table[sdk] {
+            return known
+        }
+        let answer = query()
+        table[sdk] = answer
+        return answer
+    }
+}
+
+/// The path of the named SDK, or nil if xcrun knows no such SDK.
 ///
 /// Passing `-sdk <path>` to `swiftc` (both for compilation and linking) is required
 /// when invoking it directly outside of `xcodebuild`, so it can locate:
 ///   - the Swift standard library modules (compiler)
 ///   - `libSystem` and other system libraries (linker)
-///
-/// Returns `nil` if `xcrun` is unavailable or returns a non-zero exit code.
-func resolveSDKPath() -> String? {
-    cachedSDKPath
+func resolveSDKPath(sdk: String = defaultSDKName) -> String? {
+    SDKQueries.shared.path(sdk: sdk)
 }
 
-private let cachedSDKVersion: String? = {
-    guard let version = xcrun(["--show-sdk-version", "--sdk", "macosx"]),
-          let build   = xcrun(["--show-sdk-build-version", "--sdk", "macosx"]) else {
-        return nil
-    }
-    return "\(version) (\(build))"
-}()
-
-/// The macOS SDK this machine reports, as version and build: "26.5 (25F70)".
+/// The named SDK this machine has, as version and build: "26.5 (25F70)".
 ///
 /// The build number is part of the identity. Apple ships more than one build of an SDK
 /// version, and two of them can differ in headers and stubs; a check on "26.5" alone would
@@ -50,11 +78,11 @@ private let cachedSDKVersion: String? = {
 /// only stop a wrong reuse; it cannot cause a rebuild, because an unscheduled node never
 /// recomputes it. Declaring the version makes it an ordinary graph input *and* gives this
 /// something to check against.
-func resolveSDKVersion() -> String? {
-    cachedSDKVersion
+func resolveSDKVersion(sdk: String = defaultSDKName) -> String? {
+    SDKQueries.shared.identity(sdk: sdk)
 }
 
-/// Fails when the machine's SDK is not the one the build declared.
+/// Fails when the machine's copy of the declared SDK is not the one the build declared.
 ///
 /// Deliberately loud rather than accommodating: silently compiling against a different SDK
 /// than the one recorded is how two machines produce different artifacts that look
@@ -62,14 +90,14 @@ func resolveSDKVersion() -> String? {
 // Shared by the compiler and the linker, so this cannot name either one's namespace —
 // the setting reaching this function is `swift.compiler.sdkVersion` for one caller and
 // `swift.linker.sdkVersion` for the other.
-func verifySDKVersion(_ declared: String?) throws {
+func verifySDKVersion(_ declared: String?, sdk: String = defaultSDKName) throws {
     guard let declared else {
         return // nothing declared: the machine's SDK, as before
     }
 
-    guard let actual = resolveSDKVersion() else {
+    guard let actual = resolveSDKVersion(sdk: sdk) else {
         throw NodeError.other(message: "sdkVersion is declared as \(declared) "
-                                     + "but no macOS SDK could be found on this machine")
+                                     + "but no SDK named \(sdk) could be found on this machine")
     }
     guard actual == declared else {
         // A bare version is the pre-build-number form. It is not a partial match — the

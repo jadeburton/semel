@@ -16,7 +16,7 @@ import XCTest
 /// `cacheKeyMaterial` changes the key the engine computes for them — and only for them.
 final class SDKCacheKeyTests: XCTestCase {
 
-    private var savedProvider: (() -> String?)!
+    private var savedProvider: ((String) -> String?)!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -51,13 +51,13 @@ final class SDKCacheKeyTests: XCTestCase {
     }
 
     func test_theSwiftCompilersKeyChangesWithTheSDKFingerprint() throws {
-        sdkFingerprintProvider = { "sdk-one" }
+        sdkFingerprintProvider = { _ in "sdk-one" }
         let one = try key(of: SwiftCompiler.self, spec: "SwiftCompiler()")
 
-        sdkFingerprintProvider = { "sdk-two" }
+        sdkFingerprintProvider = { _ in "sdk-two" }
         let two = try key(of: SwiftCompiler.self, spec: "SwiftCompiler()")
 
-        sdkFingerprintProvider = { "sdk-one" }
+        sdkFingerprintProvider = { _ in "sdk-one" }
         let oneAgain = try key(of: SwiftCompiler.self, spec: "SwiftCompiler()")
 
         XCTAssertNotEqual(one, two, "a different SDK behind the same declared version is a different build")
@@ -65,10 +65,10 @@ final class SDKCacheKeyTests: XCTestCase {
     }
 
     func test_theSwiftLinkersKeyChangesWithTheSDKFingerprint() throws {
-        sdkFingerprintProvider = { "sdk-one" }
+        sdkFingerprintProvider = { _ in "sdk-one" }
         let one = try key(of: SwiftLinker.self, spec: "SwiftLinker()")
 
-        sdkFingerprintProvider = { "sdk-two" }
+        sdkFingerprintProvider = { _ in "sdk-two" }
         let two = try key(of: SwiftLinker.self, spec: "SwiftLinker()")
 
         XCTAssertNotEqual(one, two)
@@ -77,10 +77,10 @@ final class SDKCacheKeyTests: XCTestCase {
     /// A node that never touches the SDK is unaffected: the fingerprint is the Swift
     /// tools' material, not a global salt.
     func test_aNodeThatDoesNotReadTheSDKIsUnaffected() throws {
-        sdkFingerprintProvider = { "sdk-one" }
+        sdkFingerprintProvider = { _ in "sdk-one" }
         let one = try key(of: Configuration.self, spec: "Configuration(role: 'x')")
 
-        sdkFingerprintProvider = { "sdk-two" }
+        sdkFingerprintProvider = { _ in "sdk-two" }
         let two = try key(of: Configuration.self, spec: "Configuration(role: 'x')")
 
         XCTAssertEqual(one, two)

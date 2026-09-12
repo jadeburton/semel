@@ -216,4 +216,36 @@ final class SwiftOptimisationLevelTests: SemelSwiftTestCase {
             XCTAssertTrue(message.contains("none, speed or size"), "got \(message)")
         }
     }
+
+    // MARK: - Which SDK and target
+
+    private func configuration(_ extra: [String: String]) throws -> SwiftCompilerConfiguration {
+        var properties = [
+            "toolDescriptor.name": "swiftc",
+            "toolDescriptor.version": "test",
+            "toolDescriptor.platform": "macOS",
+            "toolDescriptor.architecture": "arm64",
+            "moduleName": "GRDB",
+        ]
+        properties.merge(extra) { _, new in new }
+        return try SwiftCompilerConfiguration(properties: properties)
+    }
+
+    /// Nothing declared is the machine's macOS SDK and the host's default target — exactly
+    /// what every existing tree built with, so their arguments and cache keys hold.
+    func test_theSDKAndTargetDefaultToTheMachine() throws {
+        let configuration = try self.configuration([:])
+
+        XCTAssertEqual(configuration.sdk, "macosx")
+        XCTAssertNil(configuration.target)
+    }
+
+    /// An iOS package names its SDK and target; both reach the command line.
+    func test_aDeclaredSDKAndTargetAreCarried() throws {
+        let configuration = try self.configuration(["sdk": "iphonesimulator",
+                                                    "target": "arm64-apple-ios18.0-simulator"])
+
+        XCTAssertEqual(configuration.sdk, "iphonesimulator")
+        XCTAssertEqual(configuration.target, "arm64-apple-ios18.0-simulator")
+    }
 }

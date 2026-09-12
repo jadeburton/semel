@@ -155,6 +155,43 @@ final class DeclaredSDKTests: SemelSwiftTestCase {
     }
 }
 
+// MARK: - Choosing the SDK
+
+/// The Swift tools built against the macOS SDK and nothing else. An iOS package needs
+/// `swift.compiler.sdk=iphonesimulator` (and a `target` triple), and each SDK has an
+/// identity of its own that `sdkVersion` is checked against.
+final class SDKChoiceTests: SemelSwiftTestCase {
+
+    func test_theDefaultSDKIsMacOS() throws {
+        XCTAssertEqual(defaultSDKName, "macosx")
+        XCTAssertEqual(resolveSDKVersion(), resolveSDKVersion(sdk: "macosx"))
+        XCTAssertEqual(resolveSDKPath(), resolveSDKPath(sdk: "macosx"))
+    }
+
+    func test_eachSDKHasItsOwnIdentityAndPath() throws {
+        let macOS     = try XCTUnwrap(resolveSDKVersion(sdk: "macosx"))
+        let simulator = try XCTUnwrap(resolveSDKVersion(sdk: "iphonesimulator"), "Xcode ships the simulator SDK")
+
+        XCTAssertNotEqual(macOS, simulator, "different SDKs are different builds")
+        XCTAssertTrue(try XCTUnwrap(resolveSDKPath(sdk: "iphonesimulator")).contains("iPhoneSimulator"))
+    }
+
+    /// The declared version is checked against the declared SDK, not against macOS.
+    func test_theVersionCheckIsAgainstTheDeclaredSDK() throws {
+        let simulator = try XCTUnwrap(resolveSDKVersion(sdk: "iphonesimulator"))
+
+        XCTAssertNoThrow(try verifySDKVersion(simulator, sdk: "iphonesimulator"))
+        XCTAssertThrowsError(try verifySDKVersion(simulator, sdk: "macosx"))
+    }
+
+    func test_anUnknownSDKNameIsNamedInTheFailure() {
+        XCTAssertNil(resolveSDKPath(sdk: "nonesuch"))
+        XCTAssertThrowsError(try verifySDKVersion("1.0 (1A1)", sdk: "nonesuch")) { error in
+            XCTAssertTrue(String(describing: error).contains("nonesuch"), "got \(error)")
+        }
+    }
+}
+
 // MARK: - The language mode
 
 /// `.swiftLanguageMode(.v6)` on a target becomes `-swift-version 6`. The converter carries it

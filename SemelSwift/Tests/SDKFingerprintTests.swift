@@ -15,7 +15,7 @@ import XCTest
 final class SDKFingerprintTests: SemelSwiftTestCase {
 
     private var sdk: URL!
-    private var savedProvider: (() -> String?)!
+    private var savedProvider: ((String) -> String?)!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -89,26 +89,42 @@ final class SDKFingerprintTests: SemelSwiftTestCase {
 
     // MARK: - Reaching the cache key
 
+    /// A process input carrying only a configuration, which is all the material reads.
+    private func input(configuration: String) throws -> ProcessInput {
+        ProcessInput(inputValues: [SwiftCompiler.configuration: ["config": .value(try configuration.intern())]])
+    }
+
     /// Both nodes that pass `-sdk` contribute the fingerprint, and nothing else about their
-    /// key is involved here — the material is the same string for both.
+    /// key is involved here — the material is the same string for both. The SDK name is
+    /// part of it, so two SDKs that happened to fingerprint alike would still not share.
     func test_theSwiftCompilerAndLinkerContributeTheFingerprintAsCacheKeyMaterial() throws {
-        sdkFingerprintProvider = { "0123abcd" }
+        sdkFingerprintProvider = { _ in "0123abcd" }
 
         let compiler = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
         let linker   = try SwiftLinker(thisNode: NodeRecord(id: 2, kind: SwiftLinker.kind))
 
-        XCTAssertEqual(try compiler.cacheKeyMaterial(), "sdk=0123abcd")
-        XCTAssertEqual(try linker.cacheKeyMaterial(),   "sdk=0123abcd")
+        XCTAssertEqual(try compiler.cacheKeyMaterial(input: try input(configuration: "")), "sdk=macosx:0123abcd")
+        XCTAssertEqual(try linker.cacheKeyMaterial(input: try input(configuration: "")),   "sdk=macosx:0123abcd")
+    }
+
+    /// The fingerprint is of the SDK the configuration names, not always macOS's.
+    func test_theMaterialIsForTheConfiguredSDK() throws {
+        sdkFingerprintProvider = { name in "fp-\(name)" }
+
+        let compiler = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
+
+        XCTAssertEqual(try compiler.cacheKeyMaterial(input: try input(configuration: "sdk=iphonesimulator")),
+                       "sdk=iphonesimulator:fp-iphonesimulator")
     }
 
     /// With no SDK on the machine there is nothing to fingerprint and nothing to add; the
     /// compile fails on its own for want of an SDK.
     func test_noSDKMeansNoMaterial() throws {
-        sdkFingerprintProvider = { nil }
+        sdkFingerprintProvider = { _ in nil }
 
         let compiler = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
 
-        XCTAssertNil(try compiler.cacheKeyMaterial())
+        XCTAssertNil(try compiler.cacheKeyMaterial(input: try input(configuration: "")))
     }
 
     /// The machine's real SDK: the walk succeeds and is stable. Two walks, about a second

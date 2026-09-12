@@ -70,28 +70,58 @@ func sdkContentFingerprint(ofDirectory root: URL) -> String? {
     return digest.map { String(format: "%02x", $0) }.joined()
 }
 
-// Once per process, like the SDK path and version: the answer cannot change mid-build.
-private let cachedSDKFingerprint: String? =
-    resolveSDKPath().flatMap { sdkContentFingerprint(ofDirectory: URL(fileURLWithPath: $0)) }
+// Once per process per SDK, like the SDK path and version: the answer cannot change
+// mid-build. Nodes process concurrently in phase 1, so the memo is locked.
+private final class SDKFingerprints {
+    static let shared = SDKFingerprints()
+    private let lock = NSLock()
+    private var byName: [String: String?] = [:]
 
-/// Where the Swift tools get the fingerprint. A variable so a test can stand in a value
-/// without walking the machine's SDK — the same seam shape as `FatalErrors.handler`.
-var sdkFingerprintProvider: () -> String? = { cachedSDKFingerprint }
+    func fingerprint(sdk: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        if let known = byName[sdk] {
+            return known
+        }
+        let answer = resolveSDKPath(sdk: sdk).flatMap { sdkContentFingerprint(ofDirectory: URL(fileURLWithPath: $0)) }
+        byName[sdk] = answer
+        return answer
+    }
+}
 
-/// The Swift tools' contribution to their cache key. Shared by the compiler and the
-/// linker, the two nodes that pass `-sdk`.
-func sdkCacheKeyMaterial() -> String? {
-    sdkFingerprintProvider().map { "sdk=\($0)" }
+/// Where the Swift tools get the fingerprint of a named SDK. A variable so a test can
+/// stand in a value without walking the machine's SDK — the same seam shape as
+/// `FatalErrors.handler`.
+var sdkFingerprintProvider: (String) -> String? = { SDKFingerprints.shared.fingerprint(sdk: $0) }
+
+/// The Swift tools' contribution to their cache key: the SDK the configuration names and
+/// the fingerprint of what is behind it. Shared by the compiler and the linker, the two
+/// nodes that pass `-sdk`. The name is part of the material so two SDKs never share an
+/// entry even if their trees happened to fingerprint alike.
+func sdkCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
+    let sdk = try configuredSDKName(input: input, configurationPort: configurationPort)
+    return sdkFingerprintProvider(sdk).map { "sdk=\(sdk):\($0)" }
+}
+
+/// The `sdk` setting out of the configuration on the wire, or the default. Read from the
+/// raw text rather than through the tool's configuration type, which requires every other
+/// setting to be present — and the key has to be computable before that is known.
+private func configuredSDKName(input: ProcessInput, configurationPort: String) throws -> String {
+    guard let value = input.inputValues[configurationPort]?.values.first,
+          case .value(let hash) = value else {
+        return defaultSDKName
+    }
+    let properties = [String: String](plainText: try hash.resolveAsString())
+    return properties["sdk"] ?? defaultSDKName
 }
 
 extension SwiftCompiler {
-    public func cacheKeyMaterial() throws -> String? {
-        sdkCacheKeyMaterial()
+    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
+        try sdkCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 }
 
 extension SwiftLinker {
-    public func cacheKeyMaterial() throws -> String? {
-        sdkCacheKeyMaterial()
+    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
+        try sdkCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 }

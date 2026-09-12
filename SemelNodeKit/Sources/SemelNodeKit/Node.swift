@@ -40,10 +40,12 @@ public protocol Node: WithKind, WithChildren {
     /// A tool that reads the machine — the Swift tools pass `-sdk` and compile against
     /// whatever is behind that path — contributes a fingerprint of what it read, so two
     /// machines with the same declared settings and different SDK contents do not share
-    /// an entry. Most nodes read nothing outside their inputs and return nil. Note what
-    /// this cannot do: a key only stops a wrong reuse; a change here never causes a
+    /// an entry. Most nodes read nothing outside their inputs and return nil. The input is
+    /// passed because *which* outside thing a node reads can itself be configured — the
+    /// Swift tools fingerprint whichever SDK their configuration names. Note what this
+    /// cannot do: a key only stops a wrong reuse; a change here never causes a
     /// recomputation, because an unscheduled node never rebuilds its key.
-    func cacheKeyMaterial() throws -> String?
+    func cacheKeyMaterial(input: ProcessInput) throws -> String?
 }
 
 public struct ProcessInput {
@@ -107,7 +109,7 @@ public extension Node {
     }
 
     /// Most nodes read nothing outside their inputs.
-    func cacheKeyMaterial() throws -> String? {
+    func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         nil
     }
 

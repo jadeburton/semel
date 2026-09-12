@@ -46,7 +46,7 @@ public struct SampleTool: Node {
     /// unless a test sets it — CacheTests uses it to pin how the hook reaches the key.
     static var cacheKeyMaterialForTests: String?
 
-    public func cacheKeyMaterial() throws -> String? {
+    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         Self.cacheKeyMaterialForTests
     }
 }

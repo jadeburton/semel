@@ -12,6 +12,13 @@ struct SwiftCompilerConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
+    /// Which SDK, as `xcrun --sdk` names it: `macosx` unless declared, `iphonesimulator`
+    /// for an iOS package. The path handed to `-sdk`, the `sdkVersion` check and the SDK
+    /// fingerprint in the cache key all follow it.
+    let sdk: String
+    /// The `-target` triple (`arm64-apple-ios18.0-simulator`); nil passes none, which is
+    /// the host, as every tree built before this setting existed.
+    let target: String?
     /// Declared in semel.config; nil means whatever this machine has.
     let sdkVersion: String?
     /// Declared in semel.config; nil means no -O flag at all.
@@ -36,6 +43,8 @@ struct SwiftCompilerConfiguration {
 
         arguments = []
         environment = [:]
+        sdk = properties["sdk"] ?? defaultSDKName
+        target = properties["target"]
         sdkVersion = properties["sdkVersion"]
         optimisationLevel = properties["optimisationLevel"]
         parseAsLibrary = properties["parseAsLibrary"] != "false"
@@ -344,10 +353,17 @@ struct SwiftCompiler: Node {
 
         var arguments = [String]()
 
-        try verifySDKVersion(inputs.configuration.sdkVersion)
+        let sdk = inputs.configuration.sdk
+        try verifySDKVersion(inputs.configuration.sdkVersion, sdk: sdk)
 
-        if let sdkPath = resolveSDKPath() {
-            arguments.append("-sdk");                        arguments.append(sdkPath)
+        guard let sdkPath = resolveSDKPath(sdk: sdk) else {
+            throw NodeError.other(message: "no SDK named \(sdk) could be found on this machine "
+                                         + "(swift.compiler.sdk names it as `xcrun --sdk` would)")
+        }
+        arguments.append("-sdk");                            arguments.append(sdkPath)
+
+        if let target = inputs.configuration.target {
+            arguments.append("-target");                     arguments.append(target)
         }
 
         arguments.append("-module-name");                    arguments.append(moduleName)
