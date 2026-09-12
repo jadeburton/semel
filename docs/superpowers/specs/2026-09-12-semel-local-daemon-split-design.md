@@ -1,6 +1,6 @@
 # Splitting Semel into a local daemon and a CLI
 
-**Status:** design agreed, not yet implemented
+**Status:** phase 1 (SemelProtocol) implemented; phases 2 and 3 not yet started
 **Date:** 2026-09-12
 **Relationship:** this is B-30 role 3, the local build daemon. It takes the frame design
 and the surviving parts of `2026-08-15-semel-client-server-design.md` and drops everything
@@ -136,6 +136,12 @@ once framing is known to work, so a mismatch is reported as a clean rejection.
 Three Codable enums: `Request`, `Response`, `Event`. Each is an enum **of roles**, and
 each role is an enum of messages whose payloads are their own structs, so a request that
 grows a field does not disturb its neighbours:
+
+As built, a payload is a set of *labelled associated values* on the case rather than a
+separate struct. Swift's synthesized Codable turns each label into a JSON key, which gives
+the same per-case isolation with field names on the wire instead of positional `_0` keys.
+Records that several cases share — `ListEntry`, `ErrorRecord`, `ToolNamespace` — are
+structs.
 
 ```swift
 public enum Request: Codable {
