@@ -5,6 +5,8 @@
 
 public class DefaultTools {
 
+    // TODO: these are domain-specific but SemelNodeKit should be agnostic - move
+
     /// The tools this build system knows how to run, by name.  This list is the only
     /// hard-coded part: both the path and the version come from the machine.
     private static let knownToolNames = ["clang", "swiftc", "swift"]
