@@ -35,7 +35,8 @@ final class ClangCompilerToolTests: SemelClangTestCase {
     private func makeInput(sourcePath: String = "src/hello.c.p",
                            contents: String = "int main(){}",
                            target: String = "arm64-apple-macos14.0",
-                           std: String? = nil) throws -> ProcessInput {
+                           cStandard: String? = "c17",
+                           cxxStandard: String? = nil) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -43,7 +44,8 @@ final class ClangCompilerToolTests: SemelClangTestCase {
             toolDescriptor.architecture=\(descriptor.architecture)
             target=\(target)
             """
-        if let std { configuration += "\nstd=\(std)" }
+        if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
+        if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         return ProcessInput(inputValues: [
             ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
             ClangCompilerTool.input: [sourcePath: .value(try contents.intern())],
@@ -57,7 +59,8 @@ final class ClangCompilerToolTests: SemelClangTestCase {
 
         XCTAssertEqual(executor.lastArguments,
                        ["-x", "c",
-                        "-c", "src/hello.c.p",
+                        "-c", "-std=c17",
+                        "src/hello.c.p",
                         "-o", "src/hello.c.p.o",
                         "-target", "arm64-apple-macos14.0"])
     }
@@ -73,28 +76,86 @@ final class ClangCompilerToolTests: SemelClangTestCase {
 
     // MARK: - The language standard
 
-    /// Which standard clang assumes moves between releases, so a C++ file built without one
-    /// stated is not reproducible. There is no fallback: a standard baked into Semel would
-    /// change what a previous build meant the moment Semel is upgraded.
+    // B-48. A language standard belongs per language, not per package: one `std` key could
+    // not say `c17` for the `.c` files and `c++20` for the `.cpp` ones. Which standard clang
+    // assumes moves between releases for C (gnu99, gnu11, gnu17) exactly as for C++, so both
+    // are required — for the language of the file actually being compiled. There is no
+    // fallback: a standard baked into Semel would change what a previous build meant the
+    // moment Semel is upgraded.
+
     func test_aCPlusPlusSourceWithNoStandardFailsNamingTheKeyToWrite() throws {
-        XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp.p"))) { error in
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp.p",
+                                                                        cStandard: "c17"))) { error in
             let message = String(describing: error)
-            XCTAssertTrue(message.contains("clang.compiler.std"), "got \(message)")
+            XCTAssertTrue(message.contains("clang.compiler.cxxStandard"), "got \(message)")
+            XCTAssertFalse(message.contains("cStandard"), "the C standard is present and irrelevant, got \(message)")
         }
     }
 
-    func test_aCPlusPlusSourceUsesTheStandardTheConfigurationStates() throws {
-        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp.p", std: "c++20"))
+    func test_aCSourceWithNoStandardFailsNamingTheKeyToWrite() throws {
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/hello.c.p",
+                                                                        cStandard: nil,
+                                                                        cxxStandard: "c++20"))) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("clang.compiler.cStandard"), "got \(message)")
+            XCTAssertFalse(message.contains("cxxStandard"), "the C++ standard is present and irrelevant, got \(message)")
+        }
+    }
 
+    /// A mixed project states both, and each file gets its own.
+    func test_eachLanguageUsesItsOwnStandardFromOneConfiguration() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp.p", cStandard: "c17", cxxStandard: "c++20"))
+        XCTAssertTrue(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
+
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c.p", cStandard: "c17", cxxStandard: "c++20"))
+        XCTAssertTrue(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
+    }
+
+    /// The old single key is not read any more. It is not silently honoured either: the
+    /// engine's unclaimed-key report names it, and the missing per-language key fails here.
+    func test_theOldStdKeyIsNotHonoured() throws {
+        var configuration = """
+            toolDescriptor.name=\(descriptor.name)
+            toolDescriptor.version=\(descriptor.version)
+            toolDescriptor.platform=\(descriptor.platform)
+            toolDescriptor.architecture=\(descriptor.architecture)
+            target=arm64-apple-macos14.0
+            std=c++20
+            """
+        configuration += ""
+        let input = ProcessInput(inputValues: [
+            ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
+            ClangCompilerTool.input: ["src/hello.cpp.p": .value(try "int main(){}".intern())],
+        ])
+
+        XCTAssertThrowsError(try makeTool().process(input: input)) { error in
+            XCTAssertTrue(String(describing: error).contains("clang.compiler.cxxStandard"), "got \(error)")
+        }
+    }
+
+    // MARK: - Which language a file is
+
+    /// Conventionally C++ on case-sensitive systems; lowercasing the path first made it C.
+    func test_anUppercaseCSuffixIsCPlusPlus() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.C.p", cxxStandard: "c++20"))
+
+        XCTAssertTrue(executor.lastArguments.contains("c++"), "got \(executor.lastArguments)")
         XCTAssertTrue(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
     }
 
-    /// C is left alone. Its standard is still honoured when stated, but a C file with none
-    /// is a complete configuration -- so requiring one would make a mixed C/C++ project,
-    /// which has only the one `clang.compiler.std` to say it with, unbuildable.
-    func test_aCSourceStillUsesTheStandardTheConfigurationStates() throws {
-        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c.p", std: "c17"))
+    func test_objectiveCPlusPlusUsesTheCPlusPlusStandard() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.mm.p", cxxStandard: "c++20"))
 
+        XCTAssertTrue(executor.lastArguments.contains("objective-c++"), "got \(executor.lastArguments)")
+        XCTAssertTrue(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
+    }
+
+    func test_objectiveCUsesTheCStandard() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.m.p", cStandard: "c17"))
+
+        XCTAssertTrue(executor.lastArguments.contains("objective-c"), "got \(executor.lastArguments)")
         XCTAssertTrue(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
     }
 

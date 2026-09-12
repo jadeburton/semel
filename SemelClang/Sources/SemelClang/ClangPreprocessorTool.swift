@@ -10,27 +10,40 @@ import SemelDatabaseModels
 
 // MARK: - The language standard
 
-/// The `-std` value to pass for `language`, given what the config file supplied.
+/// The language standards a configuration states, one per language: `cStandard` for C and
+/// Objective-C, `cxxStandard` for C++ and Objective-C++.
 ///
-/// C++ has no usable unstated standard — which one clang picks moves between releases — so
-/// `std` is required there, reported through `RequiredSettings` exactly as `target` is, and
-/// naming `clang.compiler.std` or `clang.preprocessor.std` according to who asked. There is
-/// deliberately no fallback: a standard baked into Semel would silently change what a
-/// previous build meant the moment Semel is upgraded.
-///
-/// Checked here rather than in `init(properties:)` because the language is not a setting: it
-/// comes from the source file arriving on a wire. A C file with no `std` is complete; the
-/// same configuration reaching a C++ file is not.
-func clangStandard(_ std: String?, forLanguage language: String, namespace: String) throws -> String? {
-    guard language == "c++" else {
-        return std
+/// One key per language rather than one `std` for the package (B-48): a mixed project has
+/// `.c` files that want `c17` and `.cpp` files that want `c++20`, and a single key could say
+/// only one of them. Both are required, because neither language has a usable unstated
+/// standard — which one clang assumes moves between releases for C (gnu99, gnu11, gnu17)
+/// exactly as for C++. There is deliberately no fallback: a standard baked into Semel would
+/// silently change what a previous build meant the moment Semel is upgraded.
+struct ClangLanguageStandards {
+    let c: String?
+    let cxx: String?
+
+    init(properties: [String: String]) {
+        c   = properties["cStandard"]
+        cxx = properties["cxxStandard"]
     }
 
-    var required = RequiredSettings(properties: std.map { ["std": $0] } ?? [:],
-                                    namespace: namespace)
-    let value = required.value("std")
-    try required.check()
-    return value
+    /// The `-std` value for `language`.
+    ///
+    /// Checked here rather than in `init(properties:)` because the language is not a
+    /// setting: it comes from the source file arriving on a wire. A configuration stating
+    /// only `cStandard` is complete for every C file and incomplete for the first C++ one,
+    /// and the error names the key that file needs, under `namespace`.
+    func standard(forLanguage language: String, namespace: String) throws -> String {
+        let key   = language.hasSuffix("++") ? "cxxStandard" : "cStandard"
+        let value = language.hasSuffix("++") ? cxx : c
+
+        var required = RequiredSettings(properties: value.map { [key: $0] } ?? [:],
+                                        namespace: namespace)
+        let standard = required.value(key)
+        try required.check()
+        return standard
+    }
 }
 
 // MARK: - Configuration
@@ -43,10 +56,10 @@ struct ClangPreprocessorToolConfiguration {
     /// When set, `-isysroot <sdkPath>` is passed so clang can find system headers.
     /// Supply via `Configuration(sdkPath: '/path/to/MacOSX.sdk')` in the formula.
     let sdkPath: String?
-    /// Language standard, e.g. `"c++20"` or `"c17"`. Required for a C++ source file and
-    /// optional for a C one, which `clangStandard(_:forLanguage:namespace:)` decides once
-    /// the file itself is known.
-    let std: String?
+    /// `cStandard` and `cxxStandard`; the one the source file's language needs is required,
+    /// which `ClangLanguageStandards.standard(forLanguage:namespace:)` decides once the
+    /// file itself is known.
+    let standards: ClangLanguageStandards
     let target: String  // e.g. "arm64-apple-macos14.0"
 
     init(properties: [String: String]) throws {
@@ -57,8 +70,8 @@ struct ClangPreprocessorToolConfiguration {
 
         arguments = []
         environment = [:]
-        sdkPath = properties["sdkPath"]
-        std     = properties["std"]
+        sdkPath   = properties["sdkPath"]
+        standards = .init(properties: properties)
     }
 
     /// Where this node's settings live in a config file: `clang.preprocessor.<key>`.
@@ -154,14 +167,29 @@ public struct ClangPreprocessorTool: Node {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
-    /// Returns the clang `-x` language flag for `filePath`, handling raw source
-    /// files (`.cpp`), preprocessed files (`.cpp.p`), and object files (`.cpp.p.o`).
+    /// Returns the clang `-x` language for `filePath`, handling raw source files (`.cpp`),
+    /// preprocessed files (`.cpp.p`) and object files (`.cpp.p.o`): the source suffix is
+    /// what is left once the stage suffixes are stripped.
+    ///
+    /// Case matters for one suffix: `.C` is C++ by convention on case-sensitive systems, and
+    /// `.c` is C. Every other suffix is matched case-insensitively (`.CPP` is still C++).
     static func language(for filePath: String) -> String {
-        var lower = filePath.lowercased()
-        if lower.hasSuffix(".o") { lower = String(lower.dropLast(2)) }
-        let cppSuffixes = [".cpp", ".cc", ".cxx", ".c++",
-                           ".cpp.p", ".cc.p", ".cxx.p", ".c++.p"]
-        return cppSuffixes.contains(where: { lower.hasSuffix($0) }) ? "c++" : "c"
+        var name = filePath
+        if name.hasSuffix(".o") { name.removeLast(2) }
+        if name.hasSuffix(".p") { name.removeLast(2) }
+
+        if name.hasSuffix(".C") {
+            return "c++"
+        }
+        let lower = name.lowercased()
+        if lower.hasSuffix(".mm") {
+            return "objective-c++"
+        }
+        if lower.hasSuffix(".m") {
+            return "objective-c"
+        }
+        let cxxSuffixes = [".cpp", ".cc", ".cxx", ".c++"]
+        return cxxSuffixes.contains(where: { lower.hasSuffix($0) }) ? "c++" : "c"
     }
 
     private func runPreprocessor(inputs: ClangPreprocessorToolInputs,
@@ -178,11 +206,10 @@ public struct ClangPreprocessorTool: Node {
         arguments.append("-x"); arguments.append(language)
         arguments.append("-I"); arguments.append(".")
 
-        if let std = try clangStandard(inputs.configuration.std,
-                                       forLanguage: language,
-                                       namespace: ClangPreprocessorToolConfiguration.settingNamespace) {
-            arguments.append("-std=\(std)")
-        }
+        let standard = try inputs.configuration.standards.standard(
+            forLanguage: language,
+            namespace: ClangPreprocessorToolConfiguration.settingNamespace)
+        arguments.append("-std=\(standard)")
 
         if let sdkPath = inputs.configuration.sdkPath {
             // -isysroot locates the SDK without stripping the compiler's own include

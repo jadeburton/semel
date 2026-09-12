@@ -84,6 +84,30 @@ final class ClangLinkerToolTests: SemelClangTestCase {
         XCTAssertTrue(executor.lastArguments.contains("-dynamiclib"))
     }
 
+    // MARK: - The C++ runtime
+
+    /// libc++ is linked when any object came from C++ source, judged by suffix at every
+    /// stage — a `.C` object counts, and so does Objective-C++ — or when the configuration
+    /// declares a C++ standard for the link (B-48: `cxxStandard`, the same key the compiler
+    /// reads; the old `std` is not honoured).
+    func test_linksTheCPlusPlusRuntimeForCPlusPlusObjectsOrADeclaredCPlusPlusStandard() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o"]))
+        XCTAssertFalse(executor.lastArguments.contains("-lc++"), "got \(executor.lastArguments)")
+
+        for cxxObject in ["a.cpp.p.o", "a.C.p.o", "a.mm.p.o"] {
+            _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o", cxxObject]))
+            XCTAssertTrue(executor.lastArguments.contains("-lc++"), "\(cxxObject): got \(executor.lastArguments)")
+        }
+
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o"],
+                                                    extraConfiguration: ["cxxStandard": "c++20"]))
+        XCTAssertTrue(executor.lastArguments.contains("-lc++"), "got \(executor.lastArguments)")
+
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o"],
+                                                    extraConfiguration: ["std": "c++20"]))
+        XCTAssertFalse(executor.lastArguments.contains("-lc++"), "the old key is gone, got \(executor.lastArguments)")
+    }
+
     // A build must produce the same command line from the same inputs. Object files and
     // libraries arrive in a dictionary, whose iteration order is not stable, so they have
     // to be put into a defined order before they reach the command line.

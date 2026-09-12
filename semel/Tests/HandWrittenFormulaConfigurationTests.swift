@@ -39,14 +39,16 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         clang.preprocessor.toolDescriptor.architecture=arm64
         clang.preprocessor.sdkPath=/test/MacOSX.sdk
         clang.preprocessor.target=arm64-apple-macos14.0
-        clang.preprocessor.std=c++17
+        clang.preprocessor.cStandard=c17
+        clang.preprocessor.cxxStandard=c++17
 
         clang.compiler.toolDescriptor.name=clang
         clang.compiler.toolDescriptor.version=test-clang
         clang.compiler.toolDescriptor.platform=macOS
         clang.compiler.toolDescriptor.architecture=arm64
         clang.compiler.target=arm64-apple-macos14.0
-        clang.compiler.std=c++17
+        clang.compiler.cStandard=c17
+        clang.compiler.cxxStandard=c++17
 
         clang.linker.toolDescriptor.name=clang
         clang.linker.toolDescriptor.version=test-clang
@@ -54,7 +56,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         clang.linker.toolDescriptor.architecture=arm64
         clang.linker.sdkPath=/test/MacOSX.sdk
         clang.linker.target=arm64-apple-macos14.0
-        clang.linker.std=c++17
+        clang.linker.cxxStandard=c++17
 
         swift.compiler.sdkVersion=99.9
         """
@@ -193,7 +195,8 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         let settings = try settingsReaching(kind: ClangCompilerTool.kind)
 
         XCTAssertEqual(settings["target"], "arm64-apple-macos14.0")
-        XCTAssertEqual(settings["std"], "c++17")
+        XCTAssertEqual(settings["cStandard"], "c17")
+        XCTAssertEqual(settings["cxxStandard"], "c++17")
         XCTAssertEqual(settings["toolDescriptor.name"], "clang")
     }
 

@@ -13,10 +13,10 @@ struct ClangCompilerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
-    /// Language standard, e.g. `"c++20"` or `"c17"`. Required for a C++ source file and
-    /// optional for a C one, which `clangStandard(_:forLanguage:namespace:)` decides once
-    /// the file itself is known.
-    let std: String?
+    /// `cStandard` and `cxxStandard`; the one the source file's language needs is required,
+    /// which `ClangLanguageStandards.standard(forLanguage:namespace:)` decides once the
+    /// file itself is known.
+    let standards: ClangLanguageStandards
     let target: String  // e.g. "arm64-apple-macos14.0"
 
     init(properties: [String: String]) throws {
@@ -27,7 +27,7 @@ struct ClangCompilerToolConfiguration {
 
         arguments = []
         environment = [:]
-        std = properties["std"]
+        standards = .init(properties: properties)
     }
 
     /// Where this node's settings live in a config file: `clang.compiler.<key>`.
@@ -100,11 +100,10 @@ public struct ClangCompilerTool: Node {
         arguments.append("-x");      arguments.append(language)
         arguments.append("-c")
 
-        if let std = try clangStandard(inputs.configuration.std,
-                                       forLanguage: language,
-                                       namespace: ClangCompilerToolConfiguration.settingNamespace) {
-            arguments.append("-std=\(std)")
-        }
+        let standard = try inputs.configuration.standards.standard(
+            forLanguage: language,
+            namespace: ClangCompilerToolConfiguration.settingNamespace)
+        arguments.append("-std=\(standard)")
 
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)

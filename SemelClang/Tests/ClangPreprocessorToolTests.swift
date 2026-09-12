@@ -38,7 +38,8 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
     /// which is enough for the preprocessor to proceed without waiting on header wires.
     private func makeInput(sourcePath: String = "src/hello.c",
                            target: String = "arm64-apple-macos14.0",
-                           std: String? = nil) throws -> ProcessInput {
+                           cStandard: String? = "c17",
+                           cxxStandard: String? = nil) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -46,7 +47,8 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
             toolDescriptor.architecture=\(descriptor.architecture)
             target=\(target)
             """
-        if let std { configuration += "\nstd=\(std)" }
+        if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
+        if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         return ProcessInput(inputValues: [
             ClangPreprocessorTool.configuration:    ["configuration": .value(try configuration.intern())],
             ClangPreprocessorTool.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
@@ -77,35 +79,51 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
 
     // MARK: - The language standard
 
-    /// Which standard clang assumes moves between releases, so a C++ file built without one
-    /// stated is not reproducible. There is no fallback: a standard baked into Semel would
-    /// change what a previous build meant the moment Semel is upgraded.
+    // B-48: one key per language, each required for the language of the file at hand. See
+    // ClangCompilerToolTests for the reasoning; the preprocessor takes the same settings
+    // under its own namespace.
+
     func test_aCPlusPlusSourceWithNoStandardFailsNamingTheKeyToWrite() throws {
         XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp"))) { error in
             let message = String(describing: error)
-            XCTAssertTrue(message.contains("clang.preprocessor.std"), "got \(message)")
+            XCTAssertTrue(message.contains("clang.preprocessor.cxxStandard"), "got \(message)")
         }
     }
 
-    func test_aCPlusPlusSourceUsesTheStandardTheConfigurationStates() throws {
-        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp", std: "c++20"))
+    func test_aCSourceWithNoStandardFailsNamingTheKeyToWrite() throws {
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/hello.c",
+                                                                        cStandard: nil))) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("clang.preprocessor.cStandard"), "got \(message)")
+        }
+    }
 
+    func test_eachLanguageUsesItsOwnStandardFromOneConfiguration() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.cpp", cStandard: "c17", cxxStandard: "c++20"))
         XCTAssertTrue(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
-    }
+        XCTAssertFalse(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
 
-    /// C is left alone. Its standard is still honoured when stated, but a C file with none
-    /// is a complete configuration -- so requiring one would make a mixed C/C++ project,
-    /// which has only the one `clang.preprocessor.std` to say it with, unbuildable.
-    func test_aCSourceWithNoStandardIsCompleteAndPassesNoStdFlag() throws {
-        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c"))
-
-        XCTAssertFalse(executor.lastArguments.contains { $0.hasPrefix("-std=") },
-                       "got \(executor.lastArguments)")
-    }
-
-    func test_aCSourceStillUsesTheStandardTheConfigurationStates() throws {
-        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c", std: "c17"))
-
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c", cStandard: "c17", cxxStandard: "c++20"))
         XCTAssertTrue(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
+    }
+
+    // MARK: - Which language a file is
+
+    /// The suffix table is consulted at every stage — raw source here, `.p` in the compiler,
+    /// `.p.o` in the linker — so it is pinned once, on the raw forms.
+    func test_classifiesSourceFilesByTheirSuffix() {
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.c"),     "c")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cpp"),   "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cc"),    "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cxx"),   "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.c++"),   "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.C"),     "c++", "uppercase .C is C++ by convention")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.CPP"),   "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.m"),     "objective-c")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.mm"),    "objective-c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cpp.p"), "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.C.p.o"), "c++")
+        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.mm.p.o"), "objective-c++")
     }
 }
