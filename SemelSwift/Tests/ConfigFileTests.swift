@@ -77,38 +77,58 @@ final class ConfigFileTests: SemelSwiftTestCase {
 /// no `toolDescriptor` fails the build before the manifest is even parsed.
 final class PackagePluginConfigTests: SemelSwiftTestCase {
 
-    private func spec(forPackageFolder folder: String = "input:/repo/pkg") -> String {
-        SwiftPackageFormulaProvider().formulaSpec(forPackageFolder: folder)
+    /// The wires a `SwiftFormulaConverter(path: <folder>)` asks for on its first pass, when
+    /// a formula's `include` named it and nothing is wired yet.
+    private func selfWiring(packageFolder folder: String = "input:/repo/pkg") throws -> [String: [String: String]] {
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind,
+                                                                       name: nil, properties: ["path": folder],
+                                                                       scheduled: false, graphSpec: nil))
+        let output = try converter.process(input: ProcessInput(inputValues: [:]))
+        guard case .noValue = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]) else {
+            XCTFail("the first pass has no manifest to convert; it should be pending")
+            return [:]
+        }
+        return output.inputWireSpecs
     }
 
     func test_theNamedPackagesReaderIsWiredToASelectorForItsOwnNamespace() throws {
-        let result = spec()
+        let reader = try XCTUnwrap(try selfWiring()[SwiftFormulaConverter.packageJSON]?.values.first)
 
-        XCTAssertTrue(result.contains("ConfigFilter(prefix: 'swift.packageReader'"), "got:\n\(result)")
-        XCTAssertFalse(result.contains("Configuration().output"),
-                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(result)")
+        XCTAssertTrue(reader.contains("ConfigFilter(prefix: 'swift.packageReader'"), "got:\n\(reader)")
+        XCTAssertFalse(reader.contains("Configuration().output"),
+                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(reader)")
     }
 
     func test_theNamedPackagesReaderReadsTheConfigFileBesideThePackage() throws {
-        let result = spec(forPackageFolder: "input:/repo/pkg")
+        let specs  = try selfWiring(packageFolder: "input:/repo/pkg")
+        let reader = try XCTUnwrap(specs[SwiftFormulaConverter.packageJSON]?["input:/repo/pkg/Package.swift"])
 
-        XCTAssertTrue(result.contains("StaticFile(path: 'input:/repo/pkg/semel.config')"), "got:\n\(result)")
-        XCTAssertTrue(result.contains("input:/repo/pkg/Package.swift"), "got:\n\(result)")
+        XCTAssertTrue(reader.contains("StaticFile(path: 'input:/repo/pkg/semel.config')"), "got:\n\(reader)")
+        XCTAssertEqual(specs[SwiftFormulaConverter.packageFolder],
+                       ["input:/repo/pkg": "Folder(path: 'input:/repo/pkg').manifest"])
     }
 
-    /// B-10: a Package.swift on its own creates no builder. Only a formula does, and the
-    /// package's formula reaches it through the provider — so the spec is a converter, not a
-    /// ProjectBuilder, and nothing is registered as a project kind for `Package.swift`.
+    /// Wired explicitly instead of by path, the node has no wires of its own to ask for,
+    /// and without either it says what it needs.
+    func test_withoutAPathAndWithoutWiresTheConverterSaysWhatItNeeds() throws {
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
+
+        XCTAssertThrowsError(try converter.process(input: ProcessInput(inputValues: [:]))) { error in
+            XCTAssertTrue(String(describing: error).contains("path"), "got \(error)")
+        }
+    }
+
+    /// B-10: a Package.swift on its own creates no builder. A formula names the package —
+    /// `include SwiftFormulaConverter(path: <.>).formula` — and nothing is registered as a
+    /// project kind for `Package.swift`.
     func test_aPackageIsNotDiscoveredAsAProjectOfItsOwn() throws {
         try SemelSwift.register()
 
-        XCTAssertFalse(spec().hasPrefix("ProjectBuilder("), "got:\n\(spec())")
         let entry = FolderManifestEntry(name: "Package.swift", isFolder: false, isPinned: true)
         for plugin in ProjectDiscovery.plugins {
             XCTAssertNil(plugin.specString(forEntry: entry, inFolder: "input:/repo/pkg"),
                          "\(type(of: plugin)) still claims Package.swift")
         }
-        XCTAssertFalse(ProjectDiscovery.packageFormulaProviders.isEmpty, "the Swift toolchain provides package formulas")
     }
 }
 

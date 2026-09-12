@@ -20,9 +20,9 @@ public enum SemelSwift {
             SwiftPackageReader.self,
             SwiftFormulaConverter.self,
         ])
-        // A Package.swift is not discovered: a formula names the package it builds
-        // (`package <.>`), and this is how the engine turns that folder into a formula.
-        ProjectDiscovery.register(packageFormulaProvider: SwiftPackageFormulaProvider())
+        // A Package.swift is not discovered as a project of its own. A formula names the
+        // package it builds — `include SwiftFormulaConverter(path: <.>).formula` — and the
+        // converter wires its own reader from that path. Nothing is registered for it.
 
         // What `tools` prints under each namespace. The compiler and linker check the
         // declared SDK against the machine, so the default SDK's name and the machine's
@@ -41,27 +41,3 @@ public enum SemelSwift {
     }
 }
 
-// MARK: - Packages named by a formula
-
-/// Turns the folder a formula's `package <folder>` names into the reader-and-converter
-/// chain whose output is that package's formula. Only a formula creates a ProjectBuilder,
-/// so only the formula's products — which are the master package's, merged in — are
-/// published; a dependency package has no builder and no artifacts of its own (B-10).
-struct SwiftPackageFormulaProvider: PackageFormulaProvider {
-    func formulaSpec(forPackageFolder packageFolder: String) -> String {
-        let manifestPath = "\(packageFolder)/Package.swift"
-
-        // The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
-        // every other tool does. This is the first node of every Swift build: wired to an
-        // empty Configuration it fails before the manifest is ever read. It selects from the
-        // config file beside the package, as every node of the build does.
-        let pkgReaderExpr = SwiftFormulaConverter.packageReaderSpec(
-            packageFilePath: manifestPath,
-            rootPackageFolder: packageFolder)
-
-        return "SwiftFormulaConverter(" +
-               "packageFolder: ['\(packageFolder)': Folder(path: '\(packageFolder)').manifest], " +
-               "packageJSON: ['\(manifestPath)': \(pkgReaderExpr)]" +
-               ").formula"
-    }
-}

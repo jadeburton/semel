@@ -111,11 +111,13 @@ absent → warn once, present and mismatched → fail.
 Depends on B-26.
 
 **B-10** `open` — **Packages are named by a formula, not discovered — two residuals.**
-Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says `package <folder>`,
-the package's generated formula is merged into it (one package per formula, names may not
-clash), only the formula's products are published and they land beside the formula, and
-every node of the build reads its settings from the config beside the named package — so
-this tree keeps one `semel.config`, not six. What remains:
+Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says
+`include SwiftFormulaConverter(path: <.>).formula` — `include` merges the formula text any
+node produces, and knows nothing about packages; the converter wires its own reader from
+the path — only the formula's products are published and they land beside the formula,
+included names may not clash with the formula's own, and every node of the build reads its
+settings from the config beside the named package — so this tree keeps one `semel.config`,
+not six. What remains:
 
 1. **Dependency overrides in the formula.** The converter resolves a git dependency to
    `<root>/Dependencies/<name>` (the `semel-vendor` rule) and stalls when nothing is there;
@@ -123,7 +125,7 @@ this tree keeps one `semel.config`, not six. What remains:
    come from somewhere the rule does not reach.
 2. **Discoverability.** A pushed `Package.swift` that no formula names now builds nothing,
    silently. `ProjectFinder` sees every manifest and could report at idle the ones no
-   builder's `packageFormulas` port reaches.
+   builder's `includes` port reaches.
 
 Granularity is per package, not per product: a dependency that also vends an executable
 loses it. Acceptable until a real case shows up. The inferred-roots plan (converter

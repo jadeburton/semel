@@ -16,9 +16,10 @@ public struct ProjectBuilder: Node {
     static let productsOutputPort     = "products"
     static let foldersInputPort       = "folders"
     static let graphImportsInputPort  = "graphImports"
-    /// The generated formula of the package a `package <folder>` statement names, keyed
-    /// by the folder. Wired from whatever a registered `PackageFormulaProvider` builds.
-    static let packageFormulasInputPort = "packageFormulas"
+    /// The formula text each `include <expr>` statement's node produces, keyed by the
+    /// node's rendered spec — which is also the spec wired there. The engine knows nothing
+    /// about what the node is; a Swift package's is `SwiftFormulaConverter(path: <.>)`.
+    static let includesInputPort      = "includes"
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [
@@ -26,7 +27,7 @@ public struct ProjectBuilder: Node {
             .dynamic(productInputPort),
             .dynamic(foldersInputPort),
             .dynamic(graphImportsInputPort),
-            .dynamic(packageFormulasInputPort),
+            .dynamic(includesInputPort),
         ],
         outputPorts: [statusOutputPort, productsOutputPort]
     )
@@ -85,17 +86,17 @@ public struct ProjectBuilder: Node {
             return try nodeValue.expectValue().resolveAsString()
         }
 
-        // A package's generated formula arrives on a wire of its own, the same way an
-        // imported file does: recorded so it can be wired, absent or still pending on the
-        // first passes, present once the converter behind it has run.
-        final class PackageRecord { var folders = Set<String>(); var anyMissing = false }
-        let packageRecord = PackageRecord()
+        // An included formula arrives on a wire of its own, the same way an imported file
+        // does: the node the `include` names is recorded by its spec so it can be wired,
+        // absent or still pending on the first passes, present once that node has run.
+        final class IncludeRecord { var specs = Set<String>(); var anyMissing = false }
+        let includeRecord = IncludeRecord()
 
-        let packageFormulaReader: (String) throws -> String? = { folder in
-            packageRecord.folders.insert(folder)
-            guard let nodeValue = input.inputValues[Self.packageFormulasInputPort]?[folder],
+        let includeReader: (String) throws -> String? = { spec in
+            includeRecord.specs.insert(spec)
+            guard let nodeValue = input.inputValues[Self.includesInputPort]?[spec],
                   let hash = try? nodeValue.expectValue() else {
-                packageRecord.anyMissing = true
+                includeRecord.anyMissing = true
                 return nil
             }
             return try hash.resolveAsString()
@@ -105,7 +106,7 @@ public struct ProjectBuilder: Node {
                                              basePath: parentFolder,
                                              wildcardExpander: wildcardExpander,
                                              fileReader: fileReader,
-                                             packageFormulaReader: packageFormulaReader)
+                                             includeReader: includeReader)
 
         // There are two kinds of Formula files: those without wildcardExpander wildcards, and
         // those with. Files with wildcards require multiple passes — the initial passes
@@ -120,9 +121,9 @@ public struct ProjectBuilder: Node {
 
         let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
         let importsReady = !importRecord.anyMissing
-        let packagesReady = !packageRecord.anyMissing
+        let includesReady = !includeRecord.anyMissing
 
-        if wildcardsReady && importsReady && packagesReady {
+        if wildcardsReady && importsReady && includesReady {
             for (productName, shapeNode) in products {
 
                 let fullPath = Path(Folder.outputFileSystemName)
@@ -164,15 +165,11 @@ public struct ProjectBuilder: Node {
             importSpecs[importPath] = "StaticFile(path: '\(importPath)').output"
         }
 
-        // Wire the generated formula of the package this formula names. Which toolchain
-        // reads a package folder is a registered provider's business, not the engine's.
-        var packageSpecs = [String: String]()
-        for packageFolder in packageRecord.folders {
-            guard let provider = ProjectDiscovery.packageFormulaProviders.first else {
-                throw NodeError.other(message: "\(projectFileName) references the package at \(packageFolder), "
-                                             + "but no toolchain that reads packages is registered.")
-            }
-            packageSpecs[packageFolder] = provider.formulaSpec(forPackageFolder: packageFolder)
+        // Wire every node an `include` names: the spec is both the wire's key and what is
+        // wired there. Nothing here knows what the node is.
+        var includeSpecs = [String: String]()
+        for spec in includeRecord.specs {
+            includeSpecs[spec] = spec
         }
 
         // Which products exist, and what that means happened. The decision lives in
@@ -197,7 +194,7 @@ public struct ProjectBuilder: Node {
                 Self.productInputPort:         productSpecs,
                 Self.foldersInputPort:         folderSpecs,
                 Self.graphImportsInputPort:    importSpecs,
-                Self.packageFormulasInputPort: packageSpecs,
+                Self.includesInputPort:        includeSpecs,
             ]
         )
     }

@@ -104,12 +104,14 @@ formula names, produces no artifacts of its own:
 
 ```
 // semel.fmla, beside Package.swift
-package <.>
+include SwiftFormulaConverter(path: <.>).formula
 ```
 
-The package's generated formula is merged into the file, so its products are the file's
-products and its funcs can be called from further `product` definitions. One `package` per
-formula; the packages it depends on are reached through it. Every node of the build,
+`include` is the formula language's only notion here: it names a node whose output is
+formula text and merges that text into the file, so the included products are the file's
+products and the included funcs can be called from further `product` definitions. That
+the node is a Swift package converter is the toolchain's business, not the language's.
+The packages a package depends on are reached through it. Every node of the build,
 dependencies included, reads its settings from the `semel.config` beside the named package.
 
 ### Dependencies

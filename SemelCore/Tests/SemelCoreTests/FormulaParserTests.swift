@@ -432,31 +432,35 @@ final class FormulaParserTests: SemelCoreTestCase {
         ))
     }
 
-    // MARK: - package <folder>
+    // MARK: - include <node>
 
-    /// B-10. A formula names the package it builds; the package's generated formula is
-    /// merged in before resolution, so its products are the formula's products and its
-    /// funcs are callable from the formula's own definitions.
-    private func parse(_ source: String, packageFormulas: [String: String]) throws -> [String: GraphSpecNode] {
-        try FormulaFile.parse(source, basePath: Path("input:/repo"),
+    /// B-10. `include` names a node whose output is formula text — a Swift package's
+    /// generated formula, say — and merges that text in before resolution, so its products
+    /// are the formula's products and its funcs are callable from the formula's own
+    /// definitions. The language knows nothing about what the node is: the reader is
+    /// keyed by the node's rendered spec, which is what the builder wires.
+    private let source = "StaticFile(path: 'input:/repo/formula.txt').output"
+
+    private func parse(_ text: String, included: [String: String]) throws -> [String: GraphSpecNode] {
+        try FormulaFile.parse(text, basePath: Path("input:/repo"),
                               wildcardExpander: { _ in [] },
-                              packageFormulaReader: { packageFormulas[$0] })
+                              includeReader: { included[$0] })
     }
 
-    func test_aPackagesProductsBecomeTheFormulasProducts() throws {
-        let result = try parse("package <.>", packageFormulas: [
-            "input:/repo": "product 'libX.a' = StaticFile(path: 'input:/repo/x').output",
+    func test_anIncludedFormulasProductsBecomeTheFormulasProducts() throws {
+        let result = try parse("include \(source)", included: [
+            source: "product 'libX.a' = StaticFile(path: 'input:/repo/x').output",
         ])
 
         XCTAssertEqual(result["libX.a"]?.typeName, "StaticFile")
     }
 
-    func test_theFormulaCanCallThePackagesFuncsAndAddProducts() throws {
+    func test_theFormulaCanCallTheIncludedFuncsAndAddProducts() throws {
         let result = try parse("""
-            package <.>
+            include \(source)
             product 'extra' = compilerX()
-            """, packageFormulas: [
-            "input:/repo": """
+            """, included: [
+            source: """
                 func compilerX() = StaticFile(path: 'input:/repo/x').output
                 product 'libX.a' = compilerX()
                 """,
@@ -466,45 +470,58 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(result["extra"]?.typeName, "StaticFile")
     }
 
-    /// The package folder is a path literal, resolved like every other: `<pkg>` under the
-    /// formula's folder, `<.>` the folder itself.
-    func test_thePackageFolderIsResolvedAgainstTheFormulasFolder() throws {
+    /// The include expression is a full expression: it may call the formula's own funcs
+    /// and use path literals, and the reader is asked for the node it resolves to.
+    func test_theIncludeExpressionIsResolvedLikeAProductBody() throws {
         var asked: [String] = []
-        _ = try FormulaFile.parse("package <Sub/pkg>", basePath: Path("input:/repo"),
-                                  wildcardExpander: { _ in [] },
-                                  packageFormulaReader: { asked.append($0); return nil })
+        _ = try FormulaFile.parse("""
+            func text(p) = StaticFile(path: p).output
+            include text(p: <Sub/formula.txt>)
+            """, basePath: Path("input:/repo"),
+            wildcardExpander: { _ in [] },
+            includeReader: { asked.append($0); return nil })
 
-        XCTAssertEqual(asked, ["input:/repo/Sub/pkg"])
+        XCTAssertEqual(asked, ["StaticFile(path: 'input:/repo/Sub/formula.txt').output"])
     }
 
-    /// Until the package's formula is on the wire nothing can be resolved — the formula's
-    /// own products may call the package's funcs — so the result is empty and the caller,
-    /// having been asked for the folder, wires it and returns later.
-    func test_aPackageWhoseFormulaIsNotYetAvailableYieldsNoProducts() throws {
+    /// Until the included text is on the wire nothing can be resolved — the formula's own
+    /// products may call the included funcs — so the result is empty and the caller,
+    /// having been asked for the node, wires it and returns later.
+    func test_anIncludeNotYetAvailableYieldsNoProducts() throws {
         let result = try parse("""
-            package <.>
+            include \(source)
             product 'extra' = compilerX()
-            """, packageFormulas: [:])
+            """, included: [:])
 
         XCTAssertTrue(result.isEmpty)
     }
 
-    func test_twoPackageReferencesAreRejected() {
-        XCTAssertThrowsError(try parse("package <a>\npackage <b>", packageFormulas: [:])) { error in
-            XCTAssertTrue(String(describing: error).contains("one package"), "got \(error)")
+    func test_twoIncludesAreMergedInOrder() throws {
+        let other = "StaticFile(path: 'input:/repo/other.txt').output"
+        let result = try parse("include \(source)\ninclude \(other)", included: [
+            source: "product 'a' = StaticFile(path: 'input:/repo/a').output",
+            other:  "product 'b' = StaticFile(path: 'input:/repo/b').output",
+        ])
+
+        XCTAssertEqual(Set(result.keys), ["a", "b"])
+    }
+
+    /// A func or product the formula defines under an included name is an error, not a
+    /// silent override: the author cannot see the names a generated formula uses.
+    func test_aNameDefinedByBothTheFormulaAndAnIncludeIsRejected() {
+        XCTAssertThrowsError(try parse("""
+            include \(source)
+            func compilerX() = StaticFile(path: 'input:/repo/y').output
+            """, included: [
+            source: "func compilerX() = StaticFile(path: 'input:/repo/x').output",
+        ])) { error in
+            XCTAssertTrue(String(describing: error).contains("compilerX"), "got \(error)")
         }
     }
 
-    /// A func or product the formula defines under a generated name is an error, not a
-    /// silent override: the author cannot see the names the package generates.
-    func test_aNameDefinedByBothTheFormulaAndThePackageIsRejected() {
-        XCTAssertThrowsError(try parse("""
-            package <.>
-            func compilerX() = StaticFile(path: 'input:/repo/y').output
-            """, packageFormulas: [
-            "input:/repo": "func compilerX() = StaticFile(path: 'input:/repo/x').output",
-        ])) { error in
-            XCTAssertTrue(String(describing: error).contains("compilerX"), "got \(error)")
+    func test_anIncludeThatIsNotANodeIsRejected() {
+        XCTAssertThrowsError(try parse("include 'just a string'", included: [:])) { error in
+            XCTAssertTrue(String(describing: error).contains("include"), "got \(error)")
         }
     }
 }

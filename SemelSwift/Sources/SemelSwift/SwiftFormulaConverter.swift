@@ -40,21 +40,57 @@ struct SwiftFormulaConverter: Node {
         self.thisNode = thisNode
     }
 
+    // packageFolder and packageJSON are dynamic rather than required because the node
+    // wires them itself when a formula names the package by path —
+    // `include SwiftFormulaConverter(path: <.>).formula` — and a required port has to be
+    // wired before the node exists. Wired explicitly, the older form, they work the same.
     public static let descriptor = NodeDescriptor(
         inputPorts: [
-            .required(packageFolder),
-            .required(packageJSON),
+            .dynamic(packageFolder),
+            .dynamic(packageJSON),
             .dynamic(externalPackageJSONs),
         ],
         outputPorts: [formulaOutput, infoLog]
     )
 
+    /// The wires a `path` property stands for: the package folder's manifest, and a reader
+    /// over its `Package.swift` that selects its settings from the config beside the
+    /// package. Empty when the node was wired explicitly instead.
+    ///
+    /// The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
+    /// every other tool does. This is the first node of every Swift build: wired to an
+    /// empty Configuration it fails before the manifest is ever read.
+    private var selfWiringSpecs: [String: [String: String]] {
+        guard let packageFolder = thisNode.properties["path"] else {
+            return [:]
+        }
+        let manifestPath = "\(packageFolder)/Package.swift"
+        return [
+            Self.packageFolder: [packageFolder: "Folder(path: '\(packageFolder)').manifest"],
+            Self.packageJSON:   [manifestPath: Self.packageReaderSpec(packageFilePath: manifestPath,
+                                                                     rootPackageFolder: packageFolder)],
+        ]
+    }
+
     // MARK: - Processing
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
 
+        // ── which package ─────────────────────────────────────────────────────
+        // Named by `path`, in which case the folder manifest and the manifest reader are
+        // this node's own wires and arrive a pass later; or wired explicitly.
+        guard let folderValue = input.inputValues[Self.packageFolder]?.values.first,
+              let jsonValue   = input.inputValues[Self.packageJSON]?.values.first else {
+            guard !selfWiringSpecs.isEmpty else {
+                throw NodeError.other(message: "SwiftFormulaConverter needs a package: give it path: <folder>, "
+                                             + "or wire packageFolder and packageJSON")
+            }
+            return try pendingOutput(reason: "SwiftFormulaConverter: waiting for the package folder and manifest",
+                                     externalSpecs: [:])
+        }
+
         // ── packageFolder ─────────────────────────────────────────────────────
-        let manifestJSON = try input.inputValues[Self.packageFolder]!.values.first!.expectValue().resolveAsString()
+        let manifestJSON = try folderValue.expectValue().resolveAsString()
 
         guard let folderManifest = try? TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest else {
             return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
@@ -64,7 +100,7 @@ struct SwiftFormulaConverter: Node {
         let rootPackageFolder = folderManifest.baseFolderPath
 
         // ── root packageJSON ──────────────────────────────────────────────────
-        let jsonEntry = try input.inputValues[Self.packageJSON]!.values.first!.expectValue()
+        let jsonEntry = try jsonValue.expectValue()
 
         let rootManifest: SPMManifest
 
@@ -151,16 +187,17 @@ struct SwiftFormulaConverter: Node {
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
-            inputWireSpecs: [Self.externalPackageJSONs: specs])
+            inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs]) { _, new in new })
     }
 
-    // Returns a noValue output that still carries the current specs,
-    // so applySpecs keeps (or creates) the needed wires.
+    // Returns a noValue output that still carries the current specs — the node's own
+    // package wires included, since a spec left out of any output is unwired — so
+    // applySpecs keeps (or creates) the needed wires.
     private func pendingOutput(reason: String,
                                externalSpecs: [String: String]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
-              inputWireSpecs: [Self.externalPackageJSONs: externalSpecs])
+              inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs]) { _, new in new })
     }
 
     // MARK: - Stalls
