@@ -137,12 +137,6 @@ Three Codable enums: `Request`, `Response`, `Event`. Each is an enum **of roles*
 each role is an enum of messages whose payloads are their own structs, so a request that
 grows a field does not disturb its neighbours:
 
-As built, a payload is a set of *labelled associated values* on the case rather than a
-separate struct. Swift's synthesized Codable turns each label into a JSON key, which gives
-the same per-case isolation with field names on the wire instead of positional `_0` keys.
-Records that several cases share — `ListEntry`, `ErrorRecord`, `ToolNamespace` — are
-structs.
-
 ```swift
 public enum Request: Codable {
     case hello(Hello)
@@ -151,6 +145,12 @@ public enum Request: Codable {
     // case runner(RunnerRequest)    — B-30 role 2
 }
 ```
+
+As built, a payload is a set of *labelled associated values* on the case rather than a
+separate struct. Swift's synthesized Codable turns each label into a JSON key, which gives
+the same per-case isolation with field names on the wire instead of positional `_0` keys.
+Records that several cases share — `ListEntry`, `ErrorRecord`, `ToolNamespace` — are
+structs.
 
 Which role a message belongs to is then a type-level fact. Adding a role is a new file
 rather than an edit to every switch, and a server that does not offer a role rejects the
