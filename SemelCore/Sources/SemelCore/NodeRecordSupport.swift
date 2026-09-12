@@ -89,7 +89,9 @@ extension NodeRecord {
         if let name = nodeRecord.name, let parentNodeID = nodeRecord.parentNodeID {
             let siblings = try database.node.select(named: name, parentNodeID: parentNodeID)
             if let existing = siblings.first(where: { $0.id != nodeID }) {
-                _ = try? database.node.delete(nodeID: nodeID)
+                // The collision is the error worth throwing; backing the row out is best
+                // effort on the way there, short of the machine itself failing.
+                FatalErrors.attempt { try database.node.delete(nodeID: nodeID) }
                 throw NodeError.nameCollision(path: try Self.describePath(database: database,
                                                                           parentNodeID: parentNodeID,
                                                                           name: name),
@@ -128,7 +130,7 @@ extension NodeRecord {
     /// Best-effort full path of a would-be child, for error messages only. Falls back to
     /// the bare name if the parent cannot be resolved — an error report must never fail.
     private static func describePath(database: DatabaseLayer, parentNodeID: ObjectID, name: String) throws -> String {
-        guard let parent = try? database.node.select(nodeID: parentNodeID),
+        guard let parent = FatalErrors.attempt({ try database.node.find(nodeID: parentNodeID) }) ?? nil,
               let parentPath = try? parent.buildFullPathName(baseNodeID: nil) else {
             return name
         }

@@ -21,7 +21,9 @@ public enum ErrorReport {
     /// is the last resort rather than the first: a path if the node has one, the project file
     /// if it is a builder, the type name otherwise.
     public static func label(forNodeID nodeID: ObjectID, database: DatabaseLayer) -> String {
-        guard let nodeRecord = try? database.node.select(nodeID: nodeID),
+        // A label for a report is best effort — the report must never fail — but a machine
+        // failure on the way to it still reaches the fatal handler.
+        guard let nodeRecord = FatalErrors.attempt({ try database.node.find(nodeID: nodeID) }) ?? nil,
               let node = try? nodeRecord.nodeAsAny() else {
             return "Node \(nodeID)"
         }
@@ -32,8 +34,9 @@ public enum ErrorReport {
             return "\(typeName)  '\(path)'"
         }
 
-        if let wires = try? database.wire.select(goingToNodeID: nodeID,
-                                                 toSymbolID: "projectFile".asSymbolID()),
+        if let wires = FatalErrors.attempt({
+               try database.wire.select(goingToNodeID: nodeID, toSymbolID: "projectFile".asSymbolID())
+           }),
            let wireName = wires.first?.name {
             return "\(typeName)  '\(wireName.resolveSymbol())'"
         }

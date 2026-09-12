@@ -215,10 +215,18 @@ public struct NodeDataAccess: DataAccessType {
     }
 
     public func select(nodeID: ObjectID) throws -> NodeRecord {
-        guard let node = (try read { db in try NodeRecord.fetchOne(db, id: nodeID) }) else {
+        guard let node = try find(nodeID: nodeID) else {
             throw DatabaseLayer.DatabaseError.nodeNotFound
         }
         return node
+    }
+
+    /// `select(nodeID:)` for callers to whom absence is an answer — a node deleted by an
+    /// earlier step of the same pass, a parent that may be gone. Nil for a missing row;
+    /// a failure of the database itself still throws, so `try?` is never the right way to
+    /// ask this question.
+    public func find(nodeID: ObjectID) throws -> NodeRecord? {
+        try read { db in try NodeRecord.fetchOne(db, id: nodeID) }
     }
 
     public func select(parentNodeID: ObjectID) throws -> [NodeRecord] {

@@ -151,8 +151,15 @@ public final class BuildEngine {
     }
 
     private func cleanUpAllPendingDeletions() throws {
-        // Clean up all pending deletions, which are not safe to delete while Nodes are being processed
-        while ((try? processPendingDeletions()) ?? 0) > 0 {
+        // Clean up all pending deletions, which are not safe to delete while Nodes are being
+        // processed. A pass that fails is logged and retried on the next idle — unless the
+        // failure is the machine's, which reaches the fatal handler first.
+        do {
+            while try processPendingDeletions() > 0 {
+            }
+        } catch {
+            FatalErrors.check(error)
+            Debug.warn("pending deletions could not be processed: \(error)")
         }
     }
 
@@ -223,7 +230,8 @@ public final class BuildEngine {
     /// `unclaimedConfigKeyReporter`'s captures — the same reasoning as
     /// `FileWildcardMatcher`'s internal-for-testing methods.
     func reportUnclaimedConfigKeys() {
-        guard let subsets = try? database.node.select(kind: ConfigFilter.kind) else {
+        // A report, so best effort: a failure here loses one idle-time warning, nothing more.
+        guard let subsets = FatalErrors.attempt({ try database.node.select(kind: ConfigFilter.kind) }) else {
             return
         }
 
@@ -232,8 +240,10 @@ public final class BuildEngine {
         for subset in subsets {
 
             guard let subsetID = subset.id,
-                  let wires = try? database.wire.select(goingToNodeID: subsetID,
-                                                        toSymbolID: ConfigFilter.inputPort.asSymbolID()) else {
+                  let wires = FatalErrors.attempt({
+                      try database.wire.select(goingToNodeID: subsetID,
+                                               toSymbolID: ConfigFilter.inputPort.asSymbolID())
+                  }) else {
                 continue
             }
 
@@ -241,7 +251,7 @@ public final class BuildEngine {
         }
 
         for fileNodeID in fileNodeIDs {
-            guard let unclaimed = try? unclaimedConfigKeys(inFileNodeID: fileNodeID) else {
+            guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: fileNodeID) }) else {
                 continue
             }
 
@@ -255,7 +265,8 @@ public final class BuildEngine {
                 continue
             }
 
-            let path = (try? database.node.select(nodeID: fileNodeID))?.properties["path"] ?? "config file \(fileNodeID)"
+            let fileNode = FatalErrors.attempt({ try database.node.find(nodeID: fileNodeID) }) ?? nil
+            let path = fileNode?.properties["path"] ?? "config file \(fileNodeID)"
             unclaimedConfigKeyReporter("⚠️  \(path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
         }
     }
@@ -270,7 +281,8 @@ public final class BuildEngine {
     /// Compares current error state against the last-reported state and prints only
     /// newly-appearing errors, using the same format as the `errors` command.
     private func reportIdleTimeErrors() {
-        guard let errorPorts = try? database.outputPort.selectAllErrors() else {
+        // A report, so best effort: a failure here delays the error listing to the next idle.
+        guard let errorPorts = FatalErrors.attempt({ try database.outputPort.selectAllErrors() }) else {
             return
         }
 
@@ -441,7 +453,7 @@ public final class BuildEngine {
                 // Skip nodes that were cascade-deleted by an earlier phase-2 step.
                 // makeNode() constructs from the in-memory NodeRecord struct and does not
                 // re-query the DB, so this explicit existence check is required.
-                guard let nodeID = result.nodeRecord.id, (try? database.node.select(nodeID: nodeID)) != nil else {
+                guard let nodeID = result.nodeRecord.id, try database.node.find(nodeID: nodeID) != nil else {
                     Debug.warn("node \(result.nodeRecord.id ?? -1) deleted during processing")
                     continue
                 }
@@ -527,7 +539,7 @@ extension BuildEngine {
             }
 
             // Skip if already cascade-deleted by an earlier step in this pass.
-            guard (try? database.node.select(nodeID: nodeID)) != nil else {
+            guard try database.node.find(nodeID: nodeID) != nil else {
                 continue
             }
 
@@ -536,25 +548,28 @@ extension BuildEngine {
             }
 
             // If the node has been re-wired since being marked, clear the flag and skip.
+            // The mutations below throw: a mark that cannot be cleared or a row that cannot
+            // be deleted is a failed pass, not a skipped node — the caller logs it and the
+            // next idle retries, and a machine failure reaches the fatal handler.
             guard (try? node.hasNoOutputWires()) == true else {
-                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+                try database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
                 continue
             }
 
             guard (try? node.canBeDeleted()) == true else {
-                try? database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
+                try database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: false)
                 continue
             }
 
             // Delete each input wire; deleteWire will mark upstream nodes that lose
             // their last consumer, so they'll be caught in the next pass.
-            for inputWire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
-                try? inputWire.deleteWire(database: database)
+            for inputWire in try database.wire.select(goingToNodeID: nodeID) {
+                try inputWire.deleteWire(database: database)
             }
 
             if (try? node.hasNoOutputWires()) == true &&
                (try? node.hasNoInputWires()) == true {
-                try? node.delete()
+                try node.delete()
                 deletedCount += 1
             }
         }
