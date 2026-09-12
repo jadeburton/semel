@@ -35,7 +35,7 @@ enum WildcardSegment {
         // Where to resume when an attempt fails: the pattern position just after the most
         // recent `*`, and how much of the name that `*` has been given so far. Nil until a
         // `*` has been seen, which is what makes a mismatch final rather than retried.
-        var afterLastStar:  Int? = nil
+        var afterLastStar:  Int?
         var nameAtLastStar: Int  = 0
 
         while nameIndex < name.count {

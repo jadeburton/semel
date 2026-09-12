@@ -59,7 +59,7 @@ public final class DatabaseLayer {
         let db: Database
     }
 
-    @TaskLocal static var currentDB: TaskLocalDatabase? = nil
+    @TaskLocal static var currentDB: TaskLocalDatabase?
 
     // ── Internal helpers used by every extension method ──────────────────────
 

@@ -733,7 +733,7 @@ private func extractSegmentCaptures(pattern: String, text: String) -> [String] {
         case "*":
             pi += 1
             // Determine the next literal in the pattern (skip consecutive wildcards).
-            var nextLit: Character? = nil
+            var nextLit: Character?
             var look = pi
             while look < patChars.count && (patChars[look] == "*" || patChars[look] == "?") { look += 1 }
             nextLit = look < patChars.count ? patChars[look] : nil

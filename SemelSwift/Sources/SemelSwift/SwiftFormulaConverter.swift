@@ -427,7 +427,7 @@ struct SwiftFormulaConverter: Node {
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: AnyKey.self)
-            var found: String? = nil
+            var found: String?
 
             for key in ["byName", "target", "product"] {
                 guard found == nil, c.contains(AnyKey(key)) else { continue }
