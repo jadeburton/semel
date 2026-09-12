@@ -714,4 +714,58 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertEqual(try externalExpectations(output).keys.sorted(),
                        ["input:/repo/DatabaseModels", "input:/repo/GRDB.swift"])
     }
+
+    // MARK: - Name collisions across vendored packages (B-04)
+
+    /// An app that names one product two vendored packages both vend. SPM would reject the
+    /// graph; the converter must at least resolve it the same way in every process, or the
+    /// formula — and every searchKey derived from it — changes on restart.
+    private let appNamingSharedProduct = """
+        {
+          "name": "App",
+          "dependencies": [{"fileSystem": [{"identity": "a", "path": "../A"}]},
+                           {"fileSystem": [{"identity": "b", "path": "../B"}]}],
+          "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+          "targets": [{"name": "App", "type": "executable", "path": "App",
+                       "dependencies": [{"product": ["Shared", "A", null, null]}]}]
+        }
+        """
+
+    private func packageVending(product: String, fromTarget target: String) -> String {
+        """
+        {
+          "name": "\(product)",
+          "dependencies": [],
+          "products": [{"name": "\(product)", "targets": ["\(target)"], "type": {"library": ["automatic"]}}],
+          "targets": [{"name": "\(target)", "type": "regular", "path": "Sources/\(target)", "dependencies": []}]
+        }
+        """
+    }
+
+    /// Two vendored packages vend a product of the same name from differently named
+    /// targets. The package at the lexically first folder wins, whatever order the
+    /// manifests were handed over in.
+    func test_resolvesAProductVendedByTwoPackagesToTheLexicallyFirstFolder() throws {
+        let result = try formula(packageFolder: "input:/repo/App",
+                                 json: appNamingSharedProduct,
+                                 externalManifests: ["input:/repo/B": packageVending(product: "Shared", fromTarget: "SharedB"),
+                                                     "input:/repo/A": packageVending(product: "Shared", fromTarget: "SharedA")])
+
+        let block = try funcDefinition("compilerApp", in: result)
+        XCTAssertTrue(block.contains("'SharedA': compilerSharedA().swiftmodule"), "got:\n\(block)")
+        XCTAssertFalse(result.contains("compilerSharedB"), "got:\n\(result)")
+    }
+
+    /// Two vendored packages define a *target* of the same name. Same rule: the lexically
+    /// first folder supplies the sources.
+    func test_resolvesATargetDefinedByTwoPackagesToTheLexicallyFirstFolder() throws {
+        let result = try formula(packageFolder: "input:/repo/App",
+                                 json: appNamingSharedProduct,
+                                 externalManifests: ["input:/repo/B": packageVending(product: "Shared", fromTarget: "Shared"),
+                                                     "input:/repo/A": packageVending(product: "Shared", fromTarget: "Shared")])
+
+        let block = try funcDefinition("compilerShared", in: result)
+        XCTAssertTrue(block.contains("Folder(path: 'input:/repo/A/Sources/Shared').manifest"), "got:\n\(block)")
+        XCTAssertFalse(block.contains("input:/repo/B/"), "got:\n\(block)")
+    }
 }

@@ -24,15 +24,18 @@ input?" stops being a question only an audit can answer. Also the natural home f
 Remote Runner role (B-30).
 
 **B-04** `open` — **Prevent non-deterministic Dictionary iteration.**
-`allTargetsNamed` iterates `externalManifests` and picks whichever package the runtime
-happens to yield first when two vend the same product name — against the AGENTS.md
-invariant, and now on the transitive system-library path. Preferred approach, in order:
-(a) take `[(String, Value)]` rather than `[String: Value]` in the few functions that produce
-ordered output; (b) a test that builds the same project in two subprocesses and diffs the
-results byte-for-byte, since hashing is seeded per process — this catches every order
-dependence at once, and doubles as the determinism probe in B-11; (c) a source-scanning test
-as a backstop. A wholesale `DeterministicDictionary` is judged high-cost and low-yield:
-most dictionaries here are accumulated into, which is safe.
+The known instance is fixed: `SwiftFormulaConverter.generateFormula` walked
+`externalManifests` in dictionary order, so two vendored packages vending the same product
+or target name resolved differently per process (reproduced at 5 failures in 12 runs); it
+now walks them sorted by folder, lexically first wins. What remains is the safety net, in
+order: (b) a test that builds the same project in two subprocesses and diffs the results
+byte-for-byte, since hashing is seeded per process — this catches every order dependence
+at once, and doubles as the determinism probe in B-11; (c) a source-scanning test as a
+backstop. A wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
+dictionaries here are accumulated into, which is safe. Two sites worth a look under (c):
+`ClangPreprocessorTool` and `ClangIncludeFinder` build file lists straight from input
+dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
+command line.
 
 **B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
 Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,

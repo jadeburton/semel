@@ -471,12 +471,19 @@ struct SwiftFormulaConverter: Node {
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String) -> String {
+        // Every lookup below walks the external packages in one fixed order. Dictionary
+        // iteration order is seeded per process, so walking the dictionary itself let two
+        // packages vending the same name resolve differently on every restart — and the
+        // formula text is what every downstream searchKey is derived from.
+        let externalPackages = externalManifests.sorted { $0.key < $1.key }
+
         // Build combined target name → SPMTarget map.
         // External targets carry overridePackageFolder so buildFuncDef uses the
-        // correct source root.  Root targets take precedence on any name conflict.
+        // correct source root.  Root targets take precedence on any name conflict;
+        // between external packages, the lexically first folder does.
         var allTargetsByName: [String: SPMTarget] = [:]
-        for (extFolder, extManifest) in externalManifests {
-            for var target in extManifest.targets {
+        for (extFolder, extManifest) in externalPackages {
+            for var target in extManifest.targets where allTargetsByName[target.name] == nil {
                 target.overridePackageFolder = extFolder
                 allTargetsByName[target.name] = target
             }
@@ -490,7 +497,7 @@ struct SwiftFormulaConverter: Node {
         // target listed in that product so multi-target products are fully covered.
         func allTargetsNamed(_ name: String) -> [SPMTarget] {
             if let t = allTargetsByName[name] { return [t] }
-            for (extFolder, extManifest) in externalManifests {
+            for (extFolder, extManifest) in externalPackages {
                 guard let product = extManifest.products.first(where: { $0.name == name }) else { continue }
                 return product.targets.compactMap { targetName in
                     var t = extManifest.targets.first(where: { $0.name == targetName })
