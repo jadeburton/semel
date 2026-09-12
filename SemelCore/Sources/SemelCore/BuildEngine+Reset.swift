@@ -23,7 +23,7 @@ extension BuildEngine {
 
         let inputRoot = try inputFileSystem
         preservedIDs.insert(try inputRoot.requireID())
-        collectDescendants(of: (try inputRoot.requireID()), into: &preservedIDs)
+        try collectDescendants(of: try inputRoot.requireID(), into: &preservedIDs)
 
         let outputRoot = try outputFileSystem
         preservedIDs.insert(try outputRoot.requireID())
@@ -38,23 +38,26 @@ extension BuildEngine {
         // 3. Bulk delete — wires, output ports, nodes, and the cache — in one transaction.
         //    An empty delete set is not an early exit: the rebuild in step 4 still has to
         //    run, otherwise `reset` on an already-clean graph silently does nothing.
+        //    Every step throws: a delete that fails rolls the whole transaction back and
+        //    `reset` reports it, rather than skipping the row and committing a graph with
+        //    dangling wires in it.
         if !deleteIDs.isEmpty {
             try database.withTransaction {
                 for nodeID in deleteIDs {
                     // Wires entering this node (from preserved or other deleted nodes).
-                    for wire in (try? database.wire.select(goingToNodeID: nodeID)) ?? [] {
-                        _ = try? database.wire.delete(wire: wire)
+                    for wire in try database.wire.select(goingToNodeID: nodeID) {
+                        _ = try database.wire.delete(wire: wire)
                     }
                     // Wires leaving this node (to preserved or other deleted nodes).
-                    for wire in (try? database.wire.select(comingFromNodeID: nodeID)) ?? [] {
-                        _ = try? database.wire.delete(wire: wire)
+                    for wire in try database.wire.select(comingFromNodeID: nodeID) {
+                        _ = try database.wire.delete(wire: wire)
                     }
-                    _ = try? database.outputPort.deleteAll(nodeID: nodeID)
-                    _ = try? database.node.delete(nodeID: nodeID)
+                    _ = try database.outputPort.deleteAll(nodeID: nodeID)
+                    _ = try database.node.delete(nodeID: nodeID)
                 }
 
                 // All cached build outputs are now invalid.
-                _ = try? database.cacheEntry.deleteAll()
+                _ = try database.cacheEntry.deleteAll()
 
                 // Pending-deletion marks on preserved nodes are deliberately left alone.
                 // A mark means the user ran `rm` and the idle-time GC has not collected
@@ -79,11 +82,11 @@ extension BuildEngine {
         try pfNode.setScheduled(true)
     }
 
-    private func collectDescendants(of nodeID: ObjectID, into set: inout Set<ObjectID>) {
-        for child in (try? database.node.select(parentNodeID: nodeID)) ?? [] {
+    private func collectDescendants(of nodeID: ObjectID, into set: inout Set<ObjectID>) throws {
+        for child in try database.node.select(parentNodeID: nodeID) {
             guard let childID = child.id else { continue }
             set.insert(childID)
-            collectDescendants(of: childID, into: &set)
+            try collectDescendants(of: childID, into: &set)
         }
     }
 }

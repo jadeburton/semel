@@ -166,7 +166,14 @@ extension Node {
     }
 
     func notifyParentOfChildDeletion() throws {
-        try parentNode?.onChildDeleted(nodeID: (try thisNode.requireID()))
+        // A cascade deletes a folder before its children, so the parent may already be
+        // gone by the time a child goes: nothing to notify, and not a failure. (`parentNode`
+        // treats a missing parent as an error, which is right everywhere else.)
+        guard let parentNodeID = thisNode.parentNodeID,
+              let parent = try database.node.find(nodeID: parentNodeID) else {
+            return
+        }
+        try parent.makeNode().onChildDeleted(nodeID: try thisNode.requireID())
     }
 
     func delete() throws {
@@ -340,10 +347,13 @@ extension Node {
 
         for port in descriptor.dynamicInputPorts {
             // Already building an error result, so a further failure here just means this
-            // port's specs cannot be preserved — skip it rather than escalate.
+            // port's specs cannot be preserved — skip it rather than escalate. Unless it is
+            // the machine failing, which the fatal handler hears about either way.
             let toSymbolID = port.asSymbolID()
             guard let nodeID = try? requireID(),
-                  let wires = try? database.wire.select(goingToNodeID: nodeID, toSymbolID: toSymbolID),
+                  let wires = FatalErrors.attempt({
+                      try database.wire.select(goingToNodeID: nodeID, toSymbolID: toSymbolID)
+                  }),
                   !wires.isEmpty else {
                 continue
             }

@@ -245,7 +245,7 @@ extension GraphSpecNode {
         // writers below. The worst it can do is miss a node another task has not committed
         // yet, which falls through to the transaction, where the second find sees it.
         if let existing = try findMatchingNode(),
-           let nodeRecord = try? database.node.select(nodeID: existing.fromNodeID) {
+           let nodeRecord = try database.node.find(nodeID: existing.fromNodeID) {
             return (fromNode: nodeRecord, fromSymbolID: outputPort?.asSymbolID())
         }
 

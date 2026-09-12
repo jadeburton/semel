@@ -55,8 +55,10 @@ extension Wire {
                                           toSymbolID: toSymbolID,
                                           name: name))
 
-        // The source node has a new consumer — clear any pending-deletion mark.
-        try? database.node.updatePendingDeletion(nodeID: fromNodeID, pendingDeletion: false)
+        // The source node has a new consumer — clear any pending-deletion mark. Part of the
+        // all-or-nothing above: a mark that survives would let the collector delete a node
+        // that just gained a consumer.
+        try database.node.updatePendingDeletion(nodeID: fromNodeID, pendingDeletion: false)
 
         let toNode = try database.node.select(nodeID: toNodeID)
         try toNode.writePendingToAllOutputsOfNode()

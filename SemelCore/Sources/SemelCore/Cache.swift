@@ -69,8 +69,11 @@ extension Node {
         guard let cacheEntry = try database.cacheEntry.select(hash: cacheKey) else {
             return nil
         }
-        // Refresh the timestamp so this entry is treated as recently used by the LRU eviction policy.
-        try? database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
+        // Refresh the timestamp so this entry is treated as recently used by the LRU eviction
+        // policy. Best effort: a stale timestamp only makes the entry evictable sooner.
+        FatalErrors.attempt {
+            try database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
+        }
 
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
             return nil
@@ -111,7 +114,8 @@ extension Node {
         try database.cacheEntry.insert(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
                                              cost: Int(processingDuration * 1000.0),
                                              timestamp: Date()))
-        _ = try? database.cacheEntry.trimToLimit(cacheEntryLimit)
+        // Best effort: an untrimmed cache is over its limit until the next save trims it.
+        FatalErrors.attempt { try database.cacheEntry.trimToLimit(cacheEntryLimit) }
     }
 }
 

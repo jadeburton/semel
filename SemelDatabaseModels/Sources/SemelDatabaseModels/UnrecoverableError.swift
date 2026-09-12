@@ -87,4 +87,19 @@ public enum FatalErrors {
         }
         handler(unrecoverable)
     }
+
+    /// Runs best-effort work: a debug listing, a cache touch, a label for an error report —
+    /// things whose failure must not fail the build. An ordinary failure yields nil and
+    /// nothing else happens; a machine failure still reaches the handler. This is what
+    /// `try?` on a database call meant to say, minus the part where it also dropped the
+    /// one error that matters.
+    @discardableResult
+    public static func attempt<T>(_ work: () throws -> T) -> T? {
+        do {
+            return try work()
+        } catch {
+            check(error)
+            return nil
+        }
+    }
 }

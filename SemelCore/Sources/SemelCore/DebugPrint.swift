@@ -48,8 +48,12 @@ extension BuildEngine {
     }
 
     /// Resolve a symbol ID to its name, falling back to "?".
+    ///
+    /// Every database read in this file is best effort — debug output must never be the
+    /// thing that takes the process down — but a machine failure still reaches the fatal
+    /// handler, which is what `FatalErrors.attempt` adds over `try?`.
     private func symbolName(symbolID: ObjectID, database: DatabaseLayer) -> String {
-        (try? database.symbol.select(symbolID: symbolID))?.name ?? "<invalid symbolID>"
+        (FatalErrors.attempt({ try database.symbol.select(symbolID: symbolID) }) ?? nil)?.name ?? "<invalid symbolID>"
     }
 
     /// Format a wire as "fromNode:fromPort ──▶ toNode:toPort".
@@ -141,7 +145,7 @@ extension BuildEngine {
             let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires = wiresByFromNodeID[nodeID] ?? []
-            let outputValues  = (try? database.outputPort.selectAll(nodeID: nodeID)) ?? []
+            let outputValues  = FatalErrors.attempt({ try database.outputPort.selectAll(nodeID: nodeID) }) ?? []
 
             if !inputPorts.isEmpty {
                 print("  inputs:")
@@ -155,7 +159,10 @@ extension BuildEngine {
                         for wire in wires {
                             let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
                             let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
-                            let outputValue = (try? database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)).map { formatOutputPort($0) } ?? "—"
+                            let outputPort = FatalErrors.attempt({
+                                try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
+                            }) ?? nil
+                            let outputValue = outputPort.map { formatOutputPort($0) } ?? "—"
                             print("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── #\(wire.fromNodeID) \(fromNode):\(fromPort)   \(outputValue)")
                         }
                     }
@@ -185,7 +192,7 @@ extension BuildEngine {
         }
 
         // Debug output must never be the thing that takes the process down.
-        let outputPortCount = (try? database.outputPort.selectAllCount()).map(String.init) ?? "unavailable"
+        let outputPortCount = FatalErrors.attempt({ try database.outputPort.selectAllCount() }).map(String.init) ?? "unavailable"
         print("OutputPort count: \(outputPortCount)\n")
 
         debugPrintTree()
@@ -230,7 +237,7 @@ extension NodeRecord {
                 guard !visitedDependencyNodeIDs.contains(wire.fromNodeID) else { continue }
                 visitedDependencyNodeIDs.insert(wire.fromNodeID)
 
-                if let nodeRecord = try? database.node.select(nodeID: wire.fromNodeID) {
+                if let nodeRecord = FatalErrors.attempt({ try database.node.find(nodeID: wire.fromNodeID) }) ?? nil {
                     dependencyNodes.append(nodeRecord)
                 }
             }
