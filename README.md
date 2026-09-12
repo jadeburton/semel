@@ -43,7 +43,9 @@ Start the engine:
 .build/release/semel
 ```
 
-The engine opens an interactive prompt. Available commands:
+The engine opens an interactive prompt. Everything it persists — the graph database and the
+object store — lives under `~/Library/Application Support/semel`, whatever directory it was
+launched from; the banner prints the database path. Available commands:
 
 ### Navigation
 

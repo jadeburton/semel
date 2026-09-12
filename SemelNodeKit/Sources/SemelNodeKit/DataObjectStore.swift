@@ -37,10 +37,7 @@ public final class DataObjectStore {
     private let storeRoot: URL
 
     convenience init() {
-        let appSupport = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.init(storeRoot: appSupport.appendingPathComponent("semel/objects",
-                                                               isDirectory: true))
+        self.init(storeRoot: SemelPaths.objectStore)
     }
 
     public init(storeRoot: URL) {

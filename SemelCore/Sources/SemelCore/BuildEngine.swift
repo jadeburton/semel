@@ -20,7 +20,11 @@ public final class BuildEngine {
     /// never gets as far as processing. Tests construct engines over prepared databases
     /// all the time, so the constructor must not have that side effect.
     public static func start() throws {
-        let engine = try BuildEngine(database: DatabaseLayer(filePath: "database352.sqlite"),
+        // Beside the object store, absolute, whatever the current directory is: the two
+        // refer to each other, and a database named relative to the launch directory
+        // silently started an empty graph against the shared store.
+        try FileManager.default.createDirectory(at: SemelPaths.root, withIntermediateDirectories: true)
+        let engine = try BuildEngine(database: DatabaseLayer(filePath: SemelPaths.database.path),
                                      startProcessingLoop: false)
         shared = engine
         do {

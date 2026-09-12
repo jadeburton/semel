@@ -8,6 +8,7 @@
 import Foundation
 import SemelCore
 import SemelCLI
+import SemelNodeKit
 import SemelSwift
 import SemelClang
 
@@ -15,6 +16,7 @@ var commandInterpreter: CommandInterpreter?
 
 func main() throws {
     print("Semel \(Semel.version) (C) 2026 Jade Burton. All rights reserved.")
+    print("Graph: \(SemelPaths.database.path)")
 
     // Composition root: the engine knows no toolchains, so this is where the ones this
     // binary ships are installed. Before start(), so discovery sees them on its first pass.
