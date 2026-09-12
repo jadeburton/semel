@@ -160,6 +160,11 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
     private func markManifestDirty() throws {
         try database.metadata.upsert(key: Self.manifestDirtyKey(try thisNode.requireID()), value: "1")
+        // The rebuild that used to happen here wrote the manifest port, which scheduled
+        // the folder's consumers and so woke the processing loop. The mark defers the
+        // rebuild to the loop's next pass — which therefore has to be asked for, or a push
+        // into a sleeping engine leaves every manifest dirty and nothing ever scheduled.
+        BuildEngine.shared?.signalWorkAvailable()
     }
 
     /// Rebuilds the manifest of every folder marked dirty. Returns how many it rebuilt, so

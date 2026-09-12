@@ -56,6 +56,22 @@ final class FolderManifestRebuildTests: SemelCoreTestCase {
         try engine.database.metadata.selectKeys(withPrefix: Folder.manifestDirtyKeyPrefix)
     }
 
+    // MARK: - Waking the loop
+
+    /// The rebuild that used to happen on every push wrote the manifest port, which
+    /// scheduled consumers and so woke the loop. Deferring it to the next pass means the
+    /// push itself has to ask for that pass — the first real build after B-25 pushed 203
+    /// files into a sleeping engine and nothing was ever scheduled.
+    func test_aPushAsksTheEngineForAPass() throws {
+        _ = try engine.inputFileSystem
+        let before = engine.wakeUpsRequested
+
+        try push("src/main.c", contents: "int main(void) { return 0; }")
+
+        XCTAssertGreaterThan(engine.wakeUpsRequested, before, "a push must wake the processing loop")
+        XCTAssertFalse(try dirtyKeys().isEmpty, "and leave the manifest for that pass to rebuild")
+    }
+
     // MARK: - Cost
 
     /// Pushing N files into one folder rebuilds its manifest once — when it is next read —

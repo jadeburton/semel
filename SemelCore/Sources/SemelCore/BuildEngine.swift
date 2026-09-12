@@ -347,7 +347,12 @@ public final class BuildEngine {
     /// if the engine is currently draining, the pending count is incremented
     /// and the next iteration of processLoop will drain again immediately.
     /// When a batch is active, the signal is deferred until `endBatch()`.
+    /// How many times something asked for a pass. Read by tests that pin which mutations
+    /// wake the loop — a push has to, since its manifest rebuild is deferred to the pass.
+    private(set) var wakeUpsRequested = 0
+
     func signalWorkAvailable() {
+        wakeUpsRequested += 1
         let inBatch = batchLock.withLock { () -> Bool in
             guard batchDepth > 0 else {
                 return false
