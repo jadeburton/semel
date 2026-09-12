@@ -20,5 +20,13 @@ public enum SemelClang {
             ClangPreprocessorTool.self,
             ClangIncludeFinder.self,
         ])
+
+        // What `tools` prints under each namespace. All three run the one clang binary;
+        // the include finder runs no tool.
+        for namespace in [ClangCompilerToolConfiguration.settingNamespace,
+                          ClangLinkerToolConfiguration.settingNamespace,
+                          ClangPreprocessorToolConfiguration.settingNamespace] {
+            ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang"))
+        }
     }
 }

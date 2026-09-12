@@ -82,6 +82,8 @@ rm build/**
 | `d` / `debug` | Dump the full graph state |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `e` / `errors` | Show all current build errors |
+| `t` / `tools` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste |
+| `reset` | Discard everything derived and rebuild from the input file system |
 
 ### Session
 

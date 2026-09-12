@@ -21,6 +21,19 @@ public enum SemelSwift {
             SwiftFormulaConverter.self,
         ])
         ProjectDiscovery.register(SwiftPackagePlugin())
+
+        // What `tools` prints under each namespace. The compiler and linker check the
+        // declared SDK against the machine, so the machine's identity is printed with them;
+        // the package reader declares no SDK.
+        let sdk: () -> [String: String] = {
+            resolveSDKVersion().map { ["sdkVersion": $0] } ?? [:]
+        }
+        ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerToolConfiguration.settingNamespace,
+                                             toolName: "swiftc", machineSettings: sdk))
+        ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerToolConfiguration.settingNamespace,
+                                             toolName: "swiftc", machineSettings: sdk))
+        ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderToolConfiguration.settingNamespace,
+                                             toolName: "swift"))
     }
 }
 

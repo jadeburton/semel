@@ -1,14 +1,15 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, reset
+// Handles: d / debug, n / nudge, e / errors, reset, t / tools
 
 import SemelCore
+import SemelNodeKit
 import Foundation
 
 final class EnginePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "reset"]
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "reset", "t", "tools"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -16,7 +17,53 @@ final class EnginePlugin: CommandPlugin {
         case "n", "nudge":  try context.buildEngine.nudge()
         case "e", "errors": try handleErrors(context: context)
         case "reset":       try handleReset(context: context)
+        case "t", "tools":  handleTools(context: context)
         default:            break
+        }
+    }
+
+    // MARK: - tools
+
+    /// The installed tools, printed as the settings a `semel.config` needs — one block per
+    /// namespace that names the tool, so choosing a toolchain version is a paste. A
+    /// namespace whose tool is missing prints as a comment, so the whole output is safe to
+    /// paste and still says what is absent.
+    ///
+    /// Both sources are dictionaries, so the order is imposed: namespaces alphabetically,
+    /// and a tool installed in several versions by version.
+    private func handleTools(context: any CommandContext) {
+        let installed = ToolRunnerRegistry.instance.registeredDescriptors
+
+        var blocks: [String] = []
+        for entry in ToolNamespaceRegistry.all {
+            let descriptors = installed
+                .filter { $0.name == entry.toolName }
+                .sorted { ($0.version, $0.platform, $0.architecture) < ($1.version, $1.platform, $1.architecture) }
+
+            guard !descriptors.isEmpty else {
+                blocks.append("// \(entry.namespace): no \(entry.toolName) is installed on this machine")
+                continue
+            }
+
+            let machineSettings = entry.machineSettings()
+            for descriptor in descriptors {
+                var lines = [
+                    "\(entry.namespace).toolDescriptor.name=\(descriptor.name)",
+                    "\(entry.namespace).toolDescriptor.version=\(descriptor.version)",
+                    "\(entry.namespace).toolDescriptor.platform=\(descriptor.platform)",
+                    "\(entry.namespace).toolDescriptor.architecture=\(descriptor.architecture)",
+                ]
+                for key in machineSettings.keys.sorted() {
+                    lines.append("\(entry.namespace).\(key)=\(machineSettings[key]!)")
+                }
+                blocks.append(lines.joined(separator: "\n"))
+            }
+        }
+
+        if blocks.isEmpty {
+            context.outputMessage("No toolchains are registered.")
+        } else {
+            context.outputMessage(blocks.joined(separator: "\n\n"))
         }
     }
 
