@@ -48,6 +48,15 @@ public struct MetadataDataAccess: DataAccessType {
         }
     }
 
+    /// Every key under `prefix`, sorted, so a family of rows (`manifestDirty/<id>`) can be
+    /// walked in one query.
+    public func selectKeys(withPrefix prefix: String) throws -> [String] {
+        try read { db in
+            try String.fetchAll(db, sql: "SELECT key FROM Metadata WHERE key LIKE ? ORDER BY key",
+                                arguments: [prefix + "%"])
+        }
+    }
+
     public func upsert(key: String, value: String) throws {
         try write { db in
             try Metadata(key: key, value: value).save(db)

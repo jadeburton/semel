@@ -135,17 +135,82 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         throw NodeError.other(message: "\(Self.self) declares no input ports and cannot process")
     }
 
-    // when a child is added, we post a "child added" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
-    // when a child is deleted, we post a "child deleted" event to childrenOutputPort, then notify the parent folder, so it can also post the same event
+    // MARK: - Manifest freshness (B-25)
+    //
+    // A child change does not rebuild the manifest; it marks this folder dirty, and the
+    // manifest is rebuilt exactly once when something next needs it — the next processing
+    // pass (`flushDirtyManifests`, before it selects scheduled nodes, since the rebuild's
+    // port write is what schedules the manifest's consumers) or a direct read of the port
+    // (`NodeRecord.readFromOutputPort` asks `flushManifestIfDirty` first). A reader never
+    // sees a stale manifest, because reading is what rebuilds it; a push of N files costs
+    // one rebuild instead of 2N, each O(N).
+    //
+    // The mark is a row in the Metadata table rather than an in-memory set, so a crash
+    // between a push and the next pass leaves a row that the next launch's first pass
+    // flushes, instead of a stale manifest nothing would ever rebuild. The order matters
+    // for correctness under a concurrent push: every mutation marks *after* it has
+    // mutated, and the flush clears the mark *before* it rebuilds, so a mark the flush
+    // removes always belongs to a change the rebuild can see.
+
+    static let manifestDirtyKeyPrefix = "manifestDirty/"
+
+    private static func manifestDirtyKey(_ nodeID: ObjectID) -> String {
+        "\(manifestDirtyKeyPrefix)\(nodeID)"
+    }
+
+    private func markManifestDirty() throws {
+        try database.metadata.upsert(key: Self.manifestDirtyKey(try thisNode.requireID()), value: "1")
+    }
+
+    /// Rebuilds the manifest of every folder marked dirty. Returns how many it rebuilt, so
+    /// a caller can tell whether anything downstream may now be scheduled.
+    @discardableResult
+    static func flushDirtyManifests() throws -> Int {
+        let database = DatabaseLayer.shared!
+        var flushed = 0
+        for key in try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix) {
+            guard let nodeID = ObjectID(key.dropFirst(manifestDirtyKeyPrefix.count)) else {
+                continue
+            }
+            try database.metadata.delete(key: key)
+            // The folder may have been collected since it was marked; then there is
+            // nothing to rebuild and the row was all that was left of it.
+            guard let nodeRecord = try? database.node.select(nodeID: nodeID),
+                  let folder = try nodeRecord.makeNode() as? Folder else {
+                continue
+            }
+            try folder.refreshOutputs()
+            flushed += 1
+        }
+        return flushed
+    }
+
+    /// Rebuilds one folder's manifest if it is marked dirty. Called on the way into a
+    /// direct read of the manifest port.
+    static func flushManifestIfDirty(nodeID: ObjectID) throws {
+        let database = DatabaseLayer.shared!
+        let key = manifestDirtyKey(nodeID)
+        guard try database.metadata.select(key: key) != nil else {
+            return
+        }
+        try database.metadata.delete(key: key)
+        guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
+            return
+        }
+        try folder.refreshOutputs()
+    }
+
     public func onChildAdded(nodeID: ObjectID) throws {
-        try refreshOutputs()
+        try markManifestDirty()
     }
 
     public func onChildContentChanged(nodeID: ObjectID, name: String) throws {
-        try refreshOutputs()
+        try markManifestDirty()
     }
 
     public func onChildDeleted(nodeID: ObjectID) throws {
+        // Rebuilt at once, not deferred: a deletion is followed by the self-delete check
+        // below, and a folder that then dies must not leave a dirty mark behind.
         try refreshOutputs()
 
         // Only self-delete when the folder is truly empty. Using canBeDeleted() here is wrong:
@@ -174,7 +239,13 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         try notifyParentOfChildContentChange()
     }
 
+    /// How many manifests have been built in this process. Read by tests that pin the cost
+    /// of a push in rebuilds rather than in seconds, which a timing assertion cannot do
+    /// reliably.
+    static var manifestRebuildCount = 0
+
     private func buildManifest() throws -> FolderManifest {
+        Self.manifestRebuildCount += 1
         // Summaries rather than whole nodes: a manifest entry is a name and two flags, and
         // decoding every child's properties to produce that was most of the rebuild cost.
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())

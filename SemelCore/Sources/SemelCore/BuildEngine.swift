@@ -380,6 +380,10 @@ public final class BuildEngine {
     /// result is written in phase 2, the normal cascade mechanism reschedules any
     /// affected consumers for re-evaluation on the next pass.
     private func processSomeNodes() async throws -> Bool {
+        // Before selecting: a rebuilt manifest's port write is what schedules its consumers
+        // (B-25), and phase 2 of the previous batch may have added output files to folders.
+        try Folder.flushDirtyManifests()
+
         let nodeRecords = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
         guard !nodeRecords.isEmpty else {
             return false
