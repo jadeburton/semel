@@ -203,7 +203,7 @@ struct SwiftFormulaConverter: Node {
     /// `namespace`, with `literals` overlaid as properties.
     ///
     /// Properties win over the file: `literals` is manifest-derived — `moduleName`,
-    /// `dynamicLibrary` and the like — so it describes what the target *is*, and a config
+    /// `linkage` and the like — so it describes what the target *is*, and a config
     /// file must not be able to override identity through the settings it supplies.
     ///
     /// Sorted, because these become a formula string that becomes a node's searchKey — and
@@ -447,7 +447,10 @@ struct SwiftFormulaConverter: Node {
         let targets: [String]
         let productType: ProductType
 
-        enum ProductType { case executable, library, other }
+        enum ProductType: Equatable { case executable, library(LibraryType), other }
+
+        /// `.library(type:)` as the manifest declares it: `{"library": ["static"]}`.
+        enum LibraryType: String { case `static`, dynamic, automatic }
 
         private struct AnyKey: CodingKey {
             var stringValue: String
@@ -470,9 +473,20 @@ struct SwiftFormulaConverter: Node {
             name    = try c.decode(String.self,   forKey: .name)
             targets = try c.decode([String].self, forKey: .targets)
             let tc  = try c.nestedContainer(keyedBy: AnyKey.self, forKey: .type)
-            if      tc.contains(AnyKey("executable")) { productType = .executable }
-            else if tc.contains(AnyKey("library"))    { productType = .library }
-            else                                       { productType = .other }
+            if tc.contains(AnyKey("executable")) {
+                productType = .executable
+            } else if tc.contains(AnyKey("library")) {
+                // One-element array: `{"library": ["automatic"]}`. Strict on purpose — a
+                // type this converter has never seen must not silently become one it has.
+                let names = try tc.decode([String].self, forKey: AnyKey("library"))
+                guard let name = names.first, let libraryType = LibraryType(rawValue: name) else {
+                    throw DecodingError.dataCorruptedError(forKey: AnyKey("library"), in: tc,
+                        debugDescription: "unknown library type \(names) for product '\(name)'")
+                }
+                productType = .library(libraryType)
+            } else {
+                productType = .other
+            }
         }
     }
 
@@ -562,13 +576,23 @@ struct SwiftFormulaConverter: Node {
             // path in the output file system.  Labelling the block with the bare product
             // name instead published a linked lib<name>.dylib as plain "<name>", so the
             // file's content and its name disagreed.
-            let isLibrary    = (product.productType == .library)
-            let outputName   = isLibrary ? "lib\(product.name).dylib" : product.name
+            //
+            // Which artifact a library becomes follows its declared type. `.dynamic` is
+            // the one case SPM links as a dylib. `.automatic` is not "SPM picks dynamic":
+            // SPM never links an automatic library on its own (`swift build --product L`
+            // leaves only object files) and links it statically into whatever executable
+            // depends on it — so an archive is the artifact closest to what SPM would do,
+            // and the old "always a dylib" was an assumption, not a choice (B-09).
+            let (linkage, outputName): (SwiftLinkage, String) = switch product.productType {
+                case .library(.dynamic):                     (.dynamicLibrary, "lib\(product.name).dylib")
+                case .library(.static), .library(.automatic): (.staticArchive,  "lib\(product.name).a")
+                case .executable, .other:                    (.executable,     product.name)
+            }
             let linkerConfig = Self.configurationExpression(
                 namespace: SwiftLinkerToolConfiguration.settingNamespace,
                 packageFolder: rootPackageFolder,
-                literals: ["dynamicLibrary": isLibrary ? "true" : "false",
-                           "outputName":     outputName])
+                literals: ["linkage":    linkage.rawValue,
+                           "outputName": outputName])
 
             // One object-file wire per compiled target (all transitive deps included).
             let objectWires = allTargets.map { t in

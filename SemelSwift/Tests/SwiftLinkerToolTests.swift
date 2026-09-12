@@ -29,14 +29,14 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
 
     private func makeInput(objectFiles: [String],
                            libraries: [String] = [],
-                           dynamicLibrary: Bool = false) throws -> ProcessInput {
+                           linkage: String = "executable") throws -> ProcessInput {
         let configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
             toolDescriptor.platform=\(descriptor.platform)
             toolDescriptor.architecture=\(descriptor.architecture)
             outputName=product
-            dynamicLibrary=\(dynamicLibrary)
+            linkage=\(linkage)
             """
 
         var objects: [String: NodeValue] = [:]
@@ -95,6 +95,7 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
             toolDescriptor.platform=\(descriptor.platform)
             toolDescriptor.architecture=\(descriptor.architecture)
             outputName=product
+            linkage=executable
             """
         return ProcessInput(inputValues: [
             SwiftLinkerTool.configuration:   ["configuration": .value(try configuration.intern())],
@@ -145,9 +146,8 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
 
     // MARK: - File metadata
 
-    private func linkedFileMode(dynamicLibrary: Bool) throws -> UInt16? {
-        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
-                                                                 dynamicLibrary: dynamicLibrary))
+    private func linkedFileMode(linkage: String) throws -> UInt16? {
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: linkage))
         let value = try XCTUnwrap(output.outputValues[SwiftLinkerTool.fileMetadata])
         let metadata = try XCTUnwrap(FileMetadata.decode(from: try value.expectValue().resolveAsString()))
         return metadata.mode
@@ -157,11 +157,66 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
     /// ProjectBuilder wires the port automatically for any node type that declares it, so
     /// declaring it is the whole fix — same as ClangLinkerTool.
     func test_anExecutableIsPublishedAsExecutable() throws {
-        XCTAssertEqual(try linkedFileMode(dynamicLibrary: false), FileMetadata.executableMode)
+        XCTAssertEqual(try linkedFileMode(linkage: "executable"), FileMetadata.executableMode)
     }
 
     func test_aDynamicLibraryIsPublishedWithTheDefaultMode() throws {
-        XCTAssertEqual(try linkedFileMode(dynamicLibrary: true), FileMetadata.defaultMode)
+        XCTAssertEqual(try linkedFileMode(linkage: "dynamicLibrary"), FileMetadata.defaultMode)
+    }
+
+    /// An archive is not run either.
+    func test_aStaticArchiveIsPublishedWithTheDefaultMode() throws {
+        XCTAssertEqual(try linkedFileMode(linkage: "staticArchive"), FileMetadata.defaultMode)
+    }
+
+    // MARK: - Linkage (B-09)
+
+    /// The flags that select the artifact form, in the order they are emitted.
+    private func emitFlags(linkage: String) throws -> [String] {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: linkage))
+        return executor.lastArguments.filter { $0 == "-emit-library" || $0 == "-static" }
+    }
+
+    func test_anExecutableIsLinkedWithNeitherLibraryFlag() throws {
+        XCTAssertEqual(try emitFlags(linkage: "executable"), [])
+    }
+
+    func test_aDynamicLibraryIsLinkedWithEmitLibraryAlone() throws {
+        XCTAssertEqual(try emitFlags(linkage: "dynamicLibrary"), ["-emit-library"])
+    }
+
+    /// `swiftc -emit-library -static -o lib<name>.a *.o` drives libtool and writes a plain
+    /// `ar` archive — verified on the local toolchain — so the linker stays one tool.
+    func test_aStaticArchiveIsLinkedWithEmitLibraryAndStatic() throws {
+        XCTAssertEqual(try emitFlags(linkage: "staticArchive"), ["-emit-library", "-static"])
+    }
+
+    /// Three forms and no default: the formula has to say which one it wants.
+    func test_linkageIsRequired() throws {
+        let configuration = """
+            toolDescriptor.name=\(descriptor.name)
+            toolDescriptor.version=\(descriptor.version)
+            toolDescriptor.platform=\(descriptor.platform)
+            toolDescriptor.architecture=\(descriptor.architecture)
+            outputName=product
+            """
+        let input = ProcessInput(inputValues: [
+            SwiftLinkerTool.configuration: ["configuration": .value(try configuration.intern())],
+            SwiftLinkerTool.input: ["a.o": .value(try "object".intern())],
+            SwiftLinkerTool.libraries: [:],
+        ])
+
+        XCTAssertThrowsError(try makeTool().process(input: input)) { error in
+            XCTAssertTrue(String(describing: error).contains("swift.linker.linkage"), "got \(error)")
+        }
+    }
+
+    func test_anUnknownLinkageIsRejectedNamingTheChoices() throws {
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: "shared"))) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("shared"), "should name the bad value, got \(message)")
+            XCTAssertTrue(message.contains("staticArchive"), "should list the accepted values, got \(message)")
+        }
     }
 
     /// ProjectBuilder only wires the metadata if the port is declared on the type.

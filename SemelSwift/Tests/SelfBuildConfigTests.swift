@@ -129,11 +129,11 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
         }
     }
 
-    /// Same reasoning as the compiler above, but for `outputName`, the linker's own
-    /// manifest-derived literal.
+    /// Same reasoning as the compiler above, but for `outputName` and `linkage`, the
+    /// linker's own manifest-derived literals.
     func test_swiftLinkerNamespaceSatisfiesSwiftLinkerToolConfiguration() throws {
         try forEachConfigFile(namespace: SwiftLinkerToolConfiguration.settingNamespace,
-                              literals: ["outputName": "Test"]) { path, settings in
+                              literals: ["outputName": "Test", "linkage": "executable"]) { path, settings in
             XCTAssertNoThrow(try SwiftLinkerToolConfiguration(properties: settings), path)
         }
     }

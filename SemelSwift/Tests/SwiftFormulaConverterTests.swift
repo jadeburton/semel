@@ -108,7 +108,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertFalse(productLabels.contains { $0.contains("GRDBSQLite") },
                        "GRDBSQLite vends only a system library, got: \(productLabels)")
-        XCTAssertTrue(productLabels.contains("libGRDB.dylib"),
+        XCTAssertTrue(productLabels.contains("libGRDB.a"),
                       "the real product should still be emitted, got: \(productLabels)")
     }
 
@@ -131,7 +131,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     /// static archive is dropped — without it the modulemap's `link "sqlite3"` resolves
     /// against the SDK and the product depends on the system copy instead.
     func test_wiresASystemLibraryFolderToTheLinker() throws {
-        let block = try productBlock("libGRDB.dylib", in: try formula(json: grdbShapedManifest))
+        let block = try productBlock("libGRDB.a", in: try formula(json: grdbShapedManifest))
 
         XCTAssertTrue(block.contains("libraryFolders: [\n            'GRDBSQLite': Folder(path: 'input:/pkg/Sources/GRDBSQLite').manifest\n        ]"),
                       "got:\n\(block)")
@@ -165,13 +165,63 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     /// The product's formula label becomes its file name in the output file system, so it
     /// has to be the name the linker actually writes. A library is linked as
-    /// lib<name>.dylib but was published as the bare product name, so a dylib appeared
-    /// with neither the lib prefix nor the extension.
+    /// lib<name>.<ext> but was published as the bare product name, so a library appeared
+    /// with neither the lib prefix nor the extension. GRDB's products are `.automatic`,
+    /// which links as an archive.
     func test_publishesALibraryUnderItsLinkedFileName() throws {
         let result = try formula(json: grdbShapedManifest)
 
-        XCTAssertTrue(result.contains("product 'libGRDB.dylib' ="), "got:\n\(result)")
-        XCTAssertTrue(result.contains("outputName: 'libGRDB.dylib'"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("product 'libGRDB.a' ="), "got:\n\(result)")
+        XCTAssertTrue(result.contains("outputName: 'libGRDB.a'"), "got:\n\(result)")
+    }
+
+    // MARK: - Library type (B-09)
+
+    private func libraryManifest(type: String) -> String {
+        """
+        {
+          "name": "L",
+          "dependencies": [],
+          "products": [{"name": "L", "targets": ["L"], "type": {"library": ["\(type)"]}}],
+          "targets": [{"name": "L", "type": "regular", "path": "Sources/L", "dependencies": []}]
+        }
+        """
+    }
+
+    private func linkerConfiguration(in formula: String) throws -> String {
+        let block = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("product ") },
+                                  "no product block in:\n\(formula)")
+        return try XCTUnwrap(block.components(separatedBy: "\n").first { $0.contains("configuration: [") },
+                             "no linker configuration in:\n\(block)")
+    }
+
+    /// `.library(type: .dynamic)` is the one case SPM links as a dylib.
+    func test_linksADynamicLibraryProductAsADylib() throws {
+        let result = try formula(json: libraryManifest(type: "dynamic"))
+
+        XCTAssertTrue(result.contains("product 'libL.dylib' ="), "got:\n\(result)")
+        XCTAssertTrue(try linkerConfiguration(in: result).contains("linkage: 'dynamicLibrary', outputName: 'libL.dylib'"),
+                      "got:\n\(result)")
+    }
+
+    func test_linksAStaticLibraryProductAsAnArchive() throws {
+        let result = try formula(json: libraryManifest(type: "static"))
+
+        XCTAssertTrue(result.contains("product 'libL.a' ="), "got:\n\(result)")
+        XCTAssertTrue(try linkerConfiguration(in: result).contains("linkage: 'staticArchive', outputName: 'libL.a'"),
+                      "got:\n\(result)")
+    }
+
+    /// `.automatic` used to be built dynamic by assumption. SPM never links an automatic
+    /// library on its own (`swift build --product L` produces only object files) and links
+    /// it statically into whatever executable depends on it, so an archive is the artifact
+    /// closest to what SPM would do.
+    func test_linksAnAutomaticLibraryProductAsAnArchive() throws {
+        let result = try formula(json: libraryManifest(type: "automatic"))
+
+        XCTAssertTrue(result.contains("product 'libL.a' ="), "got:\n\(result)")
+        XCTAssertTrue(try linkerConfiguration(in: result).contains("linkage: 'staticArchive', outputName: 'libL.a'"),
+                      "got:\n\(result)")
     }
 
     func test_publishesAnExecutableUnderItsPlainName() throws {
@@ -430,7 +480,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertTrue(result.contains(
-            "Configuration(dynamicLibrary: 'false', outputName: 'semel', inherit: ['settings': "
+            "Configuration(linkage: 'executable', outputName: 'semel', inherit: ['settings': "
             + "ConfigSubset(prefix: 'swift.linker', "
             + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
             "got:\n\(result)")

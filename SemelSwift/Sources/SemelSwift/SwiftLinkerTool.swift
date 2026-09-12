@@ -2,7 +2,7 @@
 // semel
 //
 // Swift linker stage: links one or more .o object files into a final
-// executable or dynamic library using `swiftc` as the driver.
+// executable, dynamic library or static archive using `swiftc` as the driver.
 
 import Foundation
 import SemelNodeKit
@@ -10,25 +10,43 @@ import SemelDatabaseModels
 
 // MARK: - Configuration
 
+/// The artifact a link produces. A formula literal, like `outputName`: it says what the
+/// product *is*, and no config file may change that.
+enum SwiftLinkage: String, CaseIterable {
+    case executable
+    /// `lib<name>.dylib`, via `-emit-library`.
+    case dynamicLibrary
+    /// `lib<name>.a`, via `-emit-library -static`, which has swiftc drive libtool and
+    /// write a plain `ar` archive — so the linker stays one tool.
+    case staticArchive
+}
+
 struct SwiftLinkerToolConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
     /// Declared in semel.config; nil means whatever this machine has.
     let sdkVersion: String?
-    let dynamicLibrary: Bool
+    let linkage: SwiftLinkage
     let outputName: String
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
         toolDescriptor = .init(required: &required, properties: properties)
         outputName = required.value("outputName")
+        let linkageName = required.value("linkage")
         try required.check()
+
+        // Three forms and no default, so a bad spelling is an error, not an executable.
+        guard let linkage = SwiftLinkage(rawValue: linkageName) else {
+            let accepted = SwiftLinkage.allCases.map(\.rawValue).joined(separator: ", ")
+            throw NodeError.other(message: "linkage '\(linkageName)' is not one of: \(accepted)")
+        }
+        self.linkage = linkage
 
         arguments = []
         environment = [:]
         sdkVersion = properties["sdkVersion"]
-        dynamicLibrary = properties["dynamicLibrary"] == "true"
     }
 
     /// Where this node's settings live in a config file: `swift.linker.sdkVersion`.
@@ -166,8 +184,10 @@ struct SwiftLinkerTool: Node {
 
         var arguments = [String]()
 
-        if inputs.configuration.dynamicLibrary {
-            arguments.append("-emit-library")
+        switch inputs.configuration.linkage {
+        case .executable:     break
+        case .dynamicLibrary: arguments.append("-emit-library")
+        case .staticArchive:  arguments.append(contentsOf: ["-emit-library", "-static"])
         }
 
         // Pass the SDK path so swiftc's linker driver can find libSystem and
@@ -202,8 +222,8 @@ struct SwiftLinkerTool: Node {
             inputFiles: inputFiles,
             expectedOutputFileNames: [outputName])
 
-        // A dynamic library is loaded, not run, so only an executable needs the x bits.
-        let mode: UInt16 = inputs.configuration.dynamicLibrary ? FileMetadata.defaultMode : FileMetadata.executableMode
+        // A library is loaded or linked, not run, so only an executable needs the x bits.
+        let mode: UInt16 = inputs.configuration.linkage == .executable ? FileMetadata.executableMode : FileMetadata.defaultMode
         let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
 
         return .init(output: try result.asOutputNodeValue(),

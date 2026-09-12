@@ -110,10 +110,6 @@ absent → warn once, present and mismatched → fail.
 
 Depends on B-26.
 
-**B-09** `open` — **`.library(type: .automatic)` is always built dynamic.**
-No static archive support; every library product becomes a `.dylib` by assumption rather
-than by choice.
-
 **B-10** `open` — **Publish only final products: packages are referenced from a formula,
 not discovered.**
 `libSemelCore.dylib` and friends appear in `output:` though they are internal. A product
