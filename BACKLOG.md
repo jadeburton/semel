@@ -51,9 +51,11 @@ Compilers embed the invocation path in what they produce — DWARF debug info, `
 expansions, the output filename derived from the source path, diagnostics on the log ports.
 That is why the cache deliberately keys on wire *names* as well as values (`Cache.swift`:
 content-only keys once returned another file's build), and it is what blocks cache reuse
-across users once the input file system is subdivided per user and branch
-(`input:/jade/my-branch/src/…`, see FUTURE.md "Settled direction"): identical trees at
-different mounts produce byte-different artifacts, so they can never share an entry.
+across machines on the shared cache server (FUTURE.md "Settled direction", the 2026-08-15
+cache-server spec): every developer mounts the same tree at a different checkout path, so
+identical trees produce byte-different artifacts and can never share an entry. The same
+applies within one machine to two branches of one project. This is the prerequisite for
+the cache server being useful at all, not an optimisation on top of it.
 
 The distinction that preserves the old lesson: the *project-relative* path is a real input
 (module names, includes, output filenames) and stays everywhere; only the *mount prefix* is
@@ -234,15 +236,17 @@ fixing. Verify against a deep tree before spending anything here.
 
 **B-30** `open` — **`semelserv` with three roles.**
 One binary, three modes, sharing a wire protocol:
-1. **Cache Server** — see `docs/superpowers/specs/2026-08-15-semel-cache-server-design.md`
+1. **Cache Server** — see `docs/superpowers/specs/2026-08-15-semel-cache-server-design.md`.
+   This is the multi-user story (FUTURE.md "Settled direction"): every developer's local
+   engine reads and writes it, behind the existing local cache as the near tier.
 2. **Remote Runner** — executes tool commands inside, or against, a container (B-03)
-3. **Shared Build Server** — see
-   `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`
-Role 3 is still wanted even with local building, because the point is a build that continues
-in the background regardless of which CLIs are open — local CLI to local server. Write it as
-if multiple users might share it, without the full auth apparatus for now. The artifact
-events clients subscribe to are B-50's settle diffs; per-user output subtrees (FUTURE.md)
-make a subscription a path prefix.
+3. **Local Build Daemon** — the surviving part of
+   `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`. Wanted even with
+   local building, because the point is a build that continues in the background regardless
+   of which CLIs are open — local CLI to local daemon, one user, one graph. Do not write it
+   for multiple users: that is the shared-build-server model the cache server superseded,
+   and it is where the path authorisation and sync machinery came from. The artifact events
+   CLIs subscribe to are B-50's settle diffs.
 
 ## Design, correctness and code quality
 
@@ -459,31 +463,14 @@ Semantics: only the diff between the last settle and this one. An artifact that 
 `value → pending → same value` reports nothing. Appeared / content-changed / disappeared
 only; error states stay with the existing idle error report.
 
-Trigger — quiescence of a *scope*, not global idle. In a multi-user graph (FUTURE.md) the
-graph may never be globally idle: other users' pushes keep it busy continuously, and a
-report gated on global settle would starve. The trigger is per output subtree: snapshot
-`output:/jade/…` once no more changes can flow into it — no scheduled node (nor one in the
-current processing batch) can reach it, and no pending deletion targets it. That is
-decidable because in-flight work is explicit, and a conservative answer errs safely: it can
-only delay a report, never produce a wrong one. Global idle is the single-user degenerate
-case — so build the report against a scope (path prefix + quiescence signal), wire it to
-the global settle today, and multi-user later supplies partitioned scopes without the
-report changing.
-
-Sketch for the partitioned signal, recorded so it is not re-derived: reachability tags
-propagated along the cascade. Per-user paths make partitions structurally disjoint — every
-shape from `input:/jade/…` to `output:/jade/…` carries the prefix — except nodes whose
-shapes coincide across users (a selector over a shared config file is *one* node, by
-searchKey), which conservatively tag as all partitions. A push tags its targets with the
-partitions they can reach, every schedule caused by a write inherits tags, and a
-per-partition counter of in-flight tagged nodes hitting zero is that partition's settle.
-O(1) per schedule; counters in memory; a restart marks every partition dirty, which the
-first-quiescence reconciliation below already absorbs.
-
-Same starvation, noted while here: deferred deletions also wait for global idle
-(`processPendingDeletions` runs between drains), so under continuous load the *disappeared*
-half of this report starves with them. Whether deletions can run per-partition is open —
-safe only where partitions share no nodes, which a shared config area breaks.
+Trigger — global idle, the same settle that drives `reportIdleTimeErrors`. Each engine is
+single-user (FUTURE.md "Settled direction": local engines, shared cache), so the graph
+does go quiet after a push and the settle is the natural report boundary. A per-subtree
+quiescence trigger (reachability tags on the cascade, per-partition in-flight counters)
+was designed on 2026-09-09 for a shared graph that never idles; that graph is superseded
+and the design is not needed. Keep the reporter taking a path prefix anyway — it costs
+nothing and keeps a subtree report possible for a local daemon serving several
+worktrees — but do not build a second quiescence signal.
 
 Mechanism — designed for thousands of artifacts, never O(all) on the steady path:
 - An `ArtifactSnapshot` table (path, last-reported content hash) in the *same* database as
@@ -503,10 +490,10 @@ Mechanism — designed for thousands of artifacts, never O(all) on the steady pa
   way `ErrorReport` closed it for errors.
 
 Deliberately not built yet, but shaped for it: these settle diffs are the events `semelserv`
-(B-30) will stream to subscribed clients — `(generation, path, kind, hash)` with a retention
-window, full resync from the snapshot table for a client beyond the window. Per-user output
-subtrees (FUTURE.md, settled direction) make a subscription a path prefix, which is what
-makes "the outcome of *your* push" well-defined with concurrent users.
+(B-30 role 3, the local daemon) will stream to subscribed CLIs — `(generation, path, kind,
+hash)` with a retention window, full resync from the snapshot table for a client beyond the
+window. A subscription is a path prefix, so a CLI opened in one worktree sees only that
+worktree's artifacts.
 
 Presentation at scale is the one open question: a cold build of a 10,000-file project
 produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
