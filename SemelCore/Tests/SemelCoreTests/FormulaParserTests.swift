@@ -9,7 +9,7 @@ import SemelNodeKit
 
 final class FormulaParserTests: SemelCoreTestCase {
 
-    private func parse(_ source: String) throws -> [String: GraphShapeNode] {
+    private func parse(_ source: String) throws -> [String: GraphSpecNode] {
         try FormulaFile.parse(source, basePath: Path("."), wildcardExpander: { _ in [] })
     }
 
@@ -22,7 +22,7 @@ final class FormulaParserTests: SemelCoreTestCase {
 
     func test_leafNode_arg() throws {
         let result = try parse("product \"X\" = StaticFile(path: 'src/hello.c').output")
-        XCTAssertEqual(result["X"]?.properties, [GraphShapeProperty(key: "path", value: "src/hello.c")])
+        XCTAssertEqual(result["X"]?.properties, [GraphSpecProperty(key: "path", value: "src/hello.c")])
     }
 
     func test_leafNode_outputPort() throws {
@@ -49,8 +49,8 @@ final class FormulaParserTests: SemelCoreTestCase {
         let result = try parse("product \"X\" = Tool(name: 'foo', version: '1.0').output")
         let node = try XCTUnwrap(result["X"])
         XCTAssertEqual(node.properties.count, 2)
-        XCTAssertEqual(node.properties[0], GraphShapeProperty(key: "name", value: "foo"))
-        XCTAssertEqual(node.properties[1], GraphShapeProperty(key: "version", value: "1.0"))
+        XCTAssertEqual(node.properties[0], GraphSpecProperty(key: "name", value: "foo"))
+        XCTAssertEqual(node.properties[1], GraphSpecProperty(key: "version", value: "1.0"))
     }
 
     // MARK: - No-arg node
@@ -293,7 +293,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         // note: the "path" symbol resolves to the parameter, not the global function.
         func file(path) = StaticFile(path: path).output
 
-        func result(path) = SwiftPackageReaderTool(
+        func result(path) = SwiftPackageReader(
           configuration: ['config': Configuration().output],
           packageFile: ["Package.swift": file(path)]
         ).packageJSON
@@ -304,7 +304,7 @@ final class FormulaParserTests: SemelCoreTestCase {
 
     func test_specExample_packageJson_typeName() throws {
         let result = try parse(specExample)
-        XCTAssertEqual(result["Package.json"]?.typeName, "SwiftPackageReaderTool")
+        XCTAssertEqual(result["Package.json"]?.typeName, "SwiftPackageReader")
     }
 
     func test_specExample_packageJson_outputPort() throws {
@@ -372,7 +372,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         let result = try parse(specExample)
         let pkgNode   = try XCTUnwrap(result["Package.json"])
         let extraNode = try XCTUnwrap(result["Extra.json"])
-        // Both products should resolve to SwiftPackageReaderTool with the same port layout
+        // Both products should resolve to SwiftPackageReader with the same port layout
         XCTAssertEqual(pkgNode.typeName,   extraNode.typeName)
         XCTAssertEqual(pkgNode.outputPort, extraNode.outputPort)
         XCTAssertEqual(pkgNode.inputs.count, extraNode.inputs.count)

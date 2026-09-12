@@ -1,5 +1,5 @@
 //
-//  SwiftPackageReaderToolTests.swift
+//  SwiftPackageReaderTests.swift
 //  semel_tests
 //
 //  This node's output is the dumped manifest, which drives the whole formula and every
@@ -12,7 +12,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
+final class SwiftPackageReaderTests: SemelSwiftTestCase {
 
     private let descriptor = ToolDescriptor(name: "swift",
                                             version: "test-swift",
@@ -27,8 +27,8 @@ final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
         ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
     }
 
-    private func makeTool() throws -> SwiftPackageReaderTool {
-        try SwiftPackageReaderTool(thisNode: NodeRecord(id: 1, kind: SwiftPackageReaderTool.kind))
+    private func makeTool() throws -> SwiftPackageReader {
+        try SwiftPackageReader(thisNode: NodeRecord(id: 1, kind: SwiftPackageReader.kind))
     }
 
     private func makeInput() throws -> ProcessInput {
@@ -39,8 +39,8 @@ final class SwiftPackageReaderToolTests: SemelSwiftTestCase {
             toolDescriptor.architecture=\(descriptor.architecture)
             """
         return ProcessInput(inputValues: [
-            SwiftPackageReaderTool.configuration: ["config": .value(try configuration.intern())],
-            SwiftPackageReaderTool.packageFile:   ["input:/pkg/Package.swift":
+            SwiftPackageReader.configuration: ["config": .value(try configuration.intern())],
+            SwiftPackageReader.packageFile:   ["input:/pkg/Package.swift":
                                                     .value(try "// swift-tools-version:5.9".intern())],
         ])
     }

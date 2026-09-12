@@ -1,5 +1,5 @@
 //
-//  ClangPreprocessorToolTests.swift
+//  ClangPreprocessorTests.swift
 //  semel_tests
 //
 //  The preprocessor's work is a command line, so a recording executor is enough to see all
@@ -13,7 +13,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class ClangPreprocessorToolTests: SemelClangTestCase {
+final class ClangPreprocessorTests: SemelClangTestCase {
 
     private let descriptor = ToolDescriptor(name: "clang",
                                             version: "test-clang",
@@ -30,8 +30,8 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
 
     // MARK: - Helpers
 
-    private func makeTool() throws -> ClangPreprocessorTool {
-        try ClangPreprocessorTool(thisNode: NodeRecord(id: 1, kind: ClangPreprocessorTool.kind))
+    private func makeTool() throws -> ClangPreprocessor {
+        try ClangPreprocessor(thisNode: NodeRecord(id: 1, kind: ClangPreprocessor.kind))
     }
 
     /// No includes: the ClangIncludeFinder result for the source file is present but empty,
@@ -50,10 +50,10 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         return ProcessInput(inputValues: [
-            ClangPreprocessorTool.configuration:    ["configuration": .value(try configuration.intern())],
-            ClangPreprocessorTool.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
-            ClangPreprocessorTool.includeFileLists:  [sourcePath: .value(try "".intern())],
-            ClangPreprocessorTool.headerInputFiles:  [:],
+            ClangPreprocessor.configuration:    ["configuration": .value(try configuration.intern())],
+            ClangPreprocessor.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
+            ClangPreprocessor.includeFileLists:  [sourcePath: .value(try "".intern())],
+            ClangPreprocessor.headerInputFiles:  [:],
         ])
     }
 
@@ -113,17 +113,17 @@ final class ClangPreprocessorToolTests: SemelClangTestCase {
     /// The suffix table is consulted at every stage — raw source here, `.p` in the compiler,
     /// `.p.o` in the linker — so it is pinned once, on the raw forms.
     func test_classifiesSourceFilesByTheirSuffix() {
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.c"),     "c")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cpp"),   "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cc"),    "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cxx"),   "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.c++"),   "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.C"),     "c++", "uppercase .C is C++ by convention")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.CPP"),   "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.m"),     "objective-c")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.mm"),    "objective-c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.cpp.p"), "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.C.p.o"), "c++")
-        XCTAssertEqual(ClangPreprocessorTool.language(for: "a.mm.p.o"), "objective-c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.c"),     "c")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.cpp"),   "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.cc"),    "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.cxx"),   "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.c++"),   "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.C"),     "c++", "uppercase .C is C++ by convention")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.CPP"),   "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.m"),     "objective-c")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.mm"),    "objective-c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.cpp.p"), "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.C.p.o"), "c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.mm.p.o"), "objective-c++")
     }
 }

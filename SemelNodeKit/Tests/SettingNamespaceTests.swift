@@ -15,21 +15,21 @@ import XCTest
 final class SettingNamespaceTests: XCTestCase {
 
     func test_theFirstWordIsTheDomainAndTheRestIsTheNode() {
-        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftCompilerTool"), "swift.compiler")
-        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftLinkerTool"), "swift.linker")
-        XCTAssertEqual(derivedSettingNamespace(forTypeName: "ClangPreprocessorTool"), "clang.preprocessor")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftCompiler"), "swift.compiler")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftLinker"), "swift.linker")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "ClangPreprocessor"), "clang.preprocessor")
     }
 
     /// A multi-word remainder stays one segment, lower-camelled — the namespace has exactly two
     /// levels above the key, so `swift.package.reader` would put a package domain in the file.
     func test_aMultiWordRemainderIsOneLowerCamelSegment() {
-        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftPackageReaderTool"), "swift.packageReader")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftPackageReader"), "swift.packageReader")
         XCTAssertEqual(derivedSettingNamespace(forTypeName: "SwiftFormulaConverter"), "swift.formulaConverter")
     }
 
     /// A trailing `Tool` says nothing about what the node is for.
     func test_aTrailingToolIsDropped() {
-        XCTAssertEqual(derivedSettingNamespace(forTypeName: "ClangLinkerTool"), "clang.linker")
+        XCTAssertEqual(derivedSettingNamespace(forTypeName: "ClangLinker"), "clang.linker")
     }
 
     /// A single-word type has no domain to give, which is the signal its name is wrong rather

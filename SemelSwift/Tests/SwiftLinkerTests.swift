@@ -1,5 +1,5 @@
 //
-//  SwiftLinkerToolTests.swift
+//  SwiftLinkerTests.swift
 //  semel_tests
 //
 
@@ -8,7 +8,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class SwiftLinkerToolTests: SemelSwiftTestCase {
+final class SwiftLinkerTests: SemelSwiftTestCase {
 
     private let descriptor = ToolDescriptor(name: "swiftc",
                                             version: "test-swiftc",
@@ -23,8 +23,8 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
         ToolRunnerRegistry.instance.registerTool(descriptor: descriptor, toolExecutor: executor)
     }
 
-    private func makeTool() throws -> SwiftLinkerTool {
-        try SwiftLinkerTool(thisNode: NodeRecord(id: 1, kind: SwiftLinkerTool.kind))
+    private func makeTool() throws -> SwiftLinker {
+        try SwiftLinker(thisNode: NodeRecord(id: 1, kind: SwiftLinker.kind))
     }
 
     private func makeInput(objectFiles: [String],
@@ -46,9 +46,9 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
         for path in libraries { libraryValues[path] = .value(try "library \(path)".intern()) }
 
         return ProcessInput(inputValues: [
-            SwiftLinkerTool.configuration: ["configuration": .value(try configuration.intern())],
-            SwiftLinkerTool.input: objects,
-            SwiftLinkerTool.libraries: libraryValues,
+            SwiftLinker.configuration: ["configuration": .value(try configuration.intern())],
+            SwiftLinker.input: objects,
+            SwiftLinker.libraries: libraryValues,
         ])
     }
 
@@ -98,15 +98,15 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
             linkage=executable
             """
         return ProcessInput(inputValues: [
-            SwiftLinkerTool.configuration:   ["configuration": .value(try configuration.intern())],
-            SwiftLinkerTool.input:           ["a.o": .value(try "object".intern())],
-            SwiftLinkerTool.libraries:       [:],
-            SwiftLinkerTool.libraryFolders:  ["GRDBSQLite": try manifestValue("input:/pkg/Sources/GRDBSQLite", entries)],
+            SwiftLinker.configuration:   ["configuration": .value(try configuration.intern())],
+            SwiftLinker.input:           ["a.o": .value(try "object".intern())],
+            SwiftLinker.libraries:       [:],
+            SwiftLinker.libraryFolders:  ["GRDBSQLite": try manifestValue("input:/pkg/Sources/GRDBSQLite", entries)],
         ])
     }
 
-    private func libraryExpectations(_ output: ProcessOutput) throws -> [String] {
-        try XCTUnwrap(output.inputWireExpectations[SwiftLinkerTool.libraries]).keys.sorted()
+    private func librarySpecs(_ output: ProcessOutput) throws -> [String] {
+        try XCTUnwrap(output.inputWireSpecs[SwiftLinker.libraries]).keys.sorted()
     }
 
     /// A static archive dropped in the system library's folder is what makes the linked
@@ -116,7 +116,7 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try vendoredFolderInput(
             [file("libsqlite3.a"), file("module.modulemap"), file("shim.h"), file("sqlite3.h")]))
 
-        XCTAssertEqual(try libraryExpectations(output), ["input:/pkg/Sources/GRDBSQLite/libsqlite3.a"])
+        XCTAssertEqual(try librarySpecs(output), ["input:/pkg/Sources/GRDBSQLite/libsqlite3.a"])
     }
 
     /// The module map, the shim and the vendored header belong to the *compile*, not the
@@ -125,7 +125,7 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try vendoredFolderInput(
             [file("module.modulemap"), file("shim.h"), file("sqlite3.h")]))
 
-        XCTAssertEqual(try libraryExpectations(output), [])
+        XCTAssertEqual(try librarySpecs(output), [])
     }
 
     /// A folder with no archive is the "use the system library" case, and must link
@@ -148,14 +148,14 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
 
     private func linkedFileMode(linkage: String) throws -> UInt16? {
         let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: linkage))
-        let value = try XCTUnwrap(output.outputValues[SwiftLinkerTool.fileMetadata])
+        let value = try XCTUnwrap(output.outputValues[SwiftLinker.fileMetadata])
         let metadata = try XCTUnwrap(FileMetadata.decode(from: try value.expectValue().resolveAsString()))
         return metadata.mode
     }
 
     /// Without this the linked binary is copied out at the default 0644 and will not run.
     /// ProjectBuilder wires the port automatically for any node type that declares it, so
-    /// declaring it is the whole fix — same as ClangLinkerTool.
+    /// declaring it is the whole fix — same as ClangLinker.
     func test_anExecutableIsPublishedAsExecutable() throws {
         XCTAssertEqual(try linkedFileMode(linkage: "executable"), FileMetadata.executableMode)
     }
@@ -201,9 +201,9 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
             outputName=product
             """
         let input = ProcessInput(inputValues: [
-            SwiftLinkerTool.configuration: ["configuration": .value(try configuration.intern())],
-            SwiftLinkerTool.input: ["a.o": .value(try "object".intern())],
-            SwiftLinkerTool.libraries: [:],
+            SwiftLinker.configuration: ["configuration": .value(try configuration.intern())],
+            SwiftLinker.input: ["a.o": .value(try "object".intern())],
+            SwiftLinker.libraries: [:],
         ])
 
         XCTAssertThrowsError(try makeTool().process(input: input)) { error in
@@ -221,6 +221,6 @@ final class SwiftLinkerToolTests: SemelSwiftTestCase {
 
     /// ProjectBuilder only wires the metadata if the port is declared on the type.
     func test_declaresTheFileMetadataPort() {
-        XCTAssertTrue(SwiftLinkerTool.descriptor.outputPorts.contains(FileMetadata.portName))
+        XCTAssertTrue(SwiftLinker.descriptor.outputPorts.contains(FileMetadata.portName))
     }
 }

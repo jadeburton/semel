@@ -86,6 +86,42 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
 - Spell words out. `nodeFunction`, `inputPortSpec`, `existingWiresByName` — not `nf`,
   `ips`, `ewbn`.
 - `$0` in a short closure is fine. A closure long enough to want a name should have one.
+- Node types that convert input to output are named as agents ending in "-er":
+  `SwiftCompiler`, `ConfigFilter`, `ProjectBuilder`. No `Tool` suffix on the tool nodes —
+  "tool" is the binary a node runs, not the node. `StaticFile`, `OutputFile` and
+  `Configuration` are the deliberate exception: they convert nothing, they just *are*.
+- Locals are named after their type in camelCase — a `NodeRecord` is `nodeRecord`, a `Node`
+  is `node` — except where a name says *which* one (`toNode`, `fromNode`, `child`,
+  `consumer`, `folder`), which is the divergence worth keeping. A `GraphSpecNode` local is
+  `specNode`, never `graphSpec`: that name is the stored string on `NodeRecord`.
+- Renaming costs more than the compiler shows. It verifies every type site and catches
+  almost nothing else; the damage lands in prose and in compound identifiers. Comments have
+  gone wrong three ways — concept read as type, SQL identifier read as a Swift path, grammar
+  notation read as a type reference — and a substring match once turned `fromNodeFunction`
+  into `fromNode`, colliding with a variable already named that. Inside a quoted string,
+  prose must be left alone while `\(interpolations)` must be renamed, so no single rule gets
+  both right. Budget a reading pass, not a sweep.
+
+## Glossary
+
+Semel borrows few names from other build systems on purpose: a borrowed name imports its
+home semantics, and false familiarity is worse than unfamiliarity. Each term below gives
+the nearest standard equivalent and how Semel's differs.
+
+| Semel term | Nearest equivalent | How it differs |
+|---|---|---|
+| node | Bazel action, Nix derivation | Resident and reactive: it lives in the graph database and re-runs when a wire changes, rather than being re-derived each build. Not hermetic by construction (B-03). |
+| wire | dependency edge | Named, typed by port, and carries a value (a content hash). Rewiring is how the graph changes; a push wakes a wire. |
+| port | input/output declaration | Static ports are fixed by the node type; dynamic ports hold N named wires the node itself demands at process time. |
+| spec (`GraphSpec`) | Nix derivation expression | A node's demand for an upstream subgraph, rendered as text: `Folder(path: 'input:/src').manifest`. Returned on `inputWireSpecs`; the engine finds or creates matching nodes. Nothing is evaluated — the spec is matched against the resident graph. |
+| graphSpec (column) | — | The node's rendered `GraphSpec`, stored for matching; the same string a spec on an input port demands. Type names are embedded in it, so renaming a node type invalidates every stored one (bump `Semel.version`, B-29). |
+| formula (`.fmla`) | BUILD file, Makefile | Declares products as expressions of nodes, functionally — no ordering, no commands. Also what a `Package.swift` is converted into. |
+| product | Bazel target output | A published artifact: a formula product becomes an `OutputFile` in `output:`. Intermediates are not products (B-10). |
+| pinned | GC root | "Held alive by user intent rather than by references": a pushed file or folder. Unpinned nodes exist only while something depends on them. Not memory pinning. |
+| `Folder`, `StaticFile`, `OutputFile`, `Configuration` | source file, output file | Nodes that *are* rather than convert (the "-er" exception). `StaticFile` and `Folder` are filled by the push path, not by wires (B-43). |
+| cache entry | remote cache / action cache entry | Keyed on node type, properties and every input wire's name *and* value — the path is part of the key because tools embed it (B-49). Holds object-store hashes, not bytes. |
+| tool vs node | — | A tool is a binary (`swiftc`) with a `ToolDescriptor`; a node (`SwiftCompiler`) is the graph step that runs it in a sandbox. Config namespaces name nodes (`swift.compiler`), and `toolDescriptor.*` under them names the tool. |
+| config namespace | — | The dot-prefix a node's settings live under in `semel.config`, derived from the type name; a `ConfigFilter` selects it. No defaults, no inheritance. |
 
 ## Comments
 
@@ -123,10 +159,10 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
 
 These cost real debugging to learn. Violating one usually compiles fine.
 
-**Static topology is node identity.** A node's `searchKey` is written once at creation and
+**Static topology is node identity.** A node's `graphSpec` is written once at creation and
 never recomputed. That is correct: static wiring and args are immutable, so different
 static wiring means a *different node*, not the same node with a new key. Only `.dynamic`
-ports are rewired after creation, and they are deliberately excluded from the shape. Never
+ports are rewired after creation, and they are deliberately excluded from the spec. Never
 rewire a static port, and never add a recompute pass.
 
 **The cache key must cover everything that can change a node's output.** Including input

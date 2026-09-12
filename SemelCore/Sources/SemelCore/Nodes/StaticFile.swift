@@ -88,7 +88,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
 
         // Defer physical deletion to the idle-time GC (processPendingDeletions) rather
         // than deleting immediately.  This matters when the engine hasn't yet wired this
-        // file to its consumers (ClangCompilerTool etc.) — in that window hasNoOutputWires()
+        // file to its consumers (ClangCompiler etc.) — in that window hasNoOutputWires()
         // would be true even though the file IS referenced, causing the node to be destroyed
         // instead of remaining as a [missing] ghost.  connectWire() automatically clears
         // the pendingDeletion flag if a wire is later connected, rescuing the node.

@@ -1,4 +1,4 @@
-// ConfigSubset.swift
+// ConfigFilter.swift
 // SemelCore
 //
 // Selects one node's settings out of a config file that holds everyone's.
@@ -16,13 +16,13 @@
 // What it does not do is stop the cascade. Writing the config file marks the whole subgraph
 // below it pending (`NodeSupport.writeToOutputPort`), so this node's own write is
 // pending -> value, a change, and everything downstream is rescheduled whether or not the
-// selected slice moved. What stays put is node *identity*: the prefix is in the graph shape
+// selected slice moved. What stays put is node *identity*: the prefix is in the graph spec
 // and the values are not, so the woken compilers are the same nodes as before and hit cache
 // instead of recompiling. Ten thousand reschedules and cache lookups; no recompiles.
 
 import SemelNodeKit
 
-public struct ConfigSubset: Node {
+public struct ConfigFilter: Node {
     public static let kind: UInt = 25
 
     static let inputPort = "input"
@@ -45,7 +45,7 @@ public struct ConfigSubset: Node {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let prefix = thisNode.properties[Self.prefixProperty] ?? ""
 
-        // A wire named in the shape before its file exists is a ghost, and one whose file
+        // A wire named in the spec before its file exists is a ghost, and one whose file
         // failed to read is not this node's business to explain — either way it contributes
         // nothing, rather than failing every tool downstream over a config file nobody wrote
         // yet. The tool that actually needs a setting is what can say which one is missing
@@ -70,6 +70,6 @@ public struct ConfigSubset: Node {
         }
 
         return .init(outputValues: [Self.outputPort: .value(try selected.asPlainText().intern())],
-                     inputWireExpectations: [:])
+                     inputWireSpecs: [:])
     }
 }

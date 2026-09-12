@@ -39,7 +39,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
                              Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())) : .value("")], // HACK
-              inputWireExpectations: [:])
+              inputWireSpecs: [:])
     }
 
     var path: Path {
@@ -248,7 +248,7 @@ extension Folder {
     /// The input file system's root Folder.
     ///
     /// These roots are a property of the graph, not of the engine: each is just the Folder
-    /// node whose path is "input:" or "output:", found or created by shape like any other
+    /// node whose path is "input:" or "output:", found or created by spec like any other
     /// node. They live here rather than on BuildEngine so a node does not have to
     /// reach for the engine — and so the engine is not a dependency of the layer below it.
     public static var inputFileSystem: NodeRecord {
@@ -261,11 +261,11 @@ extension Folder {
     }
 
     /// Node IDs of the two file-system roots, so the common case is one indexed read by
-    /// primary key instead of a graph-shape lookup wrapped in a write transaction.
+    /// primary key instead of a graph-spec lookup wrapped in a write transaction.
     ///
     /// `root(named:)` is on a very hot path: every `resolveFolderID` goes through it, which
-    /// is every `StaticFile` and every `Folder` init. The searchKey lookup it did was itself
-    /// cheap — `Node.searchKey` is unique-indexed — but `findOrCreateMatchingNode` wraps
+    /// is every `StaticFile` and every `Folder` init. The graphSpec lookup it did was itself
+    /// cheap — `Node.graphSpec` is unique-indexed — but `findOrCreateMatchingNode` wraps
     /// find-and-create in a transaction, so the read paid for a write it never did.
     ///
     /// The ID is cached rather than the NodeRecord: `NodeRecord` is a mutable value type, and handing
@@ -313,11 +313,11 @@ extension Folder {
             return cached
         }
 
-        let graphShape = GraphShapeNode(typeName: "Folder",
+        let specNode = GraphSpecNode(typeName: "Folder",
                                         properties: [.init(key: "path", value: name)],
                                         inputs: [],
                                         outputs: [])
-        let (rootNode, _) = try graphShape.findOrCreateMatchingNode()
+        let (rootNode, _) = try specNode.findOrCreateMatchingNode()
         cacheRootID(try rootNode.requireID(), named: name)
         return rootNode
     }

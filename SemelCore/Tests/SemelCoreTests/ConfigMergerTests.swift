@@ -130,7 +130,7 @@ final class ConfigMergerTests: SemelCoreTestCase {
 
     // MARK: - Reachable from a formula
 
-    /// A node type is useless until the factory knows its name: `GraphShapeApplier` resolves a
+    /// A node type is useless until the factory knows its name: `GraphSpecApplier` resolves a
     /// formula's type names through `TypeRegistry`, so a type that compiles, has a kind and is
     /// never registered fails at graph-build time with `unknownTypeName` — after the formula
     /// has parsed, which makes it read like a language problem rather than a missing
@@ -147,11 +147,11 @@ final class ConfigMergerTests: SemelCoreTestCase {
         BuildEngine.shared = engine
         defer { BuildEngine.shared = nil }
 
-        let shape = try GraphShapeNode.parse("""
+        let spec = try GraphSpecNode.parse("""
             ConfigMerger(base: ["b": StaticFile(path: 'input:/base.cfg').output], \
             override: ["o": StaticFile(path: 'input:/local.cfg').output]).output
             """)
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let (node, _) = try spec.findOrCreateMatchingNode()
 
         XCTAssertEqual(node.kind, ConfigMerger.kind)
     }

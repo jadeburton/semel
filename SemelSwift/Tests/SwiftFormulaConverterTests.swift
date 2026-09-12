@@ -51,8 +51,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                       "no \(funcName) block in:\n\(formula)")
     }
 
-    private func externalExpectations(_ output: ProcessOutput) throws -> [String: String] {
-        try XCTUnwrap(output.inputWireExpectations[SwiftFormulaConverter.externalPackageJSONs])
+    private func externalSpecs(_ output: ProcessOutput) throws -> [String: String] {
+        try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs])
     }
 
     /// DatabaseModels' real shape: GRDB arrives as a git URL, not a local path.
@@ -97,7 +97,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     // MARK: - Products that vend no compilable targets
 
     /// A product whose targets are all system libraries has nothing to link. Emitting a
-    /// SwiftLinkerTool for it leaves the required `input` port with no wires, which fails
+    /// SwiftLinker for it leaves the required `input` port with no wires, which fails
     /// the whole ProjectBuilder with requiredPortUnwired.
     func test_skipsProductsThatVendOnlySystemLibraries() throws {
         let result = try formula(json: grdbShapedManifest)
@@ -368,11 +368,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels",
                                  json: sourceControlManifest())
 
-        let expectation = try XCTUnwrap(try externalExpectations(output)["input:/repo/GRDB.swift"])
-        XCTAssertTrue(expectation.contains("ConfigSubset(prefix: 'swift.packageReader'"),
-                      "got:\n\(expectation)")
-        XCTAssertFalse(expectation.contains("Configuration().output"),
-                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(expectation)")
+        let spec = try XCTUnwrap(try externalSpecs(output)["input:/repo/GRDB.swift"])
+        XCTAssertTrue(spec.contains("ConfigFilter(prefix: 'swift.packageReader'"),
+                      "got:\n\(spec)")
+        XCTAssertFalse(spec.contains("Configuration().output"),
+                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(spec)")
     }
 
     /// Same rule as the compiler: the reader is part of *this* build, so it selects from the
@@ -381,17 +381,17 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels",
                                  json: sourceControlManifest())
 
-        let expectation = try XCTUnwrap(try externalExpectations(output)["input:/repo/GRDB.swift"])
-        XCTAssertTrue(expectation.contains("StaticFile(path: 'input:/repo/DatabaseModels/semel.config')"),
-                      "got:\n\(expectation)")
-        XCTAssertFalse(expectation.contains("input:/repo/GRDB.swift/semel.config"),
-                       "not a config file inside the vendored dependency, got:\n\(expectation)")
+        let spec = try XCTUnwrap(try externalSpecs(output)["input:/repo/GRDB.swift"])
+        XCTAssertTrue(spec.contains("StaticFile(path: 'input:/repo/DatabaseModels/semel.config')"),
+                      "got:\n\(spec)")
+        XCTAssertFalse(spec.contains("input:/repo/GRDB.swift/semel.config"),
+                       "not a config file inside the vendored dependency, got:\n\(spec)")
     }
 
     // MARK: - Explicit source lists
 
     /// The converter cannot enumerate files — it only wires folders — so a target's
-    /// `sources:`/`exclude:` lists have to travel to SwiftCompilerTool as configuration
+    /// `sources:`/`exclude:` lists have to travel to SwiftCompiler as configuration
     /// and be applied there, during discovery.
     func test_carriesAnExplicitSourcesListIntoTheCompilerConfiguration() throws {
         let result = try formula(json: """
@@ -439,7 +439,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertTrue(result.contains(
             "Configuration(moduleName: 'Helper', inherit: ['settings': "
-            + "ConfigSubset(prefix: 'swift.compiler', "
+            + "ConfigFilter(prefix: 'swift.compiler', "
             + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
             "got:\n\(result)")
     }
@@ -481,7 +481,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertTrue(result.contains(
             "Configuration(linkage: 'executable', outputName: 'semel', inherit: ['settings': "
-            + "ConfigSubset(prefix: 'swift.linker', "
+            + "ConfigFilter(prefix: 'swift.linker', "
             + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
             "got:\n\(result)")
     }
@@ -705,14 +705,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_resolvesASourceControlDependencyToAVendoredSiblingDirectory() throws {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest())
 
-        XCTAssertEqual(try externalExpectations(output).keys.sorted(), ["input:/repo/GRDB.swift"])
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/GRDB.swift"])
     }
 
     func test_readsThePackageManifestOfAVendoredSourceControlDependency() throws {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest())
 
-        let expectation = try XCTUnwrap(try externalExpectations(output)["input:/repo/GRDB.swift"])
-        XCTAssertTrue(expectation.contains("input:/repo/GRDB.swift/Package.swift"), "got: \(expectation)")
+        let spec = try XCTUnwrap(try externalSpecs(output)["input:/repo/GRDB.swift"])
+        XCTAssertTrue(spec.contains("input:/repo/GRDB.swift/Package.swift"), "got: \(spec)")
     }
 
     /// The end of the chain: once the vendored manifest arrives, the dependency's product
@@ -732,14 +732,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels",
                                  json: sourceControlManifest(url: "https://github.com/groue/GRDB.swift"))
 
-        XCTAssertEqual(try externalExpectations(output).keys.sorted(), ["input:/repo/GRDB.swift"])
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/GRDB.swift"])
     }
 
     func test_resolvesScpStyleGitURLs() throws {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels",
                                  json: sourceControlManifest(url: "git@github.com:groue/GRDB.swift.git"))
 
-        XCTAssertEqual(try externalExpectations(output).keys.sorted(), ["input:/repo/GRDB.swift"])
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/GRDB.swift"])
     }
 
     /// A package dependency of a package dependency still has to resolve, and a vendored
@@ -761,7 +761,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """,
             externalManifests: ["input:/repo/DatabaseModels": sourceControlManifest()])
 
-        XCTAssertEqual(try externalExpectations(output).keys.sorted(),
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(),
                        ["input:/repo/DatabaseModels", "input:/repo/GRDB.swift"])
     }
 
@@ -769,7 +769,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     /// An app that names one product two vendored packages both vend. SPM would reject the
     /// graph; the converter must at least resolve it the same way in every process, or the
-    /// formula — and every searchKey derived from it — changes on restart.
+    /// formula — and every graphSpec derived from it — changes on restart.
     private let appNamingSharedProduct = """
         {
           "name": "App",
@@ -843,7 +843,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_resolvesARegistryDependencyToAVendoredSiblingNamedByItsIdentity() throws {
         let output = try convert(packageFolder: "input:/repo/App", json: registryManifest)
 
-        XCTAssertEqual(try externalExpectations(output).keys.sorted(), ["input:/repo/mona.LinkedList"])
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/mona.LinkedList"])
     }
 
     func test_explainsWhichRegistryPackageAVendoredPathIsWaitingFor() throws {

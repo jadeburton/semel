@@ -1,5 +1,5 @@
 //
-//  ClangCompilerToolTests.swift
+//  ClangCompilerTests.swift
 //  semel_tests
 //
 //  The tool wrappers' real work is assembling a command line and mapping the result onto
@@ -11,7 +11,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class ClangCompilerToolTests: SemelClangTestCase {
+final class ClangCompilerTests: SemelClangTestCase {
 
     private let descriptor = ToolDescriptor(name: "clang",
                                             version: "test-clang",
@@ -28,8 +28,8 @@ final class ClangCompilerToolTests: SemelClangTestCase {
 
     // MARK: - Helpers
 
-    private func makeTool() throws -> ClangCompilerTool {
-        try ClangCompilerTool(thisNode: NodeRecord(id: 1, kind: ClangCompilerTool.kind))
+    private func makeTool() throws -> ClangCompiler {
+        try ClangCompiler(thisNode: NodeRecord(id: 1, kind: ClangCompiler.kind))
     }
 
     private func makeInput(sourcePath: String = "src/hello.c.p",
@@ -47,8 +47,8 @@ final class ClangCompilerToolTests: SemelClangTestCase {
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         return ProcessInput(inputValues: [
-            ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
-            ClangCompilerTool.input: [sourcePath: .value(try contents.intern())],
+            ClangCompiler.configuration: ["configuration": .value(try configuration.intern())],
+            ClangCompiler.input: [sourcePath: .value(try contents.intern())],
         ])
     }
 
@@ -126,8 +126,8 @@ final class ClangCompilerToolTests: SemelClangTestCase {
             """
         configuration += ""
         let input = ProcessInput(inputValues: [
-            ClangCompilerTool.configuration: ["configuration": .value(try configuration.intern())],
-            ClangCompilerTool.input: ["src/hello.cpp.p": .value(try "int main(){}".intern())],
+            ClangCompiler.configuration: ["configuration": .value(try configuration.intern())],
+            ClangCompiler.input: ["src/hello.cpp.p": .value(try "int main(){}".intern())],
         ])
 
         XCTAssertThrowsError(try makeTool().process(input: input)) { error in
@@ -175,7 +175,7 @@ final class ClangCompilerToolTests: SemelClangTestCase {
 
         let output = try makeTool().process(input: try makeInput())
 
-        let value = try XCTUnwrap(output.outputValues[ClangCompilerTool.output])
+        let value = try XCTUnwrap(output.outputValues[ClangCompiler.output])
         XCTAssertEqual(try value.expectValue().resolveAsString(), "OBJECT-BYTES")
     }
 

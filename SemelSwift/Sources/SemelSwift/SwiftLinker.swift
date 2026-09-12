@@ -1,4 +1,4 @@
-// SwiftLinkerTool.swift
+// SwiftLinker.swift
 // semel
 //
 // Swift linker stage: links one or more .o object files into a final
@@ -21,7 +21,7 @@ enum SwiftLinkage: String, CaseIterable {
     case staticArchive
 }
 
-struct SwiftLinkerToolConfiguration {
+struct SwiftLinkerConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
@@ -50,12 +50,12 @@ struct SwiftLinkerToolConfiguration {
     }
 
     /// Where this node's settings live in a config file: `swift.linker.sdkVersion`.
-    static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftLinkerTool")
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftLinker")
 }
 
 // MARK: - Node
 
-struct SwiftLinkerTool: Node {
+struct SwiftLinker: Node {
     public static let kind: UInt = 21
 
     // MARK: Ports
@@ -73,7 +73,7 @@ struct SwiftLinkerTool: Node {
     static let infoLog = "infoLog"
     /// Declaring this port is what makes ProjectBuilder wire the linked file's Unix mode
     /// into its OutputFile wrapper, so `cp` can chmod it. Without it an executable is
-    /// published at the default 0644 and will not run. Same arrangement as ClangLinkerTool.
+    /// published at the default 0644 and will not run. Same arrangement as ClangLinker.
     static let fileMetadata = FileMetadata.portName
 
     public var thisNode: NodeRecord
@@ -95,21 +95,21 @@ struct SwiftLinkerTool: Node {
 
     // MARK: Processing
 
-    struct SwiftLinkerToolInputs {
-        let configuration: SwiftLinkerToolConfiguration
+    struct SwiftLinkerInputs {
+        let configuration: SwiftLinkerConfiguration
         let objectFiles: [FileNameAndContent]
         let libraryFiles: [FileNameAndContent]
         let libraryFolderManifests: [(String, FolderManifest)]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[SwiftLinkerTool.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.inputValues[SwiftLinker.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
             // Sorted: these go straight onto the command line, and Swift Dictionary
             // iteration order changes from one process to the next.
             var objectFiles: [FileNameAndContent] = []
 
-            for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.input]!.sorted(by: { $0.key < $1.key }) {
+            for (fileName, nodeValue) in input.inputValues[SwiftLinker.input]!.sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
 
@@ -117,7 +117,7 @@ struct SwiftLinkerTool: Node {
 
             var libraryFiles: [FileNameAndContent] = []
 
-            for (fileName, nodeValue) in input.inputValues[SwiftLinkerTool.libraries]!.sorted(by: { $0.key < $1.key }) {
+            for (fileName, nodeValue) in input.inputValues[SwiftLinker.libraries]!.sorted(by: { $0.key < $1.key }) {
                 libraryFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
 
@@ -125,7 +125,7 @@ struct SwiftLinkerTool: Node {
 
             var libraryFolderManifests = [(String, FolderManifest)]()
 
-            for (key, value) in (input.inputValues[SwiftLinkerTool.libraryFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            for (key, value) in (input.inputValues[SwiftLinker.libraryFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
 
                 guard let jsonString = try? value.expectValue().resolveAsString(),
                       let manifest = try? TypeRegistry.decode(encodedJSON: jsonString) as? FolderManifest else {
@@ -139,17 +139,17 @@ struct SwiftLinkerTool: Node {
         }
     }
 
-    struct SwiftLinkerToolOutputs {
+    struct SwiftLinkerOutputs {
         let output: NodeValue
         let infoLog: NodeValue
         let fileMetadata: NodeValue
-        let librariesExpectations: [String: String]
+        let librariesSpecs: [String: String]
 
         func asProcessOutput() -> ProcessOutput {
-            .init(outputValues: [SwiftLinkerTool.output: output,
-                                 SwiftLinkerTool.infoLog: infoLog,
-                                 SwiftLinkerTool.fileMetadata: fileMetadata],
-                  inputWireExpectations: [SwiftLinkerTool.libraries: librariesExpectations])
+            .init(outputValues: [SwiftLinker.output: output,
+                                 SwiftLinker.infoLog: infoLog,
+                                 SwiftLinker.fileMetadata: fileMetadata],
+                  inputWireSpecs: [SwiftLinker.libraries: librariesSpecs])
         }
     }
 
@@ -163,7 +163,7 @@ struct SwiftLinkerTool: Node {
     /// belong to the compile, and handing them to the linker would be an error rather
     /// than merely noise.  A folder with no archive yields nothing, which is the
     /// "link against the system library" default.
-    private func buildLibrariesExpectations(libraryFolderManifests: [(String, FolderManifest)]) -> [String: String] {
+    private func buildLibrariesSpecs(libraryFolderManifests: [(String, FolderManifest)]) -> [String: String] {
         var result: [String: String] = [:]
 
         for (_, manifest) in libraryFolderManifests {
@@ -176,9 +176,9 @@ struct SwiftLinkerTool: Node {
         return result
     }
 
-    func process(inputs: SwiftLinkerToolInputs) throws -> SwiftLinkerToolOutputs {
+    func process(inputs: SwiftLinkerInputs) throws -> SwiftLinkerOutputs {
 
-        let librariesExpectations = buildLibrariesExpectations(libraryFolderManifests: inputs.libraryFolderManifests)
+        let librariesSpecs = buildLibrariesSpecs(libraryFolderManifests: inputs.libraryFolderManifests)
 
         let outputName = inputs.configuration.outputName
 
@@ -229,6 +229,6 @@ struct SwiftLinkerTool: Node {
         return .init(output: try result.asOutputNodeValue(),
                      infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: .value(try metadataJSON.intern()),
-                     librariesExpectations: librariesExpectations)
+                     librariesSpecs: librariesSpecs)
     }
 }

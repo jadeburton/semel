@@ -138,8 +138,8 @@ final class FilePlugin: CommandPlugin {
                     relativePath.deletingLastComponent ?? .empty, pinned: true)
 
             let fullPath      = Path(Folder.inputFileSystemName) / relativePath
-            let graphShapeNode = try GraphShapeNode.parse("StaticFile(path: '\(fullPath.string)')")
-            let (fromNode, _) = try graphShapeNode.findOrCreateMatchingNode()
+            let graphSpecNode = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')")
+            let (fromNode, _) = try graphSpecNode.findOrCreateMatchingNode()
 
             guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
                 context.outputError("push: \(relativePath): the graph holds a non-file node at this path")

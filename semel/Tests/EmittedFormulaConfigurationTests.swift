@@ -13,7 +13,7 @@
 //  both, which is the whole reason it is where this lives.
 //
 //  So the assertion here is the one no unit test can make: take the converter's output and
-//  the discovery plugin's shape, run them through the real parser and the real graph
+//  the discovery plugin's spec, run them through the real parser and the real graph
 //  applier, supply a config file, and require that *every* node the graph ends up holding
 //  can construct its configuration. Nothing is listed by hand -- a node type added to the
 //  converter tomorrow is covered the day it is added.
@@ -115,8 +115,8 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     // MARK: - Building the graph the way the engine does
 
     /// Runs the converter over `rootManifest`, returning the formula text and the reader
-    /// expectations it asked for — which is both of the things the engine goes on to build.
-    private func convert() throws -> (formula: String, readerExpectations: [String]) {
+    /// specs it asked for — which is both of the things the engine goes on to build.
+    private func convert() throws -> (formula: String, readerSpecs: [String]) {
         let folderManifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         let output = try converter.process(input: ProcessInput(inputValues: [
@@ -129,14 +129,14 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
         let formula = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
             .expectValue().resolveAsString()
-        let expectations = try XCTUnwrap(output.inputWireExpectations[SwiftFormulaConverter.externalPackageJSONs])
-        return (formula, expectations.keys.sorted().compactMap { expectations[$0] })
+        let specs = try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs])
+        return (formula, specs.keys.sorted().compactMap { specs[$0] })
     }
 
-    /// Creates every node one expectation string names, exactly as `applyExpectationConfiguration`
+    /// Creates every node one spec string names, exactly as `applySpecs`
     /// does when the engine acts on it.
-    private func buildGraph(fromExpectation expectation: String) throws {
-        _ = try GraphShapeNode.parse(expectation).findOrCreateMatchingNode()
+    private func buildGraph(fromSpec spec: String) throws {
+        _ = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
     }
 
     /// Creates every node the formula's products name, exactly as ProjectBuilder does.
@@ -165,7 +165,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         }
         XCTAssertGreaterThan(configFilesFound, 0, "nothing in the graph reads a config file")
 
-        try processEveryNode(ofKind: ConfigSubset.kind)
+        try processEveryNode(ofKind: ConfigFilter.kind)
         try processEveryNode(ofKind: Configuration.kind)
     }
 
@@ -200,32 +200,32 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     /// its configuration from the file it was wired to. This is the guard that catches a
     /// node wired to an empty `Configuration()`, or to a config file nothing wrote.
     func test_everyEmittedNodeResolvesItsConfiguration() throws {
-        let (formula, readerExpectations) = try convert()
+        let (formula, readerSpecs) = try convert()
         try buildGraph(fromFormula: formula)
-        for expectation in readerExpectations {
-            try buildGraph(fromExpectation: expectation)
+        for spec in readerSpecs {
+            try buildGraph(fromSpec: spec)
         }
         try supplyConfigFile()
 
         var checked: [String] = []
 
-        for nodeRecord in try database.node.select(kind: SwiftCompilerTool.kind) {
-            let settings = try settingsReaching(nodeRecord, port: SwiftCompilerTool.configuration)
-            XCTAssertNoThrow(try SwiftCompilerToolConfiguration(properties: settings),
+        for nodeRecord in try database.node.select(kind: SwiftCompiler.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftCompiler.configuration)
+            XCTAssertNoThrow(try SwiftCompilerConfiguration(properties: settings),
                              "compiler for \(settings["moduleName"] ?? "?")")
             checked.append("compiler:\(settings["moduleName"] ?? "?")")
         }
 
-        for nodeRecord in try database.node.select(kind: SwiftLinkerTool.kind) {
-            let settings = try settingsReaching(nodeRecord, port: SwiftLinkerTool.configuration)
-            XCTAssertNoThrow(try SwiftLinkerToolConfiguration(properties: settings),
+        for nodeRecord in try database.node.select(kind: SwiftLinker.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftLinker.configuration)
+            XCTAssertNoThrow(try SwiftLinkerConfiguration(properties: settings),
                              "linker for \(settings["outputName"] ?? "?")")
             checked.append("linker:\(settings["outputName"] ?? "?")")
         }
 
-        for nodeRecord in try database.node.select(kind: SwiftPackageReaderTool.kind) {
-            let settings = try settingsReaching(nodeRecord, port: SwiftPackageReaderTool.configuration)
-            XCTAssertNoThrow(try SwiftPackageReaderToolConfiguration(properties: settings),
+        for nodeRecord in try database.node.select(kind: SwiftPackageReader.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftPackageReader.configuration)
+            XCTAssertNoThrow(try SwiftPackageReaderConfiguration(properties: settings),
                              "package reader")
             checked.append("packageReader")
         }
@@ -242,20 +242,20 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     /// "this build cannot start", and a node that quietly accepted an empty configuration
     /// would be building against defaults that no longer exist.
     func test_withNoConfigFileEveryNodeFailsNamingTheKeyToWrite() throws {
-        let (formula, readerExpectations) = try convert()
+        let (formula, readerSpecs) = try convert()
         try buildGraph(fromFormula: formula)
-        for expectation in readerExpectations {
-            try buildGraph(fromExpectation: expectation)
+        for spec in readerSpecs {
+            try buildGraph(fromSpec: spec)
         }
 
         // The selectors and Configuration nodes still run; what they have to work with is a
         // config file nobody ever pushed.
-        try processEveryNode(ofKind: ConfigSubset.kind)
+        try processEveryNode(ofKind: ConfigFilter.kind)
         try processEveryNode(ofKind: Configuration.kind)
 
-        for nodeRecord in try database.node.select(kind: SwiftPackageReaderTool.kind) {
-            let settings = try settingsReaching(nodeRecord, port: SwiftPackageReaderTool.configuration)
-            XCTAssertThrowsError(try SwiftPackageReaderToolConfiguration(properties: settings)) { error in
+        for nodeRecord in try database.node.select(kind: SwiftPackageReader.kind) {
+            let settings = try settingsReaching(nodeRecord, port: SwiftPackageReader.configuration)
+            XCTAssertThrowsError(try SwiftPackageReaderConfiguration(properties: settings)) { error in
                 let message = String(describing: error)
                 XCTAssertTrue(message.contains("swift.packageReader.toolDescriptor.name"), "got \(message)")
             }
@@ -264,22 +264,22 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
     // MARK: - Where the settings came from
 
-    /// The values are on a wire and not in the shape. This is what makes editing a setting
-    /// a cache hit rather than a new node: put a value in a searchKey and every node that
+    /// The values are on a wire and not in the spec. This is what makes editing a setting
+    /// a cache hit rather than a new node: put a value in a graphSpec and every node that
     /// reads it becomes a different node the moment it changes.
-    func test_noSettingValueAppearsInANodesSearchKey() throws {
-        let (formula, readerExpectations) = try convert()
+    func test_noSettingValueAppearsInANodesGraphSpec() throws {
+        let (formula, readerSpecs) = try convert()
         try buildGraph(fromFormula: formula)
-        for expectation in readerExpectations {
-            try buildGraph(fromExpectation: expectation)
+        for spec in readerSpecs {
+            try buildGraph(fromSpec: spec)
         }
         try supplyConfigFile()
 
-        for kind in [SwiftCompilerTool.kind, SwiftLinkerTool.kind, SwiftPackageReaderTool.kind] {
+        for kind in [SwiftCompiler.kind, SwiftLinker.kind, SwiftPackageReader.kind] {
             for nodeRecord in try database.node.select(kind: kind) {
-                let searchKey = nodeRecord.searchKey ?? ""
-                XCTAssertFalse(searchKey.contains("test-swiftc"), "got:\n\(searchKey)")
-                XCTAssertFalse(searchKey.contains("test-swift"), "got:\n\(searchKey)")
+                let graphSpec = nodeRecord.graphSpec ?? ""
+                XCTAssertFalse(graphSpec.contains("test-swiftc"), "got:\n\(graphSpec)")
+                XCTAssertFalse(graphSpec.contains("test-swift"), "got:\n\(graphSpec)")
             }
         }
     }

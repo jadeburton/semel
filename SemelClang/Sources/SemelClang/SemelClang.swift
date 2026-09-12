@@ -15,17 +15,17 @@ public enum SemelClang {
     /// once and every test calls it again.
     public static func register() throws {
         try TypeRegistry.register(types: [
-            ClangCompilerTool.self,
-            ClangLinkerTool.self,
-            ClangPreprocessorTool.self,
+            ClangCompiler.self,
+            ClangLinker.self,
+            ClangPreprocessor.self,
             ClangIncludeFinder.self,
         ])
 
         // What `tools` prints under each namespace. All three run the one clang binary;
         // the include finder runs no tool.
-        for namespace in [ClangCompilerToolConfiguration.settingNamespace,
-                          ClangLinkerToolConfiguration.settingNamespace,
-                          ClangPreprocessorToolConfiguration.settingNamespace] {
+        for namespace in [ClangCompilerConfiguration.settingNamespace,
+                          ClangLinkerConfiguration.settingNamespace,
+                          ClangPreprocessorConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang"))
         }
     }

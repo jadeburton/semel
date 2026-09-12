@@ -25,14 +25,14 @@ final class MissingSettingTests: SemelSwiftTestCase {
     ]
 
     func test_aCompleteConfigurationIsAccepted() throws {
-        XCTAssertNoThrow(try SwiftCompilerToolConfiguration(properties: complete))
+        XCTAssertNoThrow(try SwiftCompilerConfiguration(properties: complete))
     }
 
     func test_aMissingSettingNamesItselfAndItsNamespace() throws {
         var incomplete = complete
         incomplete["toolDescriptor.version"] = nil
 
-        XCTAssertThrowsError(try SwiftCompilerToolConfiguration(properties: incomplete)) { error in
+        XCTAssertThrowsError(try SwiftCompilerConfiguration(properties: incomplete)) { error in
             let message = String(describing: error)
             XCTAssertTrue(message.contains("swift.compiler.toolDescriptor.version"),
                           "should name the key to write in the config file, got \(message)")
@@ -42,7 +42,7 @@ final class MissingSettingTests: SemelSwiftTestCase {
     /// Every required setting, not just the first — a message naming one of four missing keys
     /// costs four build attempts to fix.
     func test_everyMissingSettingIsNamedAtOnce() throws {
-        XCTAssertThrowsError(try SwiftCompilerToolConfiguration(properties: ["moduleName": "Lib"])) { error in
+        XCTAssertThrowsError(try SwiftCompilerConfiguration(properties: ["moduleName": "Lib"])) { error in
             let message = String(describing: error)
             for key in ["name", "version", "platform", "architecture"] {
                 XCTAssertTrue(message.contains("toolDescriptor.\(key)"), "missing \(key) in: \(message)")
@@ -50,11 +50,11 @@ final class MissingSettingTests: SemelSwiftTestCase {
         }
     }
 
-    /// `SwiftPackageReaderTool` reads the manifest for every package, so a hardcoded
+    /// `SwiftPackageReader` reads the manifest for every package, so a hardcoded
     /// toolDescriptor here would make "no defaults" false for the very first node a
     /// build runs.
     func test_packageReaderNamesItselfAndItsOwnNamespaceWhenMissing() throws {
-        XCTAssertThrowsError(try SwiftPackageReaderToolConfiguration(properties: [:])) { error in
+        XCTAssertThrowsError(try SwiftPackageReaderConfiguration(properties: [:])) { error in
             let message = String(describing: error)
             XCTAssertTrue(message.contains("swift.packageReader.toolDescriptor.version"),
                           "should name the key to write in the config file, got \(message)")

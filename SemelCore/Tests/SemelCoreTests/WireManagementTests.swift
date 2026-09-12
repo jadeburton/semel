@@ -31,8 +31,8 @@ final class WireManagementTests: SemelCoreTestCase {
     private var database: DatabaseLayer { engine.database }
 
     private func makeConfiguration(role: String) throws -> NodeRecord {
-        let shape = try GraphShapeNode.parse("Configuration(role: '\(role)').output")
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+        let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
 

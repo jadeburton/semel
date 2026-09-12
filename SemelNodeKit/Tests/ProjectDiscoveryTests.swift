@@ -22,13 +22,13 @@ final class ProjectDiscoveryTests: XCTestCase {
     }
 
     private struct AlphaPlugin: ProjectBuilderPlugin {
-        func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+        func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
             entry.name == "alpha" ? "Alpha" : nil
         }
     }
 
     private struct ZuluPlugin: ProjectBuilderPlugin {
-        func expectationString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+        func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
             entry.name == "zulu" ? "Zulu" : nil
         }
     }
@@ -41,7 +41,7 @@ final class ProjectDiscoveryTests: XCTestCase {
         ProjectDiscovery.register(AlphaPlugin())
 
         let claimed = ProjectDiscovery.plugins.compactMap {
-            $0.expectationString(forEntry: entry("alpha"), inFolder: "input:/x")
+            $0.specString(forEntry: entry("alpha"), inFolder: "input:/x")
         }
         XCTAssertEqual(claimed, ["Alpha"])
     }
@@ -50,7 +50,7 @@ final class ProjectDiscoveryTests: XCTestCase {
         ProjectDiscovery.register(AlphaPlugin())
 
         XCTAssertTrue(ProjectDiscovery.plugins.allSatisfy {
-            $0.expectationString(forEntry: entry("something else"), inFolder: "input:/x") == nil
+            $0.specString(forEntry: entry("something else"), inFolder: "input:/x") == nil
         })
     }
 

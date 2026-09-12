@@ -39,7 +39,7 @@ public struct SampleTool: Node {
     /// for the write to fail on.
     public func process(input: ProcessInput) throws -> ProcessOutput {
         .init(outputValues: [Self.output: .value(try "result".intern())],
-              inputWireExpectations: [:])
+              inputWireSpecs: [:])
     }
 }
 
@@ -59,7 +59,7 @@ public struct OtherSampleTool: Node {
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        .init(outputValues: [:], inputWireExpectations: [:])
+        .init(outputValues: [:], inputWireSpecs: [:])
     }
 }
 

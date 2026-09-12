@@ -1,5 +1,5 @@
 //
-//  ClangLinkerToolTests.swift
+//  ClangLinkerTests.swift
 //  semel_tests
 //
 
@@ -8,7 +8,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class ClangLinkerToolTests: SemelClangTestCase {
+final class ClangLinkerTests: SemelClangTestCase {
 
     private let descriptor = ToolDescriptor(name: "clang",
                                             version: "test-clang",
@@ -25,8 +25,8 @@ final class ClangLinkerToolTests: SemelClangTestCase {
 
     // MARK: - Helpers
 
-    private func makeTool() throws -> ClangLinkerTool {
-        try ClangLinkerTool(thisNode: NodeRecord(id: 1, kind: ClangLinkerTool.kind))
+    private func makeTool() throws -> ClangLinker {
+        try ClangLinker(thisNode: NodeRecord(id: 1, kind: ClangLinker.kind))
     }
 
     private func makeInput(objectFiles: [String],
@@ -49,9 +49,9 @@ final class ClangLinkerToolTests: SemelClangTestCase {
         for path in libraries { libraryValues[path] = .value(try "library bytes for \(path)".intern()) }
 
         return ProcessInput(inputValues: [
-            ClangLinkerTool.configuration: ["configuration": .value(try configuration.intern())],
-            ClangLinkerTool.input: objects,
-            ClangLinkerTool.libraries: libraryValues,
+            ClangLinker.configuration: ["configuration": .value(try configuration.intern())],
+            ClangLinker.input: objects,
+            ClangLinker.libraries: libraryValues,
         ])
     }
 
@@ -146,7 +146,7 @@ final class ClangLinkerToolTests: SemelClangTestCase {
 
         let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
 
-        let value = try XCTUnwrap(output.outputValues[ClangLinkerTool.output])
+        let value = try XCTUnwrap(output.outputValues[ClangLinker.output])
         XCTAssertEqual(try value.expectValue().resolveAsString(), "LINKED")
     }
 
@@ -155,7 +155,7 @@ final class ClangLinkerToolTests: SemelClangTestCase {
 
         let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
 
-        let value = try XCTUnwrap(output.outputValues[ClangLinkerTool.output])
+        let value = try XCTUnwrap(output.outputValues[ClangLinker.output])
         XCTAssertTrue(value.isNoValue, "a failed link must not publish a binary")
     }
 }

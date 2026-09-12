@@ -47,8 +47,8 @@ final class FolderDeletabilityTests: SemelCoreTestCase {
         _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(
                 Path(relativePath).deletingLastComponent ?? .empty, pinned: pinFolders)
 
-        let shape = try GraphShapeNode.parse("StaticFile(path: '\(fullPath.string)')")
-        let (node, _) = try shape.findOrCreateMatchingNode()
+        let spec = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')")
+        let (node, _) = try spec.findOrCreateMatchingNode()
         let file = try XCTUnwrap(node.nodeAsAny() as? StaticFile)
 
         if let contents {

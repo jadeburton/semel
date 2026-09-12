@@ -44,13 +44,13 @@ public struct ProcessInput {
 
 public struct ProcessOutput {
     public let outputValues: [String: NodeValue]
-    /// Each named dynamic input port has N named wires connected to it, each with an expectation
-    public let inputWireExpectations: [String: [String: String]]
+    /// Each named dynamic input port has N named wires connected to it, each with a spec
+    public let inputWireSpecs: [String: [String: String]]
 
     public init(outputValues: [String: NodeValue],
-                inputWireExpectations: [String: [String: String]]) {
+                inputWireSpecs: [String: [String: String]]) {
         self.outputValues = outputValues
-        self.inputWireExpectations = inputWireExpectations
+        self.inputWireSpecs = inputWireSpecs
     }
 }
 
@@ -72,8 +72,8 @@ extension Node {
         thisNode.scheduled
     }
 
-    public var searchKey: String? {
-        thisNode.searchKey
+    public var graphSpec: String? {
+        thisNode.graphSpec
     }
 }
 

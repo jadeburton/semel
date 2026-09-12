@@ -1,4 +1,4 @@
-// ClangPreprocessorTool.swift
+// ClangPreprocessor.swift
 // semel
 //
 // Clang preprocessor stage: runs `clang -E` on a .c file and its headers,
@@ -48,7 +48,7 @@ struct ClangLanguageStandards {
 
 // MARK: - Configuration
 
-struct ClangPreprocessorToolConfiguration {
+struct ClangPreprocessorConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
     let environment: [String: String]
@@ -75,12 +75,12 @@ struct ClangPreprocessorToolConfiguration {
     }
 
     /// Where this node's settings live in a config file: `clang.preprocessor.<key>`.
-    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessorTool")
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessor")
 }
 
 // MARK: - Node
 
-public struct ClangPreprocessorTool: Node {
+public struct ClangPreprocessor: Node {
     public static let kind: UInt = 17
 
     public var thisNode: NodeRecord
@@ -111,20 +111,20 @@ public struct ClangPreprocessorTool: Node {
 
     // MARK: Processing
 
-    struct ClangPreprocessorToolInputs {
-        let configuration: ClangPreprocessorToolConfiguration
+    struct ClangPreprocessorInputs {
+        let configuration: ClangPreprocessorConfiguration
         let inputSourceFile: FileNameAndContent
         let headerFiles: [FileNameAndContent]
         let includePathLists: [String: [String]]
 
         init(input: ProcessInput) throws {
-            let configurationString = try input.inputValues[ClangCompilerTool.configuration]!.values.first!.expectValue().resolveAsString()
+            let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
-            let sourceFileInput = input.inputValues[ClangPreprocessorTool.sourceFileInput]!.first!
+            let sourceFileInput = input.inputValues[ClangPreprocessor.sourceFileInput]!.first!
             inputSourceFile = .init(filePath: sourceFileInput.key, hash: try sourceFileInput.value.expectValue())
 
-            let headerInputFiles = input.inputValues[ClangPreprocessorTool.headerInputFiles]!
+            let headerInputFiles = input.inputValues[ClangPreprocessor.headerInputFiles]!
 
             var headerFiles: [FileNameAndContent] = []
 
@@ -134,7 +134,7 @@ public struct ClangPreprocessorTool: Node {
 
             self.headerFiles = headerFiles
 
-            includePathLists = try Dictionary(uniqueKeysWithValues: input.inputValues[ClangPreprocessorTool.includeFileLists]!.map { includeFilesValue in
+            includePathLists = try Dictionary(uniqueKeysWithValues: input.inputValues[ClangPreprocessor.includeFileLists]!.map { includeFilesValue in
                 let wireName = includeFilesValue.key
                 let list = try includeFilesValue.value
                     .expectValue()
@@ -146,20 +146,20 @@ public struct ClangPreprocessorTool: Node {
         }
     }
 
-    struct ClangPreprocessorToolOutputs {
+    struct ClangPreprocessorOutputs {
         let output: NodeValue
         let errorLog: NodeValue
         let infoLog: NodeValue
 
-        let headerInputFilesWireExpectations: [String: String]
-        let includeFileListWireExpections: [String: String]
+        let headerInputFilesWireSpecs: [String: String]
+        let includeFileListWireSpecs: [String: String]
 
         func asProcessOutput() -> ProcessOutput {
-            return .init(outputValues: [ClangPreprocessorTool.output: output,
-                                 ClangPreprocessorTool.errorLog: errorLog,
-                                 ClangPreprocessorTool.infoLog: infoLog],
-                  inputWireExpectations: [ClangPreprocessorTool.headerInputFiles: headerInputFilesWireExpectations,
-                                          ClangPreprocessorTool.includeFileLists: includeFileListWireExpections])
+            return .init(outputValues: [ClangPreprocessor.output: output,
+                                 ClangPreprocessor.errorLog: errorLog,
+                                 ClangPreprocessor.infoLog: infoLog],
+                  inputWireSpecs: [ClangPreprocessor.headerInputFiles: headerInputFilesWireSpecs,
+                                          ClangPreprocessor.includeFileLists: includeFileListWireSpecs])
         }
     }
 
@@ -192,9 +192,9 @@ public struct ClangPreprocessorTool: Node {
         return cxxSuffixes.contains(where: { lower.hasSuffix($0) }) ? "c++" : "c"
     }
 
-    private func runPreprocessor(inputs: ClangPreprocessorToolInputs,
-                                 headerInputFilesWireExpectations: [String: String],
-                                 includeFileListWireExpections: [String: String]) throws -> ClangPreprocessorToolOutputs {
+    private func runPreprocessor(inputs: ClangPreprocessorInputs,
+                                 headerInputFilesWireSpecs: [String: String],
+                                 includeFileListWireSpecs: [String: String]) throws -> ClangPreprocessorOutputs {
 
         let outputFilename = inputs.inputSourceFile.filePath + ".p"
 
@@ -208,7 +208,7 @@ public struct ClangPreprocessorTool: Node {
 
         let standard = try inputs.configuration.standards.standard(
             forLanguage: language,
-            namespace: ClangPreprocessorToolConfiguration.settingNamespace)
+            namespace: ClangPreprocessorConfiguration.settingNamespace)
         arguments.append("-std=\(standard)")
 
         if let sdkPath = inputs.configuration.sdkPath {
@@ -237,26 +237,26 @@ public struct ClangPreprocessorTool: Node {
         return .init(output: try result.asOutputNodeValue(),
                      errorLog: .value(try result.errorOutput.intern()),
                      infoLog: .value(try result.infoOutput.intern()),
-                     headerInputFilesWireExpectations: headerInputFilesWireExpectations,
-                     includeFileListWireExpections: includeFileListWireExpections)
+                     headerInputFilesWireSpecs: headerInputFilesWireSpecs,
+                     includeFileListWireSpecs: includeFileListWireSpecs)
     }
 
-    func process(inputs: ClangPreprocessorToolInputs) throws -> ClangPreprocessorToolOutputs {
+    func process(inputs: ClangPreprocessorInputs) throws -> ClangPreprocessorOutputs {
 
-        var headerInputFilesWireExpectations = [String: String]()
+        var headerInputFilesWireSpecs = [String: String]()
 
         let setOfIncludeFiles: Set<String> = Set(inputs.includePathLists.flatMap { (_, list) in list })
 
         let aggregatedIncludePathList: [String] = .init(setOfIncludeFiles)
 
         for includePath in aggregatedIncludePathList {
-            headerInputFilesWireExpectations[includePath] = "StaticFile(path: '\(includePath)').output"
+            headerInputFilesWireSpecs[includePath] = "StaticFile(path: '\(includePath)').output"
         }
 
-        var includeFileListWireExpections = [String: String]()
+        var includeFileListWireSpecs = [String: String]()
 
         for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireExpections[sourcePath] = "ClangIncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
+            includeFileListWireSpecs[sourcePath] = "ClangIncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
         }
 
         // There must be one ClangIncludeFinder attached to the .c file.
@@ -266,8 +266,8 @@ public struct ClangPreprocessorTool: Node {
             return .init(output: error,
                          errorLog: error,
                          infoLog: error,
-                         headerInputFilesWireExpectations: headerInputFilesWireExpectations,
-                         includeFileListWireExpections: includeFileListWireExpections)
+                         headerInputFilesWireSpecs: headerInputFilesWireSpecs,
+                         includeFileListWireSpecs: includeFileListWireSpecs)
         }
 
         // do we have input wires for each of the Headers mentioned in the aggregated Include list?
@@ -280,12 +280,12 @@ public struct ClangPreprocessorTool: Node {
             return .init(output: error,
                          errorLog: error,
                          infoLog: error,
-                         headerInputFilesWireExpectations: headerInputFilesWireExpectations,
-                         includeFileListWireExpections: includeFileListWireExpections)
+                         headerInputFilesWireSpecs: headerInputFilesWireSpecs,
+                         includeFileListWireSpecs: includeFileListWireSpecs)
         }
 
         return try runPreprocessor(inputs: inputs,
-                                   headerInputFilesWireExpectations: headerInputFilesWireExpectations,
-                                   includeFileListWireExpections: includeFileListWireExpections)
+                                   headerInputFilesWireSpecs: headerInputFilesWireSpecs,
+                                   includeFileListWireSpecs: includeFileListWireSpecs)
     }
 }

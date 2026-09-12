@@ -42,7 +42,7 @@ enum TestGlobals {
         try BuildEngine.registerTypes()
 
         // The stand-ins these tests use in place of a toolchain node. Registered here for
-        // the same reason the engine's own types are: GraphShapeNode.parse resolves a type
+        // the same reason the engine's own types are: GraphSpecNode.parse resolves a type
         // name through the factory.
         try TypeRegistry.register(types: [SampleTool.self, OtherSampleTool.self])
     }

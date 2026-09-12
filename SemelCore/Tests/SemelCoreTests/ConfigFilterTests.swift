@@ -1,5 +1,5 @@
 //
-//  ConfigSubsetTests.swift
+//  ConfigFilterTests.swift
 //  SemelCoreTests
 //
 //  Selecting one node's settings out of a config file that holds everyone's.
@@ -15,25 +15,25 @@ import SemelDatabaseModels
 import SemelNodeKit
 import XCTest
 
-final class ConfigSubsetTests: SemelCoreTestCase {
+final class ConfigFilterTests: SemelCoreTestCase {
 
     private func subset(prefix: String, file: String) throws -> String {
-        let node = try ConfigSubset(thisNode: NodeRecord(id: 1, kind: ConfigSubset.kind,
+        let node = try ConfigFilter(thisNode: NodeRecord(id: 1, kind: ConfigFilter.kind,
                                                    properties: ["prefix": prefix]))
         let output = try node.process(input: ProcessInput(inputValues: [
-            ConfigSubset.inputPort: ["config": .value(try file.intern())]
+            ConfigFilter.inputPort: ["config": .value(try file.intern())]
         ]))
-        return try XCTUnwrap(output.outputValues[ConfigSubset.outputPort])
+        return try XCTUnwrap(output.outputValues[ConfigFilter.outputPort])
             .expectValue().resolveAsString()
     }
 
     private func subset(prefix: String, wires: [String: NodeValue]) throws -> String {
-        let node = try ConfigSubset(thisNode: NodeRecord(id: 1, kind: ConfigSubset.kind,
+        let node = try ConfigFilter(thisNode: NodeRecord(id: 1, kind: ConfigFilter.kind,
                                                    properties: ["prefix": prefix]))
         let output = try node.process(input: ProcessInput(inputValues: [
-            ConfigSubset.inputPort: wires
+            ConfigFilter.inputPort: wires
         ]))
-        return try XCTUnwrap(output.outputValues[ConfigSubset.outputPort])
+        return try XCTUnwrap(output.outputValues[ConfigFilter.outputPort])
             .expectValue().resolveAsString()
     }
 

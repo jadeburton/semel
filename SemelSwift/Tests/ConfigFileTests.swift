@@ -5,7 +5,7 @@
 //  What the converter emits so a compiled target receives its settings.
 //
 //  The settings themselves are not the converter's business any more. It names a file and a
-//  namespace; what the file says arrives later, on a wire, and never enters a searchKey — which
+//  namespace; what the file says arrives later, on a wire, and never enters a graphSpec — which
 //  is what lets a setting change without recreating every node that reads it.
 //
 
@@ -42,16 +42,16 @@ final class ConfigFileTests: SemelSwiftTestCase {
     func test_theCompilerIsWiredToASelectorForItsOwnNamespace() throws {
         let result = try formula()
 
-        XCTAssertTrue(result.contains("ConfigSubset(prefix: 'swift.compiler'"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("ConfigFilter(prefix: 'swift.compiler'"), "got:\n\(result)")
     }
 
     func test_theLinkerIsWiredToASelectorForItsOwnNamespace() throws {
         let result = try formula()
 
-        XCTAssertTrue(result.contains("ConfigSubset(prefix: 'swift.linker'"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("ConfigFilter(prefix: 'swift.linker'"), "got:\n\(result)")
     }
 
-    /// The selector reads the config file from the package folder, named in the shape so the
+    /// The selector reads the config file from the package folder, named in the spec so the
     /// wire exists whether or not the file has been pushed yet.
     func test_theSelectorReadsTheConfigFileBesideThePackage() throws {
         let result = try formula(packageFolder: "input:/a/pkg")
@@ -72,29 +72,29 @@ final class ConfigFileTests: SemelSwiftTestCase {
 
 // MARK: - The first node of every build
 
-/// `SwiftPackagePlugin` writes the graph shape for a discovered `Package.swift`, and the
+/// `SwiftPackagePlugin` writes the graph spec for a discovered `Package.swift`, and the
 /// reader it names is the node everything else waits on. Nothing defaults, so a reader with
 /// no `toolDescriptor` fails the build before the manifest is even parsed.
 final class PackagePluginConfigTests: SemelSwiftTestCase {
 
-    private func shape(entry: String = "Package.swift",
+    private func spec(entry: String = "Package.swift",
                        inFolder folder: String = "input:/repo/pkg") throws -> String {
         let plugin = SwiftPackagePlugin()
         let manifestEntry = FolderManifestEntry(name: entry, isFolder: false, isPinned: true)
-        return try XCTUnwrap(plugin.expectationString(forEntry: manifestEntry, inFolder: folder),
+        return try XCTUnwrap(plugin.specString(forEntry: manifestEntry, inFolder: folder),
                              "the plugin should claim \(entry)")
     }
 
     func test_theDiscoveredPackagesReaderIsWiredToASelectorForItsOwnNamespace() throws {
-        let result = try shape()
+        let result = try spec()
 
-        XCTAssertTrue(result.contains("ConfigSubset(prefix: 'swift.packageReader'"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("ConfigFilter(prefix: 'swift.packageReader'"), "got:\n\(result)")
         XCTAssertFalse(result.contains("Configuration().output"),
                        "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(result)")
     }
 
     func test_theDiscoveredPackagesReaderReadsTheConfigFileBesideThePackage() throws {
-        let result = try shape(inFolder: "input:/repo/pkg")
+        let result = try spec(inFolder: "input:/repo/pkg")
 
         XCTAssertTrue(result.contains("StaticFile(path: 'input:/repo/pkg/semel.config')"), "got:\n\(result)")
     }

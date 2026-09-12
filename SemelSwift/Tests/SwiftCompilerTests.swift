@@ -1,5 +1,5 @@
 //
-//  SwiftCompilerToolTests.swift
+//  SwiftCompilerTests.swift
 //  semel_tests
 //
 //  A FolderManifest lists only a folder's immediate children, so discovering the sources
@@ -12,7 +12,7 @@ import XCTest
 import SemelNodeKit
 import SemelDatabaseModels
 
-final class SwiftCompilerToolTests: SemelSwiftTestCase {
+final class SwiftCompilerTests: SemelSwiftTestCase {
 
     private let descriptor = ToolDescriptor(name: "swiftc",
                                             version: "test-swiftc",
@@ -29,8 +29,8 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
 
     // MARK: - Helpers
 
-    private func makeTool() throws -> SwiftCompilerTool {
-        try SwiftCompilerTool(thisNode: NodeRecord(id: 1, kind: SwiftCompilerTool.kind))
+    private func makeTool() throws -> SwiftCompiler {
+        try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
     }
 
     private func file(_ name: String)   -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }
@@ -51,18 +51,18 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             "moduleName=GRDB",
         ] + extraConfiguration).joined(separator: "\n")
         return ProcessInput(inputValues: [
-            SwiftCompilerTool.configuration:   ["config": .value(try configuration.intern())],
-            SwiftCompilerTool.inputFolder:     ["folder0": rootFolder],
-            SwiftCompilerTool.inputSubfolders: subfolders,
+            SwiftCompiler.configuration:   ["config": .value(try configuration.intern())],
+            SwiftCompiler.inputFolder:     ["folder0": rootFolder],
+            SwiftCompiler.inputSubfolders: subfolders,
         ])
     }
 
-    private func sourceExpectations(_ output: ProcessOutput) throws -> [String] {
-        try XCTUnwrap(output.inputWireExpectations[SwiftCompilerTool.inputSourceFiles]).keys.sorted()
+    private func sourceSpecs(_ output: ProcessOutput) throws -> [String] {
+        try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputSourceFiles]).keys.sorted()
     }
 
-    private func subfolderExpectations(_ output: ProcessOutput) throws -> [String: String] {
-        try XCTUnwrap(output.inputWireExpectations[SwiftCompilerTool.inputSubfolders])
+    private func subfolderSpecs(_ output: ProcessOutput) throws -> [String: String] {
+        try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputSubfolders])
     }
 
     // MARK: - Subfolder discovery
@@ -71,7 +71,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core"), folder("Record")])))
 
-        XCTAssertEqual(try subfolderExpectations(output),
+        XCTAssertEqual(try subfolderSpecs(output),
                        ["input:/pkg/GRDB/Core":   "Folder(path: 'input:/pkg/GRDB/Core').manifest",
                         "input:/pkg/GRDB/Record": "Folder(path: 'input:/pkg/GRDB/Record').manifest"])
     }
@@ -83,7 +83,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             folder: try manifest("input:/pkg/GRDB", [folder("Core")]),
             subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core", [folder("Support")])]))
 
-        XCTAssertEqual(try subfolderExpectations(output)["input:/pkg/GRDB/Core/Support"],
+        XCTAssertEqual(try subfolderSpecs(output)["input:/pkg/GRDB/Core/Support"],
                        "Folder(path: 'input:/pkg/GRDB/Core/Support').manifest")
     }
 
@@ -93,7 +93,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/GRDB", [.init(name: "Core", isFolder: true, isPinned: false)])))
 
-        XCTAssertEqual(try subfolderExpectations(output), [:])
+        XCTAssertEqual(try subfolderSpecs(output), [:])
     }
 
     // MARK: - Source discovery
@@ -107,7 +107,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core",
                                                               [file("Configuration.swift"), file("Database.swift")])]))
 
-        XCTAssertEqual(try sourceExpectations(output),
+        XCTAssertEqual(try sourceSpecs(output),
                        ["input:/pkg/GRDB/Core/Configuration.swift",
                         "input:/pkg/GRDB/Core/Database.swift",
                         "input:/pkg/GRDB/Fixits.swift"])
@@ -119,7 +119,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core",
                                                               [file("Configuration.swift"), file("PrivacyInfo.xcprivacy")])]))
 
-        XCTAssertEqual(try sourceExpectations(output), ["input:/pkg/GRDB/Core/Configuration.swift"])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/GRDB/Core/Configuration.swift"])
     }
 
     func test_ignoresUnpinnedSwiftFilesInsideSubfolders() throws {
@@ -128,7 +128,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core",
                                                               [.init(name: "Gone.swift", isFolder: false, isPinned: false)])]))
 
-        XCTAssertEqual(try sourceExpectations(output), [])
+        XCTAssertEqual(try sourceSpecs(output), [])
     }
 
     // MARK: - Explicit source lists
@@ -144,7 +144,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
                             try manifest("input:/pkg/semel/CommandInterpreter", [file("Repl.swift")])],
             extraConfiguration: ["sourcePaths=main.swift"]))
 
-        XCTAssertEqual(try sourceExpectations(output), ["input:/pkg/semel/main.swift"])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/semel/main.swift"])
     }
 
     func test_doesNotDescendIntoSubfoldersOutsideAnExplicitSourcesList() throws {
@@ -152,7 +152,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             folder: try manifest("input:/pkg/semel", [file("main.swift"), folder("Tests")]),
             extraConfiguration: ["sourcePaths=main.swift"]))
 
-        XCTAssertEqual(try subfolderExpectations(output), [:])
+        XCTAssertEqual(try subfolderSpecs(output), [:])
     }
 
     /// A listed source path may sit inside a subfolder, so the walk still has to descend
@@ -162,7 +162,7 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             folder: try manifest("input:/pkg/target", [folder("Core"), folder("Ignored")]),
             extraConfiguration: ["sourcePaths=Core/Thing.swift"]))
 
-        XCTAssertEqual(try subfolderExpectations(output).keys.sorted(), ["input:/pkg/target/Core"])
+        XCTAssertEqual(try subfolderSpecs(output).keys.sorted(), ["input:/pkg/target/Core"])
     }
 
     func test_skipsExcludedPaths() throws {
@@ -170,8 +170,8 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
             folder: try manifest("input:/pkg/target", [file("Keep.swift"), file("Drop.swift"), folder("Vendor")]),
             extraConfiguration: ["excludedPaths=Drop.swift,Vendor"]))
 
-        XCTAssertEqual(try sourceExpectations(output), ["input:/pkg/target/Keep.swift"])
-        XCTAssertEqual(try subfolderExpectations(output), [:])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/target/Keep.swift"])
+        XCTAssertEqual(try subfolderSpecs(output), [:])
     }
 
     /// A flat target must keep behaving exactly as it did before the walk existed —
@@ -180,8 +180,8 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
         let output = try makeTool().process(input: try makeInput(
             folder: try manifest("input:/pkg/Sources/MyLibraryTargetA", [file("Thing.swift")])))
 
-        XCTAssertEqual(try sourceExpectations(output), ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
-        XCTAssertEqual(try subfolderExpectations(output), [:])
+        XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
+        XCTAssertEqual(try subfolderSpecs(output), [:])
     }
 }
 

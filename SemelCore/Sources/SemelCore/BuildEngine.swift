@@ -57,7 +57,7 @@ public final class BuildEngine {
             ProjectFinder.self,
             ProjectBuilder.self,
             Configuration.self,
-            ConfigSubset.self,
+            ConfigFilter.self,
             ConfigMerger.self,
         ])
         ProjectDiscovery.register(FormulaFilePlugin())
@@ -65,8 +65,8 @@ public final class BuildEngine {
 
     var projectFinder: NodeRecord {
         get throws {
-            let graphShape = GraphShapeNode(typeName: "ProjectFinder", properties: [], inputs: [], outputs: [])
-            let (fromNode, _) = try graphShape.findOrCreateMatchingNode()
+            let specNode = GraphSpecNode(typeName: "ProjectFinder", properties: [], inputs: [], outputs: [])
+            let (fromNode, _) = try specNode.findOrCreateMatchingNode()
             return fromNode
         }
     }
@@ -154,7 +154,7 @@ public final class BuildEngine {
 
     // MARK: - Unclaimed config keys
 
-    /// Keys in a config file that no `ConfigSubset` selected.
+    /// Keys in a config file that no `ConfigFilter` selected.
     ///
     /// A selector knows only what it was asked for, so it cannot notice a key nobody wanted.
     /// The graph can: the wires leaving a config file lead to every node that claimed part of
@@ -181,8 +181,8 @@ public final class BuildEngine {
         for wire in try database.wire.select(comingFromNodeID: fileNodeID,
                                              fromSymbolID: StaticFile.outputPort.asSymbolID()) {
             let consumer = try database.node.select(nodeID: wire.toNodeID)
-            guard consumer.kind == ConfigSubset.kind,
-                  let prefix = consumer.properties[ConfigSubset.prefixProperty] else {
+            guard consumer.kind == ConfigFilter.kind,
+                  let prefix = consumer.properties[ConfigFilter.prefixProperty] else {
                 continue
             }
             prefixes.append(prefix + ".")
@@ -200,18 +200,18 @@ public final class BuildEngine {
     /// the same shape as `FatalErrors.handler`.
     var unclaimedConfigKeyReporter: (String) -> Void = { print($0) }
 
-    /// Finds every config file feeding a `ConfigSubset` and prints its unclaimed keys, but
+    /// Finds every config file feeding a `ConfigFilter` and prints its unclaimed keys, but
     /// only when that file's unclaimed set has changed since the last report — a project
     /// with a standing misspelt prefix would otherwise repeat the same line on every idle
     /// cycle until it read as background noise rather than something to fix.
     ///
-    /// Starts from `ConfigSubset` nodes rather than scanning for files named `semel.config`:
+    /// Starts from `ConfigFilter` nodes rather than scanning for files named `semel.config`:
     /// a config file is identified by being wired into a selector, not by its name — the same
     /// reason a variant is just a different file wired in, with no naming convention of its
-    /// own. `ConfigSubset` nodes are also rare (one per prefix), where `StaticFile` is not —
+    /// own. `ConfigFilter` nodes are also rare (one per prefix), where `StaticFile` is not —
     /// most nodes in a real project are source files, so filtering all of them by name would
     /// cost about what `selectAll()` does. One consequence of starting here: a config file
-    /// with no `ConfigSubset` wired to it at all is invisible to this pass, and so is a
+    /// with no `ConfigFilter` wired to it at all is invisible to this pass, and so is a
     /// generated config file that is not a `StaticFile` — only `StaticFile.read()` is
     /// understood as a source of config text.
     ///
@@ -219,7 +219,7 @@ public final class BuildEngine {
     /// `unclaimedConfigKeyReporter`'s captures — the same reasoning as
     /// `FileWildcardMatcher`'s internal-for-testing methods.
     func reportUnclaimedConfigKeys() {
-        guard let subsets = try? database.node.select(kind: ConfigSubset.kind) else {
+        guard let subsets = try? database.node.select(kind: ConfigFilter.kind) else {
             return
         }
 
@@ -229,7 +229,7 @@ public final class BuildEngine {
 
             guard let subsetID = subset.id,
                   let wires = try? database.wire.select(goingToNodeID: subsetID,
-                                                        toSymbolID: ConfigSubset.inputPort.asSymbolID()) else {
+                                                        toSymbolID: ConfigFilter.inputPort.asSymbolID()) else {
                 continue
             }
 

@@ -1,4 +1,4 @@
-// SwiftPackageReaderTool.swift
+// SwiftPackageReader.swift
 // semel
 //
 // Reads a Swift package manifest by shelling out to `swift package dump-package`
@@ -21,7 +21,7 @@ import SemelDatabaseModels
 
 // MARK: - Configuration
 
-struct SwiftPackageReaderToolConfiguration {
+struct SwiftPackageReaderConfiguration {
     let toolDescriptor: ToolDescriptor
 
     init(properties: [String: String]) throws {
@@ -39,12 +39,12 @@ struct SwiftPackageReaderToolConfiguration {
     }
 
     /// Where this node's settings live in a config file: `swift.packageReader.<key>`.
-    static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReaderTool")
+    static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReader")
 }
 
 // MARK: - Node
 
-struct SwiftPackageReaderTool: Node {
+struct SwiftPackageReader: Node {
     public static let kind: UInt = 23
 
     // MARK: Ports
@@ -71,16 +71,16 @@ struct SwiftPackageReaderTool: Node {
     // MARK: - Inputs / Outputs
 
     struct SwiftPackageReaderInputs {
-        let configuration: SwiftPackageReaderToolConfiguration
+        let configuration: SwiftPackageReaderConfiguration
         let packageFile: FileNameAndContent
 
         init(input: ProcessInput) throws {
-            let configString = try input.inputValues[SwiftPackageReaderTool.configuration]!
+            let configString = try input.inputValues[SwiftPackageReader.configuration]!
                 .values.first!.expectValue().resolveAsString()
 
             configuration = try .init(properties: [String: String](plainText: configString))
 
-            let packageFileNodeValues = input.inputValues[SwiftPackageReaderTool.packageFile]!.values.first!
+            let packageFileNodeValues = input.inputValues[SwiftPackageReader.packageFile]!.values.first!
 
             let fileEntry = try packageFileNodeValues.expectValue()
 
@@ -95,9 +95,9 @@ struct SwiftPackageReaderTool: Node {
         let infoLog:     NodeValue
 
         func asProcessOutput() -> ProcessOutput {
-            .init(outputValues: [SwiftPackageReaderTool.packageJSON: packageJSON,
-                                 SwiftPackageReaderTool.infoLog: infoLog],
-                  inputWireExpectations: [:])
+            .init(outputValues: [SwiftPackageReader.packageJSON: packageJSON,
+                                 SwiftPackageReader.infoLog: infoLog],
+                  inputWireSpecs: [:])
         }
     }
 
@@ -131,7 +131,7 @@ struct SwiftPackageReaderTool: Node {
 
         guard !jsonOutput.isEmpty else {
             return .init(
-                packageJSON: .noValue(reason: .error(messageDataObjectHash: try "SwiftPackageReaderTool: no output from swift package dump-package".intern())),
+                packageJSON: .noValue(reason: .error(messageDataObjectHash: try "SwiftPackageReader: no output from swift package dump-package".intern())),
                 infoLog: .value(try stderrOutput.intern()))
         }
 

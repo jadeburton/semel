@@ -1,5 +1,5 @@
 //
-//  GraphShapeConcurrencyTests.swift
+//  GraphSpecConcurrencyTests.swift
 //  SemelCoreTests
 //
 //  findOrCreateMatchingNode resolves an existing node without entering a transaction, and
@@ -7,7 +7,7 @@
 //  here under real threads rather than reasoned about.
 //
 //  The create half has a recorded history: doing the find outside a transaction and then
-//  inserting is what produced "UNIQUE constraint failed: Node.searchKey", because two tasks
+//  inserting is what produced "UNIQUE constraint failed: Node.graphSpec", because two tasks
 //  both saw nil and both inserted. The read added in front must not bring that back.
 //
 
@@ -16,7 +16,7 @@ import SemelDatabaseModels
 import SemelNodeKit
 import XCTest
 
-final class GraphShapeConcurrencyTests: SemelCoreTestCase {
+final class GraphSpecConcurrencyTests: SemelCoreTestCase {
 
     private var engine: BuildEngine!
 
@@ -41,16 +41,16 @@ final class GraphShapeConcurrencyTests: SemelCoreTestCase {
         func record(error: Error) { lock.lock(); failures.append("\(error)"); lock.unlock() }
     }
 
-    /// Many threads asking for the same shape must produce one node, not one each and not a
+    /// Many threads asking for the same spec must produce one node, not one each and not a
     /// unique-constraint crash. This is the case the transaction exists for.
     func test_concurrentResolutionOfOneShapeCreatesExactlyOneNode() throws {
-        let shapeText = "Configuration(role: 'contended').output"
+        let specText = "Configuration(role: 'contended').output"
         let collected = Collected()
 
         DispatchQueue.concurrentPerform(iterations: 64) { _ in
             do {
-                let shape = try GraphShapeNode.parse(shapeText)
-                collected.record(try shape.findOrCreateMatchingNode().fromNode.requireID())
+                let spec = try GraphSpecNode.parse(specText)
+                collected.record(try spec.findOrCreateMatchingNode().fromNode.requireID())
             } catch {
                 collected.record(error: error)
             }
@@ -62,22 +62,22 @@ final class GraphShapeConcurrencyTests: SemelCoreTestCase {
                        "every caller must get the same node, got \(Set(collected.ids).count) distinct")
     }
 
-    /// Different shapes at the same time, so the create path is genuinely contended rather
+    /// Different specs at the same time, so the create path is genuinely contended rather
     /// than one insert and sixty-three fast-path reads.
     func test_concurrentResolutionOfDistinctShapesCreatesOneNodeEach() throws {
         let collected = Collected()
 
         DispatchQueue.concurrentPerform(iterations: 32) { index in
             do {
-                let shape = try GraphShapeNode.parse("Configuration(role: 'r\(index)').output")
-                collected.record(try shape.findOrCreateMatchingNode().fromNode.requireID())
+                let spec = try GraphSpecNode.parse("Configuration(role: 'r\(index)').output")
+                collected.record(try spec.findOrCreateMatchingNode().fromNode.requireID())
             } catch {
                 collected.record(error: error)
             }
         }
 
         XCTAssertEqual(collected.failures, [])
-        XCTAssertEqual(Set(collected.ids).count, 32, "each distinct shape is its own node")
+        XCTAssertEqual(Set(collected.ids).count, 32, "each distinct spec is its own node")
     }
 
     /// The root cache is a mutable static reached from every one of these threads. Reading a

@@ -6,7 +6,7 @@
 //
 // Wire topology:
 //   Folder(path: 'input:/.../MyPkg').manifest -> SwiftFormulaConverter.packageFolder
-//   SwiftPackageReaderTool.packageJSON                 -> SwiftFormulaConverter.packageJSON
+//   SwiftPackageReader.packageJSON                 -> SwiftFormulaConverter.packageJSON
 //   SwiftFormulaConverter.formula                      -> ProjectBuilder.projectFile
 //
 // `packageFolder` is wired to a Folder.manifest rather than stored as a
@@ -16,10 +16,10 @@
 //
 // External package dependencies are resolved iteratively via the dynamic
 // `externalPackageJSONs` port.  After parsing the root Package.swift the node
-// returns SwiftPackageReaderTool wire expectations for each fileSystem dep it
+// returns SwiftPackageReader wire specs for each fileSystem dep it
 // finds; when those manifests arrive the process repeats for their own deps,
 // and so on until the full transitive closure is wired.  Packages no longer
-// referenced are automatically unwired by applyExpectationConfiguration.
+// referenced are automatically unwired by applySpecs.
 
 import Foundation
 import SemelNodeKit
@@ -58,7 +58,7 @@ struct SwiftFormulaConverter: Node {
 
         guard let folderManifest = try? TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest else {
             return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
-                                     externalExpectations: [:])
+                                     externalSpecs: [:])
         }
 
         let rootPackageFolder = folderManifest.baseFolderPath
@@ -71,7 +71,7 @@ struct SwiftFormulaConverter: Node {
         do {
             rootManifest = try SPMManifest.decode(try jsonEntry.resolveAsString())
         } catch {
-            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalExpectations: [:])
+            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalSpecs: [:])
         }
 
         // ── already-received external manifests ───────────────────────────────
@@ -90,10 +90,10 @@ struct SwiftFormulaConverter: Node {
 
         // ── BFS: discover all transitively needed external packages ───────────
         // Each run reaches one more nesting level; missing manifests are requested
-        // via wire expectations and the node is re-scheduled when they arrive.
+        // via wire specs and the node is re-scheduled when they arrive.
         var bfsQueue: [(path: String, manifest: SPMManifest)] = [(rootPackageFolder, rootManifest)]
         var visitedPaths = Set<String>([rootPackageFolder])
-        var expectations: [String: String] = [:]
+        var specs: [String: String] = [:]
         // Path -> the repository URL or registry package it stands for, nil when the
         // manifest named the path itself. Only ever read to explain a stall.
         var originOfExpectedPath: [String: String?] = [:]
@@ -122,7 +122,7 @@ struct SwiftFormulaConverter: Node {
                 // The root package's folder, not `extPath`: the reader that parses a vendored
                 // dependency's manifest is still part of *this* build, so it selects its
                 // settings from the config file the consuming project owns.
-                expectations[extPath] = Self.packageReaderExpectation(
+                specs[extPath] = Self.packageReaderSpec(
                     packageFilePath: "\(extPath)/Package.swift",
                     rootPackageFolder: rootPackageFolder)
                 originOfExpectedPath[extPath] = dependency.origin
@@ -134,12 +134,12 @@ struct SwiftFormulaConverter: Node {
         }
 
         // ── wait until every expected manifest has been received ──────────────
-        let missing = expectations.keys.filter { availableManifests[$0] == nil }
+        let missing = specs.keys.filter { availableManifests[$0] == nil }
 
         guard missing.isEmpty else {
             return try pendingOutput(
                 reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
-                externalExpectations: expectations)
+                externalSpecs: specs)
         }
 
         // ── all manifests present — generate formula ──────────────────────────
@@ -149,16 +149,16 @@ struct SwiftFormulaConverter: Node {
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
-            inputWireExpectations: [Self.externalPackageJSONs: expectations])
+            inputWireSpecs: [Self.externalPackageJSONs: specs])
     }
 
-    // Returns a noValue output that still carries the current expectations,
-    // so applyExpectationConfiguration keeps (or creates) the needed wires.
+    // Returns a noValue output that still carries the current specs,
+    // so applySpecs keeps (or creates) the needed wires.
     private func pendingOutput(reason: String,
-                               externalExpectations: [String: String]) throws -> ProcessOutput {
+                               externalSpecs: [String: String]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
-              inputWireExpectations: [Self.externalPackageJSONs: externalExpectations])
+              inputWireSpecs: [Self.externalPackageJSONs: externalSpecs])
     }
 
     // MARK: - Stalls
@@ -190,12 +190,12 @@ struct SwiftFormulaConverter: Node {
 
     /// The config file a package is configured by: `semel.config` beside the package.
     ///
-    /// Named in the shape rather than looked up, so the wire exists before the file does — an
+    /// Named in the spec rather than looked up, so the wire exists before the file does — an
     /// absent file is a ghost, and pushing it later fills the wire and rebuilds what depends on
     /// it without a rescan.
     static func configSelector(namespace: String, packageFolder: String) -> String {
         let configPath = "\(packageFolder)/\(configFileName)"
-        return "ConfigSubset(prefix: '\(namespace)', "
+        return "ConfigFilter(prefix: '\(namespace)', "
              + "input: ['config': StaticFile(path: '\(configPath)').output]).output"
     }
 
@@ -206,7 +206,7 @@ struct SwiftFormulaConverter: Node {
     /// `linkage` and the like — so it describes what the target *is*, and a config
     /// file must not be able to override identity through the settings it supplies.
     ///
-    /// Sorted, because these become a formula string that becomes a node's searchKey — and
+    /// Sorted, because these become a formula string that becomes a node's graphSpec — and
     /// Dictionary iteration order is seeded per process, so an unsorted render would give
     /// the same package a different node identity on every run.
     static func configurationExpression(namespace: String,
@@ -220,7 +220,7 @@ struct SwiftFormulaConverter: Node {
         return "Configuration(\(arguments)inherit: ['settings': \(selector)]).output"
     }
 
-    /// Graph-shape expectation string for a `SwiftPackageReaderTool` that reads the
+    /// Spec string for a `SwiftPackageReader` that reads the
     /// `Package.swift` at `packageFilePath` in the input filesystem.
     ///
     /// The reader is a tool like any other: it shells out to `swift package dump-package`
@@ -232,13 +232,13 @@ struct SwiftFormulaConverter: Node {
     /// folder holding `packageFilePath`: configuration is a property of the build, not of the
     /// package being read, and a consuming project cannot write a config file inside a
     /// vendored dependency it does not own.
-    static func packageReaderExpectation(packageFilePath: String,
+    static func packageReaderSpec(packageFilePath: String,
                                          rootPackageFolder: String) -> String {
         let configExpr = configurationExpression(
-            namespace: SwiftPackageReaderToolConfiguration.settingNamespace,
+            namespace: SwiftPackageReaderConfiguration.settingNamespace,
             packageFolder: rootPackageFolder,
             literals: [:])
-        return "SwiftPackageReaderTool(" +
+        return "SwiftPackageReader(" +
                "configuration: ['config': \(configExpr)], " +
                "packageFile: ['\(packageFilePath)': StaticFile(path: '\(packageFilePath)').output]" +
                ").packageJSON"
@@ -405,7 +405,7 @@ struct SwiftFormulaConverter: Node {
 
         // systemLibrary targets (type == "system-target") wrap C system libraries
         // via a module.modulemap.  They have no Swift sources and cannot be compiled
-        // with SwiftCompilerTool.
+        // with SwiftCompiler.
         var isSystemLibrary: Bool { type == "system-target" || type == "system" }
     }
 
@@ -498,7 +498,7 @@ struct SwiftFormulaConverter: Node {
         // Every lookup below walks the external packages in one fixed order. Dictionary
         // iteration order is seeded per process, so walking the dictionary itself let two
         // packages vending the same name resolve differently on every restart — and the
-        // formula text is what every downstream searchKey is derived from.
+        // formula text is what every downstream graphSpec is derived from.
         let externalPackages = externalManifests.sorted { $0.key < $1.key }
 
         // Build combined target name → SPMTarget map.
@@ -555,7 +555,7 @@ struct SwiftFormulaConverter: Node {
 
             // A product that reduces to no compilable targets — GRDB's `GRDBSQLite`
             // library vends nothing but a .systemLibrary — has no object files to link.
-            // Emitting a SwiftLinkerTool for it anyway leaves its required `input` port
+            // Emitting a SwiftLinker for it anyway leaves its required `input` port
             // unwired, which fails the entire ProjectBuilder rather than just that product.
             guard !allTargets.isEmpty else { continue }
 
@@ -589,7 +589,7 @@ struct SwiftFormulaConverter: Node {
                 case .executable, .other:                    (.executable,     product.name)
             }
             let linkerConfig = Self.configurationExpression(
-                namespace: SwiftLinkerToolConfiguration.settingNamespace,
+                namespace: SwiftLinkerConfiguration.settingNamespace,
                 packageFolder: rootPackageFolder,
                 literals: ["linkage":    linkage.rawValue,
                            "outputName": outputName])
@@ -602,7 +602,7 @@ struct SwiftFormulaConverter: Node {
             // Every system library the product reaches, so a vendored static archive
             // dropped in one of those folders is linked in.  The linker needs the same
             // folders the compiler already gets for their module maps — see
-            // SwiftLinkerTool.libraryFolders.
+            // SwiftLinker.libraryFolders.
             var systemLibraryFolderWires: [String] = []
             var wiredSystemLibraries = Set<String>()
             for target in allTargets {
@@ -625,7 +625,7 @@ struct SwiftFormulaConverter: Node {
 
             let block =
                 "product '\(outputName)' =\n" +
-                "    SwiftLinkerTool(\n" +
+                "    SwiftLinker(\n" +
                 linkerArgs + "\n" +
                 "    ).output"
             blocks.append(block)
@@ -759,7 +759,7 @@ struct SwiftFormulaConverter: Node {
         // The root package's own folder, not `pkgRoot`: configuration is a property of the
         // build, not of whichever package happens to be compiled, and a consuming project
         // cannot write a config file inside a vendored dependency it does not own.
-        let configExpr = Self.configurationExpression(namespace: SwiftCompilerToolConfiguration.settingNamespace,
+        let configExpr = Self.configurationExpression(namespace: SwiftCompilerConfiguration.settingNamespace,
                                                       packageFolder: packageFolder,
                                                       literals: derived)
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
@@ -799,7 +799,7 @@ struct SwiftFormulaConverter: Node {
         if !moduleMapFolderWires.isEmpty {
             args += ",\n    inputModuleMapFolders: [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
         }
-        return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompilerTool(\n\(args)\n    )"
+        return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompiler(\n\(args)\n    )"
     }
 
     // Resolves a relative path (which may contain "..") against a base path.

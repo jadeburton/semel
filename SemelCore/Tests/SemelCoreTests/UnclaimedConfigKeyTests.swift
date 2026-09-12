@@ -37,15 +37,15 @@ final class UnclaimedConfigKeyTests: SemelCoreTestCase {
     /// Builds a config file with two selectors reading it, and returns what nobody claimed.
     private func unclaimed(file: String, prefixes: [String]) throws -> [String] {
         let path = "input:/semel.config"
-        let fileShape = try GraphShapeNode.parse("StaticFile(path: '\(path)')")
+        let fileShape = try GraphSpecNode.parse("StaticFile(path: '\(path)')")
         let (fileNode, _) = try fileShape.findOrCreateMatchingNode()
         let staticFile = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile)
         _ = try staticFile.replaceContent(try file.intern())
 
         for prefix in prefixes {
-            let shape = try GraphShapeNode.parse(
-                "ConfigSubset(prefix: '\(prefix)', input: ['config': StaticFile(path: '\(path)').output]).output")
-            _ = try shape.findOrCreateMatchingNode()
+            let spec = try GraphSpecNode.parse(
+                "ConfigFilter(prefix: '\(prefix)', input: ['config': StaticFile(path: '\(path)').output]).output")
+            _ = try spec.findOrCreateMatchingNode()
         }
 
         return try engine.unclaimedConfigKeys(inFileNodeID: fileNode.requireID())

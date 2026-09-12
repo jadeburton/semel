@@ -41,13 +41,13 @@ public struct ConfigMerger: Node {
             .mergedWith(settings(on: Self.overridePort, in: input))
 
         return .init(outputValues: [Self.outputPort: .value(try merged.asPlainText().intern())],
-                     inputWireExpectations: [:])
+                     inputWireSpecs: [:])
     }
 
     /// The settings arriving on one port.
     ///
     /// A wire carrying no value contributes nothing rather than failing the node — the same
-    /// reading `ConfigSubset` takes. That is what makes an override file optional: a formula
+    /// reading `ConfigFilter` takes. That is what makes an override file optional: a formula
     /// can name one nobody has written, and until it is, the base passes through whole.
     /// Failing instead would make every project with nothing to override unbuildable until
     /// someone wrote an empty file for it.
