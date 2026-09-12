@@ -30,9 +30,21 @@ func resolveSDKPath() -> String? {
     cachedSDKPath
 }
 
-private let cachedSDKVersion: String? = xcrun(["--show-sdk-version", "--sdk", "macosx"])
+private let cachedSDKVersion: String? = {
+    guard let version = xcrun(["--show-sdk-version", "--sdk", "macosx"]),
+          let build   = xcrun(["--show-sdk-build-version", "--sdk", "macosx"]) else {
+        return nil
+    }
+    return "\(version) (\(build))"
+}()
 
-/// The macOS SDK version this machine reports, e.g. "26.5".
+/// The macOS SDK this machine reports, as version and build: "26.5 (25F70)".
+///
+/// The build number is part of the identity. Apple ships more than one build of an SDK
+/// version, and two of them can differ in headers and stubs; a check on "26.5" alone would
+/// pass on both machines and let them compile against different SDKs while agreeing that
+/// they had not. (B-47's narrow half. The wide half — the SDK's contents are still not a
+/// graph input — is B-03's.)
 ///
 /// Compared against a declared `sdkVersion` rather than fed into a cache key. A key can
 /// only stop a wrong reuse; it cannot cause a rebuild, because an unscheduled node never
@@ -60,6 +72,13 @@ func verifySDKVersion(_ declared: String?) throws {
                                      + "but no macOS SDK could be found on this machine")
     }
     guard actual == declared else {
+        // A bare version is the pre-build-number form. It is not a partial match — the
+        // gap it leaves is the one this check exists to close — but the fix is a paste.
+        if !declared.contains("(") {
+            throw NodeError.other(message: "sdkVersion is declared as \(declared), but the "
+                                         + "SDK build number is part of the identity: this "
+                                         + "machine has \(actual). Declare that instead.")
+        }
         throw NodeError.other(message: "sdkVersion is declared as \(declared) "
                                      + "but this machine has \(actual). Install that SDK, or "
                                      + "change the setting — building against a different one "

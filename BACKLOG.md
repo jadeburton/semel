@@ -401,7 +401,7 @@ against what `xcrun` reports and fails loudly on a mismatch, which catches the w
 but does not make the SDK an input. The path handed to `-sdk` still comes from
 `resolveSDKPath()`, an `xcrun` call resolved once per process, and the thousands of headers
 and stubs behind that path are never hashed, wired or named. Two machines with the same
-version string and different SDK contents produce identical cache keys and different
+declared SDK and different SDK contents produce identical cache keys and different
 artifacts, silently.
 
 So the invariant the TODO stated — every node input must exist inside the input file system or
@@ -413,13 +413,13 @@ probably why it took a TODO to notice.
 of thousands of files. Hashing it per build is not free, and putting it in the input file
 system as ordinary `StaticFile` nodes would put a graph node per header into the database.
 B-03 is the intended answer — a container digest stands in for the whole environment, and
-`sdk=26.5` becomes `image=sha256:…` — which makes this an argument for B-03 rather than an
-independent piece of work.
+`sdk=26.5 (25F70)` becomes `image=sha256:…` — which makes this an argument for B-03 rather
+than an independent piece of work.
 
-*Narrower thing worth doing sooner:* the declared version is compared as a version string only
-(`26.5`, not `26.5 (25F70)`), so two builds of one SDK version are indistinguishable. The build
-number was left out because it is unpleasant to write into a config by hand; including it costs
-nothing and closes the gap that a check can close.
+Done (2026-09-12), the narrow half: the declared value is the version *and* the SDK build
+number, `26.5 (25F70)`, as `xcrun --show-sdk-version` and `--show-sdk-build-version` report
+them, so two builds of one SDK version no longer pass the same check. A bare version fails
+with the full string to paste. What is left is the wide half above.
 
 **B-48** `open` — **`clang.*.std` is one key for a whole package, whatever language a file is.**
 `ClangCompilerToolConfiguration.std` is a single value fed from one `clang.compiler.std` key, and

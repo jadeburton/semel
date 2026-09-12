@@ -127,4 +127,30 @@ final class DeclaredSDKTests: SemelSwiftTestCase {
             XCTAssertTrue(message.contains(actual), "should name what the machine has, got \(message)")
         }
     }
+
+    // B-47, the narrow part. A version string alone (`26.5`) cannot tell two builds of one
+    // SDK apart, so two machines could pass the check and still compile against different
+    // headers. The identity the machine reports, and the one a config has to declare, is
+    // the version together with the SDK build number: `26.5 (25F70)`.
+
+    func test_theMachineSDKIdentityCarriesTheBuildNumber() throws {
+        let actual = try XCTUnwrap(resolveSDKVersion())
+
+        let form = try NSRegularExpression(pattern: #"^[0-9]+(\.[0-9]+)* \([0-9A-Za-z]+\)$"#)
+        XCTAssertNotNil(form.firstMatch(in: actual, range: NSRange(actual.startIndex..., in: actual)),
+                        "expected `<version> (<build>)`, got \(actual)")
+    }
+
+    /// The old form is not quietly accepted as a partial match: it fails, and the message
+    /// hands over the exact string to declare instead.
+    func test_aVersionWithoutABuildNumberIsRejectedAndToldTheFullForm() throws {
+        let actual  = try XCTUnwrap(resolveSDKVersion())
+        let version = String(actual.prefix { $0 != " " })
+
+        XCTAssertThrowsError(try verifySDKVersion(version)) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains(actual), "should give the full form to paste, got \(message)")
+            XCTAssertTrue(message.lowercased().contains("build"), "should say the build number is part of it, got \(message)")
+        }
+    }
 }
