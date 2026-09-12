@@ -9,16 +9,19 @@
 // and reporting "node 47 failed" hides the fact that the disk is full.  Those are
 // unrecoverable, and the process should say so plainly and stop.
 //
-// What is classified today: `ObjectStoreError` (a build output that cannot be stored, an
-// input that cannot be placed in a sandbox) and `SandboxCreationError` (nowhere to run a
-// tool at all).  All of them are one thing said three ways — the volume is out of room or
-// out of reach.
+// What is classified: `ObjectStoreError` (a build output that cannot be stored, an input
+// that cannot be placed in a sandbox), `SandboxCreationError` (nowhere to run a tool at
+// all), `DatabaseVolumeError` (the graph's own file cannot be written, opened or read, or
+// is damaged) and `DatabaseSchemaChangedError` (the file predates this Semel's tables).
+// The first three are one thing said three ways — the volume is out of room or out of
+// reach.
 //
-// Database write failures are not classified, though they can be this same failure.  GRDB
-// reports every one as `DatabaseError`, mixing SQLITE_FULL and SQLITE_IOERR with SQLITE_BUSY,
-// which is transient, and SQLITE_CONSTRAINT, which is a bug in the caller.  Telling them
-// apart needs a per-*instance* decision and conformance here is per *type* — see below.
-// Tracked as B-45.
+// Database failures need a word on how they get here.  GRDB reports every one as
+// `DatabaseError`, mixing SQLITE_FULL and SQLITE_IOERR with SQLITE_BUSY, which is
+// transient, and SQLITE_CONSTRAINT, which is a bug in the caller.  Telling them apart is a
+// per-*instance* decision and conformance here is per *type*, so the GRDB type does not
+// conform; instead `DatabaseLayer`'s read, write and transaction boundary translates the
+// machine's result codes into `DatabaseVolumeError` and lets the rest through untouched.
 
 import Foundation
 

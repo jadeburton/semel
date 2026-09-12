@@ -300,29 +300,6 @@ references" — a **GC root**. `isRooted` is more accurate only to a reader alre
 collector terms, and would read as "the root of the file system" to everyone else. Revisit
 only if a real collector lands.
 
-**B-45** `open` — **Database write failures are not classified as unrecoverable.**
-`UnrecoverableError.swift` used to claim they were; `db5fcb7` corrected the claim rather than
-making it true. A full disk currently trips the object-store path first, so this is a gap
-rather than a live bug — but a database write that fails for the same reason is still filed
-as "node 47 failed".
-
-Harder than it looks, and the reason is worth keeping: GRDB reports every failure as
-`DatabaseError`, mixing `SQLITE_FULL` and `SQLITE_IOERR` (this class) with `SQLITE_BUSY`
-(transient) and `SQLITE_CONSTRAINT` (a bug in the caller). Conformance to `UnrecoverableError`
-is per *type*, so the enum cannot simply conform — the same constraint that forced
-`SandboxCreationError` out of `LocalFileSystemToolError`.
-
-Two ways out. Wrap writes at the `DatabaseLayer` boundary and translate result codes into a
-narrow unrecoverable type, which keeps the protocol as it is. Or give the protocol a
-per-instance hook — `var isUnrecoverable: Bool { true }` by default — so a type whose cases
-disagree can answer for each one. The second is smaller and would have avoided the split
-above; it also makes it easier to classify something fatal by accident, which the per-type
-rule currently makes impossible.
-
-Also note the two `try? saveCacheForAllInputsAndOutputs` call sites: defensible today, since
-failing to save a cache entry should not fail a build, but they would swallow whatever this
-item introduces.
-
 **B-46** `open` — **Set up SwiftLint, or an equivalent.**
 Moved from `FUTURE.md`, which is for direction; this is a bounded task sitting among open
 design questions.

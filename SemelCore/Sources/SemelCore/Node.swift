@@ -109,9 +109,15 @@ extension Node {
             let startTime = Date.now
             let output = processWithCatch(input: input)
             try writeToOutputs(output: output)
-            try? saveCacheForAllInputsAndOutputs(cacheKey: cacheKey,
-                                                 processingDuration: Date.now.timeIntervalSince(startTime),
-                                                 output: output)
+            // Failing to save a cache entry must not fail a build — unless the failure is
+            // the machine's, which no later node will survive either.
+            do {
+                try saveCacheForAllInputsAndOutputs(cacheKey: cacheKey,
+                                                    processingDuration: Date.now.timeIntervalSince(startTime),
+                                                    output: output)
+            } catch {
+                FatalErrors.check(error)
+            }
         }
     }
 

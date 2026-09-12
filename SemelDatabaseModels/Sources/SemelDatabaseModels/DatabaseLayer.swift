@@ -61,20 +61,38 @@ public final class DatabaseLayer {
 
     @TaskLocal static var currentDB: TaskLocalDatabase? = nil
 
-    // ── Internal helpers used by every extension method ──────────────────────
+    // ── The boundary every access goes through ───────────────────────────────
+    //
+    // Every GRDB error is born inside one of these three, so this is where a failure of
+    // the machine (`SQLITE_FULL`, `SQLITE_IOERR`, …) is told apart from one of the
+    // statement and translated into `DatabaseVolumeError`, the unrecoverable kind. A
+    // nested call inside a transaction throws straight through to the outer boundary,
+    // which translates once; translating an already-translated error is a no-op.
 
-    func read<T>(_ block: (Database) throws -> T) throws -> T {
-        if let wrapper = DatabaseLayer.currentDB {
-            return try block(wrapper.db)
+    public func read<T>(_ block: (Database) throws -> T) throws -> T {
+        try translatingVolumeFailures {
+            if let wrapper = DatabaseLayer.currentDB {
+                return try block(wrapper.db)
+            }
+            return try dbQueue.read { db in try block(db) }
         }
-        return try dbQueue.read { db in try block(db) }
     }
 
-    func write<T>(_ block: (Database) throws -> T) throws -> T {
-        if let wrapper = DatabaseLayer.currentDB {
-            return try block(wrapper.db)
+    public func write<T>(_ block: (Database) throws -> T) throws -> T {
+        try translatingVolumeFailures {
+            if let wrapper = DatabaseLayer.currentDB {
+                return try block(wrapper.db)
+            }
+            return try dbQueue.write { db in try block(db) }
         }
-        return try dbQueue.write { db in try block(db) }
+    }
+
+    private func translatingVolumeFailures<T>(_ work: () throws -> T) throws -> T {
+        do {
+            return try work()
+        } catch {
+            throw DatabaseVolumeError.translating(error, filePath: filePath)
+        }
     }
 
     // ── Public transaction API ───────────────────────────────────────────────
@@ -101,9 +119,11 @@ public final class DatabaseLayer {
             return try work()
         }
 
-        return try dbQueue.write { db in
-            try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
-                try work()
+        return try translatingVolumeFailures {
+            try dbQueue.write { db in
+                try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
+                    try work()
+                }
             }
         }
     }

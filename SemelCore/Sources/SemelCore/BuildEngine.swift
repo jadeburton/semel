@@ -451,11 +451,17 @@ public final class BuildEngine {
                     try node.writeToOutputs(output: result.output)
 
                     if !result.fromCache {
-                        try? node.saveCacheForAllInputsAndOutputs(
-                            cacheKey: result.cacheKey,
-                            processingDuration: Date.now.timeIntervalSince(result.computeStart),
-                            output: result.output
-                        )
+                        // Failing to save a cache entry must not fail a build — unless the
+                        // failure is the machine's, which no later node will survive either.
+                        do {
+                            try node.saveCacheForAllInputsAndOutputs(
+                                cacheKey: result.cacheKey,
+                                processingDuration: Date.now.timeIntervalSince(result.computeStart),
+                                output: result.output
+                            )
+                        } catch {
+                            FatalErrors.check(error)
+                        }
                     }
                 } catch {
                     if result.fromCache {
