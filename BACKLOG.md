@@ -9,13 +9,6 @@ finds it. `Not doing` keeps the decisions that would otherwise be raised again.
 
 ## Hermeticity and determinism
 
-**B-02** `open` — **Make it hard to read outside a node's declared inputs.**
-Hermeticity is load-bearing for the whole design, and nothing currently prevents a node
-function from calling `xcrun`, reading an environment variable or touching the filesystem.
-Ideas: route all subprocess execution through `ToolRunner` and forbid `Process` elsewhere;
-scrub the environment before exec; run with a working directory that contains only declared
-inputs.
-
 **B-03** `open` — **Run tool execution in a container.**
 `ToolRunner` runs inside a dedicated process wrapping a Docker container configured with
 the toolchain, SDK and system libraries, reset between builds. The container digest then

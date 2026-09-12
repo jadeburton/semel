@@ -6,29 +6,10 @@
 import Foundation
 import SemelNodeKit
 
-/// Runs `xcrun` with `arguments` and returns its trimmed stdout, or nil if it is
-/// unavailable or exits non-zero.
+// Every xcrun query goes through the toolchain helper — the one sanctioned process launch
+// besides the sandboxed tool runner, and the one HermeticityTests allows.
 private func xcrun(_ arguments: [String]) -> String? {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-    process.arguments = arguments
-    let stdoutPipe = Pipe()
-    process.standardOutput = stdoutPipe
-    process.standardError = Pipe()   // suppress any xcrun warnings from leaking into our output
-    do {
-        // TODO: all runs of external processes should go through a single bottleneck method/helper, so we can uniformly log and track these
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            return nil
-        }
-        let raw = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let text = String(data: raw, encoding: .utf8)?
-            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-        return (text?.isEmpty == false) ? text : nil
-    } catch {
-        return nil
-    }
+    AppleClangSwiftToolchainHelper.xcrun(arguments)
 }
 
 // Resolved once per process rather than once per node: every Swift compile and link

@@ -15,14 +15,25 @@ public enum AppleClangSwiftToolchainHelper {
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`,
     /// or `nil` if there is no such tool.
     public static func find(_ toolName: String) -> String? {
-        guard let output = run("/usr/bin/xcrun", ["--find", toolName]) else {
-            return nil
-        }
-        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else {
+        guard let path = xcrun(["--find", toolName]),
+              FileManager.default.isExecutableFile(atPath: path) else {
             return nil
         }
         return path
+    }
+
+    /// Runs `xcrun` with `arguments` and returns its trimmed stdout, or nil if it is
+    /// unavailable, exits non-zero or prints nothing.
+    ///
+    /// The one place `xcrun` is asked anything. It is a launch-time lookup, not part of a
+    /// node's function, and `HermeticityTests` holds every other file to that: a tool a
+    /// node runs goes through `LocalFileSystemTool`, in a sandbox. What this inherits from
+    /// the environment — `DEVELOPER_DIR`, `SDKROOT` — is how the machine's toolchain is
+    /// selected, and it is why the SDK it yields is not a graph input (B-47).
+    public static func xcrun(_ arguments: [String]) -> String? {
+        let text = run("/usr/bin/xcrun", arguments)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text?.isEmpty == false) ? text : nil
     }
 
     /// The canonical version string the tool at `path` reports, e.g.
