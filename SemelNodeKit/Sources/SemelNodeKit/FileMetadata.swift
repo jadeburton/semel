@@ -13,7 +13,7 @@ public struct FileMetadata: Codable {
 
     /// The output port a node declares to have its file's mode carried to `cp`.
     /// ProjectBuilder wires it automatically for any node type that exposes it.
-    public static let portName      = "fileMetadata"
+    public static let portName = "fileMetadata"
     public static let executableMode: UInt16 = 0o755
     public static let defaultMode: UInt16 = 0o644
 
