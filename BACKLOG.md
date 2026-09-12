@@ -300,35 +300,21 @@ references" — a **GC root**. `isRooted` is more accurate only to a reader alre
 collector terms, and would read as "the root of the file system" to everyone else. Revisit
 only if a real collector lands.
 
-**B-47** `open` — **The SDK is declared but not an input.**
-From a TODO at `SwiftCompiler.swift:169`, whose specific ask is already answered — the
-setting does now live in a `semel.config` inside the input file system. What it was pointing
-at does not.
+**B-47** `open` — **The SDK is declared but not a graph input.**
+Closed so far (2026-09-12): the declared identity is version *and* build, `26.5 (25F70)`,
+checked against the machine; and the Swift compiler and linker put a fingerprint of the SDK
+tree — every file's path, size and mtime; 1.2 s cold, 0.4 s warm, once per process — into
+their cache key through `Node.cacheKeyMaterial`, so two machines with the same declared SDK
+and different contents no longer share an entry. Content hashing was measured at 4.4 s and
+rejected; a cross-launch cache keyed on the SDK directory's mtime was rejected because that
+mtime does not change for a file edited deep inside.
 
-`swift.sdkVersion` is *checked*, not *used*. `verifySDKVersion` compares the declared string
-against what `xcrun` reports and fails loudly on a mismatch, which catches the wrong machine
-but does not make the SDK an input. The path handed to `-sdk` still comes from
-`resolveSDKPath()`, an `xcrun` call resolved once per process, and the thousands of headers
-and stubs behind that path are never hashed, wired or named. Two machines with the same
-declared SDK and different SDK contents produce identical cache keys and different
-artifacts, silently.
-
-So the invariant the TODO stated — every node input must exist inside the input file system or
-be derived from it — is still not true of the largest input a compile has. Worth stating
-somewhere as an invariant, since nothing in `AGENTS.md` currently does; that omission is
-probably why it took a TODO to notice.
-
-*Why this is not simply "hash the SDK".* A macOS SDK is on the order of a gigabyte across tens
-of thousands of files. Hashing it per build is not free, and putting it in the input file
-system as ordinary `StaticFile` nodes would put a graph node per header into the database.
-B-03 is the intended answer — a container digest stands in for the whole environment, and
-`sdk=26.5 (25F70)` becomes `image=sha256:…` — which makes this an argument for B-03 rather
-than an independent piece of work.
-
-Done (2026-09-12), the narrow half: the declared value is the version *and* the SDK build
-number, `26.5 (25F70)`, as `xcrun --show-sdk-version` and `--show-sdk-build-version` report
-them, so two builds of one SDK version no longer pass the same check. A bare version fails
-with the full string to paste. What is left is the wide half above.
+What remains: a cache key can only stop a wrong reuse. An SDK edited in place under an
+already-built graph is not rebuilt, because an unscheduled node never recomputes its key.
+Closing that needs the SDK to be a graph input — the gigabyte-of-headers problem — which is
+B-03's container digest. The invariant the original TODO stated (every node input exists
+inside the input file system or is derived from it) is still worth writing into `AGENTS.md`;
+nothing there says it.
 
 **B-50** `open` — **Report artifact changes at idle, as the difference between settles.**
 The system is functional, so the internal steps are hidden and the user-visible story of a
