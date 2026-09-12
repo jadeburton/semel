@@ -103,10 +103,12 @@ struct SwiftFormulaConverter: Node {
             let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
 
             for dependency in manifest.packageDependencies {
-                // Resolved against the manifest that declared it, not the root: a vendored
-                // checkout sits beside whichever package named it, and that package may
-                // itself be an external one several levels down.
-                let extPath = resolveRelativePath(dependency.path, from: manifestPath)
+                // A local path is relative to the manifest that declared it, which may
+                // itself be a dependency several levels down. A vendored package is under
+                // the root's Dependencies folder whoever declared it: one copy per package.
+                let extPath = dependency.resolvedPath(declaringPackage: manifestPath,
+                                                      root: rootPackageFolder,
+                                                      resolve: resolveRelativePath)
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
                 // that cannot be read through the build graph.
@@ -180,7 +182,9 @@ struct SwiftFormulaConverter: Node {
         return "SwiftFormulaConverter: waiting for \(missingPaths.count) package(s):\n"
              + lines.joined(separator: "\n")
              + "\nThis build system never fetches anything: a dependency must be present in "
-             + "the input file system at the path above, pushed like any other source."
+             + "the input file system at the path above, pushed like any other source. "
+             + "`semel-vendor <package-root>` resolves and copies every git dependency into "
+             + "the root's Dependencies folder."
     }
 
     // MARK: - semel.config
@@ -274,11 +278,15 @@ struct SwiftFormulaConverter: Node {
 
     // Decodes one element of the top-level "dependencies" array down to local paths.
     //
-    // fileSystem entries carry their path directly.  sourceControl entries name a git
-    // URL and registry entries a `scope.name` identity, neither of which this build
-    // system ever fetches — every input must come through the graph — so the package is
-    // expected to be *vendored* into the input filesystem beside the package that depends
-    // on it: "../<RepositoryName>" for a git URL, "../<identity>" for a registry package.
+    // fileSystem entries carry their path directly, resolved against the manifest that
+    // declared it.  sourceControl entries name a git URL and registry entries a
+    // `scope.name` identity, neither of which this build system ever fetches — every input
+    // must come through the graph — so the package is expected to be *vendored* into the
+    // input filesystem under the root package's `Dependencies` folder, whatever package
+    // named it: "<root>/Dependencies/<RepositoryName>" for a git URL,
+    // "<root>/Dependencies/<identity>" for a registry package. Flat, because SwiftPM
+    // guarantees one identity per package graph, and it is where `semel-vendor` copies
+    // SwiftPM's own checkouts (docs/superpowers/specs/2026-09-12-semel-vendor-design.md).
     // A registry identity keeps its case ("mona.LinkedList"), unlike a git identity, so
     // it can name a directory directly.
     //
@@ -299,26 +307,44 @@ struct SwiftFormulaConverter: Node {
             let registry      = (try? c.decode([SPMRegistryDependency].self,      forKey: .registry))      ?? []
 
             dependencies =
-                fileSystem.map { SPMPackageDependency(path: $0.path, origin: nil) } +
+                fileSystem.map { SPMPackageDependency.local(path: $0.path) } +
                 sourceControl.compactMap { control in
-                    control.vendoredSiblingPath.map {
-                        SPMPackageDependency(path: $0, origin: control.repositoryURL)
+                    control.repositoryName.map {
+                        SPMPackageDependency.vendored(name: $0, origin: control.repositoryURL ?? $0)
                     }
                 } +
                 registry.map {
-                    SPMPackageDependency(path: "../\($0.identity)", origin: "registry package \($0.identity)")
+                    SPMPackageDependency.vendored(name: $0.identity, origin: "registry package \($0.identity)")
                 }
         }
     }
 
-    /// A package dependency reduced to a local path. `origin` is nil for a fileSystem
-    /// dependency, whose path the manifest stated outright, and names the repository URL
-    /// or registry package for the other kinds, whose path is a convention this build
-    /// system applied — which is exactly the difference a user needs told when nothing is
-    /// at that path.
-    private struct SPMPackageDependency {
-        let path: String
-        let origin: String?
+    /// Where a package dependency's sources are. A `local` one states its path in the
+    /// manifest, relative to the declaring package. A `vendored` one is a git or registry
+    /// package that `semel-vendor` placed under the root's `Dependencies` folder; `origin`
+    /// names the repository URL or registry package the folder stands for — which is
+    /// exactly what a user needs told when nothing is at that path.
+    private enum SPMPackageDependency {
+        case local(path: String)
+        case vendored(name: String, origin: String)
+
+        /// The dependency's folder in the input file system.
+        func resolvedPath(declaringPackage: String, root: String, resolve: (String, String) -> String) -> String {
+            switch self {
+            case .local(let path):
+                return resolve(path, declaringPackage)
+            case .vendored(let name, _):
+                return "\(root)/\(Self.dependenciesFolderName)/\(name)"
+            }
+        }
+
+        var origin: String? {
+            if case .vendored(_, let origin) = self { return origin }
+            return nil
+        }
+
+        /// The folder under the root package where `semel-vendor` puts every checkout.
+        static let dependenciesFolderName = "Dependencies"
     }
 
     private struct SPMRegistryDependency: Decodable {
@@ -350,11 +376,6 @@ struct SwiftFormulaConverter: Node {
             repositoryName = url.flatMap { Self.directoryName(forRepositoryURL: $0) }
         }
 
-        /// A vendored dependency sits beside the package that named it.
-        var vendoredSiblingPath: String? {
-            repositoryName.map { "../\($0)" }
-        }
-
         /// "https://github.com/groue/GRDB.swift.git" -> "GRDB.swift".
         ///
         /// Derived from the URL rather than from SPM's `identity`, which is lowercased
@@ -382,11 +403,29 @@ struct SwiftFormulaConverter: Node {
         let sources: [String]
         /// `exclude:` list, relative to the target's path.
         let exclude: [String]
+        /// `.swiftLanguageMode(.v6)` from the target's `swiftSettings`, as the version string
+        /// (`"6"`). nil when the target declares none. Other settings kinds are not carried.
+        let languageMode: String?
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
 
         enum CodingKeys: String, CodingKey {
-            case name, type, path, dependencies, sources, exclude
+            case name, type, path, dependencies, sources, exclude, settings
+        }
+
+        /// One entry of a target's `settings` as `dump-package` emits it:
+        /// `{"kind": {"swiftLanguageMode": {"_0": "6"}}, "tool": "swift"}`. Kinds whose
+        /// payload is not a string (`unsafeFlags` carries an array) decode as nil and are
+        /// ignored, which is what "not carried" means.
+        private struct SPMSetting: Decodable {
+            let kind: [String: [String: String]]?
+
+            enum CodingKeys: String, CodingKey { case kind }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                kind  = try? c.decode([String: [String: String]].self, forKey: .kind)
+            }
         }
 
         init(from decoder: Decoder) throws {
@@ -397,6 +436,8 @@ struct SwiftFormulaConverter: Node {
             dependencies = (try? c.decode([SPMTargetDependency].self, forKey: .dependencies)) ?? []
             sources      = (try? c.decode([String].self, forKey: .sources)) ?? []
             exclude      = (try? c.decode([String].self, forKey: .exclude)) ?? []
+            let settings = (try? c.decode([SPMSetting].self, forKey: .settings)) ?? []
+            languageMode = settings.compactMap { $0.kind?["swiftLanguageMode"]?["_0"] }.first
             overridePackageFolder = nil
         }
 
@@ -745,6 +786,11 @@ struct SwiftFormulaConverter: Node {
         var derived = ["moduleName": target.name]
         if target.type == "executable" {
             derived["parseAsLibrary"] = "false"
+        }
+        // Like moduleName, a fact about the target: dropped, the code compiles in Swift 5
+        // mode with different diagnostics, and a config file must not be able to change it.
+        if let languageMode = target.languageMode {
+            derived["languageMode"] = languageMode
         }
         // Comma-joined because a configuration value is one line of `key=value` and so
         // cannot hold a newline. A path containing a comma would break this, as would one

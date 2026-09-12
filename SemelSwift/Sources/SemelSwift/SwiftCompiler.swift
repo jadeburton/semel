@@ -20,6 +20,9 @@ struct SwiftCompilerConfiguration {
     let optimisationLevel: String?
     let moduleName: String
     let parseAsLibrary: Bool
+    /// The target's `.swiftLanguageMode`, carried by the converter as a literal; nil means
+    /// the compiler's default mode, which is what every target without one built with.
+    let languageMode: String?
     /// SPM's `sources:` list, relative to the target folder. Empty means the whole tree.
     let sourcePaths: [String]
     /// SPM's `exclude:` list, relative to the target folder.
@@ -36,6 +39,7 @@ struct SwiftCompilerConfiguration {
         sdkVersion = properties["sdkVersion"]
         optimisationLevel = properties["optimisationLevel"]
         parseAsLibrary = properties["parseAsLibrary"] != "false"
+        languageMode = properties["languageMode"]
         sourcePaths = Self.pathList(properties["sourcePaths"])
         excludedPaths = Self.pathList(properties["excludedPaths"])
     }
@@ -347,6 +351,10 @@ struct SwiftCompiler: Node {
         }
 
         arguments.append("-module-name");                    arguments.append(moduleName)
+
+        if let languageMode = try swiftLanguageModeVersion(inputs.configuration.languageMode) {
+            arguments.append("-swift-version");              arguments.append(languageMode)
+        }
 
         if inputs.configuration.parseAsLibrary {
             arguments.append("-parse-as-library")

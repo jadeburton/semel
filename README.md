@@ -96,6 +96,22 @@ rm build/**
 
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 
+### Dependencies
+
+Semel never fetches anything: every file a build needs has to be inside the input file
+system. For a Swift package, `semel-vendor` puts them there:
+
+```sh
+.build/release/semel-vendor path/to/package-root
+```
+
+It runs `swift package resolve` and copies every git dependency, transitively, into
+`<package-root>/Dependencies/<name>` — one flat folder, one copy per package, named as
+SwiftPM names its checkouts (`Dependencies/GRDB.swift`). That folder is the only place the
+converter looks for a git or registry dependency, whichever package declared it. Local path
+dependencies stay wherever the manifest says. Run it again after changing a dependency;
+each copy is replaced, not merged.
+
 ## Architecture
 
 ```

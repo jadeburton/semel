@@ -33,6 +33,20 @@ let package = Package(
             path: "semel",
             sources: ["main.swift"]
         ),
+        // Copies a package's resolved dependencies into `<root>/Dependencies/<name>` so every
+        // file a build needs is inside the input file system, found by one rule. A tool
+        // outside the engine: it runs `swift package resolve` and copies, and depends on no
+        // Semel library. The copying lives in a library so it can be tested.
+        .target(
+            name: "SemelVendor",
+            path: "semel-vendor/Library"
+        ),
+        .executableTarget(
+            name: "semel-vendor",
+            dependencies: ["SemelVendor"],
+            path: "semel-vendor",
+            sources: ["main.swift"]
+        ),
         // The only place a test can see the converter and the engine at once. SemelSwift
         // deliberately does not depend on SemelCore, so nothing inside it can check that
         // the formula it emits is *complete* — only that it parses. This target can.
@@ -40,6 +54,7 @@ let package = Package(
             name: "SemelCLITests",
             dependencies: [
                 "SemelCLI",
+                "SemelVendor",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),

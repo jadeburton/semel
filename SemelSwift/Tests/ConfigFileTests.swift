@@ -154,3 +154,28 @@ final class DeclaredSDKTests: SemelSwiftTestCase {
         }
     }
 }
+
+// MARK: - The language mode
+
+/// `.swiftLanguageMode(.v6)` on a target becomes `-swift-version 6`. The converter carries it
+/// as a manifest-derived literal (`languageMode`); nothing declared emits no flag, which keeps
+/// every existing tree building the arguments it built before.
+final class LanguageModeTests: SemelSwiftTestCase {
+
+    func test_nothingDeclaredEmitsNoFlag() throws {
+        XCTAssertNil(try swiftLanguageModeVersion(nil))
+    }
+
+    func test_aDeclaredModeIsPassedThrough() throws {
+        XCTAssertEqual(try swiftLanguageModeVersion("6"), "6")
+        XCTAssertEqual(try swiftLanguageModeVersion("5"), "5")
+    }
+
+    func test_anUnknownModeIsRejectedNamingTheChoices() {
+        XCTAssertThrowsError(try swiftLanguageModeVersion("7")) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("7"), "got \(message)")
+            XCTAssertTrue(message.contains("6"), "should list what is accepted, got \(message)")
+        }
+    }
+}

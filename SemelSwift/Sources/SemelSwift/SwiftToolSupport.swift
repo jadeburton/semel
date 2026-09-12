@@ -86,6 +86,23 @@ func verifySDKVersion(_ declared: String?) throws {
     }
 }
 
+/// The `-swift-version` value for a declared `languageMode`, or nil when nothing is declared.
+///
+/// The converter derives it from a target's `.swiftLanguageMode`; it is the mode's version
+/// string as `swiftc` spells it. Nothing declared emits no flag, which keeps every target
+/// without one building exactly the arguments it built before this setting existed.
+func swiftLanguageModeVersion(_ declared: String?) throws -> String? {
+    guard let declared else {
+        return nil
+    }
+    let accepted = ["4", "4.2", "5", "6"]
+    guard accepted.contains(declared) else {
+        throw NodeError.other(message: "languageMode=\(declared) is not a Swift language mode; "
+                                     + "swiftc accepts \(accepted.joined(separator: ", ")).")
+    }
+    return declared
+}
+
 /// The `swiftc` flag for a declared `optimisationLevel`, or nil when nothing is declared.
 ///
 /// Named for what the user wants rather than for the flag: `-Osize` and `-O` are not a
