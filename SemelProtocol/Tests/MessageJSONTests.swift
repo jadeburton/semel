@@ -49,6 +49,125 @@ final class MessageJSONTests: XCTestCase {
         XCTAssertEqual(ProtocolVersion.current, 1)
     }
 
+    // MARK: - Daemon requests
+
+    func test_encodesListRequestUnderItsRole() throws {
+        let request = Request.daemon(.list(fileSystem: .input, pattern: "src/*.c"))
+
+        XCTAssertEqual(try json(request),
+                       #"{"daemon":{"list":{"fileSystem":"input","pattern":"src\/*.c"}}}"#)
+    }
+
+    func test_encodesAPayloadFreeRequestAsAnEmptyObject() throws {
+        XCTAssertEqual(try json(Request.daemon(.reset)), #"{"daemon":{"reset":{}}}"#)
+    }
+
+    func test_encodesHelloRequestBesideTheRoles() throws {
+        let request = Request.hello(Hello(protocolVersion: 1, role: .daemon))
+
+        XCTAssertEqual(try json(request), #"{"hello":{"protocolVersion":1,"role":"daemon"}}"#)
+    }
+
+    func test_roundTripsEveryDaemonRequest() throws {
+        let requests: [DaemonRequest] = [
+            .list(fileSystem: .output, pattern: "**/*"),
+            .beginBatch,
+            .endBatch,
+            .pushFile(path: "src/main.c", mode: 0o644),
+            .pushFolder(path: "src"),
+            .remove(pattern: "src/*.o"),
+            .fetch(fileSystem: .output, path: "bin/app"),
+            .errors,
+            .tools,
+            .reset,
+            .nudge,
+            .debug,
+            .subscribe,
+        ]
+        for request in requests {
+            XCTAssertEqual(try roundTrip(Request.daemon(request)), .daemon(request))
+        }
+    }
+
+    // MARK: - Daemon responses
+
+    func test_encodesListEntryWithOptionalSizeAndMode() throws {
+        let entry = ListEntry(path: "src/main.c", kind: .file, size: 120, mode: 0o644, status: .none)
+
+        XCTAssertEqual(try json(entry),
+                       #"{"kind":"file","mode":420,"path":"src\/main.c","size":120,"status":"none"}"#)
+    }
+
+    func test_omitsAbsentSizeAndModeFromListEntry() throws {
+        let entry = ListEntry(path: "src", kind: .folder, size: nil, mode: nil, status: .missing)
+
+        XCTAssertEqual(try json(entry), #"{"kind":"folder","path":"src","status":"missing"}"#)
+    }
+
+    func test_roundTripsEveryDaemonResponse() throws {
+        let record = ErrorRecord(label: "SwiftCompiler  'input:/a.swift'",
+                                 entries: [ErrorEntry(ports: ["output", "errorLog"], message: "boom")])
+        let descriptor = ToolDescriptorRecord(name: "swiftc", version: "6.0", platform: "macos",
+                                              architecture: "arm64", machineSettings: ["sdk": "/x"])
+        let responses: [DaemonResponse] = [
+            .ok,
+            .list(entries: [ListEntry(path: "a", kind: .file, size: 1, mode: 0o755, status: .pending)]),
+            .pushFile(didChange: true),
+            .remove(removedPaths: ["a", "b"]),
+            .fetch(mode: 0o644),
+            .errors(records: [record]),
+            .tools(namespaces: [ToolNamespace(namespace: "swift.compiler", toolName: "swiftc",
+                                              descriptors: [descriptor])]),
+            .debug(text: "⬢ Folder #1"),
+        ]
+        for response in responses {
+            XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
+        }
+    }
+
+    func test_roundTripsEveryErrorResponse() throws {
+        let errors: [ErrorResponse] = [
+            .pathNotFound(path: "input:/nope"),
+            .notAFolder(path: "input:/file"),
+            .nodeError(description: "wire missing"),
+            .roleNotOffered(role: .runner),
+            .malformedRequest(description: "unknown case"),
+            .unrecoverable(message: "object store is read-only"),
+        ]
+        for error in errors {
+            XCTAssertEqual(try roundTrip(Response.error(error)), .error(error))
+        }
+    }
+
+    func test_roundTripsHelloResponseAtTheRoot() throws {
+        let response = Response.hello(.accepted(serverVersion: "1", databasePath: "/g"))
+
+        XCTAssertEqual(try roundTrip(response), response)
+    }
+
+    // MARK: - Events
+
+    func test_encodesNoticeEvent() throws {
+        XCTAssertEqual(try json(Event.daemon(.notice(line: "output:/app: written"))),
+                       #"{"daemon":{"notice":{"line":"output:\/app: written"}}}"#)
+    }
+
+    func test_roundTripsErrorsEvent() throws {
+        let event = Event.daemon(.errors(records: [ErrorRecord(label: "x", entries: [])]))
+
+        XCTAssertEqual(try roundTrip(event), event)
+    }
+
+    // MARK: - Decoding what we do not know
+
+    /// A peer built against a newer message set will send cases this build has never
+    /// heard of. That must decode as an error, not crash, so the server can answer it.
+    func test_decodingAnUnknownCaseThrows() {
+        let data = Data(#"{"daemon":{"teleport":{}}}"#.utf8)
+
+        XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data))
+    }
+
     // MARK: - Helpers
 
     func json<Message: Encodable>(_ message: Message) throws -> String {
