@@ -121,42 +121,56 @@ Depends on B-26.
 No static archive support; every library product becomes a `.dylib` by assumption rather
 than by choice.
 
-**B-10** `open` — **Publish only final products.** *Do after B-50.*
-`libSemelCore.dylib` and friends appear in `output:` though they are internal. A
-product is an intermediate iff another discovered package consumes it — roots of the
-dependency DAG are the deliverables. Nesting is *not* the right test: it misclassifies
-`MyLibrary`, a sibling of `MyApp` consumed by it.
+**B-10** `open` — **Publish only final products: packages are referenced from a formula,
+not discovered.**
+`libSemelCore.dylib` and friends appear in `output:` though they are internal. A product
+is an intermediate iff something consumes it — roots of the DAG are the deliverables, and
+nesting is *not* the test (it misclassifies `MyLibrary`, a sibling of `MyApp` consumed by
+it). The root set is a fact about intent, so the user states it rather than the engine
+inferring it.
 
-Plan, agreed 2026-09:
-1. `SwiftFormulaConverter` gains a `dependencies` output port. Its BFS already accumulates
-   `visitedPaths`; publish it (sorted, minus the root) instead of dropping it.
-2. `ProjectBuilderPlugin` gains `dependencyListExpectation(forEntry:inFolder:)`, default
-   nil — a `.fmla` project declares no package dependencies. `expectationString` gains a
-   `publishesProducts: Bool` parameter so the *plugin* renders the property into the
-   `ProjectBuilder` shape; `ProjectFinder` cannot inject a property into an expectation
-   string it treats as opaque.
-3. `ProjectFinder` wires the dependency lists into a new dynamic port, unions them, and
-   re-emits builder expectations with `publishProducts: 'false'` for any builder whose
-   folder is in the union.
-4. `ProjectBuilder.process` skips building `productExpectations` when the property is
-   false.
+Plan, agreed 2026-09-12, replacing the inferred-roots plan:
+1. **Stop auto-discovering `Package.swift`.** `SwiftPackagePlugin` no longer answers
+   `ProjectFinder`; only `.fmla` files create a `ProjectBuilder`. Dependency packages then
+   have no builder of their own, so no separate artifacts, no `publishProducts` property,
+   no publish-then-retract flap, and no ordering against B-50. Their targets still compile
+   exactly as now — the consumer's formula names the same compiler shapes and searchKey
+   matching shares the nodes.
+2. **A formula references a package.** Grammar gains a `package <path>` reference to a
+   `Package.swift`. `ProjectBuilder` resolves it by wiring a `SwiftFormulaConverter`
+   expectation on a new dynamic port keyed by package folder and returning pending until
+   the converter's formula arrives — the same expectation-and-wait pattern the converter
+   uses for external manifests. The converter already emits one formula for the root and
+   every dependency it can reach, so this is splicing, not new generation. The formula's
+   own `product` definitions name that package's products.
+3. **Dependency overrides live in the formula.** The converter skips dependencies resolving
+   outside `input:` and stalls on missing local ones, and its own stall text admits the
+   user cannot fix that from `Package.swift`. The formula is where a repository URL maps to
+   a pushed path — SPM keeps the same fact out of band, in `Package.resolved` and mirrors.
+   This is needed regardless of the artifact question and is why the formula must exist
+   for package builds anyway.
+4. **Products go beside the formula**, always. Delete the "inside the package folder"
+   special case in `SwiftPackagePlugin` and its `ProjectBuilderTests` case. Settings follow
+   the rule already in the converter's comments — the consumer owns the config — so the
+   formula's folder does.
+5. **Discoverability.** `ProjectFinder` still sees every manifest; report at idle any
+   `Package.swift` that no formula references, so a pushed repo with no formula explains
+   itself instead of building nothing silently.
 
-Corrections to what this item used to claim. The depended-upon package's products do not
-"still build" — the `OutputFile` wrappers lose their consumer and are collected, and so are
-that package's own linker nodes. Its *targets* still compile, because the consumer's
-formula names the same compiler shapes and searchKey matching shares the nodes; only the
-separate artifacts stop existing, which is the point.
+Namespacing is the one design question to settle before step 2: two packages referenced
+from one formula can define funcs of the same name, which one-formula-per-root avoids
+today. Either restrict a formula to one `package` reference (the "master package" that
+references the rest) or prefix imported names. Start with the restriction; it covers the
+known cases and can be lifted later.
 
-`publishProducts` is a property, so it is part of the searchKey and flipping it *replaces*
-the builder node. On a cold graph, builders are created publishing and replaced when the
-converters report their dependencies — all inside one drain, before the first settle. With
-B-50, the flap is therefore invisible by construction: the settle diff never contains the
-retracted files. That is the reason for the ordering, and why the publish-then-retract
-design (chosen over withholding builders until dependencies are known, which couples every
-package's discovery to the health of every other) is acceptable at all.
+Granularity is per package, not per product: a dependency that also vends an executable
+loses it. Acceptable until a real case shows up.
 
-Granularity is per package, not per product: a depended-upon package that also vends an
-executable loses that too. Acceptable until a real case shows up.
+Previous plan, declined 2026-09-12: infer roots from converter-published dependency lists
+unioned in `ProjectFinder`, flip a `publishProducts` property to replace the builder node,
+and rely on B-50's settle diff to hide the flap. It worked, but it added a port, a plugin
+protocol parameter, a property and an ordering constraint to approximate what one line of
+formula states directly.
 
 **B-26** `open` — **Recursive content hash for a folder tree.**
 `FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
