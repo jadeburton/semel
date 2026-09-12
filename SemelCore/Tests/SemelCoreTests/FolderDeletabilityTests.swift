@@ -66,9 +66,8 @@ final class FolderDeletabilityTests: SemelCoreTestCase {
     /// `canBeDeleted`. Lives here rather than in the engine so the fast path has something
     /// independent to be checked against.
     private func canBeDeletedPolymorphically(_ folder: Folder) throws -> Bool {
-        let childrenOK = try folder.thisNode.allChildren
-            .filter { try !$0.makeNode().canBeDeleted() }
-            .isEmpty
+        let childrenOK = try !folder.thisNode.allChildren
+            .contains { try !$0.makeNode().canBeDeleted() }
         return try childrenOK && !(folder.canBePinned() && folder.isPinned)
     }
 

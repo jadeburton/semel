@@ -59,7 +59,7 @@ public final class DatabaseLayer {
         let db: Database
     }
 
-    @TaskLocal static var currentDB: TaskLocalDatabase? = nil
+    @TaskLocal static var currentDB: TaskLocalDatabase?
 
     // ── The boundary every access goes through ───────────────────────────────
     //

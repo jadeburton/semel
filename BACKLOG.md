@@ -300,43 +300,6 @@ references" — a **GC root**. `isRooted` is more accurate only to a reader alre
 collector terms, and would read as "the root of the file system" to everyone else. Revisit
 only if a real collector lands.
 
-**B-46** `open` — **Set up SwiftLint, or an equivalent.**
-Moved from `FUTURE.md`, which is for direction; this is a bounded task sitting among open
-design questions.
-
-*The concrete case for it.* SwiftLint ships `contains_over_filter_is_empty`, which is exactly
-the defect `9019d50` fixed by hand in `Folder.canBeDeleted`:
-
-    try (thisNode.allChildren.filter { try !$0.nodeFunction().canBeDeleted() }).isEmpty
-
-That built the whole array rather than stopping at the first objection, on a path the
-collector walks per level of a tree. A linter would have said so before anyone thought to
-look.
-
-*The honest limit of the case.* Little else fixed recently would have been caught. The
-redundant-`try` sweep in `ae8c618` was the compiler's doing, and "comments should not narrate
-the project's history" (`eec8009`) is not mechanically checkable. Expect a linter to catch a
-class of small waste, not the things that took a conversation.
-
-*The actual work is choosing the rule set, not installing it.* SwiftLint's default rules on a
-codebase this size will produce a very long first run, and a wall of warnings nobody triages
-is worse than none — it trains people to ignore the tool, and it buries the one finding that
-matters. So the decision to make first is which rules are on:
-
-- Rules that would have caught real defects here — `contains_over_filter_is_empty`,
-  `empty_count`, `first_where`, `last_where` — are the reason to do this at all.
-- Purely stylistic rules (line length, brace placement, trailing whitespace) need a separate
-  decision, because they will produce the bulk of the noise and none of the value. Whatever is
-  chosen has to match what is already written rather than reformat it.
-- `force_unwrapping` and `force_try` deserve their own thought. They are common in this
-  codebase and often deliberate — `insertOrGetID` force-unwraps a `SELECT` that cannot miss,
-  and `thisNode.properties["path"]!` is load-bearing in the file-system types. Turning that
-  rule on means either a large exemption list or a large argument.
-
-*Also worth settling:* whether it runs in CI as a failure or a report, and whether formatting
-is in scope at all — `swift-format` is a different tool with a different answer, and adopting
-both is how a repo ends up with two opinions about the same line.
-
 **B-47** `open` — **The SDK is declared but not an input.**
 From a TODO at `SwiftCompiler.swift:169`, whose specific ask is already answered — the
 setting does now live in a `semel.config` inside the input file system. What it was pointing

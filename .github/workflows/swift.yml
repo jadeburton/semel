@@ -37,3 +37,19 @@ jobs:
 
       - name: Test the CLI
         run: swift test
+
+  # A separate job so a lint finding and a test failure show up as two red marks, not one.
+  # `--strict` because the rule set in .swiftlint.yml is small and curated: every finding is
+  # a real defect of the kind that has cost this codebase before, so it fails the build
+  # rather than filing a report nobody reads. Formatting is out of scope here.
+  lint:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Lint
+        run: swiftlint --strict

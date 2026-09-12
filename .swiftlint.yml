@@ -1,0 +1,57 @@
+# SwiftLint configuration (B-46).
+#
+# A curated set, not the default one. Every rule here catches a class of small waste that
+# has actually cost this codebase something — `contains_over_filter_is_empty` is exactly
+# the defect 9019d50 fixed by hand in Folder.canBeDeleted, which built a whole array on a
+# path the collector walks per tree level instead of stopping at the first objection.
+#
+# Stylistic rules (line length, brace placement, whitespace, naming, body lengths) are
+# deliberately off: on a codebase this size they produce the bulk of the noise and none of
+# the value, and a wall of warnings nobody triages trains people to ignore the tool.
+#
+# force_unwrapping, force_try and force_cast are also off. They are common and deliberate
+# here: `insertOrGetID` force-unwraps a SELECT that cannot miss, and
+# `thisNode.properties["path"]!` is load-bearing in the file-system node types. Turning
+# them on would mean a large exemption list or a large argument, neither of which is the
+# point of a linter.
+#
+# CI runs `swiftlint --strict`, so every finding fails the build. That is the right mode for
+# a set this small: a report nobody reads is the failure mode this file exists to avoid.
+# Formatting (swift-format, autocorrect) is out of scope.
+
+only_rules:
+  # Walking a whole collection to answer a yes/no question.
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - empty_count
+  - first_where
+  - last_where
+  - sorted_first_last
+  - reduce_boolean
+  - flatmap_over_map_reduce
+  # Bindings and parameters that are declared and never read.
+  - unused_optional_binding
+  - unused_closure_parameter
+  # Code that says nothing.
+  - implicit_optional_initialization
+  - unneeded_break_in_switch
+
+included:
+  - SemelNodeKit/Sources
+  - SemelNodeKit/Tests
+  - SemelDatabaseModels/Sources
+  - SemelCore/Sources
+  - SemelCore/Tests
+  - SemelSwift/Sources
+  - SemelSwift/Tests
+  - SemelClang/Sources
+  - SemelClang/Tests
+  - semel
+
+excluded:
+  - "**/.build"
+  - .claude
+  - .swiftpm
+  - docs
