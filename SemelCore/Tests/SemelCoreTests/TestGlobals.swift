@@ -1,6 +1,6 @@
 //
 //  TestGlobals.swift
-//  build_system_tests
+//  semel_tests
 //
 //  The build system resolves its object store, symbol table and tool registry through
 //  process-globals on purpose: threading them through every `intern()` and every node
@@ -49,7 +49,7 @@ enum TestGlobals {
 
     private static func makeTemporaryStoreRoot() -> URL {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("build_system-tests", isDirectory: true)
+            .appendingPathComponent("semel-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 }

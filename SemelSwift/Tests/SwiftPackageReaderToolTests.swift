@@ -1,6 +1,6 @@
 //
 //  SwiftPackageReaderToolTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  This node's output is the dumped manifest, which drives the whole formula and every
 //  node downstream of it. Anything it can see that the graph cannot is an input nobody

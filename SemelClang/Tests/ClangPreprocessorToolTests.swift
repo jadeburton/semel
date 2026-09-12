@@ -1,6 +1,6 @@
 //
 //  ClangPreprocessorToolTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  The preprocessor's work is a command line, so a recording executor is enough to see all
 //  of it. What these cover is that every part of that command line which describes the

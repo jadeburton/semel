@@ -1,5 +1,5 @@
 // SessionPlugin.swift
-// build_system
+// semel
 //
 // Handles: base, begin, commit, discard, q / quit / exit
 

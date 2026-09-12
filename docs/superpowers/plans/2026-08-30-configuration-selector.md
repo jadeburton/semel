@@ -18,7 +18,7 @@
 - **Determinism:** anything rendered into a formula or a wire value must be sorted. `Dictionary` iteration order is seeded per process.
 - **Comments describe the present.** No "used to", "the old X", or narration of what changed — that belongs in commit messages.
 - **Every task ends green:** `swift build` plus all five suites (`SemelNodeKit`, `SemelSwift`, `SemelClang`, `SemelCore`, root CLI). Baseline is 464 tests.
-- **Run tests with absolute paths:** `swift test --package-path /Users/jadeburton/Semel/build_system/<Package>`. A bare relative path breaks when the shell's directory has drifted.
+- **Run tests with absolute paths:** `swift test --package-path /Users/jadeburton/Semel/semel/<Package>`. A bare relative path breaks when the shell's directory has drifted.
 - **After deleting or renaming a file**, clear the stale SPM plan for that package: `rm -f <Package>/.build/build.db <Package>/.build/plan.json`. Otherwise the build fails with "missing inputs" for a file that no longer exists.
 
 ---
@@ -132,7 +132,7 @@ final class ConfigSubsetTests: SemelCoreTestCase {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelCore --filter ConfigSubset`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelCore --filter ConfigSubset`
 Expected: FAIL — "cannot find 'ConfigSubset' in scope".
 
 - [ ] **Step 3: Write the implementation**
@@ -211,7 +211,7 @@ In `SemelCore/Sources/SemelCore/BuildEngine.swift`, add `ConfigSubset.self` to t
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelCore --filter ConfigSubset`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelCore --filter ConfigSubset`
 Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Run every suite**
@@ -286,7 +286,7 @@ final class SettingNamespaceTests: XCTestCase {
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelNodeKit --filter SettingNamespace`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelNodeKit --filter SettingNamespace`
 Expected: FAIL — "cannot find 'derivedSettingNamespace' in scope".
 
 - [ ] **Step 3: Write the implementation**
@@ -357,7 +357,7 @@ private extension String {
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelNodeKit --filter SettingNamespace`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelNodeKit --filter SettingNamespace`
 Expected: PASS, 4 tests.
 
 - [ ] **Step 5: Commit**
@@ -492,7 +492,7 @@ final class ConfigFileTests: SemelSwiftTestCase {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelSwift --filter ConfigFile`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelSwift --filter ConfigFile`
 Expected: FAIL — the formula contains no `ConfigSubset`.
 
 - [ ] **Step 3: Emit the selector in the converter**
@@ -541,7 +541,7 @@ rm -f SemelSwift/.build/build.db SemelSwift/.build/plan.json
 
 - [ ] **Step 5: Run to verify they pass**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelSwift --filter ConfigFile`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelSwift --filter ConfigFile`
 Expected: PASS, 4 tests.
 
 - [ ] **Step 6: Run every suite**
@@ -662,7 +662,7 @@ final class MissingSettingTests: SemelSwiftTestCase {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelSwift --filter MissingSetting`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelSwift --filter MissingSetting`
 Expected: FAIL — the initialiser does not throw.
 
 - [ ] **Step 3: Make the initialisers throwing and demanding**
@@ -888,7 +888,7 @@ Note: `test_aKeyNoSelectorAsksForIsReported` asserts a key *under* a claimed pre
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `swift test --package-path /Users/jadeburton/Semel/build_system/SemelCore --filter UnclaimedConfigKey`
+Run: `swift test --package-path /Users/jadeburton/Semel/semel/SemelCore --filter UnclaimedConfigKey`
 Expected: FAIL — `unclaimedConfigKeys` does not exist.
 
 - [ ] **Step 3: Implement**

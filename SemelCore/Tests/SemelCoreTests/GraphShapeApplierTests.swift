@@ -1,6 +1,6 @@
 //
 //  GraphShapeApplierTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  Turning a shape string into live nodes and wires, and finding the node that already
 //  matches one. Node identity lives here.

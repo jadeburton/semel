@@ -28,7 +28,7 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // Tests
             .deletingLastPathComponent()   // SemelSwift
-            .deletingLastPathComponent()   // build_system
+            .deletingLastPathComponent()   // semel
     }
 
     /// Every folder in this tree holding a `Package.swift`, which is exactly the set

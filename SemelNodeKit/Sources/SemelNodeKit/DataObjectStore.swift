@@ -1,5 +1,5 @@
 // DataObjectStore.swift
-// build_system
+// semel
 //
 // Content-addressed filesystem store for DataObject bytes.
 //
@@ -10,7 +10,7 @@
 // + write cycle.
 //
 // Store layout:
-//   ~/Library/Application Support/build_system/objects/<xx>/<sha256hash>
+//   ~/Library/Application Support/semel/objects/<xx>/<sha256hash>
 //
 // The two-character prefix shard (`<xx>`) avoids single-directory inode
 // limits when thousands of objects accumulate — the same technique used
@@ -39,7 +39,7 @@ public final class DataObjectStore {
     convenience init() {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.init(storeRoot: appSupport.appendingPathComponent("build_system/objects",
+        self.init(storeRoot: appSupport.appendingPathComponent("semel/objects",
                                                                isDirectory: true))
     }
 

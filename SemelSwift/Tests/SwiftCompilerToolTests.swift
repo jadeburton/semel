@@ -1,6 +1,6 @@
 //
 //  SwiftCompilerToolTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  A FolderManifest lists only a folder's immediate children, so discovering the sources
 //  of a nested target takes more than one pass. These tests pin down that walk: which
@@ -134,22 +134,22 @@ final class SwiftCompilerToolTests: SemelSwiftTestCase {
     // MARK: - Explicit source lists
 
     /// SPM lets one target's directory contain another's, kept apart by `sources:`.
-    /// This repository's own executable target is `build_system`, whose directory also
+    /// This repository's own executable target is `semel`, whose directory also
     /// holds SemelCLI's sources and the XCTest target — walking it wholesale
     /// compiles a sibling target's files and the test suite into the binary.
     func test_restrictsSourceDiscoveryToAnExplicitSourcesList() throws {
         let output = try makeTool().process(input: try makeInput(
-            folder: try manifest("input:/pkg/build_system", [file("main.swift"), folder("CommandInterpreter")]),
-            subfolders: ["input:/pkg/build_system/CommandInterpreter":
-                            try manifest("input:/pkg/build_system/CommandInterpreter", [file("Repl.swift")])],
+            folder: try manifest("input:/pkg/semel", [file("main.swift"), folder("CommandInterpreter")]),
+            subfolders: ["input:/pkg/semel/CommandInterpreter":
+                            try manifest("input:/pkg/semel/CommandInterpreter", [file("Repl.swift")])],
             extraConfiguration: ["sourcePaths=main.swift"]))
 
-        XCTAssertEqual(try sourceExpectations(output), ["input:/pkg/build_system/main.swift"])
+        XCTAssertEqual(try sourceExpectations(output), ["input:/pkg/semel/main.swift"])
     }
 
     func test_doesNotDescendIntoSubfoldersOutsideAnExplicitSourcesList() throws {
         let output = try makeTool().process(input: try makeInput(
-            folder: try manifest("input:/pkg/build_system", [file("main.swift"), folder("Tests")]),
+            folder: try manifest("input:/pkg/semel", [file("main.swift"), folder("Tests")]),
             extraConfiguration: ["sourcePaths=main.swift"]))
 
         XCTAssertEqual(try subfolderExpectations(output), [:])

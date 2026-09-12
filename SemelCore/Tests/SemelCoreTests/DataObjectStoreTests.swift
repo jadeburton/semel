@@ -1,6 +1,6 @@
 //
 //  DataObjectStoreTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  The store is content-addressed, which means the name of every object is a claim about
 //  its bytes. Nothing checked that claim on the way out, so bit rot, a truncated write or

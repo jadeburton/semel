@@ -29,7 +29,7 @@ The engine models a build as a persistent directed graph of **Nodes** (compilati
 
 ```sh
 git clone <repo-url>
-cd build_system
+cd semel
 swift build -c release
 ```
 
@@ -95,7 +95,7 @@ Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 ## Architecture
 
 ```
-build_system/          CLI executable — REPL and command plugins
+semel/          CLI executable — REPL and command plugins
 SemelCore/       Core library
   BuildEngine          Async process loop, batch scheduling, deferred deletion
   FormulaParser        Reads .fmla text into a graph shape

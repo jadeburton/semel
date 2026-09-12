@@ -1,5 +1,5 @@
 // Path.swift
-// build_system
+// semel
 //
 // A type-safe representation of an internal (virtual) file path.
 // Internal paths are slash-separated sequences of name segments, e.g.

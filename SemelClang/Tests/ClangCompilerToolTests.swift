@@ -1,6 +1,6 @@
 //
 //  ClangCompilerToolTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  The tool wrappers' real work is assembling a command line and mapping the result onto
 //  output ports. A recording executor makes both observable without running a compiler.

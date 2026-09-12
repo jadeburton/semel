@@ -1,5 +1,5 @@
 // ClangIncludeFinder.swift
-// build_system
+// semel
 //
 // Takes a .c or .h source file as input and outputs a newline-separated list
 // of quoted #include paths found in that file (system angle-bracket includes

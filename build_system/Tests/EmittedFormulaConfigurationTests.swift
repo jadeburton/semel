@@ -108,7 +108,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
     private func makeTemporaryStoreRoot() -> URL {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("build_system-cli-tests", isDirectory: true)
+            .appendingPathComponent("semel-cli-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 

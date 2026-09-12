@@ -1,6 +1,6 @@
 //
 //  NodeLifecycleTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  Creation, pinning and the deferred delete cascade for the file-system node types.
 //  Three of the defects found in review lived in this path: a resurrected pending
@@ -65,12 +65,12 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     /// database ordering. `ensureEntirePathExistsAsFolders` already refused to walk such
     /// a folder — this stops the state being created in the first place.
     func test_aFileCannotTakeTheNameOfAnExistingSiblingFolder() throws {
-        _ = try engine.outputFileSystem.ensureEntirePathExistsAsFolders(Path("build_system"), pinned: false)
+        _ = try engine.outputFileSystem.ensureEntirePathExistsAsFolders(Path("semel"), pinned: false)
 
-        XCTAssertThrowsError(try GraphShapeNode.parse("OutputFile(path: 'output:/build_system')")
+        XCTAssertThrowsError(try GraphShapeNode.parse("OutputFile(path: 'output:/semel')")
                                 .findOrCreateMatchingNode()) { error in
             let message = String(describing: error)
-            XCTAssertTrue(message.contains("build_system"), "should name the collision, got \(message)")
+            XCTAssertTrue(message.contains("semel"), "should name the collision, got \(message)")
         }
     }
 

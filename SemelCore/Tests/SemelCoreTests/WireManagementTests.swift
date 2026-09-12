@@ -1,6 +1,6 @@
 //
 //  WireManagementTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  Wiring is where the graph actually changes shape. Every structural bug found so far
 //  has passed through connectWire or deleteWire.

@@ -1,6 +1,6 @@
 //
 //  GraphShape.swift
-//  build_system
+//  semel
 //
 //  Pure model, serialisation, topology comparison, and parser for graph shapes.
 //  No database or live-graph access — see GraphShapeApplier.swift for that.

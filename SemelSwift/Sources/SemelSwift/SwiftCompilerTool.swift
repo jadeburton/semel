@@ -1,5 +1,5 @@
 // SwiftCompilerTool.swift
-// build_system
+// semel
 //
 
 import Foundation
@@ -54,7 +54,7 @@ struct SwiftCompilerToolConfiguration {
 /// Which files under a target's folder actually belong to the target.
 ///
 /// SPM lets a target declare an explicit `sources:` list, and lets one target's directory
-/// contain another's — this repository's own executable target is `build_system`, whose
+/// contain another's — this repository's own executable target is `semel`, whose
 /// directory also holds SemelCLI's sources and the XCTest target. So "every .swift
 /// file beneath the folder" is not the same thing as "this target's sources", and the
 /// recursive walk needs both predicates to stay honest.

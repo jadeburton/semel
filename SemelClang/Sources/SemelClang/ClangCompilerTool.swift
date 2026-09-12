@@ -1,5 +1,5 @@
 // ClangCompilerTool.swift
-// build_system
+// semel
 //
 // Clang compiler stage: compiles a preprocessed .p file into a .o object file.
 

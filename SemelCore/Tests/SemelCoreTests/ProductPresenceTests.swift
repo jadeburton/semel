@@ -1,6 +1,6 @@
 //
 //  ProductPresenceTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  A pure function, so these need no graph at all — which is the point of it living
 //  outside ProjectBuilder.

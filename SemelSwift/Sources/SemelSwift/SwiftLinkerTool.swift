@@ -1,5 +1,5 @@
 // SwiftLinkerTool.swift
-// build_system
+// semel
 //
 // Swift linker stage: links one or more .o object files into a final
 // executable or dynamic library using `swiftc` as the driver.

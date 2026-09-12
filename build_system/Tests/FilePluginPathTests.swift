@@ -43,7 +43,7 @@ final class FilePluginPathTests: XCTestCase {
 
     private func makeTempDirectory() -> URL {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("build_system-cli-tests", isDirectory: true)
+            .appendingPathComponent("semel-cli-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 
@@ -224,7 +224,7 @@ final class PushTreeTests: XCTestCase {
 
     private func makeTempDirectory() -> URL {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("build_system-cli-tests", isDirectory: true)
+            .appendingPathComponent("semel-cli-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 

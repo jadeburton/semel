@@ -1,6 +1,6 @@
 //
 //  SwiftFormulaConverterTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  The converter turns a `swift package dump-package` manifest into the .fmla text
 //  ProjectBuilder consumes, so the interesting assertions are all about which blocks
@@ -155,7 +155,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     /// Same reach as the module map: the executable is three packages away and names
     /// GRDBSQLite nowhere, but its archive still has to be on the link line.
     func test_reachesASystemLibraryThroughThreePackagesAtLinkTime() throws {
-        let block = try productBlock("build_system", in: try rootFormula())
+        let block = try productBlock("semel", in: try rootFormula())
 
         XCTAssertTrue(block.contains("'GRDBSQLite': Folder(path: 'input:/repo/GRDB.swift/Sources/GRDBSQLite').manifest"),
                       "got:\n\(block)")
@@ -346,11 +346,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_carriesAnExplicitSourcesListIntoTheCompilerConfiguration() throws {
         let result = try formula(json: """
             {
-              "name": "build_system",
+              "name": "semel",
               "dependencies": [],
               "products": [],
               "targets": [
-                {"name": "build_system", "type": "executable", "path": "build_system",
+                {"name": "semel", "type": "executable", "path": "semel",
                  "sources": ["main.swift"], "dependencies": []}
               ]
             }
@@ -402,35 +402,35 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_emitsAnExecutableTargetThatNoProductDeclares() throws {
         let result = try formula(json: """
             {
-              "name": "build_system",
+              "name": "semel",
               "dependencies": [],
               "products": [],
               "targets": [
-                {"name": "build_system", "type": "executable", "path": "build_system", "dependencies": []}
+                {"name": "semel", "type": "executable", "path": "semel", "dependencies": []}
               ]
             }
             """)
 
-        XCTAssertTrue(result.contains("product 'build_system' ="), "got:\n\(result)")
-        XCTAssertTrue(result.contains("func compilerbuild_system()"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("product 'semel' ="), "got:\n\(result)")
+        XCTAssertTrue(result.contains("func compilersemel()"), "got:\n\(result)")
     }
 
     /// An implicit product is an executable, not a library — it must not be linked as
-    /// libbuild_system.dylib.
+    /// libsemel.dylib.
     func test_linksAnImplicitExecutableProductAsAnExecutable() throws {
         let result = try formula(json: """
             {
-              "name": "build_system",
+              "name": "semel",
               "dependencies": [],
               "products": [],
               "targets": [
-                {"name": "build_system", "type": "executable", "path": "build_system", "dependencies": []}
+                {"name": "semel", "type": "executable", "path": "semel", "dependencies": []}
               ]
             }
             """)
 
         XCTAssertTrue(result.contains(
-            "Configuration(dynamicLibrary: 'false', outputName: 'build_system', inherit: ['settings': "
+            "Configuration(dynamicLibrary: 'false', outputName: 'semel', inherit: ['settings': "
             + "ConfigSubset(prefix: 'swift.linker', "
             + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
             "got:\n\(result)")
@@ -521,17 +521,17 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     /// test target that must never be built.
     private let rootManifestShape = """
         {
-          "name": "build_system",
+          "name": "semel",
           "dependencies": [{"fileSystem": [{"identity": "buildsystemcore", "path": "SemelCore"}]}],
           "products": [],
           "targets": [
-            {"name": "SemelCLI", "type": "regular", "path": "build_system/CommandInterpreter",
+            {"name": "SemelCLI", "type": "regular", "path": "semel/CommandInterpreter",
              "dependencies": [{"product": ["SemelCore", "SemelCore", null, null]}]},
-            {"name": "build_system", "type": "executable", "path": "build_system",
+            {"name": "semel", "type": "executable", "path": "semel",
              "sources": ["main.swift"],
              "dependencies": [{"byName": ["SemelCLI", null]},
                               {"product": ["SemelCore", "SemelCore", null, null]}]},
-            {"name": "SemelCLITests", "type": "test", "path": "build_system/Tests",
+            {"name": "SemelCLITests", "type": "test", "path": "semel/Tests",
              "dependencies": [{"byName": ["SemelCLI", null]}]}
           ]
         }
@@ -567,8 +567,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_buildsTheExecutableFromThisRepositorysOwnRootManifest() throws {
         let result = try rootFormula()
 
-        XCTAssertTrue(result.contains("product 'build_system' ="), "got:\n\(result)")
-        XCTAssertTrue(result.contains("'build_system.o': compilerbuild_system().object"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("product 'semel' ="), "got:\n\(result)")
+        XCTAssertTrue(result.contains("'semel.o': compilersemel().object"), "got:\n\(result)")
         XCTAssertTrue(result.contains("'SemelCLI.o': compilerSemelCLI().object"), "got:\n\(result)")
     }
 
@@ -577,9 +577,9 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_confinesTheExecutableTargetToItsDeclaredSources() throws {
         let result = try rootFormula()
 
-        let block = try funcDefinition("compilerbuild_system", in: result)
+        let block = try funcDefinition("compilersemel", in: result)
         XCTAssertTrue(block.contains("sourcePaths: 'main.swift'"), "got:\n\(block)")
-        XCTAssertTrue(block.contains("Folder(path: 'input:/repo/build_system').manifest"), "got:\n\(block)")
+        XCTAssertTrue(block.contains("Folder(path: 'input:/repo/semel').manifest"), "got:\n\(block)")
     }
 
     func test_neverBuildsTheTestTarget() throws {

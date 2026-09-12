@@ -44,7 +44,7 @@ Modules are `Semel`-prefixed. The old `BuildSystem` prefix is gone from every mo
 and from the code entirely.
 
 Two things still carry the old vocabulary and are a deliberate leftover: the root package
-is named `build_system` and the CLI's sources live in `build_system/`. Renaming those
+is named `semel` and the CLI's sources live in `semel/`. Renaming those
 changes the repository's layout and the C1 fixtures that reference those paths, so it is a
 wider job than a module rename.
 

@@ -1,6 +1,6 @@
 //
 //  SampleNodes.swift
-//  build_system_tests
+//  semel_tests
 //
 //  Stand-in node types for tests whose subject is the engine, not any particular node.
 //

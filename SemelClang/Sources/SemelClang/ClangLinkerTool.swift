@@ -1,5 +1,5 @@
 // ClangLinkerTool.swift
-// build_system
+// semel
 //
 // Clang linker stage: links one or more .o object files (and optional .dylib
 // libraries) into a final output binary.

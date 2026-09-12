@@ -1,5 +1,5 @@
 // ClangPreprocessorTool.swift
-// build_system
+// semel
 //
 // Clang preprocessor stage: runs `clang -E` on a .c file and its headers,
 // producing a preprocessed .p file ready for the compiler stage.

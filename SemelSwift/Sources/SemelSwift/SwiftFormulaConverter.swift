@@ -597,7 +597,7 @@ struct SwiftFormulaConverter: Node {
     //
     // `swift build` builds an executable target whether or not a product lists it, and
     // manifests rely on that: this repository's own root manifest declares no products at
-    // all and still yields the `build_system` binary.  Emitting only declared products
+    // all and still yields the `semel` binary.  Emitting only declared products
     // produced an empty formula and, worse, no error explaining the silence.
     //
     // Only executables are synthesised.  A library target with no product is an internal

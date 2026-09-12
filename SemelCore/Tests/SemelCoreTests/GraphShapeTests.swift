@@ -1,6 +1,6 @@
 //
 //  GraphShapeTests.swift
-//  build_system_tests
+//  semel_tests
 //
 
 @testable import SemelCore

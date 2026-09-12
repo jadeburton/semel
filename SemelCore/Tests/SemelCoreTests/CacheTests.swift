@@ -1,6 +1,6 @@
 //
 //  CacheTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  A wrong cache hit is the worst failure a build system has: the output looks fine.
 //  These pin down what does and does not participate in the key.

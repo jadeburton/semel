@@ -1,6 +1,6 @@
 //
 //  Node+Graph.swift
-//  build_system
+//  semel
 //
 //  The engine's side of the node protocols declared in SemelNodeKit: reading input ports,
 //  deciding whether a node is ready, applying wire expectations, writing outputs and

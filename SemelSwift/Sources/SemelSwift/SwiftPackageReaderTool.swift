@@ -1,5 +1,5 @@
 // SwiftPackageReaderTool.swift
-// build_system
+// semel
 //
 // Reads a Swift package manifest by shelling out to `swift package dump-package`
 // and emits the resulting JSON on its output wire.

@@ -1,6 +1,6 @@
 //
 //  UnrecoverableErrorTests.swift
-//  build_system_tests
+//  semel_tests
 //
 
 @testable import SemelCore
@@ -116,7 +116,7 @@ final class UnrecoverableErrorTests: SemelCoreTestCase {
     // is exactly where an unrecoverable failure would otherwise be swallowed.
     func test_nodeProcessingRoutesUnrecoverableFailuresToTheHandler() throws {
         storeRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("build_system-fatal-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("semel-fatal-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: storeRoot, withIntermediateDirectories: true)
         DataObjectStore.shared = DataObjectStore(storeRoot: storeRoot)
 

@@ -1,6 +1,6 @@
 //
 //  ProjectBuilderTests.swift
-//  build_system_tests
+//  semel_tests
 //
 //  Where a project's products land in the output file system. The rule is not obvious
 //  because the two ProjectFinder plugins wire their projectFile port differently: a
@@ -42,13 +42,13 @@ final class ProjectBuilderTests: SemelCoreTestCase {
 
     /// SwiftPackagePlugin keys the projectFile wire by the package *folder*, so deriving
     /// the output location from the wire key's parent put products one level too high:
-    /// the root package's `build_system` product landed on `output:/swift/build_system`,
+    /// the root package's `semel` product landed on `output:/swift/semel`,
     /// the very folder holding the nested packages' products.
     func test_placesAPackageProductInsideThePackageFolder() throws {
-        let paths = try productPaths(projectFile: "input:/swift/build_system",
-                                     properties: ["outputFolder": "input:/swift/build_system"])
+        let paths = try productPaths(projectFile: "input:/swift/semel",
+                                     properties: ["outputFolder": "input:/swift/semel"])
 
-        XCTAssertEqual(paths, ["output:/swift/build_system/MyProduct"])
+        XCTAssertEqual(paths, ["output:/swift/semel/MyProduct"])
     }
 
     /// FormulaFilePlugin keys the wire by the .fmla file itself, whose containing folder
