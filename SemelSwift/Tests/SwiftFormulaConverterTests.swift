@@ -768,4 +768,52 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertTrue(block.contains("Folder(path: 'input:/repo/A/Sources/Shared').manifest"), "got:\n\(block)")
         XCTAssertFalse(block.contains("input:/repo/B/"), "got:\n\(block)")
     }
+
+    // MARK: - registry dependencies (B-07)
+
+    /// What `swift package dump-package` emits for `.package(id: "mona.LinkedList", from:)`.
+    /// A registry identity is `scope.name`, case preserved — unlike a git identity, which
+    /// is lowercased — so it can name a directory.
+    private let registryManifest = """
+        {
+          "name": "App",
+          "dependencies": [
+            {"registry": [{"identity": "mona.LinkedList",
+                           "requirement": {"range": [{"lowerBound": "1.0.0", "upperBound": "2.0.0"}]}}]}
+          ],
+          "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+          "targets": [{"name": "App", "type": "executable", "path": "Sources/App",
+                       "dependencies": [{"product": ["LinkedList", "mona.LinkedList", null, null]}]}]
+        }
+        """
+
+    /// A registry dependency was silently dropped: the build reached the compiler and
+    /// failed there with "no such module". It resolves like a git dependency — vendored
+    /// beside the package that named it — under its identity.
+    func test_resolvesARegistryDependencyToAVendoredSiblingNamedByItsIdentity() throws {
+        let output = try convert(packageFolder: "input:/repo/App", json: registryManifest)
+
+        XCTAssertEqual(try externalExpectations(output).keys.sorted(), ["input:/repo/mona.LinkedList"])
+    }
+
+    func test_explainsWhichRegistryPackageAVendoredPathIsWaitingFor() throws {
+        let reason = try pendingReason(try convert(packageFolder: "input:/repo/App", json: registryManifest))
+
+        XCTAssertTrue(reason.contains("input:/repo/mona.LinkedList"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("registry package mona.LinkedList"),
+                      "should say the path stands for a registry package, got:\n\(reason)")
+        XCTAssertFalse(reason.contains("local path"), "a registry package is not a path dependency, got:\n\(reason)")
+    }
+
+    func test_wiresTheModuleOfAVendoredRegistryDependency() throws {
+        let result = try formula(packageFolder: "input:/repo/App",
+                                 json: registryManifest,
+                                 externalManifests: ["input:/repo/mona.LinkedList":
+                                                        packageVending(product: "LinkedList", fromTarget: "LinkedList")])
+
+        let block = try funcDefinition("compilerApp", in: result)
+        XCTAssertTrue(block.contains("'LinkedList': compilerLinkedList().swiftmodule"), "got:\n\(block)")
+        XCTAssertTrue(result.contains("Folder(path: 'input:/repo/mona.LinkedList/Sources/LinkedList').manifest"),
+                      "got:\n\(result)")
+    }
 }

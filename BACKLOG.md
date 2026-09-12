@@ -117,9 +117,6 @@ absent → warn once, present and mismatched → fail.
 
 Depends on B-26.
 
-**B-07** `open` — **Registry dependencies are ignored.**
-`TODO:` at `SwiftFormulaConverter.swift:189`. Neither resolved nor reported.
-
 **B-09** `open` — **`.library(type: .automatic)` is always built dynamic.**
 No static archive support; every library product becomes a `.dylib` by assumption rather
 than by choice.

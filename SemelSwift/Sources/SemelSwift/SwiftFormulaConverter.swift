@@ -94,8 +94,8 @@ struct SwiftFormulaConverter: Node {
         var bfsQueue: [(path: String, manifest: SPMManifest)] = [(rootPackageFolder, rootManifest)]
         var visitedPaths = Set<String>([rootPackageFolder])
         var expectations: [String: String] = [:]
-        // Path -> repository URL it stands for, nil when the manifest named the path
-        // itself. Only ever read to explain a stall.
+        // Path -> the repository URL or registry package it stands for, nil when the
+        // manifest named the path itself. Only ever read to explain a stall.
         var originOfExpectedPath: [String: String?] = [:]
         var bfsIndex = 0
 
@@ -125,7 +125,7 @@ struct SwiftFormulaConverter: Node {
                 expectations[extPath] = Self.packageReaderExpectation(
                     packageFilePath: "\(extPath)/Package.swift",
                     rootPackageFolder: rootPackageFolder)
-                originOfExpectedPath[extPath] = dependency.repositoryURL
+                originOfExpectedPath[extPath] = dependency.origin
 
                 if let extManifest = availableManifests[extPath] {
                     bfsQueue.append((extPath, extManifest))
@@ -171,10 +171,10 @@ struct SwiftFormulaConverter: Node {
     /// in their manifest, and no hint that nothing is ever going to arrive on its own.
     private func describeStall(missingPaths: [String], origins: [String: String?]) -> String {
         let lines = missingPaths.map { path -> String in
-            guard let url = origins[path] ?? nil else {
+            guard let origin = origins[path] ?? nil else {
                 return "  \(path) — declared as a local path dependency, but nothing is there"
             }
-            return "  \(path) — where \(url) is expected to be vendored"
+            return "  \(path) — where \(origin) is expected to be vendored"
         }
 
         return "SwiftFormulaConverter: waiting for \(missingPaths.count) package(s):\n"
@@ -275,44 +275,54 @@ struct SwiftFormulaConverter: Node {
     // Decodes one element of the top-level "dependencies" array down to local paths.
     //
     // fileSystem entries carry their path directly.  sourceControl entries name a git
-    // URL, which this build system never fetches — every input must come through the
-    // graph — so the repository is expected to be *vendored* into the input filesystem
-    // beside the package that depends on it, and resolves to "../<RepositoryName>".
+    // URL and registry entries a `scope.name` identity, neither of which this build
+    // system ever fetches — every input must come through the graph — so the package is
+    // expected to be *vendored* into the input filesystem beside the package that depends
+    // on it: "../<RepositoryName>" for a git URL, "../<identity>" for a registry package.
+    // A registry identity keeps its case ("mona.LinkedList"), unlike a git identity, so
+    // it can name a directory directly.
     //
-    // ISSUE: a sourceControl dependency's version requirement is not checked against the
-    // vendored copy.  Nothing here can read a version out of a bare source tree, so a
-    // manifest asking for `from: "7.11.1"` builds against whatever happens to be vendored.
-    // Enforcing that needs a version marker in the tree; until then it is on the person
-    // doing the vendoring.
-    //
-    // TODO: registry dependencies are still ignored entirely.
+    // ISSUE: a sourceControl or registry dependency's version requirement is not checked
+    // against the vendored copy.  Nothing here can read a version out of a bare source
+    // tree, so a manifest asking for `from: "7.11.1"` builds against whatever happens to
+    // be vendored.  Enforcing that needs a version marker in the tree; until then it is on
+    // the person doing the vendoring.
     private struct AnySPMDependency: Decodable {
         let dependencies: [SPMPackageDependency]
 
-        enum CodingKeys: String, CodingKey { case fileSystem, sourceControl }
+        enum CodingKeys: String, CodingKey { case fileSystem, sourceControl, registry }
 
         init(from decoder: Decoder) throws {
             let c             = try decoder.container(keyedBy: CodingKeys.self)
             let fileSystem    = (try? c.decode([SPMFileSystemDependency].self,    forKey: .fileSystem))    ?? []
             let sourceControl = (try? c.decode([SPMSourceControlDependency].self, forKey: .sourceControl)) ?? []
+            let registry      = (try? c.decode([SPMRegistryDependency].self,      forKey: .registry))      ?? []
 
             dependencies =
-                fileSystem.map { SPMPackageDependency(path: $0.path, repositoryURL: nil) } +
+                fileSystem.map { SPMPackageDependency(path: $0.path, origin: nil) } +
                 sourceControl.compactMap { control in
                     control.vendoredSiblingPath.map {
-                        SPMPackageDependency(path: $0, repositoryURL: control.repositoryURL)
+                        SPMPackageDependency(path: $0, origin: control.repositoryURL)
                     }
+                } +
+                registry.map {
+                    SPMPackageDependency(path: "../\($0.identity)", origin: "registry package \($0.identity)")
                 }
         }
     }
 
-    /// A package dependency reduced to a local path. `repositoryURL` is nil for a
-    /// fileSystem dependency, whose path the manifest stated outright, and set for a
-    /// sourceControl one, whose path is a convention this build system applied — which is
-    /// exactly the difference a user needs told when nothing is at that path.
+    /// A package dependency reduced to a local path. `origin` is nil for a fileSystem
+    /// dependency, whose path the manifest stated outright, and names the repository URL
+    /// or registry package for the other kinds, whose path is a convention this build
+    /// system applied — which is exactly the difference a user needs told when nothing is
+    /// at that path.
     private struct SPMPackageDependency {
         let path: String
-        let repositoryURL: String?
+        let origin: String?
+    }
+
+    private struct SPMRegistryDependency: Decodable {
+        let identity: String
     }
 
     private struct SPMFileSystemDependency: Decodable {
