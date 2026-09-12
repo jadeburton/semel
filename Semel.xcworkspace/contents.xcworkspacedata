@@ -11,6 +11,9 @@
       location = "group:SemelNodeKit">
    </FileRef>
    <FileRef
+      location = "group:SemelProtocol">
+   </FileRef>
+   <FileRef
       location = "group:SemelSwift">
    </FileRef>
    <FileRef

@@ -8,6 +8,7 @@ about how to change it.
 ```sh
 swift build                                  # builds everything, from the repo root
 swift test --package-path SemelNodeKit       # the node-authoring API (~68)
+swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages)
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~27)
 swift test --package-path SemelCore    # the engine tests (~247)
@@ -16,7 +17,7 @@ swift test                                   # the CLI tests only (~8)
 
 `swift test` at the root runs **only** the `SemelCLI` tests. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all five.
+all six.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
