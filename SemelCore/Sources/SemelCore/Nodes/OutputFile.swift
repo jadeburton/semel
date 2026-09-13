@@ -146,7 +146,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
         }
 
         if newDescription != oldDescription {
-            print("\(path): \(newDescription)")
+            BuildEngine.notice("\(path): \(newDescription)")
         }
 
         return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireSpecs: [:])

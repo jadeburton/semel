@@ -183,7 +183,7 @@ public struct ProjectBuilder: Node {
             // Only deletions are printed. A creation is already announced by OutputFile's
             // own status line, and saying it twice would be worse than not saying it.
             if case .deleted(let path) = event {
-                print("\(path): Deleted")
+                BuildEngine.notice("\(path): Deleted")
             }
         }
 
