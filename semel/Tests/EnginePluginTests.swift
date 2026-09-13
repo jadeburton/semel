@@ -41,8 +41,10 @@ final class EnginePluginTests: XCTestCase {
 
         try run("errors")
 
+        // The header counts toward a scripted run's exit status, so it goes to the error
+        // stream while the rendered report stays a message.
+        XCTAssertEqual(context.errors, ["2 errors across 1 node:\n"])
         XCTAssertEqual(context.messages, [
-            "2 errors across 1 node:\n",
             "❌ StaticFile  'input:/a.c'",
             "   · errorLog, output: boom",
             "",
