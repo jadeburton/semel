@@ -33,7 +33,13 @@ func main() throws {
     let connection = InProcessConnection(handler: handler)
     let interpreter = CommandInterpreter(connection: connection)
 
-    let server = try interpreter.connect()
+    let server: (serverVersion: String, databasePath: String)
+    do {
+        server = try interpreter.connect()
+    } catch {
+        FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+        exit(1)
+    }
     print("Semel \(server.serverVersion) (C) 2026 Jade Burton. All rights reserved.")
     print("Graph: \(server.databasePath)")
 

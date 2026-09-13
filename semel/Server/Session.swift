@@ -10,18 +10,28 @@ import Foundation
 
 public final class Session {
 
-    public var isSubscribed = false
-
-    public private(set) var openBatchDepth = 0
+    private let lock = NSLock()
+    private var subscribed = false
+    private var batchDepth = 0
 
     public init() {}
 
+    /// Set on the handler's queue; read from whatever thread delivers an event.
+    public var isSubscribed: Bool {
+        get { lock.withLock { subscribed } }
+        set { lock.withLock { subscribed = newValue } }
+    }
+
+    public var openBatchDepth: Int {
+        lock.withLock { batchDepth }
+    }
+
     func batchOpened() {
-        openBatchDepth += 1
+        lock.withLock { batchDepth += 1 }
     }
 
     /// A close without an open is a client bug, not a reason to underflow.
     func batchClosed() {
-        openBatchDepth = max(0, openBatchDepth - 1)
+        lock.withLock { batchDepth = max(0, batchDepth - 1) }
     }
 }
