@@ -217,28 +217,3 @@ extension ErrorRecord {
                   entries: entry.items.map { ErrorEntry(ports: $0.ports, message: $0.message) })
     }
 }
-
-// MARK: - File verbs (replaced in RequestHandler+Files.swift)
-
-extension RequestHandler {
-
-    func list(fileSystem: FileSystemKind, pattern: String) throws -> DaemonResponse {
-        throw HandlerFailure.node(description: "list is not implemented yet")
-    }
-
-    func pushFile(path: String, mode: UInt16, body: Data) throws -> DaemonResponse {
-        throw HandlerFailure.node(description: "pushFile is not implemented yet")
-    }
-
-    func pushFolder(path: String) throws -> DaemonResponse {
-        throw HandlerFailure.node(description: "pushFolder is not implemented yet")
-    }
-
-    func remove(pattern: String) throws -> DaemonResponse {
-        throw HandlerFailure.node(description: "remove is not implemented yet")
-    }
-
-    func fetch(fileSystem: FileSystemKind, path: String) throws -> (DaemonResponse, Data?) {
-        throw HandlerFailure.node(description: "fetch is not implemented yet")
-    }
-}
