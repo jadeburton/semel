@@ -506,6 +506,20 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(Set(result.keys), ["a", "b"])
     }
 
+    /// Two includes that reach the same dependency each carry its generated funcs,
+    /// identically. The same definition twice is one definition, not a clash: they resolve
+    /// to the same nodes either way.
+    func test_anIdenticalDefinitionFromTwoIncludesIsOneDefinition() throws {
+        let other  = "StaticFile(path: 'input:/repo/other.txt').output"
+        let shared = "func compilerSwiftSoup() = StaticFile(path: 'input:/repo/Dependencies/SwiftSoup/x').output\n"
+        let result = try parse("include \(source)\ninclude \(other)", included: [
+            source: shared + "product 'a' = compilerSwiftSoup()",
+            other:  shared + "product 'b' = compilerSwiftSoup()",
+        ])
+
+        XCTAssertEqual(Set(result.keys), ["a", "b"])
+    }
+
     /// A func or product the formula defines under an included name is an error, not a
     /// silent override: the author cannot see the names a generated formula uses.
     func test_aNameDefinedByBothTheFormulaAndAnIncludeIsRejected() {

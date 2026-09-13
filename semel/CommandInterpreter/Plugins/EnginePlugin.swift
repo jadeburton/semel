@@ -65,8 +65,10 @@ final class EnginePlugin: CommandPlugin {
         let errorCount = records.reduce(0) { $0 + $1.entries.reduce(0) { $0 + $1.ports.count } }
         let nodeCount  = records.count
 
-        context.outputMessage("\(errorCount) error\(errorCount == 1 ? "" : "s") across " +
-                              "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
+        // Through outputError: a scripted run's exit status rests on the count of errors
+        // reported, and a build that failed is what that status is for.
+        context.outputError("\(errorCount) error\(errorCount == 1 ? "" : "s") across " +
+                            "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
 
         for record in records {
             ErrorRecordRenderer.lines(for: record).forEach { context.outputMessage($0) }

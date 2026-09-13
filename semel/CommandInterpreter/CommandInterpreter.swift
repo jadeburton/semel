@@ -34,7 +34,14 @@ public final class CommandInterpreter: CommandContext {
     var currentDirectoryPath: Path = .empty
 
     func outputMessage(_ message: String) { print(message) }
-    func outputError(_ errorMessage: String) { print(errorMessage) }
+    func outputError(_ errorMessage: String) {
+        errorsReported += 1
+        print(errorMessage)
+    }
+
+    /// How many errors commands have reported so far. A non-interactive run exits non-zero
+    /// when this is not zero, which is what makes `semel 'build Packages'` a build step.
+    public private(set) var errorsReported = 0
 
     private let plugins: [any CommandPlugin]
 
@@ -101,6 +108,37 @@ public final class CommandInterpreter: CommandContext {
             return
         }
         let remaining = Array(tokens.dropFirst())
+
+        // `build <folder> [--into <dir>]` is the whole loop in one word: push the tree,
+        // wait for the graph to settle, report, and — given a destination — export the
+        // products. A macro over the commands rather than a plugin, so each keeps its own
+        // meaning and its own tests. The destination is the opt-in; there is nothing to
+        // default. No export after a build that reported errors: the exit status already
+        // says it failed, and a partial product set beside it would only mislead.
+        if verb == "build" {
+            var arguments = remaining
+            var destination: String?
+            if let flag = arguments.firstIndex(of: "--into") {
+                guard flag + 1 < arguments.count else {
+                    outputError("build: --into needs a directory")
+                    return
+                }
+                destination = arguments[flag + 1]
+                arguments.removeSubrange(flag...(flag + 1))
+            }
+            guard arguments.count == 1 else {
+                outputError("build: expected one folder to build")
+                return
+            }
+            let errorsBefore = errorsReported
+            try handleCommand("push \(arguments[0])")
+            try handleCommand("wait")
+            try handleCommand("errors")
+            if let destination, errorsReported == errorsBefore {
+                try handleCommand("export \(arguments[0]) --into \(destination)")
+            }
+            return
+        }
 
         do {
             guard let plugin = verbMap[verb] else {
