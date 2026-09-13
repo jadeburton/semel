@@ -8,6 +8,19 @@ import GRDB
 import SemelDatabaseModels
 import SemelNodeKit
 
+/// Collects the lines of a diagnostic so the whole thing can be returned as one string.
+/// Debug output must never be the thing that takes the process down, so nothing here
+/// throws; a caller that cannot describe part of the graph appends what it can say.
+final class TextBuffer {
+    private(set) var lines: [String] = []
+
+    func append(_ line: String = "") {
+        lines.append(line)
+    }
+
+    var text: String { lines.joined(separator: "\n") }
+}
+
 // MARK: - String helpers
 
 extension String {
@@ -80,10 +93,10 @@ extension BuildEngine {
         }
     }
 
-    /// Print a titled section header.
-    private func printSectionHeader(_ title: String) {
-        print(title)
-        print(String(repeating: "─", count: title.count))
+    /// Append a titled section header.
+    private func appendSectionHeader(_ title: String, to text: TextBuffer) {
+        text.append(title)
+        text.append(String(repeating: "─", count: title.count))
     }
 
     // MARK: nudge
@@ -102,9 +115,10 @@ extension BuildEngine {
         }
     }
 
-    // MARK: printAll
+    // MARK: graphDescription
 
-    public func printAll() throws {
+    public func graphDescription() throws -> String {
+        let text = TextBuffer()
         let allNodes = try database.node.selectAll()
         let allWires = try database.wire.selectAll()
 
@@ -116,28 +130,28 @@ extension BuildEngine {
 
         // MARK: Section 1 — Nodes
 
-        printSectionHeader("BUILD GRAPH STATE (\(allNodes.count) nodes)")
-        print()
+        appendSectionHeader("BUILD GRAPH STATE (\(allNodes.count) nodes)", to: text)
+        text.append()
 
         for nodeRecord in allNodes {
             guard let nodeID = nodeRecord.id else { continue }
-            
+
             let scheduled = nodeRecord.scheduled ? "⏱ scheduled" : ""
-            print("⬢ \(type(of: try nodeRecord.makeNode())) #\(nodeID)  \(scheduled)")
+            text.append("⬢ \(type(of: try nodeRecord.makeNode())) #\(nodeID)  \(scheduled)")
 
             if let name = nodeRecord.name {
-                print("  name: '\(name)'")
+                text.append("  name: '\(name)'")
             }
 
             if let graphSpec = nodeRecord.graphSpec {
                 let graphSpecNode = try GraphSpecNode.parse(graphSpec)
-                print("  graphSpec:\n\(graphSpecNode.asString(pretty: true, omitOutputPort: true))\n")
+                text.append("  graphSpec:\n\(graphSpecNode.asString(pretty: true, omitOutputPort: true))\n")
             } else {
-                print("  graphSpec: nil")
+                text.append("  graphSpec: nil")
             }
 
             if let parentNodeID = nodeRecord.parentNodeID {
-                print("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
+                text.append("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
             }
 
             let descriptor    = (try? nodeRecord.makeNode())?.descriptor
@@ -148,13 +162,13 @@ extension BuildEngine {
             let outputValues  = FatalErrors.attempt({ try database.outputPort.selectAll(nodeID: nodeID) }) ?? []
 
             if !inputPorts.isEmpty {
-                print("  inputs:")
+                text.append("  inputs:")
                 for inputPort in inputPorts {
                     let dynamic = descriptor?.dynamicInputPorts.contains(inputPort) == true ? " (dynamic)" : ""
                     let inputSymbolID = inputPort.asSymbolID()
                     let wires   = incomingWires.filter { $0.toSymbolID == inputSymbolID }
                     if wires.isEmpty {
-                        print("    · \(inputPort)\(dynamic)  — no wires")
+                        text.append("    · \(inputPort)\(dynamic)  — no wires")
                     } else {
                         for wire in wires {
                             let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
@@ -163,54 +177,60 @@ extension BuildEngine {
                                 try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
                             }) ?? nil
                             let outputValue = outputPort.map { formatOutputPort($0) } ?? "—"
-                            print("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── #\(wire.fromNodeID) \(fromNode):\(fromPort)   \(outputValue)")
+                            text.append("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── #\(wire.fromNodeID) \(fromNode):\(fromPort)   \(outputValue)")
                         }
                     }
                 }
             }
 
             if !outputPorts.isEmpty {
-                print("  outputs:")
+                text.append("  outputs:")
                 for outputPort in outputPorts {
                     let symbolID   = outputPort.asSymbolID()
                     let wires      = outgoingWires.filter { $0.fromSymbolID == symbolID }
                     let portValue  = outputValues.first { $0.nameSymbolID == symbolID }
                     let valueDesc  = portValue.map { formatOutputPort($0) } ?? "—"
                     if wires.isEmpty {
-                        print("    · \(outputPort)  \(valueDesc)  — no wires")
+                        text.append("    · \(outputPort)  \(valueDesc)  — no wires")
                     } else {
                         for wire in wires {
                             let toNode = nodeByID[wire.toNodeID]?.name ?? "?"
                             let toPort = symbolName(symbolID: wire.toSymbolID, database: database)
-                            print("    · \(outputPort)  \(valueDesc)  ────▶ #\(wire.toNodeID) \(toNode):\(toPort)")
+                            text.append("    · \(outputPort)  \(valueDesc)  ────▶ #\(wire.toNodeID) \(toNode):\(toPort)")
                         }
                     }
                 }
             }
 
-            print()
+            text.append()
         }
 
         // Debug output must never be the thing that takes the process down.
         let outputPortCount = FatalErrors.attempt({ try database.outputPort.selectAllCount() }).map(String.init) ?? "unavailable"
-        print("OutputPort count: \(outputPortCount)\n")
+        text.append("OutputPort count: \(outputPortCount)\n")
 
-        debugPrintTree()
+        appendDependencyTree(to: text)
+        return text.text
     }
 
-    func debugPrintTree() {
+    /// Kept until the command plugins stop calling it (removed in the CLI split).
+    public func printAll() throws {
+        print(try graphDescription())
+    }
+
+    func appendDependencyTree(to text: TextBuffer) {
         do {
-            print("- build tree")
-            try projectFinder.printDependencyTree(indentLevel: 1)
+            text.append("- build tree")
+            try projectFinder.appendDependencyTree(indentLevel: 1, to: text)
         } catch {
-            print("- build tree (error: \(error))")
+            text.append("- build tree (error: \(error))")
         }
     }
 }
 
 extension NodeRecord {
 
-    fileprivate func printDependencyTree(indentLevel: Int) {
+    fileprivate func appendDependencyTree(indentLevel: Int, to text: TextBuffer) {
         let indent = String(repeating: "  ", count: indentLevel)
 
         // Debug output must never be the thing that takes the process down: an
@@ -221,11 +241,11 @@ extension NodeRecord {
         let nodeName = name ?? ""
 
         guard let nodeID = id else {
-            print("\(indent)- \(kindName)(\(nodeName)) [unsaved]")
+            text.append("\(indent)- \(kindName)(\(nodeName)) [unsaved]")
             return
         }
 
-        print("\(indent)- \(kindName)(\(nodeName)) \(nodeID)")
+        text.append("\(indent)- \(kindName)(\(nodeName)) \(nodeID)")
 
         do {
             let incomingWires = try database.wire.select(goingToNodeID: nodeID)
@@ -243,10 +263,10 @@ extension NodeRecord {
             }
 
             for dependencyNode in dependencyNodes {
-                dependencyNode.printDependencyTree(indentLevel: indentLevel + 1)
+                dependencyNode.appendDependencyTree(indentLevel: indentLevel + 1, to: text)
             }
         } catch {
-            print("\(indent)  (error loading dependencies: \(error))")
+            text.append("\(indent)  (error loading dependencies: \(error))")
         }
     }
 }
