@@ -13,7 +13,7 @@ import Foundation
 
 // MARK: - Shared records
 
-public enum FileSystemName: String, Codable, Equatable, Sendable {
+public enum FileSystemKind: String, Codable, Equatable, Sendable {
     case input
     case output
 }
@@ -92,7 +92,7 @@ public struct ToolDescriptorRecord: Codable, Equatable, Sendable {
     }
 }
 
-public struct ToolNamespace: Codable, Equatable, Sendable {
+public struct ToolNamespaceRecord: Codable, Equatable, Sendable {
     public let namespace:   String
     public let toolName:    String
     /// Empty when no such tool is installed; the client prints that as a comment.
@@ -108,7 +108,7 @@ public struct ToolNamespace: Codable, Equatable, Sendable {
 // MARK: - Requests
 
 public enum DaemonRequest: Codable, Equatable, Sendable {
-    case list(fileSystem: FileSystemName, pattern: String)
+    case list(fileSystem: FileSystemKind, pattern: String)
     case beginBatch
     case endBatch
     /// The file's bytes travel in the frame body. No hash: hashing lives in SemelNodeKit,
@@ -116,7 +116,7 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     case pushFile(path: String, mode: UInt16)
     case pushFolder(path: String)
     case remove(pattern: String)
-    case fetch(fileSystem: FileSystemName, path: String)
+    case fetch(fileSystem: FileSystemKind, path: String)
     case errors
     case tools
     case reset
@@ -135,7 +135,7 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// The file's bytes travel in the frame body.
     case fetch(mode: UInt16)
     case errors(records: [ErrorRecord])
-    case tools(namespaces: [ToolNamespace])
+    case tools(namespaces: [ToolNamespaceRecord])
     case debug(text: String)
 }
 

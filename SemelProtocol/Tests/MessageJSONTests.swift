@@ -116,7 +116,7 @@ final class MessageJSONTests: XCTestCase {
             .remove(removedPaths: ["a", "b"]),
             .fetch(mode: 0o644),
             .errors(records: [record]),
-            .tools(namespaces: [ToolNamespace(namespace: "swift.compiler", toolName: "swiftc",
+            .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
             .debug(text: "⬢ Folder #1"),
         ]
