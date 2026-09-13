@@ -18,7 +18,7 @@
   The loop closed the same day (B-57 to B-59): on a fresh copy of the packages,
   `semel-vendor init Packages --platform ios-simulator` found the five roots, vendored the
   thirteen dependencies and wrote a formula and config identical in substance to the
-  hand-written ones; `semel 'base <repo>' 'build Packages' 'export Packages --into out'`
+  hand-written ones; `semel 'base <repo>' 'build Packages --into out'`
   then produced the five archives in 17 s from the warm cache and exited 0.
 
 - Get it working with large c or c++ project

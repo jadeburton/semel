@@ -73,17 +73,34 @@ public final class CommandInterpreter: CommandContext {
         }
         let remaining = Array(tokens.dropFirst())
 
-        // `build <folder>` is the whole loop in one word: push the tree, wait for the
-        // graph to settle, report. A macro over three commands rather than a plugin, so
-        // each half keeps its own meaning and its own tests.
+        // `build <folder> [--into <dir>]` is the whole loop in one word: push the tree,
+        // wait for the graph to settle, report, and — given a destination — export the
+        // products. A macro over the commands rather than a plugin, so each keeps its own
+        // meaning and its own tests. The destination is the opt-in; there is nothing to
+        // default. No export after a build that reported errors: the exit status already
+        // says it failed, and a partial product set beside it would only mislead.
         if verb == "build" {
-            guard remaining.count == 1 else {
+            var arguments = remaining
+            var destination: String?
+            if let flag = arguments.firstIndex(of: "--into") {
+                guard flag + 1 < arguments.count else {
+                    outputError("build: --into needs a directory")
+                    return
+                }
+                destination = arguments[flag + 1]
+                arguments.removeSubrange(flag...(flag + 1))
+            }
+            guard arguments.count == 1 else {
                 outputError("build: expected one folder to build")
                 return
             }
-            try handleCommand("push \(remaining[0])")
+            let errorsBefore = errorsReported
+            try handleCommand("push \(arguments[0])")
             try handleCommand("wait")
             try handleCommand("errors")
+            if let destination, errorsReported == errorsBefore {
+                try handleCommand("export \(arguments[0]) --into \(destination)")
+            }
             return
         }
 

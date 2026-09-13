@@ -105,8 +105,10 @@ final class EnginePlugin: CommandPlugin {
             return nameA < nameB
         }
 
-        context.outputMessage("\(errorCount) error\(errorCount == 1 ? "" : "s") across " +
-                              "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
+        // Through outputError: a scripted run's exit status rests on the count of errors
+        // reported, and a build that failed is what that status is for.
+        context.outputError("\(errorCount) error\(errorCount == 1 ? "" : "s") across " +
+                            "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")
 
         for nodeID in sortedNodeIDs {
             let ports = byNode[nodeID] ?? []

@@ -87,7 +87,7 @@ rm build/**
 | `d` / `debug` | Dump the full graph state |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
-| `build <folder>` | `push <folder>`, `wait`, `errors` in one word |
+| `build <folder> [--into <dir>]` | `push <folder>`, `wait`, `errors` in one word; given a destination, `export` too, unless the build reported errors |
 | `e` / `errors` | Show all current build errors |
 | `t` / `tools` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste |
 | `reset` | Discard everything derived and rebuild from the input file system |
@@ -105,7 +105,7 @@ Given arguments, the binary runs each one as a command line instead of opening t
 and exits non-zero if any command reported an error — which makes it a build step:
 
 ```sh
-.build/release/semel 'base /path/to/repo' 'build Packages' 'export Packages --into ./out'
+.build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
 ```
 
 ### Building a Swift package
@@ -160,7 +160,7 @@ For a tree of Swift packages that ships no formula, `init` does the whole conver
 
 ```sh
 .build/release/semel-vendor init path/to/Packages --platform ios-simulator
-.build/release/semel 'base path/to' 'build Packages' 'export Packages --into ./out'
+.build/release/semel 'base path/to' 'build Packages --into ./out'
 ```
 
 It finds every `Package.swift` under the folder, takes as roots the packages no other one

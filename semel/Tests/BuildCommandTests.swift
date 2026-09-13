@@ -42,6 +42,21 @@ final class BuildCommandTests: XCTestCase {
             .appendingPathComponent("semel-cli-tests/\(UUID().uuidString)", isDirectory: true)
     }
 
+    /// A product under `output:/src`, wired to a static file standing in for its builder.
+    private func publishProduct(_ name: String, contents: String) throws {
+        // Pinned, as a push would leave it; an unpinned folder is one the graph reports.
+        _ = try interpreter.inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
+        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')").findOrCreateMatchingNode()
+        _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')").findOrCreateMatchingNode()
+        try Wire.connectWire(database: interpreter.database,
+                             fromNodeID: try source.requireID(),
+                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
+                             toNodeID: try product.requireID(),
+                             toSymbolID: OutputFile.inputPort.asSymbolID(),
+                             name: "product".asSymbolID())
+    }
+
     /// With no loop running the wait returns at once, so the macro's three steps are
     /// observable in order: the push happened, the wait settled, the report ran.
     func test_buildPushesWaitsAndReports() throws {
@@ -62,6 +77,57 @@ final class BuildCommandTests: XCTestCase {
     /// reports must land in it — here a push of something that is not there.
     func test_aReportedErrorIsCounted() throws {
         try interpreter.handleCommand("push nowhere")
+
+        XCTAssertEqual(interpreter.errorsReported, 1)
+    }
+
+    /// A build error is what the exit status is for: the `errors` report has to count,
+    /// not just print. An output file nothing feeds carries an error from creation.
+    func test_aBuildErrorIsCounted() throws {
+        _ = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed.a')").findOrCreateMatchingNode()
+
+        try interpreter.handleCommand("build src")
+
+        XCTAssertEqual(interpreter.errorsReported, 1)
+    }
+
+    // MARK: - --into
+
+    /// The destination is the opt-in: with one, a clean build ends with its products on
+    /// disk, which is what a build step is for.
+    func test_aDestinationExportsTheProductsAfterACleanBuild() throws {
+        try publishProduct("lib.a", contents: "archive")
+        let destination = makeTempDirectory()
+
+        try interpreter.handleCommand("build src --into \(destination.path)")
+
+        XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("lib.a"), encoding: .utf8), "archive")
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
+    func test_withoutADestinationNothingIsExported() throws {
+        try publishProduct("lib.a", contents: "archive")
+
+        try interpreter.handleCommand("build src")
+
+        XCTAssertEqual(interpreter.errorsReported, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: FileManager.default.currentDirectoryPath + "/lib.a"))
+    }
+
+    /// A partial product set beside a non-zero exit would only mislead.
+    func test_aBuildThatReportedErrorsExportsNothing() throws {
+        try publishProduct("lib.a", contents: "archive")
+        _ = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed.a')").findOrCreateMatchingNode()
+        let destination = makeTempDirectory()
+
+        try interpreter.handleCommand("build src --into \(destination.path)")
+
+        XCTAssertEqual(interpreter.errorsReported, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func test_intoNeedsADirectory() throws {
+        try interpreter.handleCommand("build src --into")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
