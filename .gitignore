@@ -23,3 +23,5 @@ DerivedData/
 # Editor
 .idea/
 *.swp
+/SemelCore/.swiftpm/xcode/xcuserdata/jadeburton.xcuserdatad/xcschemes/xcschememanagement.plist
+/.swiftpm/xcode/xcuserdata/jadeburton.xcuserdatad/xcschemes/xcschememanagement.plist
