@@ -106,6 +106,7 @@ public final class BuildEngine {
     /// the initialiser calls it directly unless asked not to.
     func startProcessingLoop() {
         let engine = self
+        loopIsRunning = true
 
         Task {
             try _ = projectFinder
@@ -127,6 +128,15 @@ public final class BuildEngine {
         while true {
 
             await workSignal.clear()
+            consumeWakeUps()
+            if batchLock.withLock({ stopRequested }) {
+                // Leave every waiter with a settled answer before going: the stop counted
+                // as a wake-up and was consumed just above, so they return.
+                await idle.markIdle()
+                loopIsRunning = false
+                return
+            }
+            await idle.markBusy()
 
             do {
                 try await processAllNodes()
@@ -146,8 +156,61 @@ public final class BuildEngine {
             reportIdleTimeErrors()
             reportUnclaimedConfigKeys()
 
+            await idle.markIdle()
             await workSignal.wait()
         }
+    }
+
+    // MARK: - Settling
+
+    private let idle = IdleState()
+
+    /// Whether `startProcessingLoop` ran and `stopProcessingLoop` has not. An engine without
+    /// a loop — every test engine — has nothing to settle, so waiting on it returns at once
+    /// instead of forever.
+    private var loopIsRunning = false
+
+    /// Set under `batchLock`; the loop reads it at the top of every pass.
+    private var stopRequested = false
+
+    /// Ends the processing loop after its current pass. A test that started a loop must
+    /// stop it: a loop left running keeps processing against whichever engine and
+    /// database the *next* test installs in the shared globals, and unschedules its nodes
+    /// from under it.
+    public func stopProcessingLoop() {
+        batchLock.withLock { stopRequested = true }
+        signalWorkAvailable()
+    }
+
+    /// Suspends until the build has settled: the loop is at its wait point and nothing has
+    /// asked for a pass since its last drain began. The second half matters because a
+    /// push signals through a Task — between the request and its delivery the loop can
+    /// be marked idle with no signal pending, and a waiter let through there would report
+    /// a build that had not started. Each idle mark carries a generation, so a waiter that
+    /// finds a request outstanding waits for the *next* mark rather than the current one.
+    public func waitUntilIdle() async {
+        guard loopIsRunning else {
+            return
+        }
+        var seen = -1
+        while true {
+            seen = await idle.awaitIdle(newerThan: seen)
+            if everyWakeUpIsConsumed {
+                return
+            }
+        }
+    }
+
+    /// `waitUntilIdle` for a synchronous caller such as the REPL, which blocks its thread;
+    /// the loop runs on the cooperative pool, so blocking here starves nothing.
+    public func waitUntilIdleBlocking() {
+        let done = DispatchGroup()
+        done.enter()
+        Task {
+            await self.waitUntilIdle()
+            done.leave()
+        }
+        done.wait()
     }
 
     private func cleanUpAllPendingDeletions() throws {
@@ -347,13 +410,29 @@ public final class BuildEngine {
     /// if the engine is currently draining, the pending count is incremented
     /// and the next iteration of processLoop will drain again immediately.
     /// When a batch is active, the signal is deferred until `endBatch()`.
-    /// How many times something asked for a pass. Read by tests that pin which mutations
-    /// wake the loop — a push has to, since its manifest rebuild is deferred to the pass.
-    private(set) var wakeUpsRequested = 0
+    /// How many times something asked for a pass, and how many of those the loop had seen
+    /// when its current drain began. Read under `batchLock`: requests come from any thread.
+    /// Tests pin which mutations wake the loop — a push has to, since its manifest rebuild
+    /// is deferred to the pass — and `waitUntilIdle` uses the pair to tell a settled loop
+    /// from one about to wake.
+    private var wakeUpsRequestedCount = 0
+    private var wakeUpsConsumedCount  = 0
+
+    var wakeUpsRequested: Int {
+        batchLock.withLock { wakeUpsRequestedCount }
+    }
+
+    private var everyWakeUpIsConsumed: Bool {
+        batchLock.withLock { wakeUpsRequestedCount == wakeUpsConsumedCount }
+    }
+
+    private func consumeWakeUps() {
+        batchLock.withLock { wakeUpsConsumedCount = wakeUpsRequestedCount }
+    }
 
     func signalWorkAvailable() {
-        wakeUpsRequested += 1
         let inBatch = batchLock.withLock { () -> Bool in
+            wakeUpsRequestedCount += 1
             guard batchDepth > 0 else {
                 return false
             }
@@ -603,6 +682,40 @@ extension BuildEngine {
 /// - `isPending` returns true if a signal arrived since the last `clear()`.
 ///
 /// Because this is an actor, all mutations are serialised — there is no data race.
+/// Whether the processing loop is at its wait point, with a generation that advances on
+/// every idle mark so a waiter can ask for a mark newer than one it has already judged.
+private actor IdleState {
+
+    private var isIdle = false
+    private var generation = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func markBusy() {
+        isIdle = false
+    }
+
+    func markIdle() {
+        isIdle = true
+        generation += 1
+        let resumed = waiters
+        waiters = []
+        for waiter in resumed {
+            waiter.resume()
+        }
+    }
+
+    /// Returns the current generation once the loop is idle at a generation newer than
+    /// `seen` — at once if it already is, otherwise after the next idle mark.
+    func awaitIdle(newerThan seen: Int) async -> Int {
+        while !(isIdle && generation > seen) {
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+        return generation
+    }
+}
+
 private actor WorkSignal {
 
     private var pendingCount: Int = 0

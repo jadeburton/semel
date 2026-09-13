@@ -9,7 +9,7 @@ import Foundation
 
 final class EnginePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "reset", "t", "tools"]
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "reset", "t", "tools", "wait"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -18,8 +18,19 @@ final class EnginePlugin: CommandPlugin {
         case "e", "errors": try handleErrors(context: context)
         case "reset":       try handleReset(context: context)
         case "t", "tools":  handleTools(context: context)
+        case "wait":        handleWait(context: context)
         default:            break
         }
+    }
+
+    // MARK: - wait
+
+    /// Blocks until the build has settled: every scheduled node processed and nothing
+    /// asked for another pass. What a script needs between `push` and `errors`, and what
+    /// the prompt otherwise never says — a command returns while the build runs behind it.
+    private func handleWait(context: any CommandContext) {
+        context.buildEngine.waitUntilIdleBlocking()
+        context.outputMessage("Settled.")
     }
 
     // MARK: - tools

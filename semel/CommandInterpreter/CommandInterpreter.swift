@@ -21,7 +21,14 @@ public final class CommandInterpreter: CommandContext {
     var outputFileSystem: NodeRecord    { get throws { try buildEngine.outputFileSystem } }
 
     func outputMessage(_ message: String) { print(message) }
-    func outputError(_ errorMessage: String) { print(errorMessage) }
+    func outputError(_ errorMessage: String) {
+        errorsReported += 1
+        print(errorMessage)
+    }
+
+    /// How many errors commands have reported so far. A non-interactive run exits non-zero
+    /// when this is not zero, which is what makes `semel 'build Packages'` a build step.
+    public private(set) var errorsReported = 0
 
     private let plugins: [any CommandPlugin]
 
@@ -65,6 +72,20 @@ public final class CommandInterpreter: CommandContext {
             return
         }
         let remaining = Array(tokens.dropFirst())
+
+        // `build <folder>` is the whole loop in one word: push the tree, wait for the
+        // graph to settle, report. A macro over three commands rather than a plugin, so
+        // each half keeps its own meaning and its own tests.
+        if verb == "build" {
+            guard remaining.count == 1 else {
+                outputError("build: expected one folder to build")
+                return
+            }
+            try handleCommand("push \(remaining[0])")
+            try handleCommand("wait")
+            try handleCommand("errors")
+            return
+        }
 
         do {
             guard let plugin = verbMap[verb] else {
