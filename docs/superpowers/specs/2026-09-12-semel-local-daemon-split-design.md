@@ -1,6 +1,6 @@
 # Splitting Semel into a local daemon and a CLI
 
-**Status:** design agreed, not yet implemented
+**Status:** phase 1 (SemelProtocol) implemented; phases 2 and 3 not yet started
 **Date:** 2026-09-12
 **Relationship:** this is B-30 role 3, the local build daemon. It takes the frame design
 and the surviving parts of `2026-08-15-semel-client-server-design.md` and drops everything
@@ -146,6 +146,12 @@ public enum Request: Codable {
 }
 ```
 
+As built, a payload is a set of *labelled associated values* on the case rather than a
+separate struct. Swift's synthesized Codable turns each label into a JSON key, which gives
+the same per-case isolation with field names on the wire instead of positional `_0` keys.
+Records that several cases share — `ListEntry`, `ErrorRecord`, `ToolNamespace` — are
+structs.
+
 Which role a message belongs to is then a type-level fact. Adding a role is a new file
 rather than an edit to every switch, and a server that does not offer a role rejects the
 whole group with one error case. `Response` and `Event` group the same way, with
@@ -221,7 +227,7 @@ public enum ErrorResponse: Codable {
     case pathNotFound(path: String)
     case notAFolder(path: String)
     case nodeError(description: String)
-    case roleNotOffered(role: String)
+    case roleNotOffered(role: Role)
     case malformedRequest(description: String)
     case unrecoverable(message: String)
 }
