@@ -1,7 +1,7 @@
 // FilePlugin.swift
 // semel
 //
-// Handles: push, rm / remove, cp / copy
+// Handles: push, rm / remove, cp / copy, export
 
 import Foundation
 import SemelNodeKit
@@ -9,7 +9,7 @@ import SemelProtocol
 
 final class FilePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["push", "rm", "remove", "cp", "copy"]
+    let verbs: Set<String> = ["push", "rm", "remove", "cp", "copy", "export"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -34,6 +34,9 @@ final class FilePlugin: CommandPlugin {
             try handleCopy(folder: folder, pathOrWildcard: remaining[0],
                            destinationPath: remaining.count >= 2 ? remaining[1] : nil,
                            context: context)
+
+        case "export":
+            try handleExport(tokens: tokens, context: context)
 
         default:
             break
@@ -225,5 +228,95 @@ final class FilePlugin: CommandPlugin {
         try bytes.write(to: URL(fileURLWithPath: finalPath))
         chmod(finalPath, mode_t(mode))
         context.outputMessage("File written: \(finalPath)")
+    }
+
+    // MARK: - export
+
+    /// `export <folder> --into <dir>`: every file under `<folder>` of the output file system
+    /// — the products the builders there published — lands in `<dir>`, keeping the tree
+    /// below `<folder>`. `cp -o` does one file at a time; this is the last step of the
+    /// clone-to-build loop, so it takes the folder the build took.
+    private func handleExport(tokens: [String], context: any CommandContext) throws {
+        var folderToken: String?
+        var destination: String?
+        var index = 0
+        while index < tokens.count {
+            switch tokens[index] {
+            case "--into":
+                guard index + 1 < tokens.count else {
+                    throw CommandParserError.missingArgument(command: "export", expected: "--into <dir>")
+                }
+                destination = tokens[index + 1]
+                index += 2
+            default:
+                guard folderToken == nil else {
+                    throw CommandParserError.tooManyArguments(command: "export")
+                }
+                folderToken = tokens[index]
+                index += 1
+            }
+        }
+        guard let folderToken, let destination else {
+            throw CommandParserError.missingArgument(command: "export", expected: "<folder> --into <dir>")
+        }
+
+        // The folder is a path in the output file system, from its root — the same folder
+        // `build` took, which named the input tree the products mirror.
+        let folderPath = context.resolve(folderToken, relativeTo: .empty)
+        guard case .list(let folderMatches) = try context.request(.list(fileSystem: .output,
+                                                                        pattern: folderPath.string)).0 else {
+            return
+        }
+        guard folderMatches.count == 1, folderMatches[0].kind == .folder else {
+            context.outputError("export: \(folderToken): no such folder in the output file system")
+            return
+        }
+
+        let treePattern = (folderPath / Path("**/*")).string
+        guard case .list(let matches) = try context.request(.list(fileSystem: .output,
+                                                                  pattern: treePattern)).0 else {
+            return
+        }
+        let files = matches.filter { $0.kind == .file }
+        guard !files.isEmpty else {
+            context.outputError("export: \(folderToken): nothing to export")
+            return
+        }
+
+        let externalDest = ExternalPathSanitizer.expandPartialPath(destination)
+        var exported = 0
+        for entry in files {
+            do {
+                if try exportOneFile(entry, below: folderPath, destinationPath: externalDest, context: context) {
+                    exported += 1
+                }
+            } catch {
+                // A product nothing has built yet has no content, and the server says so.
+                // Report it and carry on, exactly as `cp` does.
+                context.outputError("export: \(entry.path): \(error)")
+            }
+        }
+        context.outputMessage("Exported \(exported) file\(exported == 1 ? "" : "s") into \(externalDest)")
+    }
+
+    /// Writes one exported file below `destinationPath`, at the place it holds below
+    /// `folderPath`, creating the directories on the way. Returns whether it was written.
+    private func exportOneFile(_ entry: ListEntry, below folderPath: Path,
+                               destinationPath: String, context: any CommandContext) throws -> Bool {
+        let (response, body) = try context.request(.fetch(fileSystem: .output, path: entry.path))
+        guard case .fetch(let mode) = response else {
+            context.outputError("export: \(entry.path): not a file")
+            return false
+        }
+
+        let relative  = Path(entry.path).relative(to: folderPath)?.string ?? entry.path
+        let finalPath = destinationPath + "/" + relative
+
+        try FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+        try (body ?? Data()).write(to: URL(fileURLWithPath: finalPath))
+        chmod(finalPath, mode_t(mode))
+        return true
     }
 }
