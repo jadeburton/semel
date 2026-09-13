@@ -165,6 +165,14 @@ static wiring means a *different node*, not the same node with a new key. Only `
 ports are rewired after creation, and they are deliberately excluded from the spec. Never
 rewire a static port, and never add a recompute pass.
 
+**A formula can wire only a static port.** `.required` and `.optional` ports are named in
+a graph spec and so in a formula; `.dynamic` ports hold wires the node itself demands at
+process time and cannot be wired from outside. A port that a *generated* formula has to
+fill — `ClangPreprocessor.headerFolders` — is therefore `.optional`, not `.dynamic`, even
+though it holds N named wires; a port the node fills for itself from its own specs —
+`SwiftFormulaConverter`'s package ports, wired from `path` — is `.dynamic`. Getting this
+wrong fails at the first real formula with "port does not exist", not in any unit test.
+
 **The cache key must cover everything that can change a node's output.** Including input
 *identity*, not just input content — the wire key is the file's path and the tools embed
 it. If you add anything that influences output, it belongs in the key.
