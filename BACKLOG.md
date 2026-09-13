@@ -352,6 +352,15 @@ the threshold when wiring the terminal reporter; the mechanism is indifferent to
 Lines 35 and 254 refer to "today's" keys and defaults that "no longer exist"; reword as
 timeless statements per AGENTS.md.
 
+**B-61** `open` — **`wait` across connections.**
+Three things a socket server must settle before `wait` is offered to more than one client:
+`BuildEngine.loopIsRunning` is read by `waitUntilIdle` without synchronisation while
+`startProcessingLoop` and `processLoop` write it (put it under `batchLock` like
+`stopRequested`); a `wait` can block indefinitely while another session holds a batch open,
+since a batched work signal is counted but not sent until `endBatch` (fails safe, never a
+false settle, but needs a test with two sessions); and `waitUntilIdleBlocking` parks the
+caller's thread, so a listener must not call the handler from a cooperative-pool thread.
+
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.

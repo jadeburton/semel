@@ -43,6 +43,7 @@ public final class RequestHandler {
     public func handle(_ request: Request, body: Data?, session: Session) -> (Response, Data?) {
         // A wait observes; it does not mutate. Off the queue so a client waiting for the
         // graph to settle does not hold every other client's commands behind it.
+        // It parks the caller's thread, which must therefore not be one of the cooperative pool's — the engine's loop runs there and would have nothing left to settle on.
         if case .daemon(.wait) = request {
             engine.waitUntilIdleBlocking()
             return (.daemon(.ok), nil)
