@@ -129,10 +129,23 @@ extension Node {
         guard hasInputPorts() else {
             return nil
         }
-        guard let input = try? buildProcessInput() else {
+        // A node that cannot even assemble its input is not "not ready", it is broken —
+        // and silently returning nil left it scheduled forever with nothing said. Say why.
+        let input: ProcessInput
+        do {
+            input = try buildProcessInput()
+        } catch {
+            Debug.warn("\(type(of: self)) nodeID \(thisNode.id ?? -1) cannot read its inputs: \(error)")
             return nil
         }
-        guard (try? allInputsAreSatisfied(input: input)) == true else {
+        do {
+            guard try allInputsAreSatisfied(input: input) else {
+                let pendingPorts = input.inputValues.filter { $0.value.values.contains { $0.isPending } }.keys.sorted()
+                Debug.log("\(type(of: self)) nodeID \(thisNode.id ?? -1) not ready: pending on \(pendingPorts)")
+                return nil
+            }
+        } catch {
+            Debug.warn("\(type(of: self)) nodeID \(thisNode.id ?? -1) has an inconsistent input: \(error)")
             return nil
         }
 

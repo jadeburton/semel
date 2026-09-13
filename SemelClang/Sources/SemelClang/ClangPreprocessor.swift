@@ -95,6 +95,13 @@ public struct ClangPreprocessor: Node {
     static let sourceFileInput = "input"
     static let includeFileLists = "includeFileLists"
     static let headerInputFiles = "headerInputFiles"
+    /// Folder manifests, keyed by folder path. Given, every file in each folder is placed
+    /// in the sandbox and the folder becomes an `-I`, and the include finder is not used:
+    /// a C target inside a Swift package (swift-cmark) includes headers by search path —
+    /// `#include <parser.h>` from another folder — which the finder, resolving quoted
+    /// includes beside the including file only, cannot see. Hand-written formulas keep
+    /// the finder; the converter generates this form (B-54).
+    static let headerFolders = "headerFolders"
     static let output = "output"
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
@@ -105,6 +112,9 @@ public struct ClangPreprocessor: Node {
             .required(sourceFileInput),
             .dynamic(includeFileLists),
             .dynamic(headerInputFiles),
+            // Optional rather than dynamic: a formula can wire only a static port, and
+            // this one is wired by the generated formula, not by this node's own specs.
+            .optional(headerFolders),
         ],
         outputPorts: [output, errorLog, infoLog]
     )
@@ -116,8 +126,21 @@ public struct ClangPreprocessor: Node {
         let inputSourceFile: FileNameAndContent
         let headerFiles: [FileNameAndContent]
         let includePathLists: [String: [String]]
+        /// The folders on `headerFolders`, ordered by wire key so the command line is
+        /// the same for the same inputs.
+        let headerFolderManifests: [(String, FolderManifest)]
 
         init(input: ProcessInput) throws {
+            var folders: [(String, FolderManifest)] = []
+            for (key, value) in (input.inputValues[ClangPreprocessor.headerFolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                guard let json = try? value.expectValue().resolveAsString(),
+                      let manifest = try? TypeRegistry.decode(encodedJSON: json) as? FolderManifest else {
+                    continue
+                }
+                folders.append((key, manifest))
+            }
+            headerFolderManifests = folders
+
             let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
 
@@ -205,6 +228,11 @@ public struct ClangPreprocessor: Node {
         arguments.append("-E")
         arguments.append("-x"); arguments.append(language)
         arguments.append("-I"); arguments.append(".")
+        // Each header folder is a search path: files are placed in the sandbox at their
+        // input-file-system path, so the folder's path is its sandbox-relative directory.
+        for (_, manifest) in inputs.headerFolderManifests {
+            arguments.append("-I"); arguments.append(manifest.baseFolderPath)
+        }
 
         let standard = try inputs.configuration.standards.standard(
             forLanguage: language,
@@ -242,6 +270,31 @@ public struct ClangPreprocessor: Node {
     }
 
     func process(inputs: ClangPreprocessorInputs) throws -> ClangPreprocessorOutputs {
+
+        // Folders given: every file in them is a header input, no finder is consulted, and
+        // the run waits until all of them are on the wire.
+        if !inputs.headerFolderManifests.isEmpty {
+            var folderFileSpecs = [String: String]()
+            for (_, manifest) in inputs.headerFolderManifests {
+                for entry in manifest.entries where entry.isPinned && !entry.isFolder {
+                    let path = (Path(manifest.baseFolderPath) / entry.name).string
+                    // The source itself sits in its own folder and is already an input.
+                    guard path != inputs.inputSourceFile.filePath else { continue }
+                    folderFileSpecs[path] = "StaticFile(path: '\(path)').output"
+                }
+            }
+            guard inputs.headerFiles.count == folderFileSpecs.count else {
+                let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still collecting header folders".intern()))
+                return .init(output: error,
+                             errorLog: error,
+                             infoLog: error,
+                             headerInputFilesWireSpecs: folderFileSpecs,
+                             includeFileListWireSpecs: [:])
+            }
+            return try runPreprocessor(inputs: inputs,
+                                       headerInputFilesWireSpecs: folderFileSpecs,
+                                       includeFileListWireSpecs: [:])
+        }
 
         var headerInputFilesWireSpecs = [String: String]()
 

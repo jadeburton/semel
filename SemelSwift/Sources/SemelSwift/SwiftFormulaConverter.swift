@@ -33,6 +33,10 @@ struct SwiftFormulaConverter: Node {
     static let formulaOutput        = "formula"
     static let infoLog              = "infoLog"
     static let externalPackageJSONs = "externalPackageJSONs"
+    /// The folder manifest of every compilable target, root and dependencies alike, keyed
+    /// by folder path. A manifest says nothing about a target's language; the folder does:
+    /// C sources and no Swift make it a C target (B-54), built through the clang nodes.
+    static let targetFolders        = "targetFolders"
 
     public var thisNode: NodeRecord
 
@@ -49,6 +53,7 @@ struct SwiftFormulaConverter: Node {
             .dynamic(packageFolder),
             .dynamic(packageJSON),
             .dynamic(externalPackageJSONs),
+            .dynamic(targetFolders),
         ],
         outputPorts: [formulaOutput, infoLog]
     )
@@ -180,24 +185,89 @@ struct SwiftFormulaConverter: Node {
                 externalSpecs: specs)
         }
 
+        // ── every compilable target's folder, to tell C targets from Swift ones ──
+        // A manifest says nothing about a target's language; its folder does. The
+        // folders are asked for once every manifest is in, so this is one more pass.
+        var targetFolderSpecs: [String: String] = [:]
+        for (packageFolder, manifest) in [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }) {
+            for target in manifest.targets where target.isCompilable {
+                let folder = "\(packageFolder)/\(target.sourcesRelativePath)"
+                targetFolderSpecs[folder] = "Folder(path: '\(folder)').manifest"
+            }
+        }
+
+        var targetFolderManifests: [String: FolderManifest] = [:]
+        for (folder, nodeValue) in input.inputValues[Self.targetFolders] ?? [:] {
+            guard let json = try? nodeValue.expectValue().resolveAsString(),
+                  let manifest = try? TypeRegistry.decode(encodedJSON: json) as? FolderManifest else {
+                continue
+            }
+            targetFolderManifests[folder] = manifest
+        }
+
+        let missingFolders = targetFolderSpecs.keys.filter { targetFolderManifests[$0] == nil }.sorted()
+        guard missingFolders.isEmpty else {
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: waiting for \(missingFolders.count) target folder(s):\n"
+                      + missingFolders.map { "  \($0)" }.joined(separator: "\n"),
+                externalSpecs: specs,
+                targetFolderSpecs: targetFolderSpecs)
+        }
+
         // ── all manifests present — generate formula ──────────────────────────
         let formula = generateFormula(rootManifest: rootManifest,
                                       externalManifests: availableManifests,
-                                      rootPackageFolder: rootPackageFolder)
+                                      rootPackageFolder: rootPackageFolder,
+                                      clangInfo: { ClangTargetInfo(folderManifest: targetFolderManifests[$0]) })
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
-            inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs]) { _, new in new })
+            inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs,
+                                                     Self.targetFolders: targetFolderSpecs]) { _, new in new })
+    }
+
+    /// What a target's folder says about building it with clang: nil for a Swift target.
+    /// C sources and no Swift source at the folder's top level make a C target; a Swift
+    /// target whose sources all sit in subfolders has neither and stays Swift.
+    struct ClangTargetInfo {
+        /// The source extensions present, sorted — one wildcard per extension is generated.
+        let sourceExtensions: [String]
+        /// Whether `include/` exists: SwiftPM's default public-headers folder, where the
+        /// module map lives that makes the target importable from Swift.
+        let hasIncludeFolder: Bool
+
+        static let cFamilyExtensions: Set<String> = ["c", "m", "mm", "cpp", "cc", "cxx"]
+
+        init?(folderManifest: FolderManifest?) {
+            guard let manifest = folderManifest else { return nil }
+            var extensions = Set<String>()
+            var hasSwift = false
+            var hasInclude = false
+            for entry in manifest.entries where entry.isPinned {
+                if entry.isFolder {
+                    if entry.name == "include" { hasInclude = true }
+                    continue
+                }
+                let ext = (entry.name as NSString).pathExtension.lowercased()
+                if ext == "swift" { hasSwift = true }
+                if Self.cFamilyExtensions.contains(ext) { extensions.insert(ext) }
+            }
+            guard !hasSwift, !extensions.isEmpty else { return nil }
+            sourceExtensions = extensions.sorted()
+            hasIncludeFolder = hasInclude
+        }
     }
 
     // Returns a noValue output that still carries the current specs — the node's own
     // package wires included, since a spec left out of any output is unwired — so
     // applySpecs keeps (or creates) the needed wires.
     private func pendingOutput(reason: String,
-                               externalSpecs: [String: String]) throws -> ProcessOutput {
+                               externalSpecs: [String: String],
+                               targetFolderSpecs: [String: String] = [:]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
-              inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs]) { _, new in new })
+              inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs,
+                                                       Self.targetFolders: targetFolderSpecs]) { _, new in new })
     }
 
     // MARK: - Stalls
@@ -483,6 +553,16 @@ struct SwiftFormulaConverter: Node {
         let languageMode: String?
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
+        /// Non-decoded. What the target's folder said, once it arrived: nil means Swift.
+        var clangInfo: ClangTargetInfo?
+
+        var isClangTarget: Bool { clangInfo != nil }
+
+        /// Whether a build compiles this target at all: not a test, a system library, a
+        /// plugin or a macro.
+        var isCompilable: Bool {
+            !isSystemLibrary && !["test", "plugin", "macro"].contains(type ?? "")
+        }
 
         enum CodingKeys: String, CodingKey {
             case name, type, path, dependencies, sources, exclude, settings
@@ -623,12 +703,22 @@ struct SwiftFormulaConverter: Node {
 
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
-                                 rootPackageFolder: String) -> String {
+                                 rootPackageFolder: String,
+                                 clangInfo: (String) -> ClangTargetInfo?) -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
         // iteration order is seeded per process, so walking the dictionary itself let two
         // packages vending the same name resolve differently on every restart — and the
         // formula text is what every downstream graphSpec is derived from.
         let externalPackages = externalManifests.sorted { $0.key < $1.key }
+
+        // A target with its package folder and what its own folder says about its
+        // language, which is what every walk below asks.
+        func placed(_ target: SPMTarget, in packageFolder: String?) -> SPMTarget {
+            var placed = target
+            placed.overridePackageFolder = packageFolder
+            placed.clangInfo = clangInfo("\(packageFolder ?? rootPackageFolder)/\(target.sourcesRelativePath)")
+            return placed
+        }
 
         // Build combined target name → SPMTarget map.
         // External targets carry overridePackageFolder so buildFuncDef uses the
@@ -636,13 +726,12 @@ struct SwiftFormulaConverter: Node {
         // between external packages, the lexically first folder does.
         var allTargetsByName: [String: SPMTarget] = [:]
         for (extFolder, extManifest) in externalPackages {
-            for var target in extManifest.targets where allTargetsByName[target.name] == nil {
-                target.overridePackageFolder = extFolder
-                allTargetsByName[target.name] = target
+            for target in extManifest.targets where allTargetsByName[target.name] == nil {
+                allTargetsByName[target.name] = placed(target, in: extFolder)
             }
         }
         for target in rootManifest.targets {
-            allTargetsByName[target.name] = target  // root wins
+            allTargetsByName[target.name] = placed(target, in: nil)  // root wins
         }
 
         // Resolves a dependency name to all SPMTargets it represents.
@@ -653,9 +742,7 @@ struct SwiftFormulaConverter: Node {
             for (extFolder, extManifest) in externalPackages {
                 guard let product = extManifest.products.first(where: { $0.name == name }) else { continue }
                 return product.targets.compactMap { targetName in
-                    var t = extManifest.targets.first(where: { $0.name == targetName })
-                    t?.overridePackageFolder = extFolder
-                    return t
+                    extManifest.targets.first(where: { $0.name == targetName }).map { placed($0, in: extFolder) }
                 }
             }
             return []
@@ -673,11 +760,18 @@ struct SwiftFormulaConverter: Node {
             // system library would collapse to nothing at all.
             var allTargets: [SPMTarget] = []
             var collected = Set<String>()
+            // And every C target reached, whose objects the product links too (B-54).
+            var clangTargets: [SPMTarget] = []
+            var collectedClang = Set<String>()
             for productTargetName in product.targets {
                 for rootTarget in allTargetsNamed(productTargetName) {
                     for target in collectTransitiveTargets(root: rootTarget, lookupAll: allTargetsNamed) {
                         guard collected.insert(target.name).inserted else { continue }
                         allTargets.append(target)
+                    }
+                    for target in collectTransitiveClangTargets(root: rootTarget, lookupAll: allTargetsNamed) {
+                        guard collectedClang.insert(target.name).inserted else { continue }
+                        clangTargets.append(target)
                     }
                 }
             }
@@ -686,7 +780,7 @@ struct SwiftFormulaConverter: Node {
             // library vends nothing but a .systemLibrary — has no object files to link.
             // Emitting a SwiftLinker for it anyway leaves its required `input` port
             // unwired, which fails the entire ProjectBuilder rather than just that product.
-            guard !allTargets.isEmpty else { continue }
+            guard !allTargets.isEmpty || !clangTargets.isEmpty else { continue }
 
             // Emit one func definition per unique target (shared across products).
             for target in allTargets {
@@ -695,6 +789,14 @@ struct SwiftFormulaConverter: Node {
                 blocks.append(buildFuncDef(target: target,
                                            packageFolder: rootPackageFolder,
                                            lookupAll: allTargetsNamed))
+                emittedFuncs.insert(fn)
+            }
+            for target in clangTargets {
+                let fn = preprocessorFuncName(for: target.name)
+                guard !emittedFuncs.contains(fn) else { continue }
+                blocks.append(buildPreprocessorFuncDef(target: target,
+                                                       packageFolder: rootPackageFolder,
+                                                       lookupAll: allTargetsNamed))
                 emittedFuncs.insert(fn)
             }
 
@@ -723,10 +825,13 @@ struct SwiftFormulaConverter: Node {
                 literals: ["linkage":    linkage.rawValue,
                            "outputName": outputName])
 
-            // One object-file wire per compiled target (all transitive deps included).
+            // One object-file wire per compiled Swift target (all transitive deps
+            // included), and one object per source file of every C target reached: the
+            // for-each expands over the target folder's manifest, which ProjectBuilder
+            // wires for exactly that.
             let objectWires = allTargets.map { t in
                 "        '\(t.name).o': \(compilerFuncName(for: t.name))().object"
-            }
+            } + clangTargets.flatMap { clangObjectEntries(target: $0, packageFolder: rootPackageFolder) }
 
             // Every system library the product reaches, so a vendored static archive
             // dropped in one of those folders is linked in.  The linker needs the same
@@ -798,8 +903,10 @@ struct SwiftFormulaConverter: Node {
 
             // System-library targets (module.modulemap wrappers) have no Swift
             // sources.  Skip them here; buildFuncDef handles them separately via
-            // inputModuleMapFolders when they appear as a dependency.
-            guard !target.isSystemLibrary else {
+            // inputModuleMapFolders when they appear as a dependency. A C target has
+            // none either: its objects come through the clang nodes and its include
+            // folder reaches Swift the same way a system library's does.
+            guard !target.isSystemLibrary, !target.isClangTarget else {
                 return
             }
 
@@ -855,10 +962,99 @@ struct SwiftFormulaConverter: Node {
         return ordered
     }
 
+    // Every C target reachable from `root` — directly, or through any chain of Swift or C
+    // targets, since a C target may depend on another (cmark-gfm-extensions on cmark-gfm).
+    // Encounter order; system libraries are not C targets and are left to their own walk.
+    private func collectTransitiveClangTargets(root: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [SPMTarget] {
+        var ordered: [SPMTarget] = []
+        var visited = Set<String>()
+
+        func visit(_ target: SPMTarget) {
+            guard visited.insert(target.name).inserted else {
+                return
+            }
+            for dep in target.dependencies {
+                guard let depName = dep.targetName else {
+                    continue
+                }
+                for depTarget in lookupAll(depName) where !depTarget.isSystemLibrary {
+                    if depTarget.isClangTarget, !ordered.contains(where: { $0.name == depTarget.name }) {
+                        ordered.append(depTarget)
+                    }
+                    visit(depTarget)
+                }
+            }
+        }
+
+        visit(root)
+        return ordered
+    }
+
     // "MyTarget-A" → "compilerMyTarget_A"  (must be a valid formula identifier)
     private func compilerFuncName(for targetName: String) -> String {
-        let sanitized = String(targetName.map { $0.isLetter || $0.isNumber ? $0 : Character("_") })
-        return "compiler\(sanitized)"
+        "compiler\(sanitizedIdentifier(targetName))"
+    }
+
+    private func preprocessorFuncName(for targetName: String) -> String {
+        "preprocess\(sanitizedIdentifier(targetName))"
+    }
+
+    private func sanitizedIdentifier(_ name: String) -> String {
+        String(name.map { $0.isLetter || $0.isNumber ? $0 : Character("_") })
+    }
+
+    // MARK: - C targets (B-54)
+
+    /// The folder holding a C target's public headers and its module map: `include/`
+    /// when it exists, which is SwiftPM's default, else the target folder itself.
+    private func headerFolder(of target: SPMTarget, packageFolder: String) -> String {
+        let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
+        return target.clangInfo?.hasIncludeFolder == true ? "\(folder)/include" : folder
+    }
+
+    /// The preprocessor for one C target, as a func over the source path, the way the
+    /// hand-written C formulas write it. Header folders: the target's own folder, its
+    /// `include`, and the public headers of every C target it reaches — which is what
+    /// SwiftPM puts on its search path. The include finder is not used: these targets
+    /// include by search path (`#include <parser.h>`), which it cannot resolve.
+    private func buildPreprocessorFuncDef(target: SPMTarget,
+                                          packageFolder: String,
+                                          lookupAll: (String) -> [SPMTarget]) -> String {
+        let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
+        var folders = [folder]
+        if target.clangInfo?.hasIncludeFolder == true {
+            folders.append("\(folder)/include")
+        }
+        for dependency in collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
+            let dependencyHeaders = headerFolder(of: dependency, packageFolder: packageFolder)
+            if !folders.contains(dependencyHeaders) { folders.append(dependencyHeaders) }
+        }
+        let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
+
+        let configExpr = Self.configurationExpression(namespace: derivedSettingNamespace(forTypeName: "ClangPreprocessor"),
+                                                      packageFolder: packageFolder,
+                                                      literals: [:])
+        return "func \(preprocessorFuncName(for: target.name))(path) =\n" +
+               "    ClangPreprocessor(\n" +
+               "        configuration: ['config': \(configExpr)],\n" +
+               "        input: [path: StaticFile(path: path)],\n" +
+               "        headerFolders: [\n" + folderWires.joined(separator: ",\n") + "\n        ]\n" +
+               "    )"
+    }
+
+    /// The linker's object entries for one C target: a for-each per source extension over
+    /// the target folder, compiling each preprocessed file. The glob is a plain string,
+    /// so the generated text needs no path literal.
+    private func clangObjectEntries(target: SPMTarget, packageFolder: String) -> [String] {
+        let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
+        let configExpr = Self.configurationExpression(namespace: derivedSettingNamespace(forTypeName: "ClangCompiler"),
+                                                      packageFolder: packageFolder,
+                                                      literals: [:])
+        return (target.clangInfo?.sourceExtensions ?? []).map { ext in
+            "        {f: '\(folder)/*.\(ext)'} \"%%f%%.o\": ClangCompiler(" +
+            "configuration: ['config': \(configExpr)], " +
+            "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)])"
+        }
     }
 
     // Emits a zero-parameter func definition for one compiler node.
@@ -922,6 +1118,12 @@ struct SwiftFormulaConverter: Node {
             let depPkgRoot    = systemLibrary.overridePackageFolder ?? packageFolder
             let mapFolderPath = "\(depPkgRoot)/\(systemLibrary.sourcesRelativePath)"
             moduleMapFolderWires.append("            '\(systemLibrary.name)': Folder(path: '\(mapFolderPath)').manifest")
+        }
+        // A C target reached the same way is importable through the module map in its
+        // public-headers folder, exactly like a system library (B-54).
+        for clangTarget in collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
+            let mapFolderPath = headerFolder(of: clangTarget, packageFolder: packageFolder)
+            moduleMapFolderWires.append("            '\(clangTarget.name)': Folder(path: '\(mapFolderPath)').manifest")
         }
 
         var args =

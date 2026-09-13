@@ -20,9 +20,34 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
     }
 
+    /// The converter asks for every compilable target's folder manifest before generating
+    /// (B-54: the folder is what says whether a target is C or Swift). The manifests these
+    /// tests do not care about are supplied here from the JSON itself, one `.swift` file
+    /// per target; `folderContents` overrides a folder's entries for the tests that do.
+    private func targetFolderManifests(packageFolder: String,
+                                       json: String,
+                                       externalManifests: [String: String],
+                                       folderContents: [String: [FolderManifestEntry]]) throws -> [String: NodeValue] {
+        var manifests: [String: NodeValue] = [:]
+        for (folder, text) in [(packageFolder, json)] + externalManifests.map { ($0.key, $0.value) } {
+            let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+            for target in (object?["targets"] as? [[String: Any]]) ?? [] {
+                let name = target["name"] as? String ?? ""
+                let type = target["type"] as? String ?? "regular"
+                guard !["test", "system", "system-target", "plugin", "macro"].contains(type) else { continue }
+                let path = "\(folder)/\(target["path"] as? String ?? "Sources/\(name)")"
+                let entries = folderContents[path] ?? [FolderManifestEntry(name: "\(name).swift", isFolder: false, isPinned: true)]
+                manifests[path] = .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
+            }
+        }
+        return manifests
+    }
+
     private func convert(packageFolder: String = "input:/pkg",
                          json: String,
-                         externalManifests: [String: String] = [:]) throws -> ProcessOutput {
+                         externalManifests: [String: String] = [:],
+                         folderContents: [String: [FolderManifestEntry]] = [:],
+                         supplyTargetFolders: Bool = true) throws -> ProcessOutput {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         var externalValues = [String: NodeValue]()
         for (path, externalJSON) in externalManifests {
@@ -32,14 +57,20 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try json.intern())],
             SwiftFormulaConverter.externalPackageJSONs: externalValues,
+            SwiftFormulaConverter.targetFolders:        supplyTargetFolders
+                ? try targetFolderManifests(packageFolder: packageFolder, json: json,
+                                            externalManifests: externalManifests, folderContents: folderContents)
+                : [:],
         ])
         return try makeConverter().process(input: input)
     }
 
     private func formula(packageFolder: String = "input:/pkg",
                          json: String,
-                         externalManifests: [String: String] = [:]) throws -> String {
-        let output = try convert(packageFolder: packageFolder, json: json, externalManifests: externalManifests)
+                         externalManifests: [String: String] = [:],
+                         folderContents: [String: [FolderManifestEntry]] = [:]) throws -> String {
+        let output = try convert(packageFolder: packageFolder, json: json,
+                                 externalManifests: externalManifests, folderContents: folderContents)
         return try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
     }
 
@@ -971,5 +1002,98 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Models"])
+    }
+
+    // MARK: - C targets (B-54)
+
+    // swift-cmark, reached through EmojiText and swift-markdown, is 34 C files in two
+    // targets whose headers live in `include/` beside a module map. A manifest says
+    // nothing about a target's language; its folder does. A C target is built through the
+    // clang nodes the way the hand-written C formulas write them, its objects link beside
+    // the Swift ones, and its public headers reach Swift the way a system library's do.
+
+    private func file(_ name: String)   -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }
+    private func folder(_ name: String) -> FolderManifestEntry { .init(name: name, isFolder: true,  isPinned: true) }
+
+    private let appOverCLib = """
+        {
+          "name": "App",
+          "dependencies": [],
+          "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+          "targets": [
+            {"name": "App",  "type": "executable", "path": "Sources/App", "dependencies": [{"byName": ["CLib", null]}]},
+            {"name": "CLib", "type": "regular",    "path": "src",         "dependencies": []},
+            {"name": "CExt", "type": "regular",    "path": "extensions",  "dependencies": [{"byName": ["CLib", null]}]}
+          ]
+        }
+        """
+
+    private var cFolders: [String: [FolderManifestEntry]] {
+        ["input:/pkg/src":        [file("blocks.c"), file("parser.h"), file("CMakeLists.txt"), folder("include")],
+         "input:/pkg/extensions": [file("table.c"), folder("include")]]
+    }
+
+    func test_waitsForEveryCompilableTargetsFolderBeforeGenerating() throws {
+        let output = try convert(json: appOverCLib, supplyTargetFolders: false)
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]),
+                       ["input:/pkg/Sources/App": "Folder(path: 'input:/pkg/Sources/App').manifest",
+                        "input:/pkg/src":         "Folder(path: 'input:/pkg/src').manifest",
+                        "input:/pkg/extensions":  "Folder(path: 'input:/pkg/extensions').manifest"])
+        XCTAssertNotNil(try pendingReason(output).range(of: "target folder"))
+    }
+
+    func test_aTargetWhoseFolderHoldsCSourcesIsBuiltThroughTheClangNodes() throws {
+        let result = try formula(json: appOverCLib, folderContents: cFolders)
+
+        XCTAssertFalse(result.contains("func compilerCLib"), "a C target has no Swift compiler, got:\n\(result)")
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") },
+                                         "got:\n\(result)")
+        XCTAssertTrue(preprocessor.contains("ClangPreprocessor("), "got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("ConfigFilter(prefix: 'clang.preprocessor'"), "got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("'input:/pkg/src': Folder(path: 'input:/pkg/src').manifest"), "got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("'input:/pkg/src/include': Folder(path: 'input:/pkg/src/include').manifest"), "got:\n\(preprocessor)")
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/*.c'} \"%%f%%.o\": ClangCompiler("), "got:\n\(product)")
+        XCTAssertTrue(product.contains("preprocessCLib(path: f)"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("ConfigFilter(prefix: 'clang.compiler'"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("'App.o': compilerApp().object"), "the Swift objects still link, got:\n\(product)")
+    }
+
+    func test_aSwiftTargetDependingOnACTargetGetsItsPublicHeadersAsAModuleMapFolder() throws {
+        let result = try formula(json: appOverCLib, folderContents: cFolders)
+
+        let block = try funcDefinition("compilerApp", in: result)
+        XCTAssertTrue(block.contains("'CLib': Folder(path: 'input:/pkg/src/include').manifest"), "got:\n\(block)")
+        XCTAssertFalse(block.contains("compilerCLib().swiftmodule"), "a C target has no swiftmodule, got:\n\(block)")
+    }
+
+    /// cmark-gfm-extensions includes cmark-gfm's headers by search path; SwiftPM puts the
+    /// dependency's public headers on it, and so does the generated preprocessor.
+    func test_aCTargetsHeaderFoldersIncludeThePublicHeadersOfTheCTargetsItDependsOn() throws {
+        let json = appOverCLib.replacingOccurrences(of: "[{\"byName\": [\"CLib\", null]}]},\n    {\"name\": \"CLib\"",
+                                                   with: "[{\"byName\": [\"CExt\", null]}]},\n    {\"name\": \"CLib\"")
+        let result = try formula(json: json, folderContents: cFolders)
+
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCExt(path)") },
+                                         "got:\n\(result)")
+        XCTAssertTrue(preprocessor.contains("'input:/pkg/extensions': Folder"), "its own folder, got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("'input:/pkg/src/include': Folder"), "its dependency's public headers, got:\n\(preprocessor)")
+        XCTAssertFalse(preprocessor.contains("'input:/pkg/src': Folder"), "not its dependency's private folder, got:\n\(preprocessor)")
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/*.c'}"), "objects of a C target reached through a C target, got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/extensions/*.c'}"), "got:\n\(product)")
+    }
+
+    /// A Swift target whose sources all sit in subfolders has no `.swift` at the top of
+    /// its folder — and no C source either, so it stays Swift.
+    func test_aTargetWithSourcesOnlyInSubfoldersStaysSwift() throws {
+        let result = try formula(json: appOverCLib,
+                                 folderContents: ["input:/pkg/Sources/App": [folder("Base"), folder("Views")]]
+                                     .merging(cFolders) { _, new in new })
+
+        XCTAssertTrue(result.contains("func compilerApp()"), "got:\n\(result)")
     }
 }

@@ -126,4 +126,70 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertEqual(ClangPreprocessor.language(for: "a.C.p.o"), "c++")
         XCTAssertEqual(ClangPreprocessor.language(for: "a.mm.p.o"), "objective-c++")
     }
+
+    // MARK: - Header folders (B-54)
+
+    // A C target inside a Swift package (swift-cmark) includes headers by search path —
+    // `#include <parser.h>` from another folder — which the include finder, which resolves
+    // quoted includes beside the including file only, cannot see. The generated formula
+    // hands the preprocessor the target's folders instead: every file in them is an input
+    // and each folder is an `-I`. With folders given, the finder is not used at all.
+
+    private func folderManifest(_ path: String, files: [String], folders: [String] = []) throws -> NodeValue {
+        let entries = files.map { FolderManifestEntry(name: $0, isFolder: false, isPinned: true) }
+                    + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true) }
+        return .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
+    }
+
+    private func makeFolderInput(headerFiles: [String: NodeValue] = [:]) throws -> ProcessInput {
+        let configuration = """
+            toolDescriptor.name=\(descriptor.name)
+            toolDescriptor.version=\(descriptor.version)
+            toolDescriptor.platform=\(descriptor.platform)
+            toolDescriptor.architecture=\(descriptor.architecture)
+            target=arm64-apple-macos14.0
+            cStandard=c17
+            """
+        return ProcessInput(inputValues: [
+            ClangPreprocessor.configuration:   ["configuration": .value(try configuration.intern())],
+            ClangPreprocessor.sourceFileInput:  ["input:/pkg/src/blocks.c": .value(try "int f(void){return 0;}".intern())],
+            ClangPreprocessor.includeFileLists: [:],
+            ClangPreprocessor.headerInputFiles: headerFiles,
+            ClangPreprocessor.headerFolders: [
+                "input:/pkg/src":         try folderManifest("input:/pkg/src", files: ["blocks.c", "parser.h"], folders: ["include"]),
+                "input:/pkg/src/include": try folderManifest("input:/pkg/src/include", files: ["cmark.h", "module.modulemap"]),
+            ],
+        ])
+    }
+
+    private func headerFileWires() throws -> [String: NodeValue] {
+        var wires: [String: NodeValue] = [:]
+        for path in ["input:/pkg/src/parser.h",
+                     "input:/pkg/src/include/cmark.h", "input:/pkg/src/include/module.modulemap"] {
+            wires[path] = .value(try "// \(path)".intern())
+        }
+        return wires
+    }
+
+    /// Every file of every folder except the source itself, which is already an input.
+    func test_withHeaderFoldersEveryFileInThemIsAskedForAndNoIncludeFinderIsCreated() throws {
+        let output = try makeTool().process(input: try makeFolderInput())
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerInputFiles]).keys.sorted(),
+                       ["input:/pkg/src/include/cmark.h", "input:/pkg/src/include/module.modulemap",
+                        "input:/pkg/src/parser.h"])
+        XCTAssertEqual(output.inputWireSpecs[ClangPreprocessor.includeFileLists] ?? [:], [:],
+                       "folders replace the finder; got \(output.inputWireSpecs)")
+        XCTAssertTrue(executor.invocations.isEmpty, "nothing runs until the headers are on the wire")
+    }
+
+    func test_withHeaderFoldersOnTheWireThePreprocessorRunsWithAnIncludeFlagPerFolder() throws {
+        _ = try makeTool().process(input: try makeFolderInput(headerFiles: try headerFileWires()))
+
+        let arguments = executor.lastArguments
+        let includeFlags = zip(arguments, arguments.dropFirst()).filter { $0.0 == "-I" }.map(\.1)
+        XCTAssertEqual(includeFlags, [".", "input:/pkg/src", "input:/pkg/src/include"], "got \(arguments)")
+        XCTAssertTrue(try XCTUnwrap(executor.invocations.last).inputFileNames.contains("input:/pkg/src/include/cmark.h"),
+                      "every file of every folder is placed in the sandbox")
+    }
 }

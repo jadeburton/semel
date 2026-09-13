@@ -83,4 +83,41 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: result.sandboxPathUsed),
                        "the sandbox must be deleted once the tool has run")
     }
+
+    /// Phase 1 runs every ready node concurrently, so tools launch from many threads at
+    /// once. A pipe's write end that stays open in the parent — Foundation does not close
+    /// it reliably under concurrent launches — or that a sibling child inherits before its
+    /// own spawn keeps the reader waiting for an EOF that never comes: the first IceCubes
+    /// build with 86 ready nodes hung with every tool exited and every thread in
+    /// `readDataToEndOfFile`. The runner closes its own write ends and marks the pipes
+    /// close-on-exec, and this pins it: two dozen concurrent runs all come back.
+    func test_manyConcurrentRunsAllComeBack() throws {
+        let expectation = expectation(description: "every concurrent tool run returns")
+        expectation.expectedFulfillmentCount = 24
+
+        var failures: [String] = []
+        let lock = NSLock()
+
+        for index in 0..<24 {
+            DispatchQueue.global().async {
+                do {
+                    // Staggered durations and more than a pipe buffer of output on both
+                    // streams, so launches overlap the way real compiles do.
+                    let result = try self.runShell("""
+                        sleep 0.\(index % 5); head -c 100000 /dev/zero | tr '\\0' x; echo run\(index); \
+                        head -c 100000 /dev/zero | tr '\\0' y 1>&2; echo err\(index) 1>&2
+                        """)
+                    if result.exitCode != 0 || !result.infoOutput.contains("run\(index)") || !result.errorOutput.contains("err\(index)") {
+                        lock.lock(); failures.append("run \(index): \(result.exitCode) \(result.infoOutput) \(result.errorOutput)"); lock.unlock()
+                    }
+                } catch {
+                    lock.lock(); failures.append("run \(index): \(error)"); lock.unlock()
+                }
+                expectation.fulfill()
+            }
+        }
+
+        wait(for: [expectation], timeout: 30)
+        XCTAssertTrue(failures.isEmpty, failures.joined(separator: "\n"))
+    }
 }

@@ -441,6 +441,8 @@ public final class BuildEngine {
             return results
         }
 
+        Debug.log("batch: \(nodeRecords.count) scheduled, \(computedResults.count) computed")
+
         // Unschedule every fetched node BEFORE any writes so that cascade
         // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
         // by a later unschedule in the loop below.

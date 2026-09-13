@@ -28,10 +28,15 @@ final class ConfigFileTests: SemelSwiftTestCase {
     private func formula(packageFolder: String = "input:/pkg") throws -> String {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
+        // The target's folder, holding a Swift file: what the converter asks for to tell a
+        // C target from a Swift one (B-54).
+        let libFolder = FolderManifest(baseFolderPath: "\(packageFolder)/Sources/Lib",
+                                       entries: [FolderManifestEntry(name: "Lib.swift", isFolder: false, isPinned: true)])
         let output = try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try plainManifest.intern())],
             SwiftFormulaConverter.externalPackageJSONs: [:],
+            SwiftFormulaConverter.targetFolders:        ["\(packageFolder)/Sources/Lib": .value(try libFolder.toJSON().intern())],
         ]))
         return try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
             .expectValue().resolveAsString()

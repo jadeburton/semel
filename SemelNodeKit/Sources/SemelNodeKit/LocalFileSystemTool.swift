@@ -100,38 +100,39 @@ public class LocalFileSystemTool: ToolRunner {
 
         process.environment = processEnvironment
 
-        let stdoutPipe = Foundation.Pipe()
-        let stderrPipe = Foundation.Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError  = stderrPipe
+        // The tool's stdout and stderr go to files in the sandbox, not pipes. Pipes need a
+        // reader per stream draining while the tool runs, and an EOF that only arrives
+        // once every copy of the write end is closed — the parent's, which Foundation is
+        // expected to close on launch, and any a concurrently spawned sibling inherited.
+        // Tools launch from many threads at once (phase 1 runs every ready node
+        // concurrently), and the first IceCubes build — 86 ready nodes, eleven tools at
+        // once — hung with every tool exited, dozens of pipe descriptors still open in the
+        // parent, and every thread waiting in readDataToEndOfFile. A file has no such
+        // lifetime: the tool writes it, exits, and it is read whole. The sandbox is the
+        // tool's working directory and is deleted afterwards, so nothing leaks.
+        let stdoutURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(".semel-stdout")
+        let stderrURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(".semel-stderr")
+        guard fileManager.createFile(atPath: stdoutURL.path, contents: nil),
+              fileManager.createFile(atPath: stderrURL.path, contents: nil),
+              let stdoutHandle = Foundation.FileHandle(forWritingAtPath: stdoutURL.path),
+              let stderrHandle = Foundation.FileHandle(forWritingAtPath: stderrURL.path) else {
+            throw SandboxCreationError(underlying: LocalFileSystemToolError.failedToWriteInputFile(
+                fileName: stdoutURL.lastPathComponent,
+                underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(EIO))))
+        }
+        process.standardOutput = stdoutHandle
+        process.standardError  = stderrHandle
 
         do { try process.run() } catch {
             throw LocalFileSystemToolError.processLaunchFailed(underlying: error)
         }
 
-        // 4. Drain stdout and stderr on background threads WHILE the process runs.
-        //    Reading after waitUntilExit() risks deadlock if the tool writes more
-        //    than the OS pipe buffer (~64 KB) before the process exits.
-        var stdoutData = Foundation.Data()
-        var stderrData = Foundation.Data()
-        let ioGroup = DispatchGroup()
-
-        ioGroup.enter()
-
-        DispatchQueue.global(qos: .utility).async {
-            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            ioGroup.leave()
-        }
-
-        ioGroup.enter()
-
-        DispatchQueue.global(qos: .utility).async {
-            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            ioGroup.leave()
-        }
-
         process.waitUntilExit()
-        ioGroup.wait()
+        try? stdoutHandle.close()
+        try? stderrHandle.close()
+
+        let stdoutData = fileManager.contents(atPath: stdoutURL.path) ?? Foundation.Data()
+        let stderrData = fileManager.contents(atPath: stderrURL.path) ?? Foundation.Data()
 
         let exitCode = process.terminationStatus
 
