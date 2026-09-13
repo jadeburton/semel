@@ -1,6 +1,8 @@
 # Semel
 ## A build system
 
+[![CI](https://github.com/jadeburton/build_system/actions/workflows/swift.yml/badge.svg?branch=main)](https://github.com/jadeburton/build_system/actions/workflows/swift.yml) [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-0078d7?logo=apple&logoColor=white&style=flat-square)](https://www.apple.com/macos/) [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+
 Semel pro semper: once and for all. Semel is a functional build system that aims to cache the shit out of your builds, together with a fully hermetic, private filesystem that greatly reduces the chance of corrupt or missing files or versioning issues. 
 
 The same work is never done twice.
