@@ -174,6 +174,7 @@ whole group with one error case. `Response` and `Event` group the same way, with
 | `errors` | | | `[ErrorRecord]` |
 | `tools` | | | `[ToolNamespace]` |
 | `reset` / `nudge` | | | ok |
+| `wait` | | | ok, once the graph has settled |
 | `debug` | | | the graph as one string |
 | `subscribe` | | | ok |
 
@@ -287,6 +288,10 @@ a CLI killed mid-push cannot leave the engine suppressed forever.
 Requests are handled on one serial queue, which is the role the REPL thread plays today
 against the engine's background task. GRDB's `dbQueue` and the existing task-local
 transaction nesting already make that safe. Two CLIs issuing commands at once take turns.
+
+`wait` is the exception, answered before the queue: it observes rather than mutates, and a
+client blocked on the graph settling would otherwise hold every other client's commands
+behind it for the length of a build.
 
 The queue is serial, but the *protocol* is not: correlation IDs allow several requests in
 flight on one connection. Matching replies to requests is the connection's job, not the

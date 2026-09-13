@@ -49,6 +49,13 @@ final class EnginePluginTests: XCTestCase {
         ])
     }
 
+    func test_waitSendsWaitAndReportsSettled() throws {
+        try run("wait")
+
+        XCTAssertEqual(connection.daemonRequests, [.wait])
+        XCTAssertEqual(context.messages, ["Settled."])
+    }
+
     func test_resetSendsResetAndAnnouncesTheRebuild() throws {
         try run("reset")
 

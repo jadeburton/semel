@@ -81,6 +81,7 @@ final class MessageJSONTests: XCTestCase {
             .tools,
             .reset,
             .nudge,
+            .wait,
             .debug,
             .subscribe,
         ]

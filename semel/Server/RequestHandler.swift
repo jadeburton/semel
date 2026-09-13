@@ -41,7 +41,14 @@ public final class RequestHandler {
     // MARK: - Entry point
 
     public func handle(_ request: Request, body: Data?, session: Session) -> (Response, Data?) {
-        queue.sync { () -> (Response, Data?) in
+        // A wait observes; it does not mutate. Off the queue so a client waiting for the
+        // graph to settle does not hold every other client's commands behind it.
+        if case .daemon(.wait) = request {
+            engine.waitUntilIdleBlocking()
+            return (.daemon(.ok), nil)
+        }
+
+        return queue.sync { () -> (Response, Data?) in
             switch request {
             case .hello(let hello):
                 return (.hello(answer(hello)), nil)
@@ -110,6 +117,10 @@ public final class RequestHandler {
                 return (.daemon(.ok), nil)
             case .nudge:
                 try engine.nudge()
+                return (.daemon(.ok), nil)
+            case .wait:
+                // Answered in `handle`, before the queue. Unreachable here, and the switch
+                // wants every case.
                 return (.daemon(.ok), nil)
             case .debug:
                 return (.daemon(.debug(text: try engine.graphDescription())), nil)

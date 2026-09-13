@@ -121,6 +121,10 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     case tools
     case reset
     case nudge
+    /// Blocks until the graph has settled: every scheduled node processed and nothing
+    /// asking for another pass. The reply is `.ok`. What a script needs between a push
+    /// and a report, since every other request returns while the build runs behind it.
+    case wait
     case debug
     case subscribe
 }

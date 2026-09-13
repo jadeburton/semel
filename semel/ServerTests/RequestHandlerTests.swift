@@ -81,6 +81,13 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(.nudge).0, .ok)
     }
 
+    /// The fixture engine has no processing loop, so there is nothing to settle and the
+    /// wait returns at once. It is answered before the serial queue, so this also pins
+    /// that a wait never reaches the dispatcher.
+    func test_waitAnswersOkWhenTheEngineIsIdle() throws {
+        XCTAssertEqual(try daemon(.wait).0, .ok)
+    }
+
     func test_debugReturnsTheGraphDescription() throws {
         let (response, _) = try daemon(.debug)
 
