@@ -23,7 +23,7 @@ public enum EntryKind: String, Codable, Equatable, Sendable {
     case folder
 }
 
-/// What `ls` prints beside a name today. `missing` and `unreferenced` are the engine's
+/// What `ls` prints beside a name. `missing` and `unreferenced` are the engine's
 /// "ghost" entries — referenced but deleted, or the reverse — and hiding them would be a
 /// behavior change.
 public enum EntryStatus: String, Codable, Equatable, Sendable {
@@ -141,7 +141,7 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
 
 // MARK: - Events
 
-/// What the engine prints from its background task today, carried to every subscribed
+/// What the engine reports from its background task, carried to every subscribed
 /// connection. B-50's settle diffs become a third case.
 public enum DaemonEvent: Codable, Equatable, Sendable {
     case errors(records: [ErrorRecord])

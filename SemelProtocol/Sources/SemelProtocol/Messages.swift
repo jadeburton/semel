@@ -4,7 +4,7 @@
 // The three things that cross the wire, each an enum *of roles*. Which role a message
 // belongs to is then a type-level fact: adding a role is a new file rather than an edit to
 // every switch, and a server that does not offer a role rejects the whole group with one
-// error case. Only `daemon` exists today; `cache` (B-30 role 1) and `runner` (role 2)
+// error case. Only `daemon` has messages; `cache` (B-30 role 1) and `runner` (role 2)
 // arrive as new cases here and new files beside DaemonMessages.swift.
 //
 // The roots hand-write their Codable conformance. Their payloads are single values with no

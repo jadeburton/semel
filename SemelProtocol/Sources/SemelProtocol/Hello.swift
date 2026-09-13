@@ -12,8 +12,8 @@
 import Foundation
 
 /// One `semelserv` binary, several modes. A server offers some subset; a client asks for
-/// one. Only `daemon` has messages today; the others are named so that `Hello` does not
-/// change when they arrive.
+/// one. Only `daemon` has messages; the others are named so that `Hello` does not change
+/// when they arrive.
 public enum Role: String, Codable, Equatable, Sendable {
     case daemon
     case cache
@@ -40,8 +40,8 @@ public enum HelloRejection: Codable, Equatable, Sendable {
 }
 
 public enum HelloResponse: Codable, Equatable, Sendable {
-    /// `databasePath` is here because the REPL prints "Graph: …" at startup from local
-    /// state today, and after the split the client has no such state.
+    /// `databasePath` is here because the REPL prints "Graph: …" at startup and the client
+    /// has no local state to take it from.
     case accepted(serverVersion: String, databasePath: String)
     case rejected(reason: HelloRejection)
 }
