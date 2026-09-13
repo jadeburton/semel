@@ -31,6 +31,8 @@ final class FilePluginTests: XCTestCase {
         let url = externalRoot.appendingPathComponent(relativePath)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.write(to: url, atomically: true, encoding: .utf8)
+        // Fixes the mode so the push assertions do not depend on the runner's umask.
+        chmod(url.path, 0o644)
     }
 
     private func run(_ verb: String, _ tokens: [String]) throws {

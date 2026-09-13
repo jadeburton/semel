@@ -1,6 +1,13 @@
+//
+//  FileWildcardMatcherTests.swift
+//  SemelNodeKitTests
+//
+//  Matching `*`, `?` and `**` against a mock file system, both end to end through
+//  `FileWildcardMatcher` and at the level of the segment matcher it delegates to.
+//
+
 @testable import SemelNodeKit
 import XCTest
-import SemelNodeKit
 
 final class FileWildcardMatcherTests: XCTestCase {
 

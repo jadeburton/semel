@@ -5,7 +5,6 @@
 // the sink directly and the socket server can be a fan-out over its subscribed sessions
 // without the handler knowing which it is talking to.
 
-import Foundation
 import SemelProtocol
 
 public protocol EventSink: AnyObject {

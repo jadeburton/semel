@@ -7,19 +7,19 @@ about how to change it.
 
 ```sh
 swift build                                  # builds everything the root package links, from the repo root
-swift test --package-path SemelNodeKit       # the node-authoring API (~68)
-swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages)
-swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
-swift test --package-path SemelClang         # the C/C++ toolchain nodes (~27)
-swift test --package-path SemelCore    # the engine tests (~247)
-swift test                                   # the CLI tests only (~8)
+swift test --package-path SemelNodeKit       # the node-authoring API (~121)
+swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages) (~44)
+swift test --package-path SemelSwift         # the Swift toolchain nodes (~133)
+swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
+swift test --package-path SemelCore    # the engine tests (~338)
+swift test                                   # the CLI and server tests (~91)
 ```
 
 The root package now links `SemelProtocol` through `SemelCLI` and `SemelServ`, so
 `swift build` covers it; its own `swift test --package-path SemelProtocol` line is still
 the only thing that runs its tests.
 
-`swift test` at the root runs **only** the `SemelCLI` tests. The engine and the
+`swift test` at the root runs **only** the `SemelCLITests` and `SemelServTests` targets. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all six.
 

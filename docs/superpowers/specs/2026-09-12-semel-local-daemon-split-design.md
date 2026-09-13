@@ -309,7 +309,7 @@ interpreter; in phase 3 it fans out to subscribed connections.
 
 ### Changes to `SemelCore`
 
-Three, all small, all in service of the seam:
+Four, all small, all in service of the seam:
 
 1. **`ErrorReport` splits** into gathering and rendering. `ErrorReport.entries(forNodeID:ports:messages:database:)`
    returns `[Entry]` (label, grouped ports and messages) and stays in Core. Rendering

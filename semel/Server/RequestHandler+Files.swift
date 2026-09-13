@@ -103,8 +103,9 @@ extension RequestHandler {
 
     // MARK: - remove
 
-    /// Deletes every match in the input file system. Deletions that succeed stand even if
-    /// a later one fails; the failures are reported together so the client can say which.
+    /// Deletes every match in the input file system. Deletions that succeed stand even if a
+    /// later one fails; the failures are reported together, and the paths that were removed
+    /// are not repeated back in that case.
     func remove(pattern: String) throws -> DaemonResponse {
         let root    = try engine.inputFileSystem
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: root))

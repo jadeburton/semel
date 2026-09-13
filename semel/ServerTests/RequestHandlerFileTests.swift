@@ -46,6 +46,7 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
     // A node with no consumer is unreferenced, and no processing loop runs in these
     // tests, so nothing ever wires one: the status below is the lister's, not the
     // handler's.
+
     func test_listReturnsFilesAndFoldersWithSizeAndMode() throws {
         try daemon(.pushFolder(path: "src"))
         try daemon(.pushFile(path: "src/main.c", mode: 0o644), body: Data("int main() {}".utf8))

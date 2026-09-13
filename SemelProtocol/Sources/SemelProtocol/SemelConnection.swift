@@ -18,6 +18,9 @@ import Foundation
 public protocol SemelConnection: AnyObject {
 
     /// Blocks until the reply to this request arrives. Thread-safe.
+    ///
+    /// A reply with no body arrives as `nil`; a request with no body may be sent as `nil`
+    /// or empty, and a conformer treats the two alike.
     func send(_ request: Request, body: Data?) throws -> (Response, Data?)
 
     /// Called for every event the server pushes, from whatever thread the connection
