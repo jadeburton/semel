@@ -24,13 +24,13 @@
 
 import Foundation
 
-public enum FrameKind: UInt8 {
+public enum FrameKind: UInt8, Sendable {
     case request  = 1
     case response = 2
     case event    = 3
 }
 
-public struct Frame: Equatable {
+public struct Frame: Equatable, Sendable {
 
     /// Governs *framing* and is checked before anything is decoded. A mismatch closes the
     /// connection, because nothing further can be trusted. The message set has its own
@@ -57,11 +57,12 @@ public struct Frame: Equatable {
     }
 }
 
-public enum FrameError: Error, Equatable, CustomStringConvertible {
+public enum FrameError: Error, Equatable, CustomStringConvertible, Sendable {
     case unsupportedVersion(UInt8)
     case unknownKind(UInt8)
     case jsonTooLarge(declared: UInt32, limit: UInt32)
     case bodyTooLarge(declared: UInt64, limit: UInt64)
+    case reservedBitsSet(flags: UInt8, reserved: UInt8)
 
     public var description: String {
         switch self {
@@ -73,6 +74,8 @@ public enum FrameError: Error, Equatable, CustomStringConvertible {
             return "frame declares \(declared) bytes of JSON; the limit is \(limit)"
         case .bodyTooLarge(let declared, let limit):
             return "frame declares \(declared) bytes of body; the limit is \(limit)"
+        case .reservedBitsSet(let flags, let reserved):
+            return "frame sets flags 0x\(String(flags, radix: 16)) and reserved 0x\(String(reserved, radix: 16)); this version defines neither"
         }
     }
 }

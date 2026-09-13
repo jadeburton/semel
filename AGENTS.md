@@ -6,7 +6,7 @@ about how to change it.
 ## Build and test
 
 ```sh
-swift build                                  # builds everything, from the repo root
+swift build                                  # builds everything the root package links, from the repo root
 swift test --package-path SemelNodeKit       # the node-authoring API (~68)
 swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages)
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
@@ -14,6 +14,10 @@ swift test --package-path SemelClang         # the C/C++ toolchain nodes (~27)
 swift test --package-path SemelCore    # the engine tests (~247)
 swift test                                   # the CLI tests only (~8)
 ```
+
+`SemelProtocol` is not linked by the root package yet, so `swift build` does not build it;
+it is built only by its own `swift test --package-path SemelProtocol` line until phase 2
+links it in.
 
 `swift test` at the root runs **only** the `SemelCLI` tests. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run

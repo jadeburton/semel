@@ -139,6 +139,19 @@ final class MessageJSONTests: XCTestCase {
         }
     }
 
+    func test_encodesListResponseUnderItsRole() throws {
+        let response = Response.daemon(.list(entries: [ListEntry(path: "a", kind: .file, size: 1, mode: nil, status: .none)]))
+
+        XCTAssertEqual(try json(response),
+                       #"{"daemon":{"list":{"entries":[{"kind":"file","path":"a","size":1,"status":"none"}]}}}"#)
+    }
+
+    func test_encodesErrorResponseAtTheRoot() throws {
+        let response = Response.error(.pathNotFound(path: "input:/x"))
+
+        XCTAssertEqual(try json(response), #"{"error":{"pathNotFound":{"path":"input:\/x"}}}"#)
+    }
+
     func test_roundTripsHelloResponseAtTheRoot() throws {
         let response = Response.hello(.accepted(serverVersion: "1", databasePath: "/g"))
 
@@ -166,6 +179,38 @@ final class MessageJSONTests: XCTestCase {
         let data = Data(#"{"daemon":{"teleport":{}}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data))
+    }
+
+    /// `allKeys` on a strict container only lists keys that convert to its `CodingKeys`, so
+    /// this must be checked against the raw JSON keys, not just the typed ones, or an empty
+    /// object would be reported as having none of the keys that were actually absent.
+    func test_decodingZeroRoleKeysNamesAnEmptyList() {
+        let data = Data("{}".utf8)
+
+        XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
+            XCTAssertTrue(String(describing: error).contains("found []"), String(describing: error))
+        }
+    }
+
+    /// A role this build does not have a `CodingKeys` case for (`cache` is a `Role`, but not
+    /// yet a message-set root) must still be named in the error, not silently dropped from
+    /// `found`.
+    func test_decodingAnUnknownRoleKeyNamesIt() {
+        let data = Data(#"{"cache":{}}"#.utf8)
+
+        XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
+            XCTAssertTrue(String(describing: error).contains(#"["cache"]"#), String(describing: error))
+        }
+    }
+
+    /// A known role beside an unknown one must not decode silently as the known role; both
+    /// keys belong in the error, sorted so the message is stable.
+    func test_decodingAKnownRoleBesideAnUnknownOneNamesBoth() {
+        let data = Data(#"{"daemon":{"reset":{}},"cache":{}}"#.utf8)
+
+        XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
+            XCTAssertTrue(String(describing: error).contains(#"["cache", "daemon"]"#), String(describing: error))
+        }
     }
 
     // MARK: - Helpers

@@ -227,7 +227,7 @@ public enum ErrorResponse: Codable {
     case pathNotFound(path: String)
     case notAFolder(path: String)
     case nodeError(description: String)
-    case roleNotOffered(role: String)
+    case roleNotOffered(role: Role)
     case malformedRequest(description: String)
     case unrecoverable(message: String)
 }

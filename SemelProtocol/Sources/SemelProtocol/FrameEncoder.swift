@@ -7,7 +7,18 @@ import Foundation
 
 public enum FrameEncoder {
 
-    public static func encode(_ frame: Frame) -> Data {
+    /// The sender checks the same limits the decoder enforces. A peer that receives an
+    /// over-limit frame treats it as a hard failure and closes the connection, so it is
+    /// better for the sender to fail locally with a named error than to produce bytes no
+    /// peer will accept.
+    public static func encode(_ frame: Frame) throws -> Data {
+        guard frame.json.count <= Int(Frame.maximumJSONLength) else {
+            throw FrameError.jsonTooLarge(declared: UInt32(clamping: frame.json.count), limit: Frame.maximumJSONLength)
+        }
+        guard frame.body.count <= Int(Frame.maximumBodyLength) else {
+            throw FrameError.bodyTooLarge(declared: UInt64(frame.body.count), limit: Frame.maximumBodyLength)
+        }
+
         var bytes = Data(capacity: Frame.headerLength + frame.json.count + frame.body.count)
 
         bytes.append(Frame.version)

@@ -12,6 +12,10 @@ import Foundation
 
 public struct FrameDecoder {
 
+    // ISSUE: peak memory is about twice a large frame, because the body is copied out of
+    // `buffer` into the `Frame` while `buffer` still holds it, and `removeFirst` below is
+    // O(remaining) per frame. Measure both against a real socket in phase 3 before
+    // restructuring either.
     private var buffer: [UInt8] = []
 
     public init() {}
@@ -35,6 +39,14 @@ public struct FrameDecoder {
 
         guard let kind = FrameKind(rawValue: buffer[1]) else {
             throw FrameError.unknownKind(buffer[1])
+        }
+
+        // A reserved bit is reserved for a meaning this build does not know. Honoring the
+        // frame as if the bit were clear would hand up wrong data silently; rejecting is the
+        // only safe reading, and it is cheapest to establish now, before any peer exists to
+        // depend on the alternative.
+        guard buffer[2] == 0, buffer[3] == 0 else {
+            throw FrameError.reservedBitsSet(flags: buffer[2], reserved: buffer[3])
         }
 
         let correlationID = readBigEndian(UInt64.self, at: 4)

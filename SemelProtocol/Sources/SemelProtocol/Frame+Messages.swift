@@ -6,7 +6,7 @@
 
 import Foundation
 
-public enum MessageError: Error, Equatable, CustomStringConvertible {
+public enum MessageError: Error, Equatable, CustomStringConvertible, Sendable {
     case wrongKind(expected: FrameKind, actual: FrameKind)
 
     public var description: String {

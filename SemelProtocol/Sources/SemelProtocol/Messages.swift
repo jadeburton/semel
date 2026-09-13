@@ -12,21 +12,24 @@
 // would put a meaningless word (`{"daemon":{"request":…}}`) on every message. The
 // hand-written form is `{"daemon":{"list":…}}` — the role wrapping the message, nothing
 // else — and it is short enough to read in full here.
+//
+// Every type here is `Sendable`: the connections that will carry these are `async`, and a
+// public type is not implicitly `Sendable` outside its module.
 
 import Foundation
 
-public enum Request: Equatable {
+public enum Request: Equatable, Sendable {
     case hello(Hello)
     case daemon(DaemonRequest)
 }
 
-public enum Response: Equatable {
+public enum Response: Equatable, Sendable {
     case hello(HelloResponse)
     case daemon(DaemonResponse)
     case error(ErrorResponse)
 }
 
-public enum Event: Equatable {
+public enum Event: Equatable, Sendable {
     case daemon(DaemonEvent)
 }
 
@@ -41,7 +44,7 @@ extension Request: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let key       = try container.singleKey()
+        let key       = try container.singleKey(in: decoder)
 
         switch key {
         case .hello:  self = .hello(try container.decode(Hello.self, forKey: .hello))
@@ -69,7 +72,7 @@ extension Response: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let key       = try container.singleKey()
+        let key       = try container.singleKey(in: decoder)
 
         switch key {
         case .hello:  self = .hello(try container.decode(HelloResponse.self, forKey: .hello))
@@ -97,7 +100,7 @@ extension Event: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let key       = try container.singleKey()
+        let key       = try container.singleKey(in: decoder)
 
         switch key {
         case .daemon: self = .daemon(try container.decode(DaemonEvent.self, forKey: .daemon))
@@ -115,23 +118,46 @@ extension Event: Codable {
 
 extension KeyedDecodingContainer {
 
-    /// A root message is exactly one role key. Zero keys or two is not a message this build
-    /// understands, and the error says which keys were there so a peer mismatch is
-    /// diagnosable from the log line.
-    func singleKey() throws -> Key {
-        guard allKeys.count == 1, let key = allKeys.first else {
+    /// A root message is exactly one role key. `allKeys` on a strict, typed container only
+    /// lists keys that convert to `Key`, so `{"cache":{}}` would report `found []` and
+    /// `{"daemon":{…},"cache":{}}` would decode silently as `.daemon` — an unrecognized key
+    /// beside a recognized one would go unseen. To find every key actually present, this
+    /// re-opens the same decoder with a permissive, string-only key type and requires both
+    /// that container and the typed one to see exactly one key, so the error names every
+    /// key that was there and a peer mismatch is diagnosable from the log line.
+    func singleKey(in decoder: Decoder) throws -> Key {
+        let permissiveContainer = try decoder.container(keyedBy: AnyCodingKey.self)
+        let presentKeys         = permissiveContainer.allKeys.map(\.stringValue)
+
+        guard presentKeys.count == 1, allKeys.count == 1, let key = allKeys.first else {
             let context = DecodingError.Context(codingPath: codingPath,
-                                                debugDescription: "expected exactly one role key, found \(allKeys.map(\.stringValue))")
+                                                debugDescription: "expected exactly one role key, found \(presentKeys.sorted())")
             throw DecodingError.dataCorrupted(context)
         }
         return key
     }
 }
 
+/// A `CodingKey` that accepts any string, used only to list every key a JSON object
+/// actually has — the typed `CodingKeys` enums used elsewhere in this file reject unknown
+/// keys instead of listing them, which is exactly the gap `singleKey(in:)` closes.
+private struct AnyCodingKey: CodingKey {
+    let stringValue: String
+    let intValue:    Int? = nil
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    init?(intValue: Int) {
+        return nil
+    }
+}
+
 /// Protocol-level failures. Build errors are not among them: a node that fails to compile
 /// is data, returned by `errors`, mirroring the engine's distinction between a node failure
 /// and an `UnrecoverableError`.
-public enum ErrorResponse: Codable, Equatable {
+public enum ErrorResponse: Codable, Equatable, Sendable {
     case pathNotFound(path: String)
     case notAFolder(path: String)
     case nodeError(description: String)

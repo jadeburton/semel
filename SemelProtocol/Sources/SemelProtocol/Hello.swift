@@ -14,7 +14,7 @@ import Foundation
 /// One `semelserv` binary, several modes. A server offers some subset; a client asks for
 /// one. Only `daemon` has messages today; the others are named so that `Hello` does not
 /// change when they arrive.
-public enum Role: String, Codable, Equatable {
+public enum Role: String, Codable, Equatable, Sendable {
     case daemon
     case cache
     case runner
@@ -24,7 +24,7 @@ public enum ProtocolVersion {
     public static let current = 1
 }
 
-public struct Hello: Codable, Equatable {
+public struct Hello: Codable, Equatable, Sendable {
     public let protocolVersion: Int
     public let role:            Role
 
@@ -34,12 +34,12 @@ public struct Hello: Codable, Equatable {
     }
 }
 
-public enum HelloRejection: Codable, Equatable {
+public enum HelloRejection: Codable, Equatable, Sendable {
     case versionMismatch(client: Int, server: Int)
     case roleNotOffered(role: Role)
 }
 
-public enum HelloResponse: Codable, Equatable {
+public enum HelloResponse: Codable, Equatable, Sendable {
     /// `databasePath` is here because the REPL prints "Graph: …" at startup from local
     /// state today, and after the split the client has no such state.
     case accepted(serverVersion: String, databasePath: String)

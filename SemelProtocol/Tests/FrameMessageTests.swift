@@ -18,7 +18,7 @@ final class FrameMessageTests: XCTestCase {
 
         let frame = try Frame.request(request, correlationID: 9, body: body)
         var decoder = FrameDecoder()
-        decoder.append(FrameEncoder.encode(frame))
+        decoder.append(try FrameEncoder.encode(frame))
         let received = try XCTUnwrap(try decoder.next())
 
         XCTAssertEqual(received.kind, .request)
@@ -33,7 +33,7 @@ final class FrameMessageTests: XCTestCase {
 
         let frame = try Frame.response(response, correlationID: 9, body: body)
         var decoder = FrameDecoder()
-        decoder.append(FrameEncoder.encode(frame))
+        decoder.append(try FrameEncoder.encode(frame))
         let received = try XCTUnwrap(try decoder.next())
 
         XCTAssertEqual(received.kind, .response)

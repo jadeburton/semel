@@ -13,12 +13,12 @@ import Foundation
 
 // MARK: - Shared records
 
-public enum FileSystemName: String, Codable, Equatable {
+public enum FileSystemName: String, Codable, Equatable, Sendable {
     case input
     case output
 }
 
-public enum EntryKind: String, Codable, Equatable {
+public enum EntryKind: String, Codable, Equatable, Sendable {
     case file
     case folder
 }
@@ -26,7 +26,7 @@ public enum EntryKind: String, Codable, Equatable {
 /// What `ls` prints beside a name today. `missing` and `unreferenced` are the engine's
 /// "ghost" entries — referenced but deleted, or the reverse — and hiding them would be a
 /// behavior change.
-public enum EntryStatus: String, Codable, Equatable {
+public enum EntryStatus: String, Codable, Equatable, Sendable {
     case none
     case missing
     case unreferenced
@@ -34,7 +34,7 @@ public enum EntryStatus: String, Codable, Equatable {
     case error
 }
 
-public struct ListEntry: Codable, Equatable {
+public struct ListEntry: Codable, Equatable, Sendable {
     public let path:   String
     public let kind:   EntryKind
     public let size:   Int?
@@ -53,7 +53,7 @@ public struct ListEntry: Codable, Equatable {
 /// One distinct message a node is carrying, and the ports carrying it. Grouped by message
 /// rather than by port because a node that fails usually fails on all of its ports at once
 /// with the same reason.
-public struct ErrorEntry: Codable, Equatable {
+public struct ErrorEntry: Codable, Equatable, Sendable {
     public let ports:   [String]
     public let message: String
 
@@ -63,7 +63,7 @@ public struct ErrorEntry: Codable, Equatable {
     }
 }
 
-public struct ErrorRecord: Codable, Equatable {
+public struct ErrorRecord: Codable, Equatable, Sendable {
     /// What to call the node in a report: a path if it has one, the project file if it is a
     /// builder, the type name otherwise. Decided server-side, where the graph is.
     public let label:   String
@@ -75,7 +75,7 @@ public struct ErrorRecord: Codable, Equatable {
     }
 }
 
-public struct ToolDescriptorRecord: Codable, Equatable {
+public struct ToolDescriptorRecord: Codable, Equatable, Sendable {
     public let name:            String
     public let version:         String
     public let platform:        String
@@ -92,7 +92,7 @@ public struct ToolDescriptorRecord: Codable, Equatable {
     }
 }
 
-public struct ToolNamespace: Codable, Equatable {
+public struct ToolNamespace: Codable, Equatable, Sendable {
     public let namespace:   String
     public let toolName:    String
     /// Empty when no such tool is installed; the client prints that as a comment.
@@ -107,7 +107,7 @@ public struct ToolNamespace: Codable, Equatable {
 
 // MARK: - Requests
 
-public enum DaemonRequest: Codable, Equatable {
+public enum DaemonRequest: Codable, Equatable, Sendable {
     case list(fileSystem: FileSystemName, pattern: String)
     case beginBatch
     case endBatch
@@ -127,7 +127,7 @@ public enum DaemonRequest: Codable, Equatable {
 
 // MARK: - Responses
 
-public enum DaemonResponse: Codable, Equatable {
+public enum DaemonResponse: Codable, Equatable, Sendable {
     case ok
     case list(entries: [ListEntry])
     case pushFile(didChange: Bool)
@@ -143,7 +143,7 @@ public enum DaemonResponse: Codable, Equatable {
 
 /// What the engine prints from its background task today, carried to every subscribed
 /// connection. B-50's settle diffs become a third case.
-public enum DaemonEvent: Codable, Equatable {
+public enum DaemonEvent: Codable, Equatable, Sendable {
     case errors(records: [ErrorRecord])
     case notice(line: String)
 }
