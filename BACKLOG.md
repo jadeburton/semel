@@ -347,22 +347,6 @@ Presentation at scale is the one open question: a cold build of a 10,000-file pr
 produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
 the threshold when wiring the terminal reporter; the mechanism is indifferent to it.
 
-## Clone to build
-
-The loop an engineer should need after cloning a repository, with Semel agnostic of any
-toolchain or project format: a project that ships its own formula never meets a converter.
-
-**B-59** `open` — **`semel-vendor init`: derive the formula and config for a Swift package tree.**
-The Swift conversion tool, not Semel: it reads every `Package.swift` under a folder, takes
-as roots the packages no other package there depends on by path, vendors the closure into
-one `Dependencies`, and writes `semel.fmla` (the `package(p)` func and one `include` per
-root) and `semel.config` for a chosen platform — every `toolDescriptor` block from the tool
-registry, and for `--platform ios-simulator` the SDK name, path, identity and a target
-triple with the deployment version read from the manifests' `platforms`; C standards
-written as explicit values. The engine keeps refusing anything unstated; the generated file
-states it. Never overwrites an existing formula or config unless told to. Other toolchains
-get conversion tools of their own if they need one.
-
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.

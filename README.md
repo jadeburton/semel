@@ -154,6 +154,25 @@ dependencies stay wherever the manifest says. Run it again after changing a depe
 each copy is replaced, not merged. For several packages under one build root, name the
 shared folder: `semel-vendor --into Packages/Dependencies Packages/Timeline Packages/Explore`.
 
+### Clone to build
+
+For a tree of Swift packages that ships no formula, `init` does the whole conversion:
+
+```sh
+.build/release/semel-vendor init path/to/Packages --platform ios-simulator
+.build/release/semel 'base path/to' 'build Packages' 'export Packages --into ./out'
+```
+
+It finds every `Package.swift` under the folder, takes as roots the packages no other one
+there depends on by path, vendors the roots' closure into `Dependencies`, and writes
+`semel.fmla` (one `include` per root, all under one build root) and `semel.config` for the
+platform — every namespace the toolchains declare, the tools and SDK this machine has, and
+a target at the highest deployment version the packages declare (`macos` is the default
+platform). It never replaces a formula or config that is already there: a project that
+ships its own has already decided, and needs no `init` at all. Semel itself knows nothing
+of Swift packages; `semel-vendor` is the Swift conversion tool, and another toolchain gets
+one of its own if it needs one.
+
 ## Architecture
 
 ```

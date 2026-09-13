@@ -39,5 +39,19 @@ public enum SemelSwift {
         ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                              toolName: "swift"))
     }
+
+    // MARK: - SDK facts
+
+    /// The path of the named SDK on this machine, or nil if xcrun knows no such SDK. For a
+    /// tool outside the engine that writes a config — `semel-vendor init` — so it states
+    /// what the nodes here will check against, by the same query.
+    public static func sdkPath(sdk: String) -> String? {
+        resolveSDKPath(sdk: sdk)
+    }
+
+    /// The named SDK's identity as `version (build)`, the form `sdkVersion` takes.
+    public static func sdkIdentity(sdk: String) -> String? {
+        resolveSDKVersion(sdk: sdk)
+    }
 }
 

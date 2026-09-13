@@ -33,12 +33,19 @@ let package = Package(
             path: "semel",
             sources: ["main.swift"]
         ),
-        // Copies a package's resolved dependencies into `<root>/Dependencies/<name>` so every
-        // file a build needs is inside the input file system, found by one rule. A tool
-        // outside the engine: it runs `swift package resolve` and copies, and depends on no
-        // Semel library. The copying lives in a library so it can be tested.
+        // The Swift conversion tool, outside the engine. Copies a package's resolved
+        // dependencies into `<root>/Dependencies/<name>` so every file a build needs is
+        // inside the input file system, found by one rule; `init` also derives the formula
+        // and config for a tree of packages. It depends on the toolchain packages, not on
+        // the engine: the config it writes is what their nodes will read, so it asks them
+        // which namespaces and SDK facts those are. The work lives in a library so it can
+        // be tested.
         .target(
             name: "SemelVendor",
+            dependencies: [
+                .product(name: "SemelSwift", package: "SemelSwift"),
+                .product(name: "SemelClang", package: "SemelClang"),
+            ],
             path: "semel-vendor/Library"
         ),
         .executableTarget(
