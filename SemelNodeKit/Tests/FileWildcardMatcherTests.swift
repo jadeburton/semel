@@ -1,8 +1,8 @@
-@testable import SemelCore
+@testable import SemelNodeKit
 import XCTest
 import SemelNodeKit
 
-final class FileWildcardMatcherTests: SemelCoreTestCase {
+final class FileWildcardMatcherTests: XCTestCase {
 
     // MARK: - Mock input
 
@@ -169,7 +169,7 @@ final class FileWildcardMatcherTests: SemelCoreTestCase {
 /// exercised it: every other test drives it through directory listings, where building a
 /// case costs a mock tree. These are the cases that decide which files a wildcard picks up —
 /// for ProjectBuilder's manifest wildcards as much as for a walk of a real directory.
-final class WildcardSegmentTests: SemelCoreTestCase {
+final class WildcardSegmentTests: XCTestCase {
 
     private func assertMatches(_ pattern: String, _ name: String,
                                _ expected: Bool, line: UInt = #line) {
