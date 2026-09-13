@@ -120,7 +120,7 @@ settings from the config beside the named package — so this tree keeps one `se
 not six. What remains:
 
 1. **Dependency overrides in the formula.** The converter resolves a git dependency to
-   `<root>/Dependencies/<name>` (the `semel-vendor` rule) and stalls when nothing is there;
+   `<root>/Dependencies/<name>` (the `semel-swift` rule) and stalls when nothing is there;
    a formula cannot yet say "this URL is at that path". Needed the day a dependency has to
    come from somewhere the rule does not reach.
 2. **Discoverability.** A pushed `Package.swift` that no formula names now builds nothing,

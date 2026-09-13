@@ -1,5 +1,5 @@
 //
-//  VendorInitTests.swift
+//  PrepareTests.swift
 //  SemelCLITests
 //
 
@@ -7,21 +7,21 @@ import Foundation
 import SemelClang
 import SemelNodeKit
 import SemelSwift
-@testable import SemelVendor
+@testable import SemelSwiftTool
 import XCTest
 
-/// B-59. `semel-vendor init` derives what a tree of Swift packages needs before Semel can
+/// B-59. `semel-swift prepare` derives what a tree of Swift packages needs before Semel can
 /// build it. The machine-touching steps — SwiftPM, the network, xcrun — are handed in, so
 /// these pin the derivation: which packages are roots, what the files say, and that a
 /// file already there is never replaced.
-final class VendorInitTests: XCTestCase {
+final class PrepareTests: XCTestCase {
 
     private var root: URL!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-vendor-init-tests/\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("semel-swift-prepare-tests/\(UUID().uuidString)", isDirectory: true)
             .standardizedFileURL
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try SemelSwift.register()
@@ -85,7 +85,7 @@ final class VendorInitTests: XCTestCase {
 
         let found = try PackageScan.manifestFolders(under: root)
 
-        XCTAssertEqual(found.map { Initialization.relativePath(of: $0, under: root) },
+        XCTAssertEqual(found.map { Preparation.relativePath(of: $0, under: root) },
                        [".", "Packages/Models", "Packages/Timeline"])
     }
 
@@ -130,7 +130,7 @@ final class VendorInitTests: XCTestCase {
     // MARK: - The formula
 
     func test_theFormulaNamesEachRootThroughOneBuildRoot() {
-        let formula = InitFiles.formula(rootPaths: ["Explore", "Timeline"])
+        let formula = GeneratedFiles.formula(rootPaths: ["Explore", "Timeline"])
 
         XCTAssertEqual(lines(formula).filter { !$0.hasPrefix("//") }, [
             "func package(p) = SwiftFormulaConverter(path: p, root: <.>).formula",
@@ -143,7 +143,7 @@ final class VendorInitTests: XCTestCase {
     // MARK: - The config
 
     func test_theConfigStatesEveryNamespaceWithThePlatformSettingsItsToolNeeds() throws {
-        let config = lines(try InitFiles.config(platform: .iosSimulator, deploymentVersion: "18.0", facts: facts()))
+        let config = lines(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0", facts: facts()))
 
         for namespace in ["swift.compiler", "swift.linker"] {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name=swiftc"), "got:\n\(config)")
@@ -163,7 +163,7 @@ final class VendorInitTests: XCTestCase {
     }
 
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {
-        let config = lines(try InitFiles.config(platform: .macos, deploymentVersion: "14.0", facts: facts()))
+        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0", facts: facts()))
 
         XCTAssertTrue(config.contains("swift.compiler.sdk=macosx"), "got:\n\(config)")
         XCTAssertTrue(config.contains("swift.compiler.sdkVersion=26.5 (25F70)"), "got:\n\(config)")
@@ -172,7 +172,7 @@ final class VendorInitTests: XCTestCase {
 
     /// A config names one version; of several installed, the newest.
     func test_aToolInstalledTwiceIsPinnedToTheNewest() throws {
-        let config = lines(try InitFiles.config(platform: .macos, deploymentVersion: "14.0",
+        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
                                                 facts: facts(descriptors: [olderSwiftc, swiftc, clang, swift])))
 
         XCTAssertTrue(config.contains("swift.compiler.toolDescriptor.version=Apple Swift version 6.3.3"), "got:\n\(config)")
@@ -180,7 +180,7 @@ final class VendorInitTests: XCTestCase {
     }
 
     func test_aMissingToolLeavesACommentNotASetting() throws {
-        let config = lines(try InitFiles.config(platform: .macos, deploymentVersion: "14.0",
+        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
                                                 facts: facts(descriptors: [swiftc, swift])))
 
         XCTAssertTrue(config.contains("// clang.compiler: no clang is installed on this machine"), "got:\n\(config)")
@@ -191,7 +191,7 @@ final class VendorInitTests: XCTestCase {
         var machine = facts()
         machine.sdkIdentity = { _ in nil }
 
-        XCTAssertThrowsError(try InitFiles.config(platform: .iosSimulator, deploymentVersion: "18.0", facts: machine))
+        XCTAssertThrowsError(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0", facts: machine))
     }
 
     // MARK: - Deployment version
@@ -202,19 +202,19 @@ final class VendorInitTests: XCTestCase {
                          summary("B", platforms: ["ios": "18.0", "macos": "14.0"]),
                          summary("C")]
 
-        XCTAssertEqual(InitFiles.deploymentVersion(for: .iosSimulator, in: summaries), "18.0")
-        XCTAssertEqual(InitFiles.deploymentVersion(for: .macos, in: summaries), "14.0")
-        XCTAssertNil(InitFiles.deploymentVersion(for: .macos, in: [summary("C")]))
+        XCTAssertEqual(GeneratedFiles.deploymentVersion(for: .iosSimulator, in: summaries), "18.0")
+        XCTAssertEqual(GeneratedFiles.deploymentVersion(for: .macos, in: summaries), "14.0")
+        XCTAssertNil(GeneratedFiles.deploymentVersion(for: .macos, in: [summary("C")]))
     }
 
     func test_theSDKVersionIsItsIdentityWithoutTheBuild() {
-        XCTAssertEqual(InitFiles.version(fromSDKIdentity: "26.5 (23F81a)"), "26.5")
+        XCTAssertEqual(GeneratedFiles.version(fromSDKIdentity: "26.5 (23F81a)"), "26.5")
     }
 
     // MARK: - Running it
 
-    private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] }) -> Initialization.Steps {
-        Initialization.Steps(
+    private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] }) -> Preparation.Steps {
+        Preparation.Steps(
             summarize: { folder in
                 let name = folder.lastPathComponent
                 let dependsOn = name == "Timeline" ? [self.folder("Packages/Models")] : []
@@ -231,7 +231,7 @@ final class VendorInitTests: XCTestCase {
         var vendoredRoots: [URL] = []
         var vendoredInto: URL?
 
-        let report = try Initialization.run(folder: folder("Packages"), platform: .iosSimulator,
+        let report = try Preparation.run(folder: folder("Packages"), platform: .iosSimulator,
                                             steps: steps(vendored: { roots, into in
                                                 vendoredRoots = roots
                                                 vendoredInto = into
@@ -254,7 +254,7 @@ final class VendorInitTests: XCTestCase {
         try write("Packages/Timeline/Package.swift")
         try write("Packages/semel.fmla", "// mine\n")
 
-        let report = try Initialization.run(folder: folder("Packages"), platform: .macos, steps: steps())
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
 
         XCTAssertEqual(report.kept.map(\.lastPathComponent), ["semel.fmla"])
         XCTAssertEqual(report.written.map(\.lastPathComponent), ["semel.config"])
@@ -267,21 +267,21 @@ final class VendorInitTests: XCTestCase {
     func test_fallsBackToTheSDKVersionWhenNoPackageDeclaresOne() throws {
         try write("Packages/Models/Package.swift")
 
-        _ = try Initialization.run(folder: folder("Packages"), platform: .macos, steps: steps())
+        _ = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
 
         let config = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
         XCTAssertTrue(config.contains("swift.compiler.target=arm64-apple-macosx26.5"), "got:\n\(config)")
     }
 
     func test_aFolderWithNoPackageIsAnError() {
-        XCTAssertThrowsError(try Initialization.run(folder: root, platform: .macos, steps: steps()))
+        XCTAssertThrowsError(try Preparation.run(folder: root, platform: .macos, steps: steps()))
     }
 
     /// The folder itself can be the package, as for a single-package repository.
     func test_theFolderItselfCanBeTheOnlyRoot() throws {
         try write("Package.swift")
 
-        let report = try Initialization.run(folder: root, platform: .macos, steps: steps())
+        let report = try Preparation.run(folder: root, platform: .macos, steps: steps())
 
         XCTAssertEqual(report.roots.map(\.folder), [root])
         let formula = try String(contentsOf: root.appendingPathComponent("semel.fmla"), encoding: .utf8)

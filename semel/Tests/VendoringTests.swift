@@ -4,10 +4,10 @@
 //
 
 import Foundation
-import SemelVendor
+import SemelSwiftTool
 import XCTest
 
-/// `semel-vendor` copies what SwiftPM resolved into the one place the converter looks:
+/// `semel-swift` copies what SwiftPM resolved into the one place the converter looks:
 /// `<root>/Dependencies/<name>`. The copy is the whole contract, so what it leaves out and
 /// what it replaces are the things worth pinning.
 final class VendoringTests: XCTestCase {
@@ -17,7 +17,7 @@ final class VendoringTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-vendor-tests/\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("semel-swift-tests/\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 

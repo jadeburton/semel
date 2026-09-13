@@ -1,8 +1,8 @@
 //
-//  Initialization.swift
-//  SemelVendor
+//  Preparation.swift
+//  SemelSwiftTool
 //
-//  `semel-vendor init <folder> --platform <name>`: everything between cloning a tree of
+//  `semel-swift prepare <folder> --platform <name>`: everything between cloning a tree of
 //  Swift packages and `semel 'build <folder>'`. Finds the packages, takes as roots the
 //  ones nothing depends on by path, vendors their closure into one `Dependencies`, and
 //  writes the formula and config beside them. Never overwrites a file that is there: a
@@ -10,14 +10,14 @@
 
 import Foundation
 
-public struct InitReport: Equatable {
+public struct PrepareReport: Equatable {
     public var roots: [PackageSummary] = []
     public var vendored: [Vendoring.Copied] = []
     public var written: [URL] = []
     public var kept: [URL] = []
 }
 
-public enum Initialization {
+public enum Preparation {
 
     /// The steps that touch the machine, so a test can run the rest against a tree it
     /// wrote itself.
@@ -39,14 +39,14 @@ public enum Initialization {
                                        facts: ToolchainFacts.fromMachine)
     }
 
-    public static func run(folder: URL, platform: Platform, steps: Steps = .live) throws -> InitReport {
+    public static func run(folder: URL, platform: Platform, steps: Steps = .live) throws -> PrepareReport {
         let folder = folder.standardizedFileURL
         let manifestFolders = try PackageScan.manifestFolders(under: folder)
         guard !manifestFolders.isEmpty else {
             throw Vendoring.Failure(description: "no Package.swift under \(folder.path)")
         }
 
-        var report = InitReport()
+        var report = PrepareReport()
         let summaries = try manifestFolders.map(steps.summarize)
         report.roots = PackageScan.roots(of: summaries)
 
@@ -54,14 +54,14 @@ public enum Initialization {
                                            folder.appendingPathComponent(Vendoring.dependenciesFolderName, isDirectory: true))
 
         let facts = try steps.facts()
-        let deploymentVersion = try InitFiles.deploymentVersion(for: platform, in: summaries)
-            ?? facts.sdkIdentity(platform.sdkName).map(InitFiles.version(fromSDKIdentity:))
+        let deploymentVersion = try GeneratedFiles.deploymentVersion(for: platform, in: summaries)
+            ?? facts.sdkIdentity(platform.sdkName).map(GeneratedFiles.version(fromSDKIdentity:))
             ?? { throw Vendoring.Failure(description: "no \(platform.sdkName) SDK on this machine (xcrun --sdk \(platform.sdkName))") }()
 
-        let formula = InitFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
-        let config  = try InitFiles.config(platform: platform, deploymentVersion: deploymentVersion, facts: facts)
+        let formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
+        let config  = try GeneratedFiles.config(platform: platform, deploymentVersion: deploymentVersion, facts: facts)
 
-        for (name, contents) in [(InitFiles.formulaFileName, formula), (InitFiles.configFileName, config)] {
+        for (name, contents) in [(GeneratedFiles.formulaFileName, formula), (GeneratedFiles.configFileName, config)] {
             let file = folder.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: file.path) {
                 report.kept.append(file)

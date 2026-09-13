@@ -1,10 +1,10 @@
 //
 //  Vendoring.swift
-//  SemelVendor
+//  SemelSwiftTool
 //
 //  Semel is not a package manager, but it needs every file of every dependency inside its
 //  input file system, found by one rule rather than per-dependency configuration. The rule
-//  (docs/superpowers/specs/2026-09-12-semel-vendor-design.md): every source-control
+//  (docs/superpowers/specs/2026-09-12-semel-swift-design.md): every source-control
 //  dependency of every package in a graph lives at `<root>/Dependencies/<name>`, where
 //  `<name>` is the repository's last path component minus `.git`. That is SwiftPM's own
 //  checkout layout, so vendoring is: let SwiftPM resolve, then copy.

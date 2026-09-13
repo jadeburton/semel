@@ -732,7 +732,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     /// This build system never fetches anything, so a git dependency is resolved to a
     /// copy vendored under the root package's `Dependencies` folder — flat, one copy per
-    /// package, where `semel-vendor` puts it. The name comes from the URL, not from SPM's
+    /// package, where `semel-swift` puts it. The name comes from the URL, not from SPM's
     /// `identity` — identity is lowercased ("grdb.swift") and so cannot name a directory
     /// on a case-sensitive filesystem.
     func test_resolvesASourceControlDependencyToTheRootsDependenciesFolder() throws {

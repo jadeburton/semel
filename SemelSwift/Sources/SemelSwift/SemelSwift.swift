@@ -43,7 +43,7 @@ public enum SemelSwift {
     // MARK: - SDK facts
 
     /// The path of the named SDK on this machine, or nil if xcrun knows no such SDK. For a
-    /// tool outside the engine that writes a config — `semel-vendor init` — so it states
+    /// tool outside the engine that writes a config — `semel-swift prepare` — so it states
     /// what the nodes here will check against, by the same query.
     public static func sdkPath(sdk: String) -> String? {
         resolveSDKPath(sdk: sdk)

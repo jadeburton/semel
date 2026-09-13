@@ -33,25 +33,25 @@ let package = Package(
             path: "semel",
             sources: ["main.swift"]
         ),
-        // The Swift conversion tool, outside the engine. Copies a package's resolved
-        // dependencies into `<root>/Dependencies/<name>` so every file a build needs is
-        // inside the input file system, found by one rule; `init` also derives the formula
-        // and config for a tree of packages. It depends on the toolchain packages, not on
+        // The Swift conversion tool, outside the engine. `prepare` copies the roots'
+        // resolved dependencies into `<folder>/Dependencies/<name>` so every file a build
+        // needs is inside the input file system, found by one rule, and derives the formula
+        // and config for the tree. It depends on the toolchain packages, not on
         // the engine: the config it writes is what their nodes will read, so it asks them
         // which namespaces and SDK facts those are. The work lives in a library so it can
         // be tested.
         .target(
-            name: "SemelVendor",
+            name: "SemelSwiftTool",
             dependencies: [
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
             ],
-            path: "semel-vendor/Library"
+            path: "semel-swift/Library"
         ),
         .executableTarget(
-            name: "semel-vendor",
-            dependencies: ["SemelVendor"],
-            path: "semel-vendor",
+            name: "semel-swift",
+            dependencies: ["SemelSwiftTool"],
+            path: "semel-swift",
             sources: ["main.swift"]
         ),
         // The only place a test can see the converter and the engine at once. SemelSwift
@@ -61,7 +61,7 @@ let package = Package(
             name: "SemelCLITests",
             dependencies: [
                 "SemelCLI",
-                "SemelVendor",
+                "SemelSwiftTool",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),

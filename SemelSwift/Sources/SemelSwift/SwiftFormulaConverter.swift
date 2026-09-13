@@ -300,7 +300,7 @@ struct SwiftFormulaConverter: Node {
              + lines.joined(separator: "\n")
              + "\nThis build system never fetches anything: a dependency must be present in "
              + "the input file system at the path above, pushed like any other source. "
-             + "`semel-vendor <package-root>` resolves and copies every git dependency into "
+             + "`semel-swift <package-root>` resolves and copies every git dependency into "
              + "the root's Dependencies folder."
     }
 
@@ -426,8 +426,8 @@ struct SwiftFormulaConverter: Node {
     // input filesystem under the root package's `Dependencies` folder, whatever package
     // named it: "<root>/Dependencies/<RepositoryName>" for a git URL,
     // "<root>/Dependencies/<identity>" for a registry package. Flat, because SwiftPM
-    // guarantees one identity per package graph, and it is where `semel-vendor` copies
-    // SwiftPM's own checkouts (docs/superpowers/specs/2026-09-12-semel-vendor-design.md).
+    // guarantees one identity per package graph, and it is where `semel-swift` copies
+    // SwiftPM's own checkouts (docs/superpowers/specs/2026-09-12-semel-swift-design.md).
     // A registry identity keeps its case ("mona.LinkedList"), unlike a git identity, so
     // it can name a directory directly.
     //
@@ -464,7 +464,7 @@ struct SwiftFormulaConverter: Node {
 
     /// Where a package dependency's sources are. A `local` one states its path in the
     /// manifest, relative to the declaring package. A `vendored` one is a git or registry
-    /// package that `semel-vendor` placed under the root's `Dependencies` folder; `origin`
+    /// package that `semel-swift` placed under the root's `Dependencies` folder; `origin`
     /// names the repository URL or registry package the folder stands for — which is
     /// exactly what a user needs told when nothing is at that path. `identity` is what a
     /// target's `.product(name:package:)` names it by.
@@ -494,7 +494,7 @@ struct SwiftFormulaConverter: Node {
             return nil
         }
 
-        /// The folder under the root package where `semel-vendor` puts every checkout.
+        /// The folder under the root package where `semel-swift` puts every checkout.
         static let dependenciesFolderName = "Dependencies"
     }
 
