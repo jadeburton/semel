@@ -46,6 +46,18 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(session.openBatchDepth, 1)
     }
 
+    func test_anUnmatchedEndBatchIsIgnored() throws {
+        let (response, _) = try daemon(.endBatch)
+
+        XCTAssertEqual(response, .ok)
+        XCTAssertEqual(session.openBatchDepth, 0)
+
+        try daemon(.beginBatch)
+        try daemon(.endBatch)
+
+        XCTAssertEqual(session.openBatchDepth, 0)
+    }
+
     func test_endingASessionClosesItsOpenBatches() throws {
         try daemon(.beginBatch)
         try daemon(.beginBatch)
@@ -90,7 +102,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(namespaces.allSatisfy { $0.descriptors.isEmpty })
     }
 
-    func test_errorsReturnsOneRecordPerFailingNodeSortedByName() throws {
+    func test_errorsReturnsOneRecordPerFailingNodeSortedByLabel() throws {
         try makeFailingFile(path: "input:/b.c", message: "second")
         try makeFailingFile(path: "input:/a.c", message: "first")
 

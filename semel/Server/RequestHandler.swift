@@ -26,6 +26,9 @@ public final class RequestHandler {
 
     /// Where events go. Weak, because the in-process connection is both the sink and the
     /// owner of this handler.
+    ///
+    /// Whoever installs a sink must also retain it; a server whose sink is not owned by a
+    /// connection keeps it alive itself, or events vanish without an error.
     public weak var eventSink: EventSink?
 
     public init(engine: BuildEngine, database: DatabaseLayer, databasePath: String) {
@@ -83,6 +86,9 @@ public final class RequestHandler {
                 session.batchOpened()
                 return (.daemon(.ok), nil)
             case .endBatch:
+                guard session.openBatchDepth > 0 else {
+                    return (.daemon(.ok), nil)
+                }
                 engine.endBatch()
                 session.batchClosed()
                 return (.daemon(.ok), nil)
@@ -115,11 +121,13 @@ public final class RequestHandler {
             return (.error(failure.response), nil)
         } catch let error as NodeError {
             return (.error(.nodeError(description: "\(error)")), nil)
+        } catch let error as any UnrecoverableError {
+            // The machine, not the request, is broken. The handler runs first — under the
+            // default handler it stops the process, as it does anywhere else — and a server
+            // that installs its own handler gets to answer the client before it exits.
+            FatalErrors.handler(error)
+            return (.error(.unrecoverable(message: "\(error)")), nil)
         } catch {
-            // A store or database that is unusable belongs to the machine, not to this
-            // request; the fatal handler halts the process rather than answering one
-            // client with an error it would only retry.
-            FatalErrors.check(error)
             return (.error(.nodeError(description: error.localizedDescription)), nil)
         }
     }
@@ -130,20 +138,16 @@ public final class RequestHandler {
         let errorPorts = try database.outputPort.selectAllErrors()
         let byNode     = Dictionary(grouping: errorPorts, by: \.nodeID)
 
-        let sortedNodeIDs = byNode.keys.sorted { first, second in
-            let firstName  = (try? database.node.select(nodeID: first))?.name  ?? ""
-            let secondName = (try? database.node.select(nodeID: second))?.name ?? ""
-            return firstName < secondName
+        let entries = byNode.map { nodeID, ports in
+            ErrorReport.entry(forNodeID: nodeID,
+                              ports:     ports,
+                              messages:  Set(ports.compactMap(ErrorReport.reportableMessage)),
+                              database:  database)
         }
 
-        return sortedNodeIDs.map { nodeID in
-            let ports = byNode[nodeID] ?? []
-            let entry = ErrorReport.entry(forNodeID:  nodeID,
-                                          ports:      ports,
-                                          messages:   Set(ports.compactMap(ErrorReport.reportableMessage)),
-                                          database:   database)
-            return ErrorRecord(entry)
-        }
+        // Sorted by label, the same order the idle-time event uses, so the reply and the
+        // event list the same failures the same way.
+        return entries.sorted { $0.label < $1.label }.map(ErrorRecord.init)
     }
 
     /// The installed tools per namespace, unrendered; the client prints them as config

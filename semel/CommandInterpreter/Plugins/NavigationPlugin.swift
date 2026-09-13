@@ -49,16 +49,18 @@ final class NavigationPlugin: CommandPlugin {
         if let path, !path.isEmpty {
             let newPath = context.resolve(path, relativeTo: context.currentDirectoryPath)
 
-            if !newPath.isEmpty {
+            if newPath.isEmpty {
+                context.currentDirectoryPath = .empty
+            } else {
                 let matches = try list(newPath, in: context.currentFileSystem, context: context)
 
                 guard matches.count == 1, matches[0].kind == .folder else {
                     context.outputError("cd: \(path): no such directory")
                     return
                 }
+                // The match, not the pattern: `cd sr*` lands on `src`, and `pwd` says so.
+                context.currentDirectoryPath = Path(matches[0].path)
             }
-
-            context.currentDirectoryPath = newPath
         }
 
         context.outputMessage(context.currentLocation)

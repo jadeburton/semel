@@ -83,6 +83,16 @@ final class NavigationPluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["input:/src"])
     }
 
+    func test_cdWithAWildcardLandsOnTheMatchedFolder() throws {
+        connection.reply(.list(entries: [ListEntry(path: "src", kind: .folder, size: nil, mode: nil, status: .none)]))
+
+        try run("cd", ["sr*"])
+
+        XCTAssertEqual(connection.daemonRequests, [.list(fileSystem: .input, pattern: "sr*")])
+        XCTAssertEqual(context.currentDirectoryPath, Path("src"))
+        XCTAssertEqual(context.messages, ["input:/src"])
+    }
+
     func test_cdIntoAMissingFolderIsAnError() throws {
         connection.reply(.list(entries: []))
 
