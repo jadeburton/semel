@@ -39,8 +39,8 @@ extension RequestHandler {
             return ListEntry(path: match.path.string, kind: .folder, size: nil, mode: nil, status: status)
         }
 
-        var size: Int?    = nil
-        var mode: UInt16? = nil
+        var size: Int?
+        var mode: UInt16?
 
         if let fileNode = try root.childNode(path: match.path),
            let file     = try fileNode.nodeAsAny() as? FileType,
