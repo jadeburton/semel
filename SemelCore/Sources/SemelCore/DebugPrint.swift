@@ -213,11 +213,6 @@ extension BuildEngine {
         return text.text
     }
 
-    /// Kept until the command plugins stop calling it (removed in the CLI split).
-    public func printAll() throws {
-        print(try graphDescription())
-    }
-
     func appendDependencyTree(to text: TextBuffer) {
         do {
             text.append("- build tree")

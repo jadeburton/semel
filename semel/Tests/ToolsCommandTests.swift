@@ -12,10 +12,13 @@
 import SemelClang
 import SemelSwift
 import SemelNodeKit
+import SemelProtocol
+import SemelServ
 import XCTest
 
 final class ToolsCommandTests: XCTestCase {
 
+    private var connection: InProcessConnection!
     private var context: TestCommandContext!
 
     /// A runner that never runs. The command reads descriptors, not tools.
@@ -46,11 +49,14 @@ final class ToolsCommandTests: XCTestCase {
         // The real registrations, so the namespaces printed are the ones the toolchains own.
         try SemelSwift.register()
         try SemelClang.register()
-        context = TestCommandContext(database: database, baseDirectory: NSTemporaryDirectory())
+        let handler = RequestHandler(engine: BuildEngine.shared, database: database, databasePath: "/tmp/test-graph.sqlite")
+        connection  = InProcessConnection(handler: handler)
+        context     = TestCommandContext(connection: connection, baseDirectory: NSTemporaryDirectory())
     }
 
     override func tearDown() {
         BuildEngine.shared = nil
+        connection = nil
         context = nil
         super.tearDown()
     }
