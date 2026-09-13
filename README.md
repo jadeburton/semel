@@ -116,6 +116,17 @@ the node is a Swift package converter is the toolchain's business, not the langu
 The packages a package depends on are reached through it. Every node of the build,
 dependencies included, reads its settings from the `semel.config` beside the named package.
 
+A tree with several root packages puts one formula above them and names each with the
+formula's folder as the build root, so their common dependencies are vendored and compiled
+once and one config serves them all:
+
+```
+// Packages/semel.fmla
+func package(p) = SwiftFormulaConverter(path: p, root: <.>).formula
+include package(p: <Timeline>)
+include package(p: <Explore>)
+```
+
 ### Dependencies
 
 Semel never fetches anything: every file a build needs has to be inside the input file
@@ -130,7 +141,8 @@ It runs `swift package resolve` and copies every git dependency, transitively, i
 SwiftPM names its checkouts (`Dependencies/GRDB.swift`). That folder is the only place the
 converter looks for a git or registry dependency, whichever package declared it. Local path
 dependencies stay wherever the manifest says. Run it again after changing a dependency;
-each copy is replaced, not merged.
+each copy is replaced, not merged. For several packages under one build root, name the
+shared folder: `semel-vendor --into Packages/Dependencies Packages/Timeline Packages/Explore`.
 
 ## Architecture
 

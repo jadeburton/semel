@@ -143,20 +143,6 @@ nested folders are not compiled (the glob is one level); a `publicHeadersPath` o
 `include` is not honoured; and a package vending an *executable* with C targets would
 need a `clang.linker` block, which the archive case never reads.
 
-**B-56** `open` — **Several roots in one tree vendor and compile their shared dependencies once each.**
-The converter resolves a git dependency to `<package>/Dependencies/<name>` and reads the
-config beside the package, where "package" is the one the formula names. IceCubesApp's
-`Packages` folder has five consumption roots (Conversations, Explore, Lists, Notifications,
-Timeline), so M3 vendored the closure five times — Nuke, SwiftSoup, swift-cmark and the
-rest once under each root, 97 MB and five separate compiles of the same sources, since a
-different `input:` path is a different node. The tree has one config too, copied five
-times. The fix is to make the *formula's* folder the build root: the converter takes the
-root from the ProjectBuilder that includes it (or an explicit property), resolves
-`Dependencies` and `semel.config` there, and one formula at `Packages/semel.fmla` includes
-all five packages — `semel-vendor` then needs a destination flag, or to take the formula
-folder and vendor every package the formula names into one place. Until then the rule
-holds and the cost is paid per root.
-
 **B-26** `open` — **Recursive content hash for a folder tree.**
 `FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
 manifest changes when names change but not when contents do. A Merkle root needs a derived

@@ -80,6 +80,24 @@ final class VendoringTests: XCTestCase {
         XCTAssertFalse(exists("Dependencies/Nuke/Sources/Old.swift"))
     }
 
+    /// Several packages vendored into one folder — one build root for a formula that
+    /// includes them all — hold the union of their closures, one copy per name.
+    func test_severalPackagesCanShareOneDependenciesFolder() throws {
+        try write("A/.build/checkouts/Nuke/Package.swift")
+        try write("A/.build/checkouts/SwiftSoup/Package.swift")
+        try write("B/.build/checkouts/Nuke/Package.swift")
+        try write("B/.build/checkouts/Bodega/Package.swift")
+        let shared = root.appendingPathComponent("Dependencies", isDirectory: true)
+
+        let fromA = try Vendoring.copyCheckouts(from: root.appendingPathComponent("A/.build/checkouts"), into: shared)
+        let fromB = try Vendoring.copyCheckouts(from: root.appendingPathComponent("B/.build/checkouts"), into: shared)
+
+        XCTAssertEqual(fromA.map(\.name), ["Nuke", "SwiftSoup"])
+        XCTAssertEqual(fromB.map(\.name), ["Bodega", "Nuke"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: shared.path).sorted(),
+                       ["Bodega", "Nuke", "SwiftSoup"])
+    }
+
     func test_saysWhenNothingWasResolved() {
         XCTAssertThrowsError(try Vendoring.copyCheckouts(from: checkouts, into: dependencies)) { error in
             XCTAssertTrue(String(describing: error).contains("swift package resolve"), "got \(error)")

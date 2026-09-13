@@ -73,8 +73,18 @@ struct SwiftFormulaConverter: Node {
         return [
             Self.packageFolder: [packageFolder: "Folder(path: '\(packageFolder)').manifest"],
             Self.packageJSON:   [manifestPath: Self.packageReaderSpec(packageFilePath: manifestPath,
-                                                                     rootPackageFolder: packageFolder)],
+                                                                     rootPackageFolder: buildRoot(defaultingTo: packageFolder))],
         ]
+    }
+
+    /// Where the build's config file and vendored dependencies live: the `root` property
+    /// when a formula gives one — `SwiftFormulaConverter(path: <Timeline>, root: <.>)` —
+    /// otherwise the package's own folder. Several packages included by one formula share
+    /// one `Dependencies` folder and one `semel.config` this way, instead of vendoring and
+    /// compiling their common closure once per package (B-56). Sources are never affected:
+    /// a target's files are under its package whatever the root.
+    private func buildRoot(defaultingTo packageFolder: String) -> String {
+        thisNode.properties["root"] ?? packageFolder
     }
 
     // MARK: - Processing
@@ -148,7 +158,7 @@ struct SwiftFormulaConverter: Node {
                 // itself be a dependency several levels down. A vendored package is under
                 // the root's Dependencies folder whoever declared it: one copy per package.
                 let extPath = dependency.resolvedPath(declaringPackage: manifestPath,
-                                                      root: rootPackageFolder,
+                                                      root: buildRoot(defaultingTo: rootPackageFolder),
                                                       resolve: resolveRelativePath)
                 // Skip dependencies whose resolved path falls outside the virtual
                 // inputFileSystem — they are system-level or truly external packages
@@ -167,7 +177,7 @@ struct SwiftFormulaConverter: Node {
                 // settings from the config file the consuming project owns.
                 specs[extPath] = Self.packageReaderSpec(
                     packageFilePath: "\(extPath)/Package.swift",
-                    rootPackageFolder: rootPackageFolder)
+                    rootPackageFolder: buildRoot(defaultingTo: rootPackageFolder))
                 originOfExpectedPath[extPath] = dependency.origin
 
                 if let extManifest = availableManifests[extPath] {
@@ -821,7 +831,7 @@ struct SwiftFormulaConverter: Node {
             }
             let linkerConfig = Self.configurationExpression(
                 namespace: SwiftLinkerConfiguration.settingNamespace,
-                packageFolder: rootPackageFolder,
+                packageFolder: buildRoot(defaultingTo: rootPackageFolder),
                 literals: ["linkage":    linkage.rawValue,
                            "outputName": outputName])
 
@@ -1032,7 +1042,7 @@ struct SwiftFormulaConverter: Node {
         let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
 
         let configExpr = Self.configurationExpression(namespace: derivedSettingNamespace(forTypeName: "ClangPreprocessor"),
-                                                      packageFolder: packageFolder,
+                                                      packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
         return "func \(preprocessorFuncName(for: target.name))(path) =\n" +
                "    ClangPreprocessor(\n" +
@@ -1048,7 +1058,7 @@ struct SwiftFormulaConverter: Node {
     private func clangObjectEntries(target: SPMTarget, packageFolder: String) -> [String] {
         let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
         let configExpr = Self.configurationExpression(namespace: derivedSettingNamespace(forTypeName: "ClangCompiler"),
-                                                      packageFolder: packageFolder,
+                                                      packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
         return (target.clangInfo?.sourceExtensions ?? []).map { ext in
             "        {f: '\(folder)/*.\(ext)'} \"%%f%%.o\": ClangCompiler(" +
@@ -1090,7 +1100,7 @@ struct SwiftFormulaConverter: Node {
         // build, not of whichever package happens to be compiled, and a consuming project
         // cannot write a config file inside a vendored dependency it does not own.
         let configExpr = Self.configurationExpression(namespace: SwiftCompilerConfiguration.settingNamespace,
-                                                      packageFolder: packageFolder,
+                                                      packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: derived)
         let folderExpr  = "Folder(path: '\(sourcesPath)').manifest"
 

@@ -1096,4 +1096,41 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertTrue(result.contains("func compilerApp()"), "got:\n\(result)")
     }
+
+    // MARK: - A build root shared by several packages (B-56)
+
+    /// `SwiftFormulaConverter(path: <Timeline>, root: <.>)`: the config and the vendored
+    /// dependencies are read from `root`, so a formula that includes several packages
+    /// vendors and compiles their common closure once. Sources stay under the package.
+    private func convert(packageFolder: String, root: String, json: String) throws -> ProcessOutput {
+        let manifest  = FolderManifest(baseFolderPath: packageFolder, entries: [])
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind,
+                                                                       name: nil, properties: ["root": root],
+                                                                       scheduled: false, graphSpec: nil))
+        return try converter.process(input: ProcessInput(inputValues: [
+            SwiftFormulaConverter.packageFolder: ["folder": .value(try manifest.toJSON().intern())],
+            SwiftFormulaConverter.packageJSON:   ["json":   .value(try json.intern())],
+            SwiftFormulaConverter.externalPackageJSONs: [:],
+        ]))
+    }
+
+    func test_aBuildRootMovesDependenciesAndConfigButNotSources() throws {
+        let output = try convert(packageFolder: "input:/repo/Packages/DatabaseModels",
+                                 root: "input:/repo/Packages",
+                                 json: sourceControlManifest())
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(),
+                       ["input:/repo/Packages/Dependencies/GRDB.swift"],
+                       "the dependency lives under the root, not under the package")
+        let reader = try XCTUnwrap(try externalSpecs(output)["input:/repo/Packages/Dependencies/GRDB.swift"])
+        XCTAssertTrue(reader.contains("input:/repo/Packages/semel.config"), "config beside the root, got:\n\(reader)")
+        XCTAssertFalse(reader.contains("DatabaseModels/semel.config"), "got:\n\(reader)")
+    }
+
+    func test_withoutARootThePackageFolderIsTheRoot() throws {
+        let output = try convert(packageFolder: "input:/repo/Packages/DatabaseModels", json: sourceControlManifest())
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(),
+                       ["input:/repo/Packages/DatabaseModels/Dependencies/GRDB.swift"])
+    }
 }
