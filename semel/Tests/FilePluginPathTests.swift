@@ -2,9 +2,8 @@
 //  FilePluginPathTests.swift
 //  SemelCLITests
 //
-//  Regression cover for the push/cp path resolution defects. Each of these commands
-//  used to match nothing and report nothing — the failure mode was silence, which is
-//  why they went unnoticed.
+//  Regression cover for the push/cp path resolution defects: matching nothing must
+//  always be reported, because a silent failure here goes unnoticed.
 //
 
 @testable import SemelCLI

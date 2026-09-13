@@ -64,8 +64,7 @@ public final class CommandInterpreter: CommandContext {
     // MARK: - Handshake
 
     /// Says hello, subscribes to events, and starts printing them. Returns what the banner
-    /// needs. Events arrive on the connection's thread, which is where the engine used to
-    /// print from when it shared a process with the REPL.
+    /// needs. Events arrive on the connection's thread and are printed from there.
     public func connect() throws -> (serverVersion: String, databasePath: String) {
         let (reply, _) = try connection.send(.hello(Hello(role: .daemon)), body: nil)
         guard case .hello(let helloResponse) = reply else {
