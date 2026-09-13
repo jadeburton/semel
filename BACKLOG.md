@@ -352,11 +352,6 @@ the threshold when wiring the terminal reporter; the mechanism is indifferent to
 The loop an engineer should need after cloning a repository, with Semel agnostic of any
 toolchain or project format: a project that ships its own formula never meets a converter.
 
-**B-58** `open` — **`export <folder> --into <dir>`: copy a formula's products out.**
-`cp -o` does one file at a time, to the process working directory unless told a folder.
-Export copies every product of the formulas under `<folder>` — the `OutputFile`s the
-builders publish — into one directory, which is the last step of the loop.
-
 **B-59** `open` — **`semel-vendor init`: derive the formula and config for a Swift package tree.**
 The Swift conversion tool, not Semel: it reads every `Package.swift` under a folder, takes
 as roots the packages no other package there depends on by path, vendors the closure into

@@ -1,7 +1,7 @@
 // FilePlugin.swift
 // semel
 //
-// Handles: push, rm / remove, cp / copy
+// Handles: push, rm / remove, cp / copy, export
 
 import SemelCore
 import Foundation
@@ -9,7 +9,7 @@ import SemelNodeKit
 
 final class FilePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["push", "rm", "remove", "cp", "copy"]
+    let verbs: Set<String> = ["push", "rm", "remove", "cp", "copy", "export"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -34,6 +34,9 @@ final class FilePlugin: CommandPlugin {
             try handleCopy(folder: folder, pathOrWildcard: remaining[0],
                            destinationPath: remaining.count >= 2 ? remaining[1] : nil,
                            context: context)
+
+        case "export":
+            try handleExport(tokens: tokens, context: context)
 
         default:
             break
@@ -243,20 +246,101 @@ final class FilePlugin: CommandPlugin {
             return
         }
 
+        let finalPath = destinationPath + "/" + (entry.path.lastComponent ?? entry.path.string)
+        if try writeFile(file, node: fileNode, at: entry.path, to: finalPath, context: context) {
+            context.outputMessage("File written: \(finalPath)")
+        }
+    }
+
+    /// Writes one internal file's content and mode to an external path. Reports and
+    /// returns false when the file has no content, which for a product means it was not
+    /// built.
+    private func writeFile(_ file: FileType, node: NodeRecord, at path: Path, to finalPath: String,
+                           context: any CommandContext) throws -> Bool {
         switch try file.read() {
         case .value(let dataObjectHash):
             let fileContent = Data(try dataObjectHash.resolve())
-            let finalPath   = destinationPath + "/" + (entry.path.lastComponent ?? entry.path.string)
             try fileContent.write(to: URL(fileURLWithPath: finalPath))
-            if let metadataProvider = try fileNode.nodeAsAny() as? FileMetadataProvider,
+            if let metadataProvider = try node.nodeAsAny() as? FileMetadataProvider,
                let metadata = try metadataProvider.readFileMetadata() {
                 chmod(finalPath, mode_t(metadata.mode ?? FileMetadata.defaultMode))
             }
-            context.outputMessage("File written: \(finalPath)")
+            return true
         case .noValue(let reason):
-            context.outputError("File \(entry.path) has no content: \(reason)")
+            context.outputError("File \(path) has no content: \(reason)")
+            return false
         case nil:
-            context.outputError("File \(entry.path) has a nil value")
+            context.outputError("File \(path) has a nil value")
+            return false
         }
+    }
+
+    // MARK: - export
+
+    /// `export <folder> --into <dir>`: every file under `<folder>` of the output file system
+    /// — the products the builders there published — lands in `<dir>`, keeping the tree
+    /// below `<folder>`. `cp -o` does one file at a time; this is the last step of the
+    /// clone-to-build loop, so it takes the folder the build took.
+    private func handleExport(tokens: [String], context: any CommandContext) throws {
+        var folderToken: String?
+        var destination: String?
+        var index = 0
+        while index < tokens.count {
+            if tokens[index] == "--into" {
+                guard index + 1 < tokens.count else {
+                    throw CommandParserError.missingArgument(command: "export", expected: "--into <dir>")
+                }
+                destination = tokens[index + 1]
+                index += 2
+            } else if folderToken == nil {
+                folderToken = tokens[index]
+                index += 1
+            } else {
+                throw CommandParserError.tooManyArguments(command: "export")
+            }
+        }
+        guard let folderToken, let destination else {
+            throw CommandParserError.missingArgument(command: "export", expected: "<folder> --into <dir>")
+        }
+
+        // The folder is a path in the output file system, from its root — the same folder
+        // `build` took, which named the input tree the products mirror.
+        let outputFileSystem = try context.outputFileSystem
+        let folderPath = context.resolve(folderToken, relativeTo: .empty)
+        guard try outputFileSystem.childNode(path: folderPath.string) != nil else {
+            context.outputError("export: \(folderToken): no such folder in the output file system")
+            return
+        }
+
+        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: outputFileSystem))
+        let files = try matcher.findAllMatching(pathOrWildcard: folderPath / Path("**/*"))
+            .filter { if case .file = $0.kind { return true } else { return false } }
+        guard !files.isEmpty else {
+            context.outputError("export: \(folderToken): nothing to export")
+            return
+        }
+
+        let externalDest = ExternalPathSanitizer.expandPartialPath(destination)
+        var exported = 0
+        for entry in files {
+            let relative = entry.path.relative(to: folderPath)?.string ?? entry.path.string
+            let finalPath = externalDest + "/" + relative
+            do {
+                guard let fileNode = try outputFileSystem.childNode(path: entry.path.string),
+                      let file = try fileNode.nodeAsAny() as? FileType else {
+                    context.outputError("export: \(entry.path): not a file")
+                    continue
+                }
+                try FileManager.default.createDirectory(
+                        at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
+                        withIntermediateDirectories: true)
+                if try writeFile(file, node: fileNode, at: entry.path, to: finalPath, context: context) {
+                    exported += 1
+                }
+            } catch {
+                context.outputError("export: \(entry.path): \(error)")
+            }
+        }
+        context.outputMessage("Exported \(exported) file\(exported == 1 ? "" : "s") into \(externalDest)")
     }
 }

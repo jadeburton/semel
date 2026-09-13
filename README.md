@@ -71,6 +71,7 @@ cd -i sources/
 | `push <path>` | Push a file or directory from disk into the input file system |
 | `rm <path>` | Remove a file or directory from the input file system |
 | `cp [-i\|-o] <src> [dest]` | Copy a file out of the internal file system to disk |
+| `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
 
 Paths support wildcards (`*`, `**`, `?`):
 
@@ -104,7 +105,7 @@ Given arguments, the binary runs each one as a command line instead of opening t
 and exits non-zero if any command reported an error — which makes it a build step:
 
 ```sh
-.build/release/semel 'base /path/to/repo' 'build Packages'
+.build/release/semel 'base /path/to/repo' 'build Packages' 'export Packages --into ./out'
 ```
 
 ### Building a Swift package
