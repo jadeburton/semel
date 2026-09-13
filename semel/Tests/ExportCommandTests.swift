@@ -7,6 +7,8 @@
 @testable import SemelCore
 import Foundation
 import SemelNodeKit
+import SemelProtocol
+import SemelServ
 import XCTest
 
 /// B-58. `export <folder> --into <dir>` copies every product under a folder of the output
@@ -14,6 +16,7 @@ import XCTest
 /// the clone-to-build loop, where `cp -o` did one file at a time.
 final class ExportCommandTests: XCTestCase {
 
+    private var connection: InProcessConnection!
     private var interpreter: CommandInterpreter!
     private var destination: URL!
 
@@ -22,13 +25,16 @@ final class ExportCommandTests: XCTestCase {
         DataObjectStore.shared = DataObjectStore(storeRoot: makeTempDirectory())
         destination = makeTempDirectory()
         let database = try DatabaseLayer()
-        BuildEngine.shared = try BuildEngine(database: database, startProcessingLoop: false)
-        interpreter = CommandInterpreter(database: database, buildEngine: BuildEngine.shared,
-                                         baseDirectory: makeTempDirectory().path)
+        let engine   = try BuildEngine(database: database, startProcessingLoop: false)
+        BuildEngine.shared = engine
+        let handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        connection   = InProcessConnection(handler: handler)
+        interpreter  = CommandInterpreter(connection: connection, baseDirectory: makeTempDirectory().path)
     }
 
     override func tearDown() {
         BuildEngine.shared = nil
+        connection = nil
         interpreter = nil
         super.tearDown()
     }
@@ -45,7 +51,7 @@ final class ExportCommandTests: XCTestCase {
         let (source, _) = try GraphSpecNode.parse("StaticFile(path: '\(sourcePath)')").findOrCreateMatchingNode()
         _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
         let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/\(outputPath)')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: interpreter.database,
+        try Wire.connectWire(database: BuildEngine.shared.database,
                              fromNodeID: try source.requireID(),
                              fromSymbolID: StaticFile.outputPort.asSymbolID(),
                              toNodeID: try product.requireID(),
