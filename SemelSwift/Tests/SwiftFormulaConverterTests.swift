@@ -688,7 +688,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
               "name": "App",
               "dependencies": [{"fileSystem": [{"identity": "helper", "path": "../Helper"}]}],
               "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
-              "targets": [{"name": "App", "type": "executable", "path": "App", "dependencies": []}]
+              "targets": [{"name": "App", "type": "executable", "path": "App",
+                           "dependencies": [{"product": ["Helper", "helper", null, null]}]}]
             }
             """))
 
@@ -901,5 +902,74 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertFalse(result.contains("languageMode"), "got:\n\(result)")
+    }
+
+    // MARK: - Dependencies no target uses
+
+    private func manifest(dependencies: String, targetDependencies: String) -> String {
+        """
+        {
+          "name": "Markdown",
+          "dependencies": [\(dependencies)],
+          "products": [{"name": "Markdown", "targets": ["Markdown"], "type": {"library": ["automatic"]}}],
+          "targets": [
+            {"name": "Markdown", "type": "regular", "path": "Sources/Markdown",
+             "dependencies": [\(targetDependencies)]},
+            {"name": "CAtomic", "type": "regular", "path": "Sources/CAtomic", "dependencies": []}
+          ]
+        }
+        """
+    }
+
+    private let cmark = """
+        {"sourceControl": [{"identity": "swift-cmark", "location": {"remote": [{"urlString": "https://github.com/swiftlang/swift-cmark.git"}]}}]}
+        """
+    private let docc = """
+        {"sourceControl": [{"identity": "swift-docc-plugin", "location": {"remote": [{"urlString": "https://github.com/apple/swift-docc-plugin"}]}}]}
+        """
+
+    /// swift-markdown declares swift-docc-plugin for its documentation build; no target
+    /// uses it, SwiftPM never checks it out, and a build waiting for it waited forever.
+    func test_doesNotWaitForADependencyNoTargetUses() throws {
+        let output = try convert(packageFolder: "input:/repo/Markdown",
+                                 json: manifest(dependencies: "\(cmark), \(docc)",
+                                                targetDependencies: """
+                                                    {"byName": ["CAtomic", null]},
+                                                    {"product": ["cmark-gfm", "swift-cmark", null, null]}
+                                                    """))
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Markdown/Dependencies/swift-cmark"])
+    }
+
+    /// A `byName` that names no local target could be a product of any dependency, so
+    /// nothing can be dropped: a wait the user can see beats a compile failure that
+    /// explains nothing.
+    func test_followsEveryDependencyWhenAByNameCouldBeAnyOfTheirProducts() throws {
+        let output = try convert(packageFolder: "input:/repo/Markdown",
+                                 json: manifest(dependencies: "\(cmark), \(docc)",
+                                                targetDependencies: """
+                                                    {"byName": ["SomethingExternal", null]}
+                                                    """))
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(),
+                       ["input:/repo/Markdown/Dependencies/swift-cmark",
+                        "input:/repo/Markdown/Dependencies/swift-docc-plugin"])
+    }
+
+    /// `.package(name: "Models", path: ...)` is referenced as "Models" while its identity
+    /// is "models": the match is case-insensitive.
+    func test_matchesAPathDependencysIdentityCaseInsensitively() throws {
+        let output = try convert(packageFolder: "input:/repo/App", json: """
+            {
+              "name": "App",
+              "dependencies": [{"fileSystem": [{"identity": "models", "path": "../Models"}]},
+                               {"fileSystem": [{"identity": "unused", "path": "../Unused"}]}],
+              "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+              "targets": [{"name": "App", "type": "executable", "path": "App",
+                           "dependencies": [{"product": ["Models", "Models", null, null]}]}]
+            }
+            """)
+
+        XCTAssertEqual(try externalSpecs(output).keys.sorted(), ["input:/repo/Models"])
     }
 }

@@ -138,7 +138,7 @@ struct SwiftFormulaConverter: Node {
         while bfsIndex < bfsQueue.count {
             let (manifestPath, manifest) = bfsQueue[bfsIndex]; bfsIndex += 1
 
-            for dependency in manifest.packageDependencies {
+            for dependency in manifest.referencedDependencies() {
                 // A local path is relative to the manifest that declared it, which may
                 // itself be a dependency several levels down. A vendored package is under
                 // the root's Dependencies folder whoever declared it: one copy per package.
@@ -311,6 +311,30 @@ struct SwiftFormulaConverter: Node {
         static func decode(_ json: String) throws -> SPMManifest {
             try JSONDecoder().decode(SPMManifest.self, from: Data(json.utf8))
         }
+
+        /// The package dependencies some target actually uses — what SwiftPM itself checks
+        /// out. A dependency declared for a plugin or for documentation (swift-markdown
+        /// names swift-docc-plugin) is used by no target, SwiftPM never fetches it, and a
+        /// build waiting for it would wait forever.
+        ///
+        /// A `product` dependency names its package. A `byName` dependency that is not a
+        /// local target could be a product of any dependency, so when one exists every
+        /// dependency is followed: waiting for one too many is a stall the user can see;
+        /// dropping one that was needed is a compile failure that explains nothing.
+        func referencedDependencies() -> [SPMPackageDependency] {
+            let localTargets = Set(targets.map(\.name))
+            var referenced   = Set<String>()
+            for target in targets {
+                for dependency in target.dependencies {
+                    if let package = dependency.packageName {
+                        referenced.insert(package.lowercased())
+                    } else if dependency.isByName, let name = dependency.targetName, !localTargets.contains(name) {
+                        return packageDependencies
+                    }
+                }
+            }
+            return packageDependencies.filter { referenced.contains($0.identity.lowercased()) }
+        }
     }
 
     // Decodes one element of the top-level "dependencies" array down to local paths.
@@ -344,14 +368,16 @@ struct SwiftFormulaConverter: Node {
             let registry      = (try? c.decode([SPMRegistryDependency].self,      forKey: .registry))      ?? []
 
             dependencies =
-                fileSystem.map { SPMPackageDependency.local(path: $0.path) } +
+                fileSystem.map { SPMPackageDependency.local(identity: $0.identity, path: $0.path) } +
                 sourceControl.compactMap { control in
                     control.repositoryName.map {
-                        SPMPackageDependency.vendored(name: $0, origin: control.repositoryURL ?? $0)
+                        SPMPackageDependency.vendored(identity: control.identity ?? $0, name: $0,
+                                                      origin: control.repositoryURL ?? $0)
                     }
                 } +
                 registry.map {
-                    SPMPackageDependency.vendored(name: $0.identity, origin: "registry package \($0.identity)")
+                    SPMPackageDependency.vendored(identity: $0.identity, name: $0.identity,
+                                                  origin: "registry package \($0.identity)")
                 }
         }
     }
@@ -360,23 +386,31 @@ struct SwiftFormulaConverter: Node {
     /// manifest, relative to the declaring package. A `vendored` one is a git or registry
     /// package that `semel-vendor` placed under the root's `Dependencies` folder; `origin`
     /// names the repository URL or registry package the folder stands for — which is
-    /// exactly what a user needs told when nothing is at that path.
+    /// exactly what a user needs told when nothing is at that path. `identity` is what a
+    /// target's `.product(name:package:)` names it by.
     private enum SPMPackageDependency {
-        case local(path: String)
-        case vendored(name: String, origin: String)
+        case local(identity: String, path: String)
+        case vendored(identity: String, name: String, origin: String)
 
         /// The dependency's folder in the input file system.
         func resolvedPath(declaringPackage: String, root: String, resolve: (String, String) -> String) -> String {
             switch self {
-            case .local(let path):
+            case .local(_, let path):
                 return resolve(path, declaringPackage)
-            case .vendored(let name, _):
+            case .vendored(_, let name, _):
                 return "\(root)/\(Self.dependenciesFolderName)/\(name)"
             }
         }
 
+        var identity: String {
+            switch self {
+            case .local(let identity, _):       return identity
+            case .vendored(let identity, _, _): return identity
+            }
+        }
+
         var origin: String? {
-            if case .vendored(_, let origin) = self { return origin }
+            if case .vendored(_, _, let origin) = self { return origin }
             return nil
         }
 
@@ -394,6 +428,9 @@ struct SwiftFormulaConverter: Node {
     }
 
     private struct SPMSourceControlDependency: Decodable {
+        /// SwiftPM's identity for the package — the lowercased repository name — which is
+        /// what a target's product dependency names it by.
+        let identity: String?
         /// nil when the location is not a remote URL, or the URL names nothing usable.
         let repositoryName: String?
         /// Kept verbatim so a stalled build can name what it is waiting for.
@@ -404,11 +441,12 @@ struct SwiftFormulaConverter: Node {
             let remote: [Remote]?
         }
 
-        enum CodingKeys: String, CodingKey { case location }
+        enum CodingKeys: String, CodingKey { case location, identity }
 
         init(from decoder: Decoder) throws {
             let c    = try decoder.container(keyedBy: CodingKeys.self)
             let url  = (try? c.decode(Location.self, forKey: .location))?.remote?.first?.urlString
+            identity       = try? c.decode(String.self, forKey: .identity)
             repositoryURL  = url
             repositoryName = url.flatMap { Self.directoryName(forRepositoryURL: $0) }
         }
@@ -494,6 +532,11 @@ struct SwiftFormulaConverter: Node {
     // distinction is resolved at formula-generation time via allTargetsByName.
     private struct SPMTargetDependency: Decodable {
         let targetName: String?
+        /// For a `product` dependency, the package it names — `["Markdown", "swift-markdown",
+        /// null, null]` — which is what decides whether that package is needed at all.
+        let packageName: String?
+        /// A `byName` dependency, which may be a local target or a product of any dependency.
+        let isByName: Bool
 
         private struct AnyKey: CodingKey {
             var stringValue: String
@@ -506,17 +549,25 @@ struct SwiftFormulaConverter: Node {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: AnyKey.self)
             var found: String?
+            var package: String?
+            var byName = false
 
             for key in ["byName", "target", "product"] {
                 guard found == nil, c.contains(AnyKey(key)) else { continue }
                 if let arr = try? c.decode([String?].self, forKey: AnyKey(key)) {
-                    found = arr.compactMap { $0 }.first
+                    let present = arr.compactMap { $0 }
+                    found = present.first
+                    if key == "product", present.count >= 2 { package = present[1] }
                 } else if let sub = try? c.nestedContainer(keyedBy: AnyKey.self, forKey: AnyKey(key)),
                           let n   = try? sub.decode(String.self, forKey: AnyKey("name")) {
                     found = n
+                    if key == "product" { package = try? sub.decode(String.self, forKey: AnyKey("package")) }
                 }
+                byName = (key == "byName")
             }
-            targetName = found
+            targetName  = found
+            packageName = package
+            isByName    = byName
         }
     }
 
