@@ -348,7 +348,7 @@ Presentation at scale is the one open question: a cold build of a 10,000-file pr
 produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
 the threshold when wiring the terminal reporter; the mechanism is indifferent to it.
 
-**B-56** `open` — **History-narrating comments in EmittedFormulaConfigurationTests.swift.**
+**B-60** `open` — **History-narrating comments in EmittedFormulaConfigurationTests.swift.**
 Lines 35 and 254 refer to "today's" keys and defaults that "no longer exist"; reword as
 timeless statements per AGENTS.md.
 
