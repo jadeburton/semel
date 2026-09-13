@@ -133,6 +133,27 @@ dependency lists unioned in `ProjectFinder`, a `publishProducts` property, B-50 
 flap) was declined the same day: a port, a protocol parameter, a property and an ordering
 constraint to approximate what one line of formula states.
 
+**B-54** `open` — **C targets inside a Swift package graph.**
+The converter treats every non-system target as Swift and emits a Swift compiler func for
+it. IceCubesApp reaches swift-markdown through EmojiText, and with it swift-cmark: 34 C
+files in two targets (`src`, `extensions`), plus swift-markdown's own one-file `CAtomic`
+target. Both ship a `module.modulemap` in their `include` folder, and their `cSettings`
+matter only on Windows.
+
+Approach, none of it new tooling: a target whose sources are C (no `.swift` under its
+path; the reader could say so, or the converter can ask for the folder manifest it
+already wires) gets what the hand-written C formulas already say — a `ClangPreprocessor`
+and `ClangCompiler` per source file over a wildcard (`{f: '<target>/*.c'}` as a string, so
+the generated text needs no path literal), with `-I <target>/include` and the target folder
+for private headers, and `cSettings` defines carried as literals; the objects go on the
+product's `SwiftLinker.input` beside the Swift ones, which a static archive accepts. A Swift
+target that depends on a C target gets the C target's `include` folder on
+`inputModuleMapFolders`, exactly as a system-library target is wired today, since the
+shipped module map makes it importable. The package's config gains the three `clang.*`
+namespaces; clang takes `sdkPath` and `target`, so the simulator is a path there, not a
+name. Nested source folders (`**`) and `publicHeadersPath` other than `include` can wait
+for a package that has them.
+
 **B-26** `open` — **Recursive content hash for a folder tree.**
 `FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
 manifest changes when names change but not when contents do. A Merkle root needs a derived
