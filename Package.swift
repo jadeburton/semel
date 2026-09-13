@@ -21,7 +21,6 @@ let package = Package(
         .target(
             name: "SemelCLI",
             dependencies: [
-                .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],

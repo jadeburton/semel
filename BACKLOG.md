@@ -209,8 +209,9 @@ One binary, three modes, sharing a wire protocol:
 2. **Remote Runner** — executes tool commands inside, or against, a container (B-03)
 3. **Local Build Daemon** — the surviving part of
    `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`. Designed in
-   `docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md`; phase 1 of
-   three (the `SemelProtocol` package) is built. Wanted even with
+   `docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md`; phases 1 and 2 of
+   three are built: the `SemelProtocol` package, and the in-process split behind
+   `RequestHandler` and `InProcessConnection`. Wanted even with
    local building, because the point is a build that continues in the background regardless
    of which CLIs are open — local CLI to local daemon, one user, one graph. Do not write it
    for multiple users: that is the shared-build-server model the cache server superseded,

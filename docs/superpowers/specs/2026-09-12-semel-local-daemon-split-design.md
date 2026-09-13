@@ -1,6 +1,6 @@
 # Splitting Semel into a local daemon and a CLI
 
-**Status:** phase 1 (SemelProtocol) implemented; phases 2 and 3 not yet started
+**Status:** phases 1 and 2 implemented; phase 3 not yet started
 **Date:** 2026-09-12
 **Relationship:** this is B-30 role 3, the local build daemon. It takes the frame design
 and the surviving parts of `2026-08-15-semel-client-server-design.md` and drops everything
@@ -46,9 +46,10 @@ Named explicitly because each was discussed and deliberately cut:
 
 ```
 SemelDatabaseModels   unchanged
-SemelNodeKit          unchanged
+SemelNodeKit          gains the wildcard matcher and its external lister from SemelCore
 SemelCore             three small changes: reporter closures, ErrorReport split,
-                      string-returning graph dump (see "Changes to SemelCore")
+                      string-returning graph dump (see "Changes to SemelCore");
+                      InternalFileSystemLister keeps the graph-backed lister
 SemelProtocol   NEW   package: frame codec + message types + the SemelConnection
                       protocol. Depends on Foundation only.
 SemelServ       NEW   library target in the root package: RequestHandler, Session,
@@ -312,11 +313,17 @@ Three, all small, all in service of the seam:
 
 1. **`ErrorReport` splits** into gathering and rendering. `ErrorReport.entries(forNodeID:ports:messages:database:)`
    returns `[Entry]` (label, grouped ports and messages) and stays in Core. Rendering
-   entries to lines moves to `SemelCLI`, the only place lines are printed after the split.
+   entries to lines is duplicated: `ErrorReport.lines(for:)` stays in Core for the default
+   reporter and is pinned by `ErrorReportTests`, and `ErrorRecordRenderer` in `SemelCLI`
+   renders the wire record identically, because the CLI cannot import Core and the
+   protocol package must not render.
    The one-shape-for-both-callers property the file's header comment describes is kept:
    both the event and the `errors` reply are `ErrorRecord`s rendered by one function.
 2. **`printAll` returns a string** rather than printing, so `debug` can be a response.
 3. **The reporter closures** above.
+4. **The wildcard matcher moves to `SemelNodeKit`.** `push` walks the local disk with
+   `FileWildcardMatcher` and `ExternalFileSystemLister`, and the CLI must do that without
+   linking the engine. Only `InternalFileSystemLister` needs `NodeRecord`, so only it stays.
 
 ### Unrecoverable errors
 
