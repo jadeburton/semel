@@ -49,9 +49,11 @@ SemelDatabaseModels   unchanged
 SemelNodeKit          unchanged
 SemelCore             three small changes: reporter closures, ErrorReport split,
                       string-returning graph dump (see "Changes to SemelCore")
-SemelProtocol   NEW   package: frame codec + message types. Depends on Foundation only.
+SemelProtocol   NEW   package: frame codec + message types + the SemelConnection
+                      protocol. Depends on Foundation only.
 SemelServ       NEW   library target in the root package: RequestHandler, Session,
-                      event sink. Owns BuildEngine + DatabaseLayer. No sockets.
+                      event sink, InProcessConnection. Owns BuildEngine + DatabaseLayer.
+                      No sockets.
 SemelCLI              keeps CommandInterpreter and plugins; CommandContext holds a
                       SemelConnection instead of DatabaseLayer / BuildEngine
 semelserv       NEW   executable (phase 3): composition root + listener
@@ -333,15 +335,31 @@ path — plus the output closures and the path resolver. `database`, `buildEngin
 `inputFileSystem` and `outputFileSystem` go. In their place:
 
 ```swift
-protocol SemelConnection {
-    func send(_ request: Request, body: Data?) async throws -> (Response, Data?)
-    var events: AsyncStream<Event> { get }
+public protocol SemelConnection: AnyObject {
+    func send(_ request: Request, body: Data?) throws -> (Response, Data?)
+    var onEvent: ((Event) -> Void)? { get set }
 }
 ```
 
-The interpreter registers one consumer of `events` at startup and prints them with the
-same renderers the verbs use. `CommandInterpreterError.quit` and `CommandParserError`
-stay where they are.
+`send` is synchronous and thread-safe: it blocks the calling thread until the reply
+matched to its request arrives, and several threads may have sends outstanding at once.
+Events arrive on `onEvent`, called from whatever thread the connection receives on; the
+interpreter installs one handler at startup and prints with the same renderers the verbs
+use. `CommandInterpreterError.quit` and `CommandParserError` stay where they are.
+
+**Synchronous, deliberately, and kept small so it can become async later.** The REPL is
+a `readLine` loop, every plugin's `handle` is synchronous, and the engine's cache hooks
+that the cache role will call are synchronous too; an `async` connection would push
+`async` through all of them for a client that sends one request at a time. The protocol
+is therefore exactly two members, and all request matching lives inside the conformers,
+so an async variant is a change to one protocol's signatures and its conformers, never to
+a plugin.
+
+**The protocol lives in `SemelProtocol`**, not in `SemelCLI`, because of the dependency
+rule: `InProcessConnection` holds a `RequestHandler`, so if the protocol were the CLI's,
+either the CLI would import the server or the server the CLI. In the protocol package it
+is what it describes — a thing that carries `Request`s and returns `Response`s — and both
+sides can see it without seeing each other.
 
 ### Plugins split cleanly
 
@@ -370,14 +388,14 @@ the role, and the CLI exits.
 
 ### Connections
 
-- `InProcessConnection` (phase 2) — holds a `RequestHandler` and a `Session`. It does
-  **not** hand Swift objects across: every request is encoded to a `Frame` and decoded
-  again before the handler sees it, and every reply goes back through the same pair. The
-  day the socket arrives, the codec and the model have already been exercised by every
-  CLI test. Its `events` stream is fed directly by the handler's event sink.
-- `SocketConnection` (phase 3) — Network.framework over a Unix domain socket. Writes
-  frames; reads with a `FrameDecoder`; demultiplexes replies by correlation ID; routes
-  event frames to `events`.
+- `InProcessConnection` (phase 2, in `SemelServ`) — holds a `RequestHandler` and a
+  `Session`. It does **not** hand Swift objects across: every request is encoded to a
+  `Frame` and decoded again before the handler sees it, and every reply goes back through
+  the same pair. The day the socket arrives, the codec and the model have already been
+  exercised by every CLI test. Its `onEvent` is fed directly by the handler's event sink.
+- `SocketConnection` (phase 3, in `SemelCLI`) — Network.framework over a Unix domain
+  socket. Writes frames; reads with a `FrameDecoder`; matches replies to waiting callers
+  by correlation ID; delivers event frames to `onEvent`.
 
 ## Section 4: room for the cache server
 
@@ -394,11 +412,13 @@ carry bodies, which is what the raw body section is for.
 and, if wanted, `CacheEvent` are new files, and `Hello` already negotiates the role.
 
 **Concurrent requests from day one.** A REPL sends one request at a time, but an engine
-with twenty nodes finishing at once will make twenty cache lookups in flight. So
-`SemelConnection.send` is designed around the correlation ID from the start: it returns
-the reply matched to its request, and several sends may be outstanding. Both the in-process
-and the socket connection honour this, and their tests cover interleaved requests even
-though no CLI verb produces them.
+with twenty nodes finishing at once will make twenty cache lookups in flight, each from
+its own thread. So `SemelConnection.send` is designed around the correlation ID from the
+start: it returns the reply matched to its request, and several threads may have sends
+outstanding. Both the in-process and the socket connection honour this, and their tests
+cover interleaved requests even though no CLI verb produces them. That the calls are
+synchronous is what the engine's cache hooks want today; if the engine ever becomes
+async, the two-member protocol is the whole surface that changes.
 
 **Cache payloads are mirrored, not imported.** A cache entry on the wire is a struct in
 `SemelProtocol` that `SemelServ` maps to and from `ProcessCacheEntry`, and hashes are
@@ -419,17 +439,18 @@ is green.
 
 ### Phase 2: the in-process split
 
-- `SemelServ` library: `RequestHandler`, `Session`, `EventSink`.
+- `SemelProtocol`: the `SemelConnection` protocol.
+- `SemelServ` library: `RequestHandler`, `Session`, `EventSink`, and `InProcessConnection`
+  round-tripping through the codec.
 - `SemelCore`: the three changes above.
 - `SemelCLI`: `CommandContext` moves to `SemelConnection`; plugins send requests; the
   `ErrorReport` renderer and the `tools` renderer live here.
-- `InProcessConnection`, round-tripping through the codec.
 - `main.swift` still registers toolchains and starts the engine, then builds a
   `RequestHandler`, an `InProcessConnection`, and the interpreter on top. One process,
   behaviour unchanged.
 - The existing `SemelCLITests` are converted to construct an in-process connection.
 
-Done when all five test suites are green and the REPL behaves as before.
+Done when all six test suites are green and the REPL behaves as before.
 
 ### Phase 3: two apps
 
@@ -455,8 +476,8 @@ decodes to an equal value.
 the engine's reporters reach the event sink as events.
 
 **Connections** — `InProcessConnection` in phase 2 and `SocketConnection` in phase 3:
-interleaved sends with distinct correlation IDs each receive their own reply; an event
-frame reaches the `events` stream without disturbing a pending reply.
+interleaved sends from separate threads each receive their own reply; an event frame
+reaches `onEvent` without disturbing a pending reply.
 
 **Plugins** (`SemelCLI` tests) — against a fake `SemelConnection` that records requests and
 returns canned responses. This gives the interpreter and plugins the coverage they have
