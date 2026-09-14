@@ -735,7 +735,9 @@ final class SocketConnectionTests: XCTestCase {
 
     func test_anEventReachesOnEvent() throws {
         startServer { frame in
-            self.serverStream?.send(try! Frame.event(.daemon(.notice(line: "built"))))
+            if let event = try? Frame.event(.daemon(.notice(line: "built"))) {
+                self.serverStream?.send(event)
+            }
             return try? Frame.response(.daemon(.ok), correlationID: frame.correlationID)
         }
         let connection = try SocketConnection.connect(to: socketPath)
@@ -1102,7 +1104,7 @@ final class ServerTests: RequestHandlerTestCase {
         // The handler answers malformedRequest through ServerConnection; SocketConnection
         // cannot send malformed JSON itself, so this is pinned at the ServerConnection level:
         let json = Data(#"{"daemon":{"teleport":{}}}"#.utf8)
-        let reply = ServerConnection.reply(toUndecodable: Frame(kind: .request, correlationID: 5, json: json))
+        let reply = try XCTUnwrap(ServerConnection.reply(toUndecodable: Frame(kind: .request, correlationID: 5, json: json)))
         XCTAssertEqual(reply.correlationID, 5)
         XCTAssertEqual(try reply.response(), .error(.malformedRequest(description: "the request could not be decoded")))
     }
@@ -1287,7 +1289,9 @@ final class ServerConnection {
         do {
             request = try frame.request()
         } catch {
-            stream.send(Self.reply(toUndecodable: frame))
+            if let reply = Self.reply(toUndecodable: frame) {
+                stream.send(reply)
+            }
             return
         }
         let (response, body) = handler.handle(request, body: frame.body.isEmpty ? nil : frame.body, session: session)
@@ -1304,10 +1308,10 @@ final class ServerConnection {
     }
 
     /// The answer to a request whose JSON names nothing this build knows. The connection
-    /// survives: the frame was well formed, only the message was not.
-    static func reply(toUndecodable frame: Frame) -> Frame {
-        // Encoding a malformedRequest error cannot fail: it is a small fixed message.
-        try! Frame.response(.error(.malformedRequest(description: "the request could not be decoded")),
+    /// survives: the frame was well formed, only the message was not. Nil only if a small
+    /// fixed error message somehow fails to encode, in which case there is nothing to say.
+    static func reply(toUndecodable frame: Frame) -> Frame? {
+        try? Frame.response(.error(.malformedRequest(description: "the request could not be decoded")),
                             correlationID: frame.correlationID)
     }
 
@@ -1324,7 +1328,7 @@ final class ServerConnection {
 }
 ```
 
-The `try!` in `reply(toUndecodable:)` is the one force in the file and is commented: the frame is a constant-size error whose encoding cannot exceed the limit.
+There is no `try!` anywhere in this task; AGENTS.md keeps that at zero, so `reply(toUndecodable:)` returns an optional and the caller stays silent in the impossible case.
 
 - [ ] **Step 6: Write `ConnectionRegistry`**
 
