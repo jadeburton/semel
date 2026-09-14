@@ -71,6 +71,7 @@ cd -i sources/
 | `push <path>` | Push a file or directory from disk into the input file system |
 | `rm <path>` | Remove a file or directory from the input file system |
 | `cp [-i\|-o] <src> [dest]` | Copy a file out of the internal file system to disk |
+| `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
 
 Paths support wildcards (`*`, `**`, `?`):
 
@@ -85,6 +86,8 @@ rm build/**
 |---------|-------------|
 | `d` / `debug` | Dump the full graph state |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
+| `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
+| `build <folder> [--into <dir>]` | `push <folder>`, `wait`, `errors` in one word; given a destination, `export` too, unless the build reported errors |
 | `e` / `errors` | Show all current build errors |
 | `t` / `tools` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste |
 | `reset` | Discard everything derived and rebuild from the input file system |
@@ -97,6 +100,13 @@ rm build/**
 | `q` / `quit` / `exit` | Exit |
 
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
+
+Given arguments, the binary runs each one as a command line instead of opening the prompt,
+and exits non-zero if any command reported an error — which makes it a build step:
+
+```sh
+.build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
+```
 
 ### Building a Swift package
 
@@ -116,6 +126,17 @@ the node is a Swift package converter is the toolchain's business, not the langu
 The packages a package depends on are reached through it. Every node of the build,
 dependencies included, reads its settings from the `semel.config` beside the named package.
 
+A tree with several root packages puts one formula above them and names each with the
+formula's folder as the build root, so their common dependencies are vendored and compiled
+once and one config serves them all:
+
+```
+// Packages/semel.fmla
+func package(p) = SwiftFormulaConverter(path: p, root: <.>).formula
+include package(p: <Timeline>)
+include package(p: <Explore>)
+```
+
 ### Dependencies
 
 Semel never fetches anything: every file a build needs has to be inside the input file
@@ -130,7 +151,27 @@ It runs `swift package resolve` and copies every git dependency, transitively, i
 SwiftPM names its checkouts (`Dependencies/GRDB.swift`). That folder is the only place the
 converter looks for a git or registry dependency, whichever package declared it. Local path
 dependencies stay wherever the manifest says. Run it again after changing a dependency;
-each copy is replaced, not merged.
+each copy is replaced, not merged. For several packages under one build root, name the
+shared folder: `semel-vendor --into Packages/Dependencies Packages/Timeline Packages/Explore`.
+
+### Clone to build
+
+For a tree of Swift packages that ships no formula, `init` does the whole conversion:
+
+```sh
+.build/release/semel-vendor init path/to/Packages --platform ios-simulator
+.build/release/semel 'base path/to' 'build Packages --into ./out'
+```
+
+It finds every `Package.swift` under the folder, takes as roots the packages no other one
+there depends on by path, vendors the roots' closure into `Dependencies`, and writes
+`semel.fmla` (one `include` per root, all under one build root) and `semel.config` for the
+platform — every namespace the toolchains declare, the tools and SDK this machine has, and
+a target at the highest deployment version the packages declare (`macos` is the default
+platform). It never replaces a formula or config that is already there: a project that
+ships its own has already decided, and needs no `init` at all. Semel itself knows nothing
+of Swift packages; `semel-vendor` is the Swift conversion tool, and another toolchain gets
+one of its own if it needs one.
 
 ## Architecture
 

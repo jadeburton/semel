@@ -1,8 +1,7 @@
 // FileWildcardMatcher.swift
-// semel
+// SemelNodeKit
 
 import Foundation
-import SemelNodeKit
 
 public enum FileWildcardEntryKind {
     case file
@@ -14,6 +13,13 @@ public struct FileWildcardEntry {
     public let kind: FileWildcardEntryKind
     public let isMissing: Bool
     public let isUnreferenced: Bool
+
+    public init(path: Path, kind: FileWildcardEntryKind, isMissing: Bool, isUnreferenced: Bool) {
+        self.path = path
+        self.kind = kind
+        self.isMissing = isMissing
+        self.isUnreferenced = isUnreferenced
+    }
 }
 
 public protocol FileWildcardMatcherInput {
@@ -142,51 +148,5 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
                                      kind: isDir.boolValue ? .folder : .file,
                                      isMissing: false, isUnreferenced: false)
         }.sorted { $0.path.string < $1.path.string }
-    }
-}
-
-// MARK: - InternalFileSystemLister
-
-public final class InternalFileSystemLister: FileWildcardMatcherInput {
-    public let rootDirectoryPath = "/"
-    let folder: NodeRecord
-
-    public init(folder: NodeRecord) {
-        self.folder = folder
-    }
-
-    public func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
-        guard let start = try folder.childNode(path: inDirectoryPath) else {
-            throw NodeError.other(message: "No such directory: \(inDirectoryPath)")
-        }
-
-        return try start.allChildren.map { nodeRecord in
-            switch nodeRecord.kind {
-
-            case Folder.kind:
-                guard let folder = try nodeRecord.makeNode() as? Folder else {
-                    assert(false)
-                    throw NodeError.other(message: "Unexpected object kind")
-                }
-                let isOutputFileSystem = try folder.thisNode
-                    .buildFullPathName(baseNodeID: nil)
-                    .firstComponent == Folder.outputFileSystemName
-                return FileWildcardEntry(path: Path(nodeRecord.name!),
-                                         kind: .folder,
-                                         isMissing: isOutputFileSystem ? false : try !folder.isPinned,
-                                         isUnreferenced: try folder.hasNoOutputWires() && nodeRecord.allChildren.isEmpty)
-
-            default:
-                let node = try nodeRecord.makeNode()
-                guard let pinnable = node as? Pinnable else {
-                    assert(false)
-                    throw NodeError.other(message: "Unexpected object kind")
-                }
-                return FileWildcardEntry(path: Path(nodeRecord.name!),
-                                         kind: .file,
-                                         isMissing: try !pinnable.isPinned,
-                                         isUnreferenced: try node.hasNoOutputWires())
-            }
-        }
     }
 }

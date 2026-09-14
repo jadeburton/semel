@@ -8,6 +8,19 @@
 
 - Get it working with large swift package that has complicated dependencies and targets
 
+  Done (2026-09-13): IceCubesApp's thirteen packages — five consumption roots, thirteen
+  external packages including swift-cmark's C targets — build for the iOS simulator under
+  one formula (`C1/icecubes/Packages/semel.fmla`): 1,886 files pushed in 8 s, a cold build
+  of 271 cache entries in about 4.5 minutes wall clock for 25 minutes of tool time, five
+  archives, no errors. Nodes are shared across the roots: 26 Swift compiler nodes for 26
+  targets. What it took is in the commits from 5ffd0af to c31917e.
+
+  The loop closed the same day (B-57 to B-59): on a fresh copy of the packages,
+  `semel-vendor init Packages --platform ios-simulator` found the five roots, vendored the
+  thirteen dependencies and wrote a formula and config identical in substance to the
+  hand-written ones; `semel 'base <repo>' 'build Packages --into out'`
+  then produced the five archives in 17 s from the warm cache and exited 0.
+
 - Get it working with large c or c++ project
 
 - Maybe, if at all technically possible, a tool to convert a makefile or cmake file to a Formula file. Or even a Node that does it. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional. Cmake still has add_xxx methods and a mess of a syntax.

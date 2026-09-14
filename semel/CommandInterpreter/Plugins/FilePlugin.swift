@@ -1,15 +1,15 @@
 // FilePlugin.swift
 // semel
 //
-// Handles: push, rm / remove, cp / copy
+// Handles: push, rm / remove, cp / copy, export
 
-import SemelCore
 import Foundation
 import SemelNodeKit
+import SemelProtocol
 
 final class FilePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["push", "rm", "remove", "cp", "copy"]
+    let verbs: Set<String> = ["push", "rm", "remove", "cp", "copy", "export"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -35,6 +35,9 @@ final class FilePlugin: CommandPlugin {
                            destinationPath: remaining.count >= 2 ? remaining[1] : nil,
                            context: context)
 
+        case "export":
+            try handleExport(tokens: tokens, context: context)
+
         default:
             break
         }
@@ -43,9 +46,6 @@ final class FilePlugin: CommandPlugin {
     // MARK: - push
 
     private func handlePush(externalPathOrWildcard: String, context: any CommandContext) throws {
-        context.buildEngine.beginBatch()
-        defer { context.buildEngine.endBatch() }
-
         // The matcher is rooted at baseDirectory, and Path drops a leading slash, so an
         // absolute path would silently be reinterpreted as relative and match nothing.
         // Say so instead of doing nothing.
@@ -83,6 +83,10 @@ final class FilePlugin: CommandPlugin {
                 }
             }
         }
+
+        // One batch around the whole push, so the engine coalesces its work signals.
+        _ = try context.request(.beginBatch)
+        defer { _ = try? context.request(.endBatch) }
 
         try work.forEach { entry in
             try pushOne(entry, baseDirectory: context.baseDirectory, context: context)
@@ -126,28 +130,20 @@ final class FilePlugin: CommandPlugin {
 
             // The matcher listed this file a moment ago, but it can be deleted or made
             // unreadable in between — that is a report-and-continue, not a crash.
-            let fileContent: [UInt8]
+            let fileContent: Data
             do {
-                fileContent = try [UInt8](Data(contentsOf: URL(fileURLWithPath: absolutePath)))
+                fileContent = try Data(contentsOf: URL(fileURLWithPath: absolutePath))
             } catch {
                 context.outputError("push: \(relativePath): \(error.localizedDescription)")
                 return
             }
 
-            _ = try context.inputFileSystem.ensureEntirePathExistsAsFolders(
-                    relativePath.deletingLastComponent ?? .empty, pinned: true)
+            let mode = Self.mode(ofFileAt: absolutePath)
 
-            let fullPath      = Path(Folder.inputFileSystemName) / relativePath
-            let graphSpecNode = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')")
-            let (fromNode, _) = try graphSpecNode.findOrCreateMatchingNode()
-
-            guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
-                context.outputError("push: \(relativePath): the graph holds a non-file node at this path")
+            guard case .pushFile(let didChange) = try context.request(.pushFile(path: relativePath.string, mode: mode),
+                                                                       body: fileContent).0 else {
                 return
             }
-
-            let didChange = try staticFile.replaceContent(fileContent.intern())
-
             context.outputMessage("Push file: \(relativePath) \(didChange ? "" : "[no change]")")
 
         case .folder:
@@ -155,8 +151,15 @@ final class FilePlugin: CommandPlugin {
             // there by `expand`, so that a file reachable both directly and through its
             // folder is still pushed once.
             context.outputMessage("Push folder: \(relativePath)")
-            _ = try context.inputFileSystem.ensureEntirePathExistsAsFolders(relativePath, pinned: true)
+            _ = try context.request(.pushFolder(path: relativePath.string))
         }
+    }
+
+    /// The file's permission bits, or the default when they cannot be read.
+    private static func mode(ofFileAt absolutePath: String) -> UInt16 {
+        let attributes  = try? FileManager.default.attributesOfItem(atPath: absolutePath)
+        let permissions = attributes?[.posixPermissions] as? NSNumber
+        return permissions.map { UInt16(truncatingIfNeeded: $0.intValue) } ?? FileMetadata.defaultMode
     }
 
     // MARK: - rm
@@ -165,42 +168,23 @@ final class FilePlugin: CommandPlugin {
         let base = context.currentDirectoryPath
         let fullPattern: Path = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
 
-        let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: try context.inputFileSystem))
-        let entries = try matcher.findAllMatching(pathOrWildcard: fullPattern)
+        guard case .remove(let removedPaths) = try context.request(.remove(pattern: fullPattern.string)).0 else {
+            return
+        }
 
-        guard !entries.isEmpty else {
+        if removedPaths.isEmpty {
             context.outputError("rm: \(pathOrWildcard): no such file or directory")
-            return
         }
-
-        for entry in entries {
-            try removeOne(entry, context: context)
-        }
-    }
-
-    private func removeOne(_ entry: FileWildcardEntry, context: any CommandContext) throws {
-        guard let child = try context.inputFileSystem.childNode(path: entry.path) else {
-            context.outputError("Child not found: \(entry.path)")
-            return
-        }
-        guard let userDeletableChild = try child.nodeAsAny() as? UserDeletable else {
-            context.outputError("Child not deletable: \(entry.path)")
-            return
-        }
-        try userDeletableChild.deleteInInputFileSystem()
     }
 
     // MARK: - cp
 
     private func handleCopy(folder: FileSystemForCommand?, pathOrWildcard: String,
-                             destinationPath: String?, context: any CommandContext) throws {
+                            destinationPath: String?, context: any CommandContext) throws {
         // An explicit -i/-o names a file system the current directory does not belong
         // to, so the source pattern is root-relative in that case (same rule as `ls`).
         let targetFS   = folder ?? context.currentFileSystem
         let base: Path = folder != nil ? .empty : context.currentDirectoryPath
-
-        let fileSystem = try context.fileSystem(for: targetFS)
-        let matcher    = FileWildcardMatcher(input: InternalFileSystemLister(folder: fileSystem))
 
         // `resolve` folds away "." and "..", and treats a leading "/" as the root of
         // the internal file system.
@@ -211,52 +195,128 @@ final class FilePlugin: CommandPlugin {
         // process working directory.
         let externalDest = ExternalPathSanitizer.expandPartialPath(destinationPath ?? ".")
 
-        let entries = try matcher.findAllMatching(pathOrWildcard: fullPattern)
+        guard case .list(let entries) = try context.request(.list(fileSystem: targetFS.kind, pattern: fullPattern.string)).0 else {
+            return
+        }
 
         guard !entries.isEmpty else {
             context.outputError("cp: \(pathOrWildcard): no such file or directory")
             return
         }
 
-        for entry in entries {
+        for entry in entries where entry.kind == .file {
             do {
-                try copyOneFile(folder: fileSystem, entry: entry,
-                                destinationPath: externalDest, context: context)
+                try copyOneFile(entry, from: targetFS, destinationPath: externalDest, context: context)
             } catch {
                 context.outputError("cp: \(entry.path): \(error)")
             }
         }
     }
 
-    private func copyOneFile(folder: NodeRecord, entry: FileWildcardEntry,
-                              destinationPath: String, context: any CommandContext) throws {
-        guard case .file = entry.kind else {
-            return
-        }
+    private func copyOneFile(_ entry: ListEntry, from fileSystem: FileSystemForCommand,
+                             destinationPath: String, context: any CommandContext) throws {
+        let (response, body) = try context.request(.fetch(fileSystem: fileSystem.kind, path: entry.path))
 
-        guard let fileNode = try folder.childNode(path: entry.path) else {
-            context.outputError("File \(entry.path) not found in internal file system")
+        guard case .fetch(let mode) = response else {
+            context.outputError("File \(entry.path) has no content")
             return
         }
-        guard let file = try fileNode.nodeAsAny() as? FileType else {
-            context.outputError("Object \(entry.path) is not a FileType")
-            return
-        }
+        let bytes = body ?? Data()
 
-        switch try file.read() {
-        case .value(let dataObjectHash):
-            let fileContent = Data(try dataObjectHash.resolve())
-            let finalPath   = destinationPath + "/" + (entry.path.lastComponent ?? entry.path.string)
-            try fileContent.write(to: URL(fileURLWithPath: finalPath))
-            if let metadataProvider = try fileNode.nodeAsAny() as? FileMetadataProvider,
-               let metadata = try metadataProvider.readFileMetadata() {
-                chmod(finalPath, mode_t(metadata.mode ?? FileMetadata.defaultMode))
+        let path      = Path(entry.path)
+        let finalPath = destinationPath + "/" + (path.lastComponent ?? path.string)
+        try bytes.write(to: URL(fileURLWithPath: finalPath))
+        chmod(finalPath, mode_t(mode))
+        context.outputMessage("File written: \(finalPath)")
+    }
+
+    // MARK: - export
+
+    /// `export <folder> --into <dir>`: every file under `<folder>` of the output file system
+    /// — the products the builders there published — lands in `<dir>`, keeping the tree
+    /// below `<folder>`. `cp -o` does one file at a time; this is the last step of the
+    /// clone-to-build loop, so it takes the folder the build took.
+    private func handleExport(tokens: [String], context: any CommandContext) throws {
+        var folderToken: String?
+        var destination: String?
+        var index = 0
+        while index < tokens.count {
+            switch tokens[index] {
+            case "--into":
+                guard index + 1 < tokens.count else {
+                    throw CommandParserError.missingArgument(command: "export", expected: "--into <dir>")
+                }
+                destination = tokens[index + 1]
+                index += 2
+            default:
+                guard folderToken == nil else {
+                    throw CommandParserError.tooManyArguments(command: "export")
+                }
+                folderToken = tokens[index]
+                index += 1
             }
-            context.outputMessage("File written: \(finalPath)")
-        case .noValue(let reason):
-            context.outputError("File \(entry.path) has no content: \(reason)")
-        case nil:
-            context.outputError("File \(entry.path) has a nil value")
         }
+        guard let folderToken, let destination else {
+            throw CommandParserError.missingArgument(command: "export", expected: "<folder> --into <dir>")
+        }
+
+        // The folder is a path in the output file system, from its root — the same folder
+        // `build` took, which named the input tree the products mirror.
+        let folderPath = context.resolve(folderToken, relativeTo: .empty)
+        guard case .list(let folderMatches) = try context.request(.list(fileSystem: .output,
+                                                                        pattern: folderPath.string)).0 else {
+            return
+        }
+        guard folderMatches.count == 1, folderMatches[0].kind == .folder else {
+            context.outputError("export: \(folderToken): no such folder in the output file system")
+            return
+        }
+
+        let treePattern = (folderPath / Path("**/*")).string
+        guard case .list(let matches) = try context.request(.list(fileSystem: .output,
+                                                                  pattern: treePattern)).0 else {
+            return
+        }
+        let files = matches.filter { $0.kind == .file }
+        guard !files.isEmpty else {
+            context.outputError("export: \(folderToken): nothing to export")
+            return
+        }
+
+        let externalDest = ExternalPathSanitizer.expandPartialPath(destination)
+        var exported = 0
+        for entry in files {
+            do {
+                if try exportOneFile(entry, below: folderPath, destinationPath: externalDest, context: context) {
+                    exported += 1
+                }
+            } catch {
+                // A product nothing has built yet has no content, and the server says so.
+                // Report it and carry on, exactly as `cp` does.
+                context.outputError("export: \(entry.path): \(error)")
+            }
+        }
+        context.outputMessage("Exported \(exported) file\(exported == 1 ? "" : "s") into \(externalDest)")
+    }
+
+    /// Writes one exported file below `destinationPath`, at the place it holds below
+    /// `folderPath`, creating the directories on the way. Returns whether it was written.
+    private func exportOneFile(_ entry: ListEntry, below folderPath: Path,
+                               destinationPath: String, context: any CommandContext) throws -> Bool {
+        let (response, body) = try context.request(.fetch(fileSystem: .output, path: entry.path))
+        guard case .fetch(let mode) = response else {
+            context.outputError("export: \(entry.path): not a file")
+            return false
+        }
+
+        let relative  = Path(entry.path).relative(to: folderPath)?.string ?? entry.path
+        let finalPath = destinationPath + "/" + relative
+
+        try FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+        try (body ?? Data()).write(to: URL(fileURLWithPath: finalPath))
+        chmod(finalPath, mode_t(mode))
+        return true
     }
 }

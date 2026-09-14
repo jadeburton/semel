@@ -13,6 +13,14 @@ import SemelNodeKit
 
 final class ProjectBuilderTests: SemelCoreTestCase {
 
+    /// A builder reads its own `products` port to report what appeared or disappeared, so
+    /// processing one needs a graph database — an empty one; nothing here is persisted.
+    /// Without this the class only passed after another suite had left a database behind.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        _ = try DatabaseLayer()
+    }
+
     // MARK: - Helpers
 
     /// One product, wired to a node that needs nothing — the product's shape is

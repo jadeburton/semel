@@ -1,8 +1,15 @@
-@testable import SemelCore
-import XCTest
-import SemelNodeKit
+//
+//  FileWildcardMatcherTests.swift
+//  SemelNodeKitTests
+//
+//  Matching `*`, `?` and `**` against a mock file system, both end to end through
+//  `FileWildcardMatcher` and at the level of the segment matcher it delegates to.
+//
 
-final class FileWildcardMatcherTests: SemelCoreTestCase {
+@testable import SemelNodeKit
+import XCTest
+
+final class FileWildcardMatcherTests: XCTestCase {
 
     // MARK: - Mock input
 
@@ -169,7 +176,7 @@ final class FileWildcardMatcherTests: SemelCoreTestCase {
 /// exercised it: every other test drives it through directory listings, where building a
 /// case costs a mock tree. These are the cases that decide which files a wildcard picks up —
 /// for ProjectBuilder's manifest wildcards as much as for a walk of a real directory.
-final class WildcardSegmentTests: SemelCoreTestCase {
+final class WildcardSegmentTests: XCTestCase {
 
     private func assertMatches(_ pattern: String, _ name: String,
                                _ expected: Bool, line: UInt = #line) {

@@ -29,9 +29,24 @@ public enum Vendoring {
     /// Resolves and copies: `swift package resolve` on `packageRoot`, then every checkout
     /// under `.build/checkouts` into `<packageRoot>/Dependencies/<name>`.
     public static func vendor(packageRoot: URL) throws -> [Copied] {
-        try resolve(packageRoot: packageRoot)
-        return try copyCheckouts(from: packageRoot.appendingPathComponent(".build/checkouts", isDirectory: true),
-                                 into: packageRoot.appendingPathComponent(dependenciesFolderName, isDirectory: true))
+        try vendor(packageRoots: [packageRoot],
+                   into: packageRoot.appendingPathComponent(dependenciesFolderName, isDirectory: true))
+    }
+
+    /// Resolves each package and copies every checkout of each into one `dependencies`
+    /// folder — the shape a formula that includes several packages with one build root
+    /// needs (`SwiftFormulaConverter(path: <pkg>, root: <.>)`): their common closure is
+    /// vendored once. A name two packages both resolve is copied by the later one; SwiftPM
+    /// resolves them as separate graphs, so the versions can in principle differ, and the
+    /// last copy wins as it would for a rerun.
+    public static func vendor(packageRoots: [URL], into dependencies: URL) throws -> [Copied] {
+        var copied: [Copied] = []
+        for packageRoot in packageRoots {
+            try resolve(packageRoot: packageRoot)
+            copied += try copyCheckouts(from: packageRoot.appendingPathComponent(".build/checkouts", isDirectory: true),
+                                        into: dependencies)
+        }
+        return copied
     }
 
     /// SwiftPM does versions, `Package.resolved`, branches, registries and transitive

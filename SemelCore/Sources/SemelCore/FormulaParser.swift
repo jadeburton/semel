@@ -108,42 +108,61 @@ struct FormulaFile {
     /// packages or toolchains here: it merges what the named node produces.
     let includes:  [FormulaExpr]
 
-    /// This file with `other`'s functions and products added. A name defined by both is an
-    /// error rather than a silent override: the resolver keys functions by name, and the
-    /// formula author has no way to see the generated names they might shadow.
+    /// This file with `other`'s functions and products added.
+    ///
+    /// A name defined by both with the *same* definition is one definition: several
+    /// included formulas that reach the same dependency package each carry its generated
+    /// funcs, identically, and they resolve to the same nodes. A name defined by both
+    /// *differently* is an error rather than a silent override — the resolver keys
+    /// functions by name, and the formula author has no way to see the generated names
+    /// they might shadow.
     func merging(_ other: FormulaFile) throws -> FormulaFile {
-        let ownFunctions = Set(functions.map(\.name))
-        if let clash = other.functions.first(where: { ownFunctions.contains($0.name) }) {
-            throw FormulaParseError.duplicateDefinition(kind: "func", name: clash.name)
+        let ownFunctions = Dictionary(functions.map { ($0.name, $0) }) { first, _ in first }
+        var mergedFunctions = functions
+        for function in other.functions {
+            guard let existing = ownFunctions[function.name] else {
+                mergedFunctions.append(function)
+                continue
+            }
+            guard existing == function else {
+                throw FormulaParseError.duplicateDefinition(kind: "func", name: function.name)
+            }
         }
-        let ownProducts = Set(products.map(\.name))
-        if let clash = other.products.first(where: { ownProducts.contains($0.name) }) {
-            throw FormulaParseError.duplicateDefinition(kind: "product", name: clash.name)
+
+        let ownProducts = Dictionary(products.map { ($0.name, $0) }) { first, _ in first }
+        var mergedProducts = products
+        for product in other.products {
+            guard let existing = ownProducts[product.name] else {
+                mergedProducts.append(product)
+                continue
+            }
+            guard existing == product else {
+                throw FormulaParseError.duplicateDefinition(kind: "product", name: product.name)
+            }
         }
-        return FormulaFile(functions: other.functions + functions,
-                           products: other.products + products,
-                           includes: includes)
+
+        return FormulaFile(functions: mergedFunctions, products: mergedProducts, includes: includes)
     }
 }
 
-struct FuncDef {
+struct FuncDef: Equatable {
     let name:   String
     let params: [String]
     let body:   FormulaExpr
 }
 
-struct ProductDef {
+struct ProductDef: Equatable {
     let name: String   // e.g. "Package.json"
     let body: FormulaExpr
 }
 
-indirect enum FormulaExpr {
+indirect enum FormulaExpr: Equatable {
     case string(String)
     case identifier(String)   // parameter reference (no parentheses)
     case call(name: String, args: [FormulaCallArg], port: String?)
 }
 
-enum FormulaCallArg {
+enum FormulaCallArg: Equatable {
     case positional(FormulaExpr)
     case labeled(key: String, value: FormulaExpr)    // func named-arg OR node property
     case inputWire(portName: String, wires: [WireDictEntry])
@@ -156,7 +175,7 @@ enum FormulaCallArg {
 /// as `"wire0"`, `"wire1"`, … based on its position in the port's wire list.
 /// A `forEach` entry contributes one wire per item (after wildcard expansion),
 /// with `%%variable%%` substituted into the key template and every string literal.
-enum WireDictEntry {
+enum WireDictEntry: Equatable {
     case simple(key: FormulaExpr, value: FormulaExpr)
     case unnamed(value: FormulaExpr)
     case forEach(variable: String, items: [FormulaExpr], key: String, value: FormulaExpr)

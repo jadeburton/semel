@@ -1,5 +1,5 @@
 // WildcardSegment.swift
-// SemelCore
+// SemelNodeKit
 //
 // Matching one path segment against a pattern containing `*` and `?`.
 //
@@ -9,14 +9,14 @@
 // means one thing in a formula and another on disk would be its own kind of bug, so they
 // share this rather than each holding a copy.
 
-enum WildcardSegment {
+public enum WildcardSegment {
 
     /// Whether `name` matches `pattern`, where `?` stands for any one character and `*` for
     /// any run of them.
     ///
     /// A segment, not a path: neither wildcard crosses a `/`, because both callers have
     /// already split the path and are asking about one component.
-    static func matches(pattern: String, name: String) -> Bool {
+    public static func matches(pattern: String, name: String) -> Bool {
         matches(pattern: Array(pattern.unicodeScalars),
                 name:    Array(name.unicodeScalars))
     }
