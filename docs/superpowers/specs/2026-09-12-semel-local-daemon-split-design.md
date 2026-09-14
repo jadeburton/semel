@@ -40,13 +40,19 @@ Named explicitly because each was discussed and deliberately cut:
 - **B-50 settle diffs as events.** The event kind exists and carries what the engine
   reports today. Settle diffs become a new event case when B-50 is built.
 - **Chunked or compressed bodies.** The flags byte is reserved for them.
+- **Reconnecting.** A CLI whose socket closes reports it and its next command fails; it
+  does not try again. Restart `semel`.
+- **A `shutdown` request.** `semelserv` stops on `SIGINT`/`SIGTERM` only. Any client being
+  able to stop everyone's build is tolerable with one user and wrong with more, so the
+  verb is not offered.
 - **The cache and runner roles themselves.** Only the room for them.
 
 ## Module layout
 
 ```
 SemelDatabaseModels   unchanged
-SemelNodeKit          gains the wildcard matcher and its external lister from SemelCore
+SemelNodeKit          gains the wildcard matcher and its external lister from SemelCore,
+                      and SemelPaths.serverSocket (phase 3)
 SemelCore             three small changes: reporter closures, ErrorReport split,
                       string-returning graph dump (see "Changes to SemelCore");
                       InternalFileSystemLister keeps the graph-backed lister
@@ -57,7 +63,11 @@ SemelServ       NEW   library target in the root package: RequestHandler, Sessio
                       No sockets.
 SemelCLI              keeps CommandInterpreter and plugins; CommandContext holds a
                       SemelConnection instead of DatabaseLayer / BuildEngine
-semelserv       NEW   executable (phase 3): composition root + listener
+SemelTransport  NEW   library target (phase 3): FrameStream, frames over an NWConnection.
+                      Depends on SemelProtocol and Network; linked by SemelServ and
+                      SemelCLI. Keeps the protocol package transport-free.
+semelserv       NEW   executable (phase 3) at semel-server/: composition root, the
+                      listener, ServerConnection and ConnectionRegistry (in SemelServ)
 semel                 executable: REPL, session state, local disk I/O, SocketConnection
 ```
 
@@ -441,6 +451,91 @@ for compression and chunked bodies, which matter once a multi-megabyte artifact 
 real network rather than a local socket. `version` covers a framing change. Neither is
 built now.
 
+## Section 5: phase 3, the two apps
+
+Decided 2026-09-14, after phases 1 and 2 were merged. Three approaches were weighed: this
+one; Swift concurrency throughout (actors over Network.framework's async APIs), declined
+because `SemelConnection` is synchronous and `waitUntilIdleBlocking` parks a thread, so
+every boundary would need a bridge and B-61's cooperative-thread hazard would become live;
+and POSIX sockets with a thread per connection, declined because it reinvents what
+`NWConnection` already does on the one platform targeted.
+
+### The `semelserv` executable
+
+A new executable target at `semel-server/`, linking `SemelServ`, `SemelCore`,
+`SemelProtocol`, `SemelSwift` and `SemelClang`. It is the composition root: register the
+toolchains, start the engine, build one `RequestHandler` with the real database path,
+listen. The `semel` executable stops doing any of that.
+
+**The socket file.** `SemelPaths.serverSocket`, which is `SemelPaths.root/semelserv.sock`
+unless the environment variable `SEMEL_SOCKET` overrides it; both executables honour the
+override, which is how tests keep away from a real server. The directory is created if
+missing. A Unix-domain socket file holds nothing: it is a name the kernel routes
+connections through, and it outlives a crashed listener. So if the file exists at startup
+the server probes it — connect, send `hello`, wait up to two seconds. Any reply means a
+live server: print "semelserv is already running at <path>" and exit 1. A refused
+connection or no reply means a stale name: unlink it and listen. The banner prints the
+version, the graph path and the socket path to standard output. The server logs to
+standard output and error only; a terminal or launchd captures the stream.
+
+**Connections.** The listener runs on its own serial queue. Each accepted `NWConnection`
+becomes a `ServerConnection`: a serial queue of its own, a `FrameDecoder`, a `Session`, and
+a writer that sends encoded frames in order so a reply and an event never interleave. The
+read loop decodes frames and, per request, calls the shared `RequestHandler.handle` on the
+connection's queue and writes the reply. The handler's queue still orders requests across
+connections, and `wait` runs off it, parking the connection's queue thread — not a
+cooperative one, which meets B-61's constraint by construction. A frame error, a decode
+failure or the peer closing ends the connection: `endSession` unwinds any open batch and
+the connection leaves the registry. Undecodable JSON is answered with `malformedRequest`
+on its correlation ID and the connection stays up.
+
+**Events.** `ConnectionRegistry` is the handler's `EventSink`: it holds the live
+connections under a lock and, for each subscribed session, encodes the event once and
+hands the bytes to that connection's writer. Nothing here touches the handler's queue, so
+the engine's background thread never waits on a client.
+
+**Shutdown.** `SIGINT` and `SIGTERM` via `DispatchSource` signal sources: cancel the
+listener, close every connection and end its session, `stopProcessingLoop()`, remove the
+socket file, exit 0.
+
+**Unrecoverable errors.** `FatalErrors.handler` is replaced in the server process: log to
+standard error, mark the server as stopping so no further request is accepted, and exit
+after the in-flight reply has been written. That is what makes the handler's
+`.unrecoverable` reply reachable.
+
+**One engine change in passing.** `loopIsRunning` goes under the engine's existing lock
+(B-61's first item), since `wait` now arrives from connection threads. The other B-61
+items stay documented limits with tests.
+
+### The client
+
+**`SocketConnection`**, in `SemelCLI`, conforms to `SemelConnection`. One `NWConnection`
+on a private serial queue, one `FrameDecoder`, and under one lock: the next correlation
+ID, a table of pending calls keyed by correlation ID, and `onEvent`.
+
+- `send` allocates a correlation ID, registers a pending entry holding a semaphore, writes
+  the request frame, and waits. The reader fills the entry's reply and signals. Several
+  threads may wait at once, each on its own entry.
+- The reader drains complete frames: a response goes to its pending entry (an unknown
+  correlation ID is dropped with a log line); an event is decoded and delivered to
+  `onEvent` on the reader's queue.
+- If the socket closes or a frame error occurs, every pending call fails with
+  `ConnectionError.closed` and later sends fail at once. No reconnect.
+- The nil-body convention matches `InProcessConnection`: an empty reply body arrives as
+  `nil`; a nil request body is sent empty.
+
+**`semel`'s `main.swift`** links only `SemelCLI`, `SemelNodeKit`, `SemelProtocol` and
+`SemelTransport`. It opens a `SocketConnection` to `SemelPaths.serverSocket` and hands it
+to the interpreter. A connection failure before `hello` completes prints
+"semel: no server at <path>; start one with `semelserv`" to standard error and exits 1; a
+rejected `hello` prints the reason and exits 1. Banner, interactive loop and
+non-interactive mode are unchanged.
+
+**`SemelTransport`.** Frame writing and the read-drain loop are the same on both sides,
+so they live in one small `FrameStream` over an `NWConnection`, in a library target that
+depends on `SemelProtocol` and Network. It is a separate target rather than part of
+`SemelProtocol` because the protocol package must stay transport-free.
+
 ## Phases
 
 ### Phase 1: `SemelProtocol`
@@ -466,12 +561,18 @@ Done when all six test suites are green and the REPL behaves as before.
 
 ### Phase 3: two apps
 
-- `semelserv` executable: composition root plus an `NWListener` on a Unix domain socket at
-  `SemelPaths.root/semelserv.sock`. One `Session` per connection; the event sink fans out.
-- `SocketConnection` in `SemelCLI`.
-- The `semel` executable drops `SemelCore`, `SemelSwift` and `SemelClang` and links only
-  `SemelCLI` and `SemelProtocol`.
-- No socket present means one line saying the server is not running and how to start it.
+Designed in Section 5. Five steps, each green on its own:
+
+1. `SemelTransport` with `FrameStream`, tested over a loopback socket.
+2. `SocketConnection` in `SemelCLI`, tested against an in-test listener.
+3. `ServerConnection`, `ConnectionRegistry` and `Server` in `SemelServ`, tested against a
+   real engine over a loopback socket.
+4. The `semelserv` executable: composition root, socket probe, signal shutdown, the fatal
+   handler; tested as a subprocess.
+5. `semel` becomes the client: `main.swift` rewritten, `SemelServ`, `SemelCore`,
+   `SemelSwift` and `SemelClang` dropped, and the records updated.
+
+No socket present means one line saying the server is not running and how to start it.
 
 ## Testing
 
@@ -495,8 +596,23 @@ reaches `onEvent` without disturbing a pending reply.
 returns canned responses. This gives the interpreter and plugins the coverage they have
 never had, because testing them no longer needs an engine.
 
-**End-to-end** (phase 3) — a handful over a loopback socket: hello, push, list, fetch,
-and an event reaching a subscriber.
+**Transport** (`SemelTransport` tests, phase 3) — frames over a loopback Unix socket in a
+temporary directory: write and read, partial delivery, close.
+
+**Socket connection** (`SemelCLI` tests, phase 3) — against a tiny in-test listener with
+scripted replies: replies matched to their callers, two threads waiting at once, failure
+on close, the nil-body convention, an event delivered to `onEvent`.
+
+**Server** (`SemelServ` tests, phase 3) — a real engine over a loopback socket: hello,
+push, list, fetch, `wait`; an event reaching a subscribed client and not an unsubscribed
+one; a batch unwound when a client disconnects mid-push; the two-session `wait` limit
+(B-61) shown by a test.
+
+**Executable** (phase 3) — `semelserv` run as a subprocess with `SEMEL_SOCKET` pointing
+into a temporary directory: start, `hello` through `SocketConnection`, a second instance
+refused, `SIGTERM`, socket file gone, exit 0.
+
+Every socket test uses a unique path under the temporary directory, never the real one.
 
 ## Known consequences
 
