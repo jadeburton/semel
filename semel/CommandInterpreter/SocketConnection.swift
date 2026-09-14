@@ -1,0 +1,175 @@
+// SocketConnection.swift
+// semel
+//
+// SemelConnection over a Unix-domain socket. `send` is synchronous: it registers a waiter
+// under the correlation ID, writes the frame, and parks on a semaphore until the reader
+// delivers that ID's reply. Several threads may be parked at once, each on its own
+// waiter, which is the shape the engine's cache role will need. Events go to `onEvent`
+// on the reader's queue, as the in-process connection delivers them.
+
+import Foundation
+import Network
+import SemelProtocol
+import SemelTransport
+
+public enum ConnectionError: Error, Equatable, CustomStringConvertible {
+    case unavailable(path: String, underlying: String)
+    case closed
+    case unexpectedFrame
+
+    public var description: String {
+        switch self {
+        case .unavailable(let path, let underlying):
+            return "no server at \(path) (\(underlying)); start one with `semelserv`"
+        case .closed:
+            return "the connection to the server closed"
+        case .unexpectedFrame:
+            return "the server sent a frame this client cannot place"
+        }
+    }
+}
+
+public final class SocketConnection: SemelConnection {
+
+    public var onEvent: ((Event) -> Void)? {
+        get { lock.withLock { eventHandler } }
+        set { lock.withLock { eventHandler = newValue } }
+    }
+
+    private final class Waiter {
+        let semaphore = DispatchSemaphore(value: 0)
+        var reply: Result<(Response, Data?), Error>?
+    }
+
+    private let stream: FrameStream
+    private let lock = NSLock()
+    private var eventHandler: ((Event) -> Void)?
+    private var waiters: [UInt64: Waiter] = [:]
+    private var nextCorrelationID: UInt64 = 1
+    private var isClosed = false
+
+    // MARK: - Connecting
+
+    /// Opens the socket and waits until it is ready, or fails with the path so the user
+    /// knows what to start. Nothing is sent; the caller sends `hello`.
+    public static func connect(to path: String, timeout: TimeInterval = 5) throws -> SocketConnection {
+        do {
+            try UnixSocketPath.check(path)
+        } catch {
+            throw ConnectionError.unavailable(path: path, underlying: "\(error)")
+        }
+        let connection = NWConnection(to: .unix(path: path), using: .tcp)
+        let queue      = DispatchQueue(label: "semel.socket-connection")
+        let ready      = DispatchSemaphore(value: 0)
+        var failure: String?
+
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                ready.signal()
+            case .failed(let error):
+                failure = "\(error)"
+                ready.signal()
+            case .waiting(let error):
+                // Not listening or refused. NWConnection would retry; a local daemon that
+                // is not there now will not be there in a moment either.
+                failure = "\(error)"
+                ready.signal()
+            case .setup, .preparing, .cancelled:
+                break
+            @unknown default:
+                break
+            }
+        }
+        connection.start(queue: queue)
+
+        guard ready.wait(timeout: .now() + timeout) == .success, failure == nil else {
+            connection.cancel()
+            throw ConnectionError.unavailable(path: path, underlying: failure ?? "timed out after \(Int(timeout)) s")
+        }
+
+        // The stream takes over the state handler from here.
+        let socket = SocketConnection(stream: FrameStream(connection: connection, queue: queue))
+        socket.stream.start()
+        return socket
+    }
+
+    private init(stream: FrameStream) {
+        self.stream = stream
+        stream.onFrame = { [weak self] frame in self?.receive(frame) }
+        stream.onClose = { [weak self] _ in self?.closeAll() }
+    }
+
+    public func close() {
+        stream.close()
+        closeAll()
+    }
+
+    // MARK: - SemelConnection
+
+    public func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+        let waiter = Waiter()
+        let correlationID: UInt64 = try lock.withLock { () throws -> UInt64 in
+            guard !isClosed else {
+                throw ConnectionError.closed
+            }
+            defer { nextCorrelationID += 1 }
+            waiters[nextCorrelationID] = waiter
+            return nextCorrelationID
+        }
+
+        stream.send(try Frame.request(request, correlationID: correlationID, body: body ?? Data()))
+        waiter.semaphore.wait()
+
+        guard let reply = waiter.reply else {
+            throw ConnectionError.closed
+        }
+        return try reply.get()
+    }
+
+    // MARK: - Receiving
+
+    private func receive(_ frame: Frame) {
+        switch frame.kind {
+        case .response:
+            let waiter = lock.withLock { waiters.removeValue(forKey: frame.correlationID) }
+            guard let waiter else {
+                // A reply nobody is waiting for: dropped, but said, because it means the
+                // two sides disagree about what is in flight.
+                FileHandle.standardError.write(Data("semel: dropped a reply for unknown request \(frame.correlationID)\n".utf8))
+                return
+            }
+            do {
+                let response = try frame.response()
+                waiter.reply = .success((response, frame.body.isEmpty ? nil : frame.body))
+            } catch {
+                waiter.reply = .failure(error)
+            }
+            waiter.semaphore.signal()
+
+        case .event:
+            guard let event = try? frame.event() else {
+                return
+            }
+            onEvent?(event)
+
+        case .request:
+            // The server does not send requests; nothing to do but note it.
+            FileHandle.standardError.write(Data("semel: the server sent a request frame; ignored\n".utf8))
+        }
+    }
+
+    /// Fails every waiter and refuses later sends. Idempotent.
+    private func closeAll() {
+        let orphans: [Waiter] = lock.withLock {
+            isClosed = true
+            let all = Array(waiters.values)
+            waiters.removeAll()
+            return all
+        }
+        for waiter in orphans {
+            waiter.reply = .failure(ConnectionError.closed)
+            waiter.semaphore.signal()
+        }
+    }
+}
