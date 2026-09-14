@@ -367,6 +367,32 @@ listener is ready, so a server that fails at bind or at the ready timeout has ta
 sink from any server the handler already backed. One handler backs one server today, so
 nothing observes it; claim the sink after `.ready` when that changes.
 
+## App bundles
+
+Building the app that consumes the packages, for the simulator first. Design:
+`docs/superpowers/specs/2026-09-14-semel-app-bundles-design.md`. A hand-written formula
+already builds and launches a SwiftUI app (`C1/swift/HelloApp`, 2026-09-14); what follows
+is what a tool-decided file set needs.
+
+**B-63** `open` — **Tree-valued ports and tree products.**
+`TreeManifest` in SemelNodeKit; `ToolRunner.execute` collects `expectedOutputFolders`
+into one; `TreeFile(name:, tree:)` picks one entry; a product named with a trailing `/`
+is expanded by `ProjectBuilder` into one `OutputFile` per entry once the tree has arrived,
+the way a wildcard waits for its folder manifest. Two entries at one path are an error.
+
+**B-64** `open` — **`SemelApple`: `AssetCatalogCompiler`, `StringCatalogCompiler`, `InfoPlistBuilder`.**
+A toolchain package on SemelNodeKit only. actool and xcstringstool produce trees; the
+plist builder merges base, partials and literal keys and substitutes `$(VAR)`. The folder
+walk `SwiftCompiler` does for `inputFolder`/`inputSubfolders` moves into SemelNodeKit for
+both. Namespaces registered, `DefaultTools` knows the tool names, `prepare` writes the
+blocks. Verified on HelloApp with a catalog of each kind, launched in the simulator.
+
+**B-65** `open` — **`XcodeProjectConverter`, and `prepare` on an `.xcodeproj`.**
+pbxproj plus xcconfig to formula text: one tree of products per native target, extensions
+under `PlugIns/`, the project's package dependencies named like a package's. Acceptance:
+IceCubesApp prepared, built, installed and launched in the simulator. Device signing is
+deliberately out until then.
+
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.

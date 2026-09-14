@@ -21,6 +21,11 @@
   hand-written ones; `semel 'base <repo>' 'build Packages --into out'`
   then produced the five archives in 17 s from the warm cache and exited 0.
 
+  Next: the app itself. A spike on 2026-09-14 built a SwiftUI app for the simulator from a
+  hand-written formula with no engine change — three products under `Hello.app/` — and it
+  installed and launched. The design for resources and the Xcode project is in
+  `docs/superpowers/specs/2026-09-14-semel-app-bundles-design.md` (B-63 to B-65).
+
 - Get it working with large c or c++ project
 
 - Maybe, if at all technically possible, a tool to convert a makefile or cmake file to a Formula file. Or even a Node that does it. Technically this is trying to convert imperative code to functional, but a "pure" makefile can in fact be functional. Cmake still has add_xxx methods and a mess of a syntax.
