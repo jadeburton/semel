@@ -1620,13 +1620,26 @@ Claude-Session: https://claude.ai/code/session_01TkBRg1H4w61n6ucfHR43RE"
 
 - [ ] **Step 1: Add the target**
 
-In `Package.swift`, after the `semel` executable target:
+In `Package.swift`, first add explicit products (the package has none yet), after `platforms:`:
+
+```swift
+    products: [
+        .executable(name: "semel", targets: ["semel"]),
+        .executable(name: "semel-swift", targets: ["semel-swift"]),
+        // The binary is `semelserv`; the target is not, because a target named `semelserv`
+        // would share a build directory with the `SemelServ` library on a case-insensitive
+        // volume and corrupt both.
+        .executable(name: "semelserv", targets: ["semel-server"]),
+    ],
+```
+
+Then, after the `semel` executable target:
 
 ```swift
         // The server: the engine behind a Unix-domain socket. The composition root for the
         // toolchains and the engine lives here now; `semel` is a client.
         .executableTarget(
-            name: "semelserv",
+            name: "semel-server",
             dependencies: [
                 "SemelServ",
                 "SemelTransport",
@@ -1641,7 +1654,7 @@ In `Package.swift`, after the `semel` executable target:
         ),
 ```
 
-and add `"semelserv",` to `SemelServTests`' dependencies, so `swift test` builds the binary the subprocess test runs.
+and add `"semel-server",` to `SemelServTests`' dependencies, so `swift test` builds the binary the subprocess test runs.
 
 - [ ] **Step 2: Write the failing executable test**
 
