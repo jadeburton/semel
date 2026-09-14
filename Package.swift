@@ -35,6 +35,7 @@ let package = Package(
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
+                "SemelTransport",
             ],
             path: "semel/Server"
         ),
@@ -93,6 +94,8 @@ let package = Package(
             name: "SemelServTests",
             dependencies: [
                 "SemelServ",
+                "SemelCLI",
+                "SemelTransport",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),

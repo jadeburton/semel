@@ -106,7 +106,7 @@ public final class BuildEngine {
     /// the initialiser calls it directly unless asked not to.
     func startProcessingLoop() {
         let engine = self
-        loopIsRunning = true
+        batchLock.withLock { loopIsRunning = true }
 
         Task {
             try _ = projectFinder
@@ -133,7 +133,7 @@ public final class BuildEngine {
                 // Leave every waiter with a settled answer before going: the stop counted
                 // as a wake-up and was consumed just above, so they return.
                 await idle.markIdle()
-                loopIsRunning = false
+                batchLock.withLock { loopIsRunning = false }
                 return
             }
             await idle.markBusy()
@@ -167,7 +167,8 @@ public final class BuildEngine {
 
     /// Whether `startProcessingLoop` ran and `stopProcessingLoop` has not. An engine without
     /// a loop — every test engine — has nothing to settle, so waiting on it returns at once
-    /// instead of forever.
+    /// instead of forever. Under `batchLock`: the loop writes it from the cooperative pool
+    /// and a server reads it from any connection's thread.
     private var loopIsRunning = false
 
     /// Set under `batchLock`; the loop reads it at the top of every pass.
@@ -189,7 +190,7 @@ public final class BuildEngine {
     /// a build that had not started. Each idle mark carries a generation, so a waiter that
     /// finds a request outstanding waits for the *next* mark rather than the current one.
     public func waitUntilIdle() async {
-        guard loopIsRunning else {
+        guard batchLock.withLock({ loopIsRunning }) else {
             return
         }
         var seen = -1
