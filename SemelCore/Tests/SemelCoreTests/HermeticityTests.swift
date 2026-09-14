@@ -44,6 +44,11 @@ final class HermeticityTests: XCTestCase {
         // which B-47 records.
         "AppleClangSwiftToolchainHelper.swift":
             "launch-time toolchain lookups",
+        // `SEMEL_HOME` and `SEMEL_SOCKET`, read at launch to place the root and the socket
+        // so a test-started server never opens the user's graph. Not a node input: nothing a
+        // node function does depends on them.
+        "SemelPaths.swift":
+            "launch-time placement of the root and the server socket",
     ]
 
     /// What reaches outside a node's inputs. `Process(` also matches `Foundation.Process(`.

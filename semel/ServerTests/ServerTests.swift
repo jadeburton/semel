@@ -84,7 +84,7 @@ final class ServerTests: RequestHandlerTestCase {
     func test_anUndecodableRequestIsAnsweredNotDropped() throws {
         // Reach under SocketConnection: a raw frame whose JSON names no known case.
         let client = try connect()
-        _ = client   // keeps the connection open for the server-side assertion below
+        _ = try daemon(client, .reset)   // a completed request means the server has registered this connection
         XCTAssertEqual(server.connectionCount, 1)
         // The handler answers malformedRequest through ServerConnection; SocketConnection
         // cannot send malformed JSON itself, so this is pinned at the ServerConnection level:
