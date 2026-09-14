@@ -98,7 +98,32 @@ public final class CommandInterpreter: CommandContext {
 
     // MARK: - Commands
 
-    public func handleCommand(_ command: String) throws {
+    /// What one command line came to. `failed` means the command reported at least one
+    /// error; `quit` means the session is over and the loop feeding commands should stop.
+    public enum HandleCommandResult: Equatable {
+        case success
+        case failed
+        case quit
+    }
+
+    /// Runs one command line. Errors are printed and counted, never thrown; the caller
+    /// reads the outcome from the result.
+    @discardableResult
+    public func handleCommand(_ command: String) -> HandleCommandResult {
+        let errorsBefore = errorsReported
+        do {
+            try run(command)
+        } catch CommandInterpreterError.quit {
+            return .quit
+        } catch {
+            outputError(error.localizedDescription)
+        }
+        return errorsReported == errorsBefore ? .success : .failed
+    }
+
+    /// Only `CommandInterpreterError.quit` escapes; every other error is reported here so
+    /// a macro's later steps still run after an earlier one failed.
+    private func run(_ command: String) throws {
         var tokens = tokenize(command)
         guard !tokens.isEmpty else {
             return
@@ -131,11 +156,11 @@ public final class CommandInterpreter: CommandContext {
                 return
             }
             let errorsBefore = errorsReported
-            try handleCommand("push \(arguments[0])")
-            try handleCommand("wait")
-            try handleCommand("errors")
+            try run("push \(arguments[0])")
+            try run("wait")
+            try run("errors")
             if let destination, errorsReported == errorsBefore {
-                try handleCommand("export \(arguments[0]) --into \(destination)")
+                try run("export \(arguments[0]) --into \(destination)")
             }
             return
         }

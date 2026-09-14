@@ -12,7 +12,7 @@ swift test --package-path SemelProtocol      # the wire protocol (frame codec + 
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelCore    # the engine tests (~343)
-swift test                                   # the CLI, transport and server tests (~146)
+swift test                                   # the CLI, transport and server tests (~150)
 ```
 
 The root package now links `SemelProtocol` through `SemelCLI` and `SemelServ`, so
