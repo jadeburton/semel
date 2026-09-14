@@ -6,6 +6,14 @@ let package = Package(
     platforms: [
         .macOS(.v13),
     ],
+    products: [
+        .executable(name: "semel", targets: ["semel"]),
+        .executable(name: "semel-swift", targets: ["semel-swift"]),
+        // The binary is `semelserv`; the target is not, because a target named `semelserv`
+        // would share a build directory with the `SemelServ` library on a case-insensitive
+        // volume and corrupt both.
+        .executable(name: "semelserv", targets: ["semel-server"]),
+    ],
     dependencies: [
         .package(path: "SemelCore"),
         .package(path: "SemelNodeKit"),
@@ -69,6 +77,22 @@ let package = Package(
             path: "semel",
             sources: ["main.swift"]
         ),
+        // The server: the engine behind a Unix-domain socket. The composition root for the
+        // toolchains and the engine lives here now; `semel` is a client.
+        .executableTarget(
+            name: "semel-server",
+            dependencies: [
+                "SemelServ",
+                "SemelTransport",
+                .product(name: "SemelCore", package: "SemelCore"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+                .product(name: "SemelSwift", package: "SemelSwift"),
+                .product(name: "SemelClang", package: "SemelClang"),
+            ],
+            path: "semel-server",
+            sources: ["main.swift"]
+        ),
         // The Swift conversion tool, outside the engine. `prepare` copies the roots'
         // resolved dependencies into `<folder>/Dependencies/<name>` so every file a build
         // needs is inside the input file system, found by one rule, and derives the formula
@@ -96,6 +120,7 @@ let package = Package(
                 "SemelServ",
                 "SemelCLI",
                 "SemelTransport",
+                "semel-server",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
