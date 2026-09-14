@@ -1,6 +1,6 @@
 # Splitting Semel into a local daemon and a CLI
 
-**Status:** phase 1 (SemelProtocol) implemented; phases 2 and 3 not yet started
+**Status:** phases 1 and 2 implemented; phase 3 not yet started
 **Date:** 2026-09-12
 **Relationship:** this is B-30 role 3, the local build daemon. It takes the frame design
 and the surviving parts of `2026-08-15-semel-client-server-design.md` and drops everything
@@ -46,9 +46,10 @@ Named explicitly because each was discussed and deliberately cut:
 
 ```
 SemelDatabaseModels   unchanged
-SemelNodeKit          unchanged
+SemelNodeKit          gains the wildcard matcher and its external lister from SemelCore
 SemelCore             three small changes: reporter closures, ErrorReport split,
-                      string-returning graph dump (see "Changes to SemelCore")
+                      string-returning graph dump (see "Changes to SemelCore");
+                      InternalFileSystemLister keeps the graph-backed lister
 SemelProtocol   NEW   package: frame codec + message types + the SemelConnection
                       protocol. Depends on Foundation only.
 SemelServ       NEW   library target in the root package: RequestHandler, Session,
@@ -173,6 +174,7 @@ whole group with one error case. `Response` and `Event` group the same way, with
 | `errors` | | | `[ErrorRecord]` |
 | `tools` | | | `[ToolNamespace]` |
 | `reset` / `nudge` | | | ok |
+| `wait` | | | ok, once the graph has settled |
 | `debug` | | | the graph as one string |
 | `subscribe` | | | ok |
 
@@ -287,6 +289,10 @@ Requests are handled on one serial queue, which is the role the REPL thread play
 against the engine's background task. GRDB's `dbQueue` and the existing task-local
 transaction nesting already make that safe. Two CLIs issuing commands at once take turns.
 
+`wait` is the exception, answered before the queue: it observes rather than mutates, and a
+client blocked on the graph settling would otherwise hold every other client's commands
+behind it for the length of a build.
+
 The queue is serial, but the *protocol* is not: correlation IDs allow several requests in
 flight on one connection. Matching replies to requests is the connection's job, not the
 handler's, and the connection tests exercise it even though no CLI verb needs it. See
@@ -308,15 +314,21 @@ interpreter; in phase 3 it fans out to subscribed connections.
 
 ### Changes to `SemelCore`
 
-Three, all small, all in service of the seam:
+Four, all small, all in service of the seam:
 
 1. **`ErrorReport` splits** into gathering and rendering. `ErrorReport.entries(forNodeID:ports:messages:database:)`
    returns `[Entry]` (label, grouped ports and messages) and stays in Core. Rendering
-   entries to lines moves to `SemelCLI`, the only place lines are printed after the split.
+   entries to lines is duplicated: `ErrorReport.lines(for:)` stays in Core for the default
+   reporter and is pinned by `ErrorReportTests`, and `ErrorRecordRenderer` in `SemelCLI`
+   renders the wire record identically, because the CLI cannot import Core and the
+   protocol package must not render.
    The one-shape-for-both-callers property the file's header comment describes is kept:
    both the event and the `errors` reply are `ErrorRecord`s rendered by one function.
 2. **`printAll` returns a string** rather than printing, so `debug` can be a response.
 3. **The reporter closures** above.
+4. **The wildcard matcher moves to `SemelNodeKit`.** `push` walks the local disk with
+   `FileWildcardMatcher` and `ExternalFileSystemLister`, and the CLI must do that without
+   linking the engine. Only `InternalFileSystemLister` needs `NodeRecord`, so only it stays.
 
 ### Unrecoverable errors
 

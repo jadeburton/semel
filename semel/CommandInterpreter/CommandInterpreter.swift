@@ -2,23 +2,36 @@
 // semel
 
 import Foundation
-import SemelCore
 import SemelNodeKit
+import SemelProtocol
 
 enum CommandInterpreterError: Error {
     case quit
 }
 
+/// A rejected handshake, with what the server said so the user can act on it.
+public enum ConnectError: Error, CustomStringConvertible {
+    case rejected(HelloRejection)
+    case unexpectedReply
+
+    public var description: String {
+        switch self {
+        case .rejected(.versionMismatch(let client, let server)):
+            return "this semel speaks protocol version \(client) but the server speaks \(server)"
+        case .rejected(.roleNotOffered(let role)):
+            return "the server does not offer the \(role.rawValue) role"
+        case .unexpectedReply:
+            return "the server did not answer the handshake"
+        }
+    }
+}
+
 public final class CommandInterpreter: CommandContext {
 
-    let database: DatabaseLayer
+    let connection: any SemelConnection
     var baseDirectory: String
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
-
-    let buildEngine: BuildEngine
-    var inputFileSystem: NodeRecord     { get throws { try buildEngine.inputFileSystem } }
-    var outputFileSystem: NodeRecord    { get throws { try buildEngine.outputFileSystem } }
 
     func outputMessage(_ message: String) { print(message) }
     func outputError(_ errorMessage: String) {
@@ -40,27 +53,50 @@ public final class CommandInterpreter: CommandContext {
         return map
     }()
 
-    /// No default for `buildEngine`: the one place that resolves the process-wide engine
-    /// should be the composition root in main.swift, not a default argument here.
-    public convenience init(database: DatabaseLayer,
-                            buildEngine: BuildEngine,
+    public convenience init(connection: any SemelConnection,
                             baseDirectory: String = FileManager.default.currentDirectoryPath) {
-        self.init(database: database,
-                  buildEngine: buildEngine,
+        self.init(connection: connection,
                   baseDirectory: baseDirectory,
                   plugins: [NavigationPlugin(), FilePlugin(), EnginePlugin(), SessionPlugin()])
     }
 
-    required init(database: DatabaseLayer,
-                  buildEngine: BuildEngine,
+    required init(connection: any SemelConnection,
                   baseDirectory: String,
                   plugins: [any CommandPlugin]) {
-
-        self.database = database
-        self.buildEngine = buildEngine
+        self.connection    = connection
         self.baseDirectory = baseDirectory
-        self.plugins = plugins
+        self.plugins       = plugins
     }
+
+    // MARK: - Handshake
+
+    /// Says hello, subscribes to events, and starts printing them. Returns what the banner
+    /// needs. Events arrive on the connection's thread and are printed from there.
+    public func connect() throws -> (serverVersion: String, databasePath: String) {
+        let (reply, _) = try connection.send(.hello(Hello(role: .daemon)), body: nil)
+        guard case .hello(let helloResponse) = reply else {
+            throw ConnectError.unexpectedReply
+        }
+        switch helloResponse {
+        case .rejected(let reason):
+            throw ConnectError.rejected(reason)
+        case .accepted(let serverVersion, let databasePath):
+            connection.onEvent = { [weak self] event in self?.printEvent(event) }
+            _ = try request(.subscribe)
+            return (serverVersion, databasePath)
+        }
+    }
+
+    private func printEvent(_ event: Event) {
+        switch event {
+        case .daemon(.errors(let records)):
+            records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+        case .daemon(.notice(let line)):
+            outputMessage(line)
+        }
+    }
+
+    // MARK: - Commands
 
     public func handleCommand(_ command: String) throws {
         var tokens = tokenize(command)
@@ -111,12 +147,9 @@ public final class CommandInterpreter: CommandContext {
             try plugin.handle(verb: verb, tokens: remaining, context: self)
         } catch CommandInterpreterError.quit {
             throw CommandInterpreterError.quit
-        } catch let error as NodeError {
-            outputError("\(error)")
+        } catch let error as ServerError {
+            outputError(error.description)
         } catch {
-            // A command that failed because the store or database is unusable is not a
-            // command error — reporting it as one invites the user to try again.
-            FatalErrors.check(error)
             outputError(error.localizedDescription)
         }
     }
@@ -145,6 +178,22 @@ public final class CommandInterpreter: CommandContext {
 enum FileSystemForCommand {
     case input
     case output
+
+    /// The wire's name for this file system.
+    var kind: FileSystemKind {
+        switch self {
+        case .input:  return .input
+        case .output: return .output
+        }
+    }
+
+    /// The root segment every path in it begins with.
+    var rootName: String {
+        switch self {
+        case .input:  return FileSystemName.input
+        case .output: return FileSystemName.output
+        }
+    }
 }
 
 enum CommandParserError: Error, LocalizedError {

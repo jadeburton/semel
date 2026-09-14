@@ -1,32 +1,58 @@
 // CommandContext.swift
 // semel
+//
+// What a command plugin sees: the session's state, a way to print, and one connection to
+// whatever holds the graph. Nothing here knows whether that is the same process or a
+// socket away.
 
-import SemelCore
 import Foundation
 import SemelNodeKit
+import SemelProtocol
 
 protocol CommandContext: AnyObject {
-    var database: DatabaseLayer { get }
+    var connection: any SemelConnection { get }
     var baseDirectory: String { get set }
     var currentFileSystem: FileSystemForCommand { get set }
     var currentDirectoryPath: Path { get set }
-    var inputFileSystem: NodeRecord { get throws }
-    var outputFileSystem: NodeRecord { get throws }
-    var buildEngine: BuildEngine { get }
     func outputMessage(_ message: String)
     func outputError(_ message: String)
 }
 
+/// A failure the server reported. Thrown by `request` so the interpreter prints it the way
+/// it prints any command failure.
+struct ServerError: Error, CustomStringConvertible {
+    let response: ErrorResponse
+
+    var description: String {
+        switch response {
+        case .pathNotFound(let path):          return "\(path): no such file or directory"
+        case .notAFolder(let path):            return "\(path): not a directory"
+        case .nodeError(let description):      return description
+        case .roleNotOffered(let role):        return "the server does not offer the \(role.rawValue) role"
+        case .malformedRequest(let description): return "the server could not read the request: \(description)"
+        case .unrecoverable(let message):      return "the server stopped: \(message)"
+        }
+    }
+}
+
 extension CommandContext {
+
     var currentLocation: String {
-        let fsName = currentFileSystem == .input ? Folder.inputFileSystemName : Folder.outputFileSystemName
+        let fsName = currentFileSystem.rootName
         return currentDirectoryPath.isEmpty ? fsName : "\(fsName)/\(currentDirectoryPath)"
     }
 
-    func fileSystem(for target: FileSystemForCommand) throws -> NodeRecord {
-        switch target {
-        case .input:  return try inputFileSystem
-        case .output: return try outputFileSystem
+    /// Sends one daemon request and unwraps the daemon reply. A server-reported failure
+    /// becomes a thrown `ServerError`; any other kind of reply is a protocol bug.
+    func request(_ request: DaemonRequest, body: Data? = nil) throws -> (DaemonResponse, Data?) {
+        let (response, replyBody) = try connection.send(.daemon(request), body: body)
+        switch response {
+        case .daemon(let daemonResponse):
+            return (daemonResponse, replyBody)
+        case .error(let error):
+            throw ServerError(response: error)
+        case .hello:
+            throw ServerError(response: .malformedRequest(description: "a hello reply to a daemon request"))
         }
     }
 

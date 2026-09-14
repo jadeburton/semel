@@ -14,6 +14,9 @@ xcuserdata/
 *.xcbkptlist
 DerivedData/
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # SwiftPM Xcode integration
 .swiftpm/
 

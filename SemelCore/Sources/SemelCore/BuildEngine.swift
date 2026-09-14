@@ -272,7 +272,25 @@ public final class BuildEngine {
     /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
     /// `print` call so a test can capture what would be printed instead of scraping stdout —
     /// the same shape as `FatalErrors.handler`.
-    var unclaimedConfigKeyReporter: (String) -> Void = { print($0) }
+    var unclaimedConfigKeyReporter: (String) -> Void = { BuildEngine.notice($0) }
+
+    /// Where the idle-time error report goes. Structured entries rather than lines, so a
+    /// server can carry them to a client as records; the default renders and prints, so
+    /// an engine with no server still reports to its own terminal.
+    public var errorReporter: ([ErrorReport.Entry]) -> Void = { entries in
+        entries.flatMap(ErrorReport.lines(for:)).forEach { print($0) }
+    }
+
+    /// Where one-line status notices go — an artifact written, a product deleted. Nodes
+    /// reach it through `notice(_:)`, because a node has the process-wide engine and
+    /// nothing else to hand a line to.
+    public var noticeReporter: (String) -> Void = { print($0) }
+
+    /// The one call a node makes to say something to the user. Falls back to printing when
+    /// no engine is installed, which is only the case in tests that build nodes by hand.
+    public static func notice(_ line: String) {
+        (shared?.noticeReporter ?? { print($0) })(line)
+    }
 
     /// Finds every config file feeding a `ConfigFilter` and prints its unclaimed keys, but
     /// only when that file's unclaimed set has changed since the last report — a project
@@ -343,7 +361,7 @@ public final class BuildEngine {
     /// Called once the engine is fully idle (no more scheduled nodes, no pending signals).
     /// Compares current error state against the last-reported state and prints only
     /// newly-appearing errors, using the same format as the `errors` command.
-    private func reportIdleTimeErrors() {
+    func reportIdleTimeErrors() {
         // A report, so best effort: a failure here delays the error listing to the next idle.
         guard let errorPorts = FatalErrors.attempt({ try database.outputPort.selectAllErrors() }) else {
             return
@@ -363,17 +381,23 @@ public final class BuildEngine {
 
         // Only nodes with at least one newly-appearing message. Reporting an error that has
         // already been reported on every settle is how a report stops being read.
+        var entries: [ErrorReport.Entry] = []
         for (nodeID, msgs) in current {
             let newMsgs = msgs.subtracting(lastReportedErrors[nodeID] ?? [])
             guard !newMsgs.isEmpty else { continue }
 
-            ErrorReport.lines(forNodeID: nodeID,
-                              ports: byNode[nodeID] ?? [],
-                              messages: newMsgs,
-                              database: database).forEach { print($0) }
+            entries.append(ErrorReport.entry(forNodeID: nodeID,
+                                             ports: byNode[nodeID] ?? [],
+                                             messages: newMsgs,
+                                             database: database))
         }
 
         lastReportedErrors = current
+
+        // Sorted so a report reads the same from run to run; `current` is a dictionary.
+        if !entries.isEmpty {
+            errorReporter(entries.sorted { $0.label < $1.label })
+        }
     }
 
     // MARK: - Batch mode

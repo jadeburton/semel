@@ -2,18 +2,20 @@
 //  FilePluginPathTests.swift
 //  SemelCLITests
 //
-//  Regression cover for the push/cp path resolution defects. Each of these commands
-//  used to match nothing and report nothing — the failure mode was silence, which is
-//  why they went unnoticed.
+//  Regression cover for the push/cp path resolution defects: matching nothing must
+//  always be reported, because a silent failure here goes unnoticed.
 //
 
 @testable import SemelCLI
 @testable import SemelCore
-import XCTest
 import SemelNodeKit
+import SemelProtocol
+import SemelServ
+import XCTest
 
 final class FilePluginPathTests: XCTestCase {
 
+    private var connection: InProcessConnection!
     private var context: TestCommandContext!
     private var externalRoot: URL!
 
@@ -29,12 +31,14 @@ final class FilePluginPathTests: XCTestCase {
         let database = try DatabaseLayer()
         let engine   = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
-
-        context = TestCommandContext(database: database, baseDirectory: externalRoot.path)
+        let handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        connection   = InProcessConnection(handler: handler)
+        context      = TestCommandContext(connection: connection, baseDirectory: externalRoot.path)
     }
 
     override func tearDown() {
         BuildEngine.shared = nil
+        connection = nil
         context = nil
         super.tearDown()
     }
@@ -66,7 +70,7 @@ final class FilePluginPathTests: XCTestCase {
 
         try run("push", ["hello.c"])
 
-        XCTAssertNotNil(try context.inputFileSystem.childNode(path: Path("src/hello.c")),
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: Path("src/hello.c")),
                         "the file should be stored at input:/src/hello.c")
     }
 
@@ -110,7 +114,7 @@ final class FilePluginPathTests: XCTestCase {
 
         try run("push", ["../shared/util.c"])
 
-        XCTAssertNotNil(try context.inputFileSystem.childNode(path: Path("shared/util.c")),
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: Path("shared/util.c")),
                         "'..' should resolve before matching")
     }
 
@@ -166,35 +170,6 @@ final class FilePluginPathTests: XCTestCase {
     }
 }
 
-// MARK: - Test context
-
-/// A `CommandContext` that captures output instead of printing it, so a test can assert
-/// on what the user would have been told.
-final class TestCommandContext: CommandContext {
-
-    let database: DatabaseLayer
-    var baseDirectory: String
-    var currentFileSystem: FileSystemForCommand = .input
-    var currentDirectoryPath: Path = .empty
-
-    private(set) var messages: [String] = []
-    private(set) var errors: [String] = []
-
-    var allOutput: [String] { messages + errors }
-
-    init(database: DatabaseLayer, baseDirectory: String) {
-        self.database = database
-        self.baseDirectory = baseDirectory
-    }
-
-    var buildEngine: BuildEngine { BuildEngine.shared }
-    var inputFileSystem: NodeRecord { get throws { try buildEngine.inputFileSystem } }
-    var outputFileSystem: NodeRecord { get throws { try buildEngine.outputFileSystem } }
-
-    func outputMessage(_ message: String) { messages.append(message) }
-    func outputError(_ message: String)   { errors.append(message) }
-}
-
 // MARK: - Pushing a tree
 
 /// A wildcard that reaches into subdirectories matches the directories *and* their contents.
@@ -203,6 +178,7 @@ final class TestCommandContext: CommandContext {
 /// nothing changed, and the report stops describing what happened.
 final class PushTreeTests: XCTestCase {
 
+    private var connection: InProcessConnection!
     private var context: TestCommandContext!
     private var externalRoot: URL!
 
@@ -212,12 +188,16 @@ final class PushTreeTests: XCTestCase {
         externalRoot = makeTempDirectory()
         try FileManager.default.createDirectory(at: externalRoot, withIntermediateDirectories: true)
         let database = try DatabaseLayer()
-        BuildEngine.shared = try BuildEngine(database: database, startProcessingLoop: false)
-        context = TestCommandContext(database: database, baseDirectory: externalRoot.path)
+        let engine   = try BuildEngine(database: database, startProcessingLoop: false)
+        BuildEngine.shared = engine
+        let handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        connection   = InProcessConnection(handler: handler)
+        context      = TestCommandContext(connection: connection, baseDirectory: externalRoot.path)
     }
 
     override func tearDown() {
         BuildEngine.shared = nil
+        connection = nil
         context = nil
         super.tearDown()
     }
@@ -269,7 +249,7 @@ final class PushTreeTests: XCTestCase {
 
         try FilePlugin().handle(verb: "push", tokens: ["c"], context: context)
 
-        XCTAssertNotNil(try context.inputFileSystem.childNode(path: Path("c/src/main.c")),
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: Path("c/src/main.c")),
                         "got:\n\(context.messages.joined(separator: "\n"))")
     }
 

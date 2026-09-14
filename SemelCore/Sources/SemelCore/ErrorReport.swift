@@ -15,6 +15,30 @@ import SemelNodeKit
 /// One node's errors, rendered.
 public enum ErrorReport {
 
+    /// One distinct message a node is carrying, and the ports carrying it.
+    public struct Item: Equatable {
+        public let ports:   [String]
+        public let message: String
+
+        public init(ports: [String], message: String) {
+            self.ports   = ports
+            self.message = message
+        }
+    }
+
+    /// One node's errors, gathered but not yet rendered. The engine hands these to its
+    /// reporter, and a server turns them into wire records; only the terminal turns them
+    /// into lines.
+    public struct Entry: Equatable {
+        public let label: String
+        public let items: [Item]
+
+        public init(label: String, items: [Item]) {
+            self.label = label
+            self.items = items
+        }
+    }
+
     /// What to call a node in a report.
     ///
     /// The internal id is a surrogate integer and means nothing to the person reading, so it
@@ -53,20 +77,30 @@ public enum ErrorReport {
     ///
     /// `messages` is the caller's selection. Passing fewer than the node has is how the engine
     /// reports only what is new.
-    public static func lines(forNodeID nodeID: ObjectID,
+    public static func entry(forNodeID nodeID: ObjectID,
                              ports: [OutputPort],
                              messages: Set<String>,
-                             database: DatabaseLayer) -> [String] {
-        var result = ["❌ \(label(forNodeID: nodeID, database: database))"]
-
-        for message in messages.sorted() {
+                             database: DatabaseLayer) -> Entry {
+        let items = messages.sorted().map { message -> Item in
             let portNames = ports
                 .filter { ((try? $0.dataObjectHash?.resolveAsString()) ?? "") == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
-                .joined(separator: ", ")
+            return Item(ports: portNames, message: message)
+        }
+        return Entry(label: label(forNodeID: nodeID, database: database), items: items)
+    }
 
-            let body = message
+    /// The lines for one entry: a heading, then one line per item, or an indented block
+    /// when a message spans lines. `SemelCLI` has a twin of this over the wire record; the
+    /// two must stay identical, and `IdleErrorReportingTests` pins this one's output.
+    public static func lines(for entry: Entry) -> [String] {
+        var result = ["❌ \(entry.label)"]
+
+        for item in entry.items {
+            let portNames = item.ports.joined(separator: ", ")
+
+            let body = item.message
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .components(separatedBy: "\n")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -87,6 +121,13 @@ public enum ErrorReport {
 
         result.append("")
         return result
+    }
+
+    public static func lines(forNodeID nodeID: ObjectID,
+                             ports: [OutputPort],
+                             messages: Set<String>,
+                             database: DatabaseLayer) -> [String] {
+        lines(for: entry(forNodeID: nodeID, ports: ports, messages: messages, database: database))
     }
 
     /// The message a port is carrying, or nil when it carries nothing worth reporting.

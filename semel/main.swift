@@ -9,15 +9,14 @@ import Foundation
 import SemelCore
 import SemelCLI
 import SemelNodeKit
+import SemelProtocol
+import SemelServ
 import SemelSwift
 import SemelClang
 
 var commandInterpreter: CommandInterpreter?
 
 func main() throws {
-    print("Semel \(Semel.version) (C) 2026 Jade Burton. All rights reserved.")
-    print("Graph: \(SemelPaths.database.path)")
-
     // Composition root: the engine knows no toolchains, so this is where the ones this
     // binary ships are installed. Before start(), so discovery sees them on its first pass.
     try SemelSwift.register()
@@ -25,10 +24,26 @@ func main() throws {
 
     try BuildEngine.start()
 
-    // Composition root: the process-wide engine and database are resolved once, here, and
-    // handed to everything else.
-    commandInterpreter = CommandInterpreter(database: DatabaseLayer.shared,
-                                            buildEngine: BuildEngine.shared)
+    // The server half and the client half, joined in one process by a connection that
+    // still puts every message through the wire codec. The process-wide engine and
+    // database are resolved once, here, and handed to the handler.
+    let handler    = RequestHandler(engine: BuildEngine.shared,
+                                    database: DatabaseLayer.shared,
+                                    databasePath: SemelPaths.database.path)
+    let connection = InProcessConnection(handler: handler)
+    let interpreter = CommandInterpreter(connection: connection)
+
+    let server: (serverVersion: String, databasePath: String)
+    do {
+        server = try interpreter.connect()
+    } catch {
+        FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+        exit(1)
+    }
+    print("Semel \(server.serverVersion) (C) 2026 Jade Burton. All rights reserved.")
+    print("Graph: \(server.databasePath)")
+
+    commandInterpreter = interpreter
 
     // Non-interactive: each argument is one command line, run in order, then exit —
     // non-zero if any command reported an error. `semel 'build Packages'` is a build step;
@@ -40,7 +55,7 @@ func main() throws {
                 break
             }
         }
-        exit(commandInterpreter!.errorsReported == 0 ? 0 : 1)
+        exit(interpreter.errorsReported == 0 ? 0 : 1)
     }
 
     while let line = readLine(), receiveUserInput(line: line) {

@@ -7,19 +7,19 @@ about how to change it.
 
 ```sh
 swift build                                  # builds everything the root package links, from the repo root
-swift test --package-path SemelNodeKit       # the node-authoring API (~68)
-swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages)
-swift test --package-path SemelSwift         # the Swift toolchain nodes (~62)
-swift test --package-path SemelClang         # the C/C++ toolchain nodes (~27)
-swift test --package-path SemelCore    # the engine tests (~247)
-swift test                                   # the CLI tests only (~8)
+swift test --package-path SemelNodeKit       # the node-authoring API (~121)
+swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages) (~44)
+swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
+swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
+swift test --package-path SemelCore    # the engine tests (~343)
+swift test                                   # the CLI and server tests (~122)
 ```
 
-`SemelProtocol` is not linked by the root package yet, so `swift build` does not build it;
-it is built only by its own `swift test --package-path SemelProtocol` line until phase 2
-links it in.
+The root package now links `SemelProtocol` through `SemelCLI` and `SemelServ`, so
+`swift build` covers it; its own `swift test --package-path SemelProtocol` line is still
+the only thing that runs its tests.
 
-`swift test` at the root runs **only** the `SemelCLI` tests. The engine and the
+`swift test` at the root runs **only** the `SemelCLITests` and `SemelServTests` targets. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all six.
 
@@ -32,6 +32,8 @@ names and the configuration text format ended up there.
 Nothing registers a toolchain automatically. `semel`'s `main.swift` is the composition
 root: it calls `SemelSwift.register()` and `SemelClang.register()`, and a binary that did
 not would simply have no idea what a `Package.swift` is or how to compile a `.c` file.
+`main.swift` also builds the `RequestHandler` and the `InProcessConnection`; the CLI never
+sees the engine directly.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what

@@ -7,6 +7,8 @@
 @testable import SemelCore
 import Foundation
 import SemelNodeKit
+import SemelProtocol
+import SemelServ
 import XCTest
 
 /// B-57. `build <folder>` is the loop in one word — push, wait, errors — and a scripted
@@ -14,6 +16,7 @@ import XCTest
 /// step rather than an interactive convenience.
 final class BuildCommandTests: XCTestCase {
 
+    private var connection: InProcessConnection!
     private var interpreter: CommandInterpreter!
     private var externalRoot: URL!
 
@@ -26,13 +29,16 @@ final class BuildCommandTests: XCTestCase {
         try "int main(void) { return 0; }".write(to: externalRoot.appendingPathComponent("src/main.c"),
                                                  atomically: true, encoding: .utf8)
         let database = try DatabaseLayer()
-        BuildEngine.shared = try BuildEngine(database: database, startProcessingLoop: false)
-        interpreter = CommandInterpreter(database: database, buildEngine: BuildEngine.shared,
-                                         baseDirectory: externalRoot.path)
+        let engine   = try BuildEngine(database: database, startProcessingLoop: false)
+        BuildEngine.shared = engine
+        let handler  = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        connection   = InProcessConnection(handler: handler)
+        interpreter  = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)
     }
 
     override func tearDown() {
         BuildEngine.shared = nil
+        connection = nil
         interpreter = nil
         super.tearDown()
     }
@@ -45,11 +51,11 @@ final class BuildCommandTests: XCTestCase {
     /// A product under `output:/src`, wired to a static file standing in for its builder.
     private func publishProduct(_ name: String, contents: String) throws {
         // Pinned, as a push would leave it; an unpinned folder is one the graph reports.
-        _ = try interpreter.inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
+        _ = try BuildEngine.shared.inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
         let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')").findOrCreateMatchingNode()
         _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
         let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: interpreter.database,
+        try Wire.connectWire(database: BuildEngine.shared.database,
                              fromNodeID: try source.requireID(),
                              fromSymbolID: StaticFile.outputPort.asSymbolID(),
                              toNodeID: try product.requireID(),
@@ -62,7 +68,7 @@ final class BuildCommandTests: XCTestCase {
     func test_buildPushesWaitsAndReports() throws {
         try interpreter.handleCommand("build src")
 
-        let pushed = try XCTUnwrap(try interpreter.inputFileSystem.childNode(path: "src/main.c"))
+        let pushed = try XCTUnwrap(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
         XCTAssertNotNil(pushed)
         XCTAssertEqual(interpreter.errorsReported, 0)
     }

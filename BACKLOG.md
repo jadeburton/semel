@@ -209,8 +209,9 @@ One binary, three modes, sharing a wire protocol:
 2. **Remote Runner** — executes tool commands inside, or against, a container (B-03)
 3. **Local Build Daemon** — the surviving part of
    `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`. Designed in
-   `docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md`; phase 1 of
-   three (the `SemelProtocol` package) is built. Wanted even with
+   `docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md`; phases 1 and 2 of
+   three are built: the `SemelProtocol` package, and the in-process split behind
+   `RequestHandler` and `InProcessConnection`. Wanted even with
    local building, because the point is a build that continues in the background regardless
    of which CLIs are open — local CLI to local daemon, one user, one graph. Do not write it
    for multiple users: that is the shared-build-server model the cache server superseded,
@@ -346,6 +347,19 @@ worktree's artifacts.
 Presentation at scale is the one open question: a cold build of a 10,000-file project
 produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
 the threshold when wiring the terminal reporter; the mechanism is indifferent to it.
+
+**B-60** `open` — **History-narrating comments in EmittedFormulaConfigurationTests.swift.**
+Lines 35 and 254 refer to "today's" keys and defaults that "no longer exist"; reword as
+timeless statements per AGENTS.md.
+
+**B-61** `open` — **`wait` across connections.**
+Three things a socket server must settle before `wait` is offered to more than one client:
+`BuildEngine.loopIsRunning` is read by `waitUntilIdle` without synchronisation while
+`startProcessingLoop` and `processLoop` write it (put it under `batchLock` like
+`stopRequested`); a `wait` can block indefinitely while another session holds a batch open,
+since a batched work signal is counted but not sent until `endBatch` (fails safe, never a
+false settle, but needs a test with two sessions); and `waitUntilIdleBlocking` parks the
+caller's thread, so a listener must not call the handler from a cooperative-pool thread.
 
 ## Not doing
 
