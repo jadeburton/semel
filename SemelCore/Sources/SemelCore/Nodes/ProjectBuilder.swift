@@ -20,12 +20,17 @@ public struct ProjectBuilder: Node {
     /// node's rendered spec — which is also the spec wired there. The engine knows nothing
     /// about what the node is; a Swift package's is `SwiftFormulaConverter(path: <.>)`.
     static let includesInputPort      = "includes"
+    /// The tree value behind each product named with a trailing `/`, keyed by the product
+    /// folder's output path. Read on the next pass and expanded into one `OutputFile` per
+    /// entry, the way a wildcard's folder manifest is.
+    static let treesInputPort         = "trees"
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(projectFileInputPort),
             .dynamic(productInputPort),
             .dynamic(foldersInputPort),
+            .dynamic(treesInputPort),
             .dynamic(graphImportsInputPort),
             .dynamic(includesInputPort),
         ],
@@ -58,6 +63,7 @@ public struct ProjectBuilder: Node {
         // Decode any folder manifests already wired to our 'folders' port.
         // On the first run these are empty; subsequent runs have real data.
         let folderManifests = decodeFolderManifests(input.inputValues[Self.foldersInputPort] ?? [:])
+        let treeManifests   = decodeTreeManifests(input.inputValues[Self.treesInputPort] ?? [:])
 
         // Record every folder path the formula references via a wildcard and every file
         // path it references via import(), so we can wire them and be rescheduled
@@ -118,36 +124,69 @@ public struct ProjectBuilder: Node {
 
         // Build output-file specs for each formula product.
         var productSpecs = [String: String]()
+        // The tree-valued expressions behind tree products, keyed by the product folder.
+        var treeSpecs = [String: String]()
 
         let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
         let importsReady = !importRecord.anyMissing
         let includesReady = !includeRecord.anyMissing
 
+        /// The wrapper that publishes `shapeNode`'s value at `fullPath`, with the source's
+        /// `fileMetadata` port wired in when it has one, so chmod can be applied on cp.
+        func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) throws -> String {
+            var metadataWire = ""
+            if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
+               nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
+                let metaShape = GraphSpecNode(typeName: shapeNode.typeName,
+                                               properties: shapeNode.properties,
+                                               inputs: shapeNode.inputs,
+                                               outputs: shapeNode.outputs,
+                                               outputPort: FileMetadata.portName)
+                metadataWire = ", \(FileMetadata.portName): ['metadata': \(metaShape.asString(omitOutputPort: false))]"
+            }
+            let wrapper = try GraphSpecNode.parse(
+                "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]\(metadataWire)).status"
+            )
+            return wrapper.asString(omitOutputPort: false)
+        }
+
+        /// Two products at one path would be two nodes with one name in one folder; the
+        /// formula is wrong, and saying which path is the whole help there is.
+        func publish(_ fullPath: Path, _ spec: String) throws {
+            guard productSpecs[fullPath.string] == nil else {
+                throw NodeError.other(message: "two products at \(fullPath)")
+            }
+            productSpecs[fullPath.string] = spec
+        }
+
         if wildcardsReady && importsReady && includesReady {
-            for (productName, shapeNode) in products {
+            // Sorted: a duplicate path must be reported the same way every pass.
+            for (productName, shapeNode) in products.sorted(by: { $0.key < $1.key }) {
 
                 let fullPath = Path(Folder.outputFileSystemName)
                     / (outputFolder.deletingFirstComponent ?? Path(""))
                     / Path(productName)
 
-                // If the source node type exposes a "fileMetadata" output port,
-                // wire it into the OutputFile wrapper so chmod can be applied on cp.
-                var metadataWire = ""
-                if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
-                   nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
-                    let metaShape = GraphSpecNode(typeName: shapeNode.typeName,
-                                                   properties: shapeNode.properties,
-                                                   inputs: shapeNode.inputs,
-                                                   outputs: shapeNode.outputs,
-                                                   outputPort: FileMetadata.portName)
-                    metadataWire = ", \(FileMetadata.portName): ['metadata': \(metaShape.asString(omitOutputPort: false))]"
+                guard productName.hasSuffix("/") else {
+                    try publish(fullPath, try outputFileSpec(fullPath: fullPath, shapeNode: shapeNode))
+                    continue
                 }
 
-                let wrapper = try GraphSpecNode.parse(
-                    "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]\(metadataWire)).status"
-                )
-
-                productSpecs[fullPath.string] = wrapper.asString(omitOutputPort: false)
+                // A tree product: the expression's value is a manifest of files, decided
+                // by the node that made them, so it is wired here first and expanded once
+                // it has arrived — as a wildcard's folder manifest is. Until then the
+                // tree's files are simply not yet products.
+                let treeSpec = shapeNode.asString(omitOutputPort: false)
+                treeSpecs[fullPath.string] = treeSpec
+                guard let manifest = treeManifests[fullPath.string] else {
+                    continue
+                }
+                for entry in manifest.entries {
+                    let entryShape = try GraphSpecNode.parse(
+                        "TreeFile(name: '\(entry.path)', tree: ['tree': \(treeSpec)]).output")
+                    let entryPath = fullPath / Path(entry.path)
+                    try publish(entryPath, try outputFileSpec(fullPath: entryPath, shapeNode: entryShape))
+                }
             }
         }
 
@@ -193,6 +232,7 @@ public struct ProjectBuilder: Node {
             inputWireSpecs: [
                 Self.productInputPort:         productSpecs,
                 Self.foldersInputPort:         folderSpecs,
+                Self.treesInputPort:           treeSpecs,
                 Self.graphImportsInputPort:    importSpecs,
                 Self.includesInputPort:        includeSpecs,
             ]
@@ -229,6 +269,25 @@ public struct ProjectBuilder: Node {
             }
 
             result[folderPath] = manifest
+        }
+        return result
+    }
+
+    /// Decode the `TreeManifest` values arriving on the 'trees' dynamic port. A tree that
+    /// is pending or errored is skipped: its files are not products yet, and the error is
+    /// the producing node's to report.
+    private func decodeTreeManifests(_ inputs: [String: NodeValue]) -> [String: TreeManifest] {
+        var result: [String: TreeManifest] = [:]
+
+        for (productFolder, nodeValue) in inputs {
+
+            guard let json = try? nodeValue.expectValue().resolveAsString(),
+                  let manifest: TreeManifest = try? TypeRegistry.decodeAndCast(encodedJSON: json) else {
+
+                continue
+            }
+
+            result[productFolder] = manifest
         }
         return result
     }

@@ -372,13 +372,8 @@ nothing observes it; claim the sink after `.ready` when that changes.
 Building the app that consumes the packages, for the simulator first. Design:
 `docs/superpowers/specs/2026-09-14-semel-app-bundles-design.md`. A hand-written formula
 already builds and launches a SwiftUI app (`C1/swift/HelloApp`, 2026-09-14); what follows
-is what a tool-decided file set needs.
-
-**B-63** `open` — **Tree-valued ports and tree products.**
-`TreeManifest` in SemelNodeKit; `ToolRunner.execute` collects `expectedOutputFolders`
-into one; `TreeFile(name:, tree:)` picks one entry; a product named with a trailing `/`
-is expanded by `ProjectBuilder` into one `OutputFile` per entry once the tree has arrived,
-the way a wildcard waits for its folder manifest. Two entries at one path are an error.
+is what a tool-decided file set needs. Tree-valued ports and tree products (B-63) are
+built: `TreeManifest`, `expectedOutputFolders`, `TreeFile`, and `product 'name/'`.
 
 **B-64** `open` — **`SemelApple`: `AssetCatalogCompiler`, `StringCatalogCompiler`, `InfoPlistBuilder`.**
 A toolchain package on SemelNodeKit only. actool and xcstringstool produce trees; the

@@ -74,6 +74,45 @@ final class LocalFileSystemToolTests: XCTestCase {
                           "the tool must not inherit where Semel itself is running")
     }
 
+    // MARK: - Output folders (B-63)
+
+    /// A tool that decides its own file set writes a folder; every file under it, at any
+    /// depth, comes back with its path below the folder and its mode, so an executable
+    /// inside a tree stays one. The order is the sorted path order, whatever the file
+    /// system's, so the tree a node builds from them is one value.
+    func test_everyFileOfAnExpectedOutputFolderComesBackWithPathAndMode() throws {
+        let result = try LocalFileSystemTool(localPath: "/bin/sh")
+            .execute(arguments: ["-c", """
+                mkdir -p out/en.lproj out/zz && printf car > out/Assets.car && \
+                printf strings > out/en.lproj/Localizable.strings && printf run > out/zz/tool && chmod 755 out/zz/tool
+                """],
+                     environment: [:],
+                     inputFiles: [],
+                     expectedOutputFileNames: [],
+                     expectedOutputFolders: ["out"])
+
+        XCTAssertEqual(result.exitCode, 0, result.errorOutput)
+        let files = try XCTUnwrap(result.outputTrees["out"])
+        XCTAssertEqual(files.map(\.relativePath), ["Assets.car", "en.lproj/Localizable.strings", "zz/tool"])
+        XCTAssertEqual(files.map { String(decoding: $0.data, as: UTF8.self) }, ["car", "strings", "run"])
+        XCTAssertEqual(files.map(\.mode), [0o644, 0o644, 0o755])
+    }
+
+    /// Like a missing output file: the tool "succeeded" but left nothing to collect, and
+    /// the node must not report an empty tree as a result.
+    func test_aMissingOutputFolderIsReported() throws {
+        let result = try LocalFileSystemTool(localPath: "/bin/sh")
+            .execute(arguments: ["-c", "true"],
+                     environment: [:],
+                     inputFiles: [],
+                     expectedOutputFileNames: [],
+                     expectedOutputFolders: ["out"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertNil(result.outputTrees["out"])
+        XCTAssertTrue(result.errorOutput.contains("Expected output folder not found: out"), result.errorOutput)
+    }
+
     /// The sandbox is gone when the tool is: nothing a tool leaves behind can be read by
     /// the next run.
     func test_theSandboxIsRemovedAfterTheRun() throws {
