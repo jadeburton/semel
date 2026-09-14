@@ -14,6 +14,7 @@ import SemelTransport
 
 public enum ConnectionError: Error, Equatable, CustomStringConvertible {
     case unavailable(path: String, underlying: String)
+    case pathTooLong(path: String, length: Int, limit: Int)
     case closed
     case unexpectedFrame
 
@@ -21,6 +22,8 @@ public enum ConnectionError: Error, Equatable, CustomStringConvertible {
         switch self {
         case .unavailable(let path, let underlying):
             return "no server at \(path) (\(underlying)); start one with `semelserv`"
+        case .pathTooLong(let path, let length, let limit):
+            return "socket path is \(length) bytes, over the \(limit)-byte limit: \(path)"
         case .closed:
             return "the connection to the server closed"
         case .unexpectedFrame:
@@ -53,10 +56,14 @@ public final class SocketConnection: SemelConnection {
     /// Opens the socket and waits until it is ready, or fails with the path so the user
     /// knows what to start. Nothing is sent; the caller sends `hello`.
     public static func connect(to path: String, timeout: TimeInterval = 5) throws -> SocketConnection {
+        // Named on its own: an over-long path is a misconfiguration to correct, not a
+        // server to start.
         do {
             try UnixSocketPath.check(path)
         } catch {
-            throw ConnectionError.unavailable(path: path, underlying: "\(error)")
+            throw ConnectionError.pathTooLong(path: path,
+                                              length: path.utf8.count,
+                                              limit: UnixSocketPath.maximumLength)
         }
         let connection = NWConnection(to: .unix(path: path), using: .tcp)
         let queue      = DispatchQueue(label: "semel.socket-connection")
@@ -83,9 +90,13 @@ public final class SocketConnection: SemelConnection {
         }
         connection.start(queue: queue)
 
-        guard ready.wait(timeout: .now() + timeout) == .success, failure == nil else {
+        // `failure` is written by the state handler, which runs on `queue`; read it there
+        // so a timeout does not race a state change arriving at the same moment.
+        let arrived = ready.wait(timeout: .now() + timeout)
+        let reason  = queue.sync { failure }
+        guard arrived == .success, reason == nil else {
             connection.cancel()
-            throw ConnectionError.unavailable(path: path, underlying: failure ?? "timed out after \(Int(timeout)) s")
+            throw ConnectionError.unavailable(path: path, underlying: reason ?? "timed out after \(Int(timeout)) s")
         }
 
         // The stream takes over the state handler from here.
@@ -108,6 +119,9 @@ public final class SocketConnection: SemelConnection {
     // MARK: - SemelConnection
 
     public func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+        // Encoded before the waiter is registered: a request that cannot be encoded must
+        // leave no waiter behind for a reply that will never come.
+        let json   = try MessageCoder.encode(request)
         let waiter = Waiter()
         let correlationID: UInt64 = try lock.withLock { () throws -> UInt64 in
             guard !isClosed else {
@@ -118,7 +132,7 @@ public final class SocketConnection: SemelConnection {
             return nextCorrelationID
         }
 
-        stream.send(try Frame.request(request, correlationID: correlationID, body: body ?? Data()))
+        stream.send(Frame(kind: .request, correlationID: correlationID, json: json, body: body ?? Data()))
         waiter.semaphore.wait()
 
         guard let reply = waiter.reply else {

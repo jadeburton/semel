@@ -21,7 +21,11 @@ final class ServerConnection {
     private let stream: FrameStream
     private let handler: RequestHandler
     private let queue: DispatchQueue
+    private var finished = false
 
+    /// The queue named by `label` is a plain dispatch queue and must stay one: the handler
+    /// parks it on `wait` until the engine settles, which a cooperative-pool thread could
+    /// not afford to do.
     init(connection: NWConnection, handler: RequestHandler, label: String) {
         self.handler = handler
         self.queue   = DispatchQueue(label: label)
@@ -40,7 +44,7 @@ final class ServerConnection {
     }
 
     /// Writes an already-encoded event to this client. Called from the registry, on any
-    /// thread; FrameStream serialises the send on this connection's queue.
+    /// thread; FrameStream serializes the send on this connection's queue.
     func deliver(_ frame: Frame) {
         stream.send(frame)
     }
@@ -81,8 +85,6 @@ final class ServerConnection {
         try? Frame.response(.error(.malformedRequest(description: "the request could not be decoded")),
                             correlationID: frame.correlationID)
     }
-
-    private var finished = false
 
     private func finish() {
         guard !finished else {

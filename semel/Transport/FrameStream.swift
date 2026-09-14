@@ -138,6 +138,11 @@ public final class FrameStream {
             guard let self else {
                 return
             }
+            // A receive completion can land after `close()`; the owner has stopped
+            // listening by then and a frame handed over now would reach a torn-down state.
+            guard !isClosed else {
+                return
+            }
             if let data, !data.isEmpty {
                 decoder.append(data)
                 do {
