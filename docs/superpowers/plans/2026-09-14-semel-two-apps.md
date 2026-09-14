@@ -21,7 +21,8 @@
 - `BuildEngine.loopIsRunning` is read and written under `batchLock` (B-61 item 1).
 - Formatting (AGENTS.md): four spaces, brace on the declaration line, no `else if` chains (nest a block or use `switch`), `// MARK: -` in files long enough to navigate, aligned columns where they aid reading, US-English comments that never narrate history ("today", "used to", "no longer", "previously" are all disallowed). Naming: no single-character names, words spelt out, `struct` unless reference semantics are needed, `internal` by default. Errors are enums with associated values carrying enough context to act on.
 - SwiftLint: run `swiftlint --strict` from the repository root before every commit; the curated rules forbid `= nil` on an optional `var`, `filter{}.isEmpty`/`.count == 0` idioms, unused closure parameters and optional bindings, and unneeded `break`s. CI fails on any violation.
-- Tests: XCTest, `test_whatItDoes`; every socket test uses a unique path under `NSTemporaryDirectory()`; engine-backed tests redirect `DataObjectStore.shared` as `RequestHandlerTestCase` does; expectations wait at most 5 seconds. Test files use the Xcode-style header (`//` / `//  Name.swift` / `//  TargetTests` / `//` / paragraph / `//`); source files `// Name.swift` / `// Module` / `//` / paragraph.
+- Tests: XCTest, `test_whatItDoes`; engine-backed tests redirect `DataObjectStore.shared` as `RequestHandlerTestCase` does; expectations wait at most 5 seconds.
+- **Socket paths are short.** macOS limits a Unix-domain socket path to 103 bytes (`sun_path`), and `NWConnection` traps on a longer one rather than failing. `NSTemporaryDirectory()` alone is about 70 bytes, so every socket test uses a unique directory under `/tmp/semel-tests/` (`/tmp/semel-tests/<8 hex>/`), and `UnixSocketPath.check(_:)` in `SemelTransport` refuses an over-long path with a `TransportError.pathTooLong` before either side touches Network.framework. The executable test's `SEMEL_HOME` lives there too, because the socket is under it. Test files use the Xcode-style header (`//` / `//  Name.swift` / `//  TargetTests` / `//` / paragraph / `//`); source files `// Name.swift` / `// Module` / `//` / paragraph.
 - Commit messages are imperative sentences (no conventional-commit prefixes), ending with exactly:
   `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01TkBRg1H4w61n6ucfHR43RE`
@@ -67,7 +68,7 @@ One refinement of the spec, recorded in Task 5: `SemelPaths.root` gains a `SEMEL
 
 **Interfaces:**
 - Produces (`SemelNodeKit`): `SemelPaths.root` honouring `SEMEL_HOME`; `SemelPaths.serverSocket: URL` honouring `SEMEL_SOCKET`.
-- Produces (`SemelTransport`): `public final class FrameStream` with `init(connection: NWConnection, queue: DispatchQueue)`, `var onFrame: ((Frame) -> Void)?`, `var onClose: ((Error?) -> Void)?`, `func start()`, `func send(_ frame: Frame)`, `func close()`; `public final class SocketListener` with `init(path: String, queue: DispatchQueue)`, `var onConnection: ((NWConnection) -> Void)?`, `func start(ready: @escaping (Result<Void, Error>) -> Void)`, `func cancel()`; `public enum TransportError: Error` with `.listenFailed(path:underlying:)`, `.connectionFailed(underlying:)`, `.closed`.
+- Produces (`SemelTransport`): `public final class FrameStream` with `init(connection: NWConnection, queue: DispatchQueue)`, `var onFrame: ((Frame) -> Void)?`, `var onClose: ((Error?) -> Void)?`, `func start()`, `func send(_ frame: Frame)`, `func close()`; `public final class SocketListener` with `init(path: String, queue: DispatchQueue)`, `var onConnection: ((NWConnection) -> Void)?`, `func start(ready: @escaping (Result<Void, Error>) -> Void)`, `func cancel()`; `public enum UnixSocketPath` with `static let maximumLength = 103` and `static func check(_ path: String) throws`; `public enum TransportError: Error` with `.listenFailed(path:underlying:)`, `.connectionFailed(underlying:)`, `.pathTooLong(path:length:limit:)`, `.closed`.
 
 - [ ] **Step 1: Write the failing path tests**
 
@@ -205,10 +206,11 @@ final class FrameStreamTests: XCTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-transport-tests/\(UUID().uuidString)", isDirectory: true)
+        // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS, and
+        // NSTemporaryDirectory() alone uses most of that.
+        let directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        socketPath = directory.appendingPathComponent("test.sock").path
+        socketPath = directory.appendingPathComponent("t.sock").path
         listener = SocketListener(path: socketPath, queue: serverQueue)
     }
 
@@ -313,6 +315,17 @@ final class FrameStreamTests: XCTestCase {
         wait(for: [closed], timeout: 5)
         XCTAssertEqual(closeError as? FrameError, .unsupportedVersion(Frame.version + 1))
     }
+
+    /// NWConnection traps on a path over the limit instead of failing; the check exists so
+    /// neither side ever hands it one.
+    func test_aPathOverTheLimitIsRefusedNotTrapped() {
+        let long = "/tmp/" + String(repeating: "x", count: 120) + ".sock"
+
+        XCTAssertThrowsError(try UnixSocketPath.check(long)) { error in
+            XCTAssertEqual(error as? TransportError, .pathTooLong(path: long, length: long.utf8.count, limit: UnixSocketPath.maximumLength))
+        }
+        XCTAssertNoThrow(try UnixSocketPath.check(socketPath))
+    }
 }
 ```
 
@@ -339,8 +352,9 @@ import Network
 import SemelProtocol
 
 public enum TransportError: Error, CustomStringConvertible {
-    case listenFailed(path: String, underlying: Error)
-    case connectionFailed(underlying: Error)
+    case listenFailed(path: String, underlying: String)
+    case connectionFailed(underlying: String)
+    case pathTooLong(path: String, length: Int, limit: Int)
     case closed
 
     public var description: String {
@@ -349,8 +363,27 @@ public enum TransportError: Error, CustomStringConvertible {
             return "cannot listen at \(path): \(underlying)"
         case .connectionFailed(let underlying):
             return "connection failed: \(underlying)"
+        case .pathTooLong(let path, let length, let limit):
+            return "socket path is \(length) bytes, over the \(limit)-byte limit: \(path)"
         case .closed:
             return "the connection is closed"
+        }
+    }
+}
+
+extension TransportError: Equatable {}
+
+/// The one rule about socket paths. macOS stores a Unix-domain socket address in a fixed
+/// 104-byte field with a terminating zero, and NWConnection traps rather than fails on a
+/// longer one, so both sides check before touching Network.framework.
+public enum UnixSocketPath {
+
+    public static let maximumLength = 103
+
+    public static func check(_ path: String) throws {
+        let length = path.utf8.count
+        guard length <= maximumLength else {
+            throw TransportError.pathTooLong(path: path, length: length, limit: maximumLength)
         }
     }
 }
@@ -386,11 +419,11 @@ public final class FrameStream {
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed(let error):
-                self?.finish(with: TransportError.connectionFailed(underlying: error))
+                self?.finish(with: TransportError.connectionFailed(underlying: "\(error)"))
             case .waiting(let error):
                 // Nothing is listening at the path, or it refused. NWConnection would keep
                 // retrying; a client of a local daemon should hear the answer now.
-                self?.finish(with: TransportError.connectionFailed(underlying: error))
+                self?.finish(with: TransportError.connectionFailed(underlying: "\(error)"))
             case .cancelled:
                 self?.finish(with: nil)
             case .setup, .preparing, .ready:
@@ -433,7 +466,7 @@ public final class FrameStream {
             }
             connection.send(content: bytes, completion: .contentProcessed { [weak self] error in
                 if let error {
-                    self?.finish(with: TransportError.connectionFailed(underlying: error))
+                    self?.finish(with: TransportError.connectionFailed(underlying: "\(error)"))
                 }
             })
         }
@@ -458,7 +491,7 @@ public final class FrameStream {
                 }
             }
             if let error {
-                finish(with: TransportError.connectionFailed(underlying: error))
+                finish(with: TransportError.connectionFailed(underlying: "\(error)"))
                 return
             }
             if isComplete {
@@ -516,6 +549,13 @@ public final class SocketListener {
     /// Binds and listens. `ready` is called once, on `queue`, when the socket file exists
     /// and connections are being accepted, or with the error that prevented it.
     public func start(ready: @escaping (Result<Void, Error>) -> Void) {
+        do {
+            try UnixSocketPath.check(path)
+        } catch {
+            queue.async { ready(.failure(error)) }
+            return
+        }
+
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .unix(path: path)
 
@@ -523,7 +563,7 @@ public final class SocketListener {
         do {
             listener = try NWListener(using: parameters)
         } catch {
-            queue.async { ready(.failure(TransportError.listenFailed(path: self.path, underlying: error))) }
+            queue.async { ready(.failure(TransportError.listenFailed(path: self.path, underlying: "\(error)"))) }
             return
         }
         self.listener = listener
@@ -539,12 +579,12 @@ public final class SocketListener {
             case .failed(let error):
                 if !reported {
                     reported = true
-                    ready(.failure(TransportError.listenFailed(path: path, underlying: error)))
+                    ready(.failure(TransportError.listenFailed(path: path, underlying: "\(error)")))
                 }
             case .waiting(let error):
                 if !reported {
                     reported = true
-                    ready(.failure(TransportError.listenFailed(path: path, underlying: error)))
+                    ready(.failure(TransportError.listenFailed(path: path, underlying: "\(error)")))
                 }
             case .setup, .cancelled:
                 break
@@ -568,9 +608,9 @@ public final class SocketListener {
 - [ ] **Step 9: Run the transport tests**
 
 Run: `swift test --filter FrameStreamTests`
-Expected: 4 tests green. If `test_aBadFrameClosesTheStreamWithAFrameError` sees `TransportError.connectionFailed` instead of the `FrameError`, the decoder threw after the connection reported an error first; check the order in `receiveNext` (decode before checking `error`) and report what you saw.
+Expected: 5 tests green. If `test_aBadFrameClosesTheStreamWithAFrameError` sees `TransportError.connectionFailed` instead of the `FrameError`, the decoder threw after the connection reported an error first; check the order in `receiveNext` (decode before checking `error`) and report what you saw.
 
-Then `swiftlint --strict` (expected 0 violations) and `swift test` (root: 122 + 4).
+Then `swiftlint --strict` (expected 0 violations) and `swift test` (root: 122 + 5).
 
 - [ ] **Step 10: Commit**
 
@@ -629,10 +669,10 @@ final class SocketConnectionTests: XCTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-cli-tests/\(UUID().uuidString)", isDirectory: true)
+        // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS.
+        let directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        socketPath = directory.appendingPathComponent("server.sock").path
+        socketPath = directory.appendingPathComponent("s.sock").path
     }
 
     override func tearDown() {
@@ -845,6 +885,11 @@ public final class SocketConnection: SemelConnection {
     /// Opens the socket and waits until it is ready, or fails with the path so the user
     /// knows what to start. Nothing is sent; the caller sends `hello`.
     public static func connect(to path: String, timeout: TimeInterval = 5) throws -> SocketConnection {
+        do {
+            try UnixSocketPath.check(path)
+        } catch {
+            throw ConnectionError.unavailable(path: path, underlying: "\(error)")
+        }
         let connection = NWConnection(to: .unix(path: path), using: .tcp)
         let queue      = DispatchQueue(label: "semel.socket-connection")
         let ready      = DispatchSemaphore(value: 0)
@@ -1039,8 +1084,8 @@ final class ServerTests: RequestHandlerTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-server-tests/\(UUID().uuidString)", isDirectory: true)
+        // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS.
+        let directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         socketPath = directory.appendingPathComponent("semelserv.sock").path
         server = Server(handler: handler, socketPath: socketPath)
@@ -1448,6 +1493,11 @@ public final class Server {
     /// Probes an existing socket file, unlinks it if nothing answers, and listens. Blocks
     /// until the listener is ready or has failed.
     public func start() throws {
+        do {
+            try UnixSocketPath.check(socketPath)
+        } catch {
+            throw ServerError.cannotListen(path: socketPath, underlying: "\(error)")
+        }
         if FileManager.default.fileExists(atPath: socketPath) {
             if Self.probe(path: socketPath, timeout: 2) {
                 throw ServerError.alreadyRunning(path: socketPath)
@@ -1621,8 +1671,9 @@ final class SemelservExecutableTests: XCTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("semel-server-exec-tests/\(UUID().uuidString)", isDirectory: true)
+        // Short on purpose: the socket lives under the home, and a Unix-domain socket path
+        // is limited to 103 bytes on macOS.
+        home = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         socketPath = home.appendingPathComponent("semelserv.sock").path
     }
