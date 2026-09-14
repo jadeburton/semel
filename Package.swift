@@ -37,6 +37,23 @@ let package = Package(
             ],
             path: "semel/Server"
         ),
+        // Frames over a socket. Both halves use it, so it is one target; it is not part of
+        // SemelProtocol because the protocol package stays transport-free.
+        .target(
+            name: "SemelTransport",
+            dependencies: [
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel/Transport"
+        ),
+        .testTarget(
+            name: "SemelTransportTests",
+            dependencies: [
+                "SemelTransport",
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel/TransportTests"
+        ),
         .executableTarget(
             name: "semel",
             dependencies: [
