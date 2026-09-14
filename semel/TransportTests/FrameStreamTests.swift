@@ -16,6 +16,7 @@ import XCTest
 
 final class FrameStreamTests: XCTestCase {
 
+    private var directory: URL!
     private var socketPath: String!
     private var listener: SocketListener!
     private let serverQueue = DispatchQueue(label: "FrameStreamTests.server")
@@ -25,7 +26,7 @@ final class FrameStreamTests: XCTestCase {
         try super.setUpWithError()
         // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS, and
         // NSTemporaryDirectory() alone uses most of that.
-        let directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
+        directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         socketPath = directory.appendingPathComponent("t.sock").path
         listener = SocketListener(path: socketPath, queue: serverQueue)
@@ -34,6 +35,8 @@ final class FrameStreamTests: XCTestCase {
     override func tearDown() {
         listener.cancel()
         listener = nil
+        try? FileManager.default.removeItem(at: directory)
+        directory = nil
         super.tearDown()
     }
 

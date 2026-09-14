@@ -57,7 +57,15 @@ final class SemelPathsTests: XCTestCase {
     }
 
     func test_serverSocketDefaultsToTheRoot() {
+        // Put back whatever the caller's environment had: a test process that runs against
+        // a temporary server is pointed at it with this variable.
+        let previous = ProcessInfo.processInfo.environment["SEMEL_SOCKET"]
         unsetenv("SEMEL_SOCKET")
+        defer {
+            if let previous {
+                setenv("SEMEL_SOCKET", previous, 1)
+            }
+        }
 
         XCTAssertEqual(SemelPaths.serverSocket, SemelPaths.root.appendingPathComponent("semelserv.sock", isDirectory: false))
     }

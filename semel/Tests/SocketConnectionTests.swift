@@ -16,6 +16,7 @@ import XCTest
 
 final class SocketConnectionTests: XCTestCase {
 
+    private var directory: URL!
     private var socketPath: String!
     private var listener: SocketListener!
     private var serverStream: FrameStream?
@@ -24,7 +25,7 @@ final class SocketConnectionTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS.
-        let directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
+        directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         socketPath = directory.appendingPathComponent("s.sock").path
     }
@@ -33,6 +34,8 @@ final class SocketConnectionTests: XCTestCase {
         listener?.cancel()
         listener = nil
         serverStream = nil
+        try? FileManager.default.removeItem(at: directory)
+        directory = nil
         super.tearDown()
     }
 

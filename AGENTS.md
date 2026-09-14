@@ -19,7 +19,8 @@ The root package now links `SemelProtocol` through `SemelCLI` and `SemelServ`, s
 `swift build` covers it; its own `swift test --package-path SemelProtocol` line is still
 the only thing that runs its tests.
 
-`swift test` at the root runs **only** the `SemelCLITests` and `SemelServTests` targets. The engine and the
+`swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
+`SemelTransportTests` and `SemelServTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all six.
 
