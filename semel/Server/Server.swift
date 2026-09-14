@@ -163,8 +163,8 @@ public final class Server {
             self?.registry.remove(closed)
             self?.liveConnections.leave()
         }
-        registry.add(client)
         liveConnections.enter()
+        registry.add(client)
         client.start()
     }
 

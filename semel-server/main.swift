@@ -88,6 +88,10 @@ FatalErrors.handler = { error in
 do {
     try server.start()
 } catch let error as ServerError {
+    // The file is ours only if nobody else answered on it.
+    if case .alreadyRunning = error {
+        fail(error.description, code: 1)
+    }
     try? FileManager.default.removeItem(atPath: socketPath)
     fail(error.description, code: 1)
 } catch {

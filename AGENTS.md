@@ -7,12 +7,12 @@ about how to change it.
 
 ```sh
 swift build                                  # builds everything the root package links, from the repo root
-swift test --package-path SemelNodeKit       # the node-authoring API (~121)
+swift test --package-path SemelNodeKit       # the node-authoring API (~124)
 swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages) (~44)
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelCore    # the engine tests (~343)
-swift test                                   # the CLI, transport and server tests (~144)
+swift test                                   # the CLI, transport and server tests (~146)
 ```
 
 The root package now links `SemelProtocol` through `SemelCLI` and `SemelServ`, so

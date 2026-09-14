@@ -172,10 +172,10 @@ final class ServerTests: RequestHandlerTestCase {
     func test_aWaitOnOneConnectionLeavesAnotherFree() throws {
         // The fixture's engine has no processing loop, so a wait on it settles at once and
         // would pin nothing. This one test builds an engine that runs.
-        let liveDatabase    = try DatabaseLayer()
-        let liveEngine      = try BuildEngine(database: liveDatabase, startProcessingLoop: true)
         let fixtureEngine   = BuildEngine.shared
         let fixtureDatabase = DatabaseLayer.shared
+        let liveDatabase    = try DatabaseLayer()
+        let liveEngine      = try BuildEngine(database: liveDatabase, startProcessingLoop: true)
         BuildEngine.shared = liveEngine
         defer {
             liveEngine.stopProcessingLoop()
