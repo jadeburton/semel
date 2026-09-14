@@ -10,8 +10,6 @@ import SemelCLI
 import SemelNodeKit
 import SemelProtocol
 
-var commandInterpreter: CommandInterpreter?
-
 func main() throws {
     // The client half only. The engine, the graph and the toolchains live in semelserv;
     // this process opens a socket to it and hands the connection to the interpreter.
@@ -32,34 +30,23 @@ func main() throws {
         FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
         exit(1)
     }
-    print("Semel \(server.serverVersion) (C) 2026 Jade Burton. All rights reserved.")
+    print("Semel \(server.serverVersion)")
     print("Graph: \(server.databasePath)")
-
-    commandInterpreter = interpreter
 
     // Non-interactive: each argument is one command line, run in order, then exit —
     // non-zero if any command reported an error. `semel 'build Packages'` is a build step;
     // `semel 'base /repo' 'push src' wait errors` is the same thing spelled out.
     let scripted = Array(CommandLine.arguments.dropFirst())
     if !scripted.isEmpty {
-        for command in scripted {
-            guard receiveUserInput(line: command) else {
-                break
-            }
+        for command in scripted where interpreter.handleCommand(command) == .quit {
+            break
         }
         exit(interpreter.errorsReported == 0 ? 0 : 1)
     }
 
-    while let line = readLine(), receiveUserInput(line: line) {
-    }
-}
-
-func receiveUserInput(line: String) -> Bool {
-    do {
-        try commandInterpreter?.handleCommand(line)
-        return true
-    } catch {
-        return false
+    // Interactive: a failed command is reported and the prompt continues; only quit ends
+    // the session.
+    while let line = readLine(), interpreter.handleCommand(line) != .quit {
     }
 }
 

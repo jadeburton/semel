@@ -68,7 +68,7 @@ final class ExportCommandTests: XCTestCase {
         try publish("Packages/Sub/libSub.a", contents: "sub")
         try publish("Elsewhere/libOther.a", contents: "other")
 
-        try interpreter.handleCommand("export Packages --into \(destination.path)")
+        interpreter.handleCommand("export Packages --into \(destination.path)")
 
         XCTAssertEqual(try exported("libModels.a"), "models")
         XCTAssertEqual(try exported("Sub/libSub.a"), "sub")
@@ -80,13 +80,13 @@ final class ExportCommandTests: XCTestCase {
     func test_theDestinationIsRequired() throws {
         try publish("Packages/libModels.a", contents: "models")
 
-        try interpreter.handleCommand("export Packages")
+        interpreter.handleCommand("export Packages")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
 
     func test_aFolderThatIsNotThereIsAnError() throws {
-        try interpreter.handleCommand("export Nowhere --into \(destination.path)")
+        interpreter.handleCommand("export Nowhere --into \(destination.path)")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
@@ -96,7 +96,7 @@ final class ExportCommandTests: XCTestCase {
     func test_anUnbuiltProductIsReportedNotWrittenEmpty() throws {
         _ = try GraphSpecNode.parse("OutputFile(path: 'output:/Packages/libModels.a')").findOrCreateMatchingNode()
 
-        try interpreter.handleCommand("export Packages --into \(destination.path)")
+        interpreter.handleCommand("export Packages --into \(destination.path)")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("libModels.a").path))

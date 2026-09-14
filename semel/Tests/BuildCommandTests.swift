@@ -66,7 +66,7 @@ final class BuildCommandTests: XCTestCase {
     /// With no loop running the wait returns at once, so the macro's three steps are
     /// observable in order: the push happened, the wait settled, the report ran.
     func test_buildPushesWaitsAndReports() throws {
-        try interpreter.handleCommand("build src")
+        interpreter.handleCommand("build src")
 
         let pushed = try XCTUnwrap(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
         XCTAssertNotNil(pushed)
@@ -74,7 +74,7 @@ final class BuildCommandTests: XCTestCase {
     }
 
     func test_buildTakesExactlyOneFolder() throws {
-        try interpreter.handleCommand("build")
+        XCTAssertEqual(interpreter.handleCommand("build"), .failed)
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
@@ -82,7 +82,7 @@ final class BuildCommandTests: XCTestCase {
     /// The exit status of a scripted run rests on this count, so an error a command
     /// reports must land in it — here a push of something that is not there.
     func test_aReportedErrorIsCounted() throws {
-        try interpreter.handleCommand("push nowhere")
+        interpreter.handleCommand("push nowhere")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
@@ -92,7 +92,7 @@ final class BuildCommandTests: XCTestCase {
     func test_aBuildErrorIsCounted() throws {
         _ = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed.a')").findOrCreateMatchingNode()
 
-        try interpreter.handleCommand("build src")
+        interpreter.handleCommand("build src")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
@@ -105,7 +105,7 @@ final class BuildCommandTests: XCTestCase {
         try publishProduct("lib.a", contents: "archive")
         let destination = makeTempDirectory()
 
-        try interpreter.handleCommand("build src --into \(destination.path)")
+        interpreter.handleCommand("build src --into \(destination.path)")
 
         XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("lib.a"), encoding: .utf8), "archive")
         XCTAssertEqual(interpreter.errorsReported, 0)
@@ -114,7 +114,7 @@ final class BuildCommandTests: XCTestCase {
     func test_withoutADestinationNothingIsExported() throws {
         try publishProduct("lib.a", contents: "archive")
 
-        try interpreter.handleCommand("build src")
+        interpreter.handleCommand("build src")
 
         XCTAssertEqual(interpreter.errorsReported, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: FileManager.default.currentDirectoryPath + "/lib.a"))
@@ -126,14 +126,14 @@ final class BuildCommandTests: XCTestCase {
         _ = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed.a')").findOrCreateMatchingNode()
         let destination = makeTempDirectory()
 
-        try interpreter.handleCommand("build src --into \(destination.path)")
+        interpreter.handleCommand("build src --into \(destination.path)")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
     func test_intoNeedsADirectory() throws {
-        try interpreter.handleCommand("build src --into")
+        interpreter.handleCommand("build src --into")
 
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
