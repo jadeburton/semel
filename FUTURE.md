@@ -25,6 +25,11 @@
   hand-written formula with no engine change — three products under `Hello.app/` — and it
   installed and launched. The design for resources and the Xcode project is in
   `docs/superpowers/specs/2026-09-14-semel-app-bundles-design.md` (B-63 to B-65).
+  Parts 1 and 2 landed the same day: tree products, and the `SemelApple` nodes. HelloApp
+  now carries an asset catalog (icon, image, accent color) and a two-language string
+  catalog, its Info.plist is built from the project's file and actool's partial one, and
+  the app shows the compiled image and the localized title in the simulator. What is left
+  is the Xcode project converter (B-65).
 
 - Get it working with large c or c++ project
 

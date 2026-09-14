@@ -373,14 +373,15 @@ Building the app that consumes the packages, for the simulator first. Design:
 `docs/superpowers/specs/2026-09-14-semel-app-bundles-design.md`. A hand-written formula
 already builds and launches a SwiftUI app (`C1/swift/HelloApp`, 2026-09-14); what follows
 is what a tool-decided file set needs. Tree-valued ports and tree products (B-63) are
-built: `TreeManifest`, `expectedOutputFolders`, `TreeFile`, and `product 'name/'`.
+built: `TreeManifest`, `expectedOutputFolders`, `TreeFile`, `TreeMerger`, and
+`product 'name/'`. The Apple resource nodes (B-64) are built: `SemelApple` with
+`AssetCatalogCompiler`, `StringCatalogCompiler` and `InfoPlistBuilder`; HelloApp builds
+with an asset catalog and a string catalog and runs in the simulator.
 
-**B-64** `open` — **`SemelApple`: `AssetCatalogCompiler`, `StringCatalogCompiler`, `InfoPlistBuilder`.**
-A toolchain package on SemelNodeKit only. actool and xcstringstool produce trees; the
-plist builder merges base, partials and literal keys and substitutes `$(VAR)`. The folder
-walk `SwiftCompiler` does for `inputFolder`/`inputSubfolders` moves into SemelNodeKit for
-both. Namespaces registered, `DefaultTools` knows the tool names, `prepare` writes the
-blocks. Verified on HelloApp with a catalog of each kind, launched in the simulator.
+**B-66** `open` — **`SwiftCompiler` still walks its source folder with its own copy of the
+walk.** `FolderTreeWalk` in SemelNodeKit is what `AssetCatalogCompiler` uses; the compiler's
+`buildInputSourceFilesSpecs` / `buildInputSubfoldersSpecs` do the same with a `SourceScope`
+filter. Move it over, with `fileSpecs(of:include:)` carrying the scope.
 
 **B-65** `open` — **`XcodeProjectConverter`, and `prepare` on an `.xcodeproj`.**
 pbxproj plus xcconfig to formula text: one tree of products per native target, extensions

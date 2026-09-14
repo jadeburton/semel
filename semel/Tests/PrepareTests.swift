@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import SemelApple
 import SemelClang
 import SemelNodeKit
 import SemelSwift
@@ -26,6 +27,7 @@ final class PrepareTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try SemelSwift.register()
         try SemelClang.register()
+        try SemelApple.register()
     }
 
     override func tearDownWithError() throws {
@@ -58,10 +60,14 @@ final class PrepareTests: XCTestCase {
                                        architecture: "arm64", recursiveHash: nil)
     private let swift = ToolDescriptor(name: "swift", version: "Apple Swift version 6.3.3", platform: "macOS",
                                        architecture: "arm64", recursiveHash: nil)
+    private let actool = ToolDescriptor(name: "actool", version: "Apple actool version 26.6 (24765)", platform: "macOS",
+                                        architecture: "arm64", recursiveHash: nil)
+    private let xcstringstool = ToolDescriptor(name: "xcstringstool", version: "Xcode 26.6 (17F113)", platform: "macOS",
+                                               architecture: "arm64", recursiveHash: nil)
 
     /// A machine with one SDK of each kind and every tool installed.
     private func facts(descriptors: [ToolDescriptor]? = nil) -> ToolchainFacts {
-        ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift],
+        ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, xcstringstool],
                        namespaces: ToolNamespaceRegistry.all,
                        sdkPath: { "/SDKs/\($0).sdk" },
                        sdkIdentity: { $0 == "iphonesimulator" ? "26.5 (23F81a)" : "26.5 (25F70)" })
@@ -160,6 +166,13 @@ final class PrepareTests: XCTestCase {
             XCTAssertTrue(config.contains("\(namespace).cStandard=gnu11"), "got:\n\(config)")
             XCTAssertTrue(config.contains("\(namespace).cxxStandard=c++17"), "got:\n\(config)")
         }
+        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.platform=iphonesimulator"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.minimumDeploymentTarget=18.0"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.targetDevices=iphone,ipad"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.stringCatalogCompiler.toolDescriptor.name=xcstringstool"), "got:\n\(config)")
+        XCTAssertFalse(config.contains { $0.hasPrefix("apple.stringCatalogCompiler.platform") },
+                       "xcstringstool compiles every language whatever the platform")
     }
 
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {

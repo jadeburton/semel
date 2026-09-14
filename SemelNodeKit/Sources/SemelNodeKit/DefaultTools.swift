@@ -7,9 +7,18 @@ public class DefaultTools {
 
     // TODO: these are domain-specific but SemelNodeKit should be agnostic - move
 
-    /// The tools this build system knows how to run, by name.  This list is the only
-    /// hard-coded part: both the path and the version come from the machine.
-    private static let knownToolNames = ["clang", "swiftc", "swift"]
+    /// The tools this build system knows how to run, by name, each with the way it reports
+    /// its version. This list is the only hard-coded part: both the path and the version
+    /// come from the machine. The compilers answer `--version`; `actool` answers with a
+    /// plist; `xcstringstool` answers nothing, and a tool with no version of its own is
+    /// identified by the Xcode that ships it, which is what decides its behaviour.
+    private static let knownTools: [(name: String, version: (String) -> String?)] = [
+        ("clang",         AppleClangSwiftToolchainHelper.version(ofToolAt:)),
+        ("swiftc",        AppleClangSwiftToolchainHelper.version(ofToolAt:)),
+        ("swift",         AppleClangSwiftToolchainHelper.version(ofToolAt:)),
+        ("actool",        AppleClangSwiftToolchainHelper.actoolVersion(at:)),
+        ("xcstringstool", { _ in AppleClangSwiftToolchainHelper.xcodeVersion() }),
+    ]
 
     /// Registers whatever is actually installed.
     ///
@@ -25,9 +34,9 @@ public class DefaultTools {
     /// following the machine is deliberate: it is what makes a toolchain upgrade
     /// invalidate the cache instead of silently reusing objects built by another compiler.
     public static func setup(toolExecutorRegistry: ToolRunnerRegistry) throws {
-        for name in knownToolNames {
+        for (name, versionOfTool) in knownTools {
             guard let path = AppleClangSwiftToolchainHelper.find(name),
-                  let version = AppleClangSwiftToolchainHelper.version(ofToolAt: path) else {
+                  let version = versionOfTool(path) else {
                 continue
             }
 

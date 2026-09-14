@@ -225,15 +225,14 @@ extension ToolRunner {
 
 extension SimplifiedToolExecuteResult {
     /// One expected output folder as a tree value: every file interned, the manifest
-    /// interned, the manifest's hash on the wire. The tool's error output if it failed;
-    /// an error naming the folder if the tool succeeded without producing it.
+    /// interned, the manifest's hash on the wire. The tool's error output if it failed.
+    /// A folder the tool left empty is an empty tree, which is a value — a catalog with
+    /// nothing to compile for the platform produces one.
     public func asTreeNodeValue(folder: String) throws -> NodeValue {
         guard exitCode == 0 else {
             return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
         }
-        guard let files = outputTrees[folder] else {
-            return .noValue(reason: .error(messageDataObjectHash: try "No output folder \(folder) emitted by tool".intern()))
-        }
+        let files = outputTrees[folder] ?? []
         let entries = try files.map { file in
             TreeManifestEntry(path: file.relativePath, hash: try file.data.intern(), mode: file.mode)
         }

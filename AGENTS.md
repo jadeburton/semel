@@ -11,7 +11,8 @@ swift test --package-path SemelNodeKit       # the node-authoring API (~124)
 swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages) (~44)
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
-swift test --package-path SemelCore    # the engine tests (~343)
+swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
+swift test --package-path SemelCore    # the engine tests (~350)
 swift test                                   # the CLI, transport and server tests (~150)
 ```
 
@@ -22,7 +23,7 @@ the only thing that runs its tests.
 `swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests` and `SemelServTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all six.
+all seven.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
@@ -126,7 +127,7 @@ the nearest standard equivalent and how Semel's differs.
 | graphSpec (column) | — | The node's rendered `GraphSpec`, stored for matching; the same string a spec on an input port demands. Type names are embedded in it, so renaming a node type invalidates every stored one (bump `Semel.version`, B-29). |
 | formula (`.fmla`) | BUILD file, Makefile | Declares products as expressions of nodes, functionally — no ordering, no commands. Also what a `Package.swift` is converted into. |
 | product | Bazel target output | A published artifact: a formula product becomes an `OutputFile` in `output:`. Intermediates are not products (B-10). A product named with a trailing `/` is a *tree product*: every entry of the tree on its expression's port becomes an `OutputFile` under that folder (B-63). |
-| tree (`TreeManifest`) | Bazel TreeArtifact, a directory output | N files on one port: a manifest of relative paths with content hashes and modes, interned like any value. A tool that decides its own file set (`actool`) fills one through `expectedOutputFolders`; `TreeFile(name:, tree:)` puts one entry back on a port of its own. |
+| tree (`TreeManifest`) | Bazel TreeArtifact, a directory output | N files on one port: a manifest of relative paths with content hashes and modes, interned like any value. A tool that decides its own file set (`actool`) fills one through `expectedOutputFolders`; `TreeFile(name:, tree:)` puts one entry back on a port of its own; `TreeMerger` makes several trees one, a collision being an error. |
 | pinned | GC root | "Held alive by user intent rather than by references": a pushed file or folder. Unpinned nodes exist only while something depends on them. Not memory pinning. |
 | `Folder`, `StaticFile`, `OutputFile`, `Configuration` | source file, output file | Nodes that *are* rather than convert (the "-er" exception). `StaticFile` and `Folder` are filled by the push path, not by wires (B-43). |
 | cache entry | remote cache / action cache entry | Keyed on node type, properties and every input wire's name *and* value — the path is part of the key because tools embed it (B-49). Holds object-store hashes, not bytes. |
