@@ -68,11 +68,9 @@ let package = Package(
             name: "semel",
             dependencies: [
                 "SemelCLI",
-                "SemelServ",
-                .product(name: "SemelCore", package: "SemelCore"),
+                "SemelTransport",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
-                .product(name: "SemelSwift", package: "SemelSwift"),
-                .product(name: "SemelClang", package: "SemelClang"),
             ],
             path: "semel",
             sources: ["main.swift"]

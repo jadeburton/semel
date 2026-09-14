@@ -1,6 +1,6 @@
 # Splitting Semel into a local daemon and a CLI
 
-**Status:** phases 1 and 2 implemented; phase 3 not yet started
+**Status:** all three phases implemented
 **Date:** 2026-09-12
 **Relationship:** this is B-30 role 3, the local build daemon. It takes the frame design
 and the surviving parts of `2026-08-15-semel-client-server-design.md` and drops everything
@@ -469,14 +469,15 @@ listen. The `semel` executable stops doing any of that.
 
 **The socket file.** `SemelPaths.serverSocket`, which is `SemelPaths.root/semelserv.sock`
 unless the environment variable `SEMEL_SOCKET` overrides it; both executables honour the
-override, which is how tests keep away from a real server. The directory is created if
-missing. A Unix-domain socket file holds nothing: it is a name the kernel routes
-connections through, and it outlives a crashed listener. So if the file exists at startup
-the server probes it — connect, send `hello`, wait up to two seconds. Any reply means a
-live server: print "semelserv is already running at <path>" and exit 1. A refused
-connection or no reply means a stale name: unlink it and listen. The banner prints the
-version, the graph path and the socket path to standard output. The server logs to
-standard output and error only; a terminal or launchd captures the stream.
+override, which is how tests keep away from a real server. `SemelPaths.root` has the same
+kind of override, `SEMEL_HOME`, so a server started by a test has a graph and store of its
+own. The directory is created if missing. A Unix-domain socket file holds nothing: it is a
+name the kernel routes connections through, and it outlives a crashed listener. So if the
+file exists at startup the server probes it — connect, send `hello`, wait up to two
+seconds. Any reply means a live server: print "semelserv is already running at <path>" and
+exit 1. A refused connection or no reply means a stale name: unlink it and listen. The
+banner prints the version, the graph path and the socket path to standard output. The
+server logs to standard output and error only; a terminal or launchd captures the stream.
 
 **Connections.** The listener runs on its own serial queue. Each accepted `NWConnection`
 becomes a `ServerConnection`: a serial queue of its own, a `FrameDecoder`, a `Session`, and

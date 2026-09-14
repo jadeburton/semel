@@ -12,7 +12,7 @@ swift test --package-path SemelProtocol      # the wire protocol (frame codec + 
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelCore    # the engine tests (~343)
-swift test                                   # the CLI and server tests (~122)
+swift test                                   # the CLI, transport and server tests (~144)
 ```
 
 The root package now links `SemelProtocol` through `SemelCLI` and `SemelServ`, so
@@ -29,11 +29,11 @@ you find yourself wanting to import `SemelCore` from a toolchain package, someth
 belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`/`output:`
 names and the configuration text format ended up there.
 
-Nothing registers a toolchain automatically. `semel`'s `main.swift` is the composition
-root: it calls `SemelSwift.register()` and `SemelClang.register()`, and a binary that did
-not would simply have no idea what a `Package.swift` is or how to compile a `.c` file.
-`main.swift` also builds the `RequestHandler` and the `InProcessConnection`; the CLI never
-sees the engine directly.
+Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
+root: it registers the toolchains, starts the engine and listens on
+`SemelPaths.serverSocket`. `semel/main.swift` opens a socket to it and nothing else; start
+`semelserv` first, or `semel` says so and exits. Tests point both at a temporary directory
+with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
@@ -43,7 +43,8 @@ In Xcode, open **`Semel.xcworkspace`**, not the package. Opening `Package.swift`
 `SemelCore` and `SemelDatabaseModels` read-only *dependencies*, and Xcode neither builds
 nor lists the test targets of a dependency package — which is why the engine's tests could
 not be run from the root package. The workspace holds all three as peers, so each gets its
-own scheme and its own runnable tests.
+own scheme and its own runnable tests. Run the `semelserv` scheme before the `semel`
+scheme, or the client has no server to connect to.
 
 ## Naming of modules
 
