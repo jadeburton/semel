@@ -6,6 +6,14 @@ let package = Package(
     platforms: [
         .macOS(.v13),
     ],
+    products: [
+        .executable(name: "semel", targets: ["semel"]),
+        .executable(name: "semel-swift", targets: ["semel-swift"]),
+        // The binary is `semelserv`; the target is not, because a target named `semelserv`
+        // would share a build directory with the `SemelServ` library on a case-insensitive
+        // volume and corrupt both.
+        .executable(name: "semelserv", targets: ["semel-server"]),
+    ],
     dependencies: [
         .package(path: "SemelCore"),
         .package(path: "SemelNodeKit"),
@@ -23,6 +31,7 @@ let package = Package(
             dependencies: [
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
+                "SemelTransport",
             ],
             path: "semel/CommandInterpreter"
         ),
@@ -34,47 +43,82 @@ let package = Package(
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
+                "SemelTransport",
             ],
             path: "semel/Server"
+        ),
+        // Frames over a socket. Both halves use it, so it is one target; it is not part of
+        // SemelProtocol because the protocol package stays transport-free.
+        .target(
+            name: "SemelTransport",
+            dependencies: [
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel/Transport"
+        ),
+        .testTarget(
+            name: "SemelTransportTests",
+            dependencies: [
+                "SemelTransport",
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "semel/TransportTests"
         ),
         .executableTarget(
             name: "semel",
             dependencies: [
                 "SemelCLI",
-                "SemelServ",
-                .product(name: "SemelCore", package: "SemelCore"),
+                "SemelTransport",
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
-                .product(name: "SemelSwift", package: "SemelSwift"),
-                .product(name: "SemelClang", package: "SemelClang"),
             ],
             path: "semel",
             sources: ["main.swift"]
         ),
-        // The Swift conversion tool, outside the engine. Copies a package's resolved
-        // dependencies into `<root>/Dependencies/<name>` so every file a build needs is
-        // inside the input file system, found by one rule; `init` also derives the formula
-        // and config for a tree of packages. It depends on the toolchain packages, not on
+        // The server: the engine behind a Unix-domain socket. The composition root for the
+        // toolchains and the engine lives here now; `semel` is a client.
+        .executableTarget(
+            name: "semel-server",
+            dependencies: [
+                "SemelServ",
+                "SemelTransport",
+                .product(name: "SemelCore", package: "SemelCore"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+                .product(name: "SemelSwift", package: "SemelSwift"),
+                .product(name: "SemelClang", package: "SemelClang"),
+            ],
+            path: "semel-server",
+            sources: ["main.swift"]
+        ),
+        // The Swift conversion tool, outside the engine. `prepare` copies the roots'
+        // resolved dependencies into `<folder>/Dependencies/<name>` so every file a build
+        // needs is inside the input file system, found by one rule, and derives the formula
+        // and config for the tree. It depends on the toolchain packages, not on
         // the engine: the config it writes is what their nodes will read, so it asks them
         // which namespaces and SDK facts those are. The work lives in a library so it can
         // be tested.
         .target(
-            name: "SemelVendor",
+            name: "SemelSwiftTool",
             dependencies: [
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
             ],
-            path: "semel-vendor/Library"
+            path: "semel-swift/Library"
         ),
         .executableTarget(
-            name: "semel-vendor",
-            dependencies: ["SemelVendor"],
-            path: "semel-vendor",
+            name: "semel-swift",
+            dependencies: ["SemelSwiftTool"],
+            path: "semel-swift",
             sources: ["main.swift"]
         ),
         .testTarget(
             name: "SemelServTests",
             dependencies: [
                 "SemelServ",
+                "SemelCLI",
+                "SemelTransport",
+                "semel-server",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
@@ -90,7 +134,8 @@ let package = Package(
             dependencies: [
                 "SemelCLI",
                 "SemelServ",
-                "SemelVendor",
+                "SemelSwiftTool",
+                "SemelTransport",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
                 .product(name: "SemelProtocol", package: "SemelProtocol"),

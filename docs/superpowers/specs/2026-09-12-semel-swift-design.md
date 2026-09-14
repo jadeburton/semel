@@ -1,6 +1,9 @@
-# semel-vendor: every dependency's source inside the input file system
+# semel-swift: every dependency's source inside the input file system
 
-**Status:** design agreed 2026-09-12, implemented in the same change
+**Status:** design agreed 2026-09-12, implemented in the same change. The tool was
+named `semel-vendor` then; on 2026-09-14 it became `semel-swift`, with one idempotent verb,
+`prepare`, that vendors and also writes the formula and config (B-59). The rule below is
+unchanged.
 **Relationship:** the mechanism B-10's formula design assumes for dependency overrides;
 replaces the "vendored beside the package that named it" convention the converter used.
 
@@ -34,7 +37,7 @@ consuming `../MyLibrary`) keeps working.
 
 ## The tool
 
-`semel-vendor <package-root>` runs `swift package resolve` on the root package — SwiftPM
+`semel-swift prepare <folder>` (then `semel-vendor <package-root>`) runs `swift package resolve` on the root package — SwiftPM
 does versions, `Package.resolved` pinning, branches, registries and transitive resolution;
 Semel re-implements none of it — then copies every checkout under `.build/checkouts` into
 `<package-root>/Dependencies/<name>`, replacing what is there, skipping `.git` and `.build`

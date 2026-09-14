@@ -1,15 +1,15 @@
 //
 //  PackageScan.swift
-//  SemelVendor
+//  SemelSwiftTool
 //
-//  What `init` needs to know about a tree of Swift packages: which packages are there,
+//  What `prepare` needs to know about a tree of Swift packages: which packages are there,
 //  which of them depend on which by path, and what deployment versions they declare.
 //  Read with `swift package dump-package`, like the converter does — SwiftPM evaluates the
 //  manifest; nothing here parses Swift.
 
 import Foundation
 
-/// One package, as far as `init` cares.
+/// One package, as far as `prepare` cares.
 public struct PackageSummary: Equatable {
     public let name: String
     /// The package folder, standardized so path comparisons are by value.

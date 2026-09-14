@@ -137,41 +137,33 @@ include package(p: <Timeline>)
 include package(p: <Explore>)
 ```
 
-### Dependencies
+### Dependencies, and clone to build
 
 Semel never fetches anything: every file a build needs has to be inside the input file
-system. For a Swift package, `semel-vendor` puts them there:
+system, found by one rule. For a tree of Swift packages, the Swift conversion tool puts
+them there and writes what the build needs:
 
 ```sh
-.build/release/semel-vendor path/to/package-root
-```
-
-It runs `swift package resolve` and copies every git dependency, transitively, into
-`<package-root>/Dependencies/<name>` — one flat folder, one copy per package, named as
-SwiftPM names its checkouts (`Dependencies/GRDB.swift`). That folder is the only place the
-converter looks for a git or registry dependency, whichever package declared it. Local path
-dependencies stay wherever the manifest says. Run it again after changing a dependency;
-each copy is replaced, not merged. For several packages under one build root, name the
-shared folder: `semel-vendor --into Packages/Dependencies Packages/Timeline Packages/Explore`.
-
-### Clone to build
-
-For a tree of Swift packages that ships no formula, `init` does the whole conversion:
-
-```sh
-.build/release/semel-vendor init path/to/Packages --platform ios-simulator
+.build/release/semel-swift prepare path/to/Packages --platform ios-simulator
 .build/release/semel 'base path/to' 'build Packages --into ./out'
 ```
 
-It finds every `Package.swift` under the folder, takes as roots the packages no other one
-there depends on by path, vendors the roots' closure into `Dependencies`, and writes
-`semel.fmla` (one `include` per root, all under one build root) and `semel.config` for the
-platform — every namespace the toolchains declare, the tools and SDK this machine has, and
-a target at the highest deployment version the packages declare (`macos` is the default
-platform). It never replaces a formula or config that is already there: a project that
-ships its own has already decided, and needs no `init` at all. Semel itself knows nothing
-of Swift packages; `semel-vendor` is the Swift conversion tool, and another toolchain gets
-one of its own if it needs one.
+`prepare` finds every `Package.swift` under the folder, takes as roots the packages no
+other one there depends on by path, runs `swift package resolve` on each root and copies
+every git dependency, transitively, into `<folder>/Dependencies/<name>` — one flat folder,
+one copy per package, named as SwiftPM names its checkouts (`Dependencies/GRDB.swift`).
+That folder is the only place the converter looks for a git or registry dependency,
+whichever package declared it; local path dependencies stay wherever the manifest says.
+Then it writes `semel.fmla` (one `include` per root, all under one build root) and
+`semel.config` for the platform — every namespace the toolchains declare, the tools and
+SDK this machine has, and a target at the highest deployment version the packages declare
+(`macos` is the default platform).
+
+It is the same command every time: after cloning, and again after changing a dependency.
+Each vendored copy is replaced, not merged; a formula or config already there is kept, so
+edits survive, and a project that ships its own needs no `prepare` at all. Semel itself
+knows nothing of Swift packages; `semel-swift` is the Swift conversion tool, and another
+toolchain gets one of its own if it needs one.
 
 ## Architecture
 

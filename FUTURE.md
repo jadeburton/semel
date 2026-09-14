@@ -16,7 +16,7 @@
   targets. What it took is in the commits from 5ffd0af to c31917e.
 
   The loop closed the same day (B-57 to B-59): on a fresh copy of the packages,
-  `semel-vendor init Packages --platform ios-simulator` found the five roots, vendored the
+  `semel-swift prepare Packages --platform ios-simulator` found the five roots, vendored the
   thirteen dependencies and wrote a formula and config identical in substance to the
   hand-written ones; `semel 'base <repo>' 'build Packages --into out'`
   then produced the five archives in 17 s from the warm cache and exited 0.

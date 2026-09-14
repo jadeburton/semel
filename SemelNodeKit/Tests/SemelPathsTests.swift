@@ -34,4 +34,39 @@ final class SemelPathsTests: XCTestCase {
         XCTAssertEqual(SemelPaths.objectStore.lastPathComponent, "objects")
         XCTAssertEqual(SemelPaths.root.lastPathComponent, "semel")
     }
+
+    // MARK: - Overrides
+
+    /// A server under test must never open the user's graph, so the whole root moves with
+    /// one variable; the socket has its own so a test can point at a server it did not
+    /// start.
+    func test_rootHonoursSemelHome() {
+        setenv("SEMEL_HOME", "/tmp/semel-paths-test-home", 1)
+        defer { unsetenv("SEMEL_HOME") }
+
+        XCTAssertEqual(SemelPaths.root.path, "/tmp/semel-paths-test-home")
+        XCTAssertEqual(SemelPaths.database.path, "/tmp/semel-paths-test-home/graph.sqlite")
+        XCTAssertEqual(SemelPaths.serverSocket.path, "/tmp/semel-paths-test-home/semelserv.sock")
+    }
+
+    func test_serverSocketHonoursSemelSocket() {
+        setenv("SEMEL_SOCKET", "/tmp/semel-paths-test.sock", 1)
+        defer { unsetenv("SEMEL_SOCKET") }
+
+        XCTAssertEqual(SemelPaths.serverSocket.path, "/tmp/semel-paths-test.sock")
+    }
+
+    func test_serverSocketDefaultsToTheRoot() {
+        // Put back whatever the caller's environment had: a test process that runs against
+        // a temporary server is pointed at it with this variable.
+        let previous = ProcessInfo.processInfo.environment["SEMEL_SOCKET"]
+        unsetenv("SEMEL_SOCKET")
+        defer {
+            if let previous {
+                setenv("SEMEL_SOCKET", previous, 1)
+            }
+        }
+
+        XCTAssertEqual(SemelPaths.serverSocket, SemelPaths.root.appendingPathComponent("semelserv.sock", isDirectory: false))
+    }
 }

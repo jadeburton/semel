@@ -1,6 +1,6 @@
 //
-//  InitFiles.swift
-//  SemelVendor
+//  GeneratedFiles.swift
+//  SemelSwiftTool
 //
 //  The two files a tree of Swift packages needs before Semel can build it: a formula
 //  naming its roots, and a config stating the toolchain. Semel refuses anything unstated,
@@ -42,7 +42,7 @@ public enum Platform: String, CaseIterable {
     }
 }
 
-/// What the machine has, as `init` reads it. A value type with closures so a test can
+/// What the machine has, as `prepare` reads it. A value type with closures so a test can
 /// hand in a machine of its own.
 public struct ToolchainFacts {
     public var descriptors: [ToolDescriptor]
@@ -72,7 +72,7 @@ public struct ToolchainFacts {
     }
 }
 
-public enum InitFiles {
+public enum GeneratedFiles {
 
     public static let formulaFileName = "semel.fmla"
     public static let configFileName  = "semel.config"
@@ -82,7 +82,7 @@ public enum InitFiles {
     /// the tree. `rootPaths` are relative to the formula's folder.
     public static func formula(rootPaths: [String]) -> String {
         var lines = [
-            "// Written by semel-vendor init. The roots are the packages nothing here depends on",
+            "// Written by semel-swift prepare. The roots are the packages nothing here depends on",
             "// by path; everything else is reached through them and publishes nothing of its own.",
             "func package(p) = SwiftFormulaConverter(path: p, root: <.>).formula",
         ]
@@ -129,7 +129,7 @@ public enum InitFiles {
 
         var blocks: [String] = [
             """
-            // Written by semel-vendor init for --platform \(platform.rawValue): the tools and SDK
+            // Written by semel-swift prepare for --platform \(platform.rawValue): the tools and SDK
             // this machine has, and the deployment version the packages declare. Edit to pin
             // another toolchain; `semel tools` lists what is installed.
             """,

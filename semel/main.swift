@@ -6,31 +6,23 @@
 //
 
 import Foundation
-import SemelCore
 import SemelCLI
 import SemelNodeKit
 import SemelProtocol
-import SemelServ
-import SemelSwift
-import SemelClang
 
 var commandInterpreter: CommandInterpreter?
 
 func main() throws {
-    // Composition root: the engine knows no toolchains, so this is where the ones this
-    // binary ships are installed. Before start(), so discovery sees them on its first pass.
-    try SemelSwift.register()
-    try SemelClang.register()
-
-    try BuildEngine.start()
-
-    // The server half and the client half, joined in one process by a connection that
-    // still puts every message through the wire codec. The process-wide engine and
-    // database are resolved once, here, and handed to the handler.
-    let handler    = RequestHandler(engine: BuildEngine.shared,
-                                    database: DatabaseLayer.shared,
-                                    databasePath: SemelPaths.database.path)
-    let connection = InProcessConnection(handler: handler)
+    // The client half only. The engine, the graph and the toolchains live in semelserv;
+    // this process opens a socket to it and hands the connection to the interpreter.
+    let socketPath = SemelPaths.serverSocket.path
+    let connection: SocketConnection
+    do {
+        connection = try SocketConnection.connect(to: socketPath)
+    } catch {
+        FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+        exit(1)
+    }
     let interpreter = CommandInterpreter(connection: connection)
 
     let server: (serverVersion: String, databasePath: String)
