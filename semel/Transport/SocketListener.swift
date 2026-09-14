@@ -16,6 +16,10 @@ public final class SocketListener {
     public let path: String
 
     private let queue: DispatchQueue
+    private let lock = NSLock()
+
+    /// Under `lock`: `start` runs on the caller's thread while `cancel` is reachable from a
+    /// signal handler's queue and from the owner's.
     private var listener: NWListener?
 
     public init(path: String, queue: DispatchQueue) {
@@ -43,7 +47,7 @@ public final class SocketListener {
             queue.async { ready(.failure(TransportError.listenFailed(path: self.path, underlying: "\(error)"))) }
             return
         }
-        self.listener = listener
+        lock.withLock { self.listener = listener }
 
         var reported = false
         listener.stateUpdateHandler = { [path] state in
@@ -76,7 +80,11 @@ public final class SocketListener {
     }
 
     public func cancel() {
-        listener?.cancel()
-        listener = nil
+        let victim = lock.withLock { () -> NWListener? in
+            let current = listener
+            listener = nil
+            return current
+        }
+        victim?.cancel()
     }
 }

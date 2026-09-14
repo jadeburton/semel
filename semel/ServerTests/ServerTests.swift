@@ -19,13 +19,14 @@ import XCTest
 
 final class ServerTests: RequestHandlerTestCase {
 
+    private var directory: URL!
     private var socketPath: String!
     private var server: Server!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         // Short on purpose: a Unix-domain socket path is limited to 103 bytes on macOS.
-        let directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
+        directory = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         socketPath = directory.appendingPathComponent("semelserv.sock").path
         server = Server(handler: handler, socketPath: socketPath)
@@ -35,6 +36,8 @@ final class ServerTests: RequestHandlerTestCase {
     override func tearDown() {
         server.stop()
         server = nil
+        try? FileManager.default.removeItem(at: directory)
+        directory = nil
         super.tearDown()
     }
 
@@ -144,7 +147,7 @@ final class ServerTests: RequestHandlerTestCase {
     }
 
     /// B-61's documented limit: a wait while another session holds a batch open blocks
-    /// until that batch closes. Pinned so the behaviour is deliberate, not accidental.
+    /// until that batch closes. Pinned so the behavior is deliberate, not accidental.
     func test_waitBlocksWhileAnotherSessionHoldsABatchOpen() throws {
         let holder = try connect()
         let waiter = try connect()
@@ -161,6 +164,58 @@ final class ServerTests: RequestHandlerTestCase {
         // here by asserting the wait returns, and leave the live-loop case to B-61.
         wait(for: [finished], timeout: 5)
         _ = try daemon(holder, .endBatch)
+    }
+
+    /// A parked `wait` belongs to its own connection. The handler answers `wait` off its
+    /// request queue, so a client waiting for the graph to settle must not hold another
+    /// client's commands behind it.
+    func test_aWaitOnOneConnectionLeavesAnotherFree() throws {
+        // The fixture's engine has no processing loop, so a wait on it settles at once and
+        // would pin nothing. This one test builds an engine that runs.
+        let liveDatabase    = try DatabaseLayer()
+        let liveEngine      = try BuildEngine(database: liveDatabase, startProcessingLoop: true)
+        let fixtureEngine   = BuildEngine.shared
+        let fixtureDatabase = DatabaseLayer.shared
+        BuildEngine.shared = liveEngine
+        defer {
+            liveEngine.stopProcessingLoop()
+            BuildEngine.shared   = fixtureEngine
+            DatabaseLayer.shared = fixtureDatabase
+        }
+        let liveHandler = RequestHandler(engine: liveEngine, database: liveDatabase,
+                                         databasePath: "/tmp/test-graph.sqlite")
+        let livePath    = directory.appendingPathComponent("live.sock").path
+        let liveServer  = Server(handler: liveHandler, socketPath: livePath)
+        try liveServer.start()
+        defer { liveServer.stop() }
+
+        let commander = try SocketConnection.connect(to: livePath)
+        let waiter    = try SocketConnection.connect(to: livePath)
+        let returned  = NSLock()
+        var waitHasReturned = false
+        let waitFinished = expectation(description: "the parked wait returned")
+
+        // Settle the loop's own startup work first, so the only outstanding wake-up is the
+        // one the batch below withholds.
+        liveEngine.waitUntilIdleBlocking()
+
+        // The batch withholds the coalesced signal the reset asks for, so the loop never
+        // marks a newer idle generation and the wait cannot settle.
+        _ = try daemon(commander, .beginBatch)
+        _ = try daemon(commander, .reset)
+        DispatchQueue.global().async {
+            _ = try? self.daemon(waiter, .wait)
+            returned.withLock { waitHasReturned = true }
+            waitFinished.fulfill()
+        }
+
+        // The commander is answered while the waiter is parked; that is the whole claim.
+        XCTAssertEqual(try daemon(commander, .list(fileSystem: .input, pattern: "*")).0,
+                       .list(entries: []))
+        XCTAssertFalse(returned.withLock { waitHasReturned })
+
+        _ = try daemon(commander, .endBatch)
+        wait(for: [waitFinished], timeout: 5)
     }
 
     // MARK: - Lifecycle
@@ -185,6 +240,27 @@ final class ServerTests: RequestHandlerTestCase {
         try server.start()
         let client = try connect()
         XCTAssertEqual(try daemon(client, .reset).0, .ok)
+    }
+
+    /// `stop` does not return while a session is still unwinding. Asserted without polling
+    /// on purpose: a poll would pass against a stop that merely started the teardown.
+    /// Several clients, because each one's unwind takes the handler's queue in turn — one
+    /// alone finishes fast enough to hide a stop that did not wait.
+    func test_stopWaitsForAConnectionToFinishItsSession() throws {
+        var clients: [SocketConnection] = []
+        for _ in 0..<8 {
+            let client = try connect()
+            _ = try daemon(client, .beginBatch)
+            clients.append(client)
+        }
+        XCTAssertEqual(server.connectionCount, 8)
+
+        server.stop()
+
+        XCTAssertEqual(server.connectionCount, 0)
+        for client in clients {
+            client.close()
+        }
     }
 
     func test_fatalHandlingRefusesNewWorkThenTerminates() throws {

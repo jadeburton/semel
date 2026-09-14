@@ -34,6 +34,8 @@ final class SemelservExecutableTests: XCTestCase {
             process.waitUntilExit()
         }
         processes = []
+        try? FileManager.default.removeItem(at: home)
+        home = nil
         super.tearDown()
     }
 
@@ -85,6 +87,8 @@ final class SemelservExecutableTests: XCTestCase {
         let secondText = String(decoding: secondOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         XCTAssertEqual(second.terminationStatus, 1)
         XCTAssertTrue(secondText.contains("already running"), secondText)
+        // It never printed a banner, which means it never opened the first instance's graph.
+        XCTAssertFalse(secondText.contains("Graph:"), secondText)
 
         client.close()
         server.terminate() // SIGTERM

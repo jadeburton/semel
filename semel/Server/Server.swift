@@ -26,6 +26,8 @@ public enum ServerError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+/// A handler backs exactly one server; the sink is claimed when the server starts, so a
+/// server that fails to start never takes it.
 public final class Server {
 
     private let handler: RequestHandler
@@ -36,11 +38,15 @@ public final class Server {
     private var connectionCounter = 0
     private let lock = NSLock()
     private var stopping = false
+    private var terminating = false
+
+    /// One member per live client connection, left when the connection's session has been
+    /// unwound. `stop` waits on it so a shutdown does not cut a reply in half.
+    private let liveConnections = DispatchGroup()
 
     public init(handler: RequestHandler, socketPath: String) {
         self.handler    = handler
         self.socketPath = socketPath
-        handler.eventSink = registry
     }
 
     public var connectionCount: Int {
@@ -54,26 +60,38 @@ public final class Server {
 
     // MARK: - Start and stop
 
-    /// Probes an existing socket file, unlinks it if nothing answers, and listens. Blocks
-    /// until the listener is ready or has failed.
-    public func start() throws {
+    /// Takes the socket path for this process: checks its length, refuses to run beside a
+    /// server that answers there, unlinks a file nothing answers at, and makes sure the
+    /// parent directory exists.
+    ///
+    /// Separate from `start` so that the executable can claim the path before it opens the
+    /// graph. A second instance must learn it is second while it has touched nothing.
+    public static func claimSocket(at path: String) throws {
         do {
-            try UnixSocketPath.check(socketPath)
+            try UnixSocketPath.check(path)
         } catch {
-            throw ServerError.cannotListen(path: socketPath, underlying: "\(error)")
+            throw ServerError.cannotListen(path: path, underlying: "\(error)")
         }
-        if FileManager.default.fileExists(atPath: socketPath) {
-            if Self.probe(path: socketPath, timeout: 2) {
-                throw ServerError.alreadyRunning(path: socketPath)
+        if FileManager.default.fileExists(atPath: path) {
+            if probe(path: path, timeout: 2) {
+                throw ServerError.alreadyRunning(path: path)
             }
-            try? FileManager.default.removeItem(atPath: socketPath)
+            try? FileManager.default.removeItem(atPath: path)
         }
-        try FileManager.default.createDirectory(at: URL(fileURLWithPath: socketPath).deletingLastPathComponent(),
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
+    }
+
+    /// Claims the socket path, then listens. Blocks until the listener is ready or has
+    /// failed. A second pass over a path this process has just claimed is a file-exists
+    /// check and nothing more.
+    public func start() throws {
+        try Self.claimSocket(at: socketPath)
+        handler.eventSink = registry
 
         let listener = SocketListener(path: socketPath, queue: queue)
         listener.onConnection = { [weak self] connection in self?.accept(connection) }
-        self.listener = listener
+        lock.withLock { self.listener = listener }
 
         let ready = DispatchSemaphore(value: 0)
         var failure: Error?
@@ -83,20 +101,52 @@ public final class Server {
             }
             ready.signal()
         }
-        ready.wait()
+        guard ready.wait(timeout: .now() + 10) == .success else {
+            lock.withLock { self.listener = nil }
+            listener.cancel()
+            throw ServerError.cannotListen(path: socketPath,
+                                           underlying: "the listener did not become ready within 10 s")
+        }
         if let failure {
-            self.listener = nil
+            lock.withLock { self.listener = nil }
             throw ServerError.cannotListen(path: socketPath, underlying: "\(failure)")
         }
     }
 
-    /// Stops accepting, closes every client, and removes the socket file. Idempotent.
+    /// Stops accepting, closes every client, waits for the sessions to unwind, and removes
+    /// the socket file. Idempotent.
     public func stop() {
-        lock.withLock { stopping = true }
-        listener?.cancel()
-        listener = nil
+        let victim = lock.withLock { () -> SocketListener? in
+            stopping = true
+            let current = listener
+            listener = nil
+            return current
+        }
+        victim?.cancel()
         registry.closeAll()
+        // A bound, not a guarantee: a connection parked in `wait` cannot answer until the
+        // engine settles, and the process must still be able to stop. Two seconds is long
+        // enough for a reply already on the wire and short enough not to hang a shutdown.
+        _ = liveConnections.wait(timeout: .now() + 2)
         try? FileManager.default.removeItem(atPath: socketPath)
+    }
+
+    /// Stops the server once and ends the process. Signals, the fatal handler and a test
+    /// can all arrive here at the same moment; only the first one through the gate stops
+    /// anything or exits.
+    public func terminate(code: Int32, exit: (Int32) -> Void = { Foundation.exit($0) }) {
+        let alreadyTerminating = lock.withLock { () -> Bool in
+            guard !terminating else {
+                return true
+            }
+            terminating = true
+            return false
+        }
+        guard !alreadyTerminating else {
+            return
+        }
+        stop()
+        exit(code)
     }
 
     // MARK: - Connections
@@ -109,8 +159,12 @@ public final class Server {
         connectionCounter += 1
         let client = ServerConnection(connection: connection, handler: handler,
                                       label: "semelserv.connection.\(connectionCounter)")
-        client.onClose = { [weak self] closed in self?.registry.remove(closed) }
+        client.onClose = { [weak self] closed in
+            self?.registry.remove(closed)
+            self?.liveConnections.leave()
+        }
         registry.add(client)
+        liveConnections.enter()
         client.start()
     }
 
@@ -135,8 +189,11 @@ public final class Server {
             stream.send(hello)
         }
         _ = answered.wait(timeout: .now() + timeout)
+        // Read where it is written: on a timeout the stream's queue may still be mid-frame,
+        // and `queue.sync` orders this read after whatever it was doing.
+        let answeredWithAReply = queue.sync { sawReply }
         stream.close()
-        return sawReply
+        return answeredWithAReply
     }
 
     // MARK: - Fatal errors
@@ -144,12 +201,12 @@ public final class Server {
     /// The machine is broken: log it, take no new work, and terminate once the reply that
     /// was in flight has had a moment to leave. The delay is what lets the handler's
     /// `.unrecoverable` reply reach its client before the process ends.
-    public func handleFatal(_ error: any UnrecoverableError, terminate: @escaping (Int32) -> Void) {
+    public func handleFatal(_ error: any UnrecoverableError, terminate terminateHook: @escaping (Int32) -> Void) {
         FileHandle.standardError.write(Data("semelserv: \(error.unrecoverableDescription)\n".utf8))
         lock.withLock { stopping = true }
         queue.asyncAfter(deadline: .now() + 0.5) { [self] in
-            stop()
-            terminate(70) // EX_SOFTWARE, as FatalErrors.defaultHandler uses
+            // EX_SOFTWARE, as FatalErrors.defaultHandler uses.
+            terminate(code: 70, exit: terminateHook)
         }
     }
 }
