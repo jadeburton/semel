@@ -137,6 +137,22 @@ include package(p: <Timeline>)
 include package(p: <Explore>)
 ```
 
+### Products that are folders
+
+A product name may contain slashes, so a bundle is a set of products under one folder
+name: `product 'Hello.app/Hello'`, `product 'Hello.app/Info.plist'`. When a tool decides
+the file set itself — an asset catalog compiles to `Assets.car` plus one PNG per icon
+size — its node puts a *tree* on one port, a manifest of files with their content and
+modes, and a product named with a trailing `/` publishes every entry of it:
+
+```
+product 'Hello.app/' = AssetCatalogCompiler(...).files
+```
+
+The files appear once the tree has, the way a wildcard's matches appear once the folder
+has been read; two products at one path are an error. `export` copies the folder out
+as it is.
+
 ### Dependencies, and clone to build
 
 Semel never fetches anything: every file a build needs has to be inside the input file

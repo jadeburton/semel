@@ -37,6 +37,7 @@ public class LocalFileSystemTool: ToolRunner {
                         environment: [String: String],
                         inputFiles: [FileNameAndContent],
                         expectedOutputFileNames: [String],
+                        expectedOutputFolders: [String],
                         output: ToolOutput) throws -> ToolExecuteResult {
 
         let fileManager = FileManager.default
@@ -153,6 +154,32 @@ public class LocalFileSystemTool: ToolRunner {
                 output.write(expectedOutputFileName, [UInt8](data))
             } else {
                 output.logError("Expected output file not found: \(expectedOutputFileName)")
+            }
+        }
+
+        // 7. Read back every file of each expected output folder. Sorted, so the tree a
+        // node builds from them is the same value however the file system enumerates.
+        for folder in expectedOutputFolders {
+            let folderURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(folder)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue,
+                  let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.isRegularFileKey]) else {
+                output.logError("Expected output folder not found: \(folder)")
+                continue
+            }
+            let fileURLs = (enumerator.allObjects as? [Foundation.URL] ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+                .sorted { $0.path < $1.path }
+            let prefix = folderURL.standardizedFileURL.path + "/"
+            for fileURL in fileURLs {
+                guard let data = fileManager.contents(atPath: fileURL.path) else {
+                    output.logError("Expected output file could not be read: \(fileURL.path)")
+                    continue
+                }
+                let relativePath = String(fileURL.standardizedFileURL.path.dropFirst(prefix.count))
+                let permissions  = (try? fileManager.attributesOfItem(atPath: fileURL.path))?[.posixPermissions] as? NSNumber
+                let mode         = permissions.map { UInt16(truncatingIfNeeded: $0.intValue) } ?? FileMetadata.defaultMode
+                output.writeTreeEntry(folder, relativePath, [UInt8](data), mode)
             }
         }
 

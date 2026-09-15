@@ -41,10 +41,15 @@ public struct ToolExecuteResult {
 /// A tool that can be executed with a set of arguments and input files,
 /// producing output files and log messages via a ToolOutput callback object.
 public protocol ToolRunner {
+    /// `expectedOutputFolders` are sandbox-relative folders whose every file, at any
+    /// depth, is reported through `output.writeTreeEntry` — for a tool that decides its
+    /// own file set. A folder that is not there after the run is an error, like a missing
+    /// output file.
     func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
+                 expectedOutputFolders: [String],
                  output: ToolOutput) throws -> ToolExecuteResult
 }
 
@@ -54,15 +59,20 @@ public struct ToolOutput {
     public let logError: (_ error: String) -> Void
     public let logMessage: (_ message: String) -> Void
     public let write: (_ filePath: String, _ data: [UInt8]) -> Void
+    /// One file of an expected output folder: the folder, the path below it, the bytes
+    /// and the mode.
+    public let writeTreeEntry: (_ folder: String, _ relativePath: String, _ data: [UInt8], _ mode: UInt16) -> Void
 
     // Spelled out because a public struct's memberwise initializer is internal, and a
     // node in another package has to be able to construct one.
     public init(logError: @escaping (_ error: String) -> Void,
                 logMessage: @escaping (_ message: String) -> Void,
-                write: @escaping (_ filePath: String, _ data: [UInt8]) -> Void) {
+                write: @escaping (_ filePath: String, _ data: [UInt8]) -> Void,
+                writeTreeEntry: @escaping (_ folder: String, _ relativePath: String, _ data: [UInt8], _ mode: UInt16) -> Void = { _, _, _, _ in }) {
         self.logError = logError
         self.logMessage = logMessage
         self.write = write
+        self.writeTreeEntry = writeTreeEntry
     }
 }
 
@@ -149,6 +159,21 @@ public struct SimplifiedToolExecuteResult {
     public let infoOutput: String
     public let errorOutput: String
     public let outputFiles: [String: [UInt8]]
+    /// Every file of each expected output folder, keyed by the folder.
+    public let outputTrees: [String: [TreeFileContent]]
+}
+
+/// One collected file of an output folder, before it is interned.
+public struct TreeFileContent {
+    public let relativePath: String
+    public let data: [UInt8]
+    public let mode: UInt16
+
+    public init(relativePath: String, data: [UInt8], mode: UInt16) {
+        self.relativePath = relativePath
+        self.data = data
+        self.mode = mode
+    }
 }
 
 extension ToolRunner {
@@ -156,16 +181,19 @@ extension ToolRunner {
     public func execute(arguments: [String],
                         environment: [String: String],
                         inputFiles: [FileNameAndContent],
-                        expectedOutputFileNames: [String]) throws -> SimplifiedToolExecuteResult {
+                        expectedOutputFileNames: [String],
+                        expectedOutputFolders: [String] = []) throws -> SimplifiedToolExecuteResult {
 
         var infoOutput = ""
         var errorOutput = ""
         var outputFiles = [String: [UInt8]]()
+        var outputTrees = [String: [TreeFileContent]]()
 
         let result = try execute(arguments: arguments,
                                  environment: environment,
                                  inputFiles: inputFiles,
                                  expectedOutputFileNames: expectedOutputFileNames,
+                                 expectedOutputFolders: expectedOutputFolders,
                                  output: .init(logError: { error in
                                                    errorOutput += error
                                                    errorOutput += "\n"
@@ -180,13 +208,36 @@ extension ToolRunner {
                                                    } else {
                                                        outputFiles[filename] = outputFiles[filename]! + data
                                                    }
+                                               },
+                                               writeTreeEntry: { folder, relativePath, data, mode in
+                                                   outputTrees[folder, default: []].append(
+                                                       TreeFileContent(relativePath: relativePath, data: data, mode: mode))
                                                }))
 
         return .init(exitCode: result.exitCode,
                      sandboxPathUsed: result.sandboxPathUsed,
                      infoOutput: infoOutput,
                      errorOutput: errorOutput,
-                     outputFiles: outputFiles)
+                     outputFiles: outputFiles,
+                     outputTrees: outputTrees)
+    }
+}
+
+extension SimplifiedToolExecuteResult {
+    /// One expected output folder as a tree value: every file interned, the manifest
+    /// interned, the manifest's hash on the wire. The tool's error output if it failed;
+    /// an error naming the folder if the tool succeeded without producing it.
+    public func asTreeNodeValue(folder: String) throws -> NodeValue {
+        guard exitCode == 0 else {
+            return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
+        }
+        guard let files = outputTrees[folder] else {
+            return .noValue(reason: .error(messageDataObjectHash: try "No output folder \(folder) emitted by tool".intern()))
+        }
+        let entries = try files.map { file in
+            TreeManifestEntry(path: file.relativePath, hash: try file.data.intern(), mode: file.mode)
+        }
+        return .value(try TreeManifest(entries: entries).toJSON().intern())
     }
 }
 

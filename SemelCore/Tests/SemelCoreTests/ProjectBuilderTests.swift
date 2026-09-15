@@ -141,4 +141,76 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort], [includedNode: includedNode])
     }
+
+    // MARK: - Tree products (B-63)
+
+    /// The tree-valued node here is a Configuration, so the spec parses without a real
+    /// resource compiler; in an app build it is `AssetCatalogCompiler(...).files`.
+    private let treeNode = "Configuration(role: 'catalog').output"
+
+    private func process(formula: String, trees: [String: NodeValue]) throws -> ProcessOutput {
+        let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
+                              properties: ["outputFolder": "input:/repo"], scheduled: false, graphSpec: nil)
+        return try ProjectBuilder(thisNode: node).process(input: ProcessInput(inputValues: [
+            ProjectBuilder.projectFileInputPort:  ["input:/repo/semel.fmla": .value(try formula.intern())],
+            ProjectBuilder.productInputPort:      [:],
+            ProjectBuilder.foldersInputPort:      [:],
+            ProjectBuilder.treesInputPort:        trees,
+            ProjectBuilder.graphImportsInputPort: [:],
+            ProjectBuilder.includesInputPort:     [:],
+        ]))
+    }
+
+    private func tree(_ paths: [String]) throws -> NodeValue {
+        let entries = try paths.map { TreeManifestEntry(path: $0, hash: try $0.intern(), mode: 0o644) }
+        return .value(try TreeManifest(entries: entries).toJSON().intern())
+    }
+
+    /// First pass: the tree's files are decided by the node that makes them, so the
+    /// builder wires the expression — keyed by the product folder — and publishes nothing
+    /// for it yet, as it does for a wildcard before the folder manifest arrives.
+    func test_aTreeProductWiresItsTreeBeforePublishingAnything() throws {
+        let output = try process(formula: "product 'Hello.app/' = \(treeNode)", trees: [:])
+
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.treesInputPort], ["output:/repo/Hello.app": treeNode])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
+    }
+
+    /// Later pass: every entry of the tree is a product under the folder, each an
+    /// `OutputFile` wrapping a `TreeFile` that picks the entry out of the same tree.
+    func test_aTreeProductPublishesOneOutputFilePerEntry() throws {
+        let output = try process(formula: "product 'Hello.app/' = \(treeNode)",
+                                 trees: ["output:/repo/Hello.app": try tree(["Assets.car", "en.lproj/Localizable.strings"])])
+
+        let products = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort])
+        XCTAssertEqual(products.keys.sorted(),
+                       ["output:/repo/Hello.app/Assets.car", "output:/repo/Hello.app/en.lproj/Localizable.strings"])
+        let spec = try XCTUnwrap(products["output:/repo/Hello.app/en.lproj/Localizable.strings"])
+        XCTAssertTrue(spec.contains("TreeFile(name: 'en.lproj/Localizable.strings'"), spec)
+        XCTAssertTrue(spec.contains(treeNode), spec)
+        XCTAssertTrue(spec.contains("fileMetadata"), "the entry's mode reaches the output file: \(spec)")
+    }
+
+    /// A plain product and a tree product share a folder — the executable beside the
+    /// compiled resources is the whole point.
+    func test_aTreeProductAndAPlainProductShareAFolder() throws {
+        let output = try process(formula: """
+            product 'Hello.app/Hello' = Configuration(role: 'exe').output
+            product 'Hello.app/' = \(treeNode)
+            """, trees: ["output:/repo/Hello.app": try tree(["Assets.car"])])
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]).keys.sorted(),
+                       ["output:/repo/Hello.app/Assets.car", "output:/repo/Hello.app/Hello"])
+    }
+
+    /// Two products at one path would be two nodes with one name in one folder. The
+    /// formula is wrong, and the builder says so rather than letting one win.
+    func test_twoProductsAtOnePathAreAnError() throws {
+        XCTAssertThrowsError(try process(formula: """
+            product 'Hello.app/Assets.car' = Configuration(role: 'exe').output
+            product 'Hello.app/' = \(treeNode)
+            """, trees: ["output:/repo/Hello.app": try tree(["Assets.car"])])) { error in
+            XCTAssertTrue("\(error)".contains("Hello.app/Assets.car"), "\(error)")
+        }
+    }
 }

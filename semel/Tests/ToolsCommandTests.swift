@@ -25,7 +25,7 @@ final class ToolsCommandTests: XCTestCase {
     private struct NoTool: ToolRunner {
         func execute(arguments: [String], environment: [String: String],
                      inputFiles: [FileNameAndContent], expectedOutputFileNames: [String],
-                     output: ToolOutput) throws -> ToolExecuteResult {
+                     expectedOutputFolders: [String], output: ToolOutput) throws -> ToolExecuteResult {
             ToolExecuteResult(exitCode: 0, sandboxPathUsed: "")
         }
     }

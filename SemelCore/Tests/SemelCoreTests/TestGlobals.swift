@@ -64,12 +64,15 @@ final class RecordingToolRunner: ToolRunner {
         let environment: [String: String]
         let inputFileNames: [String]
         let expectedOutputFileNames: [String]
+        let expectedOutputFolders: [String]
     }
 
     private(set) var invocations: [Invocation] = []
 
     /// Files the fake tool "produces", keyed by the output file name the caller expects.
     var producedFiles: [String: [UInt8]] = [:]
+    /// Trees the fake tool "produces": folder -> relative path -> bytes.
+    var producedTrees: [String: [String: [UInt8]]] = [:]
     var exitCode: Int32 = 0
 
     var lastArguments: [String] { invocations.last?.arguments ?? [] }
@@ -78,15 +81,22 @@ final class RecordingToolRunner: ToolRunner {
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
                  expectedOutputFileNames: [String],
+                 expectedOutputFolders: [String],
                  output: ToolOutput) throws -> ToolExecuteResult {
 
         invocations.append(.init(arguments: arguments,
                                  environment: environment,
                                  inputFileNames: inputFiles.map(\.filePath),
-                                 expectedOutputFileNames: expectedOutputFileNames))
+                                 expectedOutputFileNames: expectedOutputFileNames,
+                                 expectedOutputFolders: expectedOutputFolders))
 
         for name in expectedOutputFileNames {
             output.write(name, producedFiles[name] ?? [])
+        }
+        for folder in expectedOutputFolders {
+            for (relativePath, data) in (producedTrees[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                output.writeTreeEntry(folder, relativePath, data, FileMetadata.defaultMode)
+            }
         }
 
         return ToolExecuteResult(exitCode: exitCode, sandboxPathUsed: "/tmp/recording-tool-sandbox")

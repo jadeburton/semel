@@ -118,6 +118,7 @@ struct SwiftPackageReader: Node {
             environment: [:],
             inputFiles: [inputs.packageFile],
             expectedOutputFileNames: [],   // JSON is emitted to stdout, not a file
+            expectedOutputFolders: [],
             output: .init(
                 logError:   { message in stderrOutput += message },
                 logMessage: { message in jsonOutput += message },  // stdout → JSON
