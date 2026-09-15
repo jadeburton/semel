@@ -10,7 +10,8 @@ import SemelNodeKit
 
 public enum SemelSwift {
 
-    /// Installs this toolchain: its node types and the project kind it recognises.
+    /// Installs this toolchain: its node types, the tools they run and the config
+    /// namespaces they read.
     ///
     /// Idempotent, because a host may call it more than once and every test calls it again.
     public static func register() throws {
@@ -23,6 +24,10 @@ public enum SemelSwift {
         // A Package.swift is not discovered as a project of its own. A formula names the
         // package it builds — `include SwiftFormulaConverter(path: <.>).formula` — and the
         // converter wires its own reader from that path. Nothing is registered for it.
+
+        // How `swiftc` and `swift` are found on this machine and versioned. Declared here,
+        // located when the engine starts.
+        SwiftToolDiscovery.finders.forEach(ToolDiscovery.register)
 
         // What `tools` prints under each namespace. The compiler and linker check the
         // declared SDK against the machine, so the default SDK's name and the machine's

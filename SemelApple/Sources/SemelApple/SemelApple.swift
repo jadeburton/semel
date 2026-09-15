@@ -9,7 +9,8 @@ import SemelNodeKit
 
 public enum SemelApple {
 
-    /// Installs this toolchain: its node types and the config namespaces they read.
+    /// Installs this toolchain: its node types, the tools they run and the config
+    /// namespaces they read.
     ///
     /// Idempotent, because a host may call it more than once and every test calls it again.
     public static func register() throws {
@@ -17,7 +18,12 @@ public enum SemelApple {
             AssetCatalogCompiler.self,
             StringCatalogCompiler.self,
             InfoPlistBuilder.self,
+            XcodeProjectConverter.self,
         ])
+
+        // How actool and xcstringstool are found on this machine and versioned. Declared
+        // here, located when the engine starts.
+        AppleToolDiscovery.finders.forEach(ToolDiscovery.register)
 
         // What `tools` prints under each namespace. The plist builder runs no tool.
         ToolNamespaceRegistry.register(.init(namespace: AssetCatalogCompilerConfiguration.settingNamespace,

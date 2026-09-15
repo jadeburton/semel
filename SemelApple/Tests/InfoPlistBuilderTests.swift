@@ -84,4 +84,25 @@ final class InfoPlistBuilderTests: SemelAppleTestCase {
         XCTAssertEqual(plist["CFBundlePackageType"] as? String, "APPL")
         XCTAssertEqual(plist.count, 2)
     }
+
+    /// A converter writes the generated keys as one JSON dictionary: a plist key such as
+    /// `UISupportedInterfaceOrientations~ipad` is no formula identifier, and JSON carries
+    /// the arrays, dictionaries and booleans a plist has. Its values resolve `$(VAR)`
+    /// from the ordinary properties like any other.
+    func test_keysArriveAsAJSONDictionaryTyped() throws {
+        let plist = try process(properties: [
+            "keys": """
+                {"UISupportedInterfaceOrientations~ipad": ["UIInterfaceOrientationPortrait"], "UILaunchScreen": {},
+                 "LSRequiresIPhoneOS": true, "CFBundleVersion": "1", "CFBundleExecutable": "$(PRODUCT_NAME)"}
+                """,
+            "PRODUCT_NAME": "Hello",
+        ])
+
+        XCTAssertEqual(plist["UISupportedInterfaceOrientations~ipad"] as? [String], ["UIInterfaceOrientationPortrait"])
+        XCTAssertEqual((plist["UILaunchScreen"] as? [String: Any])?.count, 0)
+        XCTAssertEqual(plist["LSRequiresIPhoneOS"] as? Bool, true)
+        XCTAssertEqual(plist["CFBundleVersion"] as? String, "1")
+        XCTAssertEqual(plist["CFBundleExecutable"] as? String, "Hello")
+        XCTAssertNil(plist["keys"], "the dictionary is its entries, not an entry")
+    }
 }

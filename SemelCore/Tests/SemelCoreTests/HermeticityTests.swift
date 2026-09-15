@@ -38,12 +38,13 @@ final class HermeticityTests: XCTestCase {
         // the sandbox, nothing inherited, deleted afterwards.
         "LocalFileSystemTool.swift":
             "the one sanctioned tool launcher",
-        // `xcrun --find` and `<tool> --version` to register what is installed, and the SDK
-        // queries the Swift tools cache once per process. Launch-time lookups, not part
-        // of any node's function — though the SDK path they yield is not an input either,
-        // which B-47 records.
-        "AppleClangSwiftToolchainHelper.swift":
-            "launch-time toolchain lookups",
+        // The questions the toolchains put to the machine at launch — `xcrun --find` and
+        // `<tool> --version` to register what is installed, the SDK queries the Swift
+        // tools cache once per process — all run through this one generic runner. Not
+        // part of any node's function, though the SDK path they yield is not an input
+        // either, which B-47 records.
+        "MachineQuery.swift":
+            "launch-time questions to the machine",
         // `SEMEL_HOME` and `SEMEL_SOCKET`, read at launch to place the root and the socket
         // so a test-started server never opens the user's graph. Not a node input: nothing a
         // node function does depends on them.

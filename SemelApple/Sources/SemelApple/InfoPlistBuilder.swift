@@ -23,6 +23,9 @@ public struct InfoPlistBuilder: Node {
     /// other compiler's.
     static let partials = "partials"
     static let output = "plist"
+    /// A JSON dictionary of entries, for keys no formula identifier can spell and values
+    /// no string can carry.
+    static let keysProperty = "keys"
 
     public var thisNode: NodeRecord
 
@@ -51,8 +54,17 @@ public struct InfoPlistBuilder: Node {
         for (key, value) in (input.inputValues[Self.partials] ?? [:]).sorted(by: { $0.key < $1.key }) {
             merged.merge(try Self.dictionary(fromPlist: value, named: key)) { _, partial in partial }
         }
-        for (key, value) in thisNode.properties {
-            merged[key] = value
+        // `keys` is a JSON dictionary of entries, typed as JSON types them — the form a
+        // converter writes, since a plist key like `UISupportedInterfaceOrientations~ipad`
+        // is no formula identifier. Every other property is one string entry.
+        if let keysJSON = thisNode.properties[Self.keysProperty] {
+            guard let keys = try? JSONSerialization.jsonObject(with: Data(keysJSON.utf8)) as? [String: Any] else {
+                throw NodeError.other(message: "InfoPlistBuilder: `keys` is not a JSON dictionary")
+            }
+            merged.merge(keys) { _, key in key }
+        }
+        for (key, value) in thisNode.properties where key != Self.keysProperty {
+            merged[key] = Self.typed(value)
         }
 
         var unresolved = Set<String>()
@@ -65,6 +77,23 @@ public struct InfoPlistBuilder: Node {
 
         let data = try PropertyListSerialization.data(fromPropertyList: resolved, format: .xml, options: 0)
         return .init(outputValues: [Self.output: .value(try [UInt8](data).intern())], inputWireSpecs: [:])
+    }
+
+    /// A property is a string, and a plist has arrays, dictionaries and booleans. A value
+    /// written as JSON — `["iPhoneSimulator"]`, `{}` — is read back as what it says, and
+    /// `true`/`false` as booleans; a number stays the string it is, since `CFBundleVersion`
+    /// is `"1"`, never `1`.
+    static func typed(_ value: String) -> Any {
+        switch value {
+        case "true":  return true
+        case "false": return false
+        default:
+            guard value.hasPrefix("[") || value.hasPrefix("{"),
+                  let object = try? JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed]) else {
+                return value
+            }
+            return object
+        }
     }
 
     private static func dictionary(fromPlist value: NodeValue, named name: String) throws -> [String: Any] {

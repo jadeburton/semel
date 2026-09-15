@@ -60,8 +60,8 @@ wider job than a module rename.
 
 Two words are taken and must not be reused for anything else. **Plugin** means a
 `CommandPlugin` (a CLI verb) or a `ProjectBuilderPlugin` (project discovery). **Toolchain**
-means tool discovery and versioning — `AppleClangSwiftToolchainHelper.swift`, `ToolDescriptor` — not a set of
-node functions.
+means tool discovery and versioning — `ToolDiscovery`, `ToolDescriptor`, and each package's
+own `…ToolDiscovery` finders — not a set of node functions.
 
 ## Formatting
 
@@ -208,8 +208,9 @@ is genuinely impossible, and then it wants a comment saying why.
   `DataObjectStore.shared`, `ToolRunnerRegistry.instance`, the symbol cache). Threading
   these through every `intern()` and every node function would cost far more plumbing than
   it saves. They are *swappable* instead, which is what makes them testable.
-- **Tool versions come from the machine, not from a pinned list.** `DefaultTools` locates
-  each tool with `xcrun --find` and registers it under the version it reports. A node
+- **Tool versions come from the machine, not from a pinned list.** Each toolchain package
+  declares, when it registers, how its tools are located (`xcrun --find`) and how each
+  reports its version; `ToolDiscovery` registers what is found under that version. A node
   pinned to a version that is no longer installed is expected to fail when processed, with
   a message naming what is available. Do not add launch-time warnings about this.
 

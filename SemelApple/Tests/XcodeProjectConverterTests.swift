@@ -1,0 +1,116 @@
+//
+//  XcodeProjectConverterTests.swift
+//  SemelAppleTests
+//
+//  The node's own work is the waiting: the project file a pass after creation, then the
+//  xcconfig files it names and the folders it walks, and only then the formula.
+//
+
+@testable import SemelApple
+import SemelDatabaseModels
+import SemelNodeKit
+import XCTest
+
+final class XcodeProjectConverterTests: SemelAppleTestCase {
+
+    private let projectPath = "input:/repo/IceCubesApp.xcodeproj"
+    private var projectFile: String { "\(projectPath)/project.pbxproj" }
+
+    private func process(projectFile: NodeValue? = nil,
+                         xcconfigs: [String: NodeValue] = [:],
+                         folders: [String: NodeValue] = [:]) throws -> ProcessOutput {
+        let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
+                                                                  properties: ["path": projectPath], scheduled: false, graphSpec: nil))
+        var inputs: [String: [String: NodeValue]] = [XcodeProjectConverter.xcconfigs: xcconfigs,
+                                                     XcodeProjectConverter.folders: folders]
+        if let projectFile {
+            inputs[XcodeProjectConverter.projectFile] = [self.projectFile: projectFile]
+        }
+        return try node.process(input: ProcessInput(inputValues: inputs))
+    }
+
+    private var fixtureProject: NodeValue {
+        get throws { .value(try XcodeProjectTests.fixture.intern()) }
+    }
+
+    private func isPending(_ output: ProcessOutput) -> Bool {
+        if case .noValue(.pending) = output.outputValues[XcodeProjectConverter.formulaOutput] ?? .noValue(reason: .pending) {
+            return true
+        }
+        return false
+    }
+
+    func test_demandsTheProjectFileFirst() throws {
+        let output = try process()
+
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.projectFile],
+                       [projectFile: "StaticFile(path: '\(projectFile)').output"])
+        XCTAssertTrue(isPending(output))
+    }
+
+    /// With the project read, the xcconfig it names and the application's folder are
+    /// demanded together; the formula waits for both.
+    func test_demandsTheXcconfigAndTheTargetFolderOnceTheProjectHasArrived() throws {
+        let output = try process(projectFile: try fixtureProject)
+
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.xcconfigs],
+                       ["input:/repo/App.xcconfig": "StaticFile(path: 'input:/repo/App.xcconfig').output"])
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders],
+                       ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').manifest",
+                        "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').manifest"],
+                       "the embedded extension's folder is walked too")
+        XCTAssertTrue(isPending(output))
+    }
+
+    private var extensionFolder: (String, NodeValue) {
+        get throws { ("input:/repo/IceCubesShareExtension", try manifestValue("input:/repo/IceCubesShareExtension", files: ["Share.swift"])) }
+    }
+
+    /// The folder is walked one level per pass, like every folder walk, except into a
+    /// catalog, which its own compiler walks.
+    func test_walksSubfoldersButNotCatalogs() throws {
+        let output = try process(projectFile: try fixtureProject,
+                                 xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+                                 folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp",
+                                                                                         files: ["App.swift"],
+                                                                                         folders: ["Views", "Assets.xcassets"])])
+
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(),
+                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesApp/Views", "input:/repo/IceCubesShareExtension"])
+        XCTAssertTrue(isPending(output))
+    }
+
+    /// Everything there: the formula names the executable, the catalog, the plain
+    /// resource under the walked subfolder, and the bundle — with the xcconfig's value
+    /// resolved into the bundle identifier.
+    func test_emitsTheFormulaOnceTheWalkIsComplete() throws {
+        let output = try process(
+            projectFile: try fixtureProject,
+            xcconfigs: ["input:/repo/App.xcconfig": .value(try "BUNDLE_ID_PREFIX = com.example".intern())],
+            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp",
+                                                                    files: ["App.swift", "Info.plist"],
+                                                                    folders: ["Fonts", "Assets.xcassets"]),
+                      "input:/repo/IceCubesApp/Fonts": try manifestValue("input:/repo/IceCubesApp/Fonts", files: ["Mono.ttf"]),
+                      try extensionFolder.0: try extensionFolder.1])
+
+        let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Ice Cubes' ="), formula)
+        XCTAssertTrue(formula.contains("'Assets.xcassets': Folder(path: 'input:/repo/IceCubesApp/Assets.xcassets').manifest"), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Mono.ttf' = StaticFile(path: 'input:/repo/IceCubesApp/Fonts/Mono.ttf').output"), formula)
+        XCTAssertTrue(formula.contains("\"CFBundleIdentifier\":\"com.example.IceCubesApp\""), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger("), formula)
+    }
+
+    /// The xcconfig a fresh clone lacks is an empty layer, not a stall: the formula is
+    /// emitted with the reference unresolved for the plist builder to report.
+    func test_aMissingXcconfigDoesNotStallTheConversion() throws {
+        let output = try process(
+            projectFile: try fixtureProject,
+            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
+                      try extensionFolder.0: try extensionFolder.1])
+
+        let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("\"CFBundleIdentifier\":\"$(BUNDLE_ID_PREFIX).IceCubesApp\""), formula)
+    }
+}

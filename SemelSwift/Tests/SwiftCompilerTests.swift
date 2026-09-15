@@ -183,6 +183,83 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
         XCTAssertEqual(try subfolderSpecs(output), [:])
     }
+
+    // MARK: - Extra sources
+
+    /// A file a target takes from another target's folder is named one by one on the
+    /// compiler and compiled beside the folder's own, under `extra/`.
+    func test_extraSourceFilesAreCompiledBesideTheFoldersOwn() throws {
+        var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+        input[SwiftCompiler.inputExtraSourceFiles] = ["Entity.swift": .value(try "// entity".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".swift") },
+                       ["extra/Entity.swift", "input:/ext/Sources/Main.swift"])
+    }
+
+    /// A target that borrows every source it has — an extension whose folder no target
+    /// owns — wires no folder at all, and compiles the extras alone.
+    func test_compilesWithExtraSourceFilesAndNoFolder() throws {
+        let configuration = """
+            toolDescriptor.name=\(descriptor.name)
+            toolDescriptor.version=\(descriptor.version)
+            toolDescriptor.platform=\(descriptor.platform)
+            toolDescriptor.architecture=\(descriptor.architecture)
+            moduleName=Notifications
+            """
+        let input = ProcessInput(inputValues: [
+            SwiftCompiler.configuration: ["config": .value(try configuration.intern())],
+            SwiftCompiler.inputExtraSourceFiles: ["NotificationService.swift": .value(try "// service".intern())],
+        ])
+
+        _ = try makeTool().process(input: input)
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".swift") }, ["extra/NotificationService.swift"])
+    }
+
+    // MARK: - Module trees
+
+    /// A package's `modules_P()` carries every `.swiftmodule` behind a product as one
+    /// tree. The trees are merged into one folder on the import path — a module two
+    /// products share is one file — so a target that imports two products compiles with
+    /// a single `-I`.
+    func test_moduleTreesAreMergedIntoOneFolderOnTheImportPath() throws {
+        let timeline = try TreeManifest(entries: [.init(path: "Timeline.swiftmodule", hash: try "t".intern(), mode: 0o644),
+                                                  .init(path: "Models.swiftmodule", hash: try "m".intern(), mode: 0o644)]).toJSON().intern()
+        let explore = try TreeManifest(entries: [.init(path: "Explore.swiftmodule", hash: try "e".intern(), mode: 0o644),
+                                                 .init(path: "Models.swiftmodule", hash: try "m".intern(), mode: 0o644)]).toJSON().intern()
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "import Timeline".intern())]
+        input[SwiftCompiler.inputModuleTrees] = ["Timeline": .value(timeline), "Explore": .value(explore)]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        XCTAssertEqual(arguments.filter { $0 == "-I" }.count, 1, "one import path for the merged trees: \(arguments)")
+        XCTAssertTrue(arguments.contains("modules"), "\(arguments)")
+        XCTAssertEqual(executor.invocations.last?.inputFileNames.filter { $0.hasPrefix("modules/") }.sorted(),
+                       ["modules/Explore.swiftmodule", "modules/Models.swiftmodule", "modules/Timeline.swiftmodule"])
+    }
+
+    /// A `.swiftmodule` records the Clang modules it was built against, so a product's
+    /// module tree carries their header folders too, each under its own name; every
+    /// folder in the tree holding a module map goes on the import path as well.
+    func test_aModuleMapInsideAModuleTreeIsOnTheImportPath() throws {
+        let tree = try TreeManifest(entries: [.init(path: "Markdown.swiftmodule", hash: try "m".intern(), mode: 0o644),
+                                              .init(path: "CAtomic/module.modulemap", hash: try "map".intern(), mode: 0o644),
+                                              .init(path: "CAtomic/CAtomic.h", hash: try "h".intern(), mode: 0o644)]).toJSON().intern()
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "import Markdown".intern())]
+        input[SwiftCompiler.inputModuleTrees] = ["Markdown": .value(tree)]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let importPaths = arguments.indices.filter { arguments[$0] == "-I" }.map { arguments[$0 + 1] }
+        XCTAssertEqual(importPaths, ["modules", "modules/CAtomic"])
+    }
 }
 
 // MARK: - Optimisation level
@@ -238,6 +315,14 @@ final class SwiftOptimisationLevelTests: SemelSwiftTestCase {
 
         XCTAssertEqual(configuration.sdk, "macosx")
         XCTAssertNil(configuration.target)
+    }
+
+    /// What a formula states about the target beyond its sources — conditions, an
+    /// extension's flag — arrives comma-joined and is passed as given.
+    func test_declaredArgumentsAreCarried() throws {
+        let configuration = try self.configuration(["arguments": "-D,DEBUG,-application-extension"])
+        XCTAssertEqual(configuration.arguments, ["-D", "DEBUG", "-application-extension"])
+        XCTAssertEqual(try self.configuration([:]).arguments, [])
     }
 
     /// An iOS package names its SDK and target; both reach the command line.

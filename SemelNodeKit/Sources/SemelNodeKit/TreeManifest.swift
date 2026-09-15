@@ -40,4 +40,40 @@ public struct TreeManifest: PolySerializable, Equatable {
     public func entry(at path: String) -> TreeManifestEntry? {
         entries.first { $0.path == path }
     }
+
+    /// Every file of every tree wired to `port`, as sandbox inputs: each entry placed under
+    /// the wire's key, so two trees holding one path cannot collide, ordered by key then
+    /// path so a command line built from them is the same on every run. A tree still
+    /// pending or in error throws, as any input value does, and the node waits or fails.
+    public static func inputFiles(in input: ProcessInput, port: String) throws -> [FileNameAndContent] {
+        var files: [FileNameAndContent] = []
+        for (key, value) in (input.inputValues[port] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
+            for entry in manifest.entries {
+                files.append(FileNameAndContent(filePath: (Path(key) / Path(entry.path)).string, hash: entry.hash))
+            }
+        }
+        return files
+    }
+
+    /// Every file of every tree wired to `port`, merged into one folder `under`: an entry
+    /// two trees both hold is one file when its content is the same — two products that
+    /// share a target share its object, and linking it twice is a duplicate symbol — and
+    /// an error naming the path when it is not. Ordered by path.
+    public static func mergedInputFiles(in input: ProcessInput, port: String, under folder: String) throws -> [FileNameAndContent] {
+        var hashes: [String: String] = [:]
+        var from: [String: String] = [:]
+        for (key, value) in (input.inputValues[port] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
+            for entry in manifest.entries {
+                if let earlier = hashes[entry.path], earlier != entry.hash {
+                    throw NodeError.other(message: "'\(entry.path)' differs between \(from[entry.path] ?? "?") and \(key)")
+                }
+                hashes[entry.path] = entry.hash
+                from[entry.path] = from[entry.path] ?? key
+            }
+        }
+        return hashes.sorted { $0.key < $1.key }
+            .map { FileNameAndContent(filePath: (Path(folder) / Path($0.key)).string, hash: $0.value) }
+    }
 }
