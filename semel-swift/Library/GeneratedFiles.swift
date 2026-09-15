@@ -68,14 +68,14 @@ public struct ToolchainFacts {
         self.sdkIdentity = sdkIdentity
     }
 
-    /// The real machine: the tools `xcrun` finds, the namespaces the toolchains declare,
+    /// The real machine: the tools the toolchains find on it, the namespaces they declare,
     /// and the SDK facts the Swift nodes will check against.
     public static func fromMachine() throws -> ToolchainFacts {
-        let registry = ToolRunnerRegistry()
-        try DefaultTools.setup(toolExecutorRegistry: registry)
         try SemelSwift.register()
         try SemelClang.register()
         try SemelApple.register()
+        let registry = ToolRunnerRegistry()
+        try ToolDiscovery.registerInstalledTools(into: registry)
         return ToolchainFacts(descriptors: registry.registeredDescriptors,
                               namespaces: ToolNamespaceRegistry.all,
                               sdkPath: SemelSwift.sdkPath(sdk:),

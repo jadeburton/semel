@@ -397,15 +397,18 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
-**B-69** `open` — **Tool discovery belongs to the toolchains, not to SemelNodeKit.**
-`DefaultTools` hard-codes five tool names and how each reports its version, and
-`AppleClangSwiftToolchainHelper` is `xcrun`, `--version` parsing, actool's plist and
+**B-69** `done` — **Tool discovery belongs to the toolchains, not to SemelNodeKit.**
+`DefaultTools` hard-coded five tool names and how each reports its version, and
+`AppleClangSwiftToolchainHelper` was `xcrun`, `--version` parsing, actool's plist and
 `xcodebuild -version` — the one Apple-shaped corner of a package that is otherwise
-agnostic, allowlisted by name in `HermeticityTests`. Each toolchain package should
-register what it knows how to find the way it registers its namespaces — `SemelSwift`
-swiftc and swift, `SemelClang` clang, `SemelApple` actool and xcstringstool — against a
-generic discovery API in NodeKit taking a name and a version reader; `xcrun` itself moves
-to SemelApple. Agreed 2026-09-15, to follow the extensions.
+agnostic, allowlisted by name in `HermeticityTests`. Done 2026-09-15: NodeKit keeps
+`ToolDiscovery` (a `ToolFinder` is a name, a locator and a version reader; the engine
+registers what the finders locate) and `MachineQuery`, the one generic launch-time process
+runner the hermeticity test allows. Each toolchain declares its finders when it registers
+— `SemelSwift` swiftc and swift, `SemelClang` clang, `SemelApple` actool and xcstringstool
+— and each keeps its own `xcrun --find`: the compilers cannot reach SemelApple, and four
+lines per package cost less than a package the compilers would depend on for one call.
+The descriptor's platform and architecture now come from `uname` rather than two literals.
 
 **B-68** `open` — **"Unused configuration key" noise when a formula literal overrides the
 config.** The converter states `target`, `sdk` and the like as literals, so the same keys

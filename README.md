@@ -255,6 +255,7 @@ SemelNodeKit/    Node-authoring API — no dependency on the engine
   SettingNamespace     Where a node's settings live in a config file
   DataObjectStore      Content-addressed blob store
   TypeRegistry          Deserialises nodes by kind ID
+  ToolDiscovery        The tools each toolchain declares, registered under the version found
 SemelSwift/      Swift toolchain node types
   SwiftCompiler          Compiles .swift → .o + .swiftmodule
   SwiftLinker            Links object files into an executable or library
