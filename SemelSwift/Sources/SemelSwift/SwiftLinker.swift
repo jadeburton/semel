@@ -48,7 +48,9 @@ struct SwiftLinkerConfiguration {
         }
         self.linkage = linkage
 
-        arguments = []
+        // Extra flags a formula states about the product — `-framework QuickLook`,
+        // `-e _NSExtensionMain` — comma-joined like every list in a setting.
+        arguments = (properties["arguments"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
         environment = [:]
         sdk = properties["sdk"] ?? defaultSDKName
         target = properties["target"]

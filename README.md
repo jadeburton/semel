@@ -177,6 +177,26 @@ product 'Hello.app/Hello' = SwiftLinker(..., input: ['Hello.o': compiled().objec
 The trees are merged on the way in: a module or object two products share is one file.
 `TreeBuilder` is what makes a tree out of named files, the counterpart of `TreeFile`.
 
+### Building an Xcode project
+
+An `.xcodeproj` is converted the way a package is: a formula names it, and the converter
+— an Apple platform node, not part of the engine — reads the project file and the
+xcconfig files it names, evaluates the build settings the way Xcode layers them, walks
+the application target's folders, and emits the formula for its bundle:
+
+```
+// semel.fmla, beside IceCubesApp.xcodeproj
+include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'iphonesimulator').formula
+```
+
+The emitted formula includes every package the project references — local ones as the
+project's wrappers, remote ones under `Dependencies/` by repository name — compiles the
+synchronized folders against the linked products' module trees, links their object
+trees into the executable, compiles the asset and string catalogs, copies the plain
+resources flat, and builds the Info.plist from the project's file, the generated keys
+and actool's partial. The xcconfig a fresh clone lacks is an empty layer; a `$(VAR)` it
+would have defined is then reported by the plist builder rather than shipped.
+
 ### Dependencies, and clone to build
 
 Semel never fetches anything: every file a build needs has to be inside the input file

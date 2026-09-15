@@ -41,7 +41,10 @@ struct SwiftCompilerConfiguration {
         moduleName = required.value("moduleName")
         try required.check()
 
-        arguments = []
+        // Extra flags a formula states about the target — `-D DEBUG`,
+        // `-application-extension` — comma-joined like every list in a setting. A
+        // formula literal, so a config file cannot change what the target is.
+        arguments = Self.pathList(properties["arguments"])
         environment = [:]
         sdk = properties["sdk"] ?? defaultSDKName
         target = properties["target"]
@@ -402,9 +405,18 @@ struct SwiftCompiler: Node {
             arguments.append("-I"); arguments.append(".")
         }
 
-        // The module trees are merged into one folder, and that folder is on the import path.
+        // The module trees are merged into one folder, and that folder is on the import
+        // path — as is every folder in it holding a module map, since a tree carries the
+        // C targets' headers a .swiftmodule was built against, each under its own name.
         if !inputs.moduleTreeFiles.isEmpty {
             arguments.append("-I"); arguments.append("modules")
+            var moduleMapDirsInTrees = Set<String>()
+            for file in inputs.moduleTreeFiles where (file.filePath as NSString).lastPathComponent == "module.modulemap" {
+                moduleMapDirsInTrees.insert((file.filePath as NSString).deletingLastPathComponent)
+            }
+            for dir in moduleMapDirsInTrees.sorted() {
+                arguments.append("-I"); arguments.append(dir)
+            }
         }
 
         // Add -I flags for each system-library module map directory.

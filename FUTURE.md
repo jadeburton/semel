@@ -28,8 +28,21 @@
   Parts 1 and 2 landed the same day: tree products, and the `SemelApple` nodes. HelloApp
   now carries an asset catalog (icon, image, accent color) and a two-language string
   catalog, its Info.plist is built from the project's file and actool's partial one, and
-  the app shows the compiled image and the localized title in the simulator. What is left
-  is the Xcode project converter (B-65).
+  the app shows the compiled image and the localized title in the simulator.
+
+  2026-09-15: IceCubesApp itself, from its Xcode project. `XcodeProjectConverter` reads
+  the project file and its xcconfig, evaluates the settings, walks the application's
+  three synchronized folders and emits the bundle; every package the project references
+  is included and consumed through its module and object trees. On a fresh copy of the
+  repository — 5,616 files, thirty packages vendored with `xcodebuild
+  -resolvePackageDependencies` — `build icecubes-app --into out` produced `Ice Cubes.app`
+  (a 57 MB executable, Assets.car, two icon PNGs, nineteen `.lproj` folders, fonts and
+  sounds, the Info.plist with actool's icon keys), with no errors, and `simctl install`
+  plus `launch` showed the app's onboarding screen loading instance suggestions from the
+  network. Three things fell out on the way: a symbolic link back up a package tree
+  walked without end, an included formula's own includes were not followed, and a
+  dependency only a test target uses was waited for. The extensions and `prepare` on a
+  project are what is left of B-65.
 
 - Get it working with large c or c++ project
 

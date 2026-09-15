@@ -404,7 +404,10 @@ struct SwiftFormulaConverter: Node {
         func referencedDependencies() -> [SPMPackageDependency] {
             let localTargets = Set(targets.map(\.name))
             var referenced   = Set<String>()
-            for target in targets {
+            // A test target is not built here, so what only it depends on — RevenueCat's
+            // Nimble and snapshot testing — is not fetched by a consumer's resolution
+            // either, and waiting for it would wait forever.
+            for target in targets where target.type != "test" {
                 for dependency in target.dependencies {
                     if let package = dependency.packageName {
                         referenced.insert(package.lowercased())
@@ -873,12 +876,31 @@ struct SwiftFormulaConverter: Node {
             // funcs are the product's public face; the product statement is for this
             // package's own output.
             let moduleWires = allTargets.map { t in
-                "        '\(t.name).swiftmodule': \(compilerFuncName(for: t.name))().swiftmodule"
+                "            '\(t.name).swiftmodule': \(compilerFuncName(for: t.name))().swiftmodule"
             }
+            // A .swiftmodule records the Clang modules it was built against, so a consumer
+            // loading it needs their module maps on its import path too: every C target
+            // and system library the product reaches travels in the same tree, its header
+            // folder under the target's name.
+            var moduleMapTrees: [String] = []
+            var wiredModuleMaps = Set<String>()
+            for target in allTargets {
+                for systemLibrary in collectTransitiveSystemLibraries(root: target, lookupAll: allTargetsNamed)
+                where wiredModuleMaps.insert(systemLibrary.name).inserted {
+                    let folder = "\(systemLibrary.overridePackageFolder ?? rootPackageFolder)/\(systemLibrary.sourcesRelativePath)"
+                    moduleMapTrees.append(Self.folderTreeWire(name: systemLibrary.name, folder: folder))
+                }
+                for clangTarget in collectTransitiveClangTargets(root: target, lookupAll: allTargetsNamed)
+                where wiredModuleMaps.insert(clangTarget.name).inserted {
+                    moduleMapTrees.append(Self.folderTreeWire(name: clangTarget.name,
+                                                              folder: headerFolder(of: clangTarget, packageFolder: rootPackageFolder)))
+                }
+            }
+            let swiftModulesTree = "'swift': TreeBuilder(input: [\n" + moduleWires.joined(separator: ",\n") + "\n        ]).files"
             blocks.append(
                 "func \(FormulaIdentifier.modulesFunc(forProduct: product.name))() =\n" +
-                "    TreeBuilder(input: [\n" +
-                moduleWires.joined(separator: ",\n") + "\n" +
+                "    TreeMerger(input: [\n" +
+                "        " + ([swiftModulesTree] + moduleMapTrees).joined(separator: ",\n        ") + "\n" +
                 "    ]).files")
             blocks.append(
                 "func \(FormulaIdentifier.objectsFunc(forProduct: product.name))() =\n" +
@@ -895,6 +917,12 @@ struct SwiftFormulaConverter: Node {
         }
 
         return blocks.joined(separator: "\n\n")
+    }
+
+    /// One folder of headers and a module map as a tree under `name`, for a product's
+    /// module tree: `'CAtomic': FolderTreeBuilder(under: 'CAtomic', folder: [...]).files`.
+    private static func folderTreeWire(name: String, folder: String) -> String {
+        "'\(name)': FolderTreeBuilder(under: '\(name)', folder: ['folder': Folder(path: '\(folder)').manifest]).files"
     }
 
     // Every product the package should actually produce.

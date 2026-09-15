@@ -105,6 +105,17 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-o", "product"])
     }
 
+    /// A formula states what a product needs beyond its objects — a framework, an
+    /// extension's entry point — as a comma-joined list, and every item reaches the link
+    /// line after the objects.
+    func test_declaredArgumentsReachTheLinkLine() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                        extraConfiguration: ["arguments=-framework,QuickLook,-e,_NSExtensionMain"]))
+
+        XCTAssertEqual(Array(executor.lastArguments.suffix(6)),
+                       ["-o", "product", "-framework", "QuickLook", "-e", "_NSExtensionMain"])
+    }
+
     // MARK: - Object trees
 
     /// A package's `objects_P()` carries every object behind a product as one tree. Two
