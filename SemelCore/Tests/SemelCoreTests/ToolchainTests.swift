@@ -77,7 +77,22 @@ final class AppleClangSwiftToolchainHelperTests: SemelCoreTestCase {
         let registry = ToolRunnerRegistry()
         try DefaultTools.setup(toolExecutorRegistry: registry)
 
-        XCTAssertEqual(Set(registry.registeredDescriptors.map(\.name)), ["clang", "swiftc", "swift"])
+        XCTAssertEqual(Set(registry.registeredDescriptors.map(\.name)),
+                       ["clang", "swiftc", "swift", "actool", "xcstringstool"])
+    }
+
+    /// The two resource tools report their versions differently from the compilers: actool
+    /// answers `--version` with a plist, and xcstringstool has no version of its own, so it
+    /// is identified by the Xcode that ships it. Both must end up with a version that names
+    /// a build, since the descriptor keys the cache.
+    func test_theResourceToolsAreRegisteredUnderVersionsThatNameABuild() throws {
+        let registry = ToolRunnerRegistry()
+        try DefaultTools.setup(toolExecutorRegistry: registry)
+
+        let actool = try XCTUnwrap(registry.registeredDescriptors.first { $0.name == "actool" })
+        XCTAssertTrue(actool.version.hasPrefix("Apple actool version ") && actool.version.contains("("), actool.version)
+        let xcstringstool = try XCTUnwrap(registry.registeredDescriptors.first { $0.name == "xcstringstool" })
+        XCTAssertTrue(xcstringstool.version.hasPrefix("Xcode ") && xcstringstool.version.contains("("), xcstringstool.version)
     }
 
     /// A node pinned to a version that is no longer installed must fail with something the

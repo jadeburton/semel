@@ -8,6 +8,7 @@
 //  and the engineer edits it to pin something else.
 
 import Foundation
+import SemelApple
 import SemelClang
 import SemelNodeKit
 import SemelSwift
@@ -30,6 +31,15 @@ public enum Platform: String, CaseIterable {
         switch self {
         case .macos:        return "macos"
         case .iosSimulator: return "ios"
+        }
+    }
+
+    /// The devices `actool --target-device` compiles for, comma-joined as the setting is
+    /// written.
+    public var targetDevices: String {
+        switch self {
+        case .macos:        return "mac"
+        case .iosSimulator: return "iphone,ipad"
         }
     }
 
@@ -65,6 +75,7 @@ public struct ToolchainFacts {
         try DefaultTools.setup(toolExecutorRegistry: registry)
         try SemelSwift.register()
         try SemelClang.register()
+        try SemelApple.register()
         return ToolchainFacts(descriptors: registry.registeredDescriptors,
                               namespaces: ToolNamespaceRegistry.all,
                               sdkPath: SemelSwift.sdkPath(sdk:),
@@ -149,8 +160,9 @@ public enum GeneratedFiles {
                 "\(entry.namespace).toolDescriptor.platform=\(descriptor.platform)",
                 "\(entry.namespace).toolDescriptor.architecture=\(descriptor.architecture)",
             ]
-            for (key, value) in platformSettings(toolName: entry.toolName, sdkName: platform.sdkName,
-                                                 sdkIdentity: sdkIdentity, sdkPath: sdkPath, target: target) {
+            for (key, value) in platformSettings(toolName: entry.toolName, platform: platform,
+                                                 sdkIdentity: sdkIdentity, sdkPath: sdkPath, target: target,
+                                                 deploymentVersion: deploymentVersion) {
                 lines.append("\(entry.namespace).\(key)=\(value)")
             }
             blocks.append(lines.joined(separator: "\n"))
@@ -160,14 +172,19 @@ public enum GeneratedFiles {
 
     /// The settings a tool's nodes read besides the descriptor, by tool. The Swift
     /// compiler and linker take the SDK by name and check its identity; clang takes it as
-    /// a path and needs the C standards stated. The package reader declares nothing.
-    private static func platformSettings(toolName: String, sdkName: String, sdkIdentity: String,
-                                         sdkPath: String, target: String) -> [(String, String)] {
+    /// a path and needs the C standards stated; actool takes the platform by name with
+    /// the deployment version and devices that decide what it compiles. The package
+    /// reader and xcstringstool declare nothing.
+    private static func platformSettings(toolName: String, platform: Platform, sdkIdentity: String,
+                                         sdkPath: String, target: String, deploymentVersion: String) -> [(String, String)] {
         switch toolName {
         case "swiftc":
-            return [("sdk", sdkName), ("sdkVersion", sdkIdentity), ("target", target)]
+            return [("sdk", platform.sdkName), ("sdkVersion", sdkIdentity), ("target", target)]
         case "clang":
             return [("sdkPath", sdkPath), ("target", target), ("cStandard", cStandard), ("cxxStandard", cxxStandard)]
+        case "actool":
+            return [("platform", platform.sdkName), ("minimumDeploymentTarget", deploymentVersion),
+                    ("targetDevices", platform.targetDevices)]
         default:
             return []
         }

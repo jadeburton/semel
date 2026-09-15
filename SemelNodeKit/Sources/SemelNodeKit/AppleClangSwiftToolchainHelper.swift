@@ -45,6 +45,36 @@ public enum AppleClangSwiftToolchainHelper {
         return parseVersion(from: output)
     }
 
+    /// `actool --version` answers with a plist rather than a line:
+    /// `com.apple.actool.version` holding `short-bundle-version` and `bundle-version`.
+    /// Rendered like the compilers' strings, marketing version then build, since the
+    /// build is what tells two actools of one version apart.
+    public static func actoolVersion(at path: String) -> String? {
+        guard let output = run(path, ["--version"]),
+              let data = output.data(using: .utf8),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let version = plist["com.apple.actool.version"] as? [String: Any],
+              let short = version["short-bundle-version"] as? String else {
+            return nil
+        }
+        let build = version["bundle-version"] as? String
+        return "Apple actool version \(short)" + (build.map { " (\($0))" } ?? "")
+    }
+
+    /// The Xcode that ships the active toolchain, as `xcodebuild -version` reports it:
+    /// `Xcode 26.6 (17F113)`. The version of a tool that has none of its own.
+    public static func xcodeVersion() -> String? {
+        guard let output = xcrun(["xcodebuild", "-version"]) else {
+            return nil
+        }
+        let lines = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let versionLine = lines.first, versionLine.hasPrefix("Xcode ") else {
+            return nil
+        }
+        let build = lines.dropFirst().first?.split(separator: " ").last.map(String.init)
+        return versionLine + (build.map { " (\($0))" } ?? "")
+    }
+
     /// Extracts the tool's own version from its `--version` output: the
     /// `Apple <product> version <number>` string, together with the parenthesised build
     /// identifier when the tool reports one.

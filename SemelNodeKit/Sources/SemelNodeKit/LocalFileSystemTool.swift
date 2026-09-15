@@ -83,6 +83,17 @@ public class LocalFileSystemTool: ToolRunner {
             }
         }
 
+        // An expected output folder exists when the tool runs: `actool --compile <dir>`
+        // and its kind write into a directory they do not create.
+        for folder in expectedOutputFolders {
+            let folderURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(folder)
+            do {
+                try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true)
+            } catch {
+                throw SandboxCreationError(underlying: error)
+            }
+        }
+
         // 3. Configure and launch the process.
         let process = Foundation.Process()
         process.executableURL = Foundation.URL(fileURLWithPath: localPath)

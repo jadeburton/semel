@@ -150,8 +150,14 @@ product 'Hello.app/' = AssetCatalogCompiler(...).files
 ```
 
 The files appear once the tree has, the way a wildcard's matches appear once the folder
-has been read; two products at one path are an error. `export` copies the folder out
-as it is.
+has been read; two products at one path are an error. A folder that collects what
+several tools wrote takes one tree product, merged first:
+
+```
+product 'Hello.app/' = TreeMerger(input: ['assets': assets().files, 'strings': strings().files]).files
+```
+
+`export` copies the folder out as it is.
 
 ### Dependencies, and clone to build
 
@@ -213,6 +219,10 @@ SemelClang/      Clang toolchain node types
   ClangLinker            Links Clang object files
   ClangPreprocessor      Preprocesses headers
   ClangIncludeFinder     Tracks #include dependencies
+SemelApple/      Apple platform node types — what an app bundle needs beyond code
+  AssetCatalogCompiler   actool over .xcassets and .icon folders → Assets.car + icons (a tree)
+  StringCatalogCompiler  xcstringstool over an .xcstrings → one .lproj per language (a tree)
+  InfoPlistBuilder       Merges base, partial plists and keys; resolves $(VAR)
 SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, …)
 ```
 

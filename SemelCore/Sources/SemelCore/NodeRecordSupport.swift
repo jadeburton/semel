@@ -83,19 +83,34 @@ extension NodeRecord {
         let nodeID = try nodeRecord.requireID()
         assert(nodeRecord.parentNodeID != nodeID, "a node cannot be its own parent")
 
+        // Saved now, not with the rest below: collecting a stale sibling deletes it from
+        // its folder, and a folder that finds itself childless deletes itself. This node
+        // is the folder's child from here on, so the folder stays.
+        try database.node.update(nodeRecord)
+
         // The row was inserted above before the node could report its name, so the
         // uniqueness check can only happen here — and a rejection has to back that
         // row out, or a failed creation leaves an unreachable orphan behind.
         if let name = nodeRecord.name, let parentNodeID = nodeRecord.parentNodeID {
             let siblings = try database.node.select(named: name, parentNodeID: parentNodeID)
             if let existing = siblings.first(where: { $0.id != nodeID }) {
-                // The collision is the error worth throwing; backing the row out is best
-                // effort on the way there, short of the machine itself failing.
-                FatalErrors.attempt { try database.node.delete(nodeID: nodeID) }
-                throw NodeError.nameCollision(path: try Self.describePath(database: database,
-                                                                          parentNodeID: parentNodeID,
-                                                                          name: name),
-                                              existingKind: existing.kind)
+                // A sibling nothing references any more is not a collision, it is the
+                // node this one replaces: a product whose definition changed keeps its
+                // path, and the builder that changed it has just unwired the old node in
+                // the same pass, leaving it marked for the idle-time collection. Collect
+                // it now, or the new one can never be created and the builder stays in
+                // error until something else reschedules it.
+                if existing.pendingDeletion, try Self.collectIfUnreferenced(existing, database: database) {
+                    // fall through: the name is free
+                } else {
+                    // The collision is the error worth throwing; backing the row out is
+                    // best effort on the way there, short of the machine itself failing.
+                    FatalErrors.attempt { try database.node.delete(nodeID: nodeID) }
+                    throw NodeError.nameCollision(path: try Self.describePath(database: database,
+                                                                              parentNodeID: parentNodeID,
+                                                                              name: name),
+                                                  existingKind: existing.kind)
+                }
             }
         }
 
@@ -125,6 +140,21 @@ extension NodeRecord {
         try node.notifyParentThisChildAdded()
 
         return nodeRecord
+    }
+
+    /// Deletes `record` now if nothing references it and it may go — the same test and the
+    /// same steps as the idle-time pass, for a node that is in the way of its replacement.
+    /// False if it is still held, in which case it stays and the caller has a collision.
+    private static func collectIfUnreferenced(_ record: NodeRecord, database: DatabaseLayer) throws -> Bool {
+        guard let existingID = record.id, let node = try? record.makeNode(),
+              try node.hasNoOutputWires(), try node.canBeDeleted() else {
+            return false
+        }
+        for inputWire in try database.wire.select(goingToNodeID: existingID) {
+            try inputWire.deleteWire(database: database)
+        }
+        try node.delete()
+        return true
     }
 
     /// Best-effort full path of a would-be child, for error messages only. Falls back to

@@ -98,19 +98,20 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertEqual(files.map(\.mode), [0o644, 0o644, 0o755])
     }
 
-    /// Like a missing output file: the tool "succeeded" but left nothing to collect, and
-    /// the node must not report an empty tree as a result.
-    func test_aMissingOutputFolderIsReported() throws {
+    /// `actool --compile <dir>` writes into a directory it does not create, so an expected
+    /// output folder is there before the tool runs; one the tool leaves empty is an empty
+    /// tree, which is a value.
+    func test_anExpectedOutputFolderExistsWhenTheToolRunsAndMayStayEmpty() throws {
         let result = try LocalFileSystemTool(localPath: "/bin/sh")
-            .execute(arguments: ["-c", "true"],
+            .execute(arguments: ["-c", "test -d out && test -d nested/deeper"],
                      environment: [:],
                      inputFiles: [],
                      expectedOutputFileNames: [],
-                     expectedOutputFolders: ["out"])
+                     expectedOutputFolders: ["out", "nested/deeper"])
 
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertNil(result.outputTrees["out"])
-        XCTAssertTrue(result.errorOutput.contains("Expected output folder not found: out"), result.errorOutput)
+        XCTAssertEqual(result.exitCode, 0, "the folders must exist before the tool runs: \(result.errorOutput)")
+        XCTAssertEqual(result.outputTrees["out"]?.count ?? 0, 0)
+        XCTAssertTrue(result.errorOutput.isEmpty, result.errorOutput)
     }
 
     /// The sandbox is gone when the tool is: nothing a tool leaves behind can be read by

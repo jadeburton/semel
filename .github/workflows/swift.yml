@@ -32,6 +32,9 @@ jobs:
       - name: Test SemelClang
         run: swift test --package-path SemelClang
 
+      - name: Test SemelApple
+        run: swift test --package-path SemelApple
+
       - name: Test SemelCore
         run: swift test --package-path SemelCore
 

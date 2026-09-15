@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import SemelApple
 import SemelClang
 import SemelCore
 import SemelNodeKit
@@ -66,6 +67,7 @@ for signalNumber in [SIGINT, SIGTERM] {
 do {
     try SemelSwift.register()
     try SemelClang.register()
+    try SemelApple.register()
     try BuildEngine.start()
     engineStarted = true
 } catch {

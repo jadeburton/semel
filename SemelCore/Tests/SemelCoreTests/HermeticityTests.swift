@@ -29,7 +29,7 @@ final class HermeticityTests: XCTestCase {
 
     /// Every package whose sources a node function can reach.
     private static let nodeSidePackages = ["SemelNodeKit", "SemelDatabaseModels", "SemelCore",
-                                           "SemelSwift", "SemelClang"]
+                                           "SemelSwift", "SemelClang", "SemelApple"]
 
     /// The files allowed to launch a process, each with the reason. Keep this short: an
     /// entry here is a declared hole in hermeticity.

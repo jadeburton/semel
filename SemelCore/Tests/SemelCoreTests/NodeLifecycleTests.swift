@@ -92,6 +92,39 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         XCTAssertEqual(try database.node.selectAll().count, before)
     }
 
+    /// A product whose definition changed keeps its path: the builder unwires the old
+    /// `OutputFile` and demands a new one at the same name in the same pass, and the old
+    /// one — marked for the idle-time collection, referenced by nothing — must not stand
+    /// in the way. It is collected on the spot and the new node takes the name; otherwise
+    /// the builder stays in error until something else reschedules it.
+    func test_aReplacedProductTakesTheNameOfTheNodeItReplaces() throws {
+        let (old, _) = try GraphSpecNode.parse(
+            "OutputFile(path: 'output:/product', input: ['product': Configuration(role: 'old').output])").findOrCreateMatchingNode()
+        let oldID = try old.requireID()
+        try database.node.updatePendingDeletion(nodeID: oldID, pendingDeletion: true)
+
+        let (new, _) = try GraphSpecNode.parse(
+            "OutputFile(path: 'output:/product', input: ['product': Configuration(role: 'new').output])").findOrCreateMatchingNode()
+
+        XCTAssertNotEqual(try new.requireID(), oldID)
+        XCTAssertNil(try database.node.find(nodeID: oldID), "the stale node is collected, not collided with")
+        XCTAssertEqual(try engine.outputFileSystem.childNode(path: "product")?.id, try new.requireID())
+    }
+
+    /// A sibling that is still referenced is a real collision, whatever its mark says.
+    func test_aReferencedSiblingIsStillACollision() throws {
+        let (old, _) = try GraphSpecNode.parse(
+            "OutputFile(path: 'output:/held', input: ['product': Configuration(role: 'old').output])").findOrCreateMatchingNode()
+        let (consumer, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'x', input: ['config': OutputFile(path: 'output:/held', input: ['product': Configuration(role: 'old').output]).status])")
+            .findOrCreateMatchingNode()
+        XCTAssertNotNil(consumer.id)
+        try database.node.updatePendingDeletion(nodeID: try old.requireID(), pendingDeletion: true)
+
+        XCTAssertThrowsError(try GraphSpecNode.parse(
+            "OutputFile(path: 'output:/held', input: ['product': Configuration(role: 'new').output])").findOrCreateMatchingNode())
+        XCTAssertNotNil(try database.node.find(nodeID: try old.requireID()))
+    }
+
     /// Nameless nodes (compilers, linkers — everything that is not a file-system entry)
     /// share a nil name by design and must not be caught by the check.
     func test_namelessNodesAreNotTreatedAsColliding() throws {
