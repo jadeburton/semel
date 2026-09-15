@@ -80,16 +80,26 @@ extension FormulaFile {
 
         // An include expression may call the file's own funcs, so it is resolved against
         // them — before the included text is merged in, which is what keeps the direction
-        // of definition one way.
+        // of definition one way. An included text may include in turn — a project's
+        // generated formula includes each package's — so includes are followed to the
+        // end, each spec once: two texts that include the same package name one node.
         let own = FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader)
-        for include in file.includes {
+        var pending = file.includes
+        var included = Set<String>()
+        while !pending.isEmpty {
+            let include = pending.removeFirst()
             let spec = try own.resolve(include: include).asString(omitOutputPort: false)
+            guard included.insert(spec).inserted else {
+                continue
+            }
             guard let includedFormula = try includeReader(spec) else {
                 return [:]
             }
             // Generated text names every path absolutely, so the base path is nominal.
             var includedParser = FormulaParser(try FormulaLexer.tokenize(includedFormula, basePath: basePath))
-            file = try file.merging(try includedParser.parseFile())
+            let includedFile = try includedParser.parseFile()
+            file = try file.merging(includedFile)
+            pending += includedFile.includes
         }
 
         return try FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader).resolve()

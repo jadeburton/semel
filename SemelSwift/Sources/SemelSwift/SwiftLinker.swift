@@ -48,7 +48,9 @@ struct SwiftLinkerConfiguration {
         }
         self.linkage = linkage
 
-        arguments = []
+        // Extra flags a formula states about the product — `-framework QuickLook`,
+        // `-e _NSExtensionMain` — comma-joined like every list in a setting.
+        arguments = (properties["arguments"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
         environment = [:]
         sdk = properties["sdk"] ?? defaultSDKName
         target = properties["target"]
@@ -75,6 +77,11 @@ struct SwiftLinker: Node {
     /// in; with no archive present the modulemap's `link "sqlite3"` resolves against the
     /// SDK and the product depends on the system copy, which is the pre-existing default.
     static let libraryFolders = "libraryFolders"
+    /// Trees of object files, one wire each — what a package's `objects_P()` carries: every
+    /// object behind a product, decided by the package's converter, linked in by a formula
+    /// that only knows the product's name. The trees are merged: two products that share
+    /// a target share its object, and linking it twice would be a duplicate symbol.
+    static let objectTrees = "objectTrees"
     static let output = "output"
     static let infoLog = "infoLog"
     /// Declaring this port is what makes ProjectBuilder wire the linked file's Unix mode
@@ -93,6 +100,7 @@ struct SwiftLinker: Node {
             .required(configuration),
             .required(input),
             .optional(libraryFolders),
+            .optional(objectTrees),
             .dynamic(libraries),
         ],
         outputPorts: [output, infoLog, fileMetadata]
@@ -118,6 +126,7 @@ struct SwiftLinker: Node {
             for (fileName, nodeValue) in input.inputValues[SwiftLinker.input]!.sorted(by: { $0.key < $1.key }) {
                 objectFiles.append(.init(filePath: fileName, hash: try nodeValue.expectValue()))
             }
+            objectFiles += try TreeManifest.mergedInputFiles(in: input, port: SwiftLinker.objectTrees, under: "objects")
 
             self.objectFiles = objectFiles
 

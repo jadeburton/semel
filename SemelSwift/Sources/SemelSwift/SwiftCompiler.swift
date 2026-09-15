@@ -41,7 +41,10 @@ struct SwiftCompilerConfiguration {
         moduleName = required.value("moduleName")
         try required.check()
 
-        arguments = []
+        // Extra flags a formula states about the target — `-D DEBUG`,
+        // `-application-extension` — comma-joined like every list in a setting. A
+        // formula literal, so a config file cannot change what the target is.
+        arguments = Self.pathList(properties["arguments"])
         environment = [:]
         sdk = properties["sdk"] ?? defaultSDKName
         target = properties["target"]
@@ -142,6 +145,12 @@ struct SwiftCompiler: Node {
     /// watchedFolderManifest port. Wire key = the subfolder's full input path.
     static let inputSubfolders       = "inputSubfolders"
     static let inputModules          = "inputModules"         // one wire per upstream swiftmodule
+    /// Trees of `.swiftmodule` files, one wire each — what a package's `modules_P()`
+    /// carries: every module behind a product, decided by the package's converter, made
+    /// importable by a formula that only knows the product's name. The trees are merged
+    /// into one `modules` folder on the import path; two products sharing a target share
+    /// its module.
+    static let inputModuleTrees      = "moduleTrees"
     /// Folder manifests for system-library targets (e.g. GRDBSQLite).
     /// Each entry key becomes the subdirectory name placed in the sandbox.
     static let inputModuleMapFolders = "inputModuleMapFolders"
@@ -164,6 +173,7 @@ struct SwiftCompiler: Node {
             .required(configuration),
             .required(inputFolder),
             .optional(inputModules),
+            .optional(inputModuleTrees),
             .optional(inputModuleMapFolders),
             .dynamic(inputSourceFiles),
             .dynamic(inputSubfolders),
@@ -185,6 +195,8 @@ struct SwiftCompiler: Node {
         let configuration: SwiftCompilerConfiguration
         let sourceFiles: [FileNameAndContent]
         let moduleFiles: [FileNameAndContent]
+        /// Every file of every module tree, placed under its wire's key.
+        let moduleTreeFiles: [FileNameAndContent]
         let moduleMapFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
         let subfolderManifests: [(String, FolderManifest)]
@@ -207,6 +219,8 @@ struct SwiftCompiler: Node {
                     FileNameAndContent(filePath: fileName + ".swiftmodule", hash: try nodeValue.expectValue())
                 }
                 .sorted { $0.filePath < $1.filePath }
+
+            moduleTreeFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.inputModuleTrees, under: "modules")
 
             // Module map files: wire key is already "<dirName>/<filename>".
             moduleMapFiles = try (input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:])
@@ -391,6 +405,20 @@ struct SwiftCompiler: Node {
             arguments.append("-I"); arguments.append(".")
         }
 
+        // The module trees are merged into one folder, and that folder is on the import
+        // path — as is every folder in it holding a module map, since a tree carries the
+        // C targets' headers a .swiftmodule was built against, each under its own name.
+        if !inputs.moduleTreeFiles.isEmpty {
+            arguments.append("-I"); arguments.append("modules")
+            var moduleMapDirsInTrees = Set<String>()
+            for file in inputs.moduleTreeFiles where (file.filePath as NSString).lastPathComponent == "module.modulemap" {
+                moduleMapDirsInTrees.insert((file.filePath as NSString).deletingLastPathComponent)
+            }
+            for dir in moduleMapDirsInTrees.sorted() {
+                arguments.append("-I"); arguments.append(dir)
+            }
+        }
+
         // Add -I flags for each system-library module map directory.
         var moduleMapDirs = Set<String>()
         for file in inputs.moduleMapFiles {
@@ -412,7 +440,7 @@ struct SwiftCompiler: Node {
         let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleMapFiles,
+            inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.moduleMapFiles,
             expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput])
 
         let objectBytes = result.outputFiles[objectOutput] ?? []

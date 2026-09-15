@@ -17,6 +17,7 @@ public enum SemelApple {
             AssetCatalogCompiler.self,
             StringCatalogCompiler.self,
             InfoPlistBuilder.self,
+            XcodeProjectConverter.self,
         ])
 
         // What `tools` prints under each namespace. The plist builder runs no tool.

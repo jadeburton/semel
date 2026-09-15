@@ -105,6 +105,51 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-o", "product"])
     }
 
+    /// A formula states what a product needs beyond its objects — a framework, an
+    /// extension's entry point — as a comma-joined list, and every item reaches the link
+    /// line after the objects.
+    func test_declaredArgumentsReachTheLinkLine() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                        extraConfiguration: ["arguments=-framework,QuickLook,-e,_NSExtensionMain"]))
+
+        XCTAssertEqual(Array(executor.lastArguments.suffix(6)),
+                       ["-o", "product", "-framework", "QuickLook", "-e", "_NSExtensionMain"])
+    }
+
+    // MARK: - Object trees
+
+    /// A package's `objects_P()` carries every object behind a product as one tree. Two
+    /// products sharing a target share its object: it is linked once, since linking it
+    /// twice would be a duplicate symbol. All of them come after the node's own objects.
+    func test_theObjectTreesAreMergedAndLinkedOnceEach() throws {
+        let timeline = try TreeManifest(entries: [.init(path: "Timeline.o", hash: try "t".intern(), mode: 0o644),
+                                                  .init(path: "Models.o", hash: try "m".intern(), mode: 0o644)]).toJSON().intern()
+        let explore = try TreeManifest(entries: [.init(path: "Explore.o", hash: try "e".intern(), mode: 0o644),
+                                                 .init(path: "Models.o", hash: try "m".intern(), mode: 0o644)]).toJSON().intern()
+        var input = try makeInput(objectFiles: ["App.o"]).inputValues
+        input[SwiftLinker.objectTrees] = ["Timeline": .value(timeline), "Explore": .value(explore)]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".o") },
+                       ["App.o", "objects/Explore.o", "objects/Models.o", "objects/Timeline.o"])
+        XCTAssertEqual(executor.invocations.last?.inputFileNames.sorted(),
+                       ["App.o", "objects/Explore.o", "objects/Models.o", "objects/Timeline.o"])
+    }
+
+    /// The same path with different content in two trees is two different objects, and
+    /// the formula that brought them together is wrong; the error names the path.
+    func test_anObjectThatDiffersBetweenTreesIsAnError() throws {
+        let one = try TreeManifest(entries: [.init(path: "Models.o", hash: try "m1".intern(), mode: 0o644)]).toJSON().intern()
+        let two = try TreeManifest(entries: [.init(path: "Models.o", hash: try "m2".intern(), mode: 0o644)]).toJSON().intern()
+        var input = try makeInput(objectFiles: ["App.o"]).inputValues
+        input[SwiftLinker.objectTrees] = ["A": .value(one), "B": .value(two)]
+
+        XCTAssertThrowsError(try makeTool().process(input: ProcessInput(inputValues: input))) { error in
+            XCTAssertTrue("\(error)".contains("Models.o"), "\(error)")
+        }
+    }
+
     // MARK: - Vendored system libraries
 
     private func file(_ name: String) -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }

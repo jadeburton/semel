@@ -135,6 +135,7 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
         guard let children = try? fm.contentsOfDirectory(atPath: path) else {
             return []
         }
+        let realDirectory = (path as NSString).resolvingSymlinksInPath
         return children.compactMap { name -> FileWildcardEntry? in
             guard !name.hasPrefix(".") else {
                 return nil
@@ -144,9 +145,22 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
             guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else {
                 return nil
             }
+            // A symbolic link into a folder above this one is a cycle: following it
+            // would walk the same tree without end, growing until memory ran out. A link
+            // elsewhere is followed, since a package may keep sources behind one.
+            if isDir.boolValue, Self.isSymbolicLink(fullPath) {
+                let realChild = (fullPath as NSString).resolvingSymlinksInPath
+                if realDirectory == realChild || realDirectory.hasPrefix(realChild + "/") {
+                    return nil
+                }
+            }
             return FileWildcardEntry(path: Path(name),
                                      kind: isDir.boolValue ? .folder : .file,
                                      isMissing: false, isUnreferenced: false)
         }.sorted { $0.path.string < $1.path.string }
+    }
+
+    private static func isSymbolicLink(_ path: String) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeSymbolicLink
     }
 }

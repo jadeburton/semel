@@ -132,6 +132,27 @@ final class ProjectBuilderTests: SemelCoreTestCase {
                        ["output:/repo/libX.a"])
     }
 
+    /// An included text may include in turn — a project's generated formula includes each
+    /// package's. The nested include is wired once the outer text has arrived, and the
+    /// nested text's funcs are callable from the outer text once both are there.
+    func test_followsAnIncludeInsideAnIncludedText() throws {
+        let innerNode = "Configuration(role: 'package').output"
+        let outer = "include \(innerNode)\nproduct 'App' = kit().output"
+        let inner = "func kit() = Configuration(moduleName: 'Kit')"
+
+        let firstPass = try process(formula: "include \(includedNode)",
+                                    includes: [includedNode: .value(try outer.intern())])
+        XCTAssertEqual(firstPass.inputWireSpecs[ProjectBuilder.includesInputPort]?.keys.sorted(),
+                       [innerNode, includedNode].sorted(), "the nested include is wired")
+        XCTAssertEqual(firstPass.inputWireSpecs[ProjectBuilder.productInputPort], [:])
+
+        let secondPass = try process(formula: "include \(includedNode)",
+                                     includes: [includedNode: .value(try outer.intern()),
+                                                innerNode: .value(try inner.intern())])
+        XCTAssertEqual(try XCTUnwrap(secondPass.inputWireSpecs[ProjectBuilder.productInputPort]).keys.sorted(),
+                       ["output:/repo/App"])
+    }
+
     /// A pending value on the wire — the node is still waiting on its own inputs — is the
     /// same as no value: nothing is published, and the wire is kept.
     func test_aPendingIncludePublishesNothingYet() throws {
