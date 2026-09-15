@@ -45,9 +45,13 @@ let folder = URL(fileURLWithPath: arguments[0], isDirectory: true)
 
 do {
     let report = try Preparation.run(folder: folder, platform: platform)
-    print("Roots:")
-    for root in report.roots {
-        print("  \(root.name) (\(root.folder.path))")
+    if let project = report.project {
+        print("Project: \(project)")
+    } else {
+        print("Roots:")
+        for root in report.roots {
+            print("  \(root.name) (\(root.folder.path))")
+        }
     }
     if report.vendored.isEmpty {
         print("No dependencies to vendor.")

@@ -383,16 +383,12 @@ walk.** `FolderTreeWalk` in SemelNodeKit is what `AssetCatalogCompiler` uses; th
 `buildInputSourceFilesSpecs` / `buildInputSubfoldersSpecs` do the same with a `SourceScope`
 filter. Move it over, with `fileSpecs(of:include:)` carrying the scope.
 
-**B-65** `open` — **`XcodeProjectConverter`: extensions, and `prepare` on an `.xcodeproj`.**
-The application target is done (2026-09-15): a package product travels as its module and
-object trees (`modules_P()`, `objects_P()`, with every C target's header folder in the
-module tree), the converter reads the project and its xcconfig files, evaluates the
-settings, walks the synchronized folders and emits the bundle, and IceCubesApp built from
-its project installs and launches in the simulator. Left: the four extensions under
-`PlugIns/` (`-e _NSExtensionMain`, `-application-extension`, each its own bundle with its
-`NSExtension` plist), and `prepare` treating a folder holding an `.xcodeproj` as a root —
-today the tree is prepared by hand with `xcodebuild -resolvePackageDependencies` and a
-copy of the checkouts. Device signing is deliberately out until then.
+B-65 is done (2026-09-15): `XcodeProjectConverter` builds the application and the four
+extensions it embeds from the project file, and `semel-swift prepare` on a folder holding
+an `.xcodeproj` resolves the project's packages through Xcode, vendors them and writes the
+formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
+two commands. What that left open has its own items: B-67, B-68, B-69, and device signing,
+which is deliberately out — the simulator needs none beyond what `ld` does.
 
 **B-67** `open` — **A converted project publishes every package's archive beside the app.**
 Each included package formula publishes its `lib<P>.a` products beside the including
@@ -400,6 +396,19 @@ formula, so the app's build root ends with twenty archives nobody asked for — 
 for IceCubes. An include that brings only funcs, not products, or a package converter
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
+
+**B-69** `done` — **Tool discovery belongs to the toolchains, not to SemelNodeKit.**
+`DefaultTools` hard-coded five tool names and how each reports its version, and
+`AppleClangSwiftToolchainHelper` was `xcrun`, `--version` parsing, actool's plist and
+`xcodebuild -version` — the one Apple-shaped corner of a package that is otherwise
+agnostic, allowlisted by name in `HermeticityTests`. Done 2026-09-15: NodeKit keeps
+`ToolDiscovery` (a `ToolFinder` is a name, a locator and a version reader; the engine
+registers what the finders locate) and `MachineQuery`, the one generic launch-time process
+runner the hermeticity test allows. Each toolchain declares its finders when it registers
+— `SemelSwift` swiftc and swift, `SemelClang` clang, `SemelApple` actool and xcstringstool
+— and each keeps its own `xcrun --find`: the compilers cannot reach SemelApple, and four
+lines per package cost less than a package the compilers would depend on for one call.
+The descriptor's platform and architecture now come from `uname` rather than two literals.
 
 **B-68** `open` — **"Unused configuration key" noise when a formula literal overrides the
 config.** The converter states `target`, `sdk` and the like as literals, so the same keys

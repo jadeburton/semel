@@ -56,8 +56,14 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.xcconfigs],
                        ["input:/repo/App.xcconfig": "StaticFile(path: 'input:/repo/App.xcconfig').output"])
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders],
-                       ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').manifest"])
+                       ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').manifest",
+                        "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').manifest"],
+                       "the embedded extension's folder is walked too")
         XCTAssertTrue(isPending(output))
+    }
+
+    private var extensionFolder: (String, NodeValue) {
+        get throws { ("input:/repo/IceCubesShareExtension", try manifestValue("input:/repo/IceCubesShareExtension", files: ["Share.swift"])) }
     }
 
     /// The folder is walked one level per pass, like every folder walk, except into a
@@ -70,7 +76,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                                                                                          folders: ["Views", "Assets.xcassets"])])
 
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(),
-                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesApp/Views"])
+                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesApp/Views", "input:/repo/IceCubesShareExtension"])
         XCTAssertTrue(isPending(output))
     }
 
@@ -84,7 +90,8 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp",
                                                                     files: ["App.swift", "Info.plist"],
                                                                     folders: ["Fonts", "Assets.xcassets"]),
-                      "input:/repo/IceCubesApp/Fonts": try manifestValue("input:/repo/IceCubesApp/Fonts", files: ["Mono.ttf"])])
+                      "input:/repo/IceCubesApp/Fonts": try manifestValue("input:/repo/IceCubesApp/Fonts", files: ["Mono.ttf"]),
+                      try extensionFolder.0: try extensionFolder.1])
 
         let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
         XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Ice Cubes' ="), formula)
@@ -100,7 +107,8 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         let output = try process(
             projectFile: try fixtureProject,
             xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
-            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"])])
+            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
+                      try extensionFolder.0: try extensionFolder.1])
 
         let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
         XCTAssertTrue(formula.contains("\"CFBundleIdentifier\":\"$(BUNDLE_ID_PREFIX).IceCubesApp\""), formula)

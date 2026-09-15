@@ -41,8 +41,11 @@
   plus `launch` showed the app's onboarding screen loading instance suggestions from the
   network. Three things fell out on the way: a symbolic link back up a package tree
   walked without end, an included formula's own includes were not followed, and a
-  dependency only a test target uses was waited for. The extensions and `prepare` on a
-  project are what is left of B-65.
+  dependency only a test target uses was waited for. Later the same day the four
+  extensions followed — each a bundle under `PlugIns/`, the simulator's plugin registry
+  listing all of them — and `prepare` learned a folder holding a project. The loop for an
+  app is now the same two commands as for a package tree: `semel-swift prepare <clone>
+  --platform ios-simulator`, then `semel 'base <parent>' 'build <clone> --into out'`.
 
 - Get it working with large c or c++ project
 

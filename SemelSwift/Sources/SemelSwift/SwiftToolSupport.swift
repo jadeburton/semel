@@ -6,10 +6,12 @@
 import Foundation
 import SemelNodeKit
 
-// Every xcrun query goes through the toolchain helper — the one sanctioned process launch
-// besides the sandboxed tool runner, and the one HermeticityTests allows.
-private func xcrun(_ arguments: [String]) -> String? {
-    AppleClangSwiftToolchainHelper.xcrun(arguments)
+/// Runs `xcrun` with `arguments` and returns its trimmed output, or nil if it has none.
+/// Every question this package asks the machine — where a tool is, which SDK is installed
+/// — goes through `MachineQuery`, the one launch-time process runner HermeticityTests
+/// allows besides the sandboxed tool runner.
+func xcrun(_ arguments: [String]) -> String? {
+    MachineQuery.output(of: "/usr/bin/xcrun", arguments)
 }
 
 // MARK: - Which SDK

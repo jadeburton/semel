@@ -235,8 +235,33 @@ final class PrepareTests: XCTestCase {
                                       platforms: name == "Timeline" ? ["ios": "18.0"] : [:])
             },
             vendor: vendored,
+            vendorProject: { project, into in
+                self.vendoredProject = (project, into)
+                return []
+            },
             facts: { self.facts() })
     }
+
+    private var vendoredProject: (URL, URL)?
+
+    /// A project file in the OpenStep form Xcode writes, cut to what `prepare` reads: one
+    /// application with a deployment target.
+    private let projectFixture = """
+        // !$*UTF8*$!
+        {
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 ); };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { }; };
+                G1 = { isa = PBXGroup; children = ( ); sourceTree = "<group>"; };
+                T1 = { isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application";
+                       buildConfigurationList = CL2; buildPhases = ( ); fileSystemSynchronizedGroups = ( ); packageProductDependencies = ( ); };
+                CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
+                C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { IPHONEOS_DEPLOYMENT_TARGET = 18.5; PRODUCT_NAME = App; }; };
+            };
+            rootObject = P1;
+        }
+        """
 
     func test_writesTheFormulaAndConfigBesideThePackagesAndVendorsTheRoots() throws {
         try write("Packages/Timeline/Package.swift")
@@ -259,6 +284,36 @@ final class PrepareTests: XCTestCase {
         XCTAssertTrue(formula.contains("include package(p: <Timeline>)"), "got:\n\(formula)")
         let config = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
         XCTAssertTrue(config.contains("swift.compiler.target=arm64-apple-ios18.0-simulator"), "got:\n\(config)")
+    }
+
+    // MARK: - A folder holding a project
+
+    /// An `.xcodeproj` makes the folder a project: it is the one root, its packages are
+    /// resolved through Xcode, the formula names the converter, and the config's target
+    /// carries the application's deployment target.
+    func test_aProjectIsTheRootAndItsDeploymentTargetIsTheBuilds() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/Packages/Models/Package.swift")
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(report.project, "App.xcodeproj")
+        XCTAssertEqual(report.roots, [], "the project is the root, not the packages under it")
+        XCTAssertEqual(vendoredProject?.0, folder("App/App.xcodeproj"))
+        XCTAssertEqual(vendoredProject?.1, folder("App/Dependencies"))
+        let formula = try String(contentsOf: folder("App").appendingPathComponent("semel.fmla"), encoding: .utf8)
+        XCTAssertTrue(formula.contains("include XcodeProjectConverter(path: <App.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'iphonesimulator').formula"), "got:\n\(formula)")
+        let config = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertTrue(config.contains("swift.compiler.target=arm64-apple-ios18.5-simulator"), "got:\n\(config)")
+    }
+
+    func test_twoProjectsInOneFolderIsAnError() throws {
+        try write("App/One.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/Two.xcodeproj/project.pbxproj", projectFixture)
+
+        XCTAssertThrowsError(try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())) { error in
+            XCTAssertTrue("\(error)".contains("One.xcodeproj") && "\(error)".contains("Two.xcodeproj"), "\(error)")
+        }
     }
 
     /// A project that ships its own formula or config has already decided: neither is

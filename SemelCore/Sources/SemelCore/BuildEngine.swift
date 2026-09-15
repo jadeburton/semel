@@ -99,7 +99,9 @@ public final class BuildEngine {
     init(database: DatabaseLayer, startProcessingLoop: Bool = true) throws {
         try Self.registerTypes()
 
-        try DefaultTools.setup(toolExecutorRegistry: .instance)
+        // The tools the installed toolchains declared, located on this machine now. The
+        // engine knows none of them by name; a host registers its toolchains first.
+        try ToolDiscovery.registerInstalledTools(into: .instance)
         self.database = database
 
         if startProcessingLoop {

@@ -1,0 +1,81 @@
+//
+//  AppleToolDiscovery.swift
+//  SemelApple
+//
+//  Where the resource tools are on this machine and what version they report — what this
+//  package declares to `ToolDiscovery` when it registers. The two report their versions
+//  differently from the compilers: `actool` answers `--version` with a plist, and
+//  `xcstringstool` answers nothing, so a tool with no version of its own is identified by
+//  the Xcode that ships it, which is what decides its behaviour.
+//
+
+import Foundation
+import SemelNodeKit
+
+enum AppleToolDiscovery {
+
+    /// The tools this package runs, each located through the active toolchain.
+    static var finders: [ToolFinder] {
+        [
+            ToolFinder(name: "actool", locate: { locate("actool") }, version: actoolVersion(at:)),
+            ToolFinder(name: "xcstringstool", locate: { locate("xcstringstool") }, version: { _ in xcodeVersion() }),
+        ]
+    }
+
+    /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`, or nil if
+    /// there is no such tool. Every question this package asks the machine goes through
+    /// `MachineQuery`, the one launch-time process runner HermeticityTests allows besides
+    /// the sandboxed tool runner.
+    static func locate(_ toolName: String) -> String? {
+        guard let path = xcrun(["--find", toolName]),
+              FileManager.default.isExecutableFile(atPath: path) else {
+            return nil
+        }
+        return path
+    }
+
+    private static func xcrun(_ arguments: [String]) -> String? {
+        MachineQuery.output(of: "/usr/bin/xcrun", arguments)
+    }
+
+    // MARK: - actool
+
+    /// The version the actool at `path` reports, or nil if it reports nothing recognisable.
+    static func actoolVersion(at path: String) -> String? {
+        MachineQuery.output(of: path, ["--version"]).flatMap(actoolVersion(fromPlist:))
+    }
+
+    /// `actool --version` answers with a plist rather than a line: `com.apple.actool.version`
+    /// holding `short-bundle-version` and `bundle-version`. Rendered like the compilers'
+    /// strings, marketing version then build, since the build is what tells two actools of
+    /// one version apart.
+    static func actoolVersion(fromPlist output: String) -> String? {
+        guard let data = output.data(using: .utf8),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let version = plist["com.apple.actool.version"] as? [String: Any],
+              let short = version["short-bundle-version"] as? String else {
+            return nil
+        }
+        let build = version["bundle-version"] as? String
+        return "Apple actool version \(short)" + (build.map { " (\($0))" } ?? "")
+    }
+
+    // MARK: - Xcode
+
+    /// The Xcode that ships the active toolchain, as `xcodebuild -version` reports it:
+    /// `Xcode 26.6 (17F113)`. The version of a tool that has none of its own.
+    static func xcodeVersion() -> String? {
+        xcrun(["xcodebuild", "-version"]).flatMap(xcodeVersion(from:))
+    }
+
+    /// `xcodebuild -version` answers on two lines, `Xcode <version>` then `Build version
+    /// <build>`; the build is kept for the same reason the compilers' build identifiers are.
+    static func xcodeVersion(from output: String) -> String? {
+        let lines = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let versionLine = lines.first, versionLine.hasPrefix("Xcode ") else {
+            return nil
+        }
+        let build = lines.dropFirst().first?.split(separator: " ").last.map(String.init)
+        return versionLine + (build.map { " (\($0))" } ?? "")
+    }
+}

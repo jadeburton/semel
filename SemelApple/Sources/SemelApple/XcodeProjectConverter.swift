@@ -120,7 +120,12 @@ public struct XcodeProjectConverter: Node {
         // Demanded alongside the xcconfig files, so the two waits overlap.
         let manifests = FolderTreeWalk.manifests(in: input, port: Self.folders)
         let arrived = Dictionary(uniqueKeysWithValues: manifests.map { ($0.key, $0.manifest) })
-        let sourceFolders = application.synchronizedFolders.map { "\(projectFolder)/\($0.path)" }
+        // The application's folders and every embedded extension's: each is a bundle
+        // whose resources come from its own folder.
+        let embedded = application.embeddedExtensions.compactMap { name in
+            project.targets.first { $0.productFileName == name && $0.isExtension }
+        }
+        let sourceFolders = ([application] + embedded).flatMap(\.synchronizedFolders).map { "\(projectFolder)/\($0.path)" }
         var demanded: [String] = sourceFolders
         var index = 0
         while index < demanded.count {

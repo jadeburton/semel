@@ -43,8 +43,9 @@ final class ToolsCommandTests: XCTestCase {
             .appendingPathComponent("semel-cli-tests/\(UUID().uuidString)", isDirectory: true))
         let database = try DatabaseLayer()
         BuildEngine.shared = try BuildEngine(database: database, startProcessingLoop: false)
-        // After the engine: its constructor registers the machine's real tools, and these
-        // tests must see only the descriptors they register themselves.
+        // After the engine: its constructor registers whatever real tools the toolchains
+        // have declared, and these tests must see only the descriptors they register
+        // themselves.
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
         // The real registrations, so the namespaces printed are the ones the toolchains own.
         try SemelSwift.register()

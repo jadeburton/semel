@@ -219,11 +219,19 @@ Then it writes `semel.fmla` (one `include` per root, all under one build root) a
 SDK this machine has, and a target at the highest deployment version the packages declare
 (`macos` is the default platform).
 
+A folder holding an `.xcodeproj` is a project: the project is the one root, its packages
+— the ones it declares and the ones its local packages reach — are resolved through
+`xcodebuild -resolvePackageDependencies` and vendored the same way, the formula names
+`XcodeProjectConverter`, and the config's target carries the application's deployment
+target. The one file `prepare` does not write is the xcconfig a project's README asks a
+developer to create; without it the bundle identifier's `$(BUNDLE_ID_PREFIX)` is reported
+unresolved at build time.
+
 It is the same command every time: after cloning, and again after changing a dependency.
 Each vendored copy is replaced, not merged; a formula or config already there is kept, so
 edits survive, and a project that ships its own needs no `prepare` at all. Semel itself
-knows nothing of Swift packages; `semel-swift` is the Swift conversion tool, and another
-toolchain gets one of its own if it needs one.
+knows nothing of Swift packages or Xcode projects; `semel-swift` is the Swift conversion
+tool, and another toolchain gets one of its own if it needs one.
 
 ## Architecture
 
@@ -247,6 +255,7 @@ SemelNodeKit/    Node-authoring API — no dependency on the engine
   SettingNamespace     Where a node's settings live in a config file
   DataObjectStore      Content-addressed blob store
   TypeRegistry          Deserialises nodes by kind ID
+  ToolDiscovery        The tools each toolchain declares, registered under the version found
 SemelSwift/      Swift toolchain node types
   SwiftCompiler          Compiles .swift → .o + .swiftmodule
   SwiftLinker            Links object files into an executable or library

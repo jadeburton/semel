@@ -137,6 +137,9 @@ struct SwiftCompiler: Node {
 
     static let configuration         = "configuration"
     static let inputSourceFiles      = "sourceFiles"          // dynamic: one wire per .swift file
+    /// Source files a formula names one by one, beside the folder's — what a target takes
+    /// from another target's folder. Placed in the sandbox under `extra/` by wire key.
+    static let inputExtraSourceFiles = "extraSourceFiles"
     static let inputFolder           = "inputFolder"          // manifest to watch for swift files
     /// Dynamic port — one manifest per subfolder discovered beneath `inputFolder`.
     /// A FolderManifest lists only its immediate children, so a nested source tree is
@@ -171,7 +174,10 @@ struct SwiftCompiler: Node {
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
-            .required(inputFolder),
+            // Optional: a target that borrows every source it has, as an extension can,
+            // has no folder of its own.
+            .optional(inputFolder),
+            .optional(inputExtraSourceFiles),
             .optional(inputModules),
             .optional(inputModuleTrees),
             .optional(inputModuleMapFolders),
@@ -208,11 +214,15 @@ struct SwiftCompiler: Node {
 
             configuration = try .init(properties: [String: String](plainText: configString))
 
-            sourceFiles = try (input.inputValues[SwiftCompiler.inputSourceFiles] ?? [:])
+            let discovered = try (input.inputValues[SwiftCompiler.inputSourceFiles] ?? [:])
                 .map { fileName, nodeValue in
                     FileNameAndContent(filePath: fileName, hash: try nodeValue.expectValue())
                 }
-                .sorted { $0.filePath < $1.filePath }
+            let extra = try (input.inputValues[SwiftCompiler.inputExtraSourceFiles] ?? [:])
+                .map { fileName, nodeValue in
+                    FileNameAndContent(filePath: "extra/" + fileName, hash: try nodeValue.expectValue())
+                }
+            sourceFiles = (discovered + extra).sorted { $0.filePath < $1.filePath }
 
             moduleFiles = try (input.inputValues[SwiftCompiler.inputModules] ?? [:])
                 .map { fileName, nodeValue in
