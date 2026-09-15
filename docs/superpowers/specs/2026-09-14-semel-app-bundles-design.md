@@ -111,6 +111,94 @@ hand-written formula, and because its output is only ever the formula parts 1 an
 expressible. The acceptance test is IceCubesApp: `prepare`, `build --into`, `simctl
 install`, launch.
 
+### What IceCubesApp's project actually contains (2026-09-15 survey)
+
+Five native targets: the application and four extensions (share, notifications,
+widgets, action), each embedded in the app's `PlugIns/` by the one `PBXCopyFilesBuildPhase`.
+No `PBXSourcesBuildPhase` lists a file: every target is a Xcode 16
+`PBXFileSystemSynchronizedRootGroup` — the folder *is* the target's sources and resources,
+with `membershipExceptions` naming what to leave out (`Info.plist`, files that belong to
+another target). Fourteen local packages are plain `PBXFileReference` wrappers
+(`Packages/Timeline`); four remote packages are `XCRemoteSwiftPackageReference`s. Every
+target has `GENERATE_INFOPLIST_FILE = YES` with `INFOPLIST_KEY_*` settings and an
+`INFOPLIST_FILE` holding the rest (URL types, fonts, `NSExtension`). Settings reference
+`$(BUNDLE_ID_PREFIX)` and `$(DEVELOPMENT_TEAM)` from an xcconfig the developer copies from
+a template; the Debug configuration's xcconfig does not exist in a fresh clone. Two things
+the survey rules out: no storyboards, no `PBXSourcesBuildPhase` file lists; and two it
+rules in: `.icon` folders as resources, and the app's asset catalog holding many icon sets.
+
+### Consuming a package product from another formula
+
+The app links what its packages compile, and imports their modules. Today a package
+formula's linker node is inline in its `product` statement and unnameable from outside,
+and the closure of targets behind a product is known only to `SwiftFormulaConverter`. So
+the Swift converter emits, per product `P`, two funcs beside the product:
+
+```
+func modules_P() = TreeMerger(input: ['Timeline': compilerTimeline().swiftmodule, ...]).files
+func objects_P() = TreeMerger(input: ['Timeline.o': compilerTimeline().object, ...]).files
+```
+
+— every transitive Swift target's module and object, and every C target's objects — and
+`SwiftCompiler` gains an optional `moduleTrees` port (each entry placed under `modules/`,
+one `-I modules`) while `SwiftLinker` gains an optional `objectTrees` port (every entry
+linked). A formula that includes a package can then say `moduleTrees: ['Timeline':
+modules_Timeline().files]`. The tree is doing exactly what it was built for: a file set
+decided elsewhere, carried on one port.
+
+### The converter
+
+A node in `SemelApple`, `XcodeProjectConverter(path: <X.xcodeproj>, root: <.>,
+configuration: 'Debug')`, self-wiring like `SwiftFormulaConverter`: the pbxproj as a
+`StaticFile`, the xcconfig files it names as `StaticFile`s (a missing one is empty, and
+the `$(VAR)` it would have defined is then reported by `InfoPlistBuilder`), and the
+project folder's manifest. No tool runs; the pbxproj is a plist.
+
+Settings resolution, in the order Xcode uses: project xcconfig, project configuration,
+target xcconfig, target configuration; `$(inherited)` refers to the level below;
+`[sdk=iphonesimulator*]` conditionals apply for the platform the formula builds; `$(VAR)`
+references resolve against the resolved set plus the target's own (`TARGET_NAME`,
+`PRODUCT_MODULE_NAME`). The formula literal picks the configuration; `Debug` if none.
+
+Per native target the converter emits:
+- `include SwiftFormulaConverter(path: <Packages/Timeline>, root: <.>).formula` for each
+  local package product the target links, and for each remote one the `Dependencies/<name>`
+  folder the vendoring rule puts it in.
+- A `SwiftCompiler` over the synchronized folder with `excludedPaths` from the exceptions
+  and `moduleTrees` from the linked products; `-parse-as-library`, the deployment target
+  and language mode from the settings.
+- A `SwiftLinker` with `linkage: 'executable'`, the target's object and every linked
+  product's `objects_P()`; an extension gets `-e _NSExtensionMain` and
+  `-application_extension` through the linker's `arguments`.
+- `AssetCatalogCompiler` over every `.xcassets` and `.icon` in the folder, with
+  `ASSETCATALOG_COMPILER_APPICON_NAME`; `StringCatalogCompiler` per `.xcstrings`; plain
+  copies of every other resource file, keeping the tree.
+- `InfoPlistBuilder` with `INFOPLIST_FILE` as base, actool's partial, and the generated
+  keys: `CFBundleExecutable`, `CFBundleIdentifier`, `CFBundleName`, `CFBundlePackageType`,
+  `CFBundleShortVersionString`, `CFBundleVersion`, `MinimumOSVersion`,
+  `CFBundleSupportedPlatforms`, `DTPlatformName`, `UIDeviceFamily`, plus every
+  `INFOPLIST_KEY_*` with the prefix stripped (`_Generation` keys becoming the dictionaries
+  they stand for), and `PRODUCT_NAME`, `PRODUCT_BUNDLE_IDENTIFIER`, `PRODUCT_MODULE_NAME`,
+  `TARGET_NAME` as variables.
+- `product '<PRODUCT_NAME>.app/' = TreeMerger(...)` for the application, with each
+  extension's tree under `PlugIns/<name>.appex/`; the executable and Info.plist as plain
+  products beside them.
+
+Out of scope until IceCubes launches: device signing, app intents metadata
+(`appintentsmetadataprocessor`), generated asset and string symbols
+(`GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS`, `STRING_CATALOG_GENERATE_SYMBOLS` — the code
+does not use them), Mac Catalyst, visionOS.
+
+### Order within part 3
+
+1. Tree inputs: `moduleTrees` on the compiler, `objectTrees` on the linker, and the
+   `modules_P` / `objects_P` funcs from the Swift converter; HelloApp rewritten to link a
+   package product through them.
+2. The converter for the application target alone; IceCubesApp launches without its
+   extensions.
+3. Extensions under `PlugIns/`.
+4. `prepare` on a folder holding an `.xcodeproj`.
+
 ## Order
 
 1. Part 1, with `TreeFile` and a `RecordingToolRunner`-level test for output folders.
