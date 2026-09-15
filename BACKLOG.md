@@ -383,19 +383,12 @@ walk.** `FolderTreeWalk` in SemelNodeKit is what `AssetCatalogCompiler` uses; th
 `buildInputSourceFilesSpecs` / `buildInputSubfoldersSpecs` do the same with a `SourceScope`
 filter. Move it over, with `fileSpecs(of:include:)` carrying the scope.
 
-**B-65** `open` — **`XcodeProjectConverter`: extensions, and `prepare` on an `.xcodeproj`.**
-The application target is done (2026-09-15): a package product travels as its module and
-object trees (`modules_P()`, `objects_P()`, with every C target's header folder in the
-module tree), the converter reads the project and its xcconfig files, evaluates the
-settings, walks the synchronized folders and emits the bundle, and IceCubesApp built from
-its project installs and launches in the simulator. The four extensions are done too
-(2026-09-15): each is a bundle under the app's `PlugIns/`, compiled and linked as an
-extension, with what it borrows from another target's folder — or from a folder no target
-owns, which is how the notification and share extensions get their sources — compiled
-or copied with it; the simulator registers all four. Left: `prepare` treating a folder
-holding an `.xcodeproj` as a root — today the tree is prepared by hand with `xcodebuild
--resolvePackageDependencies` and a copy of the checkouts. Device signing is deliberately
-out until then.
+B-65 is done (2026-09-15): `XcodeProjectConverter` builds the application and the four
+extensions it embeds from the project file, and `semel-swift prepare` on a folder holding
+an `.xcodeproj` resolves the project's packages through Xcode, vendors them and writes the
+formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
+two commands. What that left open has its own items: B-67, B-68, B-69, and device signing,
+which is deliberately out — the simulator needs none beyond what `ld` does.
 
 **B-67** `open` — **A converted project publishes every package's archive beside the app.**
 Each included package formula publishes its `lib<P>.a` products beside the including

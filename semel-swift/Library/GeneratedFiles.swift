@@ -103,6 +103,17 @@ public enum GeneratedFiles {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// A project as the one root: the converter reads it, walks its targets' folders and
+    /// brings every package it references, all under this folder as the build root.
+    public static func formula(project: String, platform: Platform) -> String {
+        """
+        // Written by semel-swift prepare. The project is the root: its converter brings every
+        // package it references and builds the application and the extensions it embeds.
+        include XcodeProjectConverter(path: <\(project)>, root: <.>, configuration: 'Debug', sdk: '\(platform.sdkName)').formula
+
+        """
+    }
+
     /// The highest deployment version the packages declare for the platform, or nil when
     /// none does. Highest, because a root that declares 18.0 cannot be built for 17.0
     /// whatever its dependencies allow.

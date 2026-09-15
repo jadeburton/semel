@@ -49,6 +49,29 @@ public enum Vendoring {
         return copied
     }
 
+    /// An Xcode project declares its own package references beside its local packages'
+    /// manifests, and only Xcode resolves the union: `xcodebuild -resolvePackageDependencies`
+    /// clones every package the project reaches, transitively, into the folder it is
+    /// given, under `checkouts/`, the same layout SwiftPM uses — so the copy step is the
+    /// same. The clone folder is temporary; the copies are what the build reads.
+    public static func vendor(project: URL, into dependencies: URL) throws -> [Copied] {
+        let clones = FileManager.default.temporaryDirectory
+            .appendingPathComponent("semel-swift-clones-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: clones) }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = ["xcodebuild", "-resolvePackageDependencies", "-project", project.path,
+                             "-clonedSourcePackagesDirPath", clones.path]
+        process.standardOutput = FileHandle.standardError
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw Failure(description: "xcodebuild -resolvePackageDependencies failed (exit \(process.terminationStatus)) for \(project.path)")
+        }
+        return try copyCheckouts(from: clones.appendingPathComponent("checkouts", isDirectory: true), into: dependencies)
+    }
+
     /// SwiftPM does versions, `Package.resolved`, branches, registries and transitive
     /// resolution; nothing here re-implements any of it.
     public static func resolve(packageRoot: URL) throws {
