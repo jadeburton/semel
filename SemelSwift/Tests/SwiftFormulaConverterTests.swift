@@ -306,6 +306,32 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(result.contains("SysLib.o"), "a system library has no object file, got:\n\(result)")
     }
 
+    /// Beside each product, two funcs another formula can call by the product's name:
+    /// every module behind it and every object it links, as trees. An app's formula
+    /// imports and links a package product through them without knowing its targets.
+    func test_emitsModuleAndObjectTreesForEachProduct() throws {
+        let result = try formula(json: """
+            {
+              "name": "Multi",
+              "dependencies": [],
+              "products": [
+                {"name": "Multi-Kit", "targets": ["Alpha"], "type": {"library": ["automatic"]}}
+              ],
+              "targets": [
+                {"name": "Alpha", "type": "regular", "dependencies": [{"byName": ["Beta", null]}]},
+                {"name": "Beta",  "type": "regular", "dependencies": []}
+              ]
+            }
+            """)
+
+        XCTAssertTrue(result.contains("func modules_Multi_Kit() =\n    TreeBuilder(input: ["), "got:\n\(result)")
+        XCTAssertTrue(result.contains("'Alpha.swiftmodule': compilerAlpha().swiftmodule"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("'Beta.swiftmodule': compilerBeta().swiftmodule"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("func objects_Multi_Kit() =\n    TreeBuilder(input: ["), "got:\n\(result)")
+        XCTAssertTrue(result.contains("'Beta.o': compilerBeta().object"), "got:\n\(result)")
+        XCTAssertEqual(FormulaIdentifier.modulesFunc(forProduct: "Multi-Kit"), "modules_Multi_Kit")
+    }
+
     // MARK: - System-library dependencies
 
     /// A system library reached as a dependency is not compiled; its directory is wired

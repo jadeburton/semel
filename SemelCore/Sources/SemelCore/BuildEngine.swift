@@ -59,6 +59,7 @@ public final class BuildEngine {
             OutputFile.self,
             TreeFile.self,
             TreeMerger.self,
+            TreeBuilder.self,
             StaticFile.self,
             Folder.self,
             ProjectFinder.self,

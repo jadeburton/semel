@@ -183,6 +183,30 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try sourceSpecs(output), ["input:/pkg/Sources/MyLibraryTargetA/Thing.swift"])
         XCTAssertEqual(try subfolderSpecs(output), [:])
     }
+
+    // MARK: - Module trees
+
+    /// A package's `modules_P()` carries every `.swiftmodule` behind a product as one
+    /// tree. The trees are merged into one folder on the import path — a module two
+    /// products share is one file — so a target that imports two products compiles with
+    /// a single `-I`.
+    func test_moduleTreesAreMergedIntoOneFolderOnTheImportPath() throws {
+        let timeline = try TreeManifest(entries: [.init(path: "Timeline.swiftmodule", hash: try "t".intern(), mode: 0o644),
+                                                  .init(path: "Models.swiftmodule", hash: try "m".intern(), mode: 0o644)]).toJSON().intern()
+        let explore = try TreeManifest(entries: [.init(path: "Explore.swiftmodule", hash: try "e".intern(), mode: 0o644),
+                                                 .init(path: "Models.swiftmodule", hash: try "m".intern(), mode: 0o644)]).toJSON().intern()
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "import Timeline".intern())]
+        input[SwiftCompiler.inputModuleTrees] = ["Timeline": .value(timeline), "Explore": .value(explore)]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        XCTAssertEqual(arguments.filter { $0 == "-I" }.count, 1, "one import path for the merged trees: \(arguments)")
+        XCTAssertTrue(arguments.contains("modules"), "\(arguments)")
+        XCTAssertEqual(executor.invocations.last?.inputFileNames.filter { $0.hasPrefix("modules/") }.sorted(),
+                       ["modules/Explore.swiftmodule", "modules/Models.swiftmodule", "modules/Timeline.swiftmodule"])
+    }
 }
 
 // MARK: - Optimisation level

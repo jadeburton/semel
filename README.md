@@ -159,6 +159,24 @@ product 'Hello.app/' = TreeMerger(input: ['assets': assets().files, 'strings': s
 
 `export` copies the folder out as it is.
 
+### Using a package from an app
+
+A package's formula publishes its own products, and beside each product `P` it defines
+two funcs any formula that includes it can call by the product's name: `modules_P()`,
+the tree of every `.swiftmodule` behind the product, and `objects_P()`, the tree of every
+object it links. An app imports and links the product without knowing its targets:
+
+```
+include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
+
+func compiled() = SwiftCompiler(..., moduleTrees: ['HelloKit': modules_HelloKit().files])
+product 'Hello.app/Hello' = SwiftLinker(..., input: ['Hello.o': compiled().object],
+                                        objectTrees: ['HelloKit': objects_HelloKit().files]).output
+```
+
+The trees are merged on the way in: a module or object two products share is one file.
+`TreeBuilder` is what makes a tree out of named files, the counterpart of `TreeFile`.
+
 ### Dependencies, and clone to build
 
 Semel never fetches anything: every file a build needs has to be inside the input file

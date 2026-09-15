@@ -867,6 +867,25 @@ struct SwiftFormulaConverter: Node {
                 linkerArgs += ",\n        libraryFolders: [\n" + systemLibraryFolderWires.joined(separator: ",\n") + "\n        ]"
             }
 
+            // What another formula needs to consume this product — an app that imports and
+            // links it — as two trees it can name without knowing what is behind them:
+            // every transitive target's module, and every object the product links. The
+            // funcs are the product's public face; the product statement is for this
+            // package's own output.
+            let moduleWires = allTargets.map { t in
+                "        '\(t.name).swiftmodule': \(compilerFuncName(for: t.name))().swiftmodule"
+            }
+            blocks.append(
+                "func \(FormulaIdentifier.modulesFunc(forProduct: product.name))() =\n" +
+                "    TreeBuilder(input: [\n" +
+                moduleWires.joined(separator: ",\n") + "\n" +
+                "    ]).files")
+            blocks.append(
+                "func \(FormulaIdentifier.objectsFunc(forProduct: product.name))() =\n" +
+                "    TreeBuilder(input: [\n" +
+                objectWires.joined(separator: ",\n") + "\n" +
+                "    ]).files")
+
             let block =
                 "product '\(outputName)' =\n" +
                 "    SwiftLinker(\n" +
@@ -1010,7 +1029,7 @@ struct SwiftFormulaConverter: Node {
     }
 
     private func sanitizedIdentifier(_ name: String) -> String {
-        String(name.map { $0.isLetter || $0.isNumber ? $0 : Character("_") })
+        FormulaIdentifier.sanitized(name)
     }
 
     // MARK: - C targets (B-54)
