@@ -72,7 +72,7 @@ mount-dependent outputs is exactly the wrong-hit bug reintroduced.
 ## Swift package conversion
 
 **B-06** `open` — **Lock vendored dependencies by content hash.**
-`ISSUE:` at `SwiftFormulaConverter.swift:183`. A `sourceControl` dependency resolves to a
+`ISSUE:` at `SwiftFormulaConverter.swift:434`. A `sourceControl` dependency resolves to a
 vendored sibling directory with nothing checking that what is there is what was meant.
 
 Approach: a recursive content hash over the vendored package's own folder in the input file
@@ -186,12 +186,6 @@ follows it — so a large `rm` rebuilds the parent manifest per deleted child, t
 used to. Same fix shape if it ever matters: mark dirty, and move the self-delete check to
 the flush.
 
-**B-19** `open` — **`Folder.root(named:)` builds a graph spec on every call.**
-`BUG:` at `Folder.swift` ("extremely slow. TODO cache"). Every `Folder.inputFileSystem` /
-`outputFileSystem` does a `findOrCreateMatchingNode`, and those are called constantly. A
-cache must key on the current `DatabaseLayer` identity, or it goes stale when the database
-is swapped — which every test does. Not measured yet; measure before optimising.
-
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
 stops at the first objection, so leaf children cost no instantiation at all. What remains is
@@ -209,15 +203,14 @@ One binary, three modes, sharing a wire protocol:
 2. **Remote Runner** — executes tool commands inside, or against, a container (B-03)
 3. **Local Build Daemon** — the surviving part of
    `docs/superpowers/specs/2026-08-15-semel-client-server-design.md`. Designed in
-   `docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md`; built in three
-   phases: the `SemelProtocol` package, the in-process split behind `RequestHandler` and
-   `InProcessConnection`, and `semelserv` plus `SocketConnection` — see the spec's
-   Section 5. Wanted even with
+   `docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md` and built: the
+   `SemelProtocol` package, the in-process split behind `RequestHandler` and
+   `InProcessConnection`, and `semelserv` plus `SocketConnection`. Wanted even with
    local building, because the point is a build that continues in the background regardless
    of which CLIs are open — local CLI to local daemon, one user, one graph. Do not write it
    for multiple users: that is the shared-build-server model the cache server superseded,
    and it is where the path authorisation and sync machinery came from. The artifact events
-   CLIs subscribe to are B-50's settle diffs.
+   CLIs subscribe to are B-50's settle diffs. What remains of B-30 is roles 1 and 2.
 
 ## Design, correctness and code quality
 
@@ -376,19 +369,18 @@ is what a tool-decided file set needs. Tree-valued ports and tree products (B-63
 built: `TreeManifest`, `expectedOutputFolders`, `TreeFile`, `TreeMerger`, and
 `product 'name/'`. The Apple resource nodes (B-64) are built: `SemelApple` with
 `AssetCatalogCompiler`, `StringCatalogCompiler` and `InfoPlistBuilder`; HelloApp builds
-with an asset catalog and a string catalog and runs in the simulator.
+with an asset catalog and a string catalog and runs in the simulator. The Xcode project
+converter (B-65) is built: `XcodeProjectConverter` builds the application and the four
+extensions it embeds from the project file, and `semel-swift prepare` on a folder holding
+an `.xcodeproj` resolves the project's packages through Xcode, vendors them and writes the
+formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
+two commands. Device signing is deliberately out — the simulator needs none beyond what
+`ld` does.
 
 **B-66** `open` — **`SwiftCompiler` still walks its source folder with its own copy of the
 walk.** `FolderTreeWalk` in SemelNodeKit is what `AssetCatalogCompiler` uses; the compiler's
 `buildInputSourceFilesSpecs` / `buildInputSubfoldersSpecs` do the same with a `SourceScope`
 filter. Move it over, with `fileSpecs(of:include:)` carrying the scope.
-
-B-65 is done (2026-09-15): `XcodeProjectConverter` builds the application and the four
-extensions it embeds from the project file, and `semel-swift prepare` on a folder holding
-an `.xcodeproj` resolves the project's packages through Xcode, vendors them and writes the
-formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
-two commands. What that left open has its own items: B-67, B-68, B-69, and device signing,
-which is deliberately out — the simulator needs none beyond what `ld` does.
 
 **B-67** `open` — **A converted project publishes every package's archive beside the app.**
 Each included package formula publishes its `lib<P>.a` products beside the including
@@ -396,19 +388,6 @@ formula, so the app's build root ends with twenty archives nobody asked for — 
 for IceCubes. An include that brings only funcs, not products, or a package converter
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
-
-**B-69** `done` — **Tool discovery belongs to the toolchains, not to SemelNodeKit.**
-`DefaultTools` hard-coded five tool names and how each reports its version, and
-`AppleClangSwiftToolchainHelper` was `xcrun`, `--version` parsing, actool's plist and
-`xcodebuild -version` — the one Apple-shaped corner of a package that is otherwise
-agnostic, allowlisted by name in `HermeticityTests`. Done 2026-09-15: NodeKit keeps
-`ToolDiscovery` (a `ToolFinder` is a name, a locator and a version reader; the engine
-registers what the finders locate) and `MachineQuery`, the one generic launch-time process
-runner the hermeticity test allows. Each toolchain declares its finders when it registers
-— `SemelSwift` swiftc and swift, `SemelClang` clang, `SemelApple` actool and xcstringstool
-— and each keeps its own `xcrun --find`: the compilers cannot reach SemelApple, and four
-lines per package cost less than a package the compilers would depend on for one call.
-The descriptor's platform and architecture now come from `uname` rather than two literals.
 
 **B-68** `open` — **"Unused configuration key" noise when a formula literal overrides the
 config.** The converter states `target`, `sdk` and the like as literals, so the same keys
