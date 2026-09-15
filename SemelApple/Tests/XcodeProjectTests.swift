@@ -65,8 +65,12 @@ final class XcodeProjectTests: XCTestCase {
                 F2 = { isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
                 BP3 = { isa = PBXCopyFilesBuildPhase; dstPath = ""; dstSubfolderSpec = 13; files = ( BF4 ); };
                 BF4 = { isa = PBXBuildFile; fileRef = PR2; };
-                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = IceCubesApp; exceptions = ( EX1 ); sourceTree = "<group>"; };
+                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = IceCubesApp; exceptions = ( EX1, EX2 ); sourceTree = "<group>"; };
                 EX1 = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( Info.plist, "Embeds/glass.wav" ); target = T1; };
+                EX2 = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( "Embeds/glass.wav", "Shared/Entity.swift" ); target = T2; };
+                SG2 = { isa = PBXFileSystemSynchronizedRootGroup; path = IceCubesShareExtension; exceptions = ( ); sourceTree = "<group>"; };
+                SG3 = { isa = PBXFileSystemSynchronizedRootGroup; path = IceCubesNotifications; exceptions = ( EX3 ); sourceTree = "<group>"; };
+                EX3 = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( NotificationService.swift ); target = T2; };
                 PD1 = { isa = XCSwiftPackageProductDependency; productName = Timeline; };
                 PD2 = { isa = XCSwiftPackageProductDependency; package = R1; productName = KeychainSwift; };
                 T2 = {
@@ -76,7 +80,7 @@ final class XcodeProjectTests: XCTestCase {
                     productReference = PR2;
                     buildConfigurationList = CL3;
                     buildPhases = ( );
-                    fileSystemSynchronizedGroups = ( );
+                    fileSystemSynchronizedGroups = ( SG2 );
                     packageProductDependencies = ( );
                 };
                 PR2 = { isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = IceCubesShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -111,6 +115,20 @@ final class XcodeProjectTests: XCTestCase {
 
         XCTAssertEqual(folders.map(\.path), ["IceCubesApp"])
         XCTAssertEqual(folders.first?.exceptions, ["Embeds/glass.wav", "Info.plist"])
+    }
+
+    /// An exception set in a folder naming another target says what that target takes
+    /// from here; for the folder's own target it says what to leave out. The two must not
+    /// be confused: the app's exceptions stay its own, and the extension borrows.
+    func test_readsWhatATargetBorrowsFromAnotherTargetsFolder() throws {
+        let project = try project()
+        let share = try XCTUnwrap(project.targets.first { $0.name == "IceCubesShareExtension" })
+
+        XCTAssertEqual(share.borrowedFiles, ["IceCubesApp/Embeds/glass.wav", "IceCubesApp/Shared/Entity.swift",
+                                             "IceCubesNotifications/NotificationService.swift"],
+                       "from another target's folder and from a folder no target owns alike")
+        XCTAssertEqual(share.synchronizedFolders.map(\.path), ["IceCubesShareExtension"])
+        XCTAssertEqual(try app().synchronizedFolders.first?.exceptions, ["Embeds/glass.wav", "Info.plist"])
     }
 
     func test_readsWhatTheTargetLinksAndEmbeds() throws {

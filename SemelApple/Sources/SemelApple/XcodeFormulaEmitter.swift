@@ -36,16 +36,25 @@ struct XcodeFormulaEmitter {
 
     // MARK: - Whole project
 
-    /// The formula for the application target: its bundle, with every package it links
-    /// included. Extensions and everything else wait for the next part.
+    /// The formula for the application target: its bundle, with every package it and its
+    /// extensions link included, and each extension the app embeds as a bundle of its
+    /// own under the app's `PlugIns/`.
     func formula(settings: (XcodeProject.Target) throws -> XcodeBuildSettings,
                  listing: (String) -> FolderListing?) throws -> String {
         guard let application = project.targets.first(where: \.isApplication) else {
             throw XcodeProjectError.noSuchTarget("an application")
         }
-        var blocks: [String] = ["// Written by XcodeProjectConverter from \(project.targets.count) targets; the application only."]
-        blocks += includes(for: application)
-        blocks += try bundle(for: application, settings: try settings(application), listing: listing)
+        let extensions = application.embeddedExtensions.compactMap { name in
+            project.targets.first { $0.productFileName == name && $0.isExtension }
+        }
+        var blocks: [String] = ["// Written by XcodeProjectConverter: \(application.name) and \(extensions.count) embedded extension(s)."]
+        blocks += includes(for: [application] + extensions)
+        let applicationBundle = try TargetIdentity(target: application, settings: try settings(application), sdk: build.sdk).bundleName
+        blocks += try bundle(for: application, at: applicationBundle, settings: try settings(application), listing: listing)
+        for anExtension in extensions {
+            blocks += try bundle(for: anExtension, at: "\(applicationBundle)/PlugIns/\(anExtension.productFileName)",
+                                 settings: try settings(anExtension), listing: listing)
+        }
         return blocks.joined(separator: "\n\n") + "\n"
     }
 
@@ -55,9 +64,9 @@ struct XcodeFormulaEmitter {
     /// `modules_P()` / `objects_P()` funcs the target compiles and links against. Local
     /// packages are the project's wrappers; a remote one is where the vendoring rule puts
     /// it, `Dependencies/<repository name>`.
-    func includes(for target: XcodeProject.Target) -> [String] {
+    func includes(for targets: [XcodeProject.Target]) -> [String] {
         var folders: [String] = project.localPackagePaths.map { "\(build.projectFolder)/\($0)" }
-        for case .remote(_, let url) in target.packageProducts {
+        for case .remote(_, let url) in targets.flatMap(\.packageProducts) {
             if let name = Self.repositoryName(forURL: url) {
                 folders.append("\(build.root)/Dependencies/\(name)")
             }
@@ -81,7 +90,10 @@ struct XcodeFormulaEmitter {
 
     // MARK: - One target's bundle
 
+    /// One target's bundle at `bundlePath` — `Ice Cubes.app`, or
+    /// `Ice Cubes.app/PlugIns/Share.appex` for an extension the app embeds.
     func bundle(for target: XcodeProject.Target,
+                at bundlePath: String,
                 settings: XcodeBuildSettings,
                 listing: (String) -> FolderListing?) throws -> [String] {
         let identity = try TargetIdentity(target: target, settings: settings, sdk: build.sdk)
@@ -93,9 +105,10 @@ struct XcodeFormulaEmitter {
         // ── sources ──────────────────────────────────────────────────────────
         // Every synchronized folder of the target is a source root: the compiler takes
         // them all on its folder port and walks each. Exceptions are relative to their
-        // own folder, which is how the compiler reads an excluded path too.
-        guard !target.synchronizedFolders.isEmpty else {
-            throw XcodeProjectError.noSuchTarget("\(target.name): no synchronized folder; targets with file lists are not read yet")
+        // own folder, which is how the compiler reads an excluded path too. A target with
+        // no folder of its own compiles what it borrows, and nothing else.
+        guard !target.synchronizedFolders.isEmpty || target.borrowedFiles.contains(where: { $0.hasSuffix(".swift") }) else {
+            throw XcodeProjectError.noSuchTarget("\(target.name): no synchronized folder and no borrowed sources; targets with file lists are not read yet")
         }
         let sourceFolders = target.synchronizedFolders.map { ($0, "\(build.projectFolder)/\($0.path)") }
         let folderWires = sourceFolders.enumerated().map { index, folder in
@@ -126,25 +139,33 @@ struct XcodeFormulaEmitter {
         if !compilerArguments.isEmpty {
             compilerLiterals["arguments"] = compilerArguments.joined(separator: ",")
         }
+        // What the target takes from another target's folder: sources one by one on the
+        // compiler, resources with the target's own.
+        let borrowedSources = target.borrowedFiles.filter { $0.hasSuffix(".swift") }.map {
+            "        \(Self.quoted(($0 as NSString).lastPathComponent)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
+        }
         blocks.append(
             "func compiler_\(name)() =\n" +
             "    SwiftCompiler(\n" +
-            "        configuration: ['config': \(configuration(namespace: "swift.compiler", literals: compilerLiterals))],\n" +
-            "        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]" +
+            "        configuration: ['config': \(configuration(namespace: "swift.compiler", literals: compilerLiterals))]" +
+            (folderWires.isEmpty ? "" : ",\n        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]") +
+            (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
             (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
             "\n    )")
 
         // ── the executable ───────────────────────────────────────────────────
         var linkerArguments: [String] = target.frameworks.sorted().flatMap { ["-framework", $0] }
         if target.isExtension {
-            linkerArguments += ["-e", "_NSExtensionMain", "-Xlinker", "-application_extension"]
+            // What ld needs for an app extension, through the swiftc driver: its entry
+            // point, and the flag that marks it safe for one.
+            linkerArguments += ["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"]
         }
         var linkerLiterals = ["linkage": "executable", "outputName": identity.productName, "target": identity.target]
         if !linkerArguments.isEmpty {
             linkerLiterals["arguments"] = linkerArguments.joined(separator: ",")
         }
         products.append(
-            "product '\(identity.bundleName)/\(identity.productName)' =\n" +
+            "product '\(bundlePath)/\(identity.productName)' =\n" +
             "    SwiftLinker(\n" +
             "        configuration: ['config': \(configuration(namespace: "swift.linker", literals: linkerLiterals))],\n" +
             "        input: ['\(identity.moduleName).o': compiler_\(name)().object]" +
@@ -172,6 +193,13 @@ struct XcodeFormulaEmitter {
         }
         catalogs += target.resourceFiles.filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
             .map { "\(build.projectFolder)/\($0)" }
+        for borrowed in target.borrowedFiles where !borrowed.hasSuffix(".swift") {
+            if borrowed.hasSuffix(".xcstrings") {
+                stringCatalogs.append(ResourceFile(folderPath: build.projectFolder, relativePath: borrowed))
+            } else if Self.isPlainResource(borrowed) {
+                plainResources.append(ResourceFile(folderPath: build.projectFolder, relativePath: borrowed))
+            }
+        }
         var partials: [String] = []
         if !catalogs.isEmpty {
             var assetLiterals = ["platform": build.sdk,
@@ -206,7 +234,7 @@ struct XcodeFormulaEmitter {
         // root as Xcode flattens a synchronized folder's files.
         for file in plainResources {
             let fileName = (file.relativePath as NSString).lastPathComponent
-            products.append("product '\(identity.bundleName)/\(fileName)' = StaticFile(path: '\(file.folderPath)/\(file.relativePath)').output")
+            products.append("product '\(bundlePath)/\(fileName)' = StaticFile(path: '\(file.folderPath)/\(file.relativePath)').output")
         }
 
         // ── Info.plist ───────────────────────────────────────────────────────
@@ -228,7 +256,7 @@ struct XcodeFormulaEmitter {
         let variableText = variables.sorted { $0.key < $1.key }
             .map { "\($0.key): \(Self.quoted($0.value))" }.joined(separator: ",\n        ")
         products.append(
-            "product '\(identity.bundleName)/Info.plist' =\n" +
+            "product '\(bundlePath)/Info.plist' =\n" +
             "    InfoPlistBuilder(\n" +
             "        keys: '\(keysJSON)',\n" +
             "        \(variableText),\n" +
@@ -237,7 +265,7 @@ struct XcodeFormulaEmitter {
             "    ).plist")
 
         if !bundleTrees.isEmpty {
-            products.append("product '\(identity.bundleName)/' = TreeMerger(input: [\(bundleTrees.joined(separator: ", "))]).files")
+            products.append("product '\(bundlePath)/' = TreeMerger(input: [\(bundleTrees.joined(separator: ", "))]).files")
         }
 
         return blocks + products

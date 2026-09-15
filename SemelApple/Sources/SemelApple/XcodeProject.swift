@@ -58,6 +58,11 @@ struct XcodeProject {
         let embeddedExtensions: [String]
         /// File references in the resources phase, relative to the project folder.
         let resourceFiles: [String]
+        /// Files this target takes from another target's synchronized folder — an
+        /// exception set in that folder naming this target — relative to the project
+        /// folder: a widget's sounds and strings from the app's folder, an intents
+        /// extension's entities from the app's.
+        var borrowedFiles: [String] = []
 
         var isApplication: Bool { productType == "com.apple.product-type.application" }
         var isExtension: Bool { productType == "com.apple.product-type.app-extension" }
@@ -104,12 +109,44 @@ struct XcodeProject {
             .compactMap { $0["repositoryURL"] as? String }
             .sorted()
 
-        targets = try (root["targets"] as? [String] ?? []).compactMap { targetID -> Target? in
-            guard let target = objects[targetID], target["isa"] as? String == "PBXNativeTarget" else {
+        let targetIDs = (root["targets"] as? [String] ?? []).filter { objects[$0]?["isa"] as? String == "PBXNativeTarget" }
+        var targets = try targetIDs.compactMap { targetID -> Target? in
+            guard let target = objects[targetID] else {
                 return nil
             }
             return try reader.target(target, id: targetID)
         }
+
+        // A second pass for what a target takes from a folder that is not its own: an
+        // exception set in that folder naming the target lists the files it borrows. The
+        // folder may belong to another target, or to none — Xcode leaves a folder
+        // unowned when every target that uses it names its files this way, which is how
+        // IceCubes' notification and share extensions get their sources.
+        var ownerOfGroup: [String: String] = [:]
+        for ownerID in targetIDs {
+            for groupID in objects[ownerID]?["fileSystemSynchronizedGroups"] as? [String] ?? [] {
+                ownerOfGroup[groupID] = ownerID
+            }
+        }
+        for (groupID, group) in objects where group["isa"] as? String == "PBXFileSystemSynchronizedRootGroup" {
+            guard let path = group["path"] as? String else {
+                continue
+            }
+            for exceptionID in group["exceptions"] as? [String] ?? [] {
+                guard let exceptions = objects[exceptionID],
+                      let borrowerID = exceptions["target"] as? String, borrowerID != ownerOfGroup[groupID],
+                      let borrowerIndex = targetIDs.firstIndex(of: borrowerID) else {
+                    continue
+                }
+                for file in exceptions["membershipExceptions"] as? [String] ?? [] {
+                    targets[borrowerIndex].borrowedFiles.append("\(path)/\(file)")
+                }
+            }
+        }
+        for index in targets.indices {
+            targets[index].borrowedFiles.sort()
+        }
+        self.targets = targets
     }
 
     /// Resolves object references while reading; nothing of it survives the init.

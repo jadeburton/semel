@@ -388,11 +388,14 @@ The application target is done (2026-09-15): a package product travels as its mo
 object trees (`modules_P()`, `objects_P()`, with every C target's header folder in the
 module tree), the converter reads the project and its xcconfig files, evaluates the
 settings, walks the synchronized folders and emits the bundle, and IceCubesApp built from
-its project installs and launches in the simulator. Left: the four extensions under
-`PlugIns/` (`-e _NSExtensionMain`, `-application-extension`, each its own bundle with its
-`NSExtension` plist), and `prepare` treating a folder holding an `.xcodeproj` as a root —
-today the tree is prepared by hand with `xcodebuild -resolvePackageDependencies` and a
-copy of the checkouts. Device signing is deliberately out until then.
+its project installs and launches in the simulator. The four extensions are done too
+(2026-09-15): each is a bundle under the app's `PlugIns/`, compiled and linked as an
+extension, with what it borrows from another target's folder — or from a folder no target
+owns, which is how the notification and share extensions get their sources — compiled
+or copied with it; the simulator registers all four. Left: `prepare` treating a folder
+holding an `.xcodeproj` as a root — today the tree is prepared by hand with `xcodebuild
+-resolvePackageDependencies` and a copy of the checkouts. Device signing is deliberately
+out until then.
 
 **B-67** `open` — **A converted project publishes every package's archive beside the app.**
 Each included package formula publishes its `lib<P>.a` products beside the including
@@ -400,6 +403,16 @@ formula, so the app's build root ends with twenty archives nobody asked for — 
 for IceCubes. An include that brings only funcs, not products, or a package converter
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
+
+**B-69** `open` — **Tool discovery belongs to the toolchains, not to SemelNodeKit.**
+`DefaultTools` hard-codes five tool names and how each reports its version, and
+`AppleClangSwiftToolchainHelper` is `xcrun`, `--version` parsing, actool's plist and
+`xcodebuild -version` — the one Apple-shaped corner of a package that is otherwise
+agnostic, allowlisted by name in `HermeticityTests`. Each toolchain package should
+register what it knows how to find the way it registers its namespaces — `SemelSwift`
+swiftc and swift, `SemelClang` clang, `SemelApple` actool and xcstringstool — against a
+generic discovery API in NodeKit taking a name and a version reader; `xcrun` itself moves
+to SemelApple. Agreed 2026-09-15, to follow the extensions.
 
 **B-68** `open` — **"Unused configuration key" noise when a formula literal overrides the
 config.** The converter states `target`, `sdk` and the like as literals, so the same keys

@@ -184,6 +184,41 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try subfolderSpecs(output), [:])
     }
 
+    // MARK: - Extra sources
+
+    /// A file a target takes from another target's folder is named one by one on the
+    /// compiler and compiled beside the folder's own, under `extra/`.
+    func test_extraSourceFilesAreCompiledBesideTheFoldersOwn() throws {
+        var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+        input[SwiftCompiler.inputExtraSourceFiles] = ["Entity.swift": .value(try "// entity".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".swift") },
+                       ["extra/Entity.swift", "input:/ext/Sources/Main.swift"])
+    }
+
+    /// A target that borrows every source it has — an extension whose folder no target
+    /// owns — wires no folder at all, and compiles the extras alone.
+    func test_compilesWithExtraSourceFilesAndNoFolder() throws {
+        let configuration = """
+            toolDescriptor.name=\(descriptor.name)
+            toolDescriptor.version=\(descriptor.version)
+            toolDescriptor.platform=\(descriptor.platform)
+            toolDescriptor.architecture=\(descriptor.architecture)
+            moduleName=Notifications
+            """
+        let input = ProcessInput(inputValues: [
+            SwiftCompiler.configuration: ["config": .value(try configuration.intern())],
+            SwiftCompiler.inputExtraSourceFiles: ["NotificationService.swift": .value(try "// service".intern())],
+        ])
+
+        _ = try makeTool().process(input: input)
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".swift") }, ["extra/NotificationService.swift"])
+    }
+
     // MARK: - Module trees
 
     /// A package's `modules_P()` carries every `.swiftmodule` behind a product as one

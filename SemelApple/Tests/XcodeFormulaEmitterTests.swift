@@ -150,6 +150,25 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(keys["UIDeviceFamily"] as? [Int], [1, 2], "family 7 is visionOS, not built here")
     }
 
+    // MARK: - Extensions
+
+    /// An extension the app embeds is a bundle of its own under the app's `PlugIns/`:
+    /// compiled and linked as an extension, its Info.plist an `XPC!` bundle, and what it
+    /// borrows from the app's folder compiled or copied with it.
+    func test_embedsEachExtensionAsABundleUnderPlugIns() throws {
+        let formula = try formula()
+        let appex = "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex"
+
+        XCTAssertTrue(formula.contains("func compiler_IceCubesShareExtension() =\n    SwiftCompiler("), formula)
+        XCTAssertTrue(formula.contains("arguments: '-D,DEBUG,-application-extension'"), formula)
+        XCTAssertTrue(formula.contains("'Entity.swift': StaticFile(path: 'input:/repo/IceCubesApp/Shared/Entity.swift').output"), formula)
+        XCTAssertTrue(formula.contains("product '\(appex)/IceCubesShareExtension' =\n    SwiftLinker("), formula)
+        XCTAssertTrue(formula.contains("arguments: '-Xlinker,-e,-Xlinker,_NSExtensionMain,-Xlinker,-application_extension'"), formula)
+        XCTAssertTrue(formula.contains("product '\(appex)/glass.wav' = StaticFile(path: 'input:/repo/IceCubesApp/Embeds/glass.wav').output"), formula)
+        XCTAssertTrue(formula.contains("product '\(appex)/Info.plist' =\n    InfoPlistBuilder("), formula)
+        XCTAssertTrue(formula.contains("\"CFBundlePackageType\":\"XPC!\""), formula)
+    }
+
     func test_repositoryNamesFollowTheVendoringRule() {
         XCTAssertEqual(XcodeFormulaEmitter.repositoryName(forURL: "https://github.com/wishkit/wishkit-ios.git"), "wishkit-ios")
         XCTAssertEqual(XcodeFormulaEmitter.repositoryName(forURL: "https://github.com/RevenueCat/purchases-ios-spm"), "purchases-ios-spm")
