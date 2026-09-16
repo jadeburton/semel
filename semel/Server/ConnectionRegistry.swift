@@ -1,5 +1,5 @@
 // ConnectionRegistry.swift
-// SemelServ
+// SemelServer
 //
 // The live connections, and the handler's event sink. An event is encoded once and
 // handed to every subscribed connection's stream; nothing here waits on a client, so the

@@ -1,5 +1,5 @@
 // Server.swift
-// SemelServ
+// SemelServer
 //
 // The listener and the process-level rules around it: probe a socket file that is
 // already there, refuse to run twice, unwind everything on stop, and turn an

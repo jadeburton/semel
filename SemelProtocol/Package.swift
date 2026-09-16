@@ -4,7 +4,7 @@ import PackageDescription
 // Everything that crosses the wire between `semel` and `semelserv`, and nothing else.
 //
 // It deliberately depends on Foundation alone. Anything the engine wants to send is
-// mirrored here and mapped in `SemelServ`, never imported, so the wire format stays
+// mirrored here and mapped in `SemelServer`, never imported, so the wire format stays
 // independent of the persisted schema and a client that speaks one role does not link the
 // database. See docs/superpowers/specs/2026-09-12-semel-local-daemon-split-design.md.
 let package = Package(

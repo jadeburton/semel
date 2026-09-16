@@ -1,6 +1,6 @@
 //
 //  ServerTestSupport.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  A real in-memory engine behind a real handler. The only boundary faked anywhere in
 //  these tests is the object store, redirected to a temporary directory so a test can
@@ -8,7 +8,7 @@
 //
 
 @testable import SemelCore
-@testable import SemelServ
+@testable import SemelServer
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol

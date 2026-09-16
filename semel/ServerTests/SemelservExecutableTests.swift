@@ -1,6 +1,6 @@
 //
 //  SemelservExecutableTests.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  The binary, as a subprocess, with SEMEL_HOME and SEMEL_SOCKET pointing into a
 //  temporary directory so it never opens the user's graph or socket. What is pinned:

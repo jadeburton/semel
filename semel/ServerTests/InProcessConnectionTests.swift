@@ -1,6 +1,6 @@
 //
 //  InProcessConnectionTests.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  The pretend socket. It must put every message through the real codec — the point of
 //  running one process in phase 2 is that the wire is exercised by every CLI test before
@@ -8,7 +8,7 @@
 //
 
 @testable import SemelCore
-@testable import SemelServ
+@testable import SemelServer
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol

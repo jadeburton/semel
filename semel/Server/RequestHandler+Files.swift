@@ -1,5 +1,5 @@
 // RequestHandler+Files.swift
-// SemelServ
+// SemelServer
 //
 // The file verbs: what push, ls, rm and cp do to the graph. Paths arrive absolute within
 // the named file system and already resolved by the client, so `..` never reaches here.

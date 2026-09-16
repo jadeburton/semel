@@ -1,5 +1,5 @@
 // RequestHandler.swift
-// SemelServ
+// SemelServer
 //
 // The bottleneck. Everything a client can ask of the engine arrives here as a typed
 // `Request` and leaves as a typed `Response`; nothing else in the server touches the

@@ -13,7 +13,7 @@ import SemelClang
 import SemelSwift
 import SemelNodeKit
 import SemelProtocol
-import SemelServ
+import SemelServer
 import XCTest
 
 final class ToolsCommandTests: XCTestCase {

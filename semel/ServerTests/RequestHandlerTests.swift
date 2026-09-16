@@ -1,6 +1,6 @@
 //
 //  RequestHandlerTests.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  The bottleneck between the wire and the engine, driven with typed messages against a
 //  real in-memory engine. The file verbs have their own file; this one covers the
@@ -8,7 +8,7 @@
 //
 
 @testable import SemelCore
-@testable import SemelServ
+@testable import SemelServer
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
