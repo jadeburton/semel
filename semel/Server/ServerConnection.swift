@@ -1,5 +1,5 @@
 // ServerConnection.swift
-// SemelServ
+// SemelServer
 //
 // One client. A serial queue of its own, a FrameStream, a Session, and the shared handler.
 // Each request frame becomes one handler call on this queue and one reply frame back on

@@ -8,7 +8,7 @@
 import Foundation
 import SemelNodeKit
 import SemelProtocol
-import SemelServ
+import SemelServer
 import XCTest
 
 /// B-57. `build <folder>` is the loop in one word — push, wait, errors — and a scripted

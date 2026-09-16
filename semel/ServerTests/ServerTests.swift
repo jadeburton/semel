@@ -1,6 +1,6 @@
 //
 //  ServerTests.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  The socket server against a real in-memory engine, driven by the CLI's own
 //  SocketConnection over a loopback socket in a temporary directory. What is pinned: the
@@ -11,7 +11,7 @@
 
 @testable import SemelCLI
 @testable import SemelCore
-@testable import SemelServ
+@testable import SemelServer
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol
@@ -224,7 +224,7 @@ final class ServerTests: RequestHandlerTestCase {
         let second = Server(handler: handler, socketPath: socketPath)
 
         XCTAssertThrowsError(try second.start()) { error in
-            XCTAssertEqual(error as? SemelServ.ServerError, .alreadyRunning(path: socketPath))
+            XCTAssertEqual(error as? SemelServer.ServerError, .alreadyRunning(path: socketPath))
         }
     }
 

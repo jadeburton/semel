@@ -1,5 +1,5 @@
 // InProcessConnection.swift
-// SemelServ
+// SemelServer
 //
 // A connection with no socket. It encodes every request to a frame and decodes it again
 // before the handler sees it, and puts every reply through the same pair, so that the

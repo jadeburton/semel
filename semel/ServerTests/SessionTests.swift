@@ -1,12 +1,12 @@
 //
 //  SessionTests.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  Per-connection state. The one rule worth a test: batches are counted, so a session
 //  torn down mid-push can be unwound exactly as many times as it was opened.
 //
 
-@testable import SemelServ
+@testable import SemelServer
 import XCTest
 
 final class SessionTests: XCTestCase {

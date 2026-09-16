@@ -8,7 +8,7 @@
 import Foundation
 import SemelNodeKit
 import SemelProtocol
-import SemelServ
+import SemelServer
 import XCTest
 
 /// B-58. `export <folder> --into <dir>` copies every product under a folder of the output

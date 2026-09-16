@@ -58,23 +58,23 @@ SemelCore             three small changes: reporter closures, ErrorReport split,
                       InternalFileSystemLister keeps the graph-backed lister
 SemelProtocol   NEW   package: frame codec + message types + the SemelConnection
                       protocol. Depends on Foundation only.
-SemelServ       NEW   library target in the root package: RequestHandler, Session,
+SemelServer       NEW   library target in the root package: RequestHandler, Session,
                       event sink, InProcessConnection. Owns BuildEngine + DatabaseLayer.
                       No sockets.
 SemelCLI              keeps CommandInterpreter and plugins; CommandContext holds a
                       SemelConnection instead of DatabaseLayer / BuildEngine
 SemelTransport  NEW   library target (phase 3): FrameStream, frames over an NWConnection.
-                      Depends on SemelProtocol and Network; linked by SemelServ and
+                      Depends on SemelProtocol and Network; linked by SemelServer and
                       SemelCLI. Keeps the protocol package transport-free.
 semelserv       NEW   executable (phase 3) at semel-server/: composition root, the
-                      listener, ServerConnection and ConnectionRegistry (in SemelServ)
+                      listener, ServerConnection and ConnectionRegistry (in SemelServer)
 semel                 executable: REPL, session state, local disk I/O, SocketConnection
 ```
 
 Dependency direction, which is the test of whether the seam is in the right place:
 
 ```
-SemelCore  ◀──  SemelServ  ──▶  SemelProtocol  ◀──  SemelCLI
+SemelCore  ◀──  SemelServer  ──▶  SemelProtocol  ◀──  SemelCLI
 ```
 
 `SemelCore` learns nothing about the protocol. `SemelCLI` learns nothing about the engine.
@@ -90,7 +90,7 @@ Paths, hashes and modes cross the wire as strings and integers, so nothing in it
 about nodes, the database or GRDB.
 
 The no-dependency rule is deliberate and has a cost, which is paid on purpose: anything
-the engine wants to send is *mirrored* as a wire struct and mapped in `SemelServ`, never
+the engine wants to send is *mirrored* as a wire struct and mapped in `SemelServer`, never
 imported. The wire format is therefore independent of the persisted schema, so a database
 change is not silently a protocol change, and a client that speaks only one role does not
 link GRDB.
@@ -252,11 +252,11 @@ Build errors are data, not protocol errors: a node that fails to compile comes b
 `errors`, mirroring the existing distinction between a node failure and an
 `UnrecoverableError`.
 
-## Section 2: the server side, `SemelServ`
+## Section 2: the server side, `SemelServer`
 
 ### A library first, an executable later
 
-`SemelServ` is a library target in the root package, importing `SemelCore` and
+`SemelServer` is a library target in the root package, importing `SemelCore` and
 `SemelProtocol`. In phase 2 the existing `semel` executable links it. In phase 3 the
 `semelserv` executable becomes the composition root: it registers the toolchains, starts
 the engine, opens the listener. The library never touches sockets, so it is tested with
@@ -410,7 +410,7 @@ the role, and the CLI exits.
 
 ### Connections
 
-- `InProcessConnection` (phase 2, in `SemelServ`) — holds a `RequestHandler` and a
+- `InProcessConnection` (phase 2, in `SemelServer`) — holds a `RequestHandler` and a
   `Session`. It does **not** hand Swift objects across: every request is encoded to a
   `Frame` and decoded again before the handler sees it, and every reply goes back through
   the same pair. The day the socket arrives, the codec and the model have already been
@@ -443,7 +443,7 @@ synchronous is what the engine's cache hooks want today; if the engine ever beco
 async, the two-member protocol is the whole surface that changes.
 
 **Cache payloads are mirrored, not imported.** A cache entry on the wire is a struct in
-`SemelProtocol` that `SemelServ` maps to and from `ProcessCacheEntry`, and hashes are
+`SemelProtocol` that `SemelServer` maps to and from `ProcessCacheEntry`, and hashes are
 strings. This follows from the no-dependency rule and is the reason for it.
 
 **The frame's reserved bits stop being theoretical.** `flags` keeps its reserved meaning
@@ -462,7 +462,7 @@ and POSIX sockets with a thread per connection, declined because it reinvents wh
 
 ### The `semelserv` executable
 
-A new executable target at `semel-server/`, linking `SemelServ`, `SemelCore`,
+A new executable target at `semel-server/`, linking `SemelServer`, `SemelCore`,
 `SemelProtocol`, `SemelSwift` and `SemelClang`. It is the composition root: register the
 toolchains, start the engine, build one `RequestHandler` with the real database path,
 listen. The `semel` executable stops doing any of that.
@@ -548,7 +548,7 @@ is green.
 ### Phase 2: the in-process split
 
 - `SemelProtocol`: the `SemelConnection` protocol.
-- `SemelServ` library: `RequestHandler`, `Session`, `EventSink`, and `InProcessConnection`
+- `SemelServer` library: `RequestHandler`, `Session`, `EventSink`, and `InProcessConnection`
   round-tripping through the codec.
 - `SemelCore`: the three changes above.
 - `SemelCLI`: `CommandContext` moves to `SemelConnection`; plugins send requests; the
@@ -566,11 +566,11 @@ Designed in Section 5. Five steps, each green on its own:
 
 1. `SemelTransport` with `FrameStream`, tested over a loopback socket.
 2. `SocketConnection` in `SemelCLI`, tested against an in-test listener.
-3. `ServerConnection`, `ConnectionRegistry` and `Server` in `SemelServ`, tested against a
+3. `ServerConnection`, `ConnectionRegistry` and `Server` in `SemelServer`, tested against a
    real engine over a loopback socket.
 4. The `semelserv` executable: composition root, socket probe, signal shutdown, the fatal
    handler; tested as a subprocess.
-5. `semel` becomes the client: `main.swift` rewritten, `SemelServ`, `SemelCore`,
+5. `semel` becomes the client: `main.swift` rewritten, `SemelServer`, `SemelCore`,
    `SemelSwift` and `SemelClang` dropped, and the records updated.
 
 No socket present means one line saying the server is not running and how to start it.
@@ -585,7 +585,7 @@ mid-body; zero-length JSON and body; a declared length over the limit rejected b
 allocation; a wrong version byte; every `Request`, `Response` and `Event` case encodes and
 decodes to an equal value.
 
-**Handler** (`SemelServ` tests) — each daemon request against an in-memory database;
+**Handler** (`SemelServer` tests) — each daemon request against an in-memory database;
 `pathNotFound` versus an empty listing; a batch left open at session teardown is closed;
 the engine's reporters reach the event sink as events.
 
@@ -604,7 +604,7 @@ temporary directory: write and read, partial delivery, close.
 scripted replies: replies matched to their callers, two threads waiting at once, failure
 on close, the nil-body convention, an event delivered to `onEvent`.
 
-**Server** (`SemelServ` tests, phase 3) — a real engine over a loopback socket: hello,
+**Server** (`SemelServer` tests, phase 3) — a real engine over a loopback socket: hello,
 push, list, fetch, `wait`; an event reaching a subscribed client and not an unsubscribed
 one; a batch unwound when a client disconnects mid-push; the two-session `wait` limit
 (B-61) shown by a test.

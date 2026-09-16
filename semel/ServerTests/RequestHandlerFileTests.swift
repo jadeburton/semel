@@ -1,13 +1,13 @@
 //
 //  RequestHandlerFileTests.swift
-//  SemelServTests
+//  SemelServerTests
 //
 //  The file verbs against a real in-memory graph: what the CLI's push, ls, rm and cp
 //  become once the graph is on the other side of a wire.
 //
 
 @testable import SemelCore
-@testable import SemelServ
+@testable import SemelServer
 import SemelDatabaseModels
 import SemelNodeKit
 import SemelProtocol

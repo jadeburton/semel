@@ -13,7 +13,7 @@ import SemelClang
 import SemelCore
 import SemelNodeKit
 import SemelProtocol
-import SemelServ
+import SemelServer
 import SemelSwift
 
 func fail(_ message: String, code: Int32) -> Never {

@@ -1,5 +1,5 @@
 // Session.swift
-// SemelServ
+// SemelServer
 //
 // What the server remembers about one connection: whether it asked for events, and how
 // many batches it has open. In one process there is exactly one; with a socket there is

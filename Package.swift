@@ -9,9 +9,11 @@ let package = Package(
     products: [
         .executable(name: "semel", targets: ["semel"]),
         .executable(name: "semel-swift", targets: ["semel-swift"]),
-        // The binary is `semelserv`; the target is not, because a target named `semelserv`
-        // would share a build directory with the `SemelServ` library on a case-insensitive
-        // volume and corrupt both.
+        // The binary is `semelserv`; the target is `semel-server`, and the library it links
+        // is `SemelServer`, not `SemelServ`. No target may be a case variant of any product
+        // name: SwiftPM names build directories after targets, but Xcode names an
+        // executable's after its product, so `SemelServ.build` and `semelserv.build` are one
+        // directory on a case-insensitive volume and the two builds corrupt each other.
         .executable(name: "semelserv", targets: ["semel-server"]),
     ],
     dependencies: [
@@ -39,7 +41,7 @@ let package = Package(
         // The server half: owns the engine behind one request handler. No sockets here;
         // the listener arrives with the semelserv executable.
         .target(
-            name: "SemelServ",
+            name: "SemelServer",
             dependencies: [
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
@@ -81,7 +83,7 @@ let package = Package(
         .executableTarget(
             name: "semel-server",
             dependencies: [
-                "SemelServ",
+                "SemelServer",
                 "SemelTransport",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
@@ -116,9 +118,9 @@ let package = Package(
             sources: ["main.swift"]
         ),
         .testTarget(
-            name: "SemelServTests",
+            name: "SemelServerTests",
             dependencies: [
-                "SemelServ",
+                "SemelServer",
                 "SemelCLI",
                 "SemelTransport",
                 "semel-server",
@@ -136,7 +138,7 @@ let package = Package(
             name: "SemelCLITests",
             dependencies: [
                 "SemelCLI",
-                "SemelServ",
+                "SemelServer",
                 "SemelSwiftTool",
                 "SemelTransport",
                 .product(name: "SemelCore", package: "SemelCore"),
