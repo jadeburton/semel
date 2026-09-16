@@ -173,4 +173,22 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(XcodeFormulaEmitter.repositoryName(forURL: "https://github.com/wishkit/wishkit-ios.git"), "wishkit-ios")
         XCTAssertEqual(XcodeFormulaEmitter.repositoryName(forURL: "https://github.com/RevenueCat/purchases-ios-spm"), "purchases-ios-spm")
     }
+
+    // MARK: - Config namespaces
+
+    /// `prepare` writes a config block for each namespace the converter declares and no
+    /// other, so the declaration has to cover every prefix the formula selects.
+    func test_theDeclaredConfigNamespacesCoverEveryPrefixTheFormulaSelects() throws {
+        let selected = try configFilterPrefixes(in: formula())
+
+        XCTAssertFalse(selected.isEmpty)
+        XCTAssertTrue(selected.isSubset(of: XcodeProjectConverter.configNamespaces),
+                      "selected \(selected.sorted()), declared \(XcodeProjectConverter.configNamespaces)")
+    }
+
+    private func configFilterPrefixes(in formula: String) throws -> Set<String> {
+        let pattern = try NSRegularExpression(pattern: "ConfigFilter\\(prefix: '([^']+)'")
+        let matches = pattern.matches(in: formula, range: NSRange(formula.startIndex..., in: formula))
+        return Set(matches.compactMap { Range($0.range(at: 1), in: formula).map { String(formula[$0]) } })
+    }
 }

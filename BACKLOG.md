@@ -389,11 +389,6 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
-**B-68** `open` — **"Unused configuration key" noise when a formula literal overrides the
-config.** The converter states `target`, `sdk` and the like as literals, so the same keys
-in `semel.config` are reported unused on every build. A literal that shadows a config
-key is not an unused key; the report should know the difference.
-
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.

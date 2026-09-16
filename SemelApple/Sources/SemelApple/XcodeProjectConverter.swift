@@ -30,6 +30,17 @@ public struct XcodeProjectConverter: Node {
     static let formulaOutput = "formula"
     static let infoLog = "infoLog"
 
+    /// The config namespaces the formula this converter emits selects from, for the
+    /// targets it writes itself. The package formulas it includes select from
+    /// `SwiftFormulaConverter`'s; `prepare` writes a block for each of both and no other,
+    /// because a block nothing reads is reported as unused keys on every build.
+    public static let configNamespaces: [String] = [
+        XcodeFormulaEmitter.swiftCompilerNamespace,
+        XcodeFormulaEmitter.swiftLinkerNamespace,
+        AssetCatalogCompilerConfiguration.settingNamespace,
+        StringCatalogCompilerConfiguration.settingNamespace,
+    ]
+
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {

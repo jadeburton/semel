@@ -38,6 +38,23 @@ struct SwiftFormulaConverter: Node {
     /// C sources and no Swift make it a C target (B-54), built through the clang nodes.
     static let targetFolders        = "targetFolders"
 
+    /// The clang nodes a C target is built through. Named rather than imported: this
+    /// package does not depend on SemelClang, and a formula names a node by type name.
+    static let clangPreprocessorNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessor")
+    static let clangCompilerNamespace     = derivedSettingNamespace(forTypeName: "ClangCompiler")
+
+    /// The config namespaces a formula this converter emits selects from. `prepare`
+    /// writes a block for each of these and no other, because a block nothing reads is
+    /// reported as unused keys on every build. A package's objects go into an archive
+    /// or the Swift linker's product, so `clang.linker` is not among them.
+    static let configNamespaces: [String] = [
+        SwiftPackageReaderConfiguration.settingNamespace,
+        SwiftCompilerConfiguration.settingNamespace,
+        SwiftLinkerConfiguration.settingNamespace,
+        clangPreprocessorNamespace,
+        clangCompilerNamespace,
+    ]
+
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {
@@ -1088,7 +1105,7 @@ struct SwiftFormulaConverter: Node {
         }
         let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
 
-        let configExpr = Self.configurationExpression(namespace: derivedSettingNamespace(forTypeName: "ClangPreprocessor"),
+        let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
         return "func \(preprocessorFuncName(for: target.name))(path) =\n" +
@@ -1104,7 +1121,7 @@ struct SwiftFormulaConverter: Node {
     /// so the generated text needs no path literal.
     private func clangObjectEntries(target: SPMTarget, packageFolder: String) -> [String] {
         let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
-        let configExpr = Self.configurationExpression(namespace: derivedSettingNamespace(forTypeName: "ClangCompiler"),
+        let configExpr = Self.configurationExpression(namespace: Self.clangCompilerNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
         return (target.clangInfo?.sourceExtensions ?? []).map { ext in
