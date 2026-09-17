@@ -389,6 +389,18 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
+**B-70** `open` — **A fresh IceCubesApp clone fails on the xcconfig the repository does not
+ship.** The project names `IceCubesApp.xcconfig`, which is gitignored; the repository
+carries `IceCubesApp.xcconfig.template`. Prepared and built from a clean clone
+(2026-09-17), the converter treats the missing file as an empty layer, so
+`BUNDLE_ID_PREFIX` is undefined and every extension's `Info.plist` fails — eleven errors,
+one build. Two shapes: `prepare` copies the template into place when the named file is
+absent and says so, which is what a first-time Xcode user does by hand; or the converter
+reports the missing xcconfig once, as the cause, instead of eleven symptoms. The first is
+the acceptance criterion B-65 claimed — prepare to a launched app in two commands — and
+the second is worth having anyway. Also the first external project the end-to-end
+testing design pins, so the fixture cannot be built until one of these lands.
+
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.
