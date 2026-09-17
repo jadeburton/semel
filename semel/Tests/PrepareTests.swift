@@ -287,19 +287,21 @@ final class PrepareTests: XCTestCase {
     private var vendoredProject: (URL, URL)?
 
     /// A project file in the OpenStep form Xcode writes, cut to what `prepare` reads: one
-    /// application with a deployment target.
+    /// application with a deployment target, and a project-level xcconfig.
     private let projectFixture = """
         // !$*UTF8*$!
         {
             objects = {
                 P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 ); };
                 CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
-                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { }; };
+                C1 = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = XC1; buildSettings = { }; };
+                XC1 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
                 G1 = { isa = PBXGroup; children = ( ); sourceTree = "<group>"; };
                 T1 = { isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application";
                        buildConfigurationList = CL2; buildPhases = ( ); fileSystemSynchronizedGroups = ( ); packageProductDependencies = ( ); };
                 CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
-                C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { IPHONEOS_DEPLOYMENT_TARGET = 18.5; PRODUCT_NAME = App; }; };
+                C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { IPHONEOS_DEPLOYMENT_TARGET = 18.5; PRODUCT_NAME = App;
+                       PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_ID_PREFIX).App"; }; };
             };
             rootObject = P1;
         }
@@ -356,6 +358,147 @@ final class PrepareTests: XCTestCase {
         XCTAssertThrowsError(try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())) { error in
             XCTAssertTrue("\(error)".contains("One.xcodeproj") && "\(error)".contains("Two.xcodeproj"), "\(error)")
         }
+    }
+
+    // MARK: - The xcconfig a project names but does not ship
+
+    /// B-70. A project may name an xcconfig its repository ignores and ship a
+    /// `<name>.template` instead; a fresh clone then has the template and not the file,
+    /// and the converter reads the missing file as an empty layer. `prepare` puts the
+    /// template's copy in place, which is what a first-time Xcode user does by hand.
+    func test_aMissingXcconfigTheProjectNamesIsCopiedFromItsTemplate() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/App.xcconfig.template", "BUNDLE_ID_PREFIX = com.example\n")
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        let xcconfig = folder("App").appendingPathComponent("App.xcconfig")
+        XCTAssertEqual(try String(contentsOf: xcconfig, encoding: .utf8), "BUNDLE_ID_PREFIX = com.example\n")
+        XCTAssertEqual(report.copiedFromTemplate,
+                       [.init(file: xcconfig, source: folder("App").appendingPathComponent("App.xcconfig.template"))])
+        XCTAssertEqual(report.missingXcconfigs, [])
+        XCTAssertEqual(report.undefinedReferences, [], "nothing is missing, so nothing is reported undefined")
+    }
+
+    /// Xcode knows no template; the spelling is each repository's. The stem has to match
+    /// the file the project names, and the marker is one of a short family, as a trailing
+    /// extension or before `.xcconfig` with a dot or a dash.
+    func test_aTemplateIsFoundUnderTheCommonSpellings() throws {
+        let spellings = ["App.xcconfig.template", "App.xcconfig.example", "App.xcconfig.sample", "App.xcconfig.dist",
+                         "App.example.xcconfig", "App-example.xcconfig", "App.template.xcconfig", "App-sample.xcconfig"]
+
+        for (index, spelling) in spellings.enumerated() {
+            let app = "App\(index)"
+            try write("\(app)/App.xcodeproj/project.pbxproj", projectFixture)
+            try write("\(app)/\(spelling)", "BUNDLE_ID_PREFIX = com.example\n")
+
+            let report = try Preparation.run(folder: folder(app), platform: .iosSimulator, steps: steps())
+
+            XCTAssertEqual(report.copiedFromTemplate.map(\.source.lastPathComponent), [spelling])
+            XCTAssertEqual(try String(contentsOf: folder(app).appendingPathComponent("App.xcconfig"), encoding: .utf8),
+                           "BUNDLE_ID_PREFIX = com.example\n", spelling)
+        }
+    }
+
+    /// A sibling that only shares the stem is not a template: `App.xcconfig.bak` is
+    /// someone's backup, and `AppSecrets.xcconfig` is another file.
+    func test_aSiblingOutsideTheFamilyIsNotATemplate() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/App.xcconfig.bak", "BUNDLE_ID_PREFIX = com.old\n")
+        try write("App/AppSecrets.xcconfig", "API_KEY = x\n")
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(report.copiedFromTemplate, [])
+        XCTAssertEqual(report.missingXcconfigs, [folder("App").appendingPathComponent("App.xcconfig")])
+    }
+
+    /// The escape hatch: `--xcconfig App.xcconfig=<file>` names the starting point for a
+    /// repository whose spelling the family does not cover. Named, it wins over a template.
+    func test_aSourceNamedOnTheCommandLineIsCopiedAndWinsOverATemplate() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/App.xcconfig.template", "BUNDLE_ID_PREFIX = com.example\n")
+        try write("Elsewhere/starting-point.xcconfig", "BUNDLE_ID_PREFIX = com.mine\n")
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator,
+                                         xcconfigSources: ["App.xcconfig": folder("Elsewhere").appendingPathComponent("starting-point.xcconfig")],
+                                         steps: steps())
+
+        XCTAssertEqual(try String(contentsOf: folder("App").appendingPathComponent("App.xcconfig"), encoding: .utf8),
+                       "BUNDLE_ID_PREFIX = com.mine\n")
+        XCTAssertEqual(report.copiedFromTemplate.map(\.source.lastPathComponent), ["starting-point.xcconfig"])
+    }
+
+    func test_aSourceNamedForAFileTheProjectDoesNotNameIsAnError() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("Elsewhere/starting-point.xcconfig", "")
+
+        XCTAssertThrowsError(try Preparation.run(folder: folder("App"), platform: .iosSimulator,
+                                                 xcconfigSources: ["Other.xcconfig": folder("Elsewhere").appendingPathComponent("starting-point.xcconfig")],
+                                                 steps: steps())) { error in
+            XCTAssertTrue("\(error)".contains("Other.xcconfig") && "\(error)".contains("App.xcconfig"), "\(error)")
+        }
+    }
+
+    func test_aSourceThatIsNotThereIsAnError() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+
+        XCTAssertThrowsError(try Preparation.run(folder: folder("App"), platform: .iosSimulator,
+                                                 xcconfigSources: ["App.xcconfig": folder("Elsewhere").appendingPathComponent("nope.xcconfig")],
+                                                 steps: steps())) { error in
+            XCTAssertTrue("\(error)".contains("nope.xcconfig"), "\(error)")
+        }
+    }
+
+    /// When a named xcconfig is missing and nothing provides it, the report says which
+    /// references the project's settings leave undefined — what a two-line file would
+    /// have to define — rather than leaving the build to fail on each of them.
+    func test_aMissingXcconfigReportsTheReferencesLeftUndefined() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(report.missingXcconfigs, [folder("App").appendingPathComponent("App.xcconfig")])
+        XCTAssertEqual(report.undefinedReferences, ["BUNDLE_ID_PREFIX"])
+    }
+
+    /// The copy happens before the project is read for its deployment target, so a
+    /// template that states one is honoured on the first run, not the second.
+    func test_theTemplatesCopyIsReadForTheDeploymentTarget() throws {
+        let fixture = projectFixture.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = 18.5; ", with: "")
+        try write("App/App.xcodeproj/project.pbxproj", fixture)
+        try write("App/App.xcconfig.template", "IPHONEOS_DEPLOYMENT_TARGET = 17.2\n")
+
+        try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        let config = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertTrue(config.contains("swift.compiler.target=arm64-apple-ios17.2-simulator"), "got:\n\(config)")
+    }
+
+    func test_anXcconfigThatIsThereIsNeverReplaced() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("App/App.xcconfig", "BUNDLE_ID_PREFIX = com.mine\n")
+        try write("App/App.xcconfig.template", "BUNDLE_ID_PREFIX = com.example\n")
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(try String(contentsOf: folder("App").appendingPathComponent("App.xcconfig"), encoding: .utf8),
+                       "BUNDLE_ID_PREFIX = com.mine\n")
+        XCTAssertEqual(report.copiedFromTemplate, [])
+        XCTAssertEqual(report.missingXcconfigs, [])
+    }
+
+    /// Without a template there is nothing to copy; the report says the file is missing
+    /// rather than leaving the build to fail on every reference it would have defined.
+    func test_aMissingXcconfigWithoutATemplateIsReportedNotWritten() throws {
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        let xcconfig = folder("App").appendingPathComponent("App.xcconfig")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: xcconfig.path))
+        XCTAssertEqual(report.copiedFromTemplate, [])
+        XCTAssertEqual(report.missingXcconfigs, [xcconfig])
     }
 
     /// A project that ships its own formula or config has already decided: neither is

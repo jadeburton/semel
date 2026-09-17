@@ -18,6 +18,27 @@ public struct PrepareReport: Equatable {
     public var vendored: [Vendoring.Copied] = []
     public var written: [URL] = []
     public var kept: [URL] = []
+    /// An xcconfig the project names that was not there, now in place as a copy of
+    /// `source`: the file named on the command line for it, or a template beside it.
+    public struct TemplateCopy: Equatable {
+        public var file: URL
+        public var source: URL
+
+        public init(file: URL, source: URL) {
+            self.file   = file
+            self.source = source
+        }
+    }
+
+    public var copiedFromTemplate: [TemplateCopy] = []
+    /// The xcconfig files the project names that are not there and nothing provides: the
+    /// converter reads each as an empty layer, and the build fails on what it would have
+    /// defined.
+    public var missingXcconfigs: [URL] = []
+    /// When something is missing, the names the project's settings still reference after
+    /// reading what is there — what the missing file would have to define. Empty when
+    /// nothing is missing, whatever the project leaves undefined.
+    public var undefinedReferences: [String] = []
 }
 
 public enum Preparation {
@@ -46,7 +67,11 @@ public enum Preparation {
                                        facts: ToolchainFacts.fromMachine)
     }
 
-    public static func run(folder: URL, platform: Platform, steps: Steps = .live) throws -> PrepareReport {
+    /// `xcconfigSources` is the escape hatch for a project whose starting point for an
+    /// ignored xcconfig is spelled in a way no template family covers: the path the
+    /// project names, to the file to copy there.
+    public static func run(folder: URL, platform: Platform, xcconfigSources: [String: URL] = [:],
+                           steps: Steps = .live) throws -> PrepareReport {
         let folder = folder.standardizedFileURL
         let dependencies = folder.appendingPathComponent(Vendoring.dependenciesFolderName, isDirectory: true)
         var report = PrepareReport()
@@ -63,6 +88,12 @@ public enum Preparation {
         if let project = try projectFile(in: folder) {
             report.project = project.lastPathComponent
             report.vendored = try steps.vendorProject(project, dependencies)
+            // Before the project is read for its deployment target: an xcconfig is a
+            // layer of the settings that reading evaluates.
+            (report.copiedFromTemplate, report.missingXcconfigs) = try placeXcconfigs(ofProjectAt: project, sources: xcconfigSources)
+            if !report.missingXcconfigs.isEmpty {
+                report.undefinedReferences = try XcodeProjectFacts.undefinedReferences(ofProjectAt: project, sdk: platform.sdkName)
+            }
             declaredVersion = try deploymentTarget(ofProjectAt: project, platform: platform)
             formula = GeneratedFiles.formula(project: project.lastPathComponent, platform: platform)
             namespaces = GeneratedFiles.projectNamespaces
@@ -113,6 +144,61 @@ public enum Preparation {
     /// the converter will evaluate it. Nil when the project states none.
     static func deploymentTarget(ofProjectAt project: URL, platform: Platform) throws -> String? {
         try XcodeProjectFacts.deploymentTarget(ofProjectAt: project, sdk: platform.sdkName)
+    }
+
+    /// Xcode knows no template. A repository that ignores an xcconfig and ships a starting
+    /// point for it spells the name its own way; these are the spellings seen, as a
+    /// trailing extension (`App.xcconfig.template`) or a marker before the extension
+    /// (`App.example.xcconfig`, `App-sample.xcconfig`). The stem must be the named file's,
+    /// so a sibling that merely resembles it is never copied.
+    static let templateMarkers = ["template", "example", "sample", "dist"]
+
+    /// The files that would be a template for `xcconfig`, in the order they are tried.
+    static func templateCandidates(for xcconfig: URL) -> [URL] {
+        let folder = xcconfig.deletingLastPathComponent()
+        let name = xcconfig.lastPathComponent
+        let stem = xcconfig.deletingPathExtension().lastPathComponent
+        let ext  = xcconfig.pathExtension
+        return templateMarkers.flatMap { marker in
+            ["\(name).\(marker)", "\(stem).\(marker).\(ext)", "\(stem)-\(marker).\(ext)"]
+        }.map { folder.appendingPathComponent($0) }
+    }
+
+    /// The xcconfig files the project names, each put in place when it is not there: from
+    /// the source named for it on the command line, or else from a template beside it.
+    /// One that is there is never touched: it is the user's, whatever a template says
+    /// now. Returns the copies made and the files still missing, so the report can say
+    /// both. A source named for a file the project does not name is a mistake worth
+    /// stopping on, since nothing would ever read the copy.
+    static func placeXcconfigs(ofProjectAt project: URL,
+                               sources: [String: URL]) throws -> (copied: [PrepareReport.TemplateCopy], missing: [URL]) {
+        let folder = project.deletingLastPathComponent()
+        let named = try XcodeProjectFacts.xcconfigPaths(ofProjectAt: project)
+        for path in sources.keys.sorted() where !named.contains(path) {
+            throw Vendoring.Failure(description: "--xcconfig \(path): the project names no such file; it names \(named.isEmpty ? "none" : named.joined(separator: ", "))")
+        }
+
+        var copied: [PrepareReport.TemplateCopy] = []
+        var missing: [URL] = []
+        for relativePath in named {
+            let xcconfig = folder.appendingPathComponent(relativePath)
+            guard !FileManager.default.fileExists(atPath: xcconfig.path) else {
+                continue
+            }
+            if let source = sources[relativePath] {
+                guard FileManager.default.fileExists(atPath: source.path) else {
+                    throw Vendoring.Failure(description: "--xcconfig \(relativePath)=\(source.path): no such file")
+                }
+                try FileManager.default.copyItem(at: source, to: xcconfig)
+                copied.append(.init(file: xcconfig, source: source))
+            } else if let template = templateCandidates(for: xcconfig).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                try FileManager.default.copyItem(at: template, to: xcconfig)
+                copied.append(.init(file: xcconfig, source: template))
+            } else {
+                missing.append(xcconfig)
+            }
+        }
+        return (copied, missing)
     }
 
     /// `<folder>/Packages/Timeline` under `<folder>` is `Packages/Timeline`; the folder

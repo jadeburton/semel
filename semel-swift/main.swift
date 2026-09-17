@@ -2,7 +2,7 @@
 //  main.swift
 //  semel-swift
 //
-//  semel-swift prepare <folder> [--platform macos|ios-simulator]
+//  semel-swift prepare <folder> [--platform macos|ios-simulator] [--xcconfig <name>=<file>]...
 //
 //  The Swift conversion tool, outside Semel: everything between cloning a tree of Swift
 //  packages and `semel 'build <folder>'`. It finds the packages, takes as roots the ones
@@ -16,7 +16,9 @@ import SemelSwiftTool
 
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
-        usage: semel-swift prepare <folder> [--platform \(Platform.allCases.map(\.rawValue).joined(separator: "|"))]
+        usage: semel-swift prepare <folder> [--platform \(Platform.allCases.map(\.rawValue).joined(separator: "|"))] [--xcconfig <name>=<file>]...
+          --xcconfig  the file to copy into place as <name>, an xcconfig the project names
+                      and the repository does not ship, when no template beside it is found
 
         """.utf8))
     exit(64) // EX_USAGE
@@ -38,13 +40,27 @@ if let flag = arguments.firstIndex(of: "--platform") {
     platformWasGiven = true
     arguments.removeSubrange(flag...(flag + 1))
 }
+// `--xcconfig <name>=<file>`, as often as there are files to place. The name is the path
+// the project names, relative to the folder; the file is relative to where the tool runs.
+var xcconfigSources: [String: URL] = [:]
+while let flag = arguments.firstIndex(of: "--xcconfig") {
+    guard flag + 1 < arguments.count else {
+        usage()
+    }
+    let pair = arguments[flag + 1]
+    guard let equals = pair.firstIndex(of: "="), equals > pair.startIndex, pair.index(after: equals) < pair.endIndex else {
+        usage()
+    }
+    xcconfigSources[String(pair[..<equals])] = URL(fileURLWithPath: String(pair[pair.index(after: equals)...]))
+    arguments.removeSubrange(flag...(flag + 1))
+}
 guard arguments.count == 1 else {
     usage()
 }
 let folder = URL(fileURLWithPath: arguments[0], isDirectory: true)
 
 do {
-    let report = try Preparation.run(folder: folder, platform: platform)
+    let report = try Preparation.run(folder: folder, platform: platform, xcconfigSources: xcconfigSources)
     if let project = report.project {
         print("Project: \(project)")
     } else {
@@ -58,6 +74,20 @@ do {
     }
     for entry in report.vendored {
         print("\(entry.name) -> \(entry.destination.path)")
+    }
+    for copy in report.copiedFromTemplate {
+        // The source's values are whoever wrote the source's; the simulator takes them,
+        // a device build needs the user's own.
+        print("Copied: \(copy.file.path) (from \(copy.source.path); edit it if its values are not yours)")
+    }
+    for file in report.missingXcconfigs {
+        print("Missing: \(file.path) (the project names it and nothing here provides it; the build reads it as empty)")
+    }
+    if !report.undefinedReferences.isEmpty {
+        // What the missing file would have to define, so writing it by hand is a matter
+        // of these names, not of reading the project.
+        print("  Undefined after reading what is there: \(report.undefinedReferences.joined(separator: ", "))")
+        print("  Write the file, or name one to copy: --xcconfig <name>=<file>")
     }
     for file in report.written {
         print("Written: \(file.path)")
