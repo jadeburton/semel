@@ -18,6 +18,13 @@ public struct PrepareReport: Equatable {
     public var vendored: [Vendoring.Copied] = []
     public var written: [URL] = []
     public var kept: [URL] = []
+    /// The xcconfig files the project names that were not there and had a `.template`
+    /// beside them, now in place as copies of it.
+    public var copiedFromTemplate: [URL] = []
+    /// The xcconfig files the project names that are not there and have no template: the
+    /// converter reads each as an empty layer, and the build fails on what it would have
+    /// defined.
+    public var missingXcconfigs: [URL] = []
 }
 
 public enum Preparation {
@@ -63,6 +70,9 @@ public enum Preparation {
         if let project = try projectFile(in: folder) {
             report.project = project.lastPathComponent
             report.vendored = try steps.vendorProject(project, dependencies)
+            // Before the project is read for its deployment target: an xcconfig is a
+            // layer of the settings that reading evaluates.
+            (report.copiedFromTemplate, report.missingXcconfigs) = try placeXcconfigs(ofProjectAt: project)
             declaredVersion = try deploymentTarget(ofProjectAt: project, platform: platform)
             formula = GeneratedFiles.formula(project: project.lastPathComponent, platform: platform)
             namespaces = GeneratedFiles.projectNamespaces
@@ -113,6 +123,35 @@ public enum Preparation {
     /// the converter will evaluate it. Nil when the project states none.
     static func deploymentTarget(ofProjectAt project: URL, platform: Platform) throws -> String? {
         try XcodeProjectFacts.deploymentTarget(ofProjectAt: project, sdk: platform.sdkName)
+    }
+
+    /// What a file the project names but the repository does not ship is called when the
+    /// repository ships a starting point for it instead: `IceCubesApp.xcconfig.template`
+    /// beside the ignored `IceCubesApp.xcconfig`.
+    public static let templateSuffix = ".template"
+
+    /// The xcconfig files the project names, each put in place from its template when it
+    /// is not there and the template is. One that is there is never touched: it is the
+    /// user's, whatever the template says now. Returns the copies made and the files
+    /// still missing, so the report can say both.
+    static func placeXcconfigs(ofProjectAt project: URL) throws -> (copied: [URL], missing: [URL]) {
+        let folder = project.deletingLastPathComponent()
+        var copied: [URL] = []
+        var missing: [URL] = []
+        for relativePath in try XcodeProjectFacts.xcconfigPaths(ofProjectAt: project) {
+            let xcconfig = folder.appendingPathComponent(relativePath)
+            guard !FileManager.default.fileExists(atPath: xcconfig.path) else {
+                continue
+            }
+            let template = URL(fileURLWithPath: xcconfig.path + templateSuffix)
+            if FileManager.default.fileExists(atPath: template.path) {
+                try FileManager.default.copyItem(at: template, to: xcconfig)
+                copied.append(xcconfig)
+            } else {
+                missing.append(xcconfig)
+            }
+        }
+        return (copied, missing)
     }
 
     /// `<folder>/Packages/Timeline` under `<folder>` is `Packages/Timeline`; the folder

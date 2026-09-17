@@ -389,17 +389,12 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
-**B-70** `open` — **A fresh IceCubesApp clone fails on the xcconfig the repository does not
-ship.** The project names `IceCubesApp.xcconfig`, which is gitignored; the repository
-carries `IceCubesApp.xcconfig.template`. Prepared and built from a clean clone
-(2026-09-17), the converter treats the missing file as an empty layer, so
-`BUNDLE_ID_PREFIX` is undefined and every extension's `Info.plist` fails — eleven errors,
-one build. Two shapes: `prepare` copies the template into place when the named file is
-absent and says so, which is what a first-time Xcode user does by hand; or the converter
-reports the missing xcconfig once, as the cause, instead of eleven symptoms. The first is
-the acceptance criterion B-65 claimed — prepare to a launched app in two commands — and
-the second is worth having anyway. Also the first external project the end-to-end
-testing design pins, so the fixture cannot be built until one of these lands.
+**B-71** `open` — **A missing xcconfig is eleven symptoms at build time, not one cause.**
+`prepare` now puts a named xcconfig in place from its `.template` and reports one it
+cannot (B-70), but a build whose xcconfig goes missing afterwards, or was never prepared,
+still reads it as an empty layer and fails on every `Info.plist` that referenced a value
+it would have defined. The converter knows the file is absent — the `StaticFile` arrives
+without a value — and could say so once, as the cause, in the idle error report.
 
 ## Not doing
 

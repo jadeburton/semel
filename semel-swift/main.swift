@@ -59,6 +59,14 @@ do {
     for entry in report.vendored {
         print("\(entry.name) -> \(entry.destination.path)")
     }
+    for file in report.copiedFromTemplate {
+        // The template's values are whoever wrote the template's; the simulator takes
+        // them, a device build needs the user's own.
+        print("Copied: \(file.path) (from \(file.lastPathComponent)\(Preparation.templateSuffix); edit it if its values are not yours)")
+    }
+    for file in report.missingXcconfigs {
+        print("Missing: \(file.path) (the project names it and nothing here provides it; the build reads it as empty)")
+    }
     for file in report.written {
         print("Written: \(file.path)")
     }

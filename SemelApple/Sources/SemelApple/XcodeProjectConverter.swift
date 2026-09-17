@@ -118,12 +118,8 @@ public struct XcodeProjectConverter: Node {
 
         // ── the xcconfig files the project and the target name ──────────────
         let projectFolder = try projectFolder
-        var xcconfigPaths: [String] = []
-        for configuration in [project.configuration(named: configurationName), application.configuration(named: configurationName)] {
-            if let xcconfig = configuration?.xcconfigPath {
-                xcconfigPaths.append("\(projectFolder)/\(xcconfig)")
-            }
-        }
+        let xcconfigPaths = project.xcconfigPaths(for: application, configuration: configurationName)
+            .map { "\(projectFolder)/\($0)" }
         for path in xcconfigPaths {
             specs[Self.xcconfigs]?[path] = "StaticFile(path: '\(path)').output"
         }

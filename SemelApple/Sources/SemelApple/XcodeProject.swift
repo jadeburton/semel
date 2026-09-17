@@ -84,6 +84,13 @@ struct XcodeProject {
         configurations.first { $0.name == name }
     }
 
+    /// The `.xcconfig` files the project and then `target` base the named configuration
+    /// on, relative to the project's folder: the layers `XcodeBuildSettings` reads, in
+    /// the order it reads them. Whether a file is there is the caller's question.
+    func xcconfigPaths(for target: Target, configuration name: String) -> [String] {
+        [configuration(named: name), target.configuration(named: name)].compactMap { $0?.xcconfigPath }
+    }
+
     // MARK: - Reading
 
     init(pbxproj data: Data) throws {
