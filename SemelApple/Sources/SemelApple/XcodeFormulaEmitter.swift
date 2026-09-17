@@ -34,6 +34,11 @@ struct XcodeFormulaEmitter {
     let project: XcodeProject
     let build: Build
 
+    /// The Swift nodes a target is built through. Named rather than imported: this
+    /// package does not depend on SemelSwift, and a formula names a node by type name.
+    static let swiftCompilerNamespace = derivedSettingNamespace(forTypeName: "SwiftCompiler")
+    static let swiftLinkerNamespace   = derivedSettingNamespace(forTypeName: "SwiftLinker")
+
     // MARK: - Whole project
 
     /// The formula for the application target: its bundle, with every package it and its
@@ -147,7 +152,7 @@ struct XcodeFormulaEmitter {
         blocks.append(
             "func compiler_\(name)() =\n" +
             "    SwiftCompiler(\n" +
-            "        configuration: ['config': \(configuration(namespace: "swift.compiler", literals: compilerLiterals))]" +
+            "        configuration: ['config': \(configuration(namespace: Self.swiftCompilerNamespace, literals: compilerLiterals))]" +
             (folderWires.isEmpty ? "" : ",\n        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]") +
             (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
             (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
@@ -167,7 +172,7 @@ struct XcodeFormulaEmitter {
         products.append(
             "product '\(bundlePath)/\(identity.productName)' =\n" +
             "    SwiftLinker(\n" +
-            "        configuration: ['config': \(configuration(namespace: "swift.linker", literals: linkerLiterals))],\n" +
+            "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
             "        input: ['\(identity.moduleName).o': compiler_\(name)().object]" +
             (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
             "\n    ).output")
@@ -212,7 +217,7 @@ struct XcodeFormulaEmitter {
             blocks.append(
                 "func assets_\(name)() =\n" +
                 "    AssetCatalogCompiler(\n" +
-                "        configuration: ['config': \(configuration(namespace: "apple.assetCatalogCompiler", literals: assetLiterals))],\n" +
+                "        configuration: ['config': \(configuration(namespace: AssetCatalogCompilerConfiguration.settingNamespace, literals: assetLiterals))],\n" +
                 "        catalogs: [\n" + catalogWires.joined(separator: ",\n") + "\n        ]\n" +
                 "    )")
             bundleTrees.append("'assets': assets_\(name)().files")
@@ -224,7 +229,7 @@ struct XcodeFormulaEmitter {
             blocks.append(
                 "func strings_\(name)_\(index)() =\n" +
                 "    StringCatalogCompiler(\n" +
-                "        configuration: ['config': \(configuration(namespace: "apple.stringCatalogCompiler", literals: [:]))],\n" +
+                "        configuration: ['config': \(configuration(namespace: StringCatalogCompilerConfiguration.settingNamespace, literals: [:]))],\n" +
                 "        catalog: ['\(fileName)': StaticFile(path: '\(catalog.folderPath)/\(catalog.relativePath)').output]\n" +
                 "    )")
             bundleTrees.append("'strings\(index)': strings_\(name)_\(index)().files")

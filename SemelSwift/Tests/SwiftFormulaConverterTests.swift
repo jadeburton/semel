@@ -1111,6 +1111,27 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertTrue(product.contains("'App.o': compilerApp().object"), "the Swift objects still link, got:\n\(product)")
     }
 
+    /// `prepare` writes a config block for each namespace the converter declares and no
+    /// other, so the declaration has to cover every prefix the formula selects — for a
+    /// package with C targets, and for this repository's own root. The package reader's
+    /// filter is not in the formula text: the converter wires it itself, and
+    /// `test_theExternalPackageReaderIsWiredToASelectorForItsOwnNamespace` covers that one.
+    func test_theDeclaredConfigNamespacesCoverEveryPrefixTheFormulaSelects() throws {
+        let selected = try configFilterPrefixes(in: formula(json: appOverCLib, folderContents: cFolders))
+            .union(configFilterPrefixes(in: rootFormula()))
+
+        XCTAssertTrue(selected.isSuperset(of: ["swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler"]),
+                      "\(selected.sorted())")
+        XCTAssertTrue(selected.isSubset(of: SwiftFormulaConverter.configNamespaces),
+                      "selected \(selected.sorted()), declared \(SwiftFormulaConverter.configNamespaces)")
+    }
+
+    private func configFilterPrefixes(in formula: String) throws -> Set<String> {
+        let pattern = try NSRegularExpression(pattern: "ConfigFilter\\(prefix: '([^']+)'")
+        let matches = pattern.matches(in: formula, range: NSRange(formula.startIndex..., in: formula))
+        return Set(matches.compactMap { Range($0.range(at: 1), in: formula).map { String(formula[$0]) } })
+    }
+
     func test_aSwiftTargetDependingOnACTargetGetsItsPublicHeadersAsAModuleMapFolder() throws {
         let result = try formula(json: appOverCLib, folderContents: cFolders)
 

@@ -148,8 +148,11 @@ final class PrepareTests: XCTestCase {
 
     // MARK: - The config
 
-    func test_theConfigStatesEveryNamespaceWithThePlatformSettingsItsToolNeeds() throws {
-        let config = lines(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0", facts: facts()))
+    private var everyNamespace: [String] { ToolNamespaceRegistry.all.map(\.namespace) }
+
+    func test_theConfigStatesThePlatformSettingsEachToolNeeds() throws {
+        let config = lines(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0",
+                                                facts: facts(), namespaces: everyNamespace))
 
         for namespace in ["swift.compiler", "swift.linker"] {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name=swiftc"), "got:\n\(config)")
@@ -175,8 +178,45 @@ final class PrepareTests: XCTestCase {
                        "xcstringstool compiles every language whatever the platform")
     }
 
+    /// B-68. A block nothing reads is reported as unused keys on every build, so the
+    /// config carries the namespaces the formula's converters select from and no other:
+    /// a tree of packages never links through clang and compiles no catalogs; a project
+    /// compiles catalogs and still never links through clang.
+    func test_theConfigCarriesOnlyTheNamespacesTheFormulaReads() throws {
+        try write("Packages/Timeline/Package.swift")
+        try write("App/App.xcodeproj/project.pbxproj", projectFixture)
+
+        try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
+        try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        let packages = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
+        for namespace in ["swift.packageReader", "swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler"] {
+            XCTAssertTrue(packages.contains("\(namespace).toolDescriptor.name="), "got:\n\(packages)")
+        }
+        XCTAssertFalse(packages.contains("clang.linker"), "got:\n\(packages)")
+        XCTAssertFalse(packages.contains("apple."), "got:\n\(packages)")
+
+        let project = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        for namespace in ["swift.packageReader", "swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler",
+                          "apple.assetCatalogCompiler", "apple.stringCatalogCompiler"] {
+            XCTAssertTrue(project.contains("\(namespace).toolDescriptor.name="), "got:\n\(project)")
+        }
+        XCTAssertFalse(project.contains("clang.linker"), "got:\n\(project)")
+    }
+
+    /// A namespace a converter reads that no toolchain declares would be silently left
+    /// out of the config, and the build would then fail naming the missing key.
+    func test_everyNamespaceAConverterReadsIsDeclaredByAToolchain() {
+        let declared = Set(everyNamespace)
+
+        for namespace in GeneratedFiles.packageTreeNamespaces + GeneratedFiles.projectNamespaces {
+            XCTAssertTrue(declared.contains(namespace), "\(namespace) is read but not declared; declared: \(declared.sorted())")
+        }
+    }
+
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {
-        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0", facts: facts()))
+        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
+                                                facts: facts(), namespaces: everyNamespace))
 
         XCTAssertTrue(config.contains("swift.compiler.sdk=macosx"), "got:\n\(config)")
         XCTAssertTrue(config.contains("swift.compiler.sdkVersion=26.5 (25F70)"), "got:\n\(config)")
@@ -186,7 +226,8 @@ final class PrepareTests: XCTestCase {
     /// A config names one version; of several installed, the newest.
     func test_aToolInstalledTwiceIsPinnedToTheNewest() throws {
         let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
-                                                facts: facts(descriptors: [olderSwiftc, swiftc, clang, swift])))
+                                                facts: facts(descriptors: [olderSwiftc, swiftc, clang, swift]),
+                                                namespaces: everyNamespace))
 
         XCTAssertTrue(config.contains("swift.compiler.toolDescriptor.version=Apple Swift version 6.3.3"), "got:\n\(config)")
         XCTAssertFalse(config.contains("swift.compiler.toolDescriptor.version=Apple Swift version 6.2.0"))
@@ -194,7 +235,7 @@ final class PrepareTests: XCTestCase {
 
     func test_aMissingToolLeavesACommentNotASetting() throws {
         let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
-                                                facts: facts(descriptors: [swiftc, swift])))
+                                                facts: facts(descriptors: [swiftc, swift]), namespaces: everyNamespace))
 
         XCTAssertTrue(config.contains("// clang.compiler: no clang is installed on this machine"), "got:\n\(config)")
         XCTAssertFalse(config.contains { $0.hasPrefix("clang.compiler.toolDescriptor") })
@@ -204,7 +245,8 @@ final class PrepareTests: XCTestCase {
         var machine = facts()
         machine.sdkIdentity = { _ in nil }
 
-        XCTAssertThrowsError(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0", facts: machine))
+        XCTAssertThrowsError(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0",
+                                                       facts: machine, namespaces: everyNamespace))
     }
 
     // MARK: - Deployment version

@@ -53,16 +53,19 @@ public enum Preparation {
         let facts = try steps.facts()
         let sdkVersion = facts.sdkIdentity(platform.sdkName).map(GeneratedFiles.version(fromSDKIdentity:))
         let formula: String
+        let namespaces: [String]
         var declaredVersion: String?
 
         // A folder holding an `.xcodeproj` is a project: the project is the one root, it
         // says which packages it reaches, and its application's deployment target is the
-        // build's. A folder without one is a tree of packages.
+        // build's. A folder without one is a tree of packages. The config carries the
+        // namespaces the formula's converters read, and no other.
         if let project = try projectFile(in: folder) {
             report.project = project.lastPathComponent
             report.vendored = try steps.vendorProject(project, dependencies)
             declaredVersion = try deploymentTarget(ofProjectAt: project, platform: platform)
             formula = GeneratedFiles.formula(project: project.lastPathComponent, platform: platform)
+            namespaces = GeneratedFiles.projectNamespaces
         } else {
             let manifestFolders = try PackageScan.manifestFolders(under: folder)
             guard !manifestFolders.isEmpty else {
@@ -73,12 +76,14 @@ public enum Preparation {
             report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies)
             declaredVersion = GeneratedFiles.deploymentVersion(for: platform, in: summaries)
             formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
+            namespaces = GeneratedFiles.packageTreeNamespaces
         }
 
         guard let deploymentVersion = declaredVersion ?? sdkVersion else {
             throw Vendoring.Failure(description: "no \(platform.sdkName) SDK on this machine (xcrun --sdk \(platform.sdkName))")
         }
-        let config = try GeneratedFiles.config(platform: platform, deploymentVersion: deploymentVersion, facts: facts)
+        let config = try GeneratedFiles.config(platform: platform, deploymentVersion: deploymentVersion,
+                                               facts: facts, namespaces: namespaces)
 
         for (name, contents) in [(GeneratedFiles.formulaFileName, formula), (GeneratedFiles.configFileName, config)] {
             let file = folder.appendingPathComponent(name)

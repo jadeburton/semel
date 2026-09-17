@@ -114,6 +114,19 @@ public enum GeneratedFiles {
         """
     }
 
+    /// The config namespaces the formula for a tree of packages selects from: what
+    /// `SwiftFormulaConverter` emits reads.
+    public static var packageTreeNamespaces: [String] {
+        SemelSwift.converterConfigNamespaces
+    }
+
+    /// The config namespaces the formula for a project selects from: what the project
+    /// converter emits for its own targets reads, and what the package formulas it
+    /// includes read.
+    public static var projectNamespaces: [String] {
+        XcodeProjectConverter.configNamespaces + SemelSwift.converterConfigNamespaces
+    }
+
     /// The highest deployment version the packages declare for the platform, or nil when
     /// none does. Highest, because a root that declares 18.0 cannot be built for 17.0
     /// whatever its dependencies allow.
@@ -138,25 +151,29 @@ public enum GeneratedFiles {
     static let cStandard   = "gnu11"
     static let cxxStandard = "c++17"
 
-    /// One block per namespace the toolchains declare, in the shape `semel tools` prints,
-    /// plus the platform settings each tool needs. A tool installed in several versions
-    /// is pinned to the newest; a tool not installed leaves a comment saying so, so the
-    /// file still says what is missing.
-    public static func config(platform: Platform, deploymentVersion: String, facts: ToolchainFacts) throws -> String {
+    /// One block per namespace in `namespaces`, in the shape `semel tools` prints, plus the
+    /// platform settings each tool needs. Only the namespaces the formula selects from,
+    /// because the engine reports a key no filter claims as unused on every build. A tool
+    /// installed in several versions is pinned to the newest; a tool not installed leaves
+    /// a comment saying so, so the file still says what is missing.
+    public static func config(platform: Platform, deploymentVersion: String, facts: ToolchainFacts,
+                              namespaces: [String]) throws -> String {
         guard let sdkIdentity = facts.sdkIdentity(platform.sdkName),
               let sdkPath = facts.sdkPath(platform.sdkName) else {
             throw Vendoring.Failure(description: "no \(platform.sdkName) SDK on this machine (xcrun --sdk \(platform.sdkName))")
         }
         let target = platform.target(deploymentVersion: deploymentVersion)
+        let wanted = Set(namespaces)
 
         var blocks: [String] = [
             """
             // Written by semel-swift prepare for --platform \(platform.rawValue): the tools and SDK
-            // this machine has, and the deployment version the packages declare. Edit to pin
-            // another toolchain; `semel tools` lists what is installed.
+            // this machine has, and the deployment version the packages declare, for the
+            // namespaces the formula reads. Edit to pin another toolchain; `semel tools`
+            // lists what is installed.
             """,
         ]
-        for entry in facts.namespaces.sorted(by: { $0.namespace < $1.namespace }) {
+        for entry in facts.namespaces.sorted(by: { $0.namespace < $1.namespace }) where wanted.contains(entry.namespace) {
             let descriptors = facts.descriptors
                 .filter { $0.name == entry.toolName }
                 .sorted { ($0.version, $0.platform, $0.architecture) < ($1.version, $1.platform, $1.architecture) }

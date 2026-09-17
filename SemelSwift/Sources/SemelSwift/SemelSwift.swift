@@ -45,6 +45,14 @@ public enum SemelSwift {
                                              toolName: "swift"))
     }
 
+    // MARK: - What a converted package reads
+
+    /// The config namespaces the formula `SwiftFormulaConverter` emits selects from. For
+    /// `semel-swift prepare`, which writes a config block for each and no other.
+    public static var converterConfigNamespaces: [String] {
+        SwiftFormulaConverter.configNamespaces
+    }
+
     // MARK: - SDK facts
 
     /// The path of the named SDK on this machine, or nil if xcrun knows no such SDK. For a
