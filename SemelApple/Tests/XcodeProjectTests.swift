@@ -206,6 +206,27 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertEqual(settings["PRODUCT_BUNDLE_IDENTIFIER"], "$(BUNDLE_ID_PREFIX).IceCubesApp")
     }
 
+    /// What a reference that resolved to nothing names, so `prepare` can say what a
+    /// missing xcconfig would have to define. A name Xcode provides itself is not one.
+    func test_namesTheReferencesLeftUnresolved() throws {
+        XCTAssertEqual(try settings(xcconfig: [:]).unresolvedReferences, ["BUNDLE_ID_PREFIX"])
+        XCTAssertEqual(try settings().unresolvedReferences, [])
+        XCTAssertEqual(XcodeBuildSettings.unresolvedReferences(in: ["A": "$(SRCROOT)/x $(MISSING) ${ALSO:rfc1034identifier}"]),
+                       ["ALSO", "MISSING"])
+    }
+
+    func test_theFactsNameTheUndefinedReferencesOfAProjectOnDisk() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("semel-xcodeproject-facts-\(UUID().uuidString)")
+        let project = folder.appendingPathComponent("App.xcodeproj")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data(Self.fixture.utf8).write(to: project.appendingPathComponent("project.pbxproj"))
+
+        XCTAssertEqual(try XcodeProjectFacts.undefinedReferences(ofProjectAt: project, sdk: "iphonesimulator"), ["BUNDLE_ID_PREFIX"])
+        try "BUNDLE_ID_PREFIX = com.example\n".write(to: folder.appendingPathComponent("App.xcconfig"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(try XcodeProjectFacts.undefinedReferences(ofProjectAt: project, sdk: "iphonesimulator"), [])
+    }
+
     func test_aConditionalSettingAppliesForItsSDKOnly() throws {
         XCTAssertEqual(try settings(sdk: "iphonesimulator")["INFOPLIST_KEY_UILaunchScreen_Generation"], "YES")
         XCTAssertEqual(try settings(sdk: "macosx")["INFOPLIST_KEY_UILaunchScreen_Generation"], "NO")

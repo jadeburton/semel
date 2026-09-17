@@ -143,6 +143,36 @@ struct XcodeBuildSettings {
 
     private static let reference = try? NSRegularExpression(pattern: #"\$[({]([A-Za-z_][A-Za-z0-9_]*)(?::([a-z0-9]+))?[)}]"#)
 
+    /// The names the resolved values still reference, sorted: every one a setting nobody
+    /// defined, which is what a missing xcconfig looks like from here. Names Xcode
+    /// provides from the build itself are left out; no xcconfig would define them.
+    var unresolvedReferences: [String] {
+        Self.unresolvedReferences(in: values)
+    }
+
+    static func unresolvedReferences(in values: [String: String]) -> [String] {
+        guard let reference = reference else {
+            return []
+        }
+        var names = Set<String>()
+        for value in values.values where value.contains("$") {
+            for match in reference.matches(in: value, range: NSRange(value.startIndex..., in: value)) {
+                if let nameRange = Range(match.range(at: 1), in: value) {
+                    names.insert(String(value[nameRange]))
+                }
+            }
+        }
+        return names.subtracting(providedByXcode).sorted()
+    }
+
+    /// Settings Xcode derives from the build rather than reads from a file: the project's
+    /// location, the SDK, the configuration. A reference to one is not a missing value.
+    static let providedByXcode: Set<String> = [
+        "SRCROOT", "PROJECT_DIR", "PROJECT_NAME", "PROJECT_FILE_PATH", "SDKROOT", "PLATFORM_NAME",
+        "EFFECTIVE_PLATFORM_NAME", "CONFIGURATION", "DEVELOPER_DIR", "BUILT_PRODUCTS_DIR",
+        "TARGET_BUILD_DIR", "ARCHS", "HOME", "USER", "inherited",
+    ]
+
     private static func apply(operator name: String, to value: String) -> String {
         switch name {
         case "c99extidentifier":
