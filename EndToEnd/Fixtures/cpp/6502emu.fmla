@@ -1,0 +1,14 @@
+// Take the base config one directory up, and override it with our local config
+func config(prefix) = ConfigFilter(prefix: prefix, input: [ConfigMerger(base: [StaticFile(path: <../clang.cfg>)], override: [StaticFile(path: <clang.cfg>)])])
+
+func preprocessor(path) = ClangPreprocessor(
+  configuration: [config(prefix: 'clang.preprocessor')],
+  input: [path: StaticFile(path: path)]
+)
+
+func make(glob, dynamicLibrary) = ClangLinker(
+  configuration: [Configuration(inherit: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
+  objectFiles: [{f: glob} "%%f%%.o": ClangCompiler(configuration: [config(prefix: 'clang.compiler')], input: ["%%f%%.p": preprocessor(path: f)])]
+)
+
+product "emu6502" = make(dynamicLibrary: 'false', glob: <*.cpp>)

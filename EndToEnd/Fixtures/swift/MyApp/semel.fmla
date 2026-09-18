@@ -1,0 +1,2 @@
+// MyApp is the deliverable; MyLibrary is reached through it as a path dependency.
+include SwiftFormulaConverter(path: <.>).formula
