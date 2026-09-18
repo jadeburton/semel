@@ -388,13 +388,6 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
-**B-71** `open` — **A missing xcconfig is eleven symptoms at build time, not one cause.**
-`prepare` now puts a named xcconfig in place from its `.template` and reports one it
-cannot (B-70), but a build whose xcconfig goes missing afterwards, or was never prepared,
-still reads it as an empty layer and fails on every `Info.plist` that referenced a value
-it would have defined. The converter knows the file is absent — the `StaticFile` arrives
-without a value — and could say so once, as the cause, in the idle error report.
-
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.

@@ -192,8 +192,48 @@ public struct XcodeProjectConverter: Node {
             listing: { listings[$0] })
 
         return .init(outputValues: [Self.formulaOutput: .value(try formula.intern()),
-                                    Self.infoLog: .value(try "converted \(application.name) for \(sdk), \(configurationName)".intern())],
+                                    Self.infoLog: try infoLogValue(application: application, embedded: embedded, project: project,
+                                                                   projectFolder: projectFolder, xcconfigPaths: xcconfigPaths,
+                                                                   xcconfigTexts: xcconfigTexts)],
                      inputWireSpecs: specs)
+    }
+
+    /// The success message, or — once an xcconfig the project names has no value — the
+    /// cause: which file is missing and which settings it would have defined. Reported as
+    /// an error only when that set is not empty; a missing file nothing referenced is not
+    /// a broken build, so it is folded into the ordinary success message instead. An error
+    /// here, not just the info it replaces, is what lets a real cause reach the idle error
+    /// report; `formulaOutput` still carries the formula, since one port's error does not
+    /// stop another port on the same node from carrying its value. The settings are
+    /// resolved again over the application and its extensions — the same evaluation
+    /// `XcodeFormulaEmitter` already ran per target — so the message names exactly what the
+    /// missing file would have to define.
+    private func infoLogValue(application: XcodeProject.Target, embedded: [XcodeProject.Target], project: XcodeProject,
+                              projectFolder: String, xcconfigPaths: [String], xcconfigTexts: [String: String]) throws -> NodeValue {
+        let converted = "converted \(application.name) for \(sdk), \(configurationName)"
+        let missing = xcconfigPaths.filter { xcconfigTexts[$0] == nil }
+        guard !missing.isEmpty else {
+            return .value(try converted.intern())
+        }
+
+        var undefinedNames = Set<String>()
+        for target in [application] + embedded {
+            let settings = try XcodeBuildSettings.resolve(project: project, target: target, configuration: configurationName, sdk: sdk,
+                                                           xcconfig: { xcconfigTexts["\(projectFolder)/\($0)"] },
+                                                           extra: ["TARGET_NAME": target.name])
+            undefinedNames.formUnion(settings.unresolvedReferences)
+        }
+
+        guard !undefinedNames.isEmpty else {
+            let lines = ([converted] + missing.map { "xcconfig \($0) is missing; nothing referenced it" }).joined(separator: "\n")
+            return .value(try lines.intern())
+        }
+
+        let names = undefinedNames.sorted().joined(separator: ", ")
+        let message = missing
+            .map { "xcconfig \($0) is missing; settings it would define are undefined (\(names))" }
+            .joined(separator: "\n")
+        return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
     }
 
     /// Folders whose contents are one compiled unit: never walked, so their files are not
