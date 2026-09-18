@@ -9,8 +9,9 @@ for what differed from this text.
   first (`Project.alsoPush`).
 - `prepare` writes the namespaces a kept formula selects.
 - `TreeDiff` resolves the root through `realpath` because `/tmp` is a symlink on macOS.
-- `Project.mayDiffer` lists `.a` for `swift-hello-app` and `icecubes` because of archive
-  member timestamps (B-72).
+- `Project.mayDiffer` is empty for every roster entry: `SwiftLinker` makes `.staticArchive`
+  output deterministic (B-72), so the two export trees match byte for byte with no
+  exemptions.
 
 ## 1. Why
 
