@@ -305,42 +305,6 @@ struct SwiftCompiler: Node {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
-    private func buildInputSourceFilesSpecs(folderManifests: [(String, FolderManifest)],
-                                                  scope: SourceScope) -> [String: String] {
-        var result: [String: String] = [:]
-        for folderManifest in folderManifests {
-            for entry in folderManifest.1.entries where entry.isPinned && entry.name.hasSuffix(".swift") && !entry.isFolder {
-                let fullPath = (Path(folderManifest.1.baseFolderPath) / entry.name).string
-                guard scope.includesFile(fullPath) else { continue }
-                result[fullPath] = "StaticFile(path: \"\(fullPath)\").output".replacingOccurrences(of: "\\'", with: "'")
-            }
-        }
-        return result
-    }
-
-    /// Generates a Folder wire spec for every subfolder named in `folderManifests`.
-    ///
-    /// A FolderManifest is a non-recursive list of immediate children, so one pass only
-    /// reaches one level down. Feeding this port's own manifests back in means each run
-    /// discovers the next level and reschedules the node, until the tree is exhausted and
-    /// the spec set stops changing — the same walk ProjectFinder does for its
-    /// watched folders.
-    ///
-    /// Unpinned entries are ghosts (deleted, or never pushed); wiring one would resurrect
-    /// a folder the user removed.
-    private func buildInputSubfoldersSpecs(folderManifests: [(String, FolderManifest)],
-                                                 scope: SourceScope) -> [String: String] {
-        var result: [String: String] = [:]
-        for (_, manifest) in folderManifests {
-            for entry in manifest.entries where entry.isFolder && entry.isPinned {
-                let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
-                guard scope.includesFolder(fullPath) else { continue }
-                result[fullPath] = "Folder(path: '\(fullPath)').manifest"
-            }
-        }
-        return result
-    }
-
     /// Generates dynamic wire specs for all files inside each system-library
     /// folder manifest.  Wire key format: "<sandboxDirName>/<filename>".
     private func buildInputModuleMapFilesSpecs(moduleMapFolderManifests: [(String, FolderManifest)]) -> [String: String] {
@@ -480,8 +444,10 @@ struct SwiftCompiler: Node {
     private func process(inputs: SwiftCompilerInputs) throws -> SwiftCompilerOutputs {
         // The target's own folder plus every subfolder discovered so far. Sources are
         // gathered from all of them, and each is re-scanned for further subfolders, so
-        // the tree is walked one level per run until it is fully covered.
-        let allSourceFolders = inputs.inputFolderManifests + inputs.subfolderManifests
+        // the tree is walked one level per run until it is fully covered — the same walk
+        // ProjectFinder does for its watched folders and AssetCatalogCompiler does for a
+        // catalog's contents.
+        let allSourceFolders = (inputs.inputFolderManifests + inputs.subfolderManifests).map(\.1)
 
         // Scoped to the target's own roots: a subfolder manifest's base sits deeper, so
         // relative paths must be measured from where the target actually starts.
@@ -489,8 +455,14 @@ struct SwiftCompiler: Node {
                                 sourcePaths: inputs.configuration.sourcePaths,
                                 excludedPaths: inputs.configuration.excludedPaths)
 
-        let inputSourceFilesSpecs    = buildInputSourceFilesSpecs(folderManifests: allSourceFolders, scope: scope)
-        let inputSubfoldersSpecs     = buildInputSubfoldersSpecs(folderManifests: allSourceFolders, scope: scope)
+        // Only .swift files inside the target's scope are compiled; only folders that
+        // might still lead to one are worth walking further.
+        let inputSourceFilesSpecs = FolderTreeWalk.fileSpecs(of: allSourceFolders) {
+            $0.hasSuffix(".swift") && scope.includesFile($0)
+        }
+        let inputSubfoldersSpecs = FolderTreeWalk.subfolderSpecs(of: allSourceFolders) {
+            scope.includesFolder($0)
+        }
         let inputModuleMapFilesSpecs = buildInputModuleMapFilesSpecs(moduleMapFolderManifests: inputs.moduleMapFolderManifests)
         do {
             return try compile(inputs: inputs,
