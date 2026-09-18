@@ -65,7 +65,12 @@ enum Projects {
         buildFolder: "Packages",
         platform: "ios-simulator",
         expectedProducts: ["libConversations.a", "libExplore.a", "libLists.a", "libNotifications.a", "libTimeline.a"],
-        buildTimeout: 15 * 60)
+        buildTimeout: 15 * 60,
+        // Each product's archive's member header records a wall-clock mtime, so two builds
+        // of the same objects differ in that field for all five archives: "libConversations.a:
+        // content differs at offset 31" (also libExplore.a, libLists.a, libNotifications.a,
+        // libTimeline.a, each at offset 31). B-72.
+        expectDeterministic: false)
 
     static let fixtures: [Project] = [cHello, cppEmu6502, swiftMyApp, swiftHelloApp]
     static let external: [Project] = [icecubes]
