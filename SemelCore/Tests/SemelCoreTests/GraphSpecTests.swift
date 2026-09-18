@@ -251,6 +251,22 @@ final class GraphSpecTests: SemelCoreTestCase {
         XCTAssertNoThrow(try a.expectTopologyMatch(b))
     }
 
+    // MARK: - adding(property:value:where:)
+
+    /// The property lands on every node the predicate admits, at every depth, and on no
+    /// other; a node that already has it keeps its value. Rendering sorts properties, so
+    /// the new one appears where its key sorts.
+    func test_addingAPropertyReachesEveryAdmittedNodeAndNoOther() throws {
+        let spec = try GraphSpecNode.parse(
+            "Tool(a: '1', in: ['x': StaticFile(path: 'p').output, 'y': Tool(projectRoot: 'kept', in: ['z': Other().output]).output]).output")
+
+        let stamped = spec.adding(property: "projectRoot", value: "input:/repo") { $0.typeName != "StaticFile" }
+
+        XCTAssertEqual(stamped.asString(omitOutputPort: false),
+                       "Tool(a: '1', projectRoot: 'input:/repo', in: [\"x\": StaticFile(path: 'p').output, "
+                       + "\"y\": Tool(projectRoot: 'kept', in: [\"z\": Other(projectRoot: 'input:/repo').output]).output]).output")
+    }
+
     // MARK: - Parse errors
 
     func test_parse_emptyString_throws() {

@@ -95,6 +95,26 @@ public struct GraphSpecNode: Equatable {
     }
 }
 
+extension GraphSpecNode {
+
+    /// The same tree with `key: value` added to every node `include` admits, at any depth.
+    /// A node that already carries `key` keeps its own value: what a formula states wins
+    /// over what a builder would stamp.
+    func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
+        var properties = self.properties
+        if include(self), !properties.contains(where: { $0.key == key }) {
+            properties.append(GraphSpecProperty(key: key, value: value))
+        }
+        let inputs = self.inputs.map { port in
+            GraphSpecInputPort(portName: port.portName, wires: port.wires.map { wire in
+                GraphSpecWire(name: wire.name, node: wire.node.adding(property: key, value: value, where: include))
+            })
+        }
+        return GraphSpecNode(typeName: typeName, properties: properties, inputs: inputs,
+                             outputs: outputs, outputPort: outputPort)
+    }
+}
+
 // MARK: - Serialisation
 
 extension GraphSpecNode {
