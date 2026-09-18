@@ -59,6 +59,15 @@ let package = Package(
             ],
             path: "semel/Transport"
         ),
+        // What a test needs to run one of this package's executables as a subprocess:
+        // where the binary is, a launch that captures output without blocking, a stop
+        // with a timeout, and the wait for a socket file. A library rather than a test
+        // target because two test targets cannot share a source file, and Foundation
+        // only, so it never pulls XCTest into a product.
+        .target(
+            name: "SemelTestSupport",
+            path: "semel/TestSupport"
+        ),
         .testTarget(
             name: "SemelTransportTests",
             dependencies: [
@@ -123,6 +132,7 @@ let package = Package(
                 "SemelServer",
                 "SemelCLI",
                 "SemelTransport",
+                "SemelTestSupport",
                 "semel-server",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),

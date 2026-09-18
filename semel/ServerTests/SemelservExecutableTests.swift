@@ -11,13 +11,14 @@
 import Foundation
 @testable import SemelCLI
 import SemelProtocol
+import SemelTestSupport
 import XCTest
 
 final class SemelservExecutableTests: XCTestCase {
 
     private var home: URL!
     private var socketPath: String!
-    private var processes: [Process] = []
+    private var processes: [ManagedProcess] = []
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -31,7 +32,7 @@ final class SemelservExecutableTests: XCTestCase {
     override func tearDown() {
         for process in processes where process.isRunning {
             process.terminate()
-            process.waitUntilExit()
+            _ = process.waitForExit(timeout: 10)
         }
         processes = []
         try? FileManager.default.removeItem(at: home)
@@ -39,41 +40,24 @@ final class SemelservExecutableTests: XCTestCase {
         super.tearDown()
     }
 
-    /// The products directory holds the test bundle and the executables built beside it.
     private var binary: URL {
-        Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("semelserv")
+        ProductsDirectory.executable(named: "semelserv", besideBundleAt: Bundle(for: Self.self).bundleURL)
     }
 
-    private func launch() throws -> (Process, Pipe) {
-        let process = Process()
-        process.executableURL = binary
-        process.environment = ProcessInfo.processInfo.environment.merging(
-            ["SEMEL_HOME": home.path, "SEMEL_SOCKET": socketPath]) { _, override in override }
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError  = output
-        try process.run()
+    private func launch() throws -> ManagedProcess {
+        let process = ManagedProcess(executable: binary, arguments: [],
+                                     environment: ["SEMEL_HOME": home.path, "SEMEL_SOCKET": socketPath])
+        try process.start()
         processes.append(process)
-        return (process, output)
-    }
-
-    private func waitForSocket() -> Bool {
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: socketPath) {
-                return true
-            }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        return false
+        return process
     }
 
     func test_startsAnswersHelloRefusesASecondInstanceAndStopsOnSigterm() throws {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
                           "semelserv is not built beside the test bundle at \(binary.path)")
 
-        let (server, _) = try launch()
-        XCTAssertTrue(waitForSocket(), "the server never created \(socketPath!)")
+        let server = try launch()
+        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath!)")
 
         let client = try SocketConnection.connect(to: socketPath)
         let (reply, _) = try client.send(.hello(Hello(role: .daemon)), body: nil)
@@ -82,18 +66,16 @@ final class SemelservExecutableTests: XCTestCase {
         }
         XCTAssertEqual(databasePath, home.appendingPathComponent("graph.sqlite").path)
 
-        let (second, secondOutput) = try launch()
-        second.waitUntilExit()
-        let secondText = String(decoding: secondOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        XCTAssertEqual(second.terminationStatus, 1)
+        let second = try launch()
+        XCTAssertEqual(second.waitForExit(timeout: 30), 1)
+        let secondText = second.output
         XCTAssertTrue(secondText.contains("already running"), secondText)
         // It never printed a banner, which means it never opened the first instance's graph.
         XCTAssertFalse(secondText.contains("Graph:"), secondText)
 
         client.close()
         server.terminate() // SIGTERM
-        server.waitUntilExit()
-        XCTAssertEqual(server.terminationStatus, 0)
+        XCTAssertEqual(server.waitForExit(timeout: 30), 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketPath))
     }
 }
