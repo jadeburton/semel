@@ -32,7 +32,13 @@ public final class ManagedProcess {
     public func start() throws {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard let self, !data.isEmpty else {
+            guard !data.isEmpty else {
+                // Empty data from a readability handler means EOF: the write end closed.
+                // Left in place, the handler fires again immediately for the same reason.
+                handle.readabilityHandler = nil
+                return
+            }
+            guard let self else {
                 return
             }
             self.lock.lock()
