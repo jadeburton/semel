@@ -228,6 +228,32 @@ final class ServerTests: RequestHandlerTestCase {
         }
     }
 
+    /// The socket path is a plain file inside a directory whose write bit is removed, so
+    /// `claimSocket`'s best-effort removal cannot clear it and the listener's bind fails.
+    /// A start that fails there must never have claimed the sink for its own (now dead)
+    /// registry.
+    func test_aStartThatFailsAtBindLeavesTheHandlersEventSinkUntouched() throws {
+        let blockedDirectory = directory.appendingPathComponent("blocked", isDirectory: true)
+        try FileManager.default.createDirectory(at: blockedDirectory, withIntermediateDirectories: true)
+        let blockedPath = blockedDirectory.appendingPathComponent("semelserv.sock").path
+        FileManager.default.createFile(atPath: blockedPath, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: blockedDirectory.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blockedDirectory.path)
+        }
+
+        let blockedHandler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        let blockedServer  = Server(handler: blockedHandler, socketPath: blockedPath)
+
+        XCTAssertThrowsError(try blockedServer.start()) { error in
+            guard let serverError = error as? SemelServer.ServerError, case .cannotListen = serverError else {
+                XCTFail("expected cannotListen, got \(error)")
+                return
+            }
+        }
+        XCTAssertNil(blockedHandler.eventSink)
+    }
+
     func test_stopRemovesTheSocketFileAndAStaleFileIsReplaced() throws {
         XCTAssertTrue(FileManager.default.fileExists(atPath: socketPath))
 

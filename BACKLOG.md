@@ -26,7 +26,8 @@ twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` require
 export trees to match, except the static archives B-72 exempts. What remains is a
 source-scanning test as a backstop. A
 wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
-dictionaries here are accumulated into, which is safe. Two sites worth a look under (c):
+dictionaries here are accumulated into, which is safe. Two sites worth a look for the
+source scan:
 `ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
 dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
 command line.
@@ -227,6 +228,14 @@ One binary, three modes, sharing a wire protocol:
    and it is where the path authorisation and sync machinery came from. The artifact events
    CLIs subscribe to are B-50's settle diffs. What remains of B-30 is roles 1 and 2.
 
+**B-73** `open` — **A crashed or Ctrl-C'd client orphans its `semelserv`.**
+The end-to-end harness stops every server it starts with SIGTERM, but only on the paths it
+controls; a `semel` test process that crashes or is killed does not reach its own cleanup
+and leaves the `semelserv` it started running. Two shapes fix it: put the server in the
+client's process group, so a signal delivered to the group reaches both; or have `semelserv`
+exit when its socket file disappears, which also covers a user who deletes the socket by
+hand.
+
 ## Design, correctness and code quality
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
@@ -357,10 +366,6 @@ Presentation at scale is the one open question: a cold build of a 10,000-file pr
 produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
 the threshold when wiring the terminal reporter; the mechanism is indifferent to it.
 
-**B-60** `open` — **History-narrating comments in EmittedFormulaConfigurationTests.swift.**
-Lines 35 and 254 refer to "today's" keys and defaults that "no longer exist"; reword as
-timeless statements per AGENTS.md.
-
 **B-61** `open` — **`wait` across connections.**
 Two things a socket server must settle before `wait` is offered to more than one client: a
 `wait` can block indefinitely while another session holds a batch open, since a batched
@@ -368,12 +373,6 @@ work signal is counted but not sent until `endBatch` (fails safe, never a false 
 the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
-
-**B-62** `open` — **The server claims the handler's event sink before it has bound.**
-`Server.start()` assigns `handler.eventSink` after claiming the socket file but before the
-listener is ready, so a server that fails at bind or at the ready timeout has taken the
-sink from any server the handler already backed. One handler backs one server today, so
-nothing observes it; claim the sink after `.ready` when that changes.
 
 ## App bundles
 

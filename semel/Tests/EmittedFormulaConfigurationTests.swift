@@ -32,7 +32,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
     /// The config file this build is given. Deliberately the shape a real one has —
     /// comments, blank lines, every namespace the Swift tools claim — rather than the
-    /// minimum that happens to satisfy today's required keys.
+    /// minimum that happens to satisfy the required keys.
     private let configFile = """
         // Settings for the tools this package's formula names.
         swift.compiler.toolDescriptor.name=swiftc
@@ -251,7 +251,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     /// The same graph with no config file pushed. Every one of those nodes must fail, and
     /// fail by naming a key to write -- because that error is the entire user interface for
     /// "this build cannot start", and a node that quietly accepted an empty configuration
-    /// would be building against defaults that no longer exist.
+    /// would be building against defaults it never had — config namespaces have none.
     func test_withNoConfigFileEveryNodeFailsNamingTheKeyToWrite() throws {
         let (formula, readerSpecs) = try convert()
         try buildGraph(fromFormula: formula)

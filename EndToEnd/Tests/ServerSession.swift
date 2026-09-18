@@ -46,6 +46,7 @@ final class ServerSession {
         process.terminate()
         guard let status = process.waitForExit(timeout: 30) else {
             process.kill()
+            _ = process.waitForExit(timeout: 5)
             throw EndToEndFailure(step: "stop server", message: "did not exit within 30 s of SIGTERM",
                                   commandLine: process.commandLine, serverLogTail: process.outputTail())
         }
