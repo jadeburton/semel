@@ -1,6 +1,16 @@
 # End-to-end testing: real projects through both binaries
 
-**Status:** approved design, not yet implemented.
+**Status:** implemented; see `docs/superpowers/plans/2026-09-17-semel-end-to-end-testing.md`
+for what differed from this text.
+
+- `SemelServTests` is `SemelServerTests`.
+- `swift-hello-app` does not skip.
+- `swift-my-app` pushes `swift/MyLibrary` first and the two C fixtures push `clang.cfg`
+  first (`Project.alsoPush`).
+- `prepare` writes the namespaces a kept formula selects.
+- `TreeDiff` resolves the root through `realpath` because `/tmp` is a symlink on macOS.
+- `Project.expectDeterministic` exists and is false for `swift-hello-app` and `icecubes`
+  because of archive member timestamps (B-72).
 
 ## 1. Why
 

@@ -20,11 +20,11 @@ Remote Runner role (B-30).
 The known instance is fixed: `SwiftFormulaConverter.generateFormula` walked
 `externalManifests` in dictionary order, so two vendored packages vending the same product
 or target name resolved differently per process (reproduced at 5 failures in 12 runs); it
-now walks them sorted by folder, lexically first wins. What remains is the safety net, in
-order: (b) a test that builds the same project in two subprocesses and diffs the results
-byte-for-byte, since hashing is seeded per process — this catches every order dependence
-at once, and doubles as the determinism probe in B-11; (c) a source-scanning test as a
-backstop. A wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
+now walks them sorted by folder, lexically first wins. The two-process byte-for-byte diff
+is built: `SemelEndToEndTests` builds every fixture and every pinned external project cold
+twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` requires the
+export trees to match. What remains is (c) a source-scanning test as a backstop. A
+wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
 dictionaries here are accumulated into, which is safe. Two sites worth a look under (c):
 `ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
 dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
@@ -34,6 +34,8 @@ command line.
 Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,
 hostname, wall-clock. Any output difference means the key is under-specified. The systematic
 version of how the SDK bug was found; belongs in the test suite, run once per node type.
+Its home is `EndToEndRun`: an extra cold build with a perturbed environment, and the same
+`TreeDiff` against the first.
 
 **B-17** `open` — **`ToolDescriptor.recursiveHash` is designed but never populated.**
 The slot exists on every tool descriptor and is read from
@@ -68,6 +70,8 @@ noise and must go. Three parts, in order:
 Verification is a B-05-shaped test: build one tree at two mounts, require byte-identical
 artifacts and equal cache keys. Do 1–2 before 3 — mount-independent keys with
 mount-dependent outputs is exactly the wrong-hit bug reintroduced.
+The end-to-end harness found no embedded path in any fixture's or IceCubes's exports; what
+it did find is B-72.
 
 ## Swift package conversion
 
@@ -176,6 +180,16 @@ Unreferenced objects accumulate in the object store with no collector. Not urgen
 Make the engine talk to the cache as though it were a separate server, without a socket or a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
+
+**B-72** `open` — **Static archives carry member timestamps.**
+`libHelloKit.a` and IceCubes's five archives differ between two cold builds at the `ar`
+member header's mtime field, so the archive nodes are not reproducible and two developers'
+caches can never share an archive. The fix is deterministic archive mode: `ZERO_AR_DATE=1`
+in the archiver's environment, or `ar -D` / `libtool -D` where supported, in `SwiftLinker`
+— the node that writes `.staticArchive` products by having `swiftc -emit-library -static`
+drive `libtool`. Until then `swift-hello-app` and `icecubes` run with
+`expectDeterministic: false` in `EndToEnd/Tests/Projects.swift`, and that flag is the list
+of what this item owes. Verification: flip the flags and the two fixture tests pass.
 
 ## Performance
 
