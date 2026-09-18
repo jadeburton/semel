@@ -23,7 +23,7 @@ or target name resolved differently per process (reproduced at 5 failures in 12 
 now walks them sorted by folder, lexically first wins. The two-process byte-for-byte diff
 is built: `SemelEndToEndTests` builds every fixture and every pinned external project cold
 twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` requires the
-export trees to match, except the static archives B-72 exempts. What remains is a
+export trees to match, static archives included. What remains is a
 source-scanning test as a backstop. A
 wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
 dictionaries here are accumulated into, which is safe. Two sites worth a look for the
@@ -72,8 +72,8 @@ noise and must go. Three parts, in order:
 Verification is a B-05-shaped test: build one tree at two mounts, require byte-identical
 artifacts and equal cache keys. Do 1–2 before 3 — mount-independent keys with
 mount-dependent outputs is exactly the wrong-hit bug reintroduced.
-The end-to-end harness found no embedded path in any fixture's or IceCubes's exports; what
-it did find is B-72.
+The end-to-end harness found no embedded path in any fixture's or IceCubes's exports, and
+the static archives among them match byte for byte too.
 
 ## Swift package conversion
 
@@ -182,16 +182,6 @@ Unreferenced objects accumulate in the object store with no collector. Not urgen
 Make the engine talk to the cache as though it were a separate server, without a socket or a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
-
-**B-72** `open` — **Static archives carry member timestamps.**
-`libHelloKit.a` and IceCubes's five archives differ between two cold builds at the `ar`
-member header's mtime field, so the archive nodes are not reproducible and two developers'
-caches can never share an archive. The fix is deterministic archive mode: `ZERO_AR_DATE=1`
-in the archiver's environment, or `ar -D` / `libtool -D` where supported, in `SwiftLinker`
-— the node that writes `.staticArchive` products by having `swiftc -emit-library -static`
-drive `libtool`. Until then `swift-hello-app` and `icecubes` list `.a` in `mayDiffer` in
-`EndToEnd/Tests/Projects.swift`, and those entries are the list of what this item owes.
-Verification is removing them and the two tests passing.
 
 ## Performance
 

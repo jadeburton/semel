@@ -51,7 +51,12 @@ struct SwiftLinkerConfiguration {
         // Extra flags a formula states about the product — `-framework QuickLook`,
         // `-e _NSExtensionMain` — comma-joined like every list in a setting.
         arguments = (properties["arguments"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
-        environment = [:]
+
+        // `-emit-library -static` drives `libtool` as a child process, which zeroes a
+        // member's timestamp, uid and gid when it inherits ZERO_AR_DATE=1 — otherwise the
+        // `ar` header carries the wall clock and two cold builds of the same inputs produce
+        // different bytes. Only the static-archive linkage writes an archive.
+        environment = linkage == .staticArchive ? ["ZERO_AR_DATE": "1"] : [:]
         sdk = properties["sdk"] ?? defaultSDKName
         target = properties["target"]
         sdkVersion = properties["sdkVersion"]

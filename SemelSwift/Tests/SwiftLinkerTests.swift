@@ -295,4 +295,24 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
     func test_declaresTheFileMetadataPort() {
         XCTAssertTrue(SwiftLinker.descriptor.outputPorts.contains(FileMetadata.portName))
     }
+
+    // MARK: - Deterministic archives (B-72)
+
+    /// `ZERO_AR_DATE=1` makes Apple's `ar`/`libtool` zero a member's timestamp, uid and gid,
+    /// so the same inputs produce a byte-identical archive on any run. `swiftc -emit-library
+    /// -static` drives `libtool` as a child process that inherits this environment, so the
+    /// variable has to be in what SwiftLinker passes to `execute`.
+    func test_aStaticArchiveLinksWithADeterministicArchiveDate() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: "staticArchive"))
+
+        XCTAssertEqual(executor.invocations.last?.environment["ZERO_AR_DATE"], "1")
+    }
+
+    /// Only the static-archive linkage writes an archive; the variable would be meaningless
+    /// for an executable or a dynamic library, so it is left out.
+    func test_anExecutableLinksWithNoArchiveDateVariable() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: "executable"))
+
+        XCTAssertNil(executor.invocations.last?.environment["ZERO_AR_DATE"])
+    }
 }
