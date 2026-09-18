@@ -4,7 +4,8 @@
 //
 //  Two export trees compared: the same set of relative paths, the same modes, the same
 //  bytes. Each difference names its path and how it differs, so a timestamp or an
-//  embedded path is recognisable from the message without opening the files.
+//  embedded path is recognisable from the message without opening the files. Symbolic
+//  links are skipped by the regular-file filter and never compared.
 //
 
 import Foundation
@@ -76,6 +77,9 @@ enum TreeDiff {
                 continue
             }
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard url.path.hasPrefix(rootPath + "/") else {
+                throw EndToEndFailure(step: "determinism", message: "\(url.path) is not under \(rootPath)")
+            }
             let relative = String(url.path.dropFirst(rootPath.count + 1))
             result[relative] = Entry(url: url,
                                      mode: (attributes[.posixPermissions] as? Int ?? 0) & 0o777,

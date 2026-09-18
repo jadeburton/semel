@@ -37,6 +37,10 @@ enum ClangConfigTemplate {
         try process.start()
         guard let status = process.waitForExit(timeout: 60), status == 0,
               let line = process.output.split(separator: "\n").first, !line.isEmpty else {
+            if process.isRunning {
+                process.kill()
+                _ = process.waitForExit(timeout: 5)
+            }
             throw EndToEndFailure(step: step, message: "no usable output", commandLine: process.commandLine,
                                   status: process.isRunning ? nil : process.terminationStatus, outputTail: process.outputTail())
         }

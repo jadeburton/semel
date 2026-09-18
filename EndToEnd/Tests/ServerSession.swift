@@ -32,6 +32,7 @@ final class ServerSession {
         self.process = process
         guard SocketWait.wait(forSocketAt: socketPath, timeout: 30) else {
             process.kill()
+            _ = process.waitForExit(timeout: 5)
             throw EndToEndFailure(step: "start server", message: "no socket at \(socketPath) after 30 s",
                                   commandLine: process.commandLine, outputTail: process.outputTail())
         }
@@ -60,5 +61,6 @@ final class ServerSession {
     /// For a failure path: whatever it takes, no evidence expected.
     func killIfRunning() {
         process?.kill()
+        _ = process?.waitForExit(timeout: 5)
     }
 }

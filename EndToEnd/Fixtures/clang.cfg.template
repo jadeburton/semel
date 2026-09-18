@@ -1,5 +1,6 @@
 // The base config of the C fixtures, rendered to `clang.cfg` beside this file by the
-// end-to-end harness: `${CLANG_VERSION}` is the first line of `clang --version` and
+// end-to-end harness: `${CLANG_VERSION}` is the first line of `xcrun clang --version`, the
+// `Apple clang version …` string the tool descriptor carries, and
 // `${MACOS_SDK_PATH}` is `xcrun --sdk macosx --show-sdk-path`. Both are facts about the
 // machine that runs the test, which is why the rendered file is never committed.
 //

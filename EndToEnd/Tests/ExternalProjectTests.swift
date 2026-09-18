@@ -10,13 +10,9 @@ import XCTest
 
 final class ExternalProjectTests: XCTestCase {
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    func test_icecubesPackagesBuildTwiceForTheSimulator() throws {
         try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
         try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
-    }
-
-    func test_icecubesPackagesBuildTwiceForTheSimulator() throws {
         let run = try EndToEndRun(project: Projects.icecubes)
         do {
             try run.run()

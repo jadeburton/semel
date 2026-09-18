@@ -33,7 +33,9 @@ struct Project {
     /// Relative to the export directory; every one must exist and be non-empty.
     let expectedProducts: [String]
     let buildTimeout: TimeInterval
-    /// Whether the two cold builds are required to match byte for byte. False only for
-    /// a project whose tools embed a per-run path (B-49), with a comment saying which.
-    var expectDeterministic: Bool = true
+    /// Relative paths under the export directory, or path suffixes, whose bytes may differ
+    /// between the two cold builds. Every other file must match. An entry names a
+    /// difference a backlog item owns, with a comment saying which; the empty list is the
+    /// rule.
+    var mayDiffer: [String] = []
 }

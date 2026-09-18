@@ -142,21 +142,33 @@ final class EndToEndRun {
 
     // MARK: - 6. Determinism
 
-    /// The two export trees must match: the same paths, modes and bytes. This is the
-    /// B-04(b) check: two processes, the same inputs, a byte-for-byte diff. A project
-    /// marked not deterministic reports the differences as a note instead of failing.
+    /// The two export trees must match: the same paths, modes and bytes, except the paths
+    /// `project.mayDiffer` names. This is the B-04(b) check: two processes, the same
+    /// inputs, a byte-for-byte diff. A difference the roster exempts is printed as a note;
+    /// every other difference fails the run.
     func checkDeterminism(_ out1: URL, _ out2: URL) throws {
         let differences = try TreeDiff.compare(out1, out2)
         guard !differences.isEmpty else {
             return
         }
-        let listed = differences.prefix(20).map(\.description).joined(separator: "\n  ")
-        let more = differences.count > 20 ? "\n  … and \(differences.count - 20) more" : ""
-        guard project.expectDeterministic else {
-            print("\(project.name): \(differences.count) difference(s) between the two builds (not required to match):\n  \(listed)\(more)")
+        let exempt = differences.filter { Self.exempt($0, by: project.mayDiffer) }
+        let notExempt = differences.filter { !Self.exempt($0, by: project.mayDiffer) }
+        if !exempt.isEmpty {
+            let listed = exempt.prefix(20).map(\.description).joined(separator: "\n  ")
+            let more = exempt.count > 20 ? "\n  … and \(exempt.count - 20) more" : ""
+            print("\(project.name): \(exempt.count) difference(s) between the two builds, exempt by the roster:\n  \(listed)\(more)")
+        }
+        guard !notExempt.isEmpty else {
             return
         }
-        throw EndToEndFailure(step: "determinism", message: "\(differences.count) difference(s) between out1 and out2:\n  \(listed)\(more)")
+        let listed = notExempt.prefix(20).map(\.description).joined(separator: "\n  ")
+        let more = notExempt.count > 20 ? "\n  … and \(notExempt.count - 20) more" : ""
+        throw EndToEndFailure(step: "determinism", message: "\(notExempt.count) difference(s) between out1 and out2:\n  \(listed)\(more)")
+    }
+
+    /// Whether `mayDiffer` names `difference.path`, exactly or as a suffix.
+    static func exempt(_ difference: TreeDiff.Difference, by mayDiffer: [String]) -> Bool {
+        mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix($0) }
     }
 
     // MARK: - The whole run

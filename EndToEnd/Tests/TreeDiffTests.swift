@@ -50,4 +50,12 @@ final class TreeDiffTests: XCTestCase {
             "sub/content: content differs at offset 3",
         ])
     }
+
+    func test_exemptMatchesAnExactPathOrASuffix() {
+        let difference = TreeDiff.Difference(path: "lib/libHelloKit.a", kind: .content(firstDifferingOffset: 33))
+
+        XCTAssertTrue(EndToEndRun.exempt(difference, by: ["lib/libHelloKit.a"]), "an exact path match is exempt")
+        XCTAssertTrue(EndToEndRun.exempt(difference, by: [".a"]), "a suffix match is exempt")
+        XCTAssertFalse(EndToEndRun.exempt(difference, by: [".dylib"]), "no match is not exempt")
+    }
 }

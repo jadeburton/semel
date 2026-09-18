@@ -11,7 +11,7 @@ int main()
     uint32_t offset = 0x8000; // TODO: read from file itself in future
 //    std::array<uint8_t, 1024> buffer = { 0 };
 
-    std::ifstream inputFile("/Users/jadeburton/Desktop/a.out", std::ios::binary);
+    std::ifstream inputFile("a.out", std::ios::binary);
 
 //    inputFile.seekg(127, std::ios_base::seekdir::beg);
 
