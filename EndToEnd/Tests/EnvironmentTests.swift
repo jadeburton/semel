@@ -16,8 +16,9 @@ final class EnvironmentTests: XCTestCase {
 
         let stale = base.appendingPathComponent("stale-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+        let twoDaysAgo = Date().addingTimeInterval(-2 * 24 * 60 * 60)
         try FileManager.default.setAttributes(
-            [.modificationDate: Date().addingTimeInterval(-2 * 24 * 60 * 60)], ofItemAtPath: stale.path)
+            [.creationDate: twoDaysAgo, .modificationDate: twoDaysAgo], ofItemAtPath: stale.path)
 
         let fresh = base.appendingPathComponent("fresh-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: fresh, withIntermediateDirectories: true)

@@ -48,19 +48,22 @@ enum EndToEndEnvironment {
     }
 
     /// An interrupted run leaves its root behind, and `SEMEL_E2E_KEEP=1` keeps one on
-    /// purpose; a day is long enough to inspect either before it is swept. Best effort: a
-    /// listing or removal that fails leaves the entry in place, and nothing newer than the
-    /// cutoff is touched.
+    /// purpose; a day is long enough to inspect either before it is swept. Keyed on
+    /// creation date, not modification date: on APFS a directory's modification date
+    /// moves only when a direct child is added or removed, so a live root that writes
+    /// deeper than its top level would look stale by that measure while still in use.
+    /// Best effort: a listing or removal that fails leaves the entry in place, and
+    /// nothing created within the cutoff is touched.
     private static func removeStaleSiblings(under directory: URL) {
         let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
         guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else {
+            at: directory, includingPropertiesForKeys: [.creationDateKey]) else {
             return
         }
         for entry in entries {
-            guard let values = try? entry.resourceValues(forKeys: [.contentModificationDateKey]),
-                  let modificationDate = values.contentModificationDate,
-                  modificationDate < cutoff else {
+            guard let values = try? entry.resourceValues(forKeys: [.creationDateKey]),
+                  let creationDate = values.creationDate,
+                  creationDate < cutoff else {
                 continue
             }
             try? FileManager.default.removeItem(at: entry)
