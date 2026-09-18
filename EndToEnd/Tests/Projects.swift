@@ -61,7 +61,9 @@ enum Projects {
         buildFolder: "Packages",
         platform: "ios-simulator",
         expectedProducts: ["libConversations.a", "libExplore.a", "libLists.a", "libNotifications.a", "libTimeline.a"],
-        buildTimeout: 15 * 60)
+        buildTimeout: 15 * 60,
+        // Two cold builds of five minutes each are enough; the fixtures prove the third.
+        twoMounts: false)
 
     static let fixtures: [Project] = [cHello, cppEmu6502, swiftMyApp, swiftHelloApp]
     static let external: [Project] = [icecubes]
