@@ -23,7 +23,8 @@ or target name resolved differently per process (reproduced at 5 failures in 12 
 now walks them sorted by folder, lexically first wins. The two-process byte-for-byte diff
 is built: `SemelEndToEndTests` builds every fixture and every pinned external project cold
 twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` requires the
-export trees to match. What remains is (c) a source-scanning test as a backstop. A
+export trees to match, except the static archives B-72 exempts. What remains is a
+source-scanning test as a backstop. A
 wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
 dictionaries here are accumulated into, which is safe. Two sites worth a look under (c):
 `ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
@@ -187,9 +188,9 @@ member header's mtime field, so the archive nodes are not reproducible and two d
 caches can never share an archive. The fix is deterministic archive mode: `ZERO_AR_DATE=1`
 in the archiver's environment, or `ar -D` / `libtool -D` where supported, in `SwiftLinker`
 — the node that writes `.staticArchive` products by having `swiftc -emit-library -static`
-drive `libtool`. Until then `swift-hello-app` and `icecubes` run with
-`expectDeterministic: false` in `EndToEnd/Tests/Projects.swift`, and that flag is the list
-of what this item owes. Verification: flip the flags and the two fixture tests pass.
+drive `libtool`. Until then `swift-hello-app` and `icecubes` list `.a` in `mayDiffer` in
+`EndToEnd/Tests/Projects.swift`, and those entries are the list of what this item owes.
+Verification is removing them and the two tests passing.
 
 ## Performance
 

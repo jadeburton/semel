@@ -9,8 +9,8 @@ for what differed from this text.
   first (`Project.alsoPush`).
 - `prepare` writes the namespaces a kept formula selects.
 - `TreeDiff` resolves the root through `realpath` because `/tmp` is a symlink on macOS.
-- `Project.expectDeterministic` exists and is false for `swift-hello-app` and `icecubes`
-  because of archive member timestamps (B-72).
+- `Project.mayDiffer` lists `.a` for `swift-hello-app` and `icecubes` because of archive
+  member timestamps (B-72).
 
 ## 1. Why
 

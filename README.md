@@ -239,7 +239,8 @@ tool, and another toolchain gets one of its own if it needs one.
 `swift test` builds the fixtures under `EndToEnd/Fixtures` — a C program, a C++ one,
 a Swift package with a path dependency and a SwiftUI app for the simulator — through
 `semelserv`, `semel` and `semel-swift` together, each twice in two fresh homes, and
-requires the two export trees to match byte for byte. `SEMEL_E2E_EXTERNAL=1 swift test
+requires the two export trees to match byte for byte, except the static archives B-72
+exempts. `SEMEL_E2E_EXTERNAL=1 swift test
 --filter SemelEndToEndTests` adds the real projects pinned in `EndToEnd/Tests/Projects.swift`,
 fetched once into `~/Library/Caches/semel/end-to-end`; CI runs those nightly.
 `SEMEL_E2E_KEEP=1` keeps a run's directory under `/tmp/semel-tests` for inspection.

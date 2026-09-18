@@ -38,7 +38,7 @@ jobs:
       - name: Test SemelCore
         run: swift test --package-path SemelCore
 
-      # The root package's tests now include SemelEndToEndTests, which builds the C, C++
+      # The root package's tests include SemelEndToEndTests, which builds the C, C++
       # and Swift fixtures under EndToEnd/Fixtures through semelserv, semel and
       # semel-swift, twice each. External projects are not run here; see end-to-end.yml.
       - name: Test the CLI, the server and the end-to-end fixtures
