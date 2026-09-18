@@ -32,11 +32,4 @@ final class BuildTests: XCTestCase {
         let config = try String(contentsOf: out.appendingPathComponent("config.txt"), encoding: .utf8)
         XCTAssertFalse(config.contains("${"), "config.txt is the rendered config, pushed whole")
     }
-
-    func test_cHelloBuildsTwiceToTheSameBytes() throws {
-        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
-        let run = try EndToEndRun(project: Projects.cHello)
-
-        XCTAssertNoThrow(try run.run(), "see the failure's steps and tails")
-    }
 }

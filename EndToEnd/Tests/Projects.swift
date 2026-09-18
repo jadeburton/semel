@@ -51,7 +51,11 @@ enum Projects {
         buildFolder: "swift/HelloApp",
         platform: "ios-simulator",
         expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car"],
-        buildTimeout: fixtureTimeout)
+        buildTimeout: fixtureTimeout,
+        // The included package's archive carries an `ar` member header with the build's
+        // wall-clock time as a modification timestamp, which differs between two cold
+        // builds run seconds apart: "libHelloKit.a: content differs at offset 32". B-49.
+        expectDeterministic: false)
 
     static let icecubes = Project(
         name: "icecubes",
