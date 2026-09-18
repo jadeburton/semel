@@ -156,4 +156,62 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         }
         XCTAssertTrue(try hash.resolveAsString().contains("converted"), "should be the success message")
     }
+
+    /// A project whose application target references nothing from its `.xcconfig`: the
+    /// file being missing does not undefine anything, so it is not a broken build.
+    private var fixtureProjectWithNothingReferenced: NodeValue {
+        get throws {
+            .value(try """
+                // !$*UTF8*$!
+                {
+                    archiveVersion = 1;
+                    objectVersion = 77;
+                    objects = {
+                        P1 = { isa = PBXProject; buildConfigurationList = CL1; targets = ( T1 ); };
+                        CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                        C1 = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = XC1; buildSettings = { }; };
+                        XC1 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
+                        T1 = {
+                            isa = PBXNativeTarget;
+                            name = App;
+                            productType = "com.apple.product-type.application";
+                            productReference = PR1;
+                            buildConfigurationList = CL2;
+                            buildPhases = ( );
+                            fileSystemSynchronizedGroups = ( SG1 );
+                            packageProductDependencies = ( );
+                        };
+                        SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = App; exceptions = ( ); sourceTree = "<group>"; };
+                        PR1 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = "App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+                        CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
+                        C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                            PRODUCT_NAME = App;
+                            PRODUCT_BUNDLE_IDENTIFIER = "com.example.App";
+                        }; };
+                    };
+                    rootObject = P1;
+                }
+                """.intern())
+        }
+    }
+
+    /// A missing xcconfig that nothing referenced is not a cause of anything: the build is
+    /// not broken, so `infoLog` stays the ordinary success value, only noting the file by
+    /// way of explanation rather than raising it as an error.
+    func test_doesNotErrorWhenTheMissingXcconfigDefinesNothingReferenced() throws {
+        let output = try process(
+            projectFile: try fixtureProjectWithNothingReferenced,
+            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+            folders: ["input:/repo/App": try manifestValue("input:/repo/App", files: ["App.swift"])])
+
+        XCTAssertNoThrow(try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue())
+
+        let infoLog = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog])
+        guard case .value(let hash) = infoLog else {
+            XCTFail("a missing xcconfig nothing referenced should not be an error, got \(infoLog)")
+            return
+        }
+        let message = try hash.resolveAsString()
+        XCTAssertTrue(message.contains("input:/repo/App.xcconfig is missing"), message)
+    }
 }
