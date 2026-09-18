@@ -105,6 +105,25 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-o", "product"])
     }
 
+    /// An executable or a dynamic library goes through ld, whose debug map names each
+    /// object by path; prefixed with the working directory it is the sandbox-relative path.
+    func test_prefixesTheDebugMapForLinkagesThatRunTheLinker() throws {
+        for linkage in ["executable", "dynamicLibrary"] {
+            _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: linkage))
+
+            let arguments = executor.lastArguments
+            let index = try XCTUnwrap(arguments.firstIndex(of: "-oso_prefix"), "\(linkage): \(arguments)")
+            XCTAssertEqual(Array(arguments[(index - 1)...(index + 2)]), ["-Xlinker", "-oso_prefix", "-Xlinker", "."], linkage)
+        }
+    }
+
+    /// A static archive is written by libtool, which has no debug map and no `-Xlinker`.
+    func test_aStaticArchiveGetsNoDebugMapPrefix() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: "staticArchive"))
+
+        XCTAssertFalse(executor.lastArguments.contains("-oso_prefix"), "\(executor.lastArguments)")
+    }
+
     /// A formula states what a product needs beyond its objects — a framework, an
     /// extension's entry point — as a comma-joined list, and every item reaches the link
     /// line after the objects.
