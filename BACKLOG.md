@@ -381,11 +381,6 @@ formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launch
 two commands. Device signing is deliberately out — the simulator needs none beyond what
 `ld` does.
 
-**B-66** `open` — **`SwiftCompiler` still walks its source folder with its own copy of the
-walk.** `FolderTreeWalk` in SemelNodeKit is what `AssetCatalogCompiler` uses; the compiler's
-`buildInputSourceFilesSpecs` / `buildInputSubfoldersSpecs` do the same with a `SourceScope`
-filter. Move it over, with `fileSpecs(of:include:)` carrying the scope.
-
 **B-67** `open` — **A converted project publishes every package's archive beside the app.**
 Each included package formula publishes its `lib<P>.a` products beside the including
 formula, so the app's build root ends with twenty archives nobody asked for — 40 MB each

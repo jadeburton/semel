@@ -28,13 +28,18 @@ public enum FolderTreeWalk {
     }
 
     /// One `Folder(...).manifest` spec per pinned subfolder of `manifests`, keyed by the
-    /// subfolder's full path. Unpinned entries are ghosts — deleted, or never pushed — and
-    /// wiring one would resurrect a folder the user removed.
-    public static func subfolderSpecs(of manifests: [FolderManifest]) -> [String: String] {
+    /// subfolder's full path, for the subfolders `include` accepts. Unpinned entries are
+    /// ghosts — deleted, or never pushed — and wiring one would resurrect a folder the
+    /// user removed.
+    public static func subfolderSpecs(of manifests: [FolderManifest],
+                                      include: (String) -> Bool = { _ in true }) -> [String: String] {
         var result: [String: String] = [:]
         for manifest in manifests {
             for entry in manifest.entries where entry.isFolder && entry.isPinned {
                 let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
+                guard include(fullPath) else {
+                    continue
+                }
                 result[fullPath] = "Folder(path: '\(fullPath)').manifest"
             }
         }
