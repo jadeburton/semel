@@ -25,6 +25,19 @@ public struct ProjectBuilder: Node {
     /// entry, the way a wildcard's folder manifest is.
     static let treesInputPort         = "trees"
 
+    /// The property every node built for a product carries: the project's root under
+    /// `input:`, which its cache key strips from its inputs' paths. Stamped on nodes with a
+    /// static input port — the ones the cache handles — and not on the file-system nodes,
+    /// which are shared by every project that reads them.
+    static let projectRootProperty = "projectRoot"
+
+    static func isCacheable(_ spec: GraphSpecNode) -> Bool {
+        guard let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type else {
+            return false
+        }
+        return !type.descriptor.staticInputPorts.isEmpty
+    }
+
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(projectFileInputPort),
@@ -134,6 +147,8 @@ public struct ProjectBuilder: Node {
         /// The wrapper that publishes `shapeNode`'s value at `fullPath`, with the source's
         /// `fileMetadata` port wired in when it has one, so chmod can be applied on cp.
         func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) throws -> String {
+            let shapeNode = shapeNode.adding(property: Self.projectRootProperty, value: outputFolder.string,
+                                             where: Self.isCacheable)
             var metadataWire = ""
             if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
                nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
@@ -176,7 +191,9 @@ public struct ProjectBuilder: Node {
                 // by the node that made them, so it is wired here first and expanded once
                 // it has arrived — as a wildcard's folder manifest is. Until then the
                 // tree's files are simply not yet products.
-                let treeSpec = shapeNode.asString(omitOutputPort: false)
+                let treeSpec = shapeNode
+                    .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
+                    .asString(omitOutputPort: false)
                 treeSpecs[fullPath.string] = treeSpec
                 guard let manifest = treeManifests[fullPath.string] else {
                     continue

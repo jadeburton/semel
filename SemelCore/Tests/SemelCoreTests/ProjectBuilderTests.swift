@@ -163,11 +163,32 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort], [includedNode: includedNode])
     }
 
+    // MARK: - projectRoot stamping (B-49)
+
+    /// Every node a product is built through learns the project's root, so its cache key
+    /// can name its inputs relative to it. A `StaticFile` is not built through: it is
+    /// the pushed file itself, shared by every project that reads it, and stamping it
+    /// would split it into one node per project.
+    func test_stampsTheProjectRootOnEveryCacheableNodeOfAProduct() throws {
+        let output = try process(formula:
+            "product 'x' = SampleTool(configuration: ['c': StaticFile(path: 'input:/repo/c').output]).output")
+
+        let spec = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]?["output:/repo/x"])
+        XCTAssertTrue(spec.contains("SampleTool(projectRoot: 'input:/repo', configuration: ["), spec)
+        XCTAssertTrue(spec.contains("StaticFile(path: 'input:/repo/c')"), spec)
+        XCTAssertFalse(spec.contains("StaticFile(path: 'input:/repo/c', projectRoot"), spec)
+        XCTAssertTrue(spec.contains("OutputFile(path: 'output:/repo/x', input: ["), spec)
+    }
+
     // MARK: - Tree products (B-63)
 
     /// The tree-valued node here is a Configuration, so the spec parses without a real
     /// resource compiler; in an app build it is `AssetCatalogCompiler(...).files`.
     private let treeNode = "Configuration(role: 'catalog').output"
+
+    /// `treeNode` as it is wired and embedded downstream: Configuration has a static input
+    /// port, so it is cacheable and carries the project's root.
+    private let stampedTreeNode = "Configuration(projectRoot: 'input:/repo', role: 'catalog').output"
 
     private func process(formula: String, trees: [String: NodeValue]) throws -> ProcessOutput {
         let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
@@ -193,7 +214,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     func test_aTreeProductWiresItsTreeBeforePublishingAnything() throws {
         let output = try process(formula: "product 'Hello.app/' = \(treeNode)", trees: [:])
 
-        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.treesInputPort], ["output:/repo/Hello.app": treeNode])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.treesInputPort], ["output:/repo/Hello.app": stampedTreeNode])
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
     }
 
@@ -208,7 +229,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
                        ["output:/repo/Hello.app/Assets.car", "output:/repo/Hello.app/en.lproj/Localizable.strings"])
         let spec = try XCTUnwrap(products["output:/repo/Hello.app/en.lproj/Localizable.strings"])
         XCTAssertTrue(spec.contains("TreeFile(name: 'en.lproj/Localizable.strings'"), spec)
-        XCTAssertTrue(spec.contains(treeNode), spec)
+        XCTAssertTrue(spec.contains(stampedTreeNode), spec)
         XCTAssertTrue(spec.contains("fileMetadata"), "the entry's mode reaches the output file: \(spec)")
     }
 
