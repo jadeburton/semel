@@ -1,6 +1,6 @@
 # Mount-independent tool outputs
 
-**Status:** proposed design, not yet approved, not yet implemented. B-49.
+**Status:** approved design, not yet implemented. B-49. Plan: `docs/superpowers/plans/2026-09-18-semel-mount-independent-outputs.md`.
 
 ## 1. Why
 
