@@ -96,6 +96,6 @@ final class RecordingToolRunner: ToolRunner {
             }
         }
 
-        return ToolExecuteResult(exitCode: exitCode, sandboxPathUsed: "/tmp/recording-tool-sandbox")
+        return ToolExecuteResult(exitCode: exitCode, resolvedSandboxPath: "/tmp/recording-tool-sandbox")
     }
 }
