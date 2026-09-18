@@ -375,6 +375,14 @@ struct SwiftCompiler: Node {
         arguments.append("-emit-module-interface")
         arguments.append("-emit-module-interface-path");     arguments.append(interfaceOutput)
 
+        // The object records its compilation directory; the canonical name keeps the
+        // sandbox's real one out of it. The module would serialize the search paths it was
+        // built with, sandbox root included; every consumer here is handed its own `-I`
+        // flags, so the serialized copy is dropped. `-no-serialize-debugging-options` is a
+        // frontend flag with no driver spelling.
+        arguments.append("-file-compilation-dir");           arguments.append(ToolSandbox.canonicalRootName)
+        arguments.append("-Xfrontend");                      arguments.append("-no-serialize-debugging-options")
+
         if !inputs.moduleFiles.isEmpty {
             arguments.append("-I"); arguments.append(".")
         }
