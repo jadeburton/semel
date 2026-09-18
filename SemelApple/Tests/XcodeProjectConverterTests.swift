@@ -113,4 +113,47 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
         XCTAssertTrue(formula.contains("\"CFBundleIdentifier\":\"$(BUNDLE_ID_PREFIX).IceCubesApp\""), formula)
     }
+
+    /// The empty layer still builds, but the converter names the cause once, as an error
+    /// on `infoLog`, so it reaches the idle error report instead of surfacing only as
+    /// eleven unrelated Info.plist failures.
+    func test_reportsTheMissingXcconfigAsTheCauseOfTheUndefinedSettings() throws {
+        let output = try process(
+            projectFile: try fixtureProject,
+            xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
+                      try extensionFolder.0: try extensionFolder.1])
+
+        // The empty-layer behaviour holds: the formula is still produced.
+        XCTAssertNoThrow(try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue())
+
+        let infoLog = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog])
+        guard case .noValue(.error(let messageHash)) = infoLog else {
+            XCTFail("expected infoLog to carry the cause as an error, got \(infoLog)")
+            return
+        }
+        let message = try messageHash.resolveAsString()
+        XCTAssertTrue(message.contains("input:/repo/App.xcconfig is missing"), message)
+        XCTAssertTrue(message.contains("BUNDLE_ID_PREFIX"), message)
+    }
+
+    /// Nothing to say about a cause that is not there: an xcconfig that is present leaves
+    /// `infoLog` as the ordinary success message.
+    func test_doesNotReportAMissingXcconfigWhenItIsPresent() throws {
+        let output = try process(
+            projectFile: try fixtureProject,
+            xcconfigs: ["input:/repo/App.xcconfig": .value(try "BUNDLE_ID_PREFIX = com.example".intern())],
+            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp",
+                                                                    files: ["App.swift", "Info.plist"],
+                                                                    folders: ["Fonts", "Assets.xcassets"]),
+                      "input:/repo/IceCubesApp/Fonts": try manifestValue("input:/repo/IceCubesApp/Fonts", files: ["Mono.ttf"]),
+                      try extensionFolder.0: try extensionFolder.1])
+
+        let infoLog = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog])
+        guard case .value(let hash) = infoLog else {
+            XCTFail("expected infoLog to carry the ordinary success message, got \(infoLog)")
+            return
+        }
+        XCTAssertTrue(try hash.resolveAsString().contains("converted"), "should be the success message")
+    }
 }
