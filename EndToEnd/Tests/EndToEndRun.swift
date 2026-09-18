@@ -94,6 +94,52 @@ final class EndToEndRun {
         }
     }
 
+    // MARK: - 3 and 5. A cold build
+
+    /// A fresh home named `home`, a server over it, one `semel` session that pushes the
+    /// extra folders, builds the build folder and exports into `<root>/<out>`; then the
+    /// server stopped cleanly. Returns the export directory.
+    func coldBuild(home homeName: String, out outName: String) throws -> URL {
+        let server = ServerSession(home: root.appendingPathComponent(homeName, isDirectory: true))
+        let out = root.appendingPathComponent(outName, isDirectory: true)
+        try server.start()
+        do {
+            var commands = ["base \(base.path)"]
+            commands += project.alsoPush.map { "push \($0)" }
+            commands.append("build \(project.buildFolder) --into \(out.path)")
+            try Self.run("semel", arguments: commands, environment: server.environment,
+                         timeout: project.buildTimeout, step: "build (\(homeName))", serverLog: { server.logTail })
+        } catch {
+            server.killIfRunning()
+            throw error
+        }
+        try server.stop()
+        return out
+    }
+
+    // MARK: - 4. Products
+
+    /// Every expected product exists under `out` and is not empty. Listed one by one, so
+    /// a missing icon is a named failure.
+    func checkProducts(in out: URL) throws {
+        var problems: [String] = []
+        for product in project.expectedProducts {
+            let url = out.appendingPathComponent(product)
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+                problems.append("missing: \(product)")
+                continue
+            }
+            if (attributes[.size] as? UInt64 ?? 0) == 0 {
+                problems.append("empty: \(product)")
+            }
+        }
+        guard problems.isEmpty else {
+            let present = (try? FileManager.default.subpathsOfDirectory(atPath: out.path))?.sorted().joined(separator: "\n    ") ?? "(none)"
+            throw EndToEndFailure(step: "products (\(out.lastPathComponent))",
+                                  message: problems.joined(separator: "; ") + "\n  exported:\n    " + present)
+        }
+    }
+
     // MARK: - 7. Clean up
 
     func cleanUp() {

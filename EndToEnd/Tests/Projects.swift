@@ -11,18 +11,25 @@ enum Projects {
 
     static let fixtureTimeout: TimeInterval = 120
 
+    /// `hello.fmla` reads the shared base config from `../clang.cfg`, a sibling of the
+    /// build folder rather than a file under it, so it needs its own push.
     static let cHello = Project(
         name: "c-hello",
         source: .fixture(folder: "."),
         buildFolder: "c",
+        alsoPush: ["clang.cfg"],
         platform: nil,
         expectedProducts: ["hello", "hello.dylib", "config.txt"],
         buildTimeout: fixtureTimeout)
 
+    /// `6502emu.fmla` merges the shared base config from `../clang.cfg` with its own
+    /// `clang.cfg`; the shared file is a sibling of the build folder, so it needs its
+    /// own push.
     static let cppEmu6502 = Project(
         name: "cpp-emu6502",
         source: .fixture(folder: "."),
         buildFolder: "cpp",
+        alsoPush: ["clang.cfg"],
         platform: nil,
         expectedProducts: ["emu6502"],
         buildTimeout: fixtureTimeout)
