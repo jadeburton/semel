@@ -160,5 +160,19 @@ let package = Package(
             ],
             path: "semel/Tests"
         ),
+        // Real projects through the three binaries together: the fixtures under
+        // EndToEnd/Fixtures on every run, pinned external projects on opt-in
+        // (SEMEL_E2E_EXTERNAL=1). Depending on the executable targets is what makes
+        // `swift test` build them beside the test bundle, where the harness finds them.
+        .testTarget(
+            name: "SemelEndToEndTests",
+            dependencies: [
+                "SemelTestSupport",
+                "semel",
+                "semel-server",
+                "semel-swift",
+            ],
+            path: "EndToEnd/Tests"
+        ),
     ]
 )

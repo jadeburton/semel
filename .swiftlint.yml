@@ -49,6 +49,7 @@ included:
   - SemelClang/Sources
   - SemelClang/Tests
   - semel
+  - EndToEnd/Tests
 
 excluded:
   - "**/.build"
