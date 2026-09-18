@@ -51,12 +51,7 @@ enum Projects {
         buildFolder: "swift/HelloApp",
         platform: "ios-simulator",
         expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car"],
-        buildTimeout: fixtureTimeout,
-        // The included package's static archive, libHelloKit.a, differs between two cold
-        // builds at the `ar` member header's mtime field: "libHelloKit.a: content differs
-        // at offset 33" (the digit that differs first varies run to run). B-72. Every
-        // other exported file must still match.
-        mayDiffer: [".a"])
+        buildTimeout: fixtureTimeout)
 
     static let icecubes = Project(
         name: "icecubes",
@@ -66,12 +61,7 @@ enum Projects {
         buildFolder: "Packages",
         platform: "ios-simulator",
         expectedProducts: ["libConversations.a", "libExplore.a", "libLists.a", "libNotifications.a", "libTimeline.a"],
-        buildTimeout: 15 * 60,
-        // IceCubes's five static archives differ between two cold builds at the `ar`
-        // member header's mtime field: "libConversations.a: content differs at offset 31"
-        // (also libExplore.a, libLists.a, libNotifications.a, libTimeline.a, each at offset
-        // 31). B-72. Every other exported file must still match.
-        mayDiffer: [".a"])
+        buildTimeout: 15 * 60)
 
     static let fixtures: [Project] = [cHello, cppEmu6502, swiftMyApp, swiftHelloApp]
     static let external: [Project] = [icecubes]
