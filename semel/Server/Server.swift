@@ -87,7 +87,6 @@ public final class Server {
     /// check and nothing more.
     public func start() throws {
         try Self.claimSocket(at: socketPath)
-        handler.eventSink = registry
 
         let listener = SocketListener(path: socketPath, queue: queue)
         listener.onConnection = { [weak self] connection in self?.accept(connection) }
@@ -111,6 +110,7 @@ public final class Server {
             lock.withLock { self.listener = nil }
             throw ServerError.cannotListen(path: socketPath, underlying: "\(failure)")
         }
+        handler.eventSink = registry
     }
 
     /// Stops accepting, closes every client, waits for the sessions to unwind, and removes

@@ -365,12 +365,6 @@ the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
 
-**B-62** `open` — **The server claims the handler's event sink before it has bound.**
-`Server.start()` assigns `handler.eventSink` after claiming the socket file but before the
-listener is ready, so a server that fails at bind or at the ready timeout has taken the
-sink from any server the handler already backed. One handler backs one server today, so
-nothing observes it; claim the sink after `.ready` when that changes.
-
 ## App bundles
 
 Building the app that consumes the packages, for the simulator first. Design:
