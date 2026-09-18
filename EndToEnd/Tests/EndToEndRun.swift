@@ -140,6 +140,39 @@ final class EndToEndRun {
         }
     }
 
+    // MARK: - 6. Determinism
+
+    /// The two export trees must match: the same paths, modes and bytes. This is the
+    /// B-04(b) check: two processes, the same inputs, a byte-for-byte diff. A project
+    /// marked not deterministic reports the differences as a note instead of failing.
+    func checkDeterminism(_ out1: URL, _ out2: URL) throws {
+        let differences = try TreeDiff.compare(out1, out2)
+        guard !differences.isEmpty else {
+            return
+        }
+        let listed = differences.prefix(20).map(\.description).joined(separator: "\n  ")
+        let more = differences.count > 20 ? "\n  … and \(differences.count - 20) more" : ""
+        guard project.expectDeterministic else {
+            print("\(project.name): \(differences.count) difference(s) between the two builds (not required to match):\n  \(listed)\(more)")
+            return
+        }
+        throw EndToEndFailure(step: "determinism", message: "\(differences.count) difference(s) between out1 and out2:\n  \(listed)\(more)")
+    }
+
+    // MARK: - The whole run
+
+    /// Steps 1 to 7. The root is cleaned up on the way out, kept with SEMEL_E2E_KEEP=1.
+    func run() throws {
+        defer { cleanUp() }
+        try materialise()
+        try configure()
+        let out1 = try coldBuild(home: "home1", out: "out1")
+        try checkProducts(in: out1)
+        let out2 = try coldBuild(home: "home2", out: "out2")
+        try checkProducts(in: out2)
+        try checkDeterminism(out1, out2)
+    }
+
     // MARK: - 7. Clean up
 
     func cleanUp() {
