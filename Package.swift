@@ -59,6 +59,15 @@ let package = Package(
             ],
             path: "semel/Transport"
         ),
+        // What a test needs to run one of this package's executables as a subprocess:
+        // where the binary is, a launch that captures output without blocking, a stop
+        // with a timeout, and the wait for a socket file. A library rather than a test
+        // target because two test targets cannot share a source file, and Foundation
+        // only, so it never pulls XCTest into a product.
+        .target(
+            name: "SemelTestSupport",
+            path: "semel/TestSupport"
+        ),
         .testTarget(
             name: "SemelTransportTests",
             dependencies: [
@@ -123,6 +132,7 @@ let package = Package(
                 "SemelServer",
                 "SemelCLI",
                 "SemelTransport",
+                "SemelTestSupport",
                 "semel-server",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
@@ -149,6 +159,20 @@ let package = Package(
                 .product(name: "SemelApple", package: "SemelApple"),
             ],
             path: "semel/Tests"
+        ),
+        // Real projects through the three binaries together: the fixtures under
+        // EndToEnd/Fixtures on every run, pinned external projects on opt-in
+        // (SEMEL_E2E_EXTERNAL=1). Depending on the executable targets is what makes
+        // `swift test` build them beside the test bundle, where the harness finds them.
+        .testTarget(
+            name: "SemelEndToEndTests",
+            dependencies: [
+                "SemelTestSupport",
+                "semel",
+                "semel-server",
+                "semel-swift",
+            ],
+            path: "EndToEnd/Tests"
         ),
     ]
 )

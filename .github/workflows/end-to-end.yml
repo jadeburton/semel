@@ -1,0 +1,44 @@
+name: End-to-end
+
+# Real projects pinned by commit, through both binaries, twice each. Nightly on main and
+# on demand; too slow and too network-bound for every pull request, which runs the
+# fixtures instead (swift.yml). The clone cache is keyed on the roster file, so a pin
+# change refetches (and so does any other edit to it).
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  external-projects:
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.3.app
+
+      - name: Restore the clone cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/semel/end-to-end
+          key: semel-e2e-clones-${{ hashFiles('EndToEnd/Tests/Projects.swift') }}
+
+      - name: Build
+        run: swift build
+
+      - name: Build the external projects twice each
+        env:
+          SEMEL_E2E_EXTERNAL: "1"
+          SEMEL_E2E_KEEP: "1"
+        run: swift test --filter SemelEndToEndTests
+
+      - name: Keep the run roots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semel-e2e-roots
+          path: /tmp/semel-tests
+          if-no-files-found: ignore

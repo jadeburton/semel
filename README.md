@@ -215,7 +215,7 @@ one copy per package, named as SwiftPM names its checkouts (`Dependencies/GRDB.s
 That folder is the only place the converter looks for a git or registry dependency,
 whichever package declared it; local path dependencies stay wherever the manifest says.
 Then it writes `semel.fmla` (one `include` per root, all under one build root) and
-`semel.config` for the platform — every namespace the toolchains declare, the tools and
+`semel.config` for the platform — the namespaces the formula reads, the tools and
 SDK this machine has, and a target at the highest deployment version the packages declare
 (`macos` is the default platform).
 
@@ -223,15 +223,27 @@ A folder holding an `.xcodeproj` is a project: the project is the one root, its 
 — the ones it declares and the ones its local packages reach — are resolved through
 `xcodebuild -resolvePackageDependencies` and vendored the same way, the formula names
 `XcodeProjectConverter`, and the config's target carries the application's deployment
-target. The one file `prepare` does not write is the xcconfig a project's README asks a
-developer to create; without it the bundle identifier's `$(BUNDLE_ID_PREFIX)` is reported
-unresolved at build time.
+target. An xcconfig the project names but the repository does not ship is put in place from
+the template beside it (`.template`, `.example`, `.sample` or `.dist`), or from a file named
+with `--xcconfig <name>=<file>`; failing both, `prepare` says which settings are left
+undefined so the file can be written by hand.
 
 It is the same command every time: after cloning, and again after changing a dependency.
 Each vendored copy is replaced, not merged; a formula or config already there is kept, so
 edits survive, and a project that ships its own needs no `prepare` at all. Semel itself
 knows nothing of Swift packages or Xcode projects; `semel-swift` is the Swift conversion
 tool, and another toolchain gets one of its own if it needs one.
+
+### Testing against real projects
+
+`swift test` builds the fixtures under `EndToEnd/Fixtures` — a C program, a C++ one,
+a Swift package with a path dependency and a SwiftUI app for the simulator — through
+`semelserv`, `semel` and `semel-swift` together, each twice in two fresh homes, and
+requires the two export trees to match byte for byte, except the static archives B-72
+exempts. `SEMEL_E2E_EXTERNAL=1 swift test
+--filter SemelEndToEndTests` adds the real projects pinned in `EndToEnd/Tests/Projects.swift`,
+fetched once into `~/Library/Caches/semel/end-to-end`; CI runs those nightly.
+`SEMEL_E2E_KEEP=1` keeps a run's directory under `/tmp/semel-tests` for inspection.
 
 ## Architecture
 

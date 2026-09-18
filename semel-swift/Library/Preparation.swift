@@ -78,7 +78,7 @@ public enum Preparation {
         let facts = try steps.facts()
         let sdkVersion = facts.sdkIdentity(platform.sdkName).map(GeneratedFiles.version(fromSDKIdentity:))
         let formula: String
-        let namespaces: [String]
+        var namespaces: [String]
         var declaredVersion: String?
 
         // A folder holding an `.xcodeproj` is a project: the project is the one root, it
@@ -108,6 +108,14 @@ public enum Preparation {
             declaredVersion = GeneratedFiles.deploymentVersion(for: platform, in: summaries)
             formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
             namespaces = GeneratedFiles.packageTreeNamespaces
+        }
+
+        // A formula already there is kept, and it may select namespaces the one written
+        // here would not — a hand-written app formula compiles catalogs. What it selects
+        // joins the config, so the file is not the one thing prepare left it to write.
+        let formulaFile = folder.appendingPathComponent(GeneratedFiles.formulaFileName)
+        if let kept = try? String(contentsOf: formulaFile, encoding: .utf8) {
+            namespaces = Array(Set(namespaces).union(GeneratedFiles.namespaces(selectedIn: kept))).sorted()
         }
 
         guard let deploymentVersion = declaredVersion ?? sdkVersion else {

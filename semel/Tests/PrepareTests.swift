@@ -214,6 +214,33 @@ final class PrepareTests: XCTestCase {
         }
     }
 
+    /// A formula already there is kept, and it may select namespaces the converter's
+    /// formula would not — a hand-written app formula compiles catalogs. The config
+    /// carries what the kept formula selects too, read from its `prefix: '…'` literals.
+    func test_theConfigCarriesTheNamespacesAKeptFormulaSelects() throws {
+        try write("App/HelloKit/Package.swift")
+        try write("App/semel.fmla", """
+            func settings(prefix) = ConfigFilter(prefix: prefix, input: ['config': StaticFile(path: <semel.config>).output]).output
+            include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
+            func assets() = AssetCatalogCompiler(configuration: ['config': settings(prefix: 'apple.assetCatalogCompiler')])
+            func strings() = StringCatalogCompiler(configuration: ['config': settings(prefix: 'apple.stringCatalogCompiler')])
+            """)
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        XCTAssertEqual(report.kept.map(\.lastPathComponent), ["semel.fmla"])
+        let config = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.stringCatalogCompiler.toolDescriptor.name=xcstringstool"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("swift.compiler.toolDescriptor.name=swiftc"), "the package set is still there, got:\n\(config)")
+    }
+
+    func test_namespacesSelectedInFormulaTextAreTheDistinctPrefixLiterals() {
+        let formula = "a(prefix: 'swift.compiler') b(prefix: 'clang.linker') c(prefix: 'swift.compiler') ConfigFilter(prefix: prefix, x)"
+
+        XCTAssertEqual(GeneratedFiles.namespaces(selectedIn: formula), ["clang.linker", "swift.compiler"])
+    }
+
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {
         let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
                                                 facts: facts(), namespaces: everyNamespace))

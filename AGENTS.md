@@ -13,7 +13,8 @@ swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
 swift test --package-path SemelCore    # the engine tests (~350)
-swift test                                   # the CLI, transport and server tests (~150)
+swift test                                   # the CLI, transport, server and end-to-end fixture tests (~183)
+SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
 ```
 
 The root package now links `SemelProtocol` through `SemelCLI` and `SemelServer`, so
@@ -21,7 +22,7 @@ The root package now links `SemelProtocol` through `SemelCLI` and `SemelServer`,
 the only thing that runs its tests.
 
 `swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
-`SemelTransportTests` and `SemelServerTests`. The engine and the
+`SemelTransportTests`, `SemelServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all seven.
 
@@ -36,6 +37,10 @@ root: it registers the toolchains, starts the engine and listens on
 `SemelPaths.serverSocket`. `semel/main.swift` opens a socket to it and nothing else; start
 `semelserv` first, or `semel` says so and exits. Tests point both at a temporary directory
 with `SEMEL_HOME` and `SEMEL_SOCKET`.
+
+`EndToEnd/Tests` is the one place the three executables are run together, as a user
+runs them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel` and
+`semel-swift` against it, and builds each project twice to compare the bytes.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
