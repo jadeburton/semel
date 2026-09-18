@@ -22,7 +22,8 @@ enum ClangConfigTemplate {
         try text.write(to: destination, atomically: true, encoding: .utf8)
     }
 
-    /// The first line of `clang --version`, which is what the descriptor's version is.
+    /// The first line of `xcrun clang --version`, the `Apple clang version …` string the
+    /// tool descriptor carries.
     static func clangVersion() throws -> String {
         let output = try firstLine(of: "/usr/bin/xcrun", arguments: ["clang", "--version"], step: "configure: clang --version")
         return output

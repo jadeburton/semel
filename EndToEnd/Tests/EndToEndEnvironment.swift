@@ -40,8 +40,30 @@ enum EndToEndEnvironment {
     /// Short on purpose: sockets live under it, and a Unix-domain socket path is limited
     /// to 103 bytes.
     static func newRoot() throws -> URL {
-        let root = URL(fileURLWithPath: "/tmp/semel-tests/\(UUID().uuidString.prefix(8))", isDirectory: true)
+        let base = URL(fileURLWithPath: "/tmp/semel-tests", isDirectory: true)
+        removeStaleSiblings(under: base)
+        let root = base.appendingPathComponent(String(UUID().uuidString.prefix(8)), isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
+    }
+
+    /// An interrupted run leaves its root behind, and `SEMEL_E2E_KEEP=1` keeps one on
+    /// purpose; a day is long enough to inspect either before it is swept. Best effort: a
+    /// listing or removal that fails leaves the entry in place, and nothing newer than the
+    /// cutoff is touched.
+    private static func removeStaleSiblings(under directory: URL) {
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else {
+            return
+        }
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modificationDate = values.contentModificationDate,
+                  modificationDate < cutoff else {
+                continue
+            }
+            try? FileManager.default.removeItem(at: entry)
+        }
     }
 }

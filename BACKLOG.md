@@ -26,7 +26,8 @@ twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` require
 export trees to match, except the static archives B-72 exempts. What remains is a
 source-scanning test as a backstop. A
 wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
-dictionaries here are accumulated into, which is safe. Two sites worth a look under (c):
+dictionaries here are accumulated into, which is safe. Two sites worth a look for the
+source scan:
 `ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
 dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
 command line.
@@ -226,6 +227,14 @@ One binary, three modes, sharing a wire protocol:
    for multiple users: that is the shared-build-server model the cache server superseded,
    and it is where the path authorisation and sync machinery came from. The artifact events
    CLIs subscribe to are B-50's settle diffs. What remains of B-30 is roles 1 and 2.
+
+**B-73** `open` — **A crashed or Ctrl-C'd client orphans its `semelserv`.**
+The end-to-end harness stops every server it starts with SIGTERM, but only on the paths it
+controls; a `semel` test process that crashes or is killed does not reach its own cleanup
+and leaves the `semelserv` it started running. Two shapes fix it: put the server in the
+client's process group, so a signal delivered to the group reaches both; or have `semelserv`
+exit when its socket file disappears, which also covers a user who deletes the socket by
+hand.
 
 ## Design, correctness and code quality
 
