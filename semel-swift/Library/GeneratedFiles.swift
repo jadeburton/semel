@@ -127,6 +127,18 @@ public enum GeneratedFiles {
         XcodeProjectConverter.configNamespaces + SemelSwift.converterConfigNamespaces
     }
 
+    /// The namespaces a formula's text selects, from its `prefix: '…'` literals: what a
+    /// hand-written formula names in `ConfigFilter(prefix: 'swift.compiler', …)` or through
+    /// a func of its own, `settings(prefix: 'apple.assetCatalogCompiler')`. A prefix passed
+    /// as a parameter is not a literal and does not count. Sorted, each once.
+    public static func namespaces(selectedIn formula: String) -> [String] {
+        guard let pattern = try? NSRegularExpression(pattern: #"prefix:\s*'([A-Za-z][A-Za-z0-9.]*)'"#) else {
+            return []
+        }
+        let matches = pattern.matches(in: formula, range: NSRange(formula.startIndex..., in: formula))
+        return Set(matches.compactMap { Range($0.range(at: 1), in: formula).map { String(formula[$0]) } }).sorted()
+    }
+
     /// The highest deployment version the packages declare for the platform, or nil when
     /// none does. Highest, because a root that declares 18.0 cannot be built for 17.0
     /// whatever its dependencies allow.
