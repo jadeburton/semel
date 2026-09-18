@@ -52,9 +52,9 @@ enum Projects {
         platform: "ios-simulator",
         expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car"],
         buildTimeout: fixtureTimeout,
-        // The included package's archive carries an `ar` member header with the build's
-        // wall-clock time as a modification timestamp, which differs between two cold
-        // builds run seconds apart: "libHelloKit.a: content differs at offset 32". B-49.
+        // The included package's archive's member header records a wall-clock mtime, so
+        // two builds of the same objects differ in that field: "libHelloKit.a: content
+        // differs at offset 33" (the digit that differs first varies run to run). B-72.
         expectDeterministic: false)
 
     static let icecubes = Project(
