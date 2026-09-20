@@ -46,6 +46,11 @@ public protocol Node: WithKind, WithChildren {
     /// cannot do: a key only stops a wrong reuse; a change here never causes a
     /// recomputation, because an unscheduled node never rebuilds its key.
     func cacheKeyMaterial(input: ProcessInput) throws -> String?
+
+    /// Properties that are part of a node's identity but not of its cache key: a value
+    /// the key deliberately strips from elsewhere, which would otherwise return through
+    /// the properties. `projectRoot` is the one every node has reason to exclude.
+    static var cacheKeyExcludedProperties: Set<String> { get }
 }
 
 public struct ProcessInput {
@@ -112,6 +117,8 @@ public extension Node {
     func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         nil
     }
+
+    static var cacheKeyExcludedProperties: Set<String> { ["projectRoot"] }
 
     /// Most nodes may be collected as soon as nothing consumes them. The file-system types
     /// override this: a pushed file outlives its consumers, and a folder with children is

@@ -12,6 +12,25 @@ private let cacheEntryLimit = 500
 
 extension Node {
 
+    /// The property `ProjectBuilder` stamps on every node it builds a product through.
+    static var projectRootProperty: String { "projectRoot" }
+
+    /// A wire key relative to the node's project root, when it has one and the key lies
+    /// under it; the key whole otherwise. Two developers who point `base` at different
+    /// folders put the same project at different places under `input:`; the remainder is
+    /// what both builds have in common. A key of another shape — `wire0`, `product`,
+    /// `modules/…` — keeps more in the key, never less.
+    func projectRelative(wire: String) -> String {
+        guard let root = thisNode.properties[Self.projectRootProperty], !root.isEmpty else {
+            return wire
+        }
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        guard wire.hasPrefix(prefix) else {
+            return wire
+        }
+        return String(wire.dropFirst(prefix.count))
+    }
+
     func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
         // Keying on a partial input set would produce a key that collides with a
         // different set of inputs — the one failure mode a cache must never have.
@@ -24,18 +43,22 @@ extension Node {
         // in the object file's debug info, in the output filename derived from it, and in
         // the compiler output published on the log ports.  Keying on the values alone
         // meant identical content at a different path scored a hit and came back with
-        // another file's build.
+        // another file's build. What the key names is the path relative to the project:
+        // the tools embed no more than that (ToolSandbox), so no more than that is an input.
         return try oneInput
             .sorted { $0.key < $1.key }
-            .map { CacheKeyEntry(wire: $0.key, value: $0.value) }
+            .map { CacheKeyEntry(wire: projectRelative(wire: $0.key), value: $0.value) }
             .toJSON()
     }
 
-    /// The node's own contribution: its type, its properties, and whatever it declares it
-    /// reads from outside its inputs (`cacheKeyMaterial`). A node with no material adds
-    /// nothing, so the key format for every existing node is unchanged.
+    /// The node's own contribution: its type, its properties less the excluded ones, and
+    /// whatever it declares it reads from outside its inputs (`cacheKeyMaterial`). A node
+    /// with no material and no excluded property adds nothing, so the key format for
+    /// every node created before `projectRoot` existed is unchanged.
     private func nodeCacheKey(input: ProcessInput) throws -> String {
-        var key = "\(String(describing: type(of: self)))\n\(thisNode.properties.asPlainText())"
+        let excluded = Self.cacheKeyExcludedProperties
+        let properties = thisNode.properties.filter { !excluded.contains($0.key) }
+        var key = "\(String(describing: type(of: self)))\n\(properties.asPlainText())"
         if let material = try cacheKeyMaterial(input: input) {
             key.append("\n\(material)")
         }
