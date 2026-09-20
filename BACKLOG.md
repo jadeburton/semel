@@ -388,6 +388,91 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
+## End-to-end roster
+
+Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for something IceCubes
+does not exercise. What is said about each project below is from memory of the project, not
+from a clone: pin a commit, run `semel-swift prepare`, and let the first failure list correct
+the entry. The gap list a project produces is worth more than its eventual pass.
+
+**B-74** `open` — **The roster builds IceCubes's packages, not the app.**
+`Projects.icecubes` clones with `subfolder: "Packages"` and expects five `lib*.a`; nothing
+in `swift test` goes through `XcodeProjectConverter` (B-65), so the app path has no
+end-to-end coverage. Add an entry rooted at the repository: `prepare` on the folder holding
+`IceCubesApp.xcodeproj`, expected products `IceCubesApp.app/IceCubesApp`, `Info.plist`,
+`Assets.car` and the four `.appex` bundles. To check first: that `prepare` on a harness
+clone settles the xcconfig `.template` (B-70) without a hand step. A `simctl install` /
+`launch` smoke check is optional and needs a booted simulator, so opt-in on top of opt-in.
+
+**B-75** `open` — **A roster source for a clone plus a hand-written formula.**
+`Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes
+a formula into a clone. A C or C++ project has no converter, so its `.fmla` and `clang.cfg`
+have to be laid over the clone from the fixtures folder — `.git(…, overlay:
+"external/lua")` or similar. Blocks B-78.
+
+**B-76** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
+application target, simulator only, all library code in packages. In suggested order:
+
+1. *apple/sample-food-truck* — small, no third-party dependencies, iOS and macOS, a local
+   package, a widget extension. The first `sdk: 'macosx'` app build; the cheap second
+   data point for the converter.
+2. *NetNewsWire* — nearly every build setting lives in layered xcconfig files, so it is the
+   hard test of evaluating settings the way Xcode layers them. Mac and iOS apps, framework
+   targets, group-based file references rather than synchronized folders, some
+   Objective-C, many local packages.
+3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
+   many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
+   entitlements and sandbox.
+4. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
+   `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
+   a big local SDK package.
+5. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
+   `-Swift.h`. Only when mixed-language app targets are in scope.
+
+Expected to surface: script build phases, framework and dynamic-library targets,
+Objective-C in the application target, Core Data models, storyboards and xibs (`ibtool`),
+non-synchronized groups.
+
+**B-77** `open` — **More Swift packages.**
+
+1. *Semel itself* — `semel.fmla` exists; a macOS executable root rather than a static
+   library, GRDB with a system-library SQLite, and no clone. One roster entry.
+2. *swift-nio* — every residual of B-55 at once: `cSettings` `.define` values that matter,
+   C sources in nested folders, header paths other than `include`, and executables
+   (`NIOEchoServer` and the like) linking C targets, which need the `clang.linker` block.
+   macOS, no macros. Should fail today in exactly the ways B-55 predicts.
+3. *swift-crypto*, or *Vapor* which brings it — BoringSSL is C, C++ and `.S` assembly in
+   deep folders, the hardest C-in-a-package there is; Vapor adds a transitive graph of
+   some thirty git dependencies, which tests the `Dependencies/<name>` rule and B-10
+   residual 1. After swift-nio passes.
+4. *A second project sharing dependencies with IceCubes* (Nuke, SwiftSoup,
+   swift-collections at the same commits) — what cross-project cache hits look like, for
+   the local-engines-plus-cache-server design.
+
+**B-78** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world and a
+six-file emulator. Needs B-75.
+
+1. *Lua 5.4* — about 35 files in one flat folder, no configure step, `liblua.a` plus the
+   `lua` and `luac` executables.
+2. *SQLite amalgamation* — one 250k-line translation unit: the preprocessor and compiler
+   nodes and the cache with a single enormous entry, the opposite of IceCubes's 271 small
+   ones.
+3. *fmt* or *simdjson* — C++ beyond the emulator; few sources, heavy templates.
+
+**B-79** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
+targets (`SwiftFormulaConverter.swift:594`). These are the acceptance tests for the day
+that changes, in rising cost:
+
+1. *apple/sample-backyard-birds* — SwiftData's `@Model` comes from plugins shipped in the
+   toolchain, so macro expansion is tested without building swift-syntax. Also widgets, a
+   StoreKit configuration file, local packages.
+2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
+   a useful performance benchmark in its own right.
+3. *swift-dependencies* or *swift-composable-architecture* — package-defined macros built
+   from swift-syntax and run as compiler plugins.
+4. *isowords* — one `Package.swift` with some ninety targets and heavy resources (audio,
+   fonts): graph scale and `Bundle.module`. Pulls in TCA, so it waits for 3.
+
 ## Not doing
 
 **B-40** `dropped` — Subtree-scoped `reset`. Moot: users no longer share one graph.
