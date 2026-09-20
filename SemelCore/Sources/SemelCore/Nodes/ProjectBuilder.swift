@@ -25,12 +25,9 @@ public struct ProjectBuilder: Node {
     /// entry, the way a wildcard's folder manifest is.
     static let treesInputPort         = "trees"
 
-    /// The property every node built for a product carries: the project's root under
-    /// `input:`, which its cache key strips from its inputs' paths. Stamped on nodes with a
-    /// static input port — the ones the cache handles — and not on the file-system nodes,
-    /// which are shared by every project that reads them.
-    static let projectRootProperty = "projectRoot"
-
+    /// Whether `spec` gets `projectRootProperty` stamped on it: true for a node with a
+    /// static input port, the ones the cache handles, and false for a file-system node,
+    /// which is shared by every project that reads it.
     static func isCacheable(_ spec: GraphSpecNode) -> Bool {
         guard let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type else {
             return false

@@ -73,6 +73,27 @@ final class CacheKeyMountIndependenceTests: SemelCoreTestCase {
         XCTAssertNotEqual(inside, outside)
     }
 
+    /// A wire equal to the root, not merely under it — the target *is* the project's own
+    /// folder — strips to the empty remainder rather than keying on the absolute path the
+    /// root exists to strip.
+    func test_aWireEqualToTheProjectRootKeysAsDot() throws {
+        let shallow = try node(projectRoot: "input:/a/proj").buildCacheKeyFromAllInputs(
+            input: try input(source: "input:/a/proj"))
+        let deep = try node(projectRoot: "input:/deeper/b/proj").buildCacheKeyFromAllInputs(
+            input: try input(source: "input:/deeper/b/proj"))
+
+        XCTAssertEqual(shallow, deep)
+    }
+
+    func test_aRootWithATrailingSlashStripsTheSameWay() throws {
+        let noSlash = try node(projectRoot: "input:/a/proj").buildCacheKeyFromAllInputs(
+            input: try input(source: "input:/a/proj/src/x.c"))
+        let withSlash = try node(projectRoot: "input:/a/proj/").buildCacheKeyFromAllInputs(
+            input: try input(source: "input:/a/proj/src/x.c"))
+
+        XCTAssertEqual(noSlash, withSlash)
+    }
+
     /// The root is not a cache input: two nodes that differ only in where their project
     /// sits agree on every key. Without this the property would put back the very string
     /// the wire names had stripped.

@@ -118,6 +118,8 @@ public extension Node {
         nil
     }
 
+    // The literal must agree with `Node.projectRootProperty` in SemelCore's Cache.swift,
+    // which SemelNodeKit cannot see.
     static var cacheKeyExcludedProperties: Set<String> { ["projectRoot"] }
 
     /// Most nodes may be collected as soon as nothing consumes them. The file-system types

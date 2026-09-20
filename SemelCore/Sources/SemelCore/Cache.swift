@@ -12,19 +12,26 @@ private let cacheEntryLimit = 500
 
 extension Node {
 
-    /// The property `ProjectBuilder` stamps on every node it builds a product through.
+    /// The property `ProjectBuilder` stamps on every cacheable node it builds a product
+    /// through.
     static var projectRootProperty: String { "projectRoot" }
 
     /// A wire key relative to the node's project root, when it has one and the key lies
     /// under it; the key whole otherwise. Two developers who point `base` at different
     /// folders put the same project at different places under `input:`; the remainder is
     /// what both builds have in common. A key of another shape — `wire0`, `product`,
-    /// `modules/…` — keeps more in the key, never less.
+    /// `modules/…` — keeps more in the key, never less. A wire equal to the root itself
+    /// becomes `"."`, the empty remainder — otherwise it would key on the absolute path
+    /// the root strips from every other wire.
     func projectRelative(wire: String) -> String {
         guard let root = thisNode.properties[Self.projectRootProperty], !root.isEmpty else {
             return wire
         }
-        let prefix = root.hasSuffix("/") ? root : root + "/"
+        let trimmedRoot = root.hasSuffix("/") ? String(root.dropLast()) : root
+        if wire == trimmedRoot {
+            return "."
+        }
+        let prefix = trimmedRoot + "/"
         guard wire.hasPrefix(prefix) else {
             return wire
         }
@@ -53,8 +60,8 @@ extension Node {
 
     /// The node's own contribution: its type, its properties less the excluded ones, and
     /// whatever it declares it reads from outside its inputs (`cacheKeyMaterial`). A node
-    /// with no material and no excluded property adds nothing, so the key format for
-    /// every node created before `projectRoot` existed is unchanged.
+    /// without a `projectRoot` property, with no material and nothing else excluded, adds
+    /// nothing beyond its type and properties — the key format such a node has always had.
     private func nodeCacheKey(input: ProcessInput) throws -> String {
         let excluded = Self.cacheKeyExcludedProperties
         let properties = thisNode.properties.filter { !excluded.contains($0.key) }
