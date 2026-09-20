@@ -412,8 +412,8 @@ input port can hold any number of named wires.
         let wires = input.inputValues[Self.inputPort] ?? [:]
 
         var lines: [String] = []
-        for name in wires.keys.sorted() {
-            let text = try wires[name]!.expectValue().resolveAsString()
+        for (name, value) in wires.sorted(by: { $0.key < $1.key }) {
+            let text = try value.expectValue().resolveAsString()
             lines.append("\(name): \(Self.lineCount(of: text))")
         }
 
@@ -438,7 +438,7 @@ Four things to notice.
 - `expectValue()` throws when a wire is pending or in error, which fails this node.
   `ConfigFilter` skips such a wire instead; its header comment says why. For a count, a
   silent omission would be a wrong answer that looks right.
-- `sorted()`, because a dictionary's order changes from one process to the next and your
+- Sorted, because a dictionary's order changes from one process to the next and your
   output is compared byte for byte. Non-deterministic output is a cache that never hits.
 - `process` is a pure function of its input. It may not read the disk, the clock or the
   environment. A node that must — a compiler reads an SDK — says so through

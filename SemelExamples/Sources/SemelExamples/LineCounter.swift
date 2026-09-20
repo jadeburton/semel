@@ -43,8 +43,8 @@ public struct LineCounter: Node {
         // file out would be a wrong answer that looks like a right one, so there is no
         // skipping here.
         var lines: [String] = []
-        for name in wires.keys.sorted() {
-            let text = try wires[name]!.expectValue().resolveAsString()
+        for (name, value) in wires.sorted(by: { $0.key < $1.key }) {
+            let text = try value.expectValue().resolveAsString()
             lines.append("\(name): \(Self.lineCount(of: text))")
         }
 
