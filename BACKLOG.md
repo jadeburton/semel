@@ -425,7 +425,7 @@ does not exercise. What is said about each project below is from memory of the p
 from a clone: pin a commit, run `semel-swift prepare`, and let the first failure list correct
 the entry. The gap list a project produces is worth more than its eventual pass.
 
-**B-74** `open` — **The roster builds IceCubes's packages, not the app.**
+**B-75** `open` — **The roster builds IceCubes's packages, not the app.**
 `Projects.icecubes` clones with `subfolder: "Packages"` and expects five `lib*.a`; nothing
 in `swift test` goes through `XcodeProjectConverter` (B-65), so the app path has no
 end-to-end coverage. Add an entry rooted at the repository: `prepare` on the folder holding
@@ -434,13 +434,13 @@ end-to-end coverage. Add an entry rooted at the repository: `prepare` on the fol
 clone settles the xcconfig `.template` (B-70) without a hand step. A `simctl install` /
 `launch` smoke check is optional and needs a booted simulator, so opt-in on top of opt-in.
 
-**B-75** `open` — **A roster source for a clone plus a hand-written formula.**
+**B-76** `open` — **A roster source for a clone plus a hand-written formula.**
 `Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes
 a formula into a clone. A C or C++ project has no converter, so its `.fmla` and `clang.cfg`
 have to be laid over the clone from the fixtures folder — `.git(…, overlay:
-"external/lua")` or similar. Blocks B-78.
+"external/lua")` or similar. Blocks B-79.
 
-**B-76** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
+**B-77** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
 application target, simulator only, all library code in packages. In suggested order:
 
 1. *apple/sample-food-truck* — small, no third-party dependencies, iOS and macOS, a local
@@ -463,7 +463,7 @@ Expected to surface: script build phases, framework and dynamic-library targets,
 Objective-C in the application target, Core Data models, storyboards and xibs (`ibtool`),
 non-synchronized groups.
 
-**B-77** `open` — **More Swift packages.**
+**B-78** `open` — **More Swift packages.**
 
 1. *Semel itself* — `semel.fmla` exists; a macOS executable root rather than a static
    library, GRDB with a system-library SQLite, and no clone. One roster entry.
@@ -479,8 +479,8 @@ non-synchronized groups.
    swift-collections at the same commits) — what cross-project cache hits look like, for
    the local-engines-plus-cache-server design.
 
-**B-78** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world and a
-six-file emulator. Needs B-75.
+**B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world and a
+six-file emulator. Needs B-76.
 
 1. *Lua 5.4* — about 35 files in one flat folder, no configure step, `liblua.a` plus the
    `lua` and `luac` executables.
@@ -489,7 +489,7 @@ six-file emulator. Needs B-75.
    ones.
 3. *fmt* or *simdjson* — C++ beyond the emulator; few sources, heavy templates.
 
-**B-79** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
+**B-80** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
 targets (`SwiftFormulaConverter.swift:594`). These are the acceptance tests for the day
 that changes, in rising cost:
 

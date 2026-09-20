@@ -161,7 +161,7 @@ A tutorial that has drifted is worse than none, so what can be tested is:
   the suite says so.
 - The fixture shares `src/` content with `Fixtures/c` by copy, not by reference: a fixture
   is pushed as a folder, and the C fixture is slated to go once a real C project is pinned
-  (B-78) while this one stays.
+  (B-79) while this one stays.
 
 What cannot be tested is the prose and the pasted output. The tutorial names the commit it
 was last walked through at, and `AGENTS.md`'s section on tests gains a line: a change to a
