@@ -20,8 +20,21 @@ swift build
 A debug build, not `-c release`: Part 2 reads the running commentary `semelserv` prints,
 and that is compiled out of a release build.
 
+You will want three terminals open, and the document says which one each step is in:
+
+| Terminal | What runs in it |
+|---|---|
+| **server** | `semelserv`, started once and left alone. Part 2 reads what it prints. |
+| **prompt** | `semel`. Everything in an unlabelled fence is typed here. |
+| **shell** | an ordinary shell, in the checkout. Everything fenced as `sh` is typed here. |
+
+The prompt is not a shell and the shell is not the prompt: `semel` knows `push` and `build`
+and nothing else, so copying a file or running the program you just built happens in the
+third terminal. You can leave the prompt running the whole time; `quit` ends it.
+
 Two executables matter. `semelserv` is the engine: it holds the graph and does the work.
-`semel` is the prompt you type at. Start the server in one terminal and leave it running:
+`semel` is the prompt you type at. In the **server** terminal, start it and leave it
+running:
 
 ```sh
 .build/debug/semelserv
@@ -33,22 +46,23 @@ Graph:  /Users/you/Library/Application Support/semel/graph.sqlite
 Socket: /Users/you/Library/Application Support/semel/semelserv.sock
 ```
 
-You will build a copy of one of the test fixtures, so nothing you do dirties the checkout:
+In the **shell** terminal, make a copy of one of the test fixtures to work in. Everything
+you build lives there, so nothing you do in Parts 1 and 2 touches the checkout:
 
 ```sh
 mkdir ~/semel-playground
 cp -R EndToEnd/Fixtures/c ~/semel-playground/hello
 ```
 
-In a second terminal, start the prompt:
+In the **prompt** terminal, start the prompt:
 
 ```sh
 .build/debug/semel
 ```
 
 It prints its version and the graph it is talking to, and then waits. There is no `>`: you
-type a command and press return. Tell it where your files are — the setting lasts as long
-as the session:
+type a command and press return. Tell it where your files are — `semel` expands the `~`
+itself, and the setting lasts as long as the session, so you type it once:
 
 ```
 base ~/semel-playground
@@ -110,7 +124,7 @@ Everything after the first `=` is the value, quotes included — so no quotes.
 
 ```
 push clang.cfg
-build hello --into ./out
+build hello --into ~/semel-playground/out
 ```
 
 ```
@@ -127,18 +141,21 @@ output:/hello/hello.dylib: OK
 output:/hello/hello: OK
 Settled.
 No errors.
-Exported 3 files into /Users/you/semel/out
+Exported 3 files into /Users/you/semel-playground/out
 ```
 
+`--into` expands the `~` the same way `base` does, and the products land beside your
+sources rather than in the checkout. In the **shell** terminal:
+
 ```sh
-./out/hello
+~/semel-playground/out/hello
 ```
 
 ```
 Hello, World 1!
 ```
 
-`push` copied your files into Semel's own *input file system* — the engine never reads your
+`push` copied your files into Semel's own input file system — the engine never reads your
 disk during a build, only what was pushed. `build` is `push`, wait until the graph settles,
 report errors, and copy the products out. `clang.cfg` needs its own `push` because `build`
 pushes the folder you name and that file is not in it.
@@ -189,9 +206,11 @@ ls -o hello
 
 ## Part 2 — Watch it not work
 
-The point of Semel is the work it does not do. Four experiments, and two terminals: the
-prompt tells you what was *pushed* and what was *published*, and the server's terminal
-tells you what was *done*. Two lines there are worth learning to read:
+The point of Semel is the work it does not do. Four experiments. Each one edits a file in
+the **shell** terminal, builds at the **prompt**, and is read in both the prompt and the
+**server** terminal: the prompt tells you what was **pushed** and what was **published**,
+and the server tells you what was **done**. Two of the server's lines are worth learning to
+read:
 
 - `processWithCatch(input:): ClangCompiler, nodeID 24` — that node ran.
 - `loadCachedOutputs(cacheKey:): using cache: ClangCompiler, nodeID 24` — that node was
@@ -204,7 +223,7 @@ which nodes come back, and with which of the two lines.
 **1. Build again.**
 
 ```
-build hello --into ./out
+build hello --into ~/semel-playground/out
 ```
 
 ```
@@ -217,15 +236,16 @@ Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
 No errors.
-Exported 3 files into /Users/you/semel/out
+Exported 3 files into /Users/you/semel-playground/out
 ```
 
 Every push says `[no change]`, no `output:` line appears, and the server's terminal prints
 nothing at all. Nothing ran, because no wire changed, so no node was scheduled. (`Exported
 3 files` is the export copying what is already there; it is not a rebuild.)
 
-**2. Change one file.** Edit `~/semel-playground/hello/src/hello2.c` — change the text it
-prints — and build.
+**2. Change one file.** In the **shell** terminal, edit
+`~/semel-playground/hello/src/hello2.c` — change the text it prints — then build at the
+**prompt**.
 
 ```
 Push folder: hello
@@ -279,10 +299,11 @@ processSomeNodes(): batch: 2 scheduled, 2 computed
 The same nodes, in the same order, with a different verb. They were scheduled — a wire did
 change — and every one of them was a cache hit. A *cache entry* is keyed on the node's
 type, its properties and the name and content of everything wired to it; time appears
-nowhere. Being *rescheduled* and being *recomputed* are different things, and most of
+nowhere. Being **rescheduled** and being **recomputed** are different things, and most of
 Semel's speed is the gap between them.
 
-**4. Change a setting only the linker reads.** Add a line to `clang.cfg`:
+**4. Change a setting only the linker reads.** Add a line to
+`~/semel-playground/clang.cfg`:
 
 ```
 clang.linker.exampleSettingNobodyReads=1
@@ -290,7 +311,7 @@ clang.linker.exampleSettingNobodyReads=1
 
 ```
 push clang.cfg
-build hello --into ./out
+build hello --into ~/semel-playground/out
 ```
 
 ```
@@ -343,6 +364,10 @@ lot, and worth seeing once.
 
 `MyLineCounter`: whatever files are wired to it, it outputs one `name: count` line per
 wire. No tool, no configuration — everything a node must have, and nothing else.
+
+This is the part that does touch the checkout, and it has to: node types are compiled into
+`semelserv`, so your node has to live in a package the server links. "Cleaning up" at the
+end puts the checkout back.
 
 A finished copy is in
 [`SemelExamples/Sources/SemelExamples/LineCounter.swift`](../../SemelExamples/Sources/SemelExamples/LineCounter.swift).
@@ -407,7 +432,7 @@ input port can hold any number of named wires.
 
 Four things to notice.
 
-- A wire's value is not the file. It is a *hash*; `resolveAsString()` fetches the content
+- A wire's value is not the file. It is a hash; `resolveAsString()` fetches the content
   from the object store, and `intern()` stores your output and hands back its hash. Values
   travel as hashes so that "did this change?" is always a cheap comparison.
 - `expectValue()` throws when a wire is pending or in error, which fails this node.
@@ -429,18 +454,19 @@ Register it, in `SemelExamples.swift`:
 ```
 
 Node types are linked into the server — there is no loading at run time — so rebuild and
-restart it: stop `semelserv`, `swift build`, start it again. The graph is in the database;
-it is still there when the server comes back, and nothing is rescheduled by the restart.
+restart it: stop `semelserv` in the **server** terminal, `swift build` in the **shell**,
+then start `semelserv` again. The prompt can stay open. The graph is in the database; it is
+still there when the server comes back, and nothing is rescheduled by the restart.
 
 One snag on the way. `swift build` from the repository root may not notice a file you have
-just *added* to a package it depends on by path: the build plan under `.build` is cached,
+just **added** to a package it depends on by path: the build plan under `.build` is cached,
 and the stale one still lists only the files that were there before. If the compiler says
 `cannot find 'MyLineCounter' in scope` about the file you are looking at, `rm
 .build/debug.yaml` and build again.
 
 ## Part 4 — Use it
 
-Add one line to `~/semel-playground/hello/hello.fmla`:
+In the **shell** terminal, add one line to `~/semel-playground/hello/hello.fmla`:
 
 ```
 product "lines.txt" = MyLineCounter(input: [{f: <src/*.c>} "%%f.0%%.c": StaticFile(path: f)])
@@ -453,7 +479,7 @@ name, and `%%f.0%%` is what the `*` matched — so the wires are named `hello.c`
 chooses the names; your node only ever sees what it is handed.
 
 ```
-build hello --into ./out
+build hello --into ~/semel-playground/out
 ```
 
 ```
@@ -467,13 +493,15 @@ Push file: hello/src/main.c [no change]
 output:/hello/lines.txt: OK
 Settled.
 No errors.
-Exported 4 files into /Users/you/semel/out
+Exported 4 files into /Users/you/semel-playground/out
 ```
 
 The formula changed and not one C file was recompiled: only the new product was published.
 
+In the **shell** terminal:
+
 ```sh
-cat out/lines.txt
+cat ~/semel-playground/out/lines.txt
 ```
 
 ```
@@ -499,6 +527,51 @@ Now the experiments from Part 2, on your own node:
   manifest changed. Your node is not the same node afterwards: a different set of wires is
   a different *spec*, so the engine matched nothing and made a new `MyLineCounter`, which
   `debug` will show you with four wires and a new number.
+
+## Cleaning up
+
+Keep the node if you like it. If you want the checkout back as it was, the order matters,
+because your graph database holds a `MyLineCounter` node and a server built without that
+type cannot read it.
+
+First, at the **prompt**, take the product out of the formula: delete the `lines.txt` line
+from `~/semel-playground/hello/hello.fmla` in the **shell** terminal, then
+
+```
+build hello --into ~/semel-playground/out
+```
+
+```
+Push file: hello/hello.fmla
+Settled.
+No errors.
+Exported 3 files into /Users/you/semel-playground/out
+```
+
+Three files, not four: the node is unwired and gone from the graph. Only then, in the
+**shell** terminal, remove it from the code and rebuild:
+
+```sh
+rm SemelExamples/Sources/SemelExamples/MyLineCounter.swift
+git checkout -- SemelExamples/Sources/SemelExamples/SemelExamples.swift
+swift build
+```
+
+Restart `semelserv`, and `git status` is clean.
+
+Do it the other way round — remove the type first — and the next build that wakes the node
+says so:
+
+```
+❌ ProjectBuilder  'input:/hello/hello.fmla'
+   · products, status: no type is registered for kind 37
+```
+
+The way out is the same step you skipped: delete the `lines.txt` line from the formula and
+build again. That clears the error, though the server may keep printing a bare
+`The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` while a
+stale row survives; `reset` discards everything derived and rebuilds from what was pushed,
+and after it the line is gone for good.
 
 ## Where next
 
