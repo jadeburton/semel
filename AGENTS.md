@@ -27,8 +27,8 @@ the only thing that runs its tests.
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
 
-A root `swift build` does not re-plan when a source file is added to or removed from a
-path-dependency package (`SemelNodeKit`, `SemelClang`, `SemelApple`, `SemelExamples`):
+A root `swift build` does not re-plan when a source file is added to or removed from any of
+the path-dependency packages (`SemelNodeKit`, `SemelSwift`, `SemelCore`, …):
 `.build/debug.yaml` is stale until it is deleted. Adding a file fails with `cannot find 'X'
 in scope`, naming the registration rather than the missing plan entry; removing one fails
 with `missing inputs: …/X.swift` while the previous binary stays linked with the type it no

@@ -429,8 +429,9 @@ graph predates its removal, and `reset` discards the derived state that is stuck
 
 **B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
 changes.**
-Adding or removing a source file in `SemelNodeKit`, `SemelClang`, `SemelApple` or
-`SemelExamples` is invisible to a root `swift build` until `.build/debug.yaml` is deleted:
+Adding or removing a source file in any of the path-dependency packages (`SemelNodeKit`,
+`SemelSwift`, `SemelCore`, …) is invisible to a root `swift build` until `.build/debug.yaml`
+is deleted:
 SwiftPM does not re-plan, so adding a file gives "cannot find X in scope" against the
 registration rather than the plan, and removing one gives "couldn't build … because of
 missing inputs: <the file just deleted>" while leaving the previous binary linked with the
@@ -440,9 +441,21 @@ can do better than a documented workaround.
 
 **B-86** `open` — **`tools <prefix>`: print only the namespaces asked for.**
 `tools` prints a block for every namespace the server knows — 8 blocks, 38 lines for
-`apple.*`, `clang.*` and `swift.*` together — when a newcomer copying a `clang.cfg` needs 3
-of them. `tools clang` narrowing to namespaces with that prefix would make the copy-paste
-step exact. Low priority.
+`apple.*`, `clang.*` and `swift.*` together — when a newcomer copying a `clang.cfg` needs
+three of the eight blocks. `tools clang` narrowing to namespaces with that prefix would make
+the copy-paste step exact. Low priority.
+
+**B-87** `open` — **Three hand-maintained package lists have drifted three ways.**
+`.swiftlint.yml`'s `included:`, `Semel.xcworkspace` and CI's per-package test steps
+(`.github/workflows/swift.yml`) each name the packages by hand, and the three lists no
+longer agree with each other or with `AGENTS.md`. `SemelApple` is in neither `included:` nor
+the workspace. `SemelProtocol` is in neither `included:` nor a CI test step —
+`.github/workflows/swift.yml` has no `Test SemelProtocol`, though `AGENTS.md`'s "Build and
+test" counts it among the eight. `SemelDatabaseModels` has no `Tests` directory at all, so
+it is not unlinted so much as untested — there is nothing there for `.swiftlint.yml` or CI
+to name. A test the shape of `test_everyFixtureInTheRosterHasATestHere` — asserting every
+`Semel*/` package directory appears in all three files — would catch the next drift instead
+of leaving it for a review to find.
 
 ## App bundles
 
@@ -530,7 +543,11 @@ non-synchronized groups.
    the local-engines-plus-cache-server design.
 
 **B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world and a
-six-file emulator. Needs B-76.
+six-file emulator. Needs B-76. `c-hello` is subsumed by `tutorial` — identical sources, the
+same products plus `lines.txt` — so when a real C project is pinned it is `c-hello` that
+goes, not the tutorial fixture. `RosterTests.test_theTutorialFixtureSourcesMatchTheCFixture`
+compares the two `src/` trees, though, so that test and the tutorial's "copy
+`EndToEnd/Fixtures/c`" instruction move to `Fixtures/tutorial` at the same time as `c-hello`.
 
 1. *Lua 5.4* — about 35 files in one flat folder, no configure step, `liblua.a` plus the
    `lua` and `luac` executables.

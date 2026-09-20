@@ -1,7 +1,8 @@
 # A first tutorial: build, watch the cache, write a node
 
-**Status:** implemented; see docs/superpowers/plans/2026-09-20-semel-contributor-tutorial.md
-for what differed from this text.
+**Status:** implemented (plan:
+`docs/superpowers/plans/2026-09-20-semel-contributor-tutorial.md`). What differed from this
+text:
 
 - The formula's wire key is `"%%f.0%%.c"`, not `"%%f%%"`: the full value is the mounted
   path, which would put a path into `lines.txt` and break the two-home byte comparison.
@@ -10,6 +11,7 @@ for what differed from this text.
 - `semel` prints no `>`; the tutorial shows bare commands.
 - Part 2 uses three terminals and reads `semelserv`'s debug log, because nothing at the
   prompt distinguishes a recomputation from a cache hit (B-81).
+- The tutorial does not introduce *pinned*; it did not need the term.
 - Part 4: on revert the reader's node is recomputed, not served from cache — work under
   15 ms is never stored. The tutorial explains the threshold instead.
 - The export goes to `~/semel-playground/out`, and a "Cleaning up" section gives the order
