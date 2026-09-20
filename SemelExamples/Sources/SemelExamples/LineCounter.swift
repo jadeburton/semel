@@ -4,9 +4,11 @@
 //
 //  Counts the lines of whatever is wired to it: one `name: count` line per input wire.
 //
-//  The smallest node that is still worth caching, and the reference copy of the one
+//  The smallest node that does something, and the reference copy of the one
 //  docs/tutorial/first-node.md builds by hand. It runs no tool and reads no configuration,
-//  so everything a node must have is here and nothing else is.
+//  so everything a node must have is here and nothing else is. Work this quick is
+//  recomputed rather than cached — the engine's decision, made on processing duration, not
+//  the node's.
 //
 //  The names are the wire names, which the formula chooses. The node never sees a path
 //  unless the formula hands it one as a name.
