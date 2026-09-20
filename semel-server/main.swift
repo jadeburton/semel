@@ -11,6 +11,7 @@ import Foundation
 import SemelApple
 import SemelClang
 import SemelCore
+import SemelExamples
 import SemelNodeKit
 import SemelProtocol
 import SemelServer
@@ -62,12 +63,13 @@ for signalNumber in [SIGINT, SIGTERM] {
     signalSources.append(source)
 }
 
-// Composition root: the engine knows no toolchains, so this is where the ones this
+// Composition root: the engine knows no node packages, so this is where the ones this
 // binary ships are installed. Before start(), so discovery sees them on its first pass.
 do {
     try SemelSwift.register()
     try SemelClang.register()
     try SemelApple.register()
+    try SemelExamples.register()
     try BuildEngine.start()
     engineStarted = true
 } catch {

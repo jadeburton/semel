@@ -22,6 +22,18 @@ enum Projects {
         expectedProducts: ["hello", "hello.dylib", "config.txt"],
         buildTimeout: fixtureTimeout)
 
+    /// The state docs/tutorial/first-node.md ends in: the C hello sources, and a formula
+    /// that also counts their lines with `LineCounter` from SemelExamples. Reads the
+    /// shared base config from `../clang.cfg`, so that needs its own push, as for `cHello`.
+    static let tutorial = Project(
+        name: "tutorial",
+        source: .fixture(folder: "."),
+        buildFolder: "tutorial",
+        alsoPush: ["clang.cfg"],
+        platform: nil,
+        expectedProducts: ["hello", "hello.dylib", "config.txt", "lines.txt"],
+        buildTimeout: fixtureTimeout)
+
     /// `6502emu.fmla` merges the shared base config from `../clang.cfg` with its own
     /// `clang.cfg`; the shared file is a sibling of the build folder, so it needs its
     /// own push.
@@ -63,7 +75,7 @@ enum Projects {
         expectedProducts: ["libConversations.a", "libExplore.a", "libLists.a", "libNotifications.a", "libTimeline.a"],
         buildTimeout: 15 * 60)
 
-    static let fixtures: [Project] = [cHello, cppEmu6502, swiftMyApp, swiftHelloApp]
+    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
     static let external: [Project] = [icecubes]
     static let all: [Project] = fixtures + external
 }
