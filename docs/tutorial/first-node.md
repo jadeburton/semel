@@ -554,10 +554,15 @@ Three files, not four: the node is unwired and gone from the graph. Only then, i
 ```sh
 rm SemelExamples/Sources/SemelExamples/MyLineCounter.swift
 git checkout -- SemelExamples/Sources/SemelExamples/SemelExamples.swift
+rm .build/debug.yaml
 swift build
 ```
 
-Restart `semelserv`, and `git status` is clean.
+The stale build plan is the Part 3 snag again, from the other side: leave it in place and
+the build stops with `missing inputs: …/MyLineCounter.swift`, naming the file you meant to
+delete, and `semelserv` keeps the type it was linked with.
+
+Restart `semelserv` in the **server** terminal. In the **shell**, `git status` is clean.
 
 Do it the other way round — remove the type first — and the next build that wakes the node
 says so:
