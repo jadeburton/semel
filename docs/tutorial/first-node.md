@@ -8,7 +8,8 @@ the README's [clone to build](../../README.md#dependencies-and-clone-to-build) i
 commands. Words in *italics* are defined in the [glossary](../../AGENTS.md#glossary); they
 are introduced here where they first do something.
 
-Last walked through at commit `d5cc9f1`.
+Last walked through at commit `d5cc9f1`. The commits since then change documents, comments
+and tests, not behaviour.
 
 ## Part 1 — Build something
 
@@ -25,8 +26,8 @@ You will want three terminals open, and the document says which one each step is
 | Terminal | What runs in it |
 |---|---|
 | **server** | `semelserv`, started once and left alone. Part 2 reads what it prints. |
-| **prompt** | `semel`. Everything in an unlabelled fence is typed here. |
-| **shell** | an ordinary shell, in the checkout. Everything fenced as `sh` is typed here. |
+| **prompt** | `semel`. Unlabelled fences are either what you type here or what something printed; the sentence before each says which. |
+| **shell** | an ordinary shell in the checkout; `sh` fences are typed here unless the step names another terminal. |
 
 The prompt is not a shell and the shell is not the prompt: `semel` knows `push` and `build`
 and nothing else, so copying a file or running the program you just built happens in the
@@ -117,6 +118,9 @@ clang.compiler.cStandard=c17
 clang.linker.sdkPath=/path/printed/by/xcrun
 clang.linker.target=arm64-apple-macos14.0
 ```
+
+That is `arm64-apple-macos14.0` on Apple silicon, as shown; on an Intel Mac use
+`x86_64-apple-macos14.0`, matching the `architecture` line `tools` printed.
 
 Everything after the first `=` is the value, quotes included — so no quotes.
 
@@ -353,8 +357,8 @@ move. Nothing complains about the new key either: an unused key is only reported
 falls under no selected prefix at all, and `clang.linker` is selected. The header comment
 of
 [`ConfigFilter.swift`](../../SemelCore/Sources/SemelCore/Nodes/ConfigFilter.swift) tells
-this story in full, and it is seventy-five lines — read it now; it is the shape of the node
-you are about to write.
+this story in full, and the whole file is seventy-five lines — read it now; it is the shape
+of the node you are about to write.
 
 `errors` shows what is wrong when a build fails; after a good build it says `No errors.`
 `debug` dumps the whole graph — thirty-five nodes here, fourteen hundred lines. It is a
@@ -372,7 +376,8 @@ end puts the checkout back.
 A finished copy is in
 [`SemelExamples/Sources/SemelExamples/LineCounter.swift`](../../SemelExamples/Sources/SemelExamples/LineCounter.swift).
 Write your own beside it as `MyLineCounter.swift`; two types in one module cannot share a
-name, and the name is yours to choose anyway.
+name, and the name is yours to choose anyway. Files here open with a header comment saying
+what the file is for — `LineCounter.swift`'s is the shape; the listing below starts after it.
 
 ```swift
 import SemelDatabaseModels
@@ -436,8 +441,8 @@ Four things to notice.
   from the object store, and `intern()` stores your output and hands back its hash. Values
   travel as hashes so that "did this change?" is always a cheap comparison.
 - `expectValue()` throws when a wire is pending or in error, which fails this node.
-  `ConfigFilter` skips such a wire instead; its header comment says why. For a count, a
-  silent omission would be a wrong answer that looks right.
+  `ConfigFilter` skips such a wire instead; the comment above its wire loop says why. For a
+  count, a silent omission would be a wrong answer that looks right.
 - Sorted, because a dictionary's order changes from one process to the next and your
   output is compared byte for byte. Non-deterministic output is a cache that never hits.
 - `process` is a pure function of its input. It may not read the disk, the clock or the
@@ -473,8 +478,9 @@ product "lines.txt" = MyLineCounter(input: [{f: <src/*.c>} "%%f.0%%.c": StaticFi
 ```
 
 `{f: <src/*.c>}` makes one wire per matching file. The string before the colon is the wire's
-name, and `%%f.0%%` is what the `*` matched — so the wires are named `hello.c`, `hello2.c`,
-`main.c`. Write `%%f%%` instead and the wire is named for the whole mounted path —
+name, and `%%f.0%%` is what the `*` matched — `hello`, `hello2`, `main` — and the `.c`
+after it is literal, so the wires are named `hello.c`, `hello2.c`, `main.c`. Write `%%f%%`
+instead and the wire is named for the whole mounted path —
 `input:/hello/src/hello.c` — and a path in the name is a path in the product. The formula
 chooses the names; your node only ever sees what it is handed.
 
@@ -534,8 +540,8 @@ Keep the node if you like it. If you want the checkout back as it was, the order
 because your graph database holds a `MyLineCounter` node and a server built without that
 type cannot read it.
 
-First, at the **prompt**, take the product out of the formula: delete the `lines.txt` line
-from `~/semel-playground/hello/hello.fmla` in the **shell** terminal, then
+First, in the **shell** terminal, take the product out of the formula: delete the
+`lines.txt` line from `~/semel-playground/hello/hello.fmla`. Then, at the **prompt**:
 
 ```
 build hello --into ~/semel-playground/out
@@ -575,8 +581,10 @@ says so:
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
 build again. That clears the error, though the server may keep printing a bare
 `The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` while a
-stale row survives; `reset` discards everything derived and rebuilds from what was pushed,
-and after it the line is gone for good.
+stale row survives; `reset` clears that, but it is not scoped to this tutorial — it discards
+everything derived in this graph, every project you have pushed to this home, and the cache
+with it, before rebuilding from what was pushed. In the home you use day to day, that is
+everything, not only `hello`; after it the line is gone for good.
 
 ## Where next
 

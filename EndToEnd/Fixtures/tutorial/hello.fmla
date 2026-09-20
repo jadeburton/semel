@@ -26,7 +26,7 @@ product "hello" = make(dynamicLibrary: 'false', glob: <src/*.c>)
 // The whole file, not a subset — this product exists to show what was pushed.
 product "config.txt" = rawConfig()
 
-// One wire per source file, named by the formula: `%%f.0%%` is what the `*` matched, so
-// the names are `hello.c`, not the path the tree happens to be mounted at — a path in the
-// name would be a path in the product.
+// One wire per source file, named by the formula: `%%f.0%%` is what the `*` matched and the
+// `.c` after it is literal, so the names are `hello.c`, not the path the tree happens to be
+// mounted at — a path in the name would be a path in the product.
 product "lines.txt" = LineCounter(input: [{f: <src/*.c>} "%%f.0%%.c": StaticFile(path: f)])
