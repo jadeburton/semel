@@ -14,7 +14,7 @@ swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
 swift test --package-path SemelExamples      # the tutorial's reference node (~4)
 swift test --package-path SemelCore    # the engine tests (~350)
-swift test                                   # the CLI, transport, server and end-to-end fixture tests (~183)
+swift test                                   # the CLI, transport, server and end-to-end fixture tests (~191)
 SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
 ```
 
