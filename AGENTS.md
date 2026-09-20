@@ -30,7 +30,10 @@ all seven.
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
 you find yourself wanting to import `SemelCore` from a toolchain package, something
 belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`/`output:`
-names and the configuration text format ended up there.
+names and the configuration text format ended up there. A toolchain node never puts an
+absolute sandbox path on a command line: `ToolSandbox` in `SemelNodeKit` is the contract,
+and `/semel` is the name a tool is told when it insists on recording its directory. The
+end-to-end harness's third build at a second mount is what catches a node that breaks it.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on

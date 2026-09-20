@@ -1,6 +1,21 @@
 # Mount-independent tool outputs
 
-**Status:** approved design, not yet implemented. B-49. Plan: `docs/superpowers/plans/2026-09-18-semel-mount-independent-outputs.md`.
+**Status:** implemented 2026-09-20; see BACKLOG B-49 for the residuals. Plan:
+`docs/superpowers/plans/2026-09-18-semel-mount-independent-outputs.md`.
+
+What differed from the text above:
+- The `OutputFile` wrapper of a product is not stamped with `projectRoot`, so its cache key
+  still carries the product's `output:` path.
+- A wire equal to the project root keys as `.`, the empty remainder, rather than the
+  absolute path the root strips from every other wire.
+- `FolderManifest.baseFolderPath` still carries the folder's absolute input path inside the
+  serialized manifest `SwiftCompiler` reads, outside the reach of the cache-key change
+  described here; tracked as residual 5 on B-49.
+- `ClangCompilerTests`' exact-argument-list assertion had to grow the new
+  `-fdebug-compilation-dir` flag rather than only gaining a new, separate test.
+- `SwiftLinker` adds the debug-map prefix (`-Xlinker -oso_prefix -Xlinker .`) only for the
+  executable and dynamic-library linkages; `libtool`'s static-archive path writes no debug
+  map, so there is nothing to prefix.
 
 ## 1. Why
 
