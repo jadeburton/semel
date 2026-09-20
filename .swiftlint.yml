@@ -48,6 +48,8 @@ included:
   - SemelSwift/Tests
   - SemelClang/Sources
   - SemelClang/Tests
+  - SemelExamples/Sources
+  - SemelExamples/Tests
   - semel
   - EndToEnd/Tests
 
