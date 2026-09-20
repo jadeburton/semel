@@ -99,7 +99,8 @@ extension GraphSpecNode {
 
     /// The same tree with `key: value` added to every node `include` admits, at any depth.
     /// A node that already carries `key` keeps its own value: what a formula states wins
-    /// over what a builder would stamp.
+    /// over what a builder would stamp. `outputs` is not walked, so a node reachable only
+    /// through an output wire is not stamped — nothing matches against it yet.
     func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
         var properties = self.properties
         if include(self), !properties.contains(where: { $0.key == key }) {

@@ -205,16 +205,16 @@ struct SwiftLinker: Node {
         var arguments = [String]()
 
         switch inputs.configuration.linkage {
-        case .executable, .dynamicLibrary:
-            if case .dynamicLibrary = inputs.configuration.linkage {
-                arguments.append("-emit-library")
-            }
+        case .executable:     break
+        case .dynamicLibrary: arguments.append("-emit-library")
+        // libtool writes the archive: no debug map, and no -Xlinker to pass one to.
+        case .staticArchive:  arguments.append(contentsOf: ["-emit-library", "-static"])
+        }
+
+        if inputs.configuration.linkage != .staticArchive {
             // ld's debug map (N_OSO) names each object file. Prefixed with the working
             // directory it is the object's sandbox-relative path, not the sandbox's own name.
             arguments.append(contentsOf: ["-Xlinker", "-oso_prefix", "-Xlinker", "."])
-        case .staticArchive:
-            // libtool writes the archive: no debug map, and no -Xlinker to pass one to.
-            arguments.append(contentsOf: ["-emit-library", "-static"])
         }
 
         // Pass the SDK path so swiftc's linker driver can find libSystem and

@@ -50,11 +50,13 @@ extension Node {
         // in the object file's debug info, in the output filename derived from it, and in
         // the compiler output published on the log ports.  Keying on the values alone
         // meant identical content at a different path scored a hit and came back with
-        // another file's build. What the key names is the path relative to the project:
-        // the tools embed no more than that (ToolSandbox), so no more than that is an input.
+        // another file's build. The wire key therefore stays in the key whole: a
+        // project-relative key is sound only once the sandbox materialises inputs at the
+        // project-relative path and the command lines carry that path, which is what
+        // `projectRelative(wire:)` is for and what B-49's remaining part owes.
         return try oneInput
             .sorted { $0.key < $1.key }
-            .map { CacheKeyEntry(wire: projectRelative(wire: $0.key), value: $0.value) }
+            .map { CacheKeyEntry(wire: $0.key, value: $0.value) }
             .toJSON()
     }
 

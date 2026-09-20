@@ -27,7 +27,8 @@ public struct ProjectBuilder: Node {
 
     /// Whether `spec` gets `projectRootProperty` stamped on it: true for a node with a
     /// static input port, the ones the cache handles, and false for a file-system node,
-    /// which is shared by every project that reads it.
+    /// which is shared by every project that reads it. A type name the registry does not
+    /// know is also false, so the stamp depends on the toolchains the process registered.
     static func isCacheable(_ spec: GraphSpecNode) -> Bool {
         guard let type = TypeRegistry.nodeType(forTypeName: spec.typeName) as? Node.Type else {
             return false
