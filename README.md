@@ -35,22 +35,25 @@ cd semel
 swift build -c release
 ```
 
-The executable is placed at `.build/release/semel`.
+The build places three executables under `.build/release`: `semelserv`, the engine;
+`semel`, the prompt; and `semel-swift`, the Swift conversion tool.
 
 ## Usage
 
 New here, and want to change Semel rather than only run it? Start with
 [the tutorial](docs/tutorial/first-node.md): build something, watch the cache, write a node.
 
-Start the engine:
+Start the engine — `semelserv` holds the graph and does the work — then the prompt:
 
 ```sh
-.build/release/semel
+.build/release/semelserv   # in one terminal
+.build/release/semel       # in another
 ```
 
-The engine opens an interactive prompt. Everything it persists — the graph database and the
-object store — lives under `~/Library/Application Support/semel`, whatever directory it was
-launched from; the banner prints the database path. Available commands:
+`semel` opens an interactive prompt against the running server. Everything the server
+persists — the graph database and the object store — lives under
+`~/Library/Application Support/semel`, whatever directory it was launched from; the banner
+prints the database path. Available commands:
 
 ### Navigation
 
