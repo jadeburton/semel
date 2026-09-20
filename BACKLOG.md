@@ -190,7 +190,37 @@ B-25 made a push mark the folder dirty and rebuild its manifest once (3000 files
 5 s), but `onChildDeleted` still rebuilds at once, because the folder's self-delete check
 follows it — so a large `rm` rebuilds the parent manifest per deleted child, the way push
 used to. Same fix shape if it ever matters: mark dirty, and move the self-delete check to
-the flush.
+the flush. Also: `rm` opens no batch the way `push` does (`FilePlugin.handleRemove` versus
+`handlePush`), so the engine drains repeatedly while the walk is still unpinning.
+
+**B-74** `open` — **Nothing tests a large `rm`, and four things go wrong in one.**
+Removing a prepared IceCubesApp from the input file system (2026-09-20) showed: the folder
+and the products under `output:` listed as `[missing]` until settle, `debug` failing on a
+graph of a few hundred nodes, and a wall of errors during the cascade. Nothing in the
+suites exercises `rm` through the CLI, the largest deletion test removes a folder of two
+files, and the end-to-end harness never removes anything after a build. Two tests are
+owed, and they are the acceptance for the fixes:
+
+1. A `SemelCore` scale test beside `FolderManifestRebuildTests`: push a few thousand files,
+   `rm` the folder, assert the cost grows linearly and the folder node is gone after the
+   collector runs. B-53's verification.
+2. A `SemelEndToEndTests` step, or a `SemelCLITests` case over `InProcessConnection`: after
+   a build, `rm` the build folder, `wait`, then `ls input:` and `ls output:` show nothing
+   under it, no `[missing]` entry, and the idle error report is empty.
+
+What the reproduction (C fixture grown to 1,019 nodes) found, for whoever writes them:
+`[missing]` means only "exists and not pinned" (`InternalFileSystemLister.swift:38`), and an
+`OutputFile` reads pinned from its *input* port, so an artifact whose input errored shows
+the same word; both are collected at settle. `debug`'s dependency tree keeps its visited set
+per node and so enumerates paths (one shared `StaticFile` visited 999 times), and the text
+rides in the frame JSON under the 1 MiB cap, so past about 600 nodes the server refuses the
+frame and the client sees a closed connection. Deleting one shared header produced 500
+error entries at idle, 494 of them the identical unlabelled `ClangCompiler … inputValueInError`,
+because only `.pending` blocks processing and errors propagate through every consumer;
+deleting the whole project produced none, since everything was collected. The fixes are
+separate items: the `debug` tree (global visited set; text in the frame body), the idle
+error report collapsing a cascade to its cause, `[missing]` split into its states, the
+missing batch around `rm` (B-53), and `ProjectBuilder`'s mid-flight printer (B-50).
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
