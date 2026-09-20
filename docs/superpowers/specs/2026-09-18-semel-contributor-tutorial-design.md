@@ -1,6 +1,22 @@
 # A first tutorial: build, watch the cache, write a node
 
-**Status:** design approved 2026-09-18; not implemented.
+**Status:** implemented; see docs/superpowers/plans/2026-09-20-semel-contributor-tutorial.md
+for what differed from this text.
+
+- The formula's wire key is `"%%f.0%%.c"`, not `"%%f%%"`: the full value is the mounted
+  path, which would put a path into `lines.txt` and break the two-home byte comparison.
+- `TypeRegistry.register` already refuses a duplicate `kind`; Section 6's open check is
+  closed and the `AGENTS.md` paragraph says so.
+- `semel` prints no `>`; the tutorial shows bare commands.
+- Part 2 uses three terminals and reads `semelserv`'s debug log, because nothing at the
+  prompt distinguishes a recomputation from a cache hit (B-81).
+- Part 4: on revert the reader's node is recomputed, not served from cache — work under
+  15 ms is never stored. The tutorial explains the threshold instead.
+- The export goes to `~/semel-playground/out`, and a "Cleaning up" section gives the order
+  that avoids "no type is registered for kind 37" (B-83) and the stale-plan build (B-84).
+- `.swiftlint.yml` gained `SemelExamples/Sources` and `SemelExamples/Tests`; `SemelApple`
+  is still not linted and still not in `Semel.xcworkspace` — outside this work.
+- The roster backlog items the spec refers to are B-75 to B-80.
 
 ## 1. Why
 
@@ -118,12 +134,13 @@ a way a filtered config is not.
 One line added to the formula:
 
 ```
-product "lines.txt" = LineCounter(input: [{f: <src/*.c>} "%%f%%": StaticFile(path: f)])
+product "lines.txt" = LineCounter(input: [{f: <src/*.c>} "%%f.0%%.c": StaticFile(path: f)])
 ```
 
 Build; read `lines.txt`. Edit a file: one line changes, and the C products that do not
-depend on that file are untouched. Revert: cache hit. Add a file matching the glob: a new
-wire appears without the formula changing.
+depend on that file are untouched. Revert: the C products hit cache; the reader's node is
+recomputed anyway, because the engine never stores an entry for work under fifteen
+milliseconds. Add a file matching the glob: a new wire appears without the formula changing.
 
 **Next steps**, each a link to the smallest real example: a node that runs a tool
 (`StringCatalogCompiler`, 85 lines — `ToolRunner`, `ToolDiscovery`, a config namespace);
