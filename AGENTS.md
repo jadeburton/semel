@@ -12,6 +12,7 @@ swift test --package-path SemelProtocol      # the wire protocol (frame codec + 
 swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
 swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
+swift test --package-path SemelExamples      # the tutorial's reference node (~4)
 swift test --package-path SemelCore    # the engine tests (~350)
 swift test                                   # the CLI, transport, server and end-to-end fixture tests (~183)
 SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
@@ -24,7 +25,7 @@ the only thing that runs its tests.
 `swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
-all seven.
+all eight.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
@@ -116,6 +117,22 @@ _ = try? database.wire.delete(comingFromNodeID: wire.fromNodeID,
   into `fromNode`, colliding with a variable already named that. Inside a quoted string,
   prose must be left alone while `\(interpolations)` must be renamed, so no single rule gets
   both right. Budget a reading pass, not a sweep.
+
+## Choosing a `kind`
+
+Every polymorphic type — every node type, and `FolderManifest` and `TreeManifest` beside
+them — carries a hand-assigned `static let kind: UInt`. It is how a stored row or a decoded
+value finds its Swift type again, and it is one flat number space across every package.
+
+A new type takes the next number above the highest in the repository:
+
+    grep -rhn "let kind: UInt = " Semel*/Sources | sed 's/.*= //' | sort -n | tail -1
+
+Never a gap in the sequence: a gap may be a removed type whose rows are still in
+someone's database, and giving its number to something else would bring those rows back
+as the wrong type. Never reused, for the same reason. `TypeRegistry.register` refuses two
+different types claiming one number, so a collision between two branches fails at start-up
+rather than at some later decode — renumber the newer one.
 
 ## Glossary
 
@@ -232,3 +249,7 @@ is genuinely impossible, and then it wants a comment saying why.
 - When adding a regression test for a bug already fixed, verify it actually fails against
   the pre-fix code. A test written after the fix that passes immediately has proved
   nothing.
+- `docs/tutorial/first-node.md` shows real commands and real output. A change to a REPL
+  command's name or to output the tutorial quotes updates the tutorial in the same commit;
+  `EndToEnd/Fixtures/tutorial` catches the node, the formula and the registration, and
+  nothing catches the prose.

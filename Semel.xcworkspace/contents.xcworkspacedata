@@ -20,6 +20,9 @@
       location = "group:SemelClang">
    </FileRef>
    <FileRef
+      location = "group:SemelExamples">
+   </FileRef>
+   <FileRef
       location = "group:SemelCore">
    </FileRef>
 </Workspace>

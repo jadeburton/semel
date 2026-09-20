@@ -35,6 +35,9 @@ jobs:
       - name: Test SemelApple
         run: swift test --package-path SemelApple
 
+      - name: Test SemelExamples
+        run: swift test --package-path SemelExamples
+
       - name: Test SemelCore
         run: swift test --package-path SemelCore
 
