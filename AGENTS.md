@@ -33,7 +33,8 @@ belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`
 names and the configuration text format ended up there. A toolchain node never puts an
 absolute sandbox path on a command line: `ToolSandbox` in `SemelNodeKit` is the contract,
 and `/semel` is the name a tool is told when it insists on recording its directory. The
-end-to-end harness's third build at a second mount is what catches a node that breaks it.
+harness's cold builds — each in its own sandbox, the third from a copy at a second mount —
+are what catch a node that breaks it.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on

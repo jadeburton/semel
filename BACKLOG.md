@@ -47,41 +47,52 @@ gap in the cache-key audit: two different binaries reporting the same version st
 currently share a cache key. Narrow, and B-03 subsumes it.
 
 **B-49** `open` — **Tool outputs must not depend on where the inputs are mounted — residuals.**
-Done 2026-09-18: the sandbox contract is `ToolSandbox` (inputs at their wire keys below a
-fresh root that is the working directory; every argument relative to it; the root's
-canonical name `/semel`); `ClangCompiler` and `SwiftCompiler` record `/semel` as the
-compilation directory, `ClangLinker` and `SwiftLinker` prefix the debug map with the
+Done 2026-09-20: parts 1 and 2 — the sandbox contract is `ToolSandbox` (inputs at their
+wire keys below a fresh root that is the working directory; every argument relative to it;
+the root's canonical name `/semel`); `ClangCompiler` and `SwiftCompiler` record `/semel` as
+the compilation directory, `ClangLinker` and `SwiftLinker` prefix the debug map with the
 working directory, and `SwiftCompiler` serializes no debugging options, which is what kept
 the sandbox root out of a `.swiftmodule` built without `-g`; the end-to-end harness builds
-every fixture a third time from a copy at a longer-named mount and requires it to match;
-and a cache key names each input relative to `projectRoot`, the property `ProjectBuilder`
-stamps on every cacheable node and the key excludes by name — except the `OutputFile`
-wrapper of a product, which is not stamped, so its key still carries the product's
-`output:` path (residual 2); a wire equal to the project root keys as `.`. The checkout
-prefix was never in the graph: the client pushes base-relative paths. What remains:
+every fixture a third time from a copy at a longer-named mount and requires it to match.
+The checkout prefix was never in the graph: the client pushes base-relative paths.
 
-1. The implicit clang module cache path in a Swift object built with `-g`
+Of part 3, only the plumbing is done: the `projectRoot` property `ProjectBuilder` stamps on
+every cacheable node, `GraphSpecNode.adding(property:value:where:)` that stamps it,
+`Node.cacheKeyExcludedProperties` that keeps `projectRoot` out of a node's own key, and
+`Node.projectRelative(wire:)`, which strips the root from a wire name — written, unit
+tested directly, and not applied to a cache key. What remains:
+
+1. **Applying the project-relative key.** `LocalFileSystemTool` materialises every input at
+   its full wire key, and every node puts that full key on its command line, so stripping
+   the key alone equates two placements whose bytes differ (preprocessor `#` line markers,
+   `DW_AT_name`, `__FILE__`) and whose cached `inputWireSpecs` name the other placement's
+   files instead of this one's. The key may be made project-relative only once the sandbox
+   layout and the command lines are project-relative too, which is what the design's
+   "canonical sandbox layout" (§3) must actually mean. A fix needs one fixture built at two
+   different positions under `input:`, with the resulting products compared byte for byte.
+2. The implicit clang module cache path in a Swift object built with `-g`
    (`/var/folders/<user>/C/clang/ModuleCache/…`): per user, stable on one machine,
    different between machines. Explicit modules would remove the cache rather than move it.
-2. `OutputFile.path` and `ProjectBuilder.outputFolder` in their own nodes' keys. Both
+3. `OutputFile.path` and `ProjectBuilder.outputFolder` in their own nodes' keys. Both
    determine those nodes' outputs, so stripping them needs its own argument; neither sits
    upstream of a compile.
-3. Whether `-Xfrontend -no-serialize-debugging-options` is safe in every graph. IceCubes
+4. Whether `-Xfrontend -no-serialize-debugging-options` is safe in every graph. IceCubes
    builds with it; the fallback, if a graph ever needs the serialized search paths, is
    `-file-compilation-dir` alone and accepting the `.swiftmodule` leak.
-4. `{sandbox}` substitution for a node that ever needs the real root: specified in the
+5. `{sandbox}` substitution for a node that ever needs the real root: specified in the
    design, built by nothing, so the answer exists without an API.
-5. `FolderManifest.baseFolderPath` (`SemelNodeKit/Sources/SemelNodeKit/FolderManifest.swift`)
+6. `FolderManifest.baseFolderPath` (`SemelNodeKit/Sources/SemelNodeKit/FolderManifest.swift`)
    holds the folder's absolute input path and travels inside the serialized manifest that
-   `SwiftCompiler` takes on `inputFolder`, `inputSubfolders` and `inputModuleMapFolders`, so
-   a `SwiftCompiler` key still changes when the project moves under `input:`. Costs missed
-   hits across developers, never a wrong hit. `CacheKeyMountIndependenceTests` prove the
-   wire-name half mount-independent; this value half is what remains for a real Swift
-   graph. The fix is not in the key: it is what `Folder` publishes, or a manifest whose
-   paths are root-relative, and every node that reads `baseFolderPath` — the clang
-   preprocessor's `-I`, the Swift compiler's walk — has to follow.
-The end-to-end harness found no embedded path in any fixture's or IceCubes's exports, and
-the static archives among them match byte for byte too.
+   `SwiftCompiler` takes on `inputFolder`, `inputSubfolders` and `inputModuleMapFolders`.
+   Currently load-bearing, not a mere residual: with item 1 unapplied, this absolute path
+   inside a manifest value is what keeps the keys of two placements apart wherever a folder
+   is wired, so it must not be removed before item 1 lands. Once the key is
+   project-relative, the same absolute path costs missed hits across developers — never a
+   wrong hit — and the fix is not in the key: it is what `Folder` publishes, or a manifest
+   whose paths are root-relative, and every node that reads `baseFolderPath` — the clang
+   preprocessor's `-I`, the Swift compiler's walk — has to follow. `CacheKeyMountIndependenceTests`
+   prove the wire-name half of the design; this value half is what remains for a real Swift
+   graph.
 
 ## Swift package conversion
 
