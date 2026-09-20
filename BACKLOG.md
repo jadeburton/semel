@@ -183,6 +183,17 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
+**B-81** `open` — **`build` reports what it published, not what it did.**
+A cache hit and a full recompute print byte-identical output at the prompt — the same three
+lines whether every node ran `processWithCatch` or every node used the cache — and that
+distinction lives only in `semelserv`'s stdout, which a release build compiles out.
+`BuildEngine.processSomeNodes` already counts scheduled and computed per batch and
+`Cache.loadCachedOutputs` already knows a hit from a miss; carry those totals to the client
+over the protocol as a one-line settle summary (e.g. `12 nodes scheduled, 3 computed, 9 from
+cache, 0 errors`) instead of printing them through `Debug.log`. `docs/tutorial/first-node.md`
+Part 2 reads the server's debug log for exactly this reason and should be rewritten around
+the summary once it exists.
+
 ## Performance
 
 **B-53** `open` — **`rm` of a large folder is still quadratic.**
@@ -255,6 +266,21 @@ and leaves the `semelserv` it started running. Two shapes fix it: put the server
 client's process group, so a signal delivered to the group reaches both; or have `semelserv`
 exit when its socket file disappears, which also covers a user who deletes the socket by
 hand.
+
+**B-82** `open` — **A `build` that reports errors at settle still exits 0.**
+`.build/debug/semel 'base <playground>' 'build hello --into <playground>/out'` against a
+graph holding an unregistered node type printed `2 errors across 1 node` and exited 0. The
+README's non-interactive contract says the CLI "exits non-zero if any command reported an
+error", and `main.swift` exits on `interpreter.errorsReported`, but an error surfaced through
+the settle-time error report never reaches it. A build that reports errors and exits 0
+cannot be used as a build step.
+
+**B-85** `open` — **`semelserv` block-buffers its log when redirected.**
+Redirecting `semelserv`'s stdout to a file loses the tail of the log until the process
+exits — a roughly 120-line build showed only 60 lines and a truncated final one — which
+makes `semelserv > build.log` unusable for CI or for filing a bug, precisely when someone
+would redirect it. Line-buffer stdout at start-up (`setvbuf(stdout, nil, _IOLBF, 0)`, or an
+explicit flush) so a redirected log is complete and current.
 
 ## Design, correctness and code quality
 
@@ -393,6 +419,30 @@ work signal is counted but not sent until `endBatch` (fails safe, never a false 
 the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
+
+**B-83** `open` — **"no type is registered for kind N" is a dead end.**
+The message is accurate but offers no remedy: it fires when a node type is removed or
+renamed while a database still holds a graph built against it — exactly the situation
+AGENTS.md's "never reuse a kind" rule exists for — and every subsequent build on that graph
+repeats it. Say what to do about it: the type is not linked into this `semelserv`, or the
+graph predates its removal, and `reset` discards the derived state that is stuck.
+
+**B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
+changes.**
+Adding or removing a source file in `SemelNodeKit`, `SemelClang`, `SemelApple` or
+`SemelExamples` is invisible to a root `swift build` until `.build/debug.yaml` is deleted:
+SwiftPM does not re-plan, so adding a file gives "cannot find X in scope" against the
+registration rather than the plan, and removing one gives "couldn't build … because of
+missing inputs: <the file just deleted>" while leaving the previous binary linked with the
+type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
+(`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
+can do better than a documented workaround.
+
+**B-86** `open` — **`tools <prefix>`: print only the namespaces asked for.**
+`tools` prints a block for every namespace the server knows — 8 blocks, 38 lines for
+`apple.*`, `clang.*` and `swift.*` together — when a newcomer copying a `clang.cfg` needs 3
+of them. `tools clang` narrowing to namespaces with that prefix would make the copy-paste
+step exact. Low priority.
 
 ## App bundles
 

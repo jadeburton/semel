@@ -27,6 +27,13 @@ the only thing that runs its tests.
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
 
+A root `swift build` does not re-plan when a source file is added to or removed from a
+path-dependency package (`SemelNodeKit`, `SemelClang`, `SemelApple`, `SemelExamples`):
+`.build/debug.yaml` is stale until it is deleted. Adding a file fails with `cannot find 'X'
+in scope`, naming the registration rather than the missing plan entry; removing one fails
+with `missing inputs: …/X.swift` while the previous binary stays linked with the type it no
+longer has. `rm .build/debug.yaml` before the next `swift build` fixes both (B-84).
+
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
 you find yourself wanting to import `SemelCore` from a toolchain package, something
