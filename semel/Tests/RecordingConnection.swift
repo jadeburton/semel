@@ -49,6 +49,7 @@ final class TestCommandContext: CommandContext {
 
     private(set) var messages: [String] = []
     private(set) var errors: [String] = []
+    private(set) var countedErrorRecords: [[ErrorRecord]] = []
 
     var allOutput: [String] { messages + errors }
 
@@ -59,4 +60,7 @@ final class TestCommandContext: CommandContext {
 
     func outputMessage(_ message: String) { messages.append(message) }
     func outputError(_ message: String)   { errors.append(message) }
+
+    func countErrorRecords(_ records: [ErrorRecord]) { countedErrorRecords.append(records) }
+    func resetErrorRecordAccounting() {}
 }

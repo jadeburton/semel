@@ -16,6 +16,18 @@ protocol CommandContext: AnyObject {
     var currentDirectoryPath: Path { get set }
     func outputMessage(_ message: String)
     func outputError(_ message: String)
+
+    /// Counts one non-empty settle report toward `errorsReported`, unless a report has
+    /// already been counted since the last `resetErrorRecordAccounting()`. The idle-time
+    /// event and the `errors` verb the `build` macro runs right after it usually name the
+    /// very same failures, and counting both would make one broken build look like two.
+    func countErrorRecords(_ records: [ErrorRecord])
+
+    /// Allows the next `countErrorRecords` to count again. Called before every `wait`, so
+    /// a later build against a graph that is still broken the same way is still counted —
+    /// the engine's own idle-time report will not repeat a message it already delivered,
+    /// so only this reset lets the following `errors` verb's query count it again.
+    func resetErrorRecordAccounting()
 }
 
 /// A failure the server reported. Thrown by `request` so the interpreter prints it the way

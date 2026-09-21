@@ -43,6 +43,23 @@ public final class CommandInterpreter: CommandContext {
     /// when this is not zero, which is what makes `semel 'build Packages'` a build step.
     public private(set) var errorsReported = 0
 
+    /// Whether a settle report has already added to `errorsReported` since the last
+    /// `resetErrorRecordAccounting()`. See `countErrorRecords`.
+    private var hasCountedErrorRecordsThisSettle = false
+
+    /// The idle-time event calls this with what it is about to print, and the `errors`
+    /// verb calls it with what it just printed; either way this is where a report becomes
+    /// part of the exit status, once per settle rather than once per caller.
+    func countErrorRecords(_ records: [ErrorRecord]) {
+        guard !records.isEmpty, !hasCountedErrorRecordsThisSettle else { return }
+        hasCountedErrorRecordsThisSettle = true
+        errorsReported += 1
+    }
+
+    func resetErrorRecordAccounting() {
+        hasCountedErrorRecordsThisSettle = false
+    }
+
     private let plugins: [any CommandPlugin]
 
     private lazy var verbMap: [String: any CommandPlugin] = {
@@ -91,6 +108,7 @@ public final class CommandInterpreter: CommandContext {
         switch event {
         case .daemon(.errors(let records)):
             records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+            countErrorRecords(records)
         case .daemon(.notice(let line)):
             outputMessage(line)
         }
