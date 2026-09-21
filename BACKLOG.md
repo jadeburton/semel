@@ -294,13 +294,6 @@ error", and `main.swift` exits on `interpreter.errorsReported`, but an error sur
 the settle-time error report never reaches it. A build that reports errors and exits 0
 cannot be used as a build step.
 
-**B-85** `open` — **`semelserv` block-buffers its log when redirected.**
-Redirecting `semelserv`'s stdout to a file loses the tail of the log until the process
-exits — a roughly 120-line build showed only 60 lines and a truncated final one — which
-makes `semelserv > build.log` unusable for CI or for filing a bug, precisely when someone
-would redirect it. Line-buffer stdout at start-up (`setvbuf(stdout, nil, _IOLBF, 0)`, or an
-explicit flush) so a redirected log is complete and current.
-
 ## Design, correctness and code quality
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them

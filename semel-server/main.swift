@@ -17,6 +17,12 @@ import SemelProtocol
 import SemelServer
 import SemelSwift
 
+// `print` writes through the C stream `stdout`, which glibc and Darwin's libc both
+// fully-buffer once it is not a terminal — a redirected log then holds back everything
+// short of a full buffer until the process exits. A daemon's log must be complete and
+// current the moment someone tails it, so line-buffer before the first print.
+setvbuf(stdout, nil, _IOLBF, 0)
+
 func fail(_ message: String, code: Int32) -> Never {
     FileHandle.standardError.write(Data("semelserv: \(message)\n".utf8))
     exit(code)
