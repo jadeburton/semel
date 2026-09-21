@@ -82,36 +82,34 @@ struct XcodeBuildSettings {
     /// References, resolved so that `$(NAME)` never expands before `NAME` itself has:
     /// a value may name a setting that names another, so `PRODUCT_MODULE_NAME` (naming
     /// `PRODUCT_NAME`, naming `TARGET_NAME`) must not see `PRODUCT_NAME` half-expanded.
-    /// Walking `values` in whatever order `Dictionary` iterates it — as this used to,
-    /// with an eight-round fixed point — makes the outcome depend on that order: visited
-    /// before its reference resolves, a key's operator (`:c99extidentifier`) applies to
-    /// the literal reference text instead of the value it names, and the wrong answer has
-    /// no `$` left to retry. Resolving each key by first resolving what it names, instead
-    /// of by revisiting the whole table, makes the result independent of iteration order.
+    /// The order the table is walked in must not matter: a key visited before its
+    /// reference resolves would apply its operator (`:c99extidentifier`) to the literal
+    /// reference text instead of the value it names, and the wrong answer would have no
+    /// `$` left to retry. So each key is resolved by first resolving what it names,
+    /// which bottoms out at the same base values whatever the visiting order.
     static func resolveReferences(in values: [String: String]) -> [String: String] {
         var resolved: [String: String] = [:]
         var resolving: Set<String> = []
 
-        func value(for key: String) -> String {
+        func value(for key: String, raw: String) -> String {
             if let already = resolved[key] {
                 return already
             }
-            guard let raw = values[key] else {
-                return ""
-            }
             guard resolving.insert(key).inserted else {
-                // A cyclic reference: leave it as it is rather than expanding forever.
+                // A cyclic reference. The key already being resolved returns its raw text,
+                // so the cycle's members keep a `$(…)` reference between them, unresolved,
+                // instead of expanding forever.
                 return raw
             }
-            let result = substitute(raw) { name in values[name] != nil ? value(for: name) : nil }
+            let result = substitute(raw) { name in values[name].map { value(for: name, raw: $0) } }
             resolving.remove(key)
             resolved[key] = result
             return result
         }
 
         // Sorted so the result does not depend on `Dictionary`'s iteration order.
-        for key in values.keys.sorted() {
-            resolved[key] = value(for: key)
+        for (key, raw) in values.sorted(by: { $0.key < $1.key }) {
+            resolved[key] = value(for: key, raw: raw)
         }
         return resolved
     }
@@ -142,18 +140,11 @@ struct XcodeBuildSettings {
         return result.merging(conditional) { _, matched in matched }
     }
 
-    /// `$(NAME)` and `${NAME}` from `settings`, with the two operators a bundle's identity
-    /// goes through — `$(PRODUCT_NAME:c99extidentifier)` for a module name,
-    /// `:rfc1034identifier` for a bundle identifier. A name with no setting is left as it
-    /// is, for `InfoPlistBuilder` to report if it reaches a plist.
-    static func substitute(_ value: String, in settings: [String: String]) -> String {
-        substitute(value) { settings[$0] }
-    }
-
-    /// `$(NAME)` and `${NAME}`, each replaced by `lookup(NAME)` — nil leaves the reference
-    /// as it is — with the operator, if any, applied to whatever `lookup` returns. Whether
-    /// that is already fully resolved is the caller's choice: `resolveReferences` resolves
-    /// `NAME` itself first; `substitute(_:in:)` passes the value as it stands.
+    /// `$(NAME)` and `${NAME}`, each replaced by `lookup(NAME)`, with the two operators a
+    /// bundle's identity goes through — `$(PRODUCT_NAME:c99extidentifier)` for a module
+    /// name, `:rfc1034identifier` for a bundle identifier — applied to what `lookup`
+    /// returns. A nil lookup leaves the reference as it is, for `InfoPlistBuilder` to
+    /// report if it reaches a plist.
     private static func substitute(_ value: String, lookup: (String) -> String?) -> String {
         guard let reference = reference else {
             return value
