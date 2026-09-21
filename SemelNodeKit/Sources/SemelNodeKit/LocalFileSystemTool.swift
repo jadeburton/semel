@@ -194,7 +194,7 @@ public class LocalFileSystemTool: ToolRunner {
             }
         }
 
-        return .init(exitCode: exitCode, sandboxPathUsed: canonicalSandboxPath)
+        return .init(exitCode: exitCode, resolvedSandboxPath: canonicalSandboxPath)
     }
 }
 

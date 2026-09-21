@@ -84,6 +84,17 @@ final class ClangLinkerTests: SemelClangTestCase {
         XCTAssertTrue(executor.lastArguments.contains("-dynamiclib"))
     }
 
+    /// The linker's debug map names each object by path. `-oso_prefix .` makes that the
+    /// sandbox-relative path, so a binary linked in one sandbox matches one linked in another.
+    func test_prefixesTheDebugMapWithTheWorkingDirectory() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
+
+        let arguments = executor.lastArguments
+        let index = try XCTUnwrap(arguments.firstIndex(of: "-oso_prefix"), "\(arguments)")
+        XCTAssertEqual(Array(arguments[(index - 1)...(index + 2)]), ["-Xlinker", "-oso_prefix", "-Xlinker", "."])
+        XCTAssertLessThan(index, try XCTUnwrap(arguments.firstIndex(of: "a.o")), "before the objects")
+    }
+
     // MARK: - The C++ runtime
 
     /// libc++ is linked when any object came from C++ source, judged by suffix at every

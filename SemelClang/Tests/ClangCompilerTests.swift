@@ -60,6 +60,7 @@ final class ClangCompilerTests: SemelClangTestCase {
         XCTAssertEqual(executor.lastArguments,
                        ["-x", "c",
                         "-c", "-std=c17",
+                        "-fdebug-compilation-dir=/semel",
                         "src/hello.c.p",
                         "-o", "src/hello.c.p.o",
                         "-target", "arm64-apple-macos14.0"])
@@ -72,6 +73,15 @@ final class ClangCompilerTests: SemelClangTestCase {
 
         XCTAssertTrue(executor.lastArguments.contains("x86_64-apple-macos13.0"))
         XCTAssertFalse(executor.lastArguments.contains("arm64-apple-macos14.0"))
+    }
+
+    /// Debug information records the compilation directory. Told the canonical name, an
+    /// object built in one sandbox is byte-identical to the same object built in another.
+    func test_recordsTheCanonicalSandboxNameAsTheCompilationDirectory() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c.p"))
+
+        XCTAssertTrue(executor.lastArguments.contains("-fdebug-compilation-dir=\(ToolSandbox.canonicalRootName)"),
+                      "\(executor.lastArguments)")
     }
 
     // MARK: - The language standard

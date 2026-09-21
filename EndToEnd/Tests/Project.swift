@@ -38,4 +38,8 @@ struct Project {
     /// difference a backlog item owns, with a comment saying which; the empty list is the
     /// rule.
     var mayDiffer: [String] = []
+    /// Whether the run builds a third time from a copy at a mount whose name has a
+    /// different length, and requires that export to match the first. False only for a
+    /// project whose build is too long to run three times.
+    var twoMounts: Bool = true
 }
