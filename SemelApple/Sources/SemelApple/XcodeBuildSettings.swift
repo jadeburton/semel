@@ -76,21 +76,44 @@ struct XcodeBuildSettings {
             }
         }
 
-        // References, to a fixed point: a value may name a setting that names another.
-        for _ in 0..<8 {
-            var changed = false
-            for (key, value) in resolved where value.contains("$") {
-                let substituted = substitute(value, in: resolved)
-                if substituted != value {
-                    resolved[key] = substituted
-                    changed = true
-                }
+        return XcodeBuildSettings(values: resolveReferences(in: resolved))
+    }
+
+    /// References, resolved so that `$(NAME)` never expands before `NAME` itself has:
+    /// a value may name a setting that names another, so `PRODUCT_MODULE_NAME` (naming
+    /// `PRODUCT_NAME`, naming `TARGET_NAME`) must not see `PRODUCT_NAME` half-expanded.
+    /// Walking `values` in whatever order `Dictionary` iterates it — as this used to,
+    /// with an eight-round fixed point — makes the outcome depend on that order: visited
+    /// before its reference resolves, a key's operator (`:c99extidentifier`) applies to
+    /// the literal reference text instead of the value it names, and the wrong answer has
+    /// no `$` left to retry. Resolving each key by first resolving what it names, instead
+    /// of by revisiting the whole table, makes the result independent of iteration order.
+    static func resolveReferences(in values: [String: String]) -> [String: String] {
+        var resolved: [String: String] = [:]
+        var resolving: Set<String> = []
+
+        func value(for key: String) -> String {
+            if let already = resolved[key] {
+                return already
             }
-            if !changed {
-                break
+            guard let raw = values[key] else {
+                return ""
             }
+            guard resolving.insert(key).inserted else {
+                // A cyclic reference: leave it as it is rather than expanding forever.
+                return raw
+            }
+            let result = substitute(raw) { name in values[name] != nil ? value(for: name) : nil }
+            resolving.remove(key)
+            resolved[key] = result
+            return result
         }
-        return XcodeBuildSettings(values: resolved)
+
+        // Sorted so the result does not depend on `Dictionary`'s iteration order.
+        for key in values.keys.sorted() {
+            resolved[key] = value(for: key)
+        }
+        return resolved
     }
 
     /// The layer with conditional keys folded in: `KEY[sdk=iphonesimulator*]` replaces
@@ -124,13 +147,21 @@ struct XcodeBuildSettings {
     /// `:rfc1034identifier` for a bundle identifier. A name with no setting is left as it
     /// is, for `InfoPlistBuilder` to report if it reaches a plist.
     static func substitute(_ value: String, in settings: [String: String]) -> String {
+        substitute(value) { settings[$0] }
+    }
+
+    /// `$(NAME)` and `${NAME}`, each replaced by `lookup(NAME)` — nil leaves the reference
+    /// as it is — with the operator, if any, applied to whatever `lookup` returns. Whether
+    /// that is already fully resolved is the caller's choice: `resolveReferences` resolves
+    /// `NAME` itself first; `substitute(_:in:)` passes the value as it stands.
+    private static func substitute(_ value: String, lookup: (String) -> String?) -> String {
         guard let reference = reference else {
             return value
         }
         var result = value
         for match in reference.matches(in: value, range: NSRange(value.startIndex..., in: value)).reversed() {
             guard let whole = Range(match.range, in: value), let nameRange = Range(match.range(at: 1), in: value),
-                  var replacement = settings[String(value[nameRange])] else {
+                  var replacement = lookup(String(value[nameRange])) else {
                 continue
             }
             if let operatorRange = Range(match.range(at: 2), in: value) {
