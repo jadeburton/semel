@@ -37,15 +37,15 @@ final class LocalFileSystemToolTests: XCTestCase {
     /// both point inside the sandbox, so a tool that writes "somewhere in $HOME" still
     /// cannot escape it. PATH is fixed rather than inherited.
     func test_theEnvironmentAToolGetsIsTheSandboxes() throws {
-        // `pwd -P` resolves /var to /private/var, which is how sandboxPathUsed is reported.
+        // `pwd -P` resolves /var to /private/var, which is how resolvedSandboxPath is reported.
         let result = try runShell("""
             echo "home=$(cd "$HOME" && pwd -P)"; echo "tmp=$(cd "$TMPDIR" && pwd -P)"; echo "path=$PATH"
             """)
 
         XCTAssertEqual(result.exitCode, 0, result.errorOutput)
-        XCTAssertTrue(result.infoOutput.contains("home=\(result.sandboxPathUsed)\n"),
+        XCTAssertTrue(result.infoOutput.contains("home=\(result.resolvedSandboxPath)\n"),
                       "HOME must be the sandbox, got: \(result.infoOutput)")
-        XCTAssertTrue(result.infoOutput.contains("tmp=\(result.sandboxPathUsed)\n"),
+        XCTAssertTrue(result.infoOutput.contains("tmp=\(result.resolvedSandboxPath)\n"),
                       "TMPDIR must be the sandbox, got: \(result.infoOutput)")
         XCTAssertTrue(result.infoOutput.contains("path=/usr/bin:/bin:/usr/sbin:/sbin"),
                       "PATH must be fixed, not inherited, got: \(result.infoOutput)")
@@ -68,7 +68,7 @@ final class LocalFileSystemToolTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0, result.errorOutput)
         let cwd = result.infoOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(cwd, result.sandboxPathUsed,
+        XCTAssertEqual(cwd, result.resolvedSandboxPath,
                        "the working directory must be the per-run sandbox")
         XCTAssertNotEqual(cwd, FileManager.default.currentDirectoryPath,
                           "the tool must not inherit where Semel itself is running")
@@ -120,7 +120,7 @@ final class LocalFileSystemToolTests: XCTestCase {
         let result = try runShell("echo leftover > leftover.txt")
 
         XCTAssertEqual(result.exitCode, 0, result.errorOutput)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: result.sandboxPathUsed),
+        XCTAssertFalse(FileManager.default.fileExists(atPath: result.resolvedSandboxPath),
                        "the sandbox must be deleted once the tool has run")
     }
 

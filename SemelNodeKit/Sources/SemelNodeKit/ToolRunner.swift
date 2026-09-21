@@ -29,22 +29,29 @@ public struct ToolDescriptor: Hashable, Codable {
 
 public struct ToolExecuteResult {
     public let exitCode: Int32
-    // This is needed in cases where a tool writes the temporary path into an output file. We need to undo that.
-    public let sandboxPathUsed: String
+    /// The sandbox root as the tool saw it, symlinks resolved (`/var/…` is `/private/var/…`).
+    /// For a caller that must undo a path a tool wrote into its output — `swift package
+    /// dump-package` prints absolute paths — not for building a command line, which never
+    /// names the sandbox (see `ToolSandbox`).
+    public let resolvedSandboxPath: String
 
-    public init(exitCode: Int32, sandboxPathUsed: String) {
+    public init(exitCode: Int32, resolvedSandboxPath: String) {
         self.exitCode = exitCode
-        self.sandboxPathUsed = sandboxPathUsed
+        self.resolvedSandboxPath = resolvedSandboxPath
     }
 }
 
 /// A tool that can be executed with a set of arguments and input files,
 /// producing output files and log messages via a ToolOutput callback object.
+///
+/// The contract with the caller is `ToolSandbox`'s: inputs are materialised at their wire
+/// keys below a fresh root that is the working directory, every argument is relative to
+/// that root, and the root's real name reaches neither the command line nor the outputs.
+/// `expectedOutputFolders` are sandbox-relative folders whose every file, at any
+/// depth, is reported through `output.writeTreeEntry` — for a tool that decides its
+/// own file set. A folder that is not there after the run is an error, like a missing
+/// output file.
 public protocol ToolRunner {
-    /// `expectedOutputFolders` are sandbox-relative folders whose every file, at any
-    /// depth, is reported through `output.writeTreeEntry` — for a tool that decides its
-    /// own file set. A folder that is not there after the run is an error, like a missing
-    /// output file.
     func execute(arguments: [String],
                  environment: [String: String],
                  inputFiles: [FileNameAndContent],
@@ -155,7 +162,7 @@ public class ToolRunnerRegistry {
 // To simplify the call sites we read the streams into simple strings.
 public struct SimplifiedToolExecuteResult {
     public let exitCode: Int32
-    public let sandboxPathUsed: String
+    public let resolvedSandboxPath: String
     public let infoOutput: String
     public let errorOutput: String
     public let outputFiles: [String: [UInt8]]
@@ -215,7 +222,7 @@ extension ToolRunner {
                                                }))
 
         return .init(exitCode: result.exitCode,
-                     sandboxPathUsed: result.sandboxPathUsed,
+                     resolvedSandboxPath: result.resolvedSandboxPath,
                      infoOutput: infoOutput,
                      errorOutput: errorOutput,
                      outputFiles: outputFiles,

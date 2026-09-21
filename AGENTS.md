@@ -38,7 +38,11 @@ longer has. `rm .build/debug.yaml` before the next `swift build` fixes both (B-8
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
 you find yourself wanting to import `SemelCore` from a toolchain package, something
 belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`/`output:`
-names and the configuration text format ended up there.
+names and the configuration text format ended up there. A toolchain node never puts an
+absolute sandbox path on a command line: `ToolSandbox` in `SemelNodeKit` is the contract,
+and `/semel` is the name a tool is told when it insists on recording its directory. The
+harness's cold builds — each in its own sandbox, the third from a copy at a second mount —
+are what catch a node that breaks it.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on

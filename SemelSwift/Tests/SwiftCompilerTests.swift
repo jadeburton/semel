@@ -199,6 +199,23 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
                        ["extra/Entity.swift", "input:/ext/Sources/Main.swift"])
     }
 
+    /// A Swift object records its compilation directory, and a `.swiftmodule` serializes the
+    /// search paths it was built with — the sandbox root, in both. The canonical name closes
+    /// the first; not serializing the options closes the second. Every compile here gets its
+    /// own explicit `-I` flags, so nothing downstream needs the serialized set.
+    func test_recordsTheCanonicalSandboxNameAndSerializesNoDebuggingOptions() throws {
+        var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let directory = try XCTUnwrap(arguments.firstIndex(of: "-file-compilation-dir"), "\(arguments)")
+        XCTAssertEqual(arguments[directory + 1], ToolSandbox.canonicalRootName)
+        let frontend = try XCTUnwrap(arguments.firstIndex(of: "-no-serialize-debugging-options"), "\(arguments)")
+        XCTAssertEqual(arguments[frontend - 1], "-Xfrontend", "the frontend flag has no driver spelling")
+    }
+
     /// A target that borrows every source it has — an extension whose folder no target
     /// owns — wires no folder at all, and compiles the extras alone.
     func test_compilesWithExtraSourceFilesAndNoFolder() throws {

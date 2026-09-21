@@ -98,13 +98,15 @@ final class EndToEndRun {
 
     /// A fresh home named `home`, a server over it, one `semel` session that pushes the
     /// extra folders, builds the build folder and exports into `<root>/<out>`; then the
-    /// server stopped cleanly. Returns the export directory.
-    func coldBuild(home homeName: String, out outName: String) throws -> URL {
+    /// server stopped cleanly. `base` is the copy to build, the run's own unless a caller
+    /// materialised another. Returns the export directory.
+    func coldBuild(base buildBase: URL? = nil, home homeName: String, out outName: String) throws -> URL {
+        let buildBase = buildBase ?? base
         let server = ServerSession(home: root.appendingPathComponent(homeName, isDirectory: true))
         let out = root.appendingPathComponent(outName, isDirectory: true)
         try server.start()
         do {
-            var commands = ["base \(base.path)"]
+            var commands = ["base \(buildBase.path)"]
             commands += project.alsoPush.map { "push \($0)" }
             commands.append("build \(project.buildFolder) --into \(out.path)")
             try Self.run("semel", arguments: commands, environment: server.environment,
@@ -171,9 +173,37 @@ final class EndToEndRun {
         mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix($0) }
     }
 
+    // MARK: - 6b. A second mount
+
+    /// The prepared copy again, beside the first under a folder whose name has a
+    /// different length, so a path a tool embedded would show up as a size difference
+    /// even if the diff's content check were fooled. Prepare is not run again: the copy
+    /// already carries what prepare wrote, so the third build sees the first's inputs at
+    /// a different place and nothing else.
+    func materialiseSecondMount() throws -> URL {
+        let mount = root.appendingPathComponent("mount-b-longer-name", isDirectory: true)
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+        let copy = mount.appendingPathComponent(base.lastPathComponent, isDirectory: true)
+        try FileManager.default.copyItem(at: base, to: copy)
+        return copy
+    }
+
+    /// Build three must match build one the way build two did. The roster's exemptions
+    /// apply here too: an archive's timestamp is no more a mount than it is a run.
+    func checkMountIndependence(_ out1: URL, _ out3: URL) throws {
+        let differences = try TreeDiff.compare(out1, out3)
+        let notExempt = differences.filter { !Self.exempt($0, by: project.mayDiffer) }
+        guard !notExempt.isEmpty else {
+            return
+        }
+        let listed = notExempt.prefix(20).map(\.description).joined(separator: "\n  ")
+        let more = notExempt.count > 20 ? "\n  … and \(notExempt.count - 20) more" : ""
+        throw EndToEndFailure(step: "two mounts", message: "\(notExempt.count) difference(s) between out1 and out3 (the second mount):\n  \(listed)\(more)")
+    }
+
     // MARK: - The whole run
 
-    /// Steps 1 to 7. The root is cleaned up on the way out, kept with SEMEL_E2E_KEEP=1.
+    /// Steps 1 to 7, with the second mount between the determinism check and clean-up.
     func run() throws {
         defer { cleanUp() }
         try materialise()
@@ -183,6 +213,12 @@ final class EndToEndRun {
         let out2 = try coldBuild(home: "home2", out: "out2")
         try checkProducts(in: out2)
         try checkDeterminism(out1, out2)
+        if project.twoMounts {
+            let second = try materialiseSecondMount()
+            let out3 = try coldBuild(base: second, home: "home3", out: "out3")
+            try checkProducts(in: out3)
+            try checkMountIndependence(out1, out3)
+        }
     }
 
     // MARK: - 7. Clean up

@@ -154,6 +154,10 @@ public struct ClangLinker: Node {
             arguments.append("-dynamiclib")
         }
 
+        // The debug map (N_OSO) names each object file. Prefixed with the working
+        // directory it is the object's sandbox-relative path, not the sandbox's own name.
+        arguments.append(contentsOf: ["-Xlinker", "-oso_prefix", "-Xlinker", "."])
+
         for objectFile in inputs.objectFiles {
             arguments.append(objectFile.filePath)
         }

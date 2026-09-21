@@ -105,6 +105,10 @@ public struct ClangCompiler: Node {
             namespace: ClangCompilerConfiguration.settingNamespace)
         arguments.append("-std=\(standard)")
 
+        // The object records its compilation directory in DWARF. The sandbox's real name
+        // would make two builds of one file differ; the canonical name makes them agree.
+        arguments.append("-fdebug-compilation-dir=\(ToolSandbox.canonicalRootName)")
+
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)
         arguments.append("-target"); arguments.append(inputs.configuration.target)

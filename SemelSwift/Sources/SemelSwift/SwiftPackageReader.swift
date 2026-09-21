@@ -136,9 +136,9 @@ struct SwiftPackageReader: Node {
                 infoLog: .value(try stderrOutput.intern()))
         }
 
-        // sandboxPathUsed is already symlink-resolved (captured before the sandbox
-        // directory was deleted, so /var -> /private/var is followed correctly).
-        jsonOutput = stripOutSandboxPaths(sandboxPath: result.sandboxPathUsed, jsonOutput: jsonOutput)
+        // resolvedSandboxPath is symlink-resolved, captured before the sandbox was deleted,
+        // so a `/private/var/…` path SPM printed matches it.
+        jsonOutput = stripOutSandboxPaths(sandboxPath: result.resolvedSandboxPath, jsonOutput: jsonOutput)
 
         return .init(
             packageJSON: .value(try jsonOutput.intern()),
