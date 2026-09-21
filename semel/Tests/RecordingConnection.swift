@@ -11,13 +11,22 @@ import Foundation
 import SemelNodeKit
 import SemelProtocol
 
+/// Where `RecordingConnection` and `TestCommandContext` both note what they did, so a test
+/// can pin the *order* of two calls across the two fakes — not just that each happened.
+final class OrderLog {
+    private(set) var entries: [String] = []
+    func record(_ entry: String) { entries.append(entry) }
+}
+
 final class RecordingConnection: SemelConnection {
 
     private(set) var requests: [(request: Request, body: Data?)] = []
     var responses: [(response: Response, body: Data?)] = []
     var onEvent: ((Event) -> Void)?
+    var orderLog: OrderLog?
 
     func send(_ request: Request, body: Data?) throws -> (Response, Data?) {
+        orderLog?.record("send")
         requests.append((request, body))
         guard !responses.isEmpty else {
             return (.daemon(.ok), nil)
@@ -50,6 +59,8 @@ final class TestCommandContext: CommandContext {
     private(set) var messages: [String] = []
     private(set) var errors: [String] = []
     private(set) var countedErrorRecords: [[ErrorRecord]] = []
+    private(set) var resetErrorRecordAccountingCallCount = 0
+    var orderLog: OrderLog?
 
     var allOutput: [String] { messages + errors }
 
@@ -62,5 +73,9 @@ final class TestCommandContext: CommandContext {
     func outputError(_ message: String)   { errors.append(message) }
 
     func countErrorRecords(_ records: [ErrorRecord]) { countedErrorRecords.append(records) }
-    func resetErrorRecordAccounting() {}
+
+    func resetErrorRecordAccounting() {
+        resetErrorRecordAccountingCallCount += 1
+        orderLog?.record("resetErrorRecordAccounting")
+    }
 }

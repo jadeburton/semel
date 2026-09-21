@@ -61,6 +61,19 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Settled."])
     }
 
+    /// The settle-time event this unblocks can fire and count *during* the `.wait`
+    /// request, so the guard must already be clear before that request goes out, not
+    /// after it comes back.
+    func test_waitResetsErrorAccountingBeforeSendingTheRequest() throws {
+        let orderLog = OrderLog()
+        connection.orderLog = orderLog
+        context.orderLog    = orderLog
+
+        try run("wait")
+
+        XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "send"])
+    }
+
     func test_resetSendsResetAndAnnouncesTheRebuild() throws {
         try run("reset")
 

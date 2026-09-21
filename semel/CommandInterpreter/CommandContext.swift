@@ -17,10 +17,10 @@ protocol CommandContext: AnyObject {
     func outputMessage(_ message: String)
     func outputError(_ message: String)
 
-    /// Counts one non-empty settle report toward `errorsReported`, unless a report has
-    /// already been counted since the last `resetErrorRecordAccounting()`. The idle-time
-    /// event and the `errors` verb the `build` macro runs right after it usually name the
-    /// very same failures, and counting both would make one broken build look like two.
+    /// Counts one non-empty settle report toward `errorsReported`, once since the last
+    /// `resetErrorRecordAccounting()` — the reset is per `wait`. The idle-time event and
+    /// the `errors` verb the `build` macro runs right after it usually name the very same
+    /// failures, and counting both would make one broken build look like two.
     func countErrorRecords(_ records: [ErrorRecord])
 
     /// Allows the next `countErrorRecords` to count again. Called before every `wait`, so
