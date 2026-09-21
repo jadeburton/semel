@@ -8,8 +8,8 @@ the README's [clone to build](../../README.md#dependencies-and-clone-to-build) i
 commands. Words in *italics* are defined in the [glossary](../../AGENTS.md#glossary); they
 are introduced here where they first do something.
 
-Last walked through at commit `d5cc9f1`. The commits since then change documents, comments
-and tests, not behaviour.
+Last walked through at commit `d5cc9f1`. The commits since then change documents, comments,
+tests and the shape of the reference node's loop — not what anything prints.
 
 ## Part 1 — Build something
 
@@ -581,10 +581,11 @@ says so:
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
 build again. That clears the error, though the server may keep printing a bare
 `The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` while a
-stale row survives; `reset` clears that, but it is not scoped to this tutorial — it discards
-everything derived in this graph, every project you have pushed to this home, and the cache
-with it, before rebuilding from what was pushed. In the home you use day to day, that is
-everything, not only `hello`; after it the line is gone for good.
+stale row survives. `reset` clears that, but it is not scoped to this tutorial. What you
+pushed is kept; everything built from it is discarded — every product and intermediate of
+every project in this home, and the whole cache — and then rebuilt from the pushed files. In
+the home you use day to day that is a cold build of everything, not only of `hello`; after
+it the stray line is gone for good.
 
 ## Where next
 
