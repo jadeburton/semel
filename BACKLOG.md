@@ -444,18 +444,6 @@ type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom an
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
 can do better than a documented workaround.
 
-**B-87** `open` — **Three hand-maintained package lists have drifted three ways.**
-`.swiftlint.yml`'s `included:`, `Semel.xcworkspace` and CI's per-package test steps
-(`.github/workflows/swift.yml`) each name the packages by hand, and the three lists no
-longer agree with each other or with `AGENTS.md`. `SemelApple` is in neither `included:` nor
-the workspace. `SemelProtocol` is in neither `included:` nor a CI test step —
-`.github/workflows/swift.yml` has no `Test SemelProtocol`, though `AGENTS.md`'s "Build and
-test" counts it among the eight. `SemelDatabaseModels` has no `Tests` directory at all, so
-it is not unlinted so much as untested — there is nothing there for `.swiftlint.yml` or CI
-to name. A test the shape of `test_everyFixtureInTheRosterHasATestHere` — asserting every
-`Semel*/` package directory appears in all three files — would catch the next drift instead
-of leaving it for a review to find.
-
 ## App bundles
 
 Building the app that consumes the packages, for the simulator first. Design:

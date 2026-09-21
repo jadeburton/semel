@@ -27,6 +27,9 @@ the only thing that runs its tests.
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
 
+`SemelDatabaseModels` has no line here and none in CI: it has no `Tests` directory, so
+there is nothing to run.
+
 A root `swift build` does not re-plan when a source file is added to or removed from any of
 the path-dependency packages (`SemelNodeKit`, `SemelSwift`, `SemelCore`, …):
 `.build/debug.yaml` is stale until it is deleted. Adding a file fails with `cannot find 'X'
