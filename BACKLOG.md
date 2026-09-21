@@ -444,12 +444,6 @@ type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom an
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
 can do better than a documented workaround.
 
-**B-86** `open` — **`tools <prefix>`: print only the namespaces asked for.**
-`tools` prints a block for every namespace the server knows — 8 blocks, 38 lines for
-`apple.*`, `clang.*` and `swift.*` together — when a newcomer copying a `clang.cfg` needs
-three of the eight blocks. `tools clang` narrowing to namespaces with that prefix would make
-the copy-paste step exact. Low priority.
-
 **B-87** `open` — **Three hand-maintained package lists have drifted three ways.**
 `.swiftlint.yml`'s `included:`, `Semel.xcworkspace` and CI's per-package test steps
 (`.github/workflows/swift.yml`) each name the packages by hand, and the three lists no

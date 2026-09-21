@@ -95,7 +95,7 @@ rm build/**
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
 | `build <folder> [--into <dir>]` | `push <folder>`, `wait`, `errors` in one word; given a destination, `export` too, unless the build reported errors |
 | `e` / `errors` | Show all current build errors |
-| `t` / `tools` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste |
+| `t` / `tools [prefix]` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste; a prefix narrows it to namespaces starting with it (`tools clang`) |
 | `reset` | Discard everything derived and rebuild from the input file system |
 
 ### Session
