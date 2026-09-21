@@ -202,6 +202,17 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
+**B-81** `open` — **`build` reports what it published, not what it did.**
+A cache hit and a full recompute print byte-identical output at the prompt — the same three
+lines whether every node ran `processWithCatch` or every node used the cache — and that
+distinction lives only in `semelserv`'s stdout, which a release build compiles out.
+`BuildEngine.processSomeNodes` already counts scheduled and computed per batch and
+`Cache.loadCachedOutputs` already knows a hit from a miss; carry those totals to the client
+over the protocol as a one-line settle summary (e.g. `12 nodes scheduled, 3 computed, 9 from
+cache, 0 errors`) instead of printing them through `Debug.log`. `docs/tutorial/first-node.md`
+Part 2 reads the server's debug log for exactly this reason and should be rewritten around
+the summary once it exists.
+
 ## Performance
 
 **B-53** `open` — **`rm` of a large folder is still quadratic.**
@@ -274,6 +285,21 @@ and leaves the `semelserv` it started running. Two shapes fix it: put the server
 client's process group, so a signal delivered to the group reaches both; or have `semelserv`
 exit when its socket file disappears, which also covers a user who deletes the socket by
 hand.
+
+**B-82** `open` — **A `build` that reports errors at settle still exits 0.**
+`.build/debug/semel 'base <playground>' 'build hello --into <playground>/out'` against a
+graph holding an unregistered node type printed `2 errors across 1 node` and exited 0. The
+README's non-interactive contract says the CLI "exits non-zero if any command reported an
+error", and `main.swift` exits on `interpreter.errorsReported`, but an error surfaced through
+the settle-time error report never reaches it. A build that reports errors and exits 0
+cannot be used as a build step.
+
+**B-85** `open` — **`semelserv` block-buffers its log when redirected.**
+Redirecting `semelserv`'s stdout to a file loses the tail of the log until the process
+exits — a roughly 120-line build showed only 60 lines and a truncated final one — which
+makes `semelserv > build.log` unusable for CI or for filing a bug, precisely when someone
+would redirect it. Line-buffer stdout at start-up (`setvbuf(stdout, nil, _IOLBF, 0)`, or an
+explicit flush) so a redirected log is complete and current.
 
 ## Design, correctness and code quality
 
@@ -413,6 +439,43 @@ the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
 
+**B-83** `open` — **"no type is registered for kind N" is a dead end.**
+The message is accurate but offers no remedy: it fires when a node type is removed or
+renamed while a database still holds a graph built against it — exactly the situation
+AGENTS.md's "never reuse a kind" rule exists for — and every subsequent build on that graph
+repeats it. Say what to do about it: the type is not linked into this `semelserv`, or the
+graph predates its removal, and `reset` discards the derived state that is stuck.
+
+**B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
+changes.**
+Adding or removing a source file in any of the path-dependency packages (`SemelNodeKit`,
+`SemelSwift`, `SemelCore`, …) is invisible to a root `swift build` until `.build/debug.yaml`
+is deleted:
+SwiftPM does not re-plan, so adding a file gives "cannot find X in scope" against the
+registration rather than the plan, and removing one gives "couldn't build … because of
+missing inputs: <the file just deleted>" while leaving the previous binary linked with the
+type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
+(`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
+can do better than a documented workaround.
+
+**B-86** `open` — **`tools <prefix>`: print only the namespaces asked for.**
+`tools` prints a block for every namespace the server knows — 8 blocks, 38 lines for
+`apple.*`, `clang.*` and `swift.*` together — when a newcomer copying a `clang.cfg` needs
+three of the eight blocks. `tools clang` narrowing to namespaces with that prefix would make
+the copy-paste step exact. Low priority.
+
+**B-87** `open` — **Three hand-maintained package lists have drifted three ways.**
+`.swiftlint.yml`'s `included:`, `Semel.xcworkspace` and CI's per-package test steps
+(`.github/workflows/swift.yml`) each name the packages by hand, and the three lists no
+longer agree with each other or with `AGENTS.md`. `SemelApple` is in neither `included:` nor
+the workspace. `SemelProtocol` is in neither `included:` nor a CI test step —
+`.github/workflows/swift.yml` has no `Test SemelProtocol`, though `AGENTS.md`'s "Build and
+test" counts it among the eight. `SemelDatabaseModels` has no `Tests` directory at all, so
+it is not unlinted so much as untested — there is nothing there for `.swiftlint.yml` or CI
+to name. A test the shape of `test_everyFixtureInTheRosterHasATestHere` — asserting every
+`Semel*/` package directory appears in all three files — would catch the next drift instead
+of leaving it for a review to find.
+
 ## App bundles
 
 Building the app that consumes the packages, for the simulator first. Design:
@@ -436,6 +499,95 @@ formula, so the app's build root ends with twenty archives nobody asked for — 
 for IceCubes. An include that brings only funcs, not products, or a package converter
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
+
+## End-to-end roster
+
+Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for something IceCubes
+does not exercise. What is said about each project below is from memory of the project, not
+from a clone: pin a commit, run `semel-swift prepare`, and let the first failure list correct
+the entry. The gap list a project produces is worth more than its eventual pass.
+
+**B-75** `open` — **The roster builds IceCubes's packages, not the app.**
+`Projects.icecubes` clones with `subfolder: "Packages"` and expects five `lib*.a`; nothing
+in `swift test` goes through `XcodeProjectConverter` (B-65), so the app path has no
+end-to-end coverage. Add an entry rooted at the repository: `prepare` on the folder holding
+`IceCubesApp.xcodeproj`, expected products `IceCubesApp.app/IceCubesApp`, `Info.plist`,
+`Assets.car` and the four `.appex` bundles. To check first: that `prepare` on a harness
+clone settles the xcconfig `.template` (B-70) without a hand step. A `simctl install` /
+`launch` smoke check is optional and needs a booted simulator, so opt-in on top of opt-in.
+
+**B-76** `open` — **A roster source for a clone plus a hand-written formula.**
+`Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes
+a formula into a clone. A C or C++ project has no converter, so its `.fmla` and `clang.cfg`
+have to be laid over the clone from the fixtures folder — `.git(…, overlay:
+"external/lua")` or similar. Blocks B-79.
+
+**B-77** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
+application target, simulator only, all library code in packages. In suggested order:
+
+1. *apple/sample-food-truck* — small, no third-party dependencies, iOS and macOS, a local
+   package, a widget extension. The first `sdk: 'macosx'` app build; the cheap second
+   data point for the converter.
+2. *NetNewsWire* — nearly every build setting lives in layered xcconfig files, so it is the
+   hard test of evaluating settings the way Xcode layers them. Mac and iOS apps, framework
+   targets, group-based file references rather than synchronized folders, some
+   Objective-C, many local packages.
+3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
+   many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
+   entitlements and sandbox.
+4. *Mastodon iOS (official)* — IceCubes's domain with different structure: a Core Data
+   `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
+   a big local SDK package.
+5. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
+   `-Swift.h`. Only when mixed-language app targets are in scope.
+
+Expected to surface: script build phases, framework and dynamic-library targets,
+Objective-C in the application target, Core Data models, storyboards and xibs (`ibtool`),
+non-synchronized groups.
+
+**B-78** `open` — **More Swift packages.**
+
+1. *Semel itself* — `semel.fmla` exists; a macOS executable root rather than a static
+   library, GRDB with a system-library SQLite, and no clone. One roster entry.
+2. *swift-nio* — every residual of B-55 at once: `cSettings` `.define` values that matter,
+   C sources in nested folders, header paths other than `include`, and executables
+   (`NIOEchoServer` and the like) linking C targets, which need the `clang.linker` block.
+   macOS, no macros. Should fail today in exactly the ways B-55 predicts.
+3. *swift-crypto*, or *Vapor* which brings it — BoringSSL is C, C++ and `.S` assembly in
+   deep folders, the hardest C-in-a-package there is; Vapor adds a transitive graph of
+   some thirty git dependencies, which tests the `Dependencies/<name>` rule and B-10
+   residual 1. After swift-nio passes.
+4. *A second project sharing dependencies with IceCubes* (Nuke, SwiftSoup,
+   swift-collections at the same commits) — what cross-project cache hits look like, for
+   the local-engines-plus-cache-server design.
+
+**B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world and a
+six-file emulator. Needs B-76. `c-hello` is subsumed by `tutorial` — identical sources, the
+same products plus `lines.txt` — so when a real C project is pinned it is `c-hello` that
+goes, not the tutorial fixture. `RosterTests.test_theTutorialFixtureSourcesMatchTheCFixture`
+compares the two `src/` trees, though, so that test and the tutorial's "copy
+`EndToEnd/Fixtures/c`" instruction move to `Fixtures/tutorial` at the same time as `c-hello`.
+
+1. *Lua 5.4* — about 35 files in one flat folder, no configure step, `liblua.a` plus the
+   `lua` and `luac` executables.
+2. *SQLite amalgamation* — one 250k-line translation unit: the preprocessor and compiler
+   nodes and the cache with a single enormous entry, the opposite of IceCubes's 271 small
+   ones.
+3. *fmt* or *simdjson* — C++ beyond the emulator; few sources, heavy templates.
+
+**B-80** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
+targets (`SwiftFormulaConverter.swift:594`). These are the acceptance tests for the day
+that changes, in rising cost:
+
+1. *apple/sample-backyard-birds* — SwiftData's `@Model` comes from plugins shipped in the
+   toolchain, so macro expansion is tested without building swift-syntax. Also widgets, a
+   StoreKit configuration file, local packages.
+2. *swift-syntax* alone — no macro support needed to build it; a large pure-Swift build and
+   a useful performance benchmark in its own right.
+3. *swift-dependencies* or *swift-composable-architecture* — package-defined macros built
+   from swift-syntax and run as compiler plugins.
+4. *isowords* — one `Package.swift` with some ninety targets and heavy resources (audio,
+   fonts): graph scale and `Bundle.module`. Pulls in TCA, so it waits for 3.
 
 ## Not doing
 

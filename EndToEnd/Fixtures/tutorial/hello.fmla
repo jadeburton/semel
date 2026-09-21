@@ -1,0 +1,32 @@
+// Each tool selects its own settings out of the shared config file by naming a prefix.
+// ConfigFilter strips that prefix, so the tool receives the plain keys it reads —
+// `target`, `sdkPath` — while the file keeps them apart by node.
+//
+// Selecting rather than wiring the whole file is what keeps an edit local: changing a
+// setting one tool does not read leaves the other selectors' output byte-identical, so
+// their nodes keep their cached results instead of rebuilding.
+
+func rawConfig() = StaticFile(path: <../clang.cfg>)
+
+func config(prefix) = ConfigFilter(prefix: prefix, input: [rawConfig()])
+
+func preprocessor(path) = ClangPreprocessor(
+  configuration: [config(prefix: 'clang.preprocessor')],
+  input: [path: StaticFile(path: path)]
+)
+
+func make(glob, dynamicLibrary) = ClangLinker(
+  configuration: [Configuration(inherit: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
+  objectFiles: [{f: glob} "%%f%%.o": ClangCompiler(configuration: [config(prefix: 'clang.compiler')], input: ["%%f%%.p": preprocessor(path: f)])]
+)
+
+product "hello.dylib" = make(dynamicLibrary: 'true', glob: <src/*.c>)
+product "hello" = make(dynamicLibrary: 'false', glob: <src/*.c>)
+
+// The whole file, not a subset — this product exists to show what was pushed.
+product "config.txt" = rawConfig()
+
+// One wire per source file, named by the formula: `%%f.0%%` is what the `*` matched and the
+// `.c` after it is literal, so the names are `hello.c`, not the path the tree happens to be
+// mounted at — a path in the name would be a path in the product.
+product "lines.txt" = LineCounter(input: [{f: <src/*.c>} "%%f.0%%.c": StaticFile(path: f)])

@@ -18,7 +18,7 @@ The engine models a build as a persistent directed graph of **Nodes** (compilati
 - **Swift & Clang support** — compiles `.swift` modules and C/C++ translation units with full header dependency tracking
 - **Interactive REPL** — inspect and drive builds from a shell-like command line
 - **Persistent graph** — the build graph survives restarts; the engine resumes from the last known state
-- **Extensible** - Write a plugin and provide your own Node types that can be put into the graph
+- **Extensible** - Write your own Node types in a package of their own and put them into the graph — [the tutorial](docs/tutorial/first-node.md) does it in forty lines
 - **Intuitive language** - A declarative language for specifying what Nodes are needed to derive a given product
 - **Shared cache over multiple users** - A server process combines all graphs to allow intrinsic reuse and caching
 
@@ -35,19 +35,25 @@ cd semel
 swift build -c release
 ```
 
-The executable is placed at `.build/release/semel`.
+The build places three executables under `.build/release`: `semelserv`, the engine;
+`semel`, the prompt; and `semel-swift`, the Swift conversion tool.
 
 ## Usage
 
-Start the engine:
+New here, and want to change Semel rather than only run it? Start with
+[the tutorial](docs/tutorial/first-node.md): build something, watch the cache, write a node.
+
+Start the engine — `semelserv` holds the graph and does the work — then the prompt:
 
 ```sh
-.build/release/semel
+.build/release/semelserv   # in one terminal
+.build/release/semel       # in another
 ```
 
-The engine opens an interactive prompt. Everything it persists — the graph database and the
-object store — lives under `~/Library/Application Support/semel`, whatever directory it was
-launched from; the banner prints the database path. Available commands:
+`semel` opens an interactive prompt against the running server. Everything the server
+persists — the graph database and the object store — lives under
+`~/Library/Application Support/semel`, whatever directory it was launched from; the banner
+prints the database path. Available commands:
 
 ### Navigation
 
@@ -282,6 +288,8 @@ SemelApple/      Apple platform node types — what an app bundle needs beyond c
   AssetCatalogCompiler   actool over .xcassets and .icon folders → Assets.car + icons (a tree)
   StringCatalogCompiler  xcstringstool over an .xcstrings → one .lproj per language (a tree)
   InfoPlistBuilder       Merges base, partial plists and keys; resolves $(VAR)
+SemelExamples/   Nodes that exist to be read
+  LineCounter            One `name: count` line per input wire — the tutorial's reference copy
 SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, …)
 ```
 

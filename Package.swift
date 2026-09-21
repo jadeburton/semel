@@ -23,6 +23,7 @@ let package = Package(
         .package(path: "SemelSwift"),
         .package(path: "SemelClang"),
         .package(path: "SemelApple"),
+        .package(path: "SemelExamples"),
     ],
     targets: [
         // The command interpreter lives in a library rather than the executable so it can
@@ -100,6 +101,7 @@ let package = Package(
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
                 .product(name: "SemelApple", package: "SemelApple"),
+                .product(name: "SemelExamples", package: "SemelExamples"),
             ],
             path: "semel-server",
             sources: ["main.swift"]
