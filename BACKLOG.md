@@ -432,13 +432,6 @@ the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
 
-**B-83** `open` — **"no type is registered for kind N" is a dead end.**
-The message is accurate but offers no remedy: it fires when a node type is removed or
-renamed while a database still holds a graph built against it — exactly the situation
-AGENTS.md's "never reuse a kind" rule exists for — and every subsequent build on that graph
-repeats it. Say what to do about it: the type is not linked into this `semelserv`, or the
-graph predates its removal, and `reset` discards the derived state that is stuck.
-
 **B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
 changes.**
 Adding or removing a source file in any of the path-dependency packages (`SemelNodeKit`,
