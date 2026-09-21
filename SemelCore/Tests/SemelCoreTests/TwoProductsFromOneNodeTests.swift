@@ -11,9 +11,9 @@ import XCTest
 /// builder asks that node's output port for two wires into one of its own ports, told
 /// apart only by the wire's name. Both products have to be built.
 ///
-/// The shape comes from IceCubesApp: two app extensions with the same string catalog and
-/// no asset catalog render the identical tree expression, and one of them lost every
-/// localization — silently, and a different one per process.
+/// The shape is IceCubesApp's: two app extensions with the same string catalog and no asset
+/// catalog render the identical tree expression, so one node feeds both bundles and each
+/// bundle's localizations depend on its own wire surviving alongside the other's.
 final class TwoProductsFromOneNodeTests: SemelCoreTestCase {
 
     private var engine: BuildEngine!

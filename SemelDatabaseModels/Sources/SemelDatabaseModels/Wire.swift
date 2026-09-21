@@ -79,13 +79,6 @@ public struct WireDataAccess: DataAccessType {
         }
     }
 
-    public func select(comingFromNodeID: ObjectID, goingToNodeID: ObjectID) throws -> [Wire] {
-        try read { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
-        }
-    }
-
     /// The one wire with this exact identity, or `nil`. A port pair holds as many wires as
     /// the consumer demands names for, so the name is what selects a single row.
     public func select(comingFromNodeID: ObjectID,

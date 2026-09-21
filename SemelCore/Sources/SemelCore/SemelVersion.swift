@@ -13,8 +13,9 @@ public enum Semel {
     /// 0.1.1: node types renamed (B-44). Type names are embedded in every stored graphSpec,
     /// so a graph built before the rename matches nothing and has to be rebuilt.
     ///
-    /// 0.1.2: a wire's name is part of its primary key, so a port pair can hold the several
-    /// named wires its consumers demand. The `Wire` table's key changed with it, which the
-    /// schema check refuses before this marker is ever read: such a database is deleted.
+    /// 0.1.2: a wire's name is part of its primary key, so a port pair holds the several
+    /// named wires its consumers demand. The `Wire` table's key says so too, and a database
+    /// keyed the other way is caught by the schema check before this marker is read: that
+    /// one is not a reset but a stopped launch, telling the user which file to delete.
     public static let version = "0.1.2"
 }

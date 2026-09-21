@@ -143,9 +143,7 @@ extension GraphSpecNode {
 
         // Inputs: portName: ["wireName": ShapeNode, ...]
         for input in inputs {
-            let wireStrings = input.wires.map { wire in
-                "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
-            }
+            let wireStrings = Self.render(wires: input.wires, pretty: pretty, depth: depth)
             let inner = pretty
                 ? "\n\(indent)\(wireStrings.joined(separator: separator))\n\(String(repeating: "  ", count: depth))"
                 : wireStrings.joined(separator: separator)
@@ -154,9 +152,7 @@ extension GraphSpecNode {
 
         // Outputs: portName -> ["wireName": ShapeNode, ...] (future use)
         for output in outputs {
-            let wireStrings = output.wires.map { wire in
-                "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))"
-            }
+            let wireStrings = Self.render(wires: output.wires, pretty: pretty, depth: depth)
             let inner = pretty
                 ? "\n\(indent)\(wireStrings.joined(separator: separator))\n\(String(repeating: "  ", count: depth))"
                 : wireStrings.joined(separator: separator)
@@ -170,6 +166,21 @@ extension GraphSpecNode {
                 : params.joined(separator: separator)
 
         return "\(typeName)(\(joinedParams))\(suffix)"
+    }
+
+    /// One `"name": Node` entry per wire, sorted by wire name and then by the node the wire
+    /// comes from. The rendered string is a node's identity, so the order a caller listed
+    /// its wires in — a formula's line order, a dictionary's iteration order — must not
+    /// make one demand two nodes. The second key only orders wires the engine refuses to
+    /// store side by side; it costs nothing and leaves no pair unordered.
+    private static func render(wires: [GraphSpecWire], pretty: Bool, depth: Int) -> [String] {
+        wires
+            .map { wire in
+                (name: wire.name,
+                 text: "\"\(wire.name)\": \(wire.node.asString(pretty: pretty, depth: depth + 1, omitOutputPort: false))")
+            }
+            .sorted { ($0.name, $0.text) < ($1.name, $1.text) }
+            .map(\.text)
     }
 }
 

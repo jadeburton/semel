@@ -114,10 +114,10 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try database.schemaFingerprint(), try DatabaseLayer.expectedSchemaFingerprint())
     }
 
-    /// A wire's name is part of its key, so a database keyed without it cannot hold what
-    /// the engine now demands and cannot be migrated into one that can. Recreating the old
-    /// table, indexes and all, is the closest a test comes to opening such a file: only the
-    /// key differs, and that alone has to stop the launch.
+    /// A wire's name is part of its key, so a database keyed without it cannot hold two
+    /// wires between one pair of ports and cannot be migrated into one that can. Recreating
+    /// that table, indexes and all, is the closest a test comes to opening such a file: only
+    /// the key differs, and that alone has to stop the launch.
     func test_aDatabaseWithTheOlderWireKeyIsRefused() throws {
         let path     = try makeTemporaryDatabasePath()
         let database = try DatabaseLayer(filePath: path)

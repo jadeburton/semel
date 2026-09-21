@@ -136,22 +136,6 @@ extension GraphSpecNode {
         DatabaseLayer.shared
     }
 
-    /// Returns `(fromNodeID, fromSymbolID)` of the first live node whose topology
-    /// matches `self`, or `nil` if no match exists.
-    private func findMatchingNodeBruteForce() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
-        for nodeRecord in try database.node.selectAll() {
-            let graphSpec = try GraphSpecNode.buildFromNode(database: database,
-                                                              nodeID: (try nodeRecord.requireID()),
-                                                              fromSymbolID: outputPort?.asSymbolID()).asString(omitOutputPort: true)
-
-            if graphSpec == asString(omitOutputPort: true) {
-                return (fromNodeID: (try nodeRecord.requireID()), fromSymbolID: outputPort?.asSymbolID())
-            }
-        }
-
-        return nil
-    }
-
     private func findMatchingNodeUsingGraphSpec() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         let thisGraphSpec = asString(omitOutputPort: true)
 
@@ -162,59 +146,10 @@ extension GraphSpecNode {
         return (fromNodeID: (try nodeRecord.requireID()), fromSymbolID: outputPort?.asSymbolID())
     }
 
+    /// A node is found by its rendered spec: `asString` is canonical, so an equal demand
+    /// renders to an equal string and the lookup is an indexed one on `Node.graphSpec`.
     func findMatchingNode() throws -> (fromNodeID: ObjectID, fromSymbolID: ObjectID?)? {
         try findMatchingNodeUsingGraphSpec()
-    }
-
-    private func matchesNode(nodeID: ObjectID) throws -> Bool {
-        let nodeRecord = try database.node.select(nodeID: nodeID)
-        let node = try nodeRecord.makeNode()
-
-        guard String(describing: type(of: node)) == typeName else {
-            return false
-        }
-
-        let actualProperties = node.graphSpecProperties()
-
-        guard Set(actualProperties) == Set(properties) else {
-            return false
-        }
-
-        for expectedPort in inputs {
-            let portSymbolID = expectedPort.portName.asSymbolID()
-            let actualWires  = try database.wire.select(goingToNodeID: nodeID,
-                                                                    toSymbolID:    portSymbolID)
-
-            guard actualWires.count == expectedPort.wires.count else {
-                return false
-            }
-
-            // Matched by name, never by position: a port holds N named wires, several of
-            // them possibly from the same output port of the same node, and they come back
-            // in the order they were created rather than the order the spec lists them.
-            let actualWiresByName = Dictionary(actualWires.map { ($0.name.resolveSymbol(), $0) },
-                                               uniquingKeysWith: { first, _ in first })
-
-            for expectedWire in expectedPort.wires {
-
-                guard let actualWire = actualWiresByName[expectedWire.name] else {
-                    return false
-                }
-
-                var visited: Set<ObjectID> = []
-
-                let actualChild = try GraphSpecNode.buildFromOrigin(database: database,
-                                                                     fromNodeID: actualWire.fromNodeID,
-                                                                     fromSymbolID: actualWire.fromSymbolID,
-                                                                     includeOutputPort: true,
-                                                                     visited: &visited)
-
-                guard actualChild == expectedWire.node else {
-                    return false
-                }
-            }
-        }
-        return true
     }
 }
 
