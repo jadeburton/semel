@@ -189,13 +189,16 @@ extension GraphSpecNode {
                 return false
             }
 
-            for (actualWire, expectedWire) in zip(actualWires, expectedPort.wires) {
+            // Matched by name, never by position: a port holds N named wires, several of
+            // them possibly from the same output port of the same node, and they come back
+            // in the order they were created rather than the order the spec lists them.
+            let actualWiresByName = Dictionary(actualWires.map { ($0.name.resolveSymbol(), $0) },
+                                               uniquingKeysWith: { first, _ in first })
 
-                // Compare wire name (unless the expected name is empty — old format).
-                if !expectedWire.name.isEmpty {
-                    guard actualWire.name.resolveSymbol() == expectedWire.name else {
-                        return false
-                    }
+            for expectedWire in expectedPort.wires {
+
+                guard let actualWire = actualWiresByName[expectedWire.name] else {
+                    return false
                 }
 
                 var visited: Set<ObjectID> = []

@@ -114,6 +114,44 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try database.schemaFingerprint(), try DatabaseLayer.expectedSchemaFingerprint())
     }
 
+    /// A wire's name is part of its key, so a database keyed without it cannot hold what
+    /// the engine now demands and cannot be migrated into one that can. Recreating the old
+    /// table, indexes and all, is the closest a test comes to opening such a file: only the
+    /// key differs, and that alone has to stop the launch.
+    func test_aDatabaseWithTheOlderWireKeyIsRefused() throws {
+        let path     = try makeTemporaryDatabasePath()
+        let database = try DatabaseLayer(filePath: path)
+        let (wireTable, wireIndexes) = try database.dbQueue.read { db in
+            (try String.fetchOne(db, sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'Wire'"),
+             try String.fetchAll(db, sql: """
+                SELECT sql FROM sqlite_master
+                WHERE type = 'index' AND tbl_name = 'Wire' AND sql IS NOT NULL
+                """))
+        }
+        // The older statement is this one without the name in its key — the text an older
+        // file holds, so nothing but the key can be what the check reacts to.
+        let olderWireTable = try XCTUnwrap(wireTable).replacingOccurrences(of: ", \"name\"))", with: "))")
+        XCTAssertNotEqual(olderWireTable, wireTable, "precondition: the name is part of the key")
+
+        try database.dbQueue.write { db in
+            try db.execute(sql: "DROP TABLE Wire")
+            try db.execute(sql: olderWireTable)
+            for indexStatement in wireIndexes {
+                try db.execute(sql: indexStatement)
+            }
+        }
+
+        let engine = try makeEngine(database)
+
+        XCTAssertThrowsError(try engine.reconcileVersionMarkers()) { error in
+            guard let schemaError = error as? DatabaseSchemaChangedError else {
+                return XCTFail("expected DatabaseSchemaChangedError, got \(error)")
+            }
+            XCTAssertTrue(schemaError.unrecoverableDescription.contains(path),
+                          "the user has to know which file to delete, got: \(schemaError.unrecoverableDescription)")
+        }
+    }
+
     func test_aChangedSchemaStopsTheLaunchAndNamesTheFile() throws {
         let path     = try makeTemporaryDatabasePath()
         let database = try DatabaseLayer(filePath: path)

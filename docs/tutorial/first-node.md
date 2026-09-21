@@ -42,7 +42,7 @@ running:
 ```
 
 ```
-Semel server 0.1.1
+Semel server 0.1.2
 Graph:  /Users/you/Library/Application Support/semel/graph.sqlite
 Socket: /Users/you/Library/Application Support/semel/semelserv.sock
 ```
