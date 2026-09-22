@@ -482,18 +482,28 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
-**B-89** `open` — **`actool` renditions from a `.icon` input are not byte-reproducible.**
-`actool` embeds a fresh UUID, its pid and a mach timestamp in the names of the renditions
-it generates from an Icon Composer `.icon` bundle, so IceCubesApp's `Assets.car` differs
-between two identical cold builds (eight rendition names plus a reordered appearance
-table) even though the catalog's inputs and actool's arguments are character-for-character
-the same in both builds. The two extensions' `Assets.car` files, compiled from `.xcassets`
-alone, are byte-identical across the same two builds — the `.icon` input is the trigger.
-To find: an actool flag or environment variable that fixes the rendition identifier, or
-whether `--output-format` or a newer Xcode's `.icon` handling avoids it; failing that, the
-harness exempts `Assets.car` from `TreeDiff` for a project with a `.icon` input, named per
-project. Evidence: the diagnosis's section 4. The roster exempts `Ice Cubes.app/Assets.car`
-for `icecubes-app`; removing that exemption is this item's exit.
+**B-89** `open` — **`actool` output is not byte-reproducible: `.icon` renditions carry a
+UUID and pid, and the appearance table's order varies.** Two separate causes, both in
+IceCubesApp's compiled asset catalogs. First, `actool` embeds a fresh UUID, its pid and a
+mach timestamp in the names of the renditions it generates from an Icon Composer `.icon`
+bundle, so the app's `Assets.car` differs between two identical cold builds (eight
+rendition names) even though the catalog's inputs and actool's arguments are
+character-for-character the same in both builds; only the app's catalog carries a `.icon`
+input. Second, and independent of a `.icon` input: an asset catalog with more than one
+appearance can have its appearance table's entry order vary between two identical
+compiles. The widgets extension's catalog — 18,856 bytes, two colorsets with light and
+dark appearances and an appiconset, no `.icon` — differed in exactly this way in one of
+three two-build comparisons: the two entry names written in swapped order, and the four
+key indices pointing at them following suit; `xcrun assetutil --info` on the two files
+differs only in a timestamp field that is the file's own mtime, confirming the content
+itself is the same table, reordered. To find: an actool flag or environment variable that
+fixes the rendition identifier or the appearance order, whether actool has a
+single-threaded mode that makes the appearance table's order stable, or whether
+`--output-format` or a newer Xcode's `.icon` handling avoids the first cause; failing that,
+the harness exempts `Assets.car` from `TreeDiff` for a project with a catalog carrying
+either an `.icon` input or more than one appearance, named per project. Evidence: the
+diagnosis's section 4. The roster exempts every `Assets.car` of `icecubes-app`; removing
+that exemption is this item's exit.
 
 **B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
 IceCubesApp's linked executable carries two GOT entries binding the same import,

@@ -103,10 +103,13 @@ enum Projects {
         // and the GitHub macOS runner this also has to fit is roughly half the speed.
         buildTimeout: 25 * 60,
         mayDiffer: [
-            // actool embeds a fresh UUID, pid and timestamp in the renditions it derives
-            // from the app's `.icon` input (B-89); the two extensions' catalogs, compiled
-            // from `.xcassets` alone, need no exemption.
-            "Ice Cubes.app/Assets.car",
+            // actool's output is not byte-reproducible (B-89): the `.icon` renditions it
+            // derives for the app carry a fresh UUID and pid, and an asset catalog with
+            // more than one appearance can have its appearance table's entry order vary
+            // regardless of a `.icon` input — the widgets extension's catalog has no
+            // `.icon` and still hit it. A bare name, not a full path, so the exemption
+            // reaches every target's `Assets.car`.
+            "Assets.car",
             // The linker picks between two duplicate `_objc_msgSend` GOT entries
             // non-deterministically wherever a target's objects carry the duplicate pair
             // (B-90); `IceCubesActionExtension` links a single entry and needs none.

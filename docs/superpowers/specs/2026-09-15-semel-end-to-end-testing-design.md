@@ -11,9 +11,11 @@ for what differed from this text.
 - `TreeDiff` resolves the root through `realpath` because `/tmp` is a symlink on macOS.
 - `Project.mayDiffer` is empty for every roster entry except `icecubes-app`: `SwiftLinker`
   makes `.staticArchive` output deterministic (B-72), so the two export trees match byte for
-  byte with no exemptions elsewhere. `icecubes-app` names five paths the Apple toolchain
-  itself does not reproduce byte for byte — `actool`'s `.icon` renditions (B-89) and the
-  linker's duplicate `_objc_msgSend` GOT entry (B-90) — until one of those items closes.
+  byte with no exemptions elsewhere. `icecubes-app` names what the Apple toolchain itself
+  does not reproduce byte for byte — every bundle's `Assets.car` (B-89: `actool`'s `.icon`
+  renditions and, independent of a `.icon` input, its appearance table's entry order) and
+  four executables carrying a duplicate `_objc_msgSend` GOT entry (B-90) — until one of
+  those items closes.
 
 ## 1. Why
 
