@@ -26,6 +26,9 @@ jobs:
       - name: Test SemelNodeKit
         run: swift test --package-path SemelNodeKit
 
+      - name: Test SemelProtocol
+        run: swift test --package-path SemelProtocol
+
       - name: Test SemelSwift
         run: swift test --package-path SemelSwift
 

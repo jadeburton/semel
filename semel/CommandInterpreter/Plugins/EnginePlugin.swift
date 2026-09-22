@@ -16,7 +16,7 @@ final class EnginePlugin: CommandPlugin {
         case "n", "nudge":  _ = try context.request(.nudge)
         case "e", "errors": try handleErrors(context: context)
         case "reset":       try handleReset(context: context)
-        case "t", "tools":  try handleTools(context: context)
+        case "t", "tools":  try handleTools(tokens: tokens, context: context)
         case "wait":        try handleWait(context: context)
         default:            break
         }
@@ -47,15 +47,32 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - tools
 
-    private func handleTools(context: any CommandContext) throws {
+    /// With no argument, every namespace. With a prefix, only the namespaces whose name
+    /// starts with it — `tools clang` gives the three `clang.*` blocks a newcomer copying
+    /// a `clang.cfg` needs, instead of all eight. Filtered on the client: the records
+    /// already carry the namespace, so the server has nothing to add.
+    private func handleTools(tokens: [String], context: any CommandContext) throws {
         guard case .tools(let namespaces) = try context.request(.tools).0 else {
             return
         }
-        if namespaces.isEmpty {
+        guard !namespaces.isEmpty else {
             context.outputMessage("No toolchains are registered.")
-        } else {
-            context.outputMessage(ToolNamespaceRenderer.text(for: namespaces))
+            return
         }
+
+        guard let prefix = tokens.first else {
+            context.outputMessage(ToolNamespaceRenderer.text(for: namespaces))
+            return
+        }
+
+        let matching = namespaces.filter { $0.namespace.hasPrefix(prefix) }
+        guard !matching.isEmpty else {
+            let known = namespaces.map(\.namespace).sorted().joined(separator: ", ")
+            context.outputMessage("No namespace starts with '\(prefix)'. Namespaces: \(known).")
+            return
+        }
+
+        context.outputMessage(ToolNamespaceRenderer.text(for: matching))
     }
 
     // MARK: - reset

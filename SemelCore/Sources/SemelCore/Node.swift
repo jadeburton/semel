@@ -346,8 +346,9 @@ extension Node {
             }
 
         default:
+            let message = reportedMessage(for: error)
             for outputPort in descriptor.outputPorts {
-                outputValues[outputPort] = .noValue(reason: .error(messageDataObjectHash: (try? "\(error)".intern()) ?? ""))
+                outputValues[outputPort] = .noValue(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
             }
         }
 
@@ -386,6 +387,17 @@ extension Node {
             }
         }
         return .init(outputValues: outputValues, inputWireSpecs: wireSpecs)
+    }
+
+    /// A thrown error's text for a node's output ports. `SemelNodeKit` cannot name `reset`
+    /// — it does not know the engine has one — so an unregistered kind gets its remedy
+    /// appended here, where the engine renders the error rather than where it is thrown.
+    private func reportedMessage(for error: Error) -> String {
+        guard case TypeRegistryError.unknownKind = error else {
+            return "\(error)"
+        }
+        return "\(error): the type is not linked into this semelserv, or the graph predates " +
+               "its removal. reset discards the derived state that is stuck."
     }
 
     fileprivate func hasInputPorts() -> Bool {
