@@ -77,7 +77,46 @@ enum Projects {
         // Two cold builds of five minutes each are enough; the fixtures prove the third.
         twoMounts: false)
 
+    /// The application itself, through `XcodeProjectConverter`: the whole checkout is the
+    /// project's root, so `buildFolder` names the checkout (see `Project.Source.git`'s
+    /// `"."` case). `Ice Cubes.app` is `PRODUCT_NAME`, not the target name; the four
+    /// extensions embedded under `PlugIns/` keep their target names for both the bundle
+    /// and the executable inside it — `IceCubesAppWidgetsExtensionExtension` doubled
+    /// "Extension" is the project's own naming, not a typo here.
+    static let icecubesApp = Project(
+        name: "icecubes-app",
+        source: .git(url: "https://github.com/Dimillian/IceCubesApp.git",
+                     commit: "3dc60a80a66db2c3a92c517b38398246ef4ea1b9",
+                     subfolder: "."),
+        buildFolder: "icecubes-app",
+        platform: "ios-simulator",
+        expectedProducts: [
+            "Ice Cubes.app/Ice Cubes",
+            "Ice Cubes.app/Info.plist",
+            "Ice Cubes.app/Assets.car",
+            "Ice Cubes.app/PlugIns/IceCubesNotifications.appex/IceCubesNotifications",
+            "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex/IceCubesShareExtension",
+            "Ice Cubes.app/PlugIns/IceCubesActionExtension.appex/IceCubesActionExtension",
+            "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
+        ],
+        buildTimeout: 15 * 60,
+        mayDiffer: [
+            // actool embeds a fresh UUID, pid and timestamp in the renditions it derives
+            // from the app's `.icon` input (B-89); the two extensions' catalogs, compiled
+            // from `.xcassets` alone, need no exemption.
+            "Ice Cubes.app/Assets.car",
+            // The linker picks between two duplicate `_objc_msgSend` GOT entries
+            // non-deterministically wherever a target's objects carry the duplicate pair
+            // (B-90); `IceCubesActionExtension` links a single entry and needs none.
+            "Ice Cubes.app/Ice Cubes",
+            "Ice Cubes.app/PlugIns/IceCubesNotifications.appex/IceCubesNotifications",
+            "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex/IceCubesShareExtension",
+            "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
+        ],
+        // Two cold builds of about five minutes each are enough; the fixtures prove the third.
+        twoMounts: false)
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes]
+    static let external: [Project] = [icecubes, icecubesApp]
     static let all: [Project] = fixtures + external
 }

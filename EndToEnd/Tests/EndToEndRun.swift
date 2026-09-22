@@ -62,20 +62,29 @@ final class EndToEndRun {
     // MARK: - 1. Materialise
 
     /// A fixture project copies the whole `Fixtures` tree to `<root>/tree`; an external
-    /// project copies the cached checkout's subfolder parent there. Either way `base` is
-    /// what the build folder is relative to.
+    /// project copies the cached checkout's subfolder parent there, except that a
+    /// subfolder of `"."` nests the checkout one level under `tree`, named after the
+    /// project, instead of copying it to `tree` directly — `build`'s folder argument
+    /// cannot be the base itself (`push .` resolves to nothing to push), so a project
+    /// whose build folder is the checkout's own root needs a real subfolder to name; its
+    /// `buildFolder` is then `project.name`. Either way `base` is what the build folder
+    /// is relative to.
     func materialise() throws {
         let tree = root.appendingPathComponent("tree", isDirectory: true)
         switch project.source {
         case .fixture:
             try FileManager.default.copyItem(at: EndToEndEnvironment.fixtures, to: tree)
-            base = tree
         case .git(let url, let commit, let subfolder):
             let checkout = try CloneCache.checkout(name: project.name, url: url, commit: commit)
-            let parent = subfolder == "." ? checkout : checkout.appendingPathComponent(subfolder).deletingLastPathComponent()
-            try FileManager.default.copyItem(at: parent, to: tree)
-            base = tree
+            if subfolder == "." {
+                try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: checkout, to: tree.appendingPathComponent(project.name, isDirectory: true))
+            } else {
+                let parent = checkout.appendingPathComponent(subfolder).deletingLastPathComponent()
+                try FileManager.default.copyItem(at: parent, to: tree)
+            }
         }
+        base = tree
     }
 
     // MARK: - 2. Configure

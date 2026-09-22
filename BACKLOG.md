@@ -492,7 +492,8 @@ alone, are byte-identical across the same two builds — the `.icon` input is th
 To find: an actool flag or environment variable that fixes the rendition identifier, or
 whether `--output-format` or a newer Xcode's `.icon` handling avoids it; failing that, the
 harness exempts `Assets.car` from `TreeDiff` for a project with a `.icon` input, named per
-project. Evidence: the diagnosis's section 4.
+project. Evidence: the diagnosis's section 4. The roster exempts `Ice Cubes.app/Assets.car`
+for `icecubes-app`; removing that exemption is this item's exit.
 
 **B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
 IceCubesApp's linked executable carries two GOT entries binding the same import,
@@ -502,7 +503,16 @@ does `LC_UUID`, while every symbol, address and fixup is identical. All inputs t
 are the same hash in both builds. To find: the linker option that makes GOT emission
 deterministic (`-no_deduplicate` is already passed by clang's driver in debug; check
 `-fixup_chains` and `-ld_classic` behaviour), or confirm the duplicate originates from a
-specific input. Evidence: the diagnosis's section 3.
+specific input. Evidence: the diagnosis's section 3. Further evidence, from `icecubes-app`'s
+two-build comparisons: the flip lands on whichever executables carry the duplicate pair —
+three of the app's four `.appex` targets plus the app itself in one run, a different subset
+in another — while `IceCubesActionExtension` links a single `_objc_msgSend` GOT entry
+(`dyld_info -fixups` shows one `_objc_msgSend$` line against two for every other target) and
+is stable across every run so far; comparing its link inputs against
+`IceCubesNotifications`'s is the shortest route to the input that introduces the second
+entry. The roster exempts `Ice Cubes.app`'s executable and three of its four extensions'
+(every one but `IceCubesActionExtension`'s) for `icecubes-app`; removing that exemption is
+this item's exit.
 
 ## End-to-end roster
 
@@ -510,15 +520,6 @@ Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for somethi
 does not exercise. What is said about each project below is from memory of the project, not
 from a clone: pin a commit, run `semel-swift prepare`, and let the first failure list correct
 the entry. The gap list a project produces is worth more than its eventual pass.
-
-**B-75** `open` — **The roster builds IceCubes's packages, not the app.**
-`Projects.icecubes` clones with `subfolder: "Packages"` and expects five `lib*.a`; nothing
-in `swift test` goes through `XcodeProjectConverter` (B-65), so the app path has no
-end-to-end coverage. Add an entry rooted at the repository: `prepare` on the folder holding
-`IceCubesApp.xcodeproj`, expected products `IceCubesApp.app/IceCubesApp`, `Info.plist`,
-`Assets.car` and the four `.appex` bundles. To check first: that `prepare` on a harness
-clone settles the xcconfig `.template` (B-70) without a hand step. A `simctl install` /
-`launch` smoke check is optional and needs a booted simulator, so opt-in on top of opt-in.
 
 **B-76** `open` — **A roster source for a clone plus a hand-written formula.**
 `Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes
