@@ -99,7 +99,9 @@ enum Projects {
             "Ice Cubes.app/PlugIns/IceCubesActionExtension.appex/IceCubesActionExtension",
             "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
         ],
-        buildTimeout: 15 * 60,
+        // A cold build takes several minutes locally; `prepare` shares the same budget,
+        // and the GitHub macOS runner this also has to fit is roughly half the speed.
+        buildTimeout: 25 * 60,
         mayDiffer: [
             // actool embeds a fresh UUID, pid and timestamp in the renditions it derives
             // from the app's `.icon` input (B-89); the two extensions' catalogs, compiled
@@ -113,7 +115,8 @@ enum Projects {
             "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex/IceCubesShareExtension",
             "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
         ],
-        // Two cold builds of about five minutes each are enough; the fixtures prove the third.
+        // A cold build takes several minutes; the third build the fixtures prove is not
+        // worth a third here.
         twoMounts: false)
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]

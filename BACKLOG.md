@@ -504,15 +504,15 @@ are the same hash in both builds. To find: the linker option that makes GOT emis
 deterministic (`-no_deduplicate` is already passed by clang's driver in debug; check
 `-fixup_chains` and `-ld_classic` behaviour), or confirm the duplicate originates from a
 specific input. Evidence: the diagnosis's section 3. Further evidence, from `icecubes-app`'s
-two-build comparisons: the flip lands on whichever executables carry the duplicate pair —
-three of the app's four `.appex` targets plus the app itself in one run, a different subset
-in another — while `IceCubesActionExtension` links a single `_objc_msgSend` GOT entry
-(`dyld_info -fixups` shows one `_objc_msgSend$` line against two for every other target) and
-is stable across every run so far; comparing its link inputs against
-`IceCubesNotifications`'s is the shortest route to the input that introduces the second
-entry. The roster exempts `Ice Cubes.app`'s executable and three of its four extensions'
-(every one but `IceCubesActionExtension`'s) for `icecubes-app`; removing that exemption is
-this item's exit.
+two-build comparisons: carrying the duplicate pair is necessary but not sufficient — which
+of the executables carrying the pair flips varies — three of the four `.appex` executables
+in one run, the app's own executable in another — while `IceCubesActionExtension` links a
+single `_objc_msgSend` GOT entry (`dyld_info -fixups` shows one `_objc_msgSend$` line
+against two for every other target) and has been identical in both runs; comparing its link
+inputs against `IceCubesNotifications`'s is the shortest route to the input that introduces
+the second entry. The roster exempts `Ice Cubes.app`'s executable and three of its four
+extensions' (every one but `IceCubesActionExtension`'s) for `icecubes-app`; removing that
+exemption is this item's exit.
 
 ## End-to-end roster
 

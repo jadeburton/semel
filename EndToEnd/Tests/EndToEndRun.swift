@@ -177,9 +177,11 @@ final class EndToEndRun {
         throw EndToEndFailure(step: "determinism", message: "\(notExempt.count) difference(s) between out1 and out2:\n  \(listed)\(more)")
     }
 
-    /// Whether `mayDiffer` names `difference.path`, exactly or as a suffix.
+    /// Whether `mayDiffer` names `difference.path`, exactly or as a trailing path: a
+    /// component boundary is required, so `Assets.car` names only paths ending
+    /// `/Assets.car`, not an unrelated file that merely ends with the same characters.
     static func exempt(_ difference: TreeDiff.Difference, by mayDiffer: [String]) -> Bool {
-        mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix($0) }
+        mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix("/" + $0) }
     }
 
     // MARK: - 6b. A second mount

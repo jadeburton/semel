@@ -121,7 +121,9 @@ extensions. Nothing hand-written is needed for either.
 `swift-hello-app` depends on the `SemelApple` nodes (B-64) being on `main`; until then
 that fixture is listed in the roster and its test skips with a message naming B-64.
 
-Timeouts: two minutes for a fixture, fifteen for each of `icecubes` and `icecubes-app`.
+Timeouts: two minutes for a fixture, fifteen for `icecubes`, twenty-five for
+`icecubes-app` — `prepare` and each cold build share the one budget, and the app build
+also vendors packages.
 
 ## 4. What one run does
 

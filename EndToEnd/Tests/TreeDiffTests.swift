@@ -51,11 +51,21 @@ final class TreeDiffTests: XCTestCase {
         ])
     }
 
-    func test_exemptMatchesAnExactPathOrASuffix() {
+    func test_exemptMatchesAnExactPathOrATrailingPath() {
         let difference = TreeDiff.Difference(path: "lib/libHelloKit.a", kind: .content(firstDifferingOffset: 33))
 
         XCTAssertTrue(EndToEndRun.exempt(difference, by: ["lib/libHelloKit.a"]), "an exact path match is exempt")
-        XCTAssertTrue(EndToEndRun.exempt(difference, by: [".a"]), "a suffix match is exempt")
+        XCTAssertTrue(EndToEndRun.exempt(difference, by: ["libHelloKit.a"]), "a trailing path component is exempt")
+        XCTAssertFalse(EndToEndRun.exempt(difference, by: [".a"]), "a bare character suffix is not a path component")
         XCTAssertFalse(EndToEndRun.exempt(difference, by: [".dylib"]), "no match is not exempt")
+    }
+
+    /// A component boundary is required: `Assets.car` must not exempt a file that merely
+    /// ends with those characters inside a different, longer name.
+    func test_exemptDoesNotMatchAcrossAPathComponentBoundary() {
+        let difference = TreeDiff.Difference(path: "My Ice Cubes.app/Assets.car", kind: .content(firstDifferingOffset: 0))
+
+        XCTAssertFalse(EndToEndRun.exempt(difference, by: ["Ice Cubes.app/Assets.car"]),
+                       "the exemption names a different, shorter bundle name")
     }
 }
