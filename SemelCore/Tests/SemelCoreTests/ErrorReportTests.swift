@@ -119,6 +119,24 @@ final class ErrorReportTests: SemelCoreTestCase {
         XCTAssertEqual(ErrorReport.label(forNodeID: 99999, database: database), "Node 99999")
     }
 
+    // MARK: - Remedy text for a stale kind
+
+    /// `TypeRegistryError` lives in `SemelNodeKit`, which cannot name `reset` — it does not
+    /// know the engine has one. The engine appends the remedy where it renders the error,
+    /// not where `SemelNodeKit` throws it.
+    func test_anUnregisteredKindErrorNamesTheRemedy() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+
+        let output = node.buildErrorOutput(withError: TypeRegistryError.unknownKind(37))
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        let message = try messageHash.resolveAsString()
+        XCTAssertTrue(message.contains("no type is registered for kind 37"), message)
+        XCTAssertTrue(message.contains("reset"), message)
+    }
+
     // MARK: - What counts as reportable
 
     /// Every node holds "initializing" between being created and first processing, so

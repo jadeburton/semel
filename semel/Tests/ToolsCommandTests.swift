@@ -62,8 +62,8 @@ final class ToolsCommandTests: XCTestCase {
         super.tearDown()
     }
 
-    private func runTools() throws -> String {
-        try EnginePlugin().handle(verb: "tools", tokens: [], context: context)
+    private func runTools(_ prefix: String? = nil) throws -> String {
+        try EnginePlugin().handle(verb: "tools", tokens: prefix.map { [$0] } ?? [], context: context)
         return context.messages.joined(separator: "\n")
     }
 
@@ -139,5 +139,35 @@ final class ToolsCommandTests: XCTestCase {
         XCTAssertTrue(note.hasPrefix("//"), "a missing tool must not print as a setting, got: \(note)")
         XCTAssertTrue(note.contains("clang"), "should name the tool that is missing, got: \(note)")
         XCTAssertFalse(output.contains { $0.hasPrefix("clang.compiler.toolDescriptor") }, "got:\n\(output)")
+    }
+
+    /// `tools clang` narrows to the three `clang.*` blocks, so copying a `clang.cfg` does
+    /// not mean picking those lines out of `swift.*` and `apple.*` as well.
+    func test_prefixNarrowsToMatchingNamespaces() throws {
+        ToolRunnerRegistry.instance.registerTool(descriptor: swiftcDescriptor, toolExecutor: NoTool())
+        ToolRunnerRegistry.instance.registerTool(descriptor: clangDescriptor,  toolExecutor: NoTool())
+
+        let output = lines(try runTools("clang"))
+        let namespaceOrder = output.compactMap { line -> String? in
+            guard line.contains(".toolDescriptor.name=") else { return nil }
+            return String(line.prefix { $0 != "=" }.dropLast(".toolDescriptor.name".count))
+        }
+
+        XCTAssertEqual(Set(namespaceOrder), ["clang.compiler", "clang.linker", "clang.preprocessor"],
+                       "got:\n\(output)")
+        XCTAssertFalse(output.contains { $0.hasPrefix("swift.") }, "got:\n\(output)")
+    }
+
+    /// A prefix nothing starts with says so and lists what does exist, rather than
+    /// printing nothing and leaving the reader to guess whether it typed the wrong thing
+    /// or the server has nothing registered.
+    func test_unknownPrefixNamesItAndListsTheKnownNamespaces() throws {
+        ToolRunnerRegistry.instance.registerTool(descriptor: swiftcDescriptor, toolExecutor: NoTool())
+
+        let output = try runTools("bogus")
+
+        XCTAssertTrue(output.contains("bogus"), "got: \(output)")
+        XCTAssertTrue(output.contains("swift.compiler"), "got: \(output)")
+        XCTAssertFalse(output.contains(".toolDescriptor.name="), "got: \(output)")
     }
 }

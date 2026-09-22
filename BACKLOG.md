@@ -294,13 +294,6 @@ error", and `main.swift` exits on `interpreter.errorsReported`, but an error sur
 the settle-time error report never reaches it. A build that reports errors and exits 0
 cannot be used as a build step.
 
-**B-85** `open` — **`semelserv` block-buffers its log when redirected.**
-Redirecting `semelserv`'s stdout to a file loses the tail of the log until the process
-exits — a roughly 120-line build showed only 60 lines and a truncated final one — which
-makes `semelserv > build.log` unusable for CI or for filing a bug, precisely when someone
-would redirect it. Line-buffer stdout at start-up (`setvbuf(stdout, nil, _IOLBF, 0)`, or an
-explicit flush) so a redirected log is complete and current.
-
 ## Design, correctness and code quality
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
@@ -439,13 +432,6 @@ the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
 
-**B-83** `open` — **"no type is registered for kind N" is a dead end.**
-The message is accurate but offers no remedy: it fires when a node type is removed or
-renamed while a database still holds a graph built against it — exactly the situation
-AGENTS.md's "never reuse a kind" rule exists for — and every subsequent build on that graph
-repeats it. Say what to do about it: the type is not linked into this `semelserv`, or the
-graph predates its removal, and `reset` discards the derived state that is stuck.
-
 **B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
 changes.**
 Adding or removing a source file in any of the path-dependency packages (`SemelNodeKit`,
@@ -457,24 +443,6 @@ missing inputs: <the file just deleted>" while leaving the previous binary linke
 type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
 can do better than a documented workaround.
-
-**B-86** `open` — **`tools <prefix>`: print only the namespaces asked for.**
-`tools` prints a block for every namespace the server knows — 8 blocks, 38 lines for
-`apple.*`, `clang.*` and `swift.*` together — when a newcomer copying a `clang.cfg` needs
-three of the eight blocks. `tools clang` narrowing to namespaces with that prefix would make
-the copy-paste step exact. Low priority.
-
-**B-87** `open` — **Three hand-maintained package lists have drifted three ways.**
-`.swiftlint.yml`'s `included:`, `Semel.xcworkspace` and CI's per-package test steps
-(`.github/workflows/swift.yml`) each name the packages by hand, and the three lists no
-longer agree with each other or with `AGENTS.md`. `SemelApple` is in neither `included:` nor
-the workspace. `SemelProtocol` is in neither `included:` nor a CI test step —
-`.github/workflows/swift.yml` has no `Test SemelProtocol`, though `AGENTS.md`'s "Build and
-test" counts it among the eight. `SemelDatabaseModels` has no `Tests` directory at all, so
-it is not unlinted so much as untested — there is nothing there for `.swiftlint.yml` or CI
-to name. A test the shape of `test_everyFixtureInTheRosterHasATestHere` — asserting every
-`Semel*/` package directory appears in all three files — would catch the next drift instead
-of leaving it for a review to find.
 
 ## App bundles
 

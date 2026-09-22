@@ -78,4 +78,42 @@ final class SemelservExecutableTests: XCTestCase {
         XCTAssertEqual(server.waitForExit(timeout: 30), 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: socketPath))
     }
+
+    func test_bannerIsOnDiskBeforeShutdownWhenStdoutIsRedirectedToAFile() throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: binary.path),
+                          "semelserv is not built beside the test bundle at \(binary.path)")
+
+        // A pipe (ManagedProcess) is read continuously and so hides block buffering; only a
+        // real file, read back without the process's cooperation, shows what is actually
+        // on disk while the process is still running.
+        let logPath = home.appendingPathComponent("semelserv.log").path
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let logHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: logPath))
+
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = []
+        process.environment = ProcessInfo.processInfo.environment.merging(
+            ["SEMEL_HOME": home.path, "SEMEL_SOCKET": socketPath]) { _, override in override }
+        process.standardOutput = logHandle
+        process.standardError  = logHandle
+        try process.run()
+        defer {
+            logHandle.closeFile()
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+        }
+
+        XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath!)")
+
+        let loggedBeforeShutdown = try String(contentsOfFile: logPath, encoding: .utf8)
+        XCTAssertTrue(loggedBeforeShutdown.contains("Semel server"),
+                      "banner missing from the redirected log while the server is still running: " +
+                      "\(loggedBeforeShutdown)")
+
+        process.terminate()
+        process.waitUntilExit()
+    }
 }

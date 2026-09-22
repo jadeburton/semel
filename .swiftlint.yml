@@ -38,9 +38,15 @@ only_rules:
   - implicit_optional_initialization
   - unneeded_break_in_switch
 
+# Two other lists name the same packages by hand and must be kept in step with this one:
+# `Semel.xcworkspace/contents.xcworkspacedata` (the FileRefs) and
+# `.github/workflows/swift.yml` (the per-package `Test …` steps). `SemelDatabaseModels`
+# has no `Tests` directory, so it has no `/Tests` entry here and no step there.
 included:
   - SemelNodeKit/Sources
   - SemelNodeKit/Tests
+  - SemelProtocol/Sources
+  - SemelProtocol/Tests
   - SemelDatabaseModels/Sources
   - SemelCore/Sources
   - SemelCore/Tests
@@ -48,6 +54,8 @@ included:
   - SemelSwift/Tests
   - SemelClang/Sources
   - SemelClang/Tests
+  - SemelApple/Sources
+  - SemelApple/Tests
   - SemelExamples/Sources
   - SemelExamples/Tests
   - semel
