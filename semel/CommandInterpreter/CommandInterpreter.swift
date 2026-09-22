@@ -35,13 +35,48 @@ public final class CommandInterpreter: CommandContext {
 
     func outputMessage(_ message: String) { print(message) }
     func outputError(_ errorMessage: String) {
-        errorsReported += 1
+        errorsLock.withLock { errorsReportedStorage += 1 }
         print(errorMessage)
     }
 
+    /// Guards `errorsReportedStorage` and `hasCountedErrorRecordsSinceReset`. The exit
+    /// status a scripted run gets rests on the count, and it is written from two
+    /// threads: the command thread, through `outputError`, and a connection's event
+    /// thread, through `countErrorRecords` (called from `printEvent`) — the socket's
+    /// reader thread over a real connection, or the engine's cooperative-pool task
+    /// through `InProcessConnection`. The `build` macro's own push/wait/errors ordering
+    /// happens to serialise these on that one path, but a plain `wait` racing a `push`'s
+    /// own error report does not, so the count needs its own lock rather than relying on
+    /// the transport to have already made it coherent.
+    private let errorsLock = NSLock()
+
+    private var errorsReportedStorage = 0
+
     /// How many errors commands have reported so far. A non-interactive run exits non-zero
     /// when this is not zero, which is what makes `semel 'build Packages'` a build step.
-    public private(set) var errorsReported = 0
+    public var errorsReported: Int { errorsLock.withLock { errorsReportedStorage } }
+
+    /// Whether a settle report has already added to `errorsReported` once since the last
+    /// `resetErrorRecordAccounting()` — the reset is per `wait`. See `countErrorRecords`.
+    /// Guarded by `errorsLock` alongside the count itself.
+    private var hasCountedErrorRecordsSinceReset = false
+
+    /// The idle-time event calls this with what it is about to print, and the `errors`
+    /// verb calls it with what it just printed; either way this is where a report becomes
+    /// part of the exit status, once since the last reset (per `wait`) rather than once
+    /// per caller.
+    func countErrorRecords(_ records: [ErrorRecord]) {
+        guard !records.isEmpty else { return }
+        errorsLock.withLock {
+            guard !hasCountedErrorRecordsSinceReset else { return }
+            hasCountedErrorRecordsSinceReset = true
+            errorsReportedStorage += 1
+        }
+    }
+
+    func resetErrorRecordAccounting() {
+        errorsLock.withLock { hasCountedErrorRecordsSinceReset = false }
+    }
 
     private let plugins: [any CommandPlugin]
 
@@ -91,6 +126,7 @@ public final class CommandInterpreter: CommandContext {
         switch event {
         case .daemon(.errors(let records)):
             records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+            countErrorRecords(records)
         case .daemon(.notice(let line)):
             outputMessage(line)
         }

@@ -41,14 +41,17 @@ final class EnginePluginTests: XCTestCase {
 
         try run("errors")
 
-        // The header counts toward a scripted run's exit status, so it goes to the error
-        // stream while the rendered report stays a message.
-        XCTAssertEqual(context.errors, ["2 errors across 1 node:\n"])
+        // The count goes through `countErrorRecords`, not `outputError`, so the same
+        // settle report the idle-time event already counted is not counted twice.
         XCTAssertEqual(context.messages, [
+            "2 errors across 1 node:\n",
             "❌ StaticFile  'input:/a.c'",
             "   · errorLog, output: boom",
             "",
         ])
+        XCTAssertEqual(context.countedErrorRecords, [[
+            ErrorRecord(label: "StaticFile  'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
+        ]])
     }
 
     func test_waitSendsWaitAndReportsSettled() throws {
@@ -56,6 +59,19 @@ final class EnginePluginTests: XCTestCase {
 
         XCTAssertEqual(connection.daemonRequests, [.wait])
         XCTAssertEqual(context.messages, ["Settled."])
+    }
+
+    /// The settle-time event this unblocks can fire and count *during* the `.wait`
+    /// request, so the guard must already be clear before that request goes out, not
+    /// after it comes back.
+    func test_waitResetsErrorAccountingBeforeSendingTheRequest() throws {
+        let orderLog = OrderLog()
+        connection.orderLog = orderLog
+        context.orderLog    = orderLog
+
+        try run("wait")
+
+        XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "send"])
     }
 
     func test_resetSendsResetAndAnnouncesTheRebuild() throws {

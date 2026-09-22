@@ -108,7 +108,10 @@ rm build/**
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.
 
 Given arguments, the binary runs each one as a command line instead of opening the prompt,
-and exits non-zero if any command reported an error — which makes it a build step:
+and exits non-zero if any command reported an error — including an error a `wait` in this
+run reported at settle, printed through the idle-time report rather than an explicit
+`errors` (the daemon does not repeat that report across runs, so a bare `push`/`wait`
+against a graph already broken the same way prints nothing) — which makes it a build step:
 
 ```sh
 .build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
