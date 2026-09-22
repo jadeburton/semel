@@ -76,21 +76,42 @@ struct XcodeBuildSettings {
             }
         }
 
-        // References, to a fixed point: a value may name a setting that names another.
-        for _ in 0..<8 {
-            var changed = false
-            for (key, value) in resolved where value.contains("$") {
-                let substituted = substitute(value, in: resolved)
-                if substituted != value {
-                    resolved[key] = substituted
-                    changed = true
-                }
+        return XcodeBuildSettings(values: resolveReferences(in: resolved))
+    }
+
+    /// References, resolved so that `$(NAME)` never expands before `NAME` itself has:
+    /// a value may name a setting that names another, so `PRODUCT_MODULE_NAME` (naming
+    /// `PRODUCT_NAME`, naming `TARGET_NAME`) must not see `PRODUCT_NAME` half-expanded.
+    /// The order the table is walked in must not matter: a key visited before its
+    /// reference resolves would apply its operator (`:c99extidentifier`) to the literal
+    /// reference text instead of the value it names, and the wrong answer would have no
+    /// `$` left to retry. So each key is resolved by first resolving what it names,
+    /// which bottoms out at the same base values whatever the visiting order.
+    static func resolveReferences(in values: [String: String]) -> [String: String] {
+        var resolved: [String: String] = [:]
+        var resolving: Set<String> = []
+
+        func value(for key: String, raw: String) -> String {
+            if let already = resolved[key] {
+                return already
             }
-            if !changed {
-                break
+            guard resolving.insert(key).inserted else {
+                // A cyclic reference. The key already being resolved returns its raw text,
+                // so the cycle's members keep a `$(…)` reference between them, unresolved,
+                // instead of expanding forever.
+                return raw
             }
+            let result = substitute(raw) { name in values[name].map { value(for: name, raw: $0) } }
+            resolving.remove(key)
+            resolved[key] = result
+            return result
         }
-        return XcodeBuildSettings(values: resolved)
+
+        // Sorted so the result does not depend on `Dictionary`'s iteration order.
+        for (key, raw) in values.sorted(by: { $0.key < $1.key }) {
+            resolved[key] = value(for: key, raw: raw)
+        }
+        return resolved
     }
 
     /// The layer with conditional keys folded in: `KEY[sdk=iphonesimulator*]` replaces
@@ -119,18 +140,19 @@ struct XcodeBuildSettings {
         return result.merging(conditional) { _, matched in matched }
     }
 
-    /// `$(NAME)` and `${NAME}` from `settings`, with the two operators a bundle's identity
-    /// goes through — `$(PRODUCT_NAME:c99extidentifier)` for a module name,
-    /// `:rfc1034identifier` for a bundle identifier. A name with no setting is left as it
-    /// is, for `InfoPlistBuilder` to report if it reaches a plist.
-    static func substitute(_ value: String, in settings: [String: String]) -> String {
+    /// `$(NAME)` and `${NAME}`, each replaced by `lookup(NAME)`, with the two operators a
+    /// bundle's identity goes through — `$(PRODUCT_NAME:c99extidentifier)` for a module
+    /// name, `:rfc1034identifier` for a bundle identifier — applied to what `lookup`
+    /// returns. A nil lookup leaves the reference as it is, for `InfoPlistBuilder` to
+    /// report if it reaches a plist.
+    private static func substitute(_ value: String, lookup: (String) -> String?) -> String {
         guard let reference = reference else {
             return value
         }
         var result = value
         for match in reference.matches(in: value, range: NSRange(value.startIndex..., in: value)).reversed() {
             guard let whole = Range(match.range, in: value), let nameRange = Range(match.range(at: 1), in: value),
-                  var replacement = settings[String(value[nameRange])] else {
+                  var replacement = lookup(String(value[nameRange])) else {
                 continue
             }
             if let operatorRange = Range(match.range(at: 2), in: value) {

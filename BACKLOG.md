@@ -20,7 +20,12 @@ Remote Runner role (B-30).
 The known instance is fixed: `SwiftFormulaConverter.generateFormula` walked
 `externalManifests` in dictionary order, so two vendored packages vending the same product
 or target name resolved differently per process (reproduced at 5 failures in 12 runs); it
-now walks them sorted by folder, lexically first wins. The two-process byte-for-byte diff
+now walks them sorted by folder, lexically first wins. A second known instance is fixed:
+`XcodeBuildSettings.resolve`'s eight-round fixed-point loop substituted `$(NAME)`
+references in dictionary order, so `PRODUCT_MODULE_NAME` could see `PRODUCT_NAME`
+half-expanded and permanently mangle the module name; it now resolves each key by first
+resolving what it names, which makes the result independent of iteration order. The
+two-process byte-for-byte diff
 is built: `SemelEndToEndTests` builds every fixture and every pinned external project cold
 twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` requires the
 export trees to match, static archives included. What remains is a
@@ -474,6 +479,28 @@ formula, so the app's build root ends with twenty archives nobody asked for — 
 for IceCubes. An include that brings only funcs, not products, or a package converter
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
+
+**B-89** `open` — **`actool` renditions from a `.icon` input are not byte-reproducible.**
+`actool` embeds a fresh UUID, its pid and a mach timestamp in the names of the renditions
+it generates from an Icon Composer `.icon` bundle, so IceCubesApp's `Assets.car` differs
+between two identical cold builds (eight rendition names plus a reordered appearance
+table) even though the catalog's inputs and actool's arguments are character-for-character
+the same in both builds. The two extensions' `Assets.car` files, compiled from `.xcassets`
+alone, are byte-identical across the same two builds — the `.icon` input is the trigger.
+To find: an actool flag or environment variable that fixes the rendition identifier, or
+whether `--output-format` or a newer Xcode's `.icon` handling avoids it; failing that, the
+harness exempts `Assets.car` from `TreeDiff` for a project with a `.icon` input, named per
+project. Evidence: the diagnosis's section 4.
+
+**B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
+IceCubesApp's linked executable carries two GOT entries binding the same import,
+`_objc_msgSend`, and which one the linker's `__objc_stubs` synthesis references varies
+between two identical links of the same objects — 531 `ldr` displacements differ and so
+does `LC_UUID`, while every symbol, address and fixup is identical. All inputs to the link
+are the same hash in both builds. To find: the linker option that makes GOT emission
+deterministic (`-no_deduplicate` is already passed by clang's driver in debug; check
+`-fixup_chains` and `-ld_classic` behaviour), or confirm the duplicate originates from a
+specific input. Evidence: the diagnosis's section 3.
 
 ## End-to-end roster
 

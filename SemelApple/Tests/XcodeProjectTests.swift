@@ -227,6 +227,57 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertEqual(try XcodeProjectFacts.undefinedReferences(ofProjectAt: project, sdk: "iphonesimulator"), [])
     }
 
+    /// `PRODUCT_MODULE_NAME` names `PRODUCT_NAME`, which names `TARGET_NAME`: the chain
+    /// must resolve regardless of which of the three a `Dictionary` visits first.
+    func test_resolvesAChainOfReferencesRegardlessOfDictionaryOrder() throws {
+        let extensionTarget = try XCTUnwrap(try project().targets.first { $0.name == "IceCubesShareExtension" })
+        let settings = try XcodeBuildSettings.resolve(project: try project(), target: extensionTarget, configuration: "Debug",
+                                                       sdk: "iphonesimulator", xcconfig: { _ in nil },
+                                                       extra: ["TARGET_NAME": "IceCubesNotifications"])
+
+        XCTAssertEqual(settings["PRODUCT_MODULE_NAME"], "IceCubesNotifications")
+    }
+
+    /// The same chain under names whose alphabetical order is the wrong order to visit
+    /// them in, so a fixed-point loop that walks a sorted snapshot fails deterministically
+    /// rather than by luck: `A_MODULE` must not be substituted before `B_NAME` is.
+    func test_resolvesAChainOfReferencesEvenWhenSortedOrderIsTheWrongOrder() throws {
+        let settings = try XcodeBuildSettings.resolve(project: try project(), target: try app(), configuration: "Debug",
+                                                       sdk: "iphonesimulator", xcconfig: { _ in nil },
+                                                       extra: ["TARGET_NAME": "IceCubesApp",
+                                                               "A_MODULE": "$(B_NAME:c99extidentifier)",
+                                                               "B_NAME": "$(C_TARGET)",
+                                                               "C_TARGET": "Foo"])
+
+        XCTAssertEqual(settings["A_MODULE"], "Foo")
+    }
+
+    /// A reference cycle has no principled resolution; the resolver must not hang trying
+    /// to find one, and must leave the two settings as they are rather than guess.
+    func test_aReferenceCycleLeavesBothSettingsUnresolvedAndDoesNotHang() throws {
+        let settings = try XcodeBuildSettings.resolve(project: try project(), target: try app(), configuration: "Debug",
+                                                       sdk: "iphonesimulator", xcconfig: { _ in nil },
+                                                       extra: ["TARGET_NAME": "IceCubesApp",
+                                                               "CYCLE_A": "$(CYCLE_B)",
+                                                               "CYCLE_B": "$(CYCLE_A)"])
+
+        XCTAssertTrue(settings["CYCLE_A"]?.contains("$") == true)
+        XCTAssertTrue(settings["CYCLE_B"]?.contains("$") == true)
+    }
+
+    /// An operator applies to the fully resolved value its reference names, not to
+    /// whatever that reference's own text happens to be at the time.
+    func test_anOperatorAppliesToTheFullyResolvedReferencedValue() throws {
+        let settings = try XcodeBuildSettings.resolve(project: try project(), target: try app(), configuration: "Debug",
+                                                       sdk: "iphonesimulator", xcconfig: { _ in nil },
+                                                       extra: ["TARGET_NAME": "IceCubesApp",
+                                                               "OP_X": "$(OP_Y:rfc1034identifier)",
+                                                               "OP_Y": "$(OP_Z)",
+                                                               "OP_Z": "a b"])
+
+        XCTAssertEqual(settings["OP_X"], "a-b")
+    }
+
     func test_aConditionalSettingAppliesForItsSDKOnly() throws {
         XCTAssertEqual(try settings(sdk: "iphonesimulator")["INFOPLIST_KEY_UILaunchScreen_Generation"], "YES")
         XCTAssertEqual(try settings(sdk: "macosx")["INFOPLIST_KEY_UILaunchScreen_Generation"], "NO")
