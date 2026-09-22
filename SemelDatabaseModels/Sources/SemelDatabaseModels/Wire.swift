@@ -7,13 +7,17 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
         public static let fromSymbolID = Column(CodingKeys.fromSymbolID)
         public static let toNodeID = Column(CodingKeys.toNodeID)
         public static let toSymbolID = Column(CodingKeys.toSymbolID)
+        public static let name = Column(CodingKeys.name)
     }
 
     public var fromNodeID: ObjectID
     public var fromSymbolID: ObjectID
     public var toNodeID: ObjectID
     public var toSymbolID: ObjectID
-    public var name: ObjectID // used by the target node to discern multiple wires going to the same input. Named by the creator of the target node.
+    /// Used by the target node to discern multiple wires going to the same input. Named by
+    /// the creator of the target node, and part of the wire's identity: two consumers of one
+    /// output port may each demand it under a name of their own.
+    public var name: ObjectID
 
     public init(fromNodeID: ObjectID, fromSymbolID: ObjectID, toNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) {
         self.fromNodeID = fromNodeID
@@ -30,8 +34,8 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
                 t.column("fromSymbolID", .integer).notNull()
                 t.column("toNodeID", .integer).notNull().indexed()
                 t.column("toSymbolID", .integer).notNull()
-                t.primaryKey(["fromNodeID", "fromSymbolID", "toNodeID", "toSymbolID"])
                 t.column("name", .integer).notNull()
+                t.primaryKey(["fromNodeID", "fromSymbolID", "toNodeID", "toSymbolID", "name"])
             }
         }
     }
@@ -75,22 +79,19 @@ public struct WireDataAccess: DataAccessType {
         }
     }
 
-    public func select(comingFromNodeID: ObjectID, goingToNodeID: ObjectID) throws -> [Wire] {
-        try read { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
-        }
-    }
-
+    /// The one wire with this exact identity, or `nil`. A port pair holds as many wires as
+    /// the consumer demands names for, so the name is what selects a single row.
     public func select(comingFromNodeID: ObjectID,
                        fromSymbolID: ObjectID,
                        goingToNodeID: ObjectID,
-                       toSymbolID: ObjectID) throws -> [Wire] {
+                       toSymbolID: ObjectID,
+                       name: ObjectID) throws -> Wire? {
         try read { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.fromSymbolID == fromSymbolID &&
                             Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
+                            Wire.Columns.toSymbolID == toSymbolID &&
+                            Wire.Columns.name == name).fetchOne(db)
         }
     }
 
@@ -101,28 +102,27 @@ public struct WireDataAccess: DataAccessType {
         }
     }
 
-    public func update(_ wire: Wire) throws {
-        try write { db in try wire.update(db) }
-    }
-
+    /// Deletes the one wire with this identity. Every other wire between the same pair of
+    /// ports stays: it belongs to a different consumer's demand.
     public func delete(comingFromNodeID: ObjectID,
                        fromSymbolID: ObjectID,
                        goingToNodeID: ObjectID,
-                       toSymbolID: ObjectID) throws -> Bool {
+                       toSymbolID: ObjectID,
+                       name: ObjectID) throws -> Bool {
         try write { db in
             try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                             Wire.Columns.fromSymbolID == fromSymbolID &&
                             Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID).deleteAll(db) > 0
+                            Wire.Columns.toSymbolID == toSymbolID &&
+                            Wire.Columns.name == name).deleteAll(db) > 0
         }
     }
 
     public func delete(wire: Wire) throws -> Bool {
-        try write { db in
-            try Wire.filter(Wire.Columns.fromNodeID == wire.fromNodeID &&
-                            Wire.Columns.fromSymbolID == wire.fromSymbolID &&
-                            Wire.Columns.toNodeID == wire.toNodeID &&
-                            Wire.Columns.toSymbolID == wire.toSymbolID).deleteAll(db) > 0
-        }
+        try delete(comingFromNodeID: wire.fromNodeID,
+                   fromSymbolID:     wire.fromSymbolID,
+                   goingToNodeID:    wire.toNodeID,
+                   toSymbolID:       wire.toSymbolID,
+                   name:             wire.name)
     }
 }

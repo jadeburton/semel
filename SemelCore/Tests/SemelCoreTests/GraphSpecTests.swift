@@ -103,6 +103,19 @@ final class GraphSpecTests: SemelCoreTestCase {
         XCTAssertEqual(node.inputs[0].wires[1].name, "b")
     }
 
+    /// The rendered string is a node's identity, so two demands that differ only in the
+    /// order their wires are written in are one node, not two.
+    func test_multipleWires_renderInTheSameOrderWhateverOrderTheyAreWrittenIn() throws {
+        let first = try GraphSpecNode.parse(
+            "ClangLinker(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
+        )
+        let second = try GraphSpecNode.parse(
+            "ClangLinker(objectFiles: [\"b\": StaticFile(path: 'b.c').output, \"a\": StaticFile(path: 'a.c').output]).output"
+        )
+
+        XCTAssertEqual(first.asString(omitOutputPort: true), second.asString(omitOutputPort: true))
+    }
+
     func test_multipleWires_roundTrip() throws {
         let input = "ClangLinker(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
         XCTAssertEqual(try GraphSpecNode.parse(input).asString(omitOutputPort: false), input)

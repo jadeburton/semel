@@ -25,10 +25,13 @@ extension Wire {
                             toSymbolID: ObjectID,
                             name: ObjectID) throws {
 
+        // The same wire, demanded again: connecting is idempotent. A wire between the same
+        // ports under a *different* name is a different wire and is created alongside it.
         guard try database.wire.select(comingFromNodeID: fromNodeID,
                                        fromSymbolID: fromSymbolID,
                                        goingToNodeID: toNodeID,
-                                       toSymbolID: toSymbolID).isEmpty else {
+                                       toSymbolID: toSymbolID,
+                                       name: name) == nil else {
             return
         }
 
@@ -105,7 +108,8 @@ extension Wire {
         guard try database.wire.delete(comingFromNodeID: fromNodeID,
                                        fromSymbolID: fromSymbolID,
                                        goingToNodeID: toNodeID,
-                                       toSymbolID: toSymbolID) else {
+                                       toSymbolID: toSymbolID,
+                                       name: name) else {
             throw WireError.failedToDeleteWire
         }
 

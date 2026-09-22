@@ -96,6 +96,34 @@ final class WireManagementTests: SemelCoreTestCase {
         }
     }
 
+    /// Two products fed by one node ask for two differently named wires between the same
+    /// pair of ports. Both are wires in their own right — the name is what the target node
+    /// addresses them by — so both have to exist.
+    func test_twoDifferentlyNamedWiresShareOnePortPair() throws {
+        let source = try makeConfiguration(role: "source")
+        let consumer = try makeConfiguration(role: "consumer")
+
+        try connect(source, to: consumer, name: "first")
+        try connect(source, to: consumer, name: "second")
+
+        XCTAssertEqual(try wires(into: consumer).map { $0.name.resolveSymbol() }.sorted(),
+                       ["first", "second"],
+                       "neither demand may be dropped")
+    }
+
+    func test_deletingOneOfTwoWiresOnOnePortPairLeavesTheOther() throws {
+        let source = try makeConfiguration(role: "source")
+        let consumer = try makeConfiguration(role: "consumer")
+        try connect(source, to: consumer, name: "first")
+        try connect(source, to: consumer, name: "second")
+
+        let first = try XCTUnwrap(try wires(into: consumer).first { $0.name.resolveSymbol() == "first" })
+        try first.deleteWire(database: database)
+
+        XCTAssertEqual(try wires(into: consumer).map { $0.name.resolveSymbol() }, ["second"])
+        XCTAssertFalse(try isPendingDeletion(source), "the source still feeds the second wire")
+    }
+
     func test_aCycleIsRefused() throws {
         let a = try makeConfiguration(role: "a")
         let b = try makeConfiguration(role: "b")

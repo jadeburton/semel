@@ -35,7 +35,9 @@ dictionaries here are accumulated into, which is safe. Two sites worth a look fo
 source scan:
 `ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
 dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
-command line.
+command line. `Node.applySpecs` walked its wire specs in dictionary order, which decided
+*which* of two wires a port pair could not hold was the one kept — the identity of a
+dropped product varied per process; it is sorted, and the pair holds both wires.
 
 **B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
 Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,

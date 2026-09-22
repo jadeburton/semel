@@ -259,14 +259,16 @@ extension Node {
         )
 
         // Step 1 — delete wires whose name is absent from the new configuration.
-        for (wireName, existingWire) in existingWiresByName {
+        for (wireName, existingWire) in existingWiresByName.sorted(by: { $0.key < $1.key }) {
             if wireSpecs[wireName] == nil {
                 _ = try existingWire.deleteWire(database: database)
             }
         }
 
-        // Steps 2 & 3 — iterate over the desired configuration.
-        for (wireName, specString) in wireSpecs {
+        // Steps 2 & 3 — iterate over the desired configuration. Sorted: the order wires are
+        // created in decides the order they are read back in, and a dictionary's is seeded
+        // per process (B-04).
+        for (wireName, specString) in wireSpecs.sorted(by: { $0.key < $1.key }) {
             var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
