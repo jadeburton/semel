@@ -493,7 +493,8 @@ input. Second, and independent of a `.icon` input: an asset catalog with more th
 appearance can have its appearance table's entry order vary between two identical
 compiles. The widgets extension's catalog — 18,856 bytes, two colorsets with light and
 dark appearances and an appiconset, no `.icon` — differed in exactly this way in one of
-three two-build comparisons: the two entry names written in swapped order, and the four
+three two-build comparisons, 16 bytes in all: the two entry names `UIAppearanceAny` and
+`UIAppearanceDark` written in swapped order, and the four
 key indices pointing at them following suit; `xcrun assetutil --info` on the two files
 differs only in a timestamp field that is the file's own mtime, confirming the content
 itself is the same table, reordered. To find: an actool flag or environment variable that
