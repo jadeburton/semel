@@ -54,6 +54,33 @@ final class EnginePluginTests: XCTestCase {
         ]])
     }
 
+    /// A missing-configuration message spans lines and carries the config lines the reader
+    /// has to paste, so it prints as an indented block under the ports rather than folded
+    /// onto one line. This is the path a node's error takes once it arrives as the words
+    /// the node wrote instead of as the debug form of the case carrying them.
+    func test_errorsPrintsAMultiLineMessageAsAnIndentedBlock() throws {
+        let message = """
+            Missing configuration. Add these to a semel.config in the input file system:
+
+            clang.linker.target=…
+            """
+        connection.reply(.errors(records: [
+            ErrorRecord(label: "ClangLinker  'input:/semel.fmla'",
+                        entries: [ErrorEntry(ports: ["output"], message: message)]),
+        ]))
+
+        try run("errors")
+
+        XCTAssertEqual(context.messages, [
+            "1 error across 1 node:\n",
+            "❌ ClangLinker  'input:/semel.fmla'",
+            "   · output:",
+            "     Missing configuration. Add these to a semel.config in the input file system:",
+            "     clang.linker.target=…",
+            "",
+        ])
+    }
+
     func test_waitSendsWaitAndReportsSettled() throws {
         try run("wait")
 

@@ -198,12 +198,29 @@ public class LocalFileSystemTool: ToolRunner {
     }
 }
 
-public enum LocalFileSystemToolError: Error {
+/// A tool run that never reached the tool. These reach the node's output ports as text, so
+/// each case says what happened in a sentence rather than in the enum's debug form.
+public enum LocalFileSystemToolError: Error, CustomStringConvertible {
     case toolNotFound(path: String)
     case toolNotExecutable(path: String)
     case failedToWriteInputFile(fileName: String, underlying: Error)
     case failedToReadOutputFile(fileName: String)
     case processLaunchFailed(underlying: Error)
+
+    public var description: String {
+        switch self {
+        case .toolNotFound(let path):
+            return "no tool exists at '\(path)'"
+        case .toolNotExecutable(let path):
+            return "the file at '\(path)' is not executable"
+        case .failedToWriteInputFile(let fileName, let underlying):
+            return "'\(fileName)' could not be written into the sandbox: \(underlying)"
+        case .failedToReadOutputFile(let fileName):
+            return "the tool produced no '\(fileName)'"
+        case .processLaunchFailed(let underlying):
+            return "the tool could not be launched: \(underlying)"
+        }
+    }
 }
 
 /// The temporary sandbox could not be created.

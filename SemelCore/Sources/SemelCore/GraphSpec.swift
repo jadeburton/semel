@@ -244,10 +244,26 @@ extension GraphSpecNode {
 
 // MARK: - Parser
 
-enum GraphSpecParseError: Error {
+/// A spec string that could not be read back. Sentences rather than case names, because
+/// the engine interns a thrown error's text onto the failing node's output ports.
+enum GraphSpecParseError: Error, CustomStringConvertible {
     case unexpectedCharacter(Character?, context: String)
     case unexpectedEndOfInput(context: String)
     case emptyIdentifier
+
+    var description: String {
+        switch self {
+        case .unexpectedCharacter(let character, let context):
+            guard let character else {
+                return "a graph spec ended early — \(context)"
+            }
+            return "unexpected '\(character)' in a graph spec — \(context)"
+        case .unexpectedEndOfInput(let context):
+            return "a graph spec ended early — \(context)"
+        case .emptyIdentifier:
+            return "a graph spec has an empty name where a type or a port belongs"
+        }
+    }
 }
 
 extension GraphSpecNode {
