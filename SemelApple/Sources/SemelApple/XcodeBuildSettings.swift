@@ -121,7 +121,12 @@ struct XcodeBuildSettings {
     private static func applyingConditions(_ layer: [String: String], sdk: String) -> [String: String] {
         var result: [String: String] = [:]
         var conditional: [String: String] = [:]
-        for (key, value) in layer {
+        // Sorted: two conditions on one key can both match — `KEY[sdk=iphone*]` and
+        // `KEY[sdk=iphonesimulator*]` for an `iphonesimulator` build — and the last one
+        // written wins. A Dictionary's iteration order is seeded per process, so an
+        // unsorted walk would give the key a different value from one run to the next,
+        // and that value reaches the command line the formula states (B-04).
+        for (key, value) in layer.sorted(by: { $0.key < $1.key }) {
             guard let bracket = key.firstIndex(of: "[") else {
                 result[key] = value
                 continue
