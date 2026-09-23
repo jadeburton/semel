@@ -128,6 +128,29 @@ extension BuildEngine {
         let wiresByToNodeID:   [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.toNodeID)
         let wiresByFromNodeID: [ObjectID: [Wire]] = Dictionary(grouping: allWires, by: \.fromNodeID)
 
+        // A handful of port names name every wire in the graph, and a node's output ports
+        // are read both for its own section and for every wire that starts at it. Both are
+        // resolved once per distinct key rather than once per line.
+        var resolvedSymbolNames: [ObjectID: String] = [:]
+        func portName(_ symbolID: ObjectID) -> String {
+            if let known = resolvedSymbolNames[symbolID] {
+                return known
+            }
+            let resolved = symbolName(symbolID: symbolID, database: database)
+            resolvedSymbolNames[symbolID] = resolved
+            return resolved
+        }
+
+        var outputPortsByNodeID: [ObjectID: [SemelDatabaseModels.OutputPort]] = [:]
+        func outputPortRows(of nodeID: ObjectID) -> [SemelDatabaseModels.OutputPort] {
+            if let known = outputPortsByNodeID[nodeID] {
+                return known
+            }
+            let ports = FatalErrors.attempt({ try database.outputPort.selectAll(nodeID: nodeID) }) ?? []
+            outputPortsByNodeID[nodeID] = ports
+            return ports
+        }
+
         // MARK: Section 1 — Nodes
 
         appendSectionHeader("BUILD GRAPH STATE (\(allNodes.count) nodes)", to: text)
@@ -136,8 +159,11 @@ extension BuildEngine {
         for nodeRecord in allNodes {
             guard let nodeID = nodeRecord.id else { continue }
 
+            // Built once and used for both the type name and the descriptor: instantiating
+            // a node decodes its properties, and a few hundred nodes make that a cost.
+            let node = try? nodeRecord.makeNode()
             let scheduled = nodeRecord.scheduled ? "⏱ scheduled" : ""
-            text.append("⬢ \(type(of: try nodeRecord.makeNode())) #\(nodeID)  \(scheduled)")
+            text.append("⬢ \(node.map { String(describing: type(of: $0)) } ?? "kind \(nodeRecord.kind)?") #\(nodeID)  \(scheduled)")
 
             if let name = nodeRecord.name {
                 text.append("  name: '\(name)'")
@@ -154,12 +180,12 @@ extension BuildEngine {
                 text.append("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
             }
 
-            let descriptor    = (try? nodeRecord.makeNode())?.descriptor
+            let descriptor    = node?.descriptor
             let inputPorts    = (descriptor?.staticInputPorts  ?? []) + (descriptor?.dynamicInputPorts ?? [])
             let outputPorts   =  descriptor?.outputPorts ?? []
             let incomingWires = wiresByToNodeID[nodeID]   ?? []
             let outgoingWires = wiresByFromNodeID[nodeID] ?? []
-            let outputValues  = FatalErrors.attempt({ try database.outputPort.selectAll(nodeID: nodeID) }) ?? []
+            let outputValues  = outputPortRows(of: nodeID)
 
             if !inputPorts.isEmpty {
                 text.append("  inputs:")
@@ -172,10 +198,9 @@ extension BuildEngine {
                     } else {
                         for wire in wires {
                             let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
-                            let fromPort = symbolName(symbolID: wire.fromSymbolID, database: database)
-                            let outputPort = FatalErrors.attempt({
-                                try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
-                            }) ?? nil
+                            let fromPort = portName(wire.fromSymbolID)
+                            let outputPort = outputPortRows(of: wire.fromNodeID)
+                                .first { $0.nameSymbolID == wire.fromSymbolID }
                             let outputValue = outputPort.map { formatOutputPort($0) } ?? "—"
                             text.append("    · \(inputPort)\(dynamic)  ◀──(\(wire.name.resolveSymbol()))── #\(wire.fromNodeID) \(fromNode):\(fromPort)   \(outputValue)")
                         }
@@ -195,7 +220,7 @@ extension BuildEngine {
                     } else {
                         for wire in wires {
                             let toNode = nodeByID[wire.toNodeID]?.name ?? "?"
-                            let toPort = symbolName(symbolID: wire.toSymbolID, database: database)
+                            let toPort = portName(wire.toSymbolID)
                             text.append("    · \(outputPort)  \(valueDesc)  ────▶ #\(wire.toNodeID) \(toNode):\(toPort)")
                         }
                     }
@@ -213,19 +238,48 @@ extension BuildEngine {
         return text.text
     }
 
-    func appendDependencyTree(to text: TextBuffer) {
+    @discardableResult
+    func appendDependencyTree(to text: TextBuffer) -> DependencyTreeWalk {
+        let walk = DependencyTreeWalk()
         do {
             text.append("- build tree")
-            try projectFinder.appendDependencyTree(indentLevel: 1, to: text)
+            try projectFinder.appendDependencyTree(indentLevel: 1, walk: walk, to: text)
         } catch {
             text.append("- build tree (error: \(error))")
         }
+        return walk
+    }
+}
+
+/// One walk of the dependency tree, and the nodes it has rendered.
+///
+/// The set belongs to the walk rather than to each node's recursion, because the
+/// dependencies are a graph and not a tree: a header wired into a thousand compiles is one
+/// node reached a thousand ways. A set per node makes the walk enumerate the graph's
+/// *paths*, whose number grows with every shared dependency, so a few hundred nodes are
+/// already more paths than a prompt can wait for.
+///
+/// How many nodes the walk has entered is what the cost tests assert on: a timing cannot
+/// tell a walk that grew from a walk that ran on a busy machine.
+final class DependencyTreeWalk {
+
+    private(set) var visits = 0
+    private var renderedNodeIDs = Set<ObjectID>()
+
+    func enter() {
+        visits += 1
+    }
+
+    /// True the first time a node is reached, false for every encounter after that.
+    func shouldRender(_ nodeID: ObjectID) -> Bool {
+        renderedNodeIDs.insert(nodeID).inserted
     }
 }
 
 extension NodeRecord {
 
-    fileprivate func appendDependencyTree(indentLevel: Int, to text: TextBuffer) {
+    fileprivate func appendDependencyTree(indentLevel: Int, walk: DependencyTreeWalk, to text: TextBuffer) {
+        walk.enter()
         let indent = String(repeating: "  ", count: indentLevel)
 
         // Debug output must never be the thing that takes the process down: an
@@ -237,6 +291,14 @@ extension NodeRecord {
 
         guard let nodeID = id else {
             text.append("\(indent)- \(kindName)(\(nodeName)) [unsaved]")
+            return
+        }
+
+        // A node reached again is the same node, and its dependencies are printed where it
+        // was first reached; a reference costs one line where the subtree costs a copy of
+        // everything under it, once per consumer.
+        guard walk.shouldRender(nodeID) else {
+            text.append("\(indent)- \(kindName)(\(nodeName)) \(nodeID)  (see above)")
             return
         }
 
@@ -258,7 +320,7 @@ extension NodeRecord {
             }
 
             for dependencyNode in dependencyNodes {
-                dependencyNode.appendDependencyTree(indentLevel: indentLevel + 1, to: text)
+                dependencyNode.appendDependencyTree(indentLevel: indentLevel + 1, walk: walk, to: text)
             }
         } catch {
             text.append("\(indent)  (error loading dependencies: \(error))")
