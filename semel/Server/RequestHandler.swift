@@ -191,6 +191,14 @@ public final class RequestHandler {
         engine.noticeReporter = { [weak self] line in
             self?.eventSink?.deliver(.daemon(.notice(line: line)))
         }
+        // After the error reporter in the engine's own order, so a subscriber reads the
+        // failures and then the line that counts them.
+        engine.settleReporter = { [weak self] summary in
+            self?.eventSink?.deliver(.daemon(.settled(scheduled: summary.scheduled,
+                                                      computed:  summary.computed,
+                                                      fromCache: summary.fromCache,
+                                                      errors:    summary.errors)))
+        }
     }
 
     // MARK: - Shared helpers for the file verbs

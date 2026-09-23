@@ -190,6 +190,17 @@ final class MessageJSONTests: XCTestCase {
         XCTAssertEqual(try roundTrip(event), event)
     }
 
+    func test_encodesSettledEvent() throws {
+        XCTAssertEqual(try json(Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 0))),
+                       #"{"daemon":{"settled":{"computed":3,"errors":0,"fromCache":9,"scheduled":12}}}"#)
+    }
+
+    func test_roundTripsSettledEvent() throws {
+        let event = Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 1))
+
+        XCTAssertEqual(try roundTrip(event), event)
+    }
+
     // MARK: - Decoding what we do not know
 
     /// A peer built against a newer message set will send cases this build has never

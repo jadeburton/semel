@@ -167,8 +167,17 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
 // MARK: - Events
 
 /// What the engine reports from its background task, carried to every subscribed
-/// connection. B-50's settle diffs become a third case.
+/// connection. B-50's settle diffs become a fourth case.
 public enum DaemonEvent: Codable, Equatable, Sendable {
     case errors(records: [ErrorRecord])
     case notice(line: String)
+    /// The totals for one settle: how many nodes the engine fetched as scheduled, how
+    /// many of them ran, how many were answered out of the cache, and how many errors the
+    /// error report that precedes this event named. A cache hit and a full recompute are
+    /// otherwise indistinguishable at the prompt, which is the whole point of carrying
+    /// this over the protocol rather than leaving it in the server's debug log.
+    ///
+    /// `scheduled` is not `computed + fromCache`: a node fetched as scheduled whose
+    /// inputs are not yet satisfied is unscheduled again without producing either.
+    case settled(scheduled: Int, computed: Int, fromCache: Int, errors: Int)
 }

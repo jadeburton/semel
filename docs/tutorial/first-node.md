@@ -8,8 +8,9 @@ the README's [clone to build](../../README.md#dependencies-and-clone-to-build) i
 commands. Words in *italics* are defined in the [glossary](../../AGENTS.md#glossary); they
 are introduced here where they first do something.
 
-Last walked through at commit `d5cc9f1`. The commits since then change documents, comments,
-tests and the shape of the reference node's loop — not what anything prints.
+Last walked through at commit `d5cc9f1`, and Parts 1 and 2 again when the prompt learned to
+print a settle summary. The commits in between change documents, comments, tests and the
+shape of the reference node's loop — not what anything prints.
 
 ## Part 1 — Build something
 
@@ -18,14 +19,11 @@ git clone <repo-url> && cd semel
 swift build
 ```
 
-A debug build, not `-c release`: Part 2 reads the running commentary `semelserv` prints,
-and that is compiled out of a release build.
-
 You will want three terminals open, and the document says which one each step is in:
 
 | Terminal | What runs in it |
 |---|---|
-| **server** | `semelserv`, started once and left alone. Part 2 reads what it prints. |
+| **server** | `semelserv`, started once and left alone. Nothing in this tutorial reads what it prints. |
 | **prompt** | `semel`. Unlabelled fences are either what you type here or what something printed; the sentence before each says which. |
 | **shell** | an ordinary shell in the checkout; `sh` fences are typed here unless the step names another terminal. |
 
@@ -143,10 +141,17 @@ Push file: hello/src/main.c
 output:/hello/config.txt: OK
 output:/hello/hello.dylib: OK
 output:/hello/hello: OK
+✅ 66 nodes scheduled, 32 computed, 0 from cache, 0 errors
 Settled.
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
+
+The line with the tick is the *settle summary*: one line per settle, saying what the engine
+did. Nothing came from the cache, because there was no cache to come from — this graph had
+never been built. Part 2 is about that column. The counts are from one walk-through and
+yours will differ a little; `scheduled` is larger than `computed` plus `from cache` because
+a node can be woken before the thing it is waiting for has arrived, and is then woken again.
 
 `--into` expands the `~` the same way `base` does, and the products land beside your
 sources rather than in the checkout. In the **shell** terminal:
@@ -210,19 +215,22 @@ ls -o hello
 
 ## Part 2 — Watch it not work
 
-The point of Semel is the work it does not do. Four experiments. Each one edits a file in
-the **shell** terminal, builds at the **prompt**, and is read in both the prompt and the
-**server** terminal: the prompt tells you what was **pushed** and what was **published**,
-and the server tells you what was **done**. Two of the server's lines are worth learning to
-read:
+The point of Semel is the work it does not do. Four experiments, each built at the
+**prompt**, with any edit made in the **shell** terminal first. Everything you need is in
+the settle summary, and three of its four numbers are the experiment:
 
-- `processWithCatch(input:): ClangCompiler, nodeID 24` — that node ran.
-- `loadCachedOutputs(cacheKey:): using cache: ClangCompiler, nodeID 24` — that node was
-  scheduled, looked up its inputs, and did not run.
+- **scheduled** — how many nodes a change woke. This is the cascade: which nodes could
+  have been affected.
+- **computed** — how many of those actually ran their tool.
+- **from cache** — how many were woken, looked up their inputs, and did not run because an
+  earlier build had already produced that exact answer.
 
-The prompt does not draw that distinction; the server's terminal is where you see it. The
-node numbers below are from one walk-through and will differ from yours — what matters is
-which nodes come back, and with which of the two lines.
+Being **rescheduled** and being **recomputed** are different things, and most of Semel's
+speed is the gap between them. The mark on the line says which way it went: ✅ when
+everything the settle woke had to be done, ⚡️ when some of it did not.
+
+The counts below are from one walk-through and yours will differ. What matters is how they
+move between the experiments.
 
 **1. Build again.**
 
@@ -243,9 +251,10 @@ No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
-Every push says `[no change]`, no `output:` line appears, and the server's terminal prints
-nothing at all. Nothing ran, because no wire changed, so no node was scheduled. (`Exported
-3 files` is the export copying what is already there; it is not a rebuild.)
+Every push says `[no change]`, no `output:` line appears, and there is no summary either.
+A settle that woke nothing says nothing: no wire changed, so no node was scheduled, so
+there is nothing to report. (`Exported 3 files` is the export copying what is already
+there; it is not a rebuild.)
 
 **2. Change one file.** In the **shell** terminal, edit
 `~/semel-playground/hello/src/hello2.c` — change the text it prints — then build at the
@@ -261,50 +270,33 @@ Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 output:/hello/hello: OK
 output:/hello/hello.dylib: OK
+⚡️ 10 nodes scheduled, 8 computed, 1 from cache, 0 errors
 Settled.
 No errors.
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. The server:
-
-```
-processWithCatch(input:): ClangIncludeFinder, nodeID 32
-processSomeNodes(): batch: 2 scheduled, 1 computed
-processWithCatch(input:): ClangPreprocessor, nodeID 25
-processSomeNodes(): batch: 1 scheduled, 1 computed
-processWithCatch(input:): ClangCompiler, nodeID 24
-processSomeNodes(): batch: 1 scheduled, 1 computed
-processWithCatch(input:): ClangLinker, nodeID 17
-processWithCatch(input:): ClangLinker, nodeID 29
-processSomeNodes(): batch: 2 scheduled, 2 computed
-```
-
-One preprocess–compile chain reran, then both links, because both products take that
-object. `hello.c` and `main.c` were not touched: one preprocessor and one compiler are
-named here, not three of each.
+`config.txt` not. Ten nodes woken out of the thirty-five in this graph, and eight of them
+ran: the project finder and the include finder, then one preprocessor and one compiler —
+`hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
+because both products take that object, then the two output files. The one hit is the node
+that reads `hello.fmla`, which did not change, and it is why the line carries a ⚡️ rather
+than a ✅.
 
 **3. Put it back.** Undo the edit and build. The prompt prints exactly what it printed
-last time, line for line — the same file pushed, the same two products republished. The
-server does not:
+last time, line for line — the same file pushed, the same two products republished — with
+one line different:
 
 ```
-processWithCatch(input:): ClangIncludeFinder, nodeID 32
-processSomeNodes(): batch: 2 scheduled, 1 computed
-loadCachedOutputs(cacheKey:): using cache: ClangPreprocessor, nodeID 25
-processSomeNodes(): batch: 1 scheduled, 1 computed
-loadCachedOutputs(cacheKey:): using cache: ClangCompiler, nodeID 24
-processSomeNodes(): batch: 1 scheduled, 1 computed
-loadCachedOutputs(cacheKey:): using cache: ClangLinker, nodeID 17
-loadCachedOutputs(cacheKey:): using cache: ClangLinker, nodeID 29
-processSomeNodes(): batch: 2 scheduled, 2 computed
+⚡️ 10 nodes scheduled, 4 computed, 5 from cache, 0 errors
 ```
 
-The same nodes, in the same order, with a different verb. They were scheduled — a wire did
-change — and every one of them was a cache hit. A *cache entry* is keyed on the node's
-type, its properties and the name and content of everything wired to it; time appears
-nowhere. Being **rescheduled** and being **recomputed** are different things, and most of
-Semel's speed is the gap between them.
+The same ten nodes were woken. Four ran; five did not, and those five are the preprocessor,
+the compiler, both linkers and the formula reader — the entire chain that had just been
+rebuilt, cache hits from end to end. A *cache entry* is keyed on the node's type, its
+properties and the name and content of everything wired to it; time appears nowhere, so a
+file restored to what it was asks the same question as before and gets the stored answer.
+`scheduled` did not move and `computed` halved: that gap is the whole idea.
 
 **4. Change a setting only the linker reads.** Add a line to
 `~/semel-playground/clang.cfg`:
@@ -327,35 +319,23 @@ Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 output:/hello/hello: OK
 output:/hello/hello.dylib: OK
+⚡️ 24 nodes scheduled, 11 computed, 7 from cache, 0 errors
 Settled.
 No errors.
 ```
 
 Not one C file changed, and both programs were relinked — the linkers' settings really did
-change. What did not happen is the interesting part:
+change. What did not happen is the interesting part. Twenty-four nodes woken, against ten
+for a one-character edit to a source file: the config file feeds every tool in the build,
+so touching it wakes nearly the whole graph. Seven of those were answered from the cache,
+and those seven are all six preprocessors and compilers plus the formula reader.
 
-```
-processWithCatch(input:): ConfigFilter, nodeID 19
-processWithCatch(input:): ConfigFilter, nodeID 23
-processWithCatch(input:): ConfigFilter, nodeID 21
-processSomeNodes(): batch: 4 scheduled, 4 computed
-loadCachedOutputs(cacheKey:): using cache: ClangPreprocessor, nodeID 25
-loadCachedOutputs(cacheKey:): using cache: ClangPreprocessor, nodeID 22
-loadCachedOutputs(cacheKey:): using cache: ClangPreprocessor, nodeID 27
-processSomeNodes(): batch: 9 scheduled, 5 computed
-loadCachedOutputs(cacheKey:): using cache: ClangCompiler, nodeID 20
-loadCachedOutputs(cacheKey:): using cache: ClangCompiler, nodeID 24
-loadCachedOutputs(cacheKey:): using cache: ClangCompiler, nodeID 26
-processWithCatch(input:): ClangLinker, nodeID 17
-processWithCatch(input:): ClangLinker, nodeID 29
-```
-
-All three selectors reran; all six preprocessors and compilers were woken and hit cache.
-Each reads its settings through a `ConfigFilter` that passes on only `clang.compiler.*` or
-`clang.preprocessor.*`, so what reached them was byte-identical and their keys did not
-move. Nothing complains about the new key either: an unused key is only reported when it
-falls under no selected prefix at all, and `clang.linker` is selected. The header comment
-of
+Each of the six reads its settings through a `ConfigFilter` that passes on only
+`clang.compiler.*` or `clang.preprocessor.*`, so what reached them was byte-identical and
+their keys did not move — woken, and not one of them ran. Only the linkers, whose selector
+really did see a different file, had work to do. Nothing complains about the new key
+either: an unused key is only reported when it falls under no selected prefix at all, and
+`clang.linker` is selected. The header comment of
 [`ConfigFilter.swift`](../../SemelCore/Sources/SemelCore/Nodes/ConfigFilter.swift) tells
 this story in full, and the whole file is seventy-five lines — read it now; it is the shape
 of the node you are about to write.

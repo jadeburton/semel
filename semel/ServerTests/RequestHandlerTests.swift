@@ -211,6 +211,20 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(sink.events, [.daemon(.notice(line: "output:/app: written"))])
     }
 
+    func test_theSettleSummaryReachesTheSinkAsItsFourTotals() {
+        engine.settleReporter(SettleSummary(scheduled: 12, computed: 3, fromCache: 9, errors: 0))
+
+        XCTAssertEqual(sink.events, [.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 0))])
+    }
+
+    /// The summary's error count is the one the settle-time report just delivered, counted
+    /// per port as the `errors` command counts it, so the line and the records agree.
+    func test_theSettleTimeErrorReportCountsWhatItReported() throws {
+        try makeFailingFile(path: "input:/a.c", message: "boom")
+
+        XCTAssertEqual(engine.reportIdleTimeErrors(), 1)
+    }
+
     // MARK: - Helpers
 
     private func makeFailingFile(path: String, message: String) throws {

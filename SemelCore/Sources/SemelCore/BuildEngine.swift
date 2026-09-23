@@ -160,8 +160,9 @@ public final class BuildEngine {
                 continue
             }
 
-            reportIdleTimeErrors()
+            settleTotals.errors = reportIdleTimeErrors()
             reportUnclaimedConfigKeys()
+            reportSettleSummary()
 
             await idle.markIdle()
             await workSignal.wait()
@@ -289,6 +290,13 @@ public final class BuildEngine {
         entries.flatMap(ErrorReport.lines(for:)).forEach { print($0) }
     }
 
+    /// Where the settle summary goes. Totals rather than a line, for the same reason the
+    /// error reporter hands over entries: the marks and the wording belong to whatever
+    /// terminal is reading, and pinning them in one renderer is what keeps them from
+    /// drifting per command. An engine with no server has the per-batch `Debug.log` line
+    /// and needs nothing here, so the default is silence.
+    public var settleReporter: (SettleSummary) -> Void = { _ in }
+
     /// Where one-line status notices go — an artifact written, a product deleted. Nodes
     /// reach it through `notice(_:)`, because a node has the process-wide engine and
     /// nothing else to hand a line to.
@@ -369,10 +377,15 @@ public final class BuildEngine {
     /// Called once the engine is fully idle (no more scheduled nodes, no pending signals).
     /// Compares current error state against the last-reported state and prints only
     /// newly-appearing errors, using the same format as the `errors` command.
-    func reportIdleTimeErrors() {
+    ///
+    /// Returns how many errors it reported, counted per port carrying a message — the way
+    /// the `errors` command counts them, so the settle summary's number and a report of
+    /// the same failures agree.
+    @discardableResult
+    func reportIdleTimeErrors() -> Int {
         // A report, so best effort: a failure here delays the error listing to the next idle.
         guard let errorPorts = FatalErrors.attempt({ try database.outputPort.selectAllErrors() }) else {
-            return
+            return 0
         }
 
         // The "current" error map. `ErrorReport.reportableMessage` is the one place that
@@ -406,9 +419,35 @@ public final class BuildEngine {
         }
         lastReportedErrors = reported
 
-        if !entries.isEmpty {
-            errorReporter(entries.map(\.entry))
+        guard !entries.isEmpty else {
+            return 0
         }
+
+        errorReporter(entries.map(\.entry))
+        return entries.flatMap { $0.entry.items }.reduce(0) { $0 + $1.ports.count }
+    }
+
+    // MARK: - Settle summary
+
+    /// The totals accumulated since the engine last went idle. Written by
+    /// `processSomeNodes` and by the settle-time error report, both on the loop's own
+    /// task, and read and cleared by `reportSettleSummary` on that same task.
+    private var settleTotals = SettleSummary()
+
+    /// Hands one settle's totals to whoever is reading, and starts the next settle's count.
+    ///
+    /// A settle that scheduled nothing says nothing: the loop passes through idle on every
+    /// signal that turns out to have no work behind it, and a line per pass would be noise
+    /// where the interesting case — a build where everything came from the cache — is one
+    /// line among it.
+    private func reportSettleSummary() {
+        let summary = settleTotals
+        settleTotals = SettleSummary()
+
+        guard summary.scheduled > 0 else {
+            return
+        }
+        settleReporter(summary)
     }
 
     // MARK: - Batch mode
@@ -568,7 +607,17 @@ public final class BuildEngine {
             return results
         }
 
-        Debug.log("batch: \(nodeRecords.count) scheduled, \(computedResults.count) computed")
+        // A cache hit is a node that was scheduled and did not run, which is the one
+        // distinction the summary exists to carry; counting it beside the nodes that ran
+        // would make a rebuild of an unchanged graph read as a full build.
+        let cachedCount   = computedResults.filter(\.fromCache).count
+        let computedCount = computedResults.count - cachedCount
+
+        settleTotals.scheduled += nodeRecords.count
+        settleTotals.computed  += computedCount
+        settleTotals.fromCache += cachedCount
+
+        Debug.log("batch: \(nodeRecords.count) scheduled, \(computedCount) computed, \(cachedCount) from cache")
 
         // Unschedule every fetched node BEFORE any writes so that cascade
         // reschedules (setScheduled(true)) from phase-2 writes are not clobbered

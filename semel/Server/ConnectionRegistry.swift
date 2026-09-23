@@ -63,6 +63,7 @@ final class ConnectionRegistry: EventSink {
         switch event {
         case .daemon(.errors):  return "errors"
         case .daemon(.notice):  return "notice"
+        case .daemon(.settled): return "settled"
         }
     }
 }

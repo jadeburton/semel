@@ -10,6 +10,7 @@
 //
 
 @testable import SemelCore
+import Foundation
 import SemelDatabaseModels
 import SemelNodeKit
 
@@ -35,11 +36,22 @@ public struct SampleTool: Node {
         outputPorts: [output, errorLog, infoLog]
     )
 
+    /// How long `process` takes. Zero unless a test sets it, and a test that wants this
+    /// node's result *cached* has to: the cache declines to store anything that took less
+    /// than its floor, on the grounds that such an entry costs more than recomputing.
+    static var processingDurationForTests: TimeInterval = 0
+
     /// Interns a result, so a test that makes the object store unwritable has something
-    /// for the write to fail on.
+    /// for the write to fail on. Every declared port is written: a node that leaves one
+    /// unwritten is warned about and left scheduled.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        .init(outputValues: [Self.output: .value(try "result".intern())],
-              inputWireSpecs: [:])
+        if Self.processingDurationForTests > 0 {
+            Thread.sleep(forTimeInterval: Self.processingDurationForTests)
+        }
+        return .init(outputValues: [Self.output:   .value(try "result".intern()),
+                                    Self.errorLog: .value(try "".intern()),
+                                    Self.infoLog:  .value(try "".intern())],
+                     inputWireSpecs: [:])
     }
 
     /// What this tool claims to read from outside its inputs. Nil, as for most nodes,
