@@ -293,21 +293,6 @@ client's process group, so a signal delivered to the group reaches both; or have
 exit when its socket file disappears, which also covers a user who deletes the socket by
 hand.
 
-**B-85** `open` — **`semelserv` block-buffers its log when redirected.**
-Redirecting `semelserv`'s stdout to a file loses the tail of the log until the process
-exits — a roughly 120-line build showed only 60 lines and a truncated final one — which
-makes `semelserv > build.log` unusable for CI or for filing a bug, precisely when someone
-would redirect it. Line-buffer stdout at start-up (`setvbuf(stdout, nil, _IOLBF, 0)`, or an
-explicit flush) so a redirected log is complete and current.
-
-**B-82** `open` — **A `build` that reports errors at settle still exits 0.**
-`.build/debug/semel 'base <playground>' 'build hello --into <playground>/out'` against a
-graph holding an unregistered node type printed `2 errors across 1 node` and exited 0. The
-README's non-interactive contract says the CLI "exits non-zero if any command reported an
-error", and `main.swift` exits on `interpreter.errorsReported`, but an error surfaced through
-the settle-time error report never reaches it. A build that reports errors and exits 0
-cannot be used as a build step.
-
 ## Design, correctness and code quality
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
