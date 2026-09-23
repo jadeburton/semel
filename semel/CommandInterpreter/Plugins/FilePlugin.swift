@@ -88,9 +88,53 @@ final class FilePlugin: CommandPlugin {
         _ = try context.request(.beginBatch)
         defer { _ = try? context.request(.endBatch) }
 
-        try work.forEach { entry in
-            try pushOne(entry, baseDirectory: context.baseDirectory, context: context)
+        // A push of a whole project runs to thousands of files: name each one while the
+        // list is short enough to read, and count them when it is not.
+        let nameEachPath = work.count <= Self.pathsNamedIndividually
+        var files     = 0
+        var folders   = 0
+        var unchanged = 0
+
+        for entry in work {
+            guard let outcome = try pushOne(entry, baseDirectory: context.baseDirectory, context: context) else {
+                continue
+            }
+            switch outcome {
+
+            case .folder:
+                folders += 1
+                if nameEachPath {
+                    context.outputMessage("Push folder: \(entry.path)")
+                }
+
+            case .file(let didChange):
+                files += 1
+                if !didChange {
+                    unchanged += 1
+                }
+                if nameEachPath {
+                    context.outputMessage("Push file: \(entry.path)\(didChange ? "" : " [no change]")")
+                }
+            }
         }
+
+        guard !nameEachPath else {
+            return
+        }
+        var line = "Pushed \(Self.counted(files, "file"))"
+        if folders > 0 {
+            line += " and \(Self.counted(folders, "folder"))"
+        }
+        if unchanged > 0 {
+            line += ", \(unchanged) unchanged"
+        }
+        context.outputMessage(line)
+    }
+
+    /// What pushing one entry did, for the report the whole push makes at the end.
+    private enum PushOutcome {
+        case file(didChange: Bool)
+        case folder
     }
 
     /// A matched entry, plus everything pushing it implies.
@@ -118,8 +162,9 @@ final class FilePlugin: CommandPlugin {
         return [entry] + contents
     }
 
+    /// Pushes one entry and says what it was; `nil` when it was reported and skipped.
     private func pushOne(_ entry: FileWildcardEntry, baseDirectory: String,
-                         context: any CommandContext) throws {
+                         context: any CommandContext) throws -> PushOutcome? {
 
         let relativePath = entry.path
 
@@ -135,23 +180,23 @@ final class FilePlugin: CommandPlugin {
                 fileContent = try Data(contentsOf: URL(fileURLWithPath: absolutePath))
             } catch {
                 context.outputError("push: \(relativePath): \(error.localizedDescription)")
-                return
+                return nil
             }
 
             let mode = Self.mode(ofFileAt: absolutePath)
 
             guard case .pushFile(let didChange) = try context.request(.pushFile(path: relativePath.string, mode: mode),
                                                                        body: fileContent).0 else {
-                return
+                return nil
             }
-            context.outputMessage("Push file: \(relativePath) \(didChange ? "" : "[no change]")")
+            return .file(didChange: didChange)
 
         case .folder:
             // Just the folder. Its contents are separate entries in the work list, put
             // there by `expand`, so that a file reachable both directly and through its
             // folder is still pushed once.
-            context.outputMessage("Push folder: \(relativePath)")
             _ = try context.request(.pushFolder(path: relativePath.string))
+            return .folder
         }
     }
 
@@ -168,13 +213,58 @@ final class FilePlugin: CommandPlugin {
         let base = context.currentDirectoryPath
         let fullPattern: Path = base.isEmpty ? Path(pathOrWildcard) : base / pathOrWildcard
 
-        guard case .remove(let removedPaths) = try context.request(.remove(pattern: fullPattern.string)).0 else {
+        // One batch around the removal, as a push takes around its files: the server
+        // unpins and marks as it walks the matches, and without a batch the engine drains
+        // against a tree the walk is still taking apart.
+        _ = try context.request(.beginBatch)
+        defer { _ = try? context.request(.endBatch) }
+
+        guard case .remove(let removedFiles, let removedFolders)
+                = try context.request(.remove(pattern: fullPattern.string)).0 else {
             return
         }
 
-        if removedPaths.isEmpty {
+        guard !removedFiles.isEmpty || !removedFolders.isEmpty else {
             context.outputError("rm: \(pathOrWildcard): no such file or directory")
+            return
         }
+
+        reportRemoval(files: removedFiles, folders: removedFolders, context: context)
+
+        // A `*` matches within one segment and `*.*` needs a literal dot, as in a shell, so
+        // a pattern can take every file of a folder and leave the folder standing. That is
+        // the right outcome and nothing else in the output would show it.
+        if removedFolders.isEmpty, fullPattern.containsWildcard {
+            context.outputMessage("rm: \(pathOrWildcard): matched files only, no folder")
+        }
+    }
+
+    // MARK: - Reporting what a verb touched
+
+    /// How many paths a verb names one per line before it reports a count instead. A push
+    /// or an rm of a whole project runs to thousands, and a wall of paths buries whatever
+    /// else the command said.
+    private static let pathsNamedIndividually = 20
+
+    /// What `rm` says when it succeeds: a line per path while the list is short enough to
+    /// read, and a count once it is not — with the folders named at any size, since a
+    /// folder is the shape of what happened and the files are what fill the screen.
+    private func reportRemoval(files: [String], folders: [String], context: any CommandContext) {
+        guard files.count + folders.count > Self.pathsNamedIndividually else {
+            folders.forEach { context.outputMessage("Removed folder: \($0)") }
+            files.forEach { context.outputMessage("Removed file: \($0)") }
+            return
+        }
+
+        var line = "Removed \(Self.counted(files.count, "file"))"
+        if !folders.isEmpty {
+            line += " and \(Self.counted(folders.count, "folder")): \(folders.joined(separator: ", "))"
+        }
+        context.outputMessage(line)
+    }
+
+    private static func counted(_ count: Int, _ noun: String) -> String {
+        "\(count) \(noun)\(count == 1 ? "" : "s")"
     }
 
     // MARK: - cp

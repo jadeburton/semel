@@ -135,7 +135,10 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case ok
     case list(entries: [ListEntry])
     case pushFile(didChange: Bool)
-    case remove(removedPaths: [String])
+    /// What the removal took, split by kind: a client reports the two differently, and a
+    /// pattern that took every file of a folder and left the folder standing is a correct
+    /// outcome that reads as a no-op unless it is said.
+    case remove(removedFiles: [String], removedFolders: [String])
     /// The file's bytes travel in the frame body.
     case fetch(mode: UInt16)
     case errors(records: [ErrorRecord])
