@@ -78,10 +78,11 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
 
         let (response, _) = try daemon(.remove(pattern: "*.c"))
 
-        guard case .remove(let removed) = response else {
+        guard case .remove(let removed, let removedFolders) = response else {
             return XCTFail("expected remove, got \(response)")
         }
         XCTAssertEqual(removed.sorted(), ["a.c", "b.c"])
+        XCTAssertEqual(removedFolders, [], "a pattern with a dot matches no folder here")
         // A removed file lingers as a ghost with no content, which `list` reports as missing.
         let (listed, _) = try daemon(.list(fileSystem: .input, pattern: "*.c"))
         guard case .list(let entries) = listed else {
@@ -90,8 +91,18 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
         XCTAssertTrue(entries.allSatisfy { $0.status == .missing || $0.status == .error }, "\(entries)")
     }
 
+    /// The two lists are what the client reports from, so a removed folder has to arrive
+    /// as a folder rather than as one more path.
+    func test_removeReportsAFolderApartFromItsFiles() throws {
+        try daemon(.pushFile(path: "src/a.c", mode: 0o644), body: Data("a".utf8))
+
+        let (response, _) = try daemon(.remove(pattern: "src"))
+
+        XCTAssertEqual(response, .remove(removedFiles: [], removedFolders: ["src"]))
+    }
+
     func test_removeOfNothingReturnsNoPaths() throws {
-        XCTAssertEqual(try daemon(.remove(pattern: "nope")).0, .remove(removedPaths: []))
+        XCTAssertEqual(try daemon(.remove(pattern: "nope")).0, .remove(removedFiles: [], removedFolders: []))
     }
 
     // MARK: - fetch
