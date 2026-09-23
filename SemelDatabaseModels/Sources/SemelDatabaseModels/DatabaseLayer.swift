@@ -5,6 +5,7 @@
 //  Created by Jade Burton on 06.02.26.
 //
 
+import Foundation
 @preconcurrency import GRDB
 
 public protocol DataAccessType {
@@ -170,6 +171,30 @@ public final class DatabaseLayer {
         try Symbol.createTable(dbQueue: dbQueue)
         try OutputPort.createTable(dbQueue: dbQueue)
         try Metadata.createTable(dbQueue: dbQueue)
+    }
+
+    // ── Copying the file aside ───────────────────────────────────────────────
+
+    /// Writes a self-contained copy of this database beside the original, under the same
+    /// name with `suffix` appended, and answers the path it wrote. Answers nil for an
+    /// in-memory database, which has no file and no state worth keeping past the process.
+    ///
+    /// Through SQLite's own backup rather than a file copy: the database runs in WAL mode,
+    /// so committed rows live in `graph.sqlite-wal` until a checkpoint moves them, and
+    /// copying the one file alone would leave them out. The copy is written without WAL,
+    /// so it is one file that opens anywhere.
+    @discardableResult
+    public func copyAside(suffix: String) throws -> String? {
+        guard let filePath else {
+            return nil
+        }
+        let destinationPath = filePath + suffix
+        if FileManager.default.fileExists(atPath: destinationPath) {
+            try FileManager.default.removeItem(atPath: destinationPath)
+        }
+        let destination = try DatabaseQueue(path: destinationPath)
+        try dbQueue.backup(to: destination)
+        return destinationPath
     }
 
     // ── Schema fingerprint ───────────────────────────────────────────────────

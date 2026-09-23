@@ -21,8 +21,8 @@ final class EnginePluginTests: XCTestCase {
         context    = TestCommandContext(connection: connection)
     }
 
-    private func run(_ verb: String) throws {
-        try EnginePlugin().handle(verb: verb, tokens: [], context: context)
+    private func run(_ verb: String, _ tokens: [String] = []) throws {
+        try EnginePlugin().handle(verb: verb, tokens: tokens, context: context)
     }
 
     func test_errorsWithNoneSaysSo() throws {
@@ -136,11 +136,43 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "send"])
     }
 
-    func test_resetSendsResetAndAnnouncesTheRebuild() throws {
+    func test_resetKeepsTheCacheAndAnnouncesTheRebuild() throws {
+        connection.reply(.reset(archivedGraphPath: nil))
+
         try run("reset")
 
-        XCTAssertEqual(connection.daemonRequests, [.reset])
+        XCTAssertEqual(connection.daemonRequests, [.reset(clearCache: false)])
         XCTAssertEqual(context.messages, ["Rebuild started."])
+    }
+
+    /// The cache is what makes a reset cheap, so discarding it is asked for by name.
+    func test_resetWithTheCacheFlagAsksForTheCacheToGoToo() throws {
+        connection.reply(.reset(archivedGraphPath: nil))
+
+        try run("reset", ["--cache"])
+
+        XCTAssertEqual(connection.daemonRequests, [.reset(clearCache: true)])
+        XCTAssertEqual(context.messages, ["Cache discarded. Rebuild started."])
+    }
+
+    /// The graph a reset discards is copied aside, and the only way to find that copy is
+    /// for the reply to name it.
+    func test_resetPrintsWhereTheDiscardedGraphWent() throws {
+        connection.reply(.reset(archivedGraphPath: "/semel-home/graph.sqlite.broken-2026-09-23T101500Z"))
+
+        try run("reset")
+
+        XCTAssertEqual(context.messages, [
+            "Graph copied to /semel-home/graph.sqlite.broken-2026-09-23T101500Z",
+            "Rebuild started.",
+        ])
+    }
+
+    /// A misspelled flag is a request the user did not mean, not a plain reset.
+    func test_resetRejectsAnOptionItDoesNotKnow() throws {
+        XCTAssertThrowsError(try run("reset", ["--caches"]))
+
+        XCTAssertEqual(connection.daemonRequests, [])
     }
 
     func test_debugPrintsTheTextItGetsBack() throws {

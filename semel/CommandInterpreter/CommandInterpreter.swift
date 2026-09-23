@@ -274,6 +274,7 @@ enum CommandParserError: Error, LocalizedError {
     case unknownCommand(String)
     case missingArgument(command: String, expected: String)
     case tooManyArguments(command: String)
+    case unknownOption(command: String, option: String)
 
     var errorDescription: String? {
         switch self {
@@ -283,6 +284,8 @@ enum CommandParserError: Error, LocalizedError {
             return "\(cmd): missing argument (\(expected))"
         case .tooManyArguments(let cmd):
             return "\(cmd): too many arguments"
+        case .unknownOption(let cmd, let option):
+            return "\(cmd): unknown option '\(option)'"
         }
     }
 }

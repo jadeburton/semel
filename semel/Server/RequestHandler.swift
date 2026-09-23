@@ -113,9 +113,9 @@ public final class RequestHandler {
                 return (.daemon(.errors(records: try errorRecords())), nil)
             case .tools:
                 return (.daemon(.tools(namespaces: toolNamespaces())), nil)
-            case .reset:
-                try engine.reset()
-                return (.daemon(.ok), nil)
+            case .reset(let clearCache):
+                let archivedGraphPath = try engine.reset(clearCache: clearCache)
+                return (.daemon(.reset(archivedGraphPath: archivedGraphPath)), nil)
             case .nudge:
                 try engine.nudge()
                 return (.daemon(.ok), nil)

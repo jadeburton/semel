@@ -134,7 +134,7 @@ final class ServerTests: RequestHandlerTestCase {
     func test_anUndecodableRequestIsAnsweredNotDropped() throws {
         // Reach under SocketConnection: a raw frame whose JSON names no known case.
         let client = try connect()
-        _ = try daemon(client, .reset)   // a completed request means the server has registered this connection
+        _ = try daemon(client, .reset(clearCache: false))   // a completed request means the server has registered this connection
         XCTAssertEqual(server.connectionCount, 1)
         // The handler answers malformedRequest through ServerConnection; SocketConnection
         // cannot send malformed JSON itself, so this is pinned at the ServerConnection level:
@@ -270,7 +270,7 @@ final class ServerTests: RequestHandlerTestCase {
         // The batch withholds the coalesced signal the reset asks for, so the loop never
         // marks a newer idle generation and the wait cannot settle.
         _ = try daemon(commander, .beginBatch)
-        _ = try daemon(commander, .reset)
+        _ = try daemon(commander, .reset(clearCache: false))
         DispatchQueue.global().async {
             _ = try? self.daemon(waiter, .wait)
             returned.withLock { waitHasReturned = true }
@@ -333,7 +333,7 @@ final class ServerTests: RequestHandlerTestCase {
         server = Server(handler: handler, socketPath: socketPath)
         try server.start()
         let client = try connect()
-        XCTAssertEqual(try daemon(client, .reset).0, .ok)
+        XCTAssertEqual(try daemon(client, .reset(clearCache: false)).0, .reset(archivedGraphPath: nil))
     }
 
     /// `stop` does not return while a session is still unwinding. Asserted without polling

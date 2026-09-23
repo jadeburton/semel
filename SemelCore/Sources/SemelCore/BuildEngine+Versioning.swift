@@ -12,14 +12,18 @@ import SemelDatabaseModels
 
 /// The database was created by a Semel whose tables looked different. `reset` cannot help:
 /// it preserves the input file system, and those rows live in the old tables. The only
-/// safe move is a new database, which means pushing the sources again.
+/// safe move is a new database, which means pushing the sources again — with the old file
+/// moved aside rather than deleted, which is what `reset` does with a graph it discards
+/// and for the same reason: it is the evidence for whatever went wrong in it.
 public struct DatabaseSchemaChangedError: UnrecoverableError {
     public let filePath: String
 
     public var unrecoverableDescription: String {
         """
         The database schema changed since \(filePath) was created.
-        Delete that file and push your sources again.
+        Move that file aside — `mv "\(filePath)" "\(filePath).broken"` — and push your sources again.
+        The moved file is the only record of what that graph held, which is worth keeping
+        if the schema is not the whole story.
         """
     }
 }
@@ -49,7 +53,10 @@ extension BuildEngine {
         let isFresh = try recorded == nil && database.node.selectAll().isEmpty
         if !isFresh {
             Debug.log("Semel \(recorded ?? "of unknown version") built this graph; now \(Semel.version). Rebuilding.")
-            try reset()
+            // With the cache, because a cache key says nothing about which Semel computed
+            // the entry: a rebuild that reads the old entries back publishes exactly the
+            // artifacts this marker exists to replace.
+            try reset(clearCache: true)
             try restateThePortsOfPreservedNodes()
         }
         try database.metadata.upsert(key: Self.semelVersionKey, value: Semel.version)

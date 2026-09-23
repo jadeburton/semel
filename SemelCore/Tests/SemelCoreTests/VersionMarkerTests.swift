@@ -158,6 +158,24 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "target=arm64")
     }
 
+    /// A plain `reset` keeps the cache, because the key covers the inputs. It says nothing
+    /// about which Semel computed the entry, so the rebuild a version change asks for has
+    /// to discard the entries too — otherwise it republishes the very artifacts the marker
+    /// exists to replace.
+    func test_aVersionChangeDiscardsTheCachedBuildsToo() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        try engine.database.cacheEntry.insert(.init(hash: "an-entry-built-by-the-older-semel",
+                                                    content: [UInt8]("{}".utf8),
+                                                    cost: 100,
+                                                    timestamp: Date()))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.0-older")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertEqual(try engine.database.cacheEntry.count(), 0,
+                       "a new Semel may compute different outputs from the same inputs")
+    }
+
     func test_theInputFileSystemSurvivesAVersionChange() throws {
         let engine = try makeEngine(try DatabaseLayer())
         let source = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
@@ -243,5 +261,16 @@ final class VersionMarkerTests: SemelCoreTestCase {
             XCTAssertTrue(schemaError.unrecoverableDescription.contains(path),
                           "the user has to know which file to delete, got: \(schemaError.unrecoverableDescription)")
         }
+    }
+
+    /// The graph a reset discards is copied aside rather than dropped, and the file this
+    /// gate stops on is the same evidence. What it asks the user to do has to agree.
+    func test_aChangedSchemaAsksForTheFileToBeMovedAsideRatherThanDeleted() {
+        let error = DatabaseSchemaChangedError(filePath: "/tmp/semel-home/graph.sqlite")
+
+        XCTAssertTrue(error.unrecoverableDescription.contains("Move that file aside"),
+                      error.unrecoverableDescription)
+        XCTAssertFalse(error.unrecoverableDescription.lowercased().contains("delete"),
+                       "deleting the file destroys the only record of the broken graph")
     }
 }
