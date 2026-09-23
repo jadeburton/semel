@@ -201,6 +201,19 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
+**B-102** `open` — **A cache entry does not know which code produced it.**
+`Cache.swift` keys an entry on the node's inputs, its properties, the tool descriptors and
+whatever `cacheKeyMaterial` adds (the SDK fingerprint), and on nothing that identifies the
+node implementation itself. An upgrade that changes what `SwiftCompiler` or `TreeMerger`
+emits for the same inputs reuses the old entries, and the only defence is a manual cache
+wipe. Put a code version in the key: a per-node-type version constant the node declares
+(`static let implementationVersion`), bumped when its output for equal inputs changes, or the
+engine's build hash as the blunt form. Either makes an upgrade invalidate entries lazily on
+the next lookup, with no command and no cold build of what did not change. The per-node
+constant is the better one: it keeps every entry a bug fix did not touch. Test: the same
+node with two implementation versions produces two keys; a graph rebuilt under the new
+version hits nothing from the old.
+
 **B-81** `open` — **`build` reports what it published, not what it did.**
 A cache hit and a full recompute print byte-identical output at the prompt — the same three
 lines whether every node ran `processWithCatch` or every node used the cache — and that
@@ -223,7 +236,11 @@ and to whatever else leaves a graph in a state nobody wants to debug. The one th
 wipe is for — an entry believed wrong — is a different command (`reset --cache`, or the
 integrity check `FUTURE.md` wants). Reopens the question B-40 dropped: with a cheap
 home-wide reset, per-project scoping may not be needed at all; with an expensive one, it is.
-`docs/tutorial/first-node.md` "Cleaning up" is the text this shortens.
+`docs/tutorial/first-node.md` "Cleaning up" is the text this shortens. A reset is also
+the moment evidence is destroyed: move the graph aside (`graph.sqlite.broken-<date>`) instead
+of deleting it, and have the schema gate say the same, so the bug that made a reset
+necessary can still be read afterwards. Reset stays a repair command, not an everyday one;
+B-102 and B-103 are what keeps the everyday path from reaching it.
 
 ## Performance
 
@@ -403,6 +420,18 @@ not wait on, where `pending` would stall it. So the new case has to say, per con
 whether it counts as pending or as error, and `ConfigMerger`'s own comment names that
 separation as the work to do. Belongs with B-43: an error standing in for "nothing there"
 is the dataflow rule being bent.
+
+**B-103** `open` — **Nothing checks the graph's invariants short of failing on them.**
+The week's silent corruptions — a wire dropped because two shared a key, a folder manifest
+rebuilt per child, an error whose message was empty — were each found by a test written
+after the symptom, not by anything the running system could say about itself. A `check`
+verb walks the graph and reports every invariant that does not hold: a wire whose endpoint
+node or port is gone, a node whose `graphSpec` no longer parses or names a type the server
+does not link (B-83), a product with no producer, a folder manifest naming a child that
+does not exist, an error port with no message, a cache entry whose key no longer parses. It
+reports and repairs nothing; `reset` is the repair, and `check` is how one learns whether it
+is needed and what to file when it is. Run by the end-to-end harness after every build so
+the fixtures prove the invariants, and offered to a user before `reset` is suggested.
 
 **B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
 Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFilter`,
