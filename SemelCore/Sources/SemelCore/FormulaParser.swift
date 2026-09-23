@@ -215,7 +215,7 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
     case forEachRequiresAtLeastOneItem
     case duplicateDefinition(kind: String, name: String)
 
-    var errorDescription: String? {
+    var description: String {
         switch self {
         case .unexpectedToken(let token, let expected):
             return "Unexpected token: \(token) — expected: \(expected)"
@@ -244,10 +244,9 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
         }
     }
 
-    /// One implementation, read through whichever protocol the caller has. `String(reflecting:)`
-    /// rather than interpolation, which would ask this property for its own answer.
-    var description: String {
-        errorDescription ?? String(reflecting: self)
+    /// The same sentence through `LocalizedError`, for a caller that asks that way.
+    var errorDescription: String? {
+        description
     }
 }
 
