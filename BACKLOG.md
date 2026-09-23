@@ -244,33 +244,16 @@ B-102 and B-103 are what keeps the everyday path from reaching it.
 
 ## Performance
 
-**B-74** `open` — **Nothing tests a large `rm`, and four things go wrong in one.**
-Removing a prepared IceCubesApp from the input file system (2026-09-20) showed: the folder
-and the products under `output:` listed as `[missing]` until settle, `debug` failing on a
-graph of a few hundred nodes, and a wall of errors during the cascade. Nothing in the
-suites exercises `rm` through the CLI, the largest deletion test removes a folder of two
-files, and the end-to-end harness never removes anything after a build. Two tests are
-owed, and they are the acceptance for the fixes:
-
-1. `FolderRemovalScaleTests` is that `SemelCore` scale test: it pushes a few thousand
-   files, removes them, and holds the cost to linear growth and the folder node to gone
-   once the collector has run.
-2. A `SemelEndToEndTests` step, or a `SemelCLITests` case over `InProcessConnection`: after
-   a build, `rm` the build folder, `wait`, then `ls input:` and `ls output:` show nothing
-   under it, no `[missing]` entry, and the idle error report is empty.
-
-What the reproduction (C fixture grown to 1,019 nodes) found, for whoever writes them:
-`[missing]` means only "exists and not pinned" (`InternalFileSystemLister.swift:38`), and an
-`OutputFile` reads pinned from its *input* port, so an artifact whose input errored shows
-the same word; both are collected at settle. `debug`'s dependency tree keeps its visited set
-per node and so enumerates paths (one shared `StaticFile` visited 999 times), and the text
-rides in the frame JSON under the 1 MiB cap, so past about 600 nodes the server refuses the
-frame and the client sees a closed connection. Deleting one shared header produced 500
-error entries at idle, 494 of them the identical unlabelled `ClangCompiler … inputValueInError`,
-because only `.pending` blocks processing and errors propagate through every consumer;
-deleting the whole project produced none, since everything was collected. The fixes are
-separate items: the idle error report collapsing a cascade to its cause, `[missing]` split
-into its states, and `ProjectBuilder`'s mid-flight printer (B-50). The `debug` tree is fixed.
+**B-74** `open` — **`[missing]` is one word for two states.**
+`ls` prints `[missing]` for anything that exists and is not pinned
+(`InternalFileSystemLister.swift:38`). That covers a file on its way out of the input file
+system, and it also covers an artifact under `output:` whose build failed, because an
+`OutputFile` reads pinned from its *input* port and an input in error is not pinned. One
+word for both tells the reader nothing: the first state settles by itself, the second is a
+failure to act on. Split the state and give each its own word. `FolderRemovalScaleTests`
+and `FolderRemovalAfterBuildTests` hold the removal side — the folder and its products are
+gone once the collector has run, with nothing listed `[missing]` behind them — so what the
+split is owed is a case that leaves a product's input in error and reads the listing.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and

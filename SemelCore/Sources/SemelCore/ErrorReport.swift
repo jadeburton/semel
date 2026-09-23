@@ -32,10 +32,15 @@ public enum ErrorReport {
     public struct Entry: Equatable {
         public let label: String
         public let items: [Item]
+        /// How many nodes downstream of this one fail only because this one did. They are
+        /// folded into a count instead of a line each: one deleted header stops every node
+        /// that reads it, and the reader can act on the header alone.
+        public let downstreamCarrierCount: Int
 
-        public init(label: String, items: [Item]) {
-            self.label = label
-            self.items = items
+        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0) {
+            self.label                  = label
+            self.items                  = items
+            self.downstreamCarrierCount = downstreamCarrierCount
         }
     }
 
@@ -80,7 +85,8 @@ public enum ErrorReport {
     public static func entry(forNodeID nodeID: ObjectID,
                              ports: [OutputPort],
                              messages: Set<String>,
-                             database: DatabaseLayer) -> Entry {
+                             database: DatabaseLayer,
+                             downstreamCarrierCount: Int = 0) -> Entry {
         let items = messages.sorted().map { message -> Item in
             let portNames = ports
                 .filter { ((try? $0.dataObjectHash?.resolveAsString()) ?? "") == message }
@@ -88,7 +94,9 @@ public enum ErrorReport {
                 .sorted()
             return Item(ports: portNames, message: message)
         }
-        return Entry(label: label(forNodeID: nodeID, database: database), items: items)
+        return Entry(label: label(forNodeID: nodeID, database: database),
+                     items: items,
+                     downstreamCarrierCount: downstreamCarrierCount)
     }
 
     /// The lines for one entry: a heading, then one line per item, or an indented block
@@ -119,8 +127,22 @@ public enum ErrorReport {
             }
         }
 
+        if let carried = carriedLine(count: entry.downstreamCarrierCount) {
+            result.append("   · \(carried)")
+        }
+
         result.append("")
         return result
+    }
+
+    /// The one line a whole cascade reads as, or nil when nothing is downstream. `semel`'s
+    /// `ErrorRecordRenderer` has a twin of this, as it does of every line here.
+    public static func carriedLine(count: Int) -> String? {
+        switch count {
+        case ..<1: return nil
+        case 1:    return "and 1 node downstream carries it"
+        default:   return "and \(count) nodes downstream carry it"
+        }
     }
 
     public static func lines(forNodeID nodeID: ObjectID,
@@ -146,4 +168,127 @@ public enum ErrorReport {
 
     /// What stands in for an error whose message is empty.
     public static let emptyMessage = "an error with no message"
+
+    // MARK: - Folding a cascade onto its cause
+
+    /// Whether a message says only that something upstream of the node failed.
+    ///
+    /// A port holds its error as `NoValueReason.error(messageDataObjectHash:)` — the hash of
+    /// the interned sentence, and nothing about which `NodeError` wrote it — so the sentence
+    /// is the only signal there is. The comparison is against the one constant
+    /// `NodeError.inputValueInError` renders, the way `initializing` is matched, rather than
+    /// against a sentence spelled out twice.
+    public static func isCarriedFromAnInput(_ message: String) -> Bool {
+        message == NodeError.inputValueInErrorMessage
+    }
+
+    /// The nodes worth reporting, each with the number of nodes downstream that fail only
+    /// because it did.
+    ///
+    /// A node whose every message is carried from an input is carrying someone else's
+    /// failure, and is folded into the causes the wires reach upstream of it; a node with
+    /// anything else to say is a cause and is reported. A carrier with nothing failing
+    /// upstream is as far as the walk can go — the node that failed has been collected — so
+    /// it stands in for its own cause and is reported once, with whatever it carries folded
+    /// under it.
+    public static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
+                              database: DatabaseLayer) -> [ObjectID: Int] {
+
+        var messages: [ObjectID: Set<String>] = [:]
+        for (nodeID, ports) in byNode {
+            let reportable = Set(ports.compactMap(reportableMessage))
+            if !reportable.isEmpty {
+                messages[nodeID] = reportable
+            }
+        }
+
+        let carriers = Set(messages.filter { $0.value.allSatisfy(isCarriedFromAnInput) }.keys)
+
+        var counts: [ObjectID: Int] = [:]
+        for nodeID in messages.keys where !carriers.contains(nodeID) {
+            counts[nodeID] = 0
+        }
+
+        // One walk per carrier, memoised: a graph where a thousand nodes read one header
+        // has a thousand carriers whose answer is the same node.
+        var walked: [ObjectID: Set<ObjectID>] = [:]
+
+        func causeIDs(of nodeID: ObjectID, walking: Set<ObjectID>) -> Set<ObjectID> {
+            if let known = walked[nodeID] {
+                return known
+            }
+            guard !walking.contains(nodeID) else {
+                return []
+            }
+
+            // A report is best effort: a wire the database cannot hand over leaves the
+            // carrier standing in for its own cause, which is still one line rather than none.
+            let upstream = FatalErrors.attempt({ try database.wire.select(goingToNodeID: nodeID) })?
+                .map(\.fromNodeID) ?? []
+
+            var found: Set<ObjectID> = []
+            for source in Set(upstream) where messages[source] != nil {
+                if carriers.contains(source) {
+                    found.formUnion(causeIDs(of: source, walking: walking.union([nodeID])))
+                } else {
+                    found.insert(source)
+                }
+            }
+
+            let result = found.isEmpty ? [nodeID] : found
+            walked[nodeID] = result
+            return result
+        }
+
+        for carrier in carriers {
+            for cause in causeIDs(of: carrier, walking: []) {
+                if cause == carrier {
+                    counts[carrier] = counts[carrier] ?? 0
+                } else {
+                    counts[cause, default: 0] += 1
+                }
+            }
+        }
+
+        return counts
+    }
+
+    /// Every failing node's errors, the cascade folded onto its causes, in report order.
+    ///
+    /// This is the whole of what a report is, so that the engine's idle-time event and the
+    /// `errors` verb's reply say the same thing: they differ only in `select`, which narrows
+    /// one node's messages to the ones that caller wants — the engine to what is newly
+    /// appearing, the verb to everything. A node left with nothing is not reported, and the
+    /// node id comes back beside each entry for a caller keeping its own accounts.
+    ///
+    /// Sorted by label and then by node, so a report reads the same from run to run: the
+    /// error map is a dictionary, whose order is seeded per process, and two nodes can carry
+    /// one label — two of a type with no path do. A sort by label alone leaves those two in
+    /// the order the walk found them, `sort` being no more stable than the key it is given.
+    public static func entries(forErrorPorts errorPorts: [OutputPort],
+                               database: DatabaseLayer,
+                               select: (ObjectID, Set<String>) -> Set<String>)
+                               -> [(nodeID: ObjectID, entry: Entry)] {
+
+        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
+        let counts = causes(amongErrorPorts: byNode, database: database)
+
+        var reported: [(nodeID: ObjectID, entry: Entry)] = []
+
+        for (nodeID, carriedCount) in counts {
+            let ports    = byNode[nodeID] ?? []
+            let selected = select(nodeID, Set(ports.compactMap(reportableMessage)))
+            guard !selected.isEmpty else {
+                continue
+            }
+
+            reported.append((nodeID, entry(forNodeID: nodeID,
+                                           ports: ports,
+                                           messages: selected,
+                                           database: database,
+                                           downstreamCarrierCount: carriedCount)))
+        }
+
+        return reported.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }
+    }
 }

@@ -109,7 +109,13 @@ final class DictionaryOrderTests: XCTestCase {
         "SemelCore/Sources/SemelCore/BuildEngine.swift: byNode":
             "collects each node's distinct messages into a set",
         "SemelCore/Sources/SemelCore/BuildEngine.swift: current":
-            "collects the entries, which are reported sorted by label and then by node",
+            "carries each node's remembered messages forward, node by node",
+        "SemelCore/Sources/SemelCore/ErrorReport.swift: byNode":
+            "collects each node's distinct messages into a set",
+        "SemelCore/Sources/SemelCore/ErrorReport.swift: messages.keys":
+            "starts a count per cause; the entries are sorted by label and then by node",
+        "SemelCore/Sources/SemelCore/ErrorReport.swift: counts":
+            "builds one entry per cause, and the entries are sorted before they are returned",
         "SemelCore/Sources/SemelCore/FormulaParser.swift: templateEnv":
             "each binding expands its own marker, and no two bindings share one",
         "SemelCore/Sources/SemelCore/Nodes/TreeMerger.swift: merged.values":
@@ -130,8 +136,6 @@ final class DictionaryOrderTests: XCTestCase {
             "the discovered and extra sources are sorted by path once the two halves are joined",
         "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: { wireKey, nodeValue in":
             "the module maps are sorted by path two lines below",
-        "semel/Server/RequestHandler.swift: byNode":
-            "the entries are sorted by label and then by node before they become records",
 
         // ── a set of live objects, not a sequence anything is derived from ──────
         "semel/Server/ConnectionRegistry.swift: connections.values":

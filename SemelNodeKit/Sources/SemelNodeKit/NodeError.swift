@@ -32,6 +32,12 @@ public enum NodeError: Error, CustomStringConvertible {
     /// one string rather than two that must agree.
     public static let initializingMessage = "initializing"
 
+    /// The text of `.inputValueInError`, named for the same reason: an error reaches a port
+    /// as the hash of its interned message and nothing else, so a report that wants to tell
+    /// a node carrying someone else's failure from a node that failed itself has only this
+    /// sentence to match on. `ErrorReport` matches it.
+    public static let inputValueInErrorMessage = "an input is in error"
+
     public var description: String {
         switch self {
         case .nodeNotFound:
@@ -39,7 +45,7 @@ public enum NodeError: Error, CustomStringConvertible {
         case .onlyOneWireShouldBeConnectedToInput:
             return "an input port takes one wire, and more than one is connected"
         case .inputValueInError:
-            return "an input is in error"
+            return Self.inputValueInErrorMessage
         case .inputValuePending:
             return "an input has no value yet"
         case .other(let message):

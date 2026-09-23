@@ -28,11 +28,13 @@ public enum ProtocolVersion {
     /// say so instead. Nothing enforces it: the test that pins the number only fires when
     /// someone changes the number.
     ///
-    /// Version 3's `remove` reply carries files and folders apart, where version 2's carried
-    /// one list. Version 2 carries `debug`'s text in the frame body; version 1 carried it in
-    /// the reply's JSON. A peer speaking an older one decodes such a reply as an empty
-    /// answer and prints nothing, which is why the mismatch is worth a rejection naming both.
-    public static let current = 3
+    /// Version 4's `ErrorRecord` carries the size of the cascade under a failure, where
+    /// version 3's carried a record per node in it. Version 3's `remove` reply carries files
+    /// and folders apart, where version 2's carried one list. Version 2 carries `debug`'s
+    /// text in the frame body; version 1 carried it in the reply's JSON. A peer speaking an
+    /// older one decodes such a reply as an empty answer and prints nothing, which is why
+    /// the mismatch is worth a rejection naming both.
+    public static let current = 4
 }
 
 public struct Hello: Codable, Equatable, Sendable {
