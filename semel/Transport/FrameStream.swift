@@ -32,6 +32,12 @@ public enum TransportError: Error, CustomStringConvertible {
 
 extension TransportError: Equatable {}
 
+/// So that a transport failure reaching a client that prints `localizedDescription` is the
+/// sentence above and not a type name with a case number.
+extension TransportError: LocalizedError {
+    public var errorDescription: String? { description }
+}
+
 /// The one rule about socket paths. macOS stores a Unix-domain socket address in a fixed
 /// 104-byte field with a terminating zero, and NWConnection traps rather than fails on a
 /// longer one, so both sides check before touching Network.framework.
@@ -107,14 +113,12 @@ public final class FrameStream {
 
     // MARK: - Sending
 
-    public func send(_ frame: Frame) {
-        // Encoding can fail only on an over-limit frame, which is a bug on this side; the
-        // stream closes rather than silently dropping the frame.
-        do {
-            sendRaw(try FrameEncoder.encode(frame))
-        } catch {
-            finish(with: error)
-        }
+    /// Throws `FrameError` for a frame over one of the protocol's limits, before anything
+    /// reaches the socket. The connection is untouched by such a failure, which is what
+    /// lets the sender answer its peer — closing here would leave the peer with a dead
+    /// socket and no way to learn what was refused.
+    public func send(_ frame: Frame) throws {
+        sendRaw(try FrameEncoder.encode(frame))
     }
 
     /// Bytes as they are, for tests that need to put a malformed frame on the wire.

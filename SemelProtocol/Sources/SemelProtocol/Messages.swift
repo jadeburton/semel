@@ -163,6 +163,12 @@ public enum ErrorResponse: Codable, Equatable, Sendable {
     case nodeError(description: String)
     case roleNotOffered(role: Role)
     case malformedRequest(description: String)
+    /// The answer to this request does not fit a frame. Sent in place of that answer, so
+    /// that a reply too large is something the client can report rather than a socket that
+    /// closes under it. The candidates are the replies whose size follows the graph and
+    /// which carry it in the JSON: `errors(records:)` on a wide failure cascade, and
+    /// `list(entries:)` on a large tree.
+    case replyTooLarge(request: String, bytes: Int, limit: Int)
     /// The machine, not the request, is broken. The server answers the in-flight request
     /// with this, then exits; every client sees its connection close.
     case unrecoverable(message: String)

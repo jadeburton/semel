@@ -137,7 +137,7 @@ public struct AssetCatalogCompiler: Node {
         if result.exitCode == 0, let plist = result.outputFiles[Self.partialInfoPlistFile] {
             partialPlist = .value(try plist.intern())
         } else {
-            partialPlist = .noValue(reason: .error(messageDataObjectHash: try result.errorOutput.intern()))
+            partialPlist = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: result).intern()))
         }
 
         return .init(outputValues: [Self.output:           try result.asTreeNodeValue(folder: Self.outputFolder),
@@ -145,6 +145,14 @@ public struct AssetCatalogCompiler: Node {
                                     Self.infoLog:          .value(try result.infoOutput.intern()),
                                     Self.errorLog:         .value(try result.errorOutput.intern())],
                      inputWireSpecs: specs)
+    }
+
+    /// What a failed run says: the tool's own failure message, naming actool, or, for a run
+    /// that exits cleanly and writes no partial plist, that.
+    static func failureMessage(for result: SimplifiedToolExecuteResult) -> String {
+        result.exitCode == 0
+            ? "actool exited with status 0 and wrote no '\(partialInfoPlistFile)'"
+            : result.failureMessage(tool: "actool")
     }
 
     private static func pending(inputWireSpecs: [String: [String: String]]) -> ProcessOutput {

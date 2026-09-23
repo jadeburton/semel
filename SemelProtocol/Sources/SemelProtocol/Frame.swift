@@ -79,3 +79,10 @@ public enum FrameError: Error, Equatable, CustomStringConvertible, Sendable {
         }
     }
 }
+
+/// A framing failure can reach a user, through a client that prints `localizedDescription`
+/// — which, for a Swift error that does not conform, is a type name and a case number
+/// rather than the sentence above.
+extension FrameError: LocalizedError {
+    public var errorDescription: String? { description }
+}

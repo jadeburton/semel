@@ -51,7 +51,7 @@ final class FilePluginTests: XCTestCase {
 
         XCTAssertEqual(connection.daemonRequests, [.beginBatch, .pushFile(path: "a.c", mode: 0o644), .endBatch])
         XCTAssertEqual(connection.requests[1].body, Data("int main() {}".utf8))
-        XCTAssertEqual(context.messages, ["Push file: a.c "])
+        XCTAssertEqual(context.messages, ["Push file: a.c"])
     }
 
     func test_pushOfAFolderSendsTheFolderThenItsFiles() throws {
@@ -66,6 +66,24 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(connection.daemonRequests, [.beginBatch, .pushFolder(path: "src"),
                                                    .pushFile(path: "src/a.c", mode: 0o644), .endBatch])
         XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c [no change]"])
+    }
+
+    /// Past the point where a wall of paths is worth reading, the push reports a count
+    /// instead — and still says how much of it was already there.
+    func test_aLongPushReportsACountRatherThanEveryPath() throws {
+        for index in 0..<21 {
+            try write("src/file\(index).c", "\(index)")
+        }
+        connection.reply(.ok)
+        connection.reply(.ok)
+        for index in 0..<21 {
+            connection.reply(.pushFile(didChange: index > 1))
+        }
+        connection.reply(.ok)
+
+        try run("push", ["src"])
+
+        XCTAssertEqual(context.messages, ["Pushed 21 files and 1 folder, 2 unchanged"])
     }
 
     func test_pushOfAnAbsolutePathIsRefusedWithoutSendingAnything() throws {
@@ -84,22 +102,76 @@ final class FilePluginTests: XCTestCase {
 
     // MARK: - rm
 
-    func test_rmSendsThePatternRelativeToTheCurrentDirectory() throws {
+    func test_rmSendsThePatternRelativeToTheCurrentDirectoryInsideOneBatch() throws {
         context.currentDirectoryPath = Path("src")
-        connection.reply(.remove(removedPaths: ["src/a.c"]))
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: ["src/a.c"], removedFolders: []))
+        connection.reply(.ok)
 
-        try run("rm", ["*.c"])
+        try run("rm", ["a.c"])
 
-        XCTAssertEqual(connection.daemonRequests, [.remove(pattern: "src/*.c")])
-        XCTAssertTrue(context.allOutput.isEmpty)
+        XCTAssertEqual(connection.daemonRequests, [.beginBatch, .remove(pattern: "src/a.c"), .endBatch])
+        XCTAssertEqual(context.messages, ["Removed file: src/a.c"])
+    }
+
+    func test_rmNamesWhatItRemoved() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: ["src/a.c"], removedFolders: ["src"]))
+        connection.reply(.ok)
+
+        try run("rm", ["src"])
+
+        XCTAssertEqual(context.messages, ["Removed folder: src", "Removed file: src/a.c"])
+    }
+
+    /// A long removal is a count, with the folders still named: they are what the user
+    /// meant, and the files are what would fill the screen.
+    func test_aLongRmReportsACountAndNamesTheFolders() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: (0..<30).map { "pkg/file\($0).c" },
+                                 removedFolders: ["pkg", "pkg/sub"]))
+        connection.reply(.ok)
+
+        try run("rm", ["pkg"])
+
+        XCTAssertEqual(context.messages, ["Removed 30 files and 2 folders: pkg, pkg/sub"])
+    }
+
+    /// `*` matches within one segment, so `*.*` takes the dotted files and leaves the
+    /// folders. Naming what went is what says so: files, and no folder.
+    func test_aWildcardThatTookNoFolderNamesOnlyFiles() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: ["a.c", "b.c"], removedFolders: []))
+        connection.reply(.ok)
+
+        try run("rm", ["*.*"])
+
+        XCTAssertEqual(context.messages, ["Removed file: a.c", "Removed file: b.c"])
+    }
+
+    /// The folder list is capped like the file list: a pattern can match folders by the
+    /// hundred, and the count exists to keep them off the screen.
+    func test_aLongRmCapsTheFolderListItNames() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: [], removedFolders: (0..<25).map { "pkg\($0)" }))
+        connection.reply(.ok)
+
+        try run("rm", ["pkg*"])
+
+        XCTAssertEqual(context.messages, ["Removed 25 folders: "
+                                          + (0..<20).map { "pkg\($0)" }.joined(separator: ", ")
+                                          + ", and 5 more"])
     }
 
     func test_rmOfNothingIsAnError() throws {
-        connection.reply(.remove(removedPaths: []))
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: [], removedFolders: []))
+        connection.reply(.ok)
 
         try run("rm", ["nope"])
 
         XCTAssertEqual(context.errors, ["rm: nope: no such file or directory"])
+        XCTAssertTrue(context.messages.isEmpty)
     }
 
     // MARK: - cp

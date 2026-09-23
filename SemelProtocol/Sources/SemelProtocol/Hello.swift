@@ -21,7 +21,18 @@ public enum Role: String, Codable, Equatable, Sendable {
 }
 
 public enum ProtocolVersion {
-    public static let current = 1
+    /// **The rule: any change to the message set changes this number.** Not only a change to
+    /// the framing — adding, removing or reshaping a case of `DaemonRequest`,
+    /// `DaemonResponse`, `DaemonEvent` or `ErrorResponse` is what a peer built against the
+    /// other side decodes wrongly, and this number is the one thing that lets the handshake
+    /// say so instead. Nothing enforces it: the test that pins the number only fires when
+    /// someone changes the number.
+    ///
+    /// Version 3's `remove` reply carries files and folders apart, where version 2's carried
+    /// one list. Version 2 carries `debug`'s text in the frame body; version 1 carried it in
+    /// the reply's JSON. A peer speaking an older one decodes such a reply as an empty
+    /// answer and prints nothing, which is why the mismatch is worth a rejection naming both.
+    public static let current = 3
 }
 
 public struct Hello: Codable, Equatable, Sendable {

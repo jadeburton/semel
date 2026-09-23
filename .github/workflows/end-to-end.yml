@@ -18,7 +18,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.3.app
+        run: |
+          ls /Applications | grep -i xcode
+          sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcrun simctl list runtimes | grep -i ios
 
       - name: Restore the clone cache
         uses: actions/cache@v4

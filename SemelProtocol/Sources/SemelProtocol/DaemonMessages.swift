@@ -135,12 +135,20 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case ok
     case list(entries: [ListEntry])
     case pushFile(didChange: Bool)
-    case remove(removedPaths: [String])
+    /// What the removal took, split by kind: a client reports the two differently, and a
+    /// pattern that took every file of a folder and left the folder standing is a correct
+    /// outcome that reads as a no-op unless it is said.
+    case remove(removedFiles: [String], removedFolders: [String])
     /// The file's bytes travel in the frame body.
     case fetch(mode: UInt16)
     case errors(records: [ErrorRecord])
     case tools(namespaces: [ToolNamespaceRecord])
-    case debug(text: String)
+    /// The description of the graph travels in the frame body, as UTF-8. A few hundred
+    /// nodes describe themselves in more than the megabyte the JSON section allows, and
+    /// that cap is not a number to raise: a declared JSON length is checked before the
+    /// bytes are read, so it bounds what a header alone can ask this process to allocate.
+    /// The body's own limit is three orders of magnitude higher for exactly this traffic.
+    case debug
 }
 
 // MARK: - Events

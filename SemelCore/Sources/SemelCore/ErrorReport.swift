@@ -134,8 +134,16 @@ public enum ErrorReport {
     ///
     /// `initializing` is the placeholder every node holds between being created and first
     /// processing, so reporting it would announce an error for every node in a fresh graph.
+    /// An error with no text at all is still an error, and the one kind a reader cannot
+    /// diagnose, so it is reported as exactly that rather than dropped.
     public static func reportableMessage(of port: OutputPort) -> String? {
         let message = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-        return message.isEmpty || message == "initializing" ? nil : message
+        guard message != NodeError.initializingMessage else {
+            return nil
+        }
+        return message.isEmpty ? Self.emptyMessage : message
     }
+
+    /// What stands in for an error whose message is empty.
+    public static let emptyMessage = "an error with no message"
 }

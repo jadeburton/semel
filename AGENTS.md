@@ -37,6 +37,13 @@ in scope`, naming the registration rather than the missing plan entry; removing 
 with `missing inputs: …/X.swift` while the previous binary stays linked with the type it no
 longer has. `rm .build/debug.yaml` before the next `swift build` fixes both (B-84).
 
+A second staleness, with a bigger hammer: a `public static let` used as a *default argument*
+(`ProtocolVersion.current` in `Hello.init`) is compiled into every caller's object file, so
+after changing one, modules built earlier keep the old value and the linker may pick either —
+which surfaced as `semel` and `semelserv` disagreeing about the protocol version inside one
+test binary. `rm .build/debug.yaml` does not clear it; `rm -rf .build/arm64-apple-macosx` does
+(B-84).
+
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
 you find yourself wanting to import `SemelCore` from a toolchain package, something

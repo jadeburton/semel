@@ -45,8 +45,11 @@ final class MessageJSONTests: XCTestCase {
         }
     }
 
-    func test_currentProtocolVersionIsOne() {
-        XCTAssertEqual(ProtocolVersion.current, 1)
+    /// Pinned so that a change to the message set is a change to this number too: the
+    /// version is what lets a mismatched pair say so instead of misreading each other.
+    func test_currentProtocolVersionIsThree() {
+        XCTAssertEqual(ProtocolVersion.current, 3)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 3, "a hello sent with no version named speaks the current one")
     }
 
     // MARK: - Daemon requests
@@ -114,16 +117,22 @@ final class MessageJSONTests: XCTestCase {
             .ok,
             .list(entries: [ListEntry(path: "a", kind: .file, size: 1, mode: 0o755, status: .pending)]),
             .pushFile(didChange: true),
-            .remove(removedPaths: ["a", "b"]),
+            .remove(removedFiles: ["a", "b"], removedFolders: ["src"]),
             .fetch(mode: 0o644),
             .errors(records: [record]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
-            .debug(text: "⬢ Folder #1"),
+            .debug,
         ]
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
         }
+    }
+
+    /// The graph's description is the reply's *body*, so the reply itself carries nothing
+    /// and stays far under the cap on a frame's JSON however large the graph is.
+    func test_encodesTheDebugReplyWithoutItsText() throws {
+        XCTAssertEqual(try json(Response.daemon(.debug)), #"{"daemon":{"debug":{}}}"#)
     }
 
     func test_roundTripsEveryErrorResponse() throws {
@@ -133,6 +142,7 @@ final class MessageJSONTests: XCTestCase {
             .nodeError(description: "wire missing"),
             .roleNotOffered(role: .runner),
             .malformedRequest(description: "unknown case"),
+            .replyTooLarge(request: "debug", bytes: 3_000_000, limit: 1_048_576),
             .unrecoverable(message: "object store is read-only"),
         ]
         for error in errors {
@@ -200,7 +210,8 @@ final class MessageJSONTests: XCTestCase {
         let data = Data(#"{"cache":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
-            XCTAssertTrue(String(describing: error).contains(#"["cache"]"#), String(describing: error))
+            let message = Self.decodingMessage(of: error)
+            XCTAssertTrue(message.contains(#"["cache"]"#), message)
         }
     }
 
@@ -210,7 +221,26 @@ final class MessageJSONTests: XCTestCase {
         let data = Data(#"{"daemon":{"reset":{}},"cache":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
-            XCTAssertTrue(String(describing: error).contains(#"["cache", "daemon"]"#), String(describing: error))
+            let message = Self.decodingMessage(of: error)
+            XCTAssertTrue(message.contains(#"["cache", "daemon"]"#), message)
+        }
+    }
+
+    /// The decoder's own sentence. `String(describing:)` of a `DecodingError` quotes that
+    /// sentence, and whether the quotes inside it are escaped differs between Swift
+    /// toolchains, so a test that reads the sentence goes to the context it is stored in.
+    private static func decodingMessage(of error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return String(describing: error)
+        }
+        switch decodingError {
+        case .dataCorrupted(let context),
+             .keyNotFound(_, let context),
+             .typeMismatch(_, let context),
+             .valueNotFound(_, let context):
+            return context.debugDescription
+        @unknown default:
+            return String(describing: error)
         }
     }
 

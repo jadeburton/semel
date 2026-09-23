@@ -284,6 +284,26 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertNil(try settings(sdk: "xros")["INFOPLIST_KEY_UILaunchScreen_Generation"])
     }
 
+    /// Two conditions on one key can both match the SDK being built for. Which of them
+    /// wins must not depend on `Dictionary`'s iteration order, which is seeded per
+    /// process: the condition sorting last takes the key, the same way on every run, and
+    /// that is the more specific one for the `iphone*` / `iphonesimulator*` pair projects
+    /// actually write.
+    func test_twoConditionsMatchingOneKeyResolveTheSameWayOnEveryRun() throws {
+        var extra = ["TARGET_NAME": "IceCubesApp"]
+        for index in 1...6 {
+            extra["PAIR_\(index)[sdk=iphone*]"] = "broad"
+            extra["PAIR_\(index)[sdk=iphonesimulator*]"] = "specific"
+        }
+
+        let settings = try XcodeBuildSettings.resolve(project: try project(), target: try app(), configuration: "Debug",
+                                                      sdk: "iphonesimulator", xcconfig: { _ in nil }, extra: extra)
+
+        for index in 1...6 {
+            XCTAssertEqual(settings["PAIR_\(index)"], "specific")
+        }
+    }
+
     func test_anUnknownConfigurationNamesTheOnesThereAre() {
         XCTAssertThrowsError(try settings(configuration: "Beta")) { error in
             XCTAssertTrue("\(error)".contains("Debug") && "\(error)".contains("Release"), "\(error)")

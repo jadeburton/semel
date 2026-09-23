@@ -402,7 +402,13 @@ struct TargetIdentity {
         }
         keys["UIDeviceFamily"] = targetDevices.split(separator: ",").compactMap { $0 == "iphone" ? 1 : $0 == "ipad" ? 2 : nil }
 
-        for (setting, value) in settings.values where setting.hasPrefix("INFOPLIST_KEY_") {
+        // Sorted: two settings can name one plist key — `UILaunchScreen_Generation` and a
+        // literal `UILaunchScreen`, `UISupportedInterfaceOrientations_iPad` and
+        // `UISupportedInterfaceOrientations~ipad` — and the last one written wins. A
+        // Dictionary's iteration order is seeded per process, so an unsorted walk would
+        // put a different value in the emitted formula from one run to the next (B-04).
+        for (setting, value) in settings.values.sorted(by: { $0.key < $1.key })
+        where setting.hasPrefix("INFOPLIST_KEY_") {
             let key = String(setting.dropFirst("INFOPLIST_KEY_".count))
             if key.hasSuffix("_Generation") {
                 // `UILaunchScreen_Generation = YES` stands for an empty `UILaunchScreen`

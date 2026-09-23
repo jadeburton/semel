@@ -54,6 +54,33 @@ final class EnginePluginTests: XCTestCase {
         ]])
     }
 
+    /// A missing-configuration message spans lines and carries the config lines the reader
+    /// has to paste, so it prints as an indented block under the ports rather than folded
+    /// onto one line. This is the path a node's error takes once it arrives as the words
+    /// the node wrote instead of as the debug form of the case carrying them.
+    func test_errorsPrintsAMultiLineMessageAsAnIndentedBlock() throws {
+        let message = """
+            Missing configuration. Add these to a semel.config in the input file system:
+
+            clang.linker.target=…
+            """
+        connection.reply(.errors(records: [
+            ErrorRecord(label: "ClangLinker  'input:/semel.fmla'",
+                        entries: [ErrorEntry(ports: ["output"], message: message)]),
+        ]))
+
+        try run("errors")
+
+        XCTAssertEqual(context.messages, [
+            "1 error across 1 node:\n",
+            "❌ ClangLinker  'input:/semel.fmla'",
+            "   · output:",
+            "     Missing configuration. Add these to a semel.config in the input file system:",
+            "     clang.linker.target=…",
+            "",
+        ])
+    }
+
     func test_waitSendsWaitAndReportsSettled() throws {
         try run("wait")
 
@@ -82,7 +109,7 @@ final class EnginePluginTests: XCTestCase {
     }
 
     func test_debugPrintsTheTextItGetsBack() throws {
-        connection.reply(.debug(text: "BUILD GRAPH STATE (0 nodes)"))
+        connection.reply(.debug, body: Data("BUILD GRAPH STATE (0 nodes)".utf8))
 
         try run("debug")
 
@@ -116,6 +143,20 @@ final class EnginePluginTests: XCTestCase {
 
         XCTAssertThrowsError(try run("nudge")) { error in
             XCTAssertEqual((error as? ServerError)?.description, "wire missing")
+        }
+    }
+
+    /// B-94. A reply the server cannot frame reached the prompt as a closed socket and
+    /// "error 2". The user is told which command was refused, how large its answer was and
+    /// what the limit is.
+    func test_aRefusedReplySaysWhatWasTooLargeAndHowLarge() {
+        connection.responses.append((.error(.replyTooLarge(request: "debug", bytes: 3_000_000, limit: 1_048_576)), nil))
+
+        XCTAssertThrowsError(try run("debug")) { error in
+            let message = (error as? ServerError)?.description ?? "\(error)"
+            XCTAssertTrue(message.contains("`debug`"),   message)
+            XCTAssertTrue(message.contains("3000000"),   message)
+            XCTAssertTrue(message.contains("1048576"),   message)
         }
     }
 }

@@ -12,7 +12,10 @@ import Network
 import SemelProtocol
 import SemelTransport
 
-public enum ConnectionError: Error, Equatable, CustomStringConvertible {
+/// `LocalizedError` as well as `CustomStringConvertible`: the interpreter prints
+/// `localizedDescription`, and a Swift error that does not conform reaches the prompt as
+/// "the operation couldn't be completed", a type name and a case number.
+public enum ConnectionError: Error, Equatable, CustomStringConvertible, LocalizedError {
     case unavailable(path: String, underlying: String)
     case pathTooLong(path: String, length: Int, limit: Int)
     case closed
@@ -25,11 +28,14 @@ public enum ConnectionError: Error, Equatable, CustomStringConvertible {
         case .pathTooLong(let path, let length, let limit):
             return "socket path is \(length) bytes, over the \(limit)-byte limit: \(path)"
         case .closed:
-            return "the connection to the server closed"
+            return "the connection to the server closed before it answered; the server has stopped, "
+                 + "or it could not frame the reply — check that `semelserv` is still running and what it last printed"
         case .unexpectedFrame:
             return "the server sent a frame this client cannot place"
         }
     }
+
+    public var errorDescription: String? { description }
 }
 
 public final class SocketConnection: SemelConnection {
@@ -132,7 +138,14 @@ public final class SocketConnection: SemelConnection {
             return nextCorrelationID
         }
 
-        stream.send(Frame(kind: .request, correlationID: correlationID, json: json, body: body ?? Data()))
+        // A request too large to frame leaves no waiter behind for a reply that will never
+        // come, the same way an unencodable request does not.
+        do {
+            try stream.send(Frame(kind: .request, correlationID: correlationID, json: json, body: body ?? Data()))
+        } catch {
+            lock.withLock { _ = waiters.removeValue(forKey: correlationID) }
+            throw error
+        }
         waiter.semaphore.wait()
 
         guard let reply = waiter.reply else {

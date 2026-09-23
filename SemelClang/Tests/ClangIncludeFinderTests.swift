@@ -1,6 +1,7 @@
 @testable import SemelClang
 import XCTest
 import SemelNodeKit
+import SemelDatabaseModels
 
 final class ClangIncludeFinderTests: SemelClangTestCase {
 
@@ -131,5 +132,33 @@ final class ClangIncludeFinderTests: SemelClangTestCase {
             sourceFileContent: "int main() { return 0; }"
         )
         XCTAssertTrue(result.isEmpty)
+    }
+
+    // MARK: - Aggregation order
+
+    /// Several sources on the one wire: the aggregate is their include lists in wire-key
+    /// order, whichever order the input dictionary offers them in. The aggregate is the
+    /// node's output value, so an order that differed from run to run would give the same
+    /// set of sources a different hash and every consumer of it a cache miss.
+    func test_aggregatesTheSourceFilesInWireKeyOrder() throws {
+        let names = ["src/e.c", "src/b.c", "src/f.c", "src/a.c", "src/d.c", "src/c.c"]
+        var wires: [String: NodeValue] = [:]
+        for name in names {
+            wires[name] = .value(try "#include \"\(Self.headerName(forSource: name))\"\n".intern())
+        }
+
+        let finder = try ClangIncludeFinder(thisNode: NodeRecord(id: 1, kind: ClangIncludeFinder.kind))
+        let inputs = try ClangIncludeFinder.ClangIncludeFinderInputs(
+            input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires]))
+        let outputs = try finder.process(inputs: inputs)
+
+        let expected = names.sorted().map { "src/" + Self.headerName(forSource: $0) }.joined()
+        XCTAssertEqual(try outputs.includePathList.expectValue().resolveAsString(), expected)
+    }
+
+    /// `src/b.c` includes `b.h`: one header per source, named after it, so the aggregate
+    /// says which source contributed which part of it.
+    private static func headerName(forSource path: String) -> String {
+        String(path.dropLast(2).suffix(1)) + ".h"
     }
 }

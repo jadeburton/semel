@@ -24,11 +24,14 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - debug
 
+    /// The graph's description arrives as the reply's body rather than inside its JSON:
+    /// the text runs to megabytes on a real project, and the JSON section is capped.
     private func handleDebug(context: any CommandContext) throws {
-        guard case .debug(let text) = try context.request(.debug).0 else {
+        let (response, body) = try context.request(.debug)
+        guard case .debug = response else {
             return
         }
-        context.outputMessage(text)
+        context.outputMessage(String(decoding: body ?? Data(), as: UTF8.self))
     }
 
     // MARK: - wait

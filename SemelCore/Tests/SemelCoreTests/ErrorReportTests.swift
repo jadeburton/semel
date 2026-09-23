@@ -137,6 +137,87 @@ final class ErrorReportTests: SemelCoreTestCase {
         XCTAssertTrue(message.contains("reset"), message)
     }
 
+    // MARK: - A thrown error's own words
+
+    /// What a node throws reaches the report as the sentence the node wrote, not as the
+    /// enum case's debug form. The debug form puts the whole message on one line, inside
+    /// `other(message: "…")`, with every newline escaped — unreadable, and impossible to
+    /// paste the config lines out of.
+    func test_aThrownNodeErrorIsReportedAsItsMessage() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+        let written = "Missing configuration. Add these to a semel.config:\nclang.linker.target=…"
+
+        let output = node.buildErrorOutput(withError: NodeError.other(message: written))
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(), written)
+    }
+
+    /// A case with no message of its own still has to read as a sentence, for the same
+    /// reason: `inputValueInError` is the enum's spelling, not an explanation.
+    func test_aNodeErrorWithoutAMessageIsReportedAsASentence() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+
+        let output = node.buildErrorOutput(withError: NodeError.inputValueInError)
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(), "an input is in error")
+    }
+
+    /// A tool that cannot be found on this machine is a node failure like any other, and
+    /// reaches the report by the same route.
+    func test_aMissingToolIsReportedAsASentenceNamingThePath() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+
+        let output = node.buildErrorOutput(
+            withError: LocalFileSystemToolError.toolNotFound(path: "/usr/bin/nonesuch"))
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(),
+                       "no tool exists at '/usr/bin/nonesuch'")
+    }
+
+    /// A mistake in a formula the user wrote by hand is the most likely error of all to be
+    /// read, and `LocalizedError` alone does not reach it: interpolation asks for
+    /// `CustomStringConvertible`, and `errorDescription` answers only `localizedDescription`.
+    /// The sentence the parser builds has to be the sentence the port carries.
+    ///
+    /// A token the lexer rejects is wrapped in a `FormulaLexerError`, which carries the
+    /// source location and a description of its own. The errors raised while evaluating a
+    /// parsed formula — an unknown name among them — are thrown bare, so they are the ones
+    /// that reach the port as the type's own spelling.
+    func test_aFormulaErrorIsReportedAsTheParsersSentence() throws {
+        let builder = try ProjectBuilder(thisNode: NodeRecord(id: 1, kind: ProjectBuilder.kind))
+        let broken = """
+            product 'MyProduct' =
+                Configuration(moduleName: noSuchName).output
+            """
+        let input = ProcessInput(inputValues: [
+            ProjectBuilder.projectFileInputPort:  ["input:/proj/build.fmla": .value(try broken.intern())],
+            ProjectBuilder.productInputPort:      [:],
+            ProjectBuilder.foldersInputPort:      [:],
+            ProjectBuilder.graphImportsInputPort: [:],
+        ])
+
+        do {
+            _ = try builder.process(input: input)
+            return XCTFail("expected the formula to fail to parse")
+        } catch {
+            let output = builder.buildErrorOutput(withError: error)
+            guard case .noValue(.error(let messageHash)) =
+                    output.outputValues[ProjectBuilder.statusOutputPort] else {
+                return XCTFail("expected an error value")
+            }
+            XCTAssertEqual(try messageHash.resolveAsString(), "Undefined identifier 'noSuchName'")
+        }
+    }
+
     // MARK: - What counts as reportable
 
     /// Every node holds "initializing" between being created and first processing, so
@@ -145,7 +226,7 @@ final class ErrorReportTests: SemelCoreTestCase {
         let nodeID = try makeNode(kind: Configuration.kind)
 
         XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, "output", "initializing")))
-        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, "output", "")))
+        XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, "output", "")), ErrorReport.emptyMessage)
         XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, "output", "real")), "real")
     }
 }

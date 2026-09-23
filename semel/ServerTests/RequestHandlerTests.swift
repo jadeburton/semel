@@ -88,12 +88,13 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(.wait).0, .ok)
     }
 
-    func test_debugReturnsTheGraphDescription() throws {
-        let (response, _) = try daemon(.debug)
+    /// The description is the reply's body, not a field in its JSON: it runs to megabytes
+    /// on a real graph, and the JSON section of a frame is capped at one.
+    func test_debugReturnsTheGraphDescriptionAsTheReplyBody() throws {
+        let (response, body) = try daemon(.debug)
 
-        guard case .debug(let text) = response else {
-            return XCTFail("expected debug text, got \(response)")
-        }
+        XCTAssertEqual(response, .debug)
+        let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
         XCTAssertTrue(text.hasPrefix("BUILD GRAPH STATE ("), text)
     }
 
@@ -119,6 +120,26 @@ final class RequestHandlerTests: RequestHandlerTestCase {
             ErrorRecord(label: "StaticFile  'input:/a.c'", entries: [ErrorEntry(ports: ["output"], message: "first")]),
             ErrorRecord(label: "StaticFile  'input:/b.c'", entries: [ErrorEntry(ports: ["output"], message: "second")]),
         ]))
+    }
+
+    /// Six nodes of one type, so every label ties: the reply orders them by node, and the
+    /// idle-time event lists them identically, which is what the two orderings promise
+    /// each other.
+    func test_errorsWithTiedLabelsAreOrderedByNodeInBothTheReplyAndTheEvent() throws {
+        let messages = (1...6).map { "boom \($0)" }
+        for message in messages {
+            try makeFailingMerger(message: message)
+        }
+
+        let (response, _) = try daemon(.errors)
+        engine.reportIdleTimeErrors()
+
+        guard case .errors(let records) = response else {
+            return XCTFail("expected errors, got \(response)")
+        }
+        XCTAssertEqual(records.map { $0.entries.first?.message }, messages,
+                       "the nodes were created in message order, so node order is message order")
+        XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
     }
 
     func test_errorsIsEmptyWhenNothingFailed() throws {
@@ -150,6 +171,21 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let nodeRecord = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
                                                    properties: ["path": path], graphSpec: nil)
         try nodeRecord.writeToOutputPort("output",
+                                         value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+    }
+
+    /// A node with no path is labelled by its type alone, so several of one type share a
+    /// label. Ordering them by label alone leaves them in the order the error map was
+    /// walked in, and that order is seeded per process — the reply would list them one way
+    /// on Monday and another on Tuesday, and the event could disagree with the reply in
+    /// the same run. The node breaks the tie, in both places.
+    private func makeFailingMerger(message: String) throws {
+        // A property of its own, because two nodes of one type with the same properties are
+        // one node to the graph; `path` is deliberately not it, since that is what a label
+        // would be made of.
+        let nodeRecord = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
+                                                   properties: ["tag": message], graphSpec: nil)
+        try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
     }
 }

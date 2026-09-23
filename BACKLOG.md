@@ -16,28 +16,20 @@ the toolchain, SDK and system libraries, reset between builds. The container dig
 input?" stops being a question only an audit can answer. Also the natural home for the
 Remote Runner role (B-30).
 
-**B-04** `open` — **Prevent non-deterministic Dictionary iteration.**
-The known instance is fixed: `SwiftFormulaConverter.generateFormula` walked
-`externalManifests` in dictionary order, so two vendored packages vending the same product
-or target name resolved differently per process (reproduced at 5 failures in 12 runs); it
-now walks them sorted by folder, lexically first wins. A second known instance is fixed:
-`XcodeBuildSettings.resolve`'s eight-round fixed-point loop substituted `$(NAME)`
-references in dictionary order, so `PRODUCT_MODULE_NAME` could see `PRODUCT_NAME`
-half-expanded and permanently mangle the module name; it now resolves each key by first
-resolving what it names, which makes the result independent of iteration order. The
-two-process byte-for-byte diff
-is built: `SemelEndToEndTests` builds every fixture and every pinned external project cold
-twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` requires the
-export trees to match, static archives included. What remains is a
-source-scanning test as a backstop. A
-wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
-dictionaries here are accumulated into, which is safe. Two sites worth a look for the
-source scan:
-`ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
-dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
-command line. `Node.applySpecs` walked its wire specs in dictionary order, which decided
-*which* of two wires a port pair could not hold was the one kept — the identity of a
-dropped product varied per process; it is sorted, and the pair holds both wires.
+**B-100** `open` — **What the dictionary-order scan does not see.**
+`DictionaryOrderTests` gates every `for … in <dictionary>`, `keys`/`values` walk and
+two-binding closure over a dictionary in the scanned sources against an allowlist with a
+reason per site. Outside its sight: `Array(someSet)` and any other set-to-sequence
+conversion, which has the same per-process seed problem; a subject sorted two or more
+lines away from its walk (the scan consults the adjacent line only), and the converse, an
+adjacent `.sorted` that sorts some other receiver, which the scan takes as covering the
+walk; and a dictionary passed to a function that walks it elsewhere. Also found by the audit and left alone:
+`ClangIncludeFinder` appends each source's include list to its output with no separator,
+so two sources on one port would run their last and first paths together — unreachable
+through the generated spec, which gives every finder one source, but a hand-written
+formula could reach it. To do: extend the scan to set conversions, or decide they are
+covered by the two-process end-to-end diff and say so here; put a separator (or a
+per-source structure) in the finder's output and a test with two sources on one port.
 
 **B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
 Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,
@@ -235,14 +227,6 @@ home-wide reset, per-project scoping may not be needed at all; with an expensive
 
 ## Performance
 
-**B-53** `open` — **`rm` of a large folder is still quadratic.**
-B-25 made a push mark the folder dirty and rebuild its manifest once (3000 files: 45 s to
-5 s), but `onChildDeleted` still rebuilds at once, because the folder's self-delete check
-follows it — so a large `rm` rebuilds the parent manifest per deleted child, the way push
-used to. Same fix shape if it ever matters: mark dirty, and move the self-delete check to
-the flush. Also: `rm` opens no batch the way `push` does (`FilePlugin.handleRemove` versus
-`handlePush`), so the engine drains repeatedly while the walk is still unpinning.
-
 **B-74** `open` — **Nothing tests a large `rm`, and four things go wrong in one.**
 Removing a prepared IceCubesApp from the input file system (2026-09-20) showed: the folder
 and the products under `output:` listed as `[missing]` until settle, `debug` failing on a
@@ -251,9 +235,9 @@ suites exercises `rm` through the CLI, the largest deletion test removes a folde
 files, and the end-to-end harness never removes anything after a build. Two tests are
 owed, and they are the acceptance for the fixes:
 
-1. A `SemelCore` scale test beside `FolderManifestRebuildTests`: push a few thousand files,
-   `rm` the folder, assert the cost grows linearly and the folder node is gone after the
-   collector runs. B-53's verification.
+1. `FolderRemovalScaleTests` is that `SemelCore` scale test: it pushes a few thousand
+   files, removes them, and holds the cost to linear growth and the folder node to gone
+   once the collector has run.
 2. A `SemelEndToEndTests` step, or a `SemelCLITests` case over `InProcessConnection`: after
    a build, `rm` the build folder, `wait`, then `ls input:` and `ls output:` show nothing
    under it, no `[missing]` entry, and the idle error report is empty.
@@ -268,24 +252,8 @@ frame and the client sees a closed connection. Deleting one shared header produc
 error entries at idle, 494 of them the identical unlabelled `ClangCompiler … inputValueInError`,
 because only `.pending` blocks processing and errors propagate through every consumer;
 deleting the whole project produced none, since everything was collected. The fixes are
-separate items: the `debug` tree (B-94), the idle error report collapsing a cascade to its
-cause, `[missing]` split into its states, the missing batch around `rm` (B-53), and
-`ProjectBuilder`'s mid-flight printer (B-50).
-
-**B-94** `open` — **`debug` on a few hundred nodes burns a minute of one core, then closes the connection.**
-`d` against a prepared IceCubesApp graph runs `semelserv` at 100 % of one core for about a
-minute and ends with `The operation couldn't be completed. (SemelCLI.ConnectionError error
-2.)`, which is `ConnectionError.closed`: the server refused the reply frame. Two causes, both
-recorded under B-74's reproduction: the dependency tree keeps its visited set per node, so a
-`StaticFile` shared by a thousand consumers is visited a thousand times and the walk
-enumerates paths rather than nodes; and the rendered text rides inside the frame JSON under
-the 1 MiB cap, so past about 600 nodes the frame is rejected and the client sees a closed
-socket. The single busy core is not a missing parallelism: the walk is exponential in the
-sharing, and a global visited set makes it linear, after which one core is plenty. Fix: one
-visited set for the whole walk, the text streamed as the frame body rather than embedded in
-its JSON (or paged), and a client message for a refused frame that says what was too large
-instead of "error 2". Acceptance: `debug` on the 1,019-node C fixture from B-74 returns in
-well under a second.
+separate items: the idle error report collapsing a cascade to its cause, `[missing]` split
+into its states, and `ProjectBuilder`'s mid-flight printer (B-50). The `debug` tree is fixed.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
@@ -340,30 +308,6 @@ subscription is the transport it grows into. Open, and to decide before building
 the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
 verb and left with a key).
-
-**B-96** `open` — **`rm` says nothing about what it removed.**
-`FilePlugin.handleRemove` prints only when the wildcard matched nothing; on any match it is
-silent, so `rm *.*` in a folder of packages looks like a no-op when it removed the dotted
-files and left the folders — `*` matches within one segment and `*.*` needs a literal dot,
-as in a shell, so that outcome is correct and unannounced. The server already returns the
-removed paths (`RequestHandler+Files.remove`). Print them, or a count with the folders
-named; and when a pattern matched files but no folder, say so. `push` has the same silence
-on success (`handlePush` prints only its errors) and takes the same fix.
-
-**B-97** `open` — **A node's error message is shown in its debug form, with `\n` and quotes.**
-A missing configuration prints as
-`other(message: "Missing configuration. Add these to a semel.config …:\n\nclang.linker.target=…\n…")`,
-one line, escaped newlines, the whole thing in quotes, and the user cannot paste it. Cause:
-`Node.swift` interns a thrown error as `"\(error)"` (lines 239 and 399), and `NodeError` is
-not `CustomStringConvertible`, so `.other(message:)` renders as its case description. The
-client's `ErrorRecordRenderer` already prints a multi-line message as an indented block;
-it never gets the chance. Fix: give `NodeError` a `description` that is the message for
-`.other` and a sentence for each other case, and intern that. Then the configuration message
-itself: the `=…` are the template's placeholders, not truncation, and `tools clang.linker`
-prints the four `toolDescriptor.*` keys with the installed tool's real values as a
-paste-ready block (`ToolNamespaceRenderer`), so the message should name that command for
-those and list placeholders only for the keys that need the user's choice, `target` among
-them.
 
 **B-98** `open` — **A tool's own error is repeated without the setting that caused it.**
 `ClangPreprocessor` failing with clang's `error: unknown target triple '…'` shows the user
@@ -445,6 +389,20 @@ arguably more correct, since a push *is* an event that should run the node. But
 `descriptor.hasInputs` is now the single answer to "does the graph process this node"
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
+
+**B-101** `open` — **`initializing` is an error message the engine recognises by its text.**
+A fresh node's output port is stored as `noValue(.error)` carrying the interned string
+`initializing`, and `ErrorReport.reportableMessage` keeps a new graph from reading as a
+graph full of failures by comparing that text against `NodeError.initializingMessage`. A
+sentinel matched by string is the wrong shape for a state: `NoValueReason` wants a third
+case, `initializing`, so the report filters by case and the string goes. It is persisted
+in `OutputPort.valueKind`, so the change bumps `Semel.version`, and it has one consumer
+that depends on the encoding: `ConfigMerger` runs against an override file nobody has
+pushed *because* the placeholder arrives as `error`, which `allInputsAreSatisfied` does
+not wait on, where `pending` would stall it. So the new case has to say, per consumer,
+whether it counts as pending or as error, and `ConfigMerger`'s own comment names that
+separation as the work to do. Belongs with B-43: an error standing in for "nothing there"
+is the dataflow rule being bent.
 
 **B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
 Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFilter`,
@@ -545,7 +503,12 @@ registration rather than the plan, and removing one gives "couldn't build … be
 missing inputs: <the file just deleted>" while leaving the previous binary linked with the
 type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
-can do better than a documented workaround.
+can do better than a documented workaround. A second instance, found while bumping
+`ProtocolVersion.current` (B-94): a `public static let` used as a default argument is emitted
+into every caller's object file, so modules compiled before the change keep the old value and
+the linker picks whichever copy it finds — `semel` and `semelserv` disagreed about the
+protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
+`rm .build/debug.yaml` does not touch it.
 
 **B-92** `open` — **A file nobody pushed is an error that hides itself.**
 A `StaticFile` the formula names but nobody has pushed publishes `noValue(.error)` carrying

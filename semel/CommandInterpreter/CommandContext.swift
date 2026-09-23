@@ -42,6 +42,9 @@ struct ServerError: Error, CustomStringConvertible {
         case .nodeError(let description):      return description
         case .roleNotOffered(let role):        return "the server does not offer the \(role.rawValue) role"
         case .malformedRequest(let description): return "the server could not read the request: \(description)"
+        case .replyTooLarge(let request, let bytes, let limit):
+            return "the server's reply to `\(request)` is \(bytes) bytes, over the \(limit)-byte limit for one reply; "
+                 + "ask for less of the graph at a time, or report the verb as needing a reply that streams"
         case .unrecoverable(let message):      return "the server stopped: \(message)"
         }
     }

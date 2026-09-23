@@ -377,34 +377,38 @@ public final class BuildEngine {
 
         let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
 
-        // Build the new "current" error map, filtering out transient "initializing" noise.
+        // The "current" error map. `ErrorReport.reportableMessage` is the one place that
+        // decides what a port's message is and which placeholder is not one.
         var current: [ObjectID: Set<String>] = [:]
         for (nodeID, ports) in byNode {
-            let msgs = Set(ports.compactMap { port -> String? in
-                let msg = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-                return msg.isEmpty || msg == "initializing" ? nil : msg
-            })
-            if !msgs.isEmpty { current[nodeID] = msgs }
+            let messages = Set(ports.compactMap(ErrorReport.reportableMessage))
+            if !messages.isEmpty { current[nodeID] = messages }
         }
 
         // Only nodes with at least one newly-appearing message. Reporting an error that has
         // already been reported on every settle is how a report stops being read.
-        var entries: [ErrorReport.Entry] = []
-        for (nodeID, msgs) in current {
-            let newMsgs = msgs.subtracting(lastReportedErrors[nodeID] ?? [])
-            guard !newMsgs.isEmpty else { continue }
+        var entries: [(nodeID: ObjectID, entry: ErrorReport.Entry)] = []
 
-            entries.append(ErrorReport.entry(forNodeID: nodeID,
-                                             ports: byNode[nodeID] ?? [],
-                                             messages: newMsgs,
-                                             database: database))
+        for (nodeID, messages) in current {
+            let newMessages = messages.subtracting(lastReportedErrors[nodeID] ?? [])
+            guard !newMessages.isEmpty else { continue }
+
+            entries.append((nodeID, ErrorReport.entry(forNodeID: nodeID,
+                                                      ports: byNode[nodeID] ?? [],
+                                                      messages: newMessages,
+                                                      database: database)))
         }
 
         lastReportedErrors = current
 
-        // Sorted so a report reads the same from run to run; `current` is a dictionary.
+        // Sorted by label and then by node, so a report reads the same from run to run:
+        // `current` is a dictionary, whose order is seeded per process, and two nodes can
+        // carry one label — two of a type with no path do. A sort by label alone leaves
+        // those two in the order the walk found them, `sort` being no more stable than the
+        // key it is given. `RequestHandler` orders the `errors` reply the same way, which
+        // is what lets the reply and this event list the same failures alike.
         if !entries.isEmpty {
-            errorReporter(entries.sorted { $0.label < $1.label })
+            errorReporter(entries.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }.map(\.entry))
         }
     }
 
@@ -432,11 +436,26 @@ public final class BuildEngine {
             return true
         }
         if shouldSignal {
-            Task { await workSignal.signal() }
+            sendLoopSignal()
         }
     }
 
     // MARK: - Signalling
+
+    /// How many signals have been sent to the loop — counted as each is dispatched, which
+    /// the loop then receives in order. One batch of any size sends one, however many
+    /// mutations asked for a pass inside it, which is what a batch is for and what a test
+    /// can hold it to.
+    private var loopSignalsSentCount = 0
+
+    var loopSignalsSent: Int {
+        batchLock.withLock { loopSignalsSentCount }
+    }
+
+    private func sendLoopSignal() {
+        batchLock.withLock { loopSignalsSentCount += 1 }
+        Task { await workSignal.signal() }
+    }
 
     /// Safe to call from any actor or thread. A signal will never be lost:
     /// if the engine is currently draining, the pending count is incremented
@@ -474,9 +493,7 @@ public final class BuildEngine {
         guard !inBatch else {
             return
         }
-        Task {
-            await workSignal.signal()
-        }
+        sendLoopSignal()
     }
 
     // MARK: - Processing
