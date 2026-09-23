@@ -226,7 +226,7 @@ final class ErrorReportTests: SemelCoreTestCase {
         let nodeID = try makeNode(kind: Configuration.kind)
 
         XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, "output", "initializing")))
-        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, "output", "")))
+        XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, "output", "")), ErrorReport.emptyMessage)
         XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, "output", "real")), "real")
     }
 }

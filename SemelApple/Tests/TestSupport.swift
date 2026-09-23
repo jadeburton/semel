@@ -67,6 +67,7 @@ final class RecordingToolRunner: ToolRunner {
     var producedTrees: [String: [String: [UInt8]]] = [:]
     var exitCode: Int32 = 0
     var errorOutput = ""
+    var infoOutput = ""
 
     var lastArguments: [String] { invocations.last?.arguments ?? [] }
     var lastInputFileNames: [String] { invocations.last?.inputFileNames ?? [] }
@@ -86,6 +87,9 @@ final class RecordingToolRunner: ToolRunner {
 
         if !errorOutput.isEmpty {
             output.logError(errorOutput)
+        }
+        if !infoOutput.isEmpty {
+            output.logMessage(infoOutput)
         }
         for name in expectedOutputFileNames {
             output.write(name, producedFiles[name] ?? [])

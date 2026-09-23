@@ -150,6 +150,24 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         }
     }
 
+    /// actool puts its diagnostics on stdout under `--output-format human-readable-text`, so
+    /// a run that fails with nothing on stderr must still say what it said, and the exit
+    /// status is there when it said nothing.
+    func test_aFailedRunNamesTheStatusAndWhatActoolPrintedOnEitherStream() throws {
+        executor.exitCode = 1
+        executor.errorOutput = ""
+        executor.infoOutput = "/* com.apple.actool.errors */\nAssets.xcassets: error: The operation could not be completed."
+
+        let output = try processWholeCatalog(appIcon: "AppIcon")
+
+        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[AssetCatalogCompiler.partialInfoPlist]) else {
+            return XCTFail("the partial plist must carry the error")
+        }
+        let message = try messageHash.resolveAsString()
+        XCTAssertTrue(message.hasPrefix("actool exited with status 1"), message)
+        XCTAssertTrue(message.contains("The operation could not be completed."), message)
+    }
+
     /// The tree is what the platform settings produced, so they are required: a catalog
     /// compiled for no platform in particular is not a build.
     func test_thePlatformSettingsAreRequired() throws {
