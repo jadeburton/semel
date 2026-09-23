@@ -377,26 +377,24 @@ public final class BuildEngine {
 
         let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
 
-        // Build the new "current" error map, filtering out transient "initializing" noise.
+        // The "current" error map. `ErrorReport.reportableMessage` is the one place that
+        // decides what a port's message is and which placeholder is not one.
         var current: [ObjectID: Set<String>] = [:]
         for (nodeID, ports) in byNode {
-            let msgs = Set(ports.compactMap { port -> String? in
-                let msg = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-                return msg.isEmpty || msg == NodeError.initializingMessage ? nil : msg
-            })
-            if !msgs.isEmpty { current[nodeID] = msgs }
+            let messages = Set(ports.compactMap(ErrorReport.reportableMessage))
+            if !messages.isEmpty { current[nodeID] = messages }
         }
 
         // Only nodes with at least one newly-appearing message. Reporting an error that has
         // already been reported on every settle is how a report stops being read.
         var entries: [ErrorReport.Entry] = []
-        for (nodeID, msgs) in current {
-            let newMsgs = msgs.subtracting(lastReportedErrors[nodeID] ?? [])
-            guard !newMsgs.isEmpty else { continue }
+        for (nodeID, messages) in current {
+            let newMessages = messages.subtracting(lastReportedErrors[nodeID] ?? [])
+            guard !newMessages.isEmpty else { continue }
 
             entries.append(ErrorReport.entry(forNodeID: nodeID,
                                              ports: byNode[nodeID] ?? [],
-                                             messages: newMsgs,
+                                             messages: newMessages,
                                              database: database))
         }
 
