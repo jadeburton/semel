@@ -166,6 +166,27 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertTrue(bystanderEvents.isEmpty)
     }
 
+    /// An event carries everything in its JSON, so one over the cap cannot be sent. It is
+    /// dropped — nobody is waiting on it — and the connection carries the next one, rather
+    /// than every subscriber losing its socket over a diagnostic. `semelserv` says so on
+    /// its standard error, which is the only trace such an event leaves.
+    func test_anEventTooLargeToFrameIsDroppedAndTheNextOneStillArrives() throws {
+        let subscriber = try connect()
+        let delivered  = expectation(description: "the event after the over-size one")
+        var events: [Event] = []
+        subscriber.onEvent = { event in
+            events.append(event)
+            delivered.fulfill()
+        }
+        _ = try daemon(subscriber, .subscribe)
+
+        BuildEngine.notice(String(repeating: "x", count: Int(Frame.maximumJSONLength) + 1))
+        BuildEngine.notice("output:/app: written")
+
+        wait(for: [delivered], timeout: 5)
+        XCTAssertEqual(events, [.daemon(.notice(line: "output:/app: written"))])
+    }
+
     // MARK: - Sessions
 
     func test_aClientThatVanishesMidBatchLeavesNoBatchOpen() throws {

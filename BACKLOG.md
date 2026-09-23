@@ -502,7 +502,12 @@ registration rather than the plan, and removing one gives "couldn't build … be
 missing inputs: <the file just deleted>" while leaving the previous binary linked with the
 type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
-can do better than a documented workaround.
+can do better than a documented workaround. A second instance, found while bumping
+`ProtocolVersion.current` (B-94): a `public static let` used as a default argument is emitted
+into every caller's object file, so modules compiled before the change keep the old value and
+the linker picks whichever copy it finds — `semel` and `semelserv` disagreed about the
+protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
+`rm .build/debug.yaml` does not touch it.
 
 ## App bundles
 

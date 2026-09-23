@@ -133,8 +133,11 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     /// B-94's acceptance, in the shape that produced it: 1,019 nodes in layers, each one
     /// depending on two of the layer below, so every node is shared by two consumers and
     /// the paths from the sink number in the tens of thousands. The whole `debug` text —
-    /// node dump and tree — has to come back in a time a prompt can wait for.
-    func test_describesAThousandNodeGraphInWellUnderASecond() throws {
+    /// node dump and tree — has to come back in a time a prompt can wait for, and the walk
+    /// behind it has to cost nodes and wires. The visit bound is what proves the second;
+    /// the clock is loose enough for a shared runner and still four times under the twelve
+    /// seconds this fixture took when the walk counted paths.
+    func test_describesAThousandNodeGraphInATimeAPromptCanWaitFor() throws {
         let width  = 113
         let layers = 9
         let shared = try makeNode("sharedHeader")
@@ -162,6 +165,7 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
         try attachToProjectFinder(sink, name: "sink")
 
         let nodeCount = try database.node.selectAll().count
+        let wireCount = try database.wire.selectAll().count
         XCTAssertGreaterThanOrEqual(nodeCount, 1019, "the fixture is the size B-94 names")
 
         let start = Date.now
@@ -169,6 +173,11 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
         let taken = Date.now.timeIntervalSince(start)
 
         XCTAssertFalse(text.isEmpty)
-        XCTAssertLessThan(taken, 1.0, "describing \(nodeCount) nodes took \(taken)s")
+        // The counter is the proof: it holds on any machine at any load, where the clock
+        // below is a sanity check with room for a shared CI runner.
+        let (_, walk) = walkTheTree()
+        XCTAssertLessThan(walk.visits, 4 * (nodeCount + wireCount),
+                          "\(nodeCount) nodes and \(wireCount) wires, but \(walk.visits) visits")
+        XCTAssertLessThan(taken, 3.0, "describing \(nodeCount) nodes took \(taken)s")
     }
 }

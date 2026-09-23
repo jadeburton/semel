@@ -39,9 +39,30 @@ final class ConnectionRegistry: EventSink {
         guard let frame = try? Frame.event(event) else {
             return
         }
+        // An event carries everything in its JSON, so the cap on that section is the whole
+        // event budget, and a wide failure cascade is the traffic that reaches it. Nobody
+        // is waiting on an event, so an over-size one is dropped rather than closing every
+        // subscriber's connection over a diagnostic — but it is dropped out loud, and here
+        // rather than in `ServerConnection`, where one lost event would print once per
+        // subscriber.
+        guard frame.json.count <= Int(Frame.maximumJSONLength) else {
+            let line = "semelserv: dropped a \(Self.name(of: event)) event of \(frame.json.count) bytes; "
+                     + "one event may carry \(Frame.maximumJSONLength)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+            return
+        }
         let subscribed = lock.withLock { connections.values.filter { $0.session.isSubscribed } }
         for connection in subscribed {
             connection.deliver(frame)
+        }
+    }
+
+    /// What to call an event in that line. Spelled out rather than reflected off the case
+    /// name, so renaming a case does not quietly rename what the log says.
+    private static func name(of event: Event) -> String {
+        switch event {
+        case .daemon(.errors):  return "errors"
+        case .daemon(.notice):  return "notice"
         }
     }
 }
