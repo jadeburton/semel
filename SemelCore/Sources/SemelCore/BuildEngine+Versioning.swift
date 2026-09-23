@@ -55,18 +55,27 @@ extension BuildEngine {
         try database.metadata.upsert(key: Self.semelVersionKey, value: Semel.version)
     }
 
-    /// The rebuild deletes what it can, but `reset()` preserves the input file system with
-    /// its ports, and those ports were written by another Semel — which may have spelled a
-    /// reason differently from this one. A preserved node is a file: it either holds its
-    /// content or has never had any, so a port holding an error is restated as the one thing
-    /// such a port can truthfully be. A file that was pushed keeps its content and is not
-    /// touched; one that was not is waiting to be, which is what the state says.
+    /// The rebuild deletes what it can, but `reset()` preserves the input file system, the
+    /// output root and `ProjectFinder` with their ports — and those ports were written by
+    /// another Semel, which spelled one of this version's states as an error carrying a word.
+    /// A port still holding that word means "nothing has been produced here", so it is
+    /// restated as the state that says so. Every other error is left alone: what a node said
+    /// about itself is still what it said.
+    ///
+    /// Reading the message is what a migration is for, and this is the only place allowed to:
+    /// the text below is 0.1.2's encoding, data rather than vocabulary, and nothing outside
+    /// this function may compare against it.
     private func restateThePortsOfPreservedNodes() throws {
+        let placeholderOfVersion0_1_2 = "initializing"
+
         for node in try database.node.selectAll() {
             guard let nodeID = node.id else {
                 continue
             }
             for port in try database.outputPort.selectAll(nodeID: nodeID) where port.valueKind == .error {
+                guard (try? port.dataObjectHash?.resolveAsString()) == placeholderOfVersion0_1_2 else {
+                    continue
+                }
                 var restated = port
                 restated.valueKind = .initializing
                 restated.dataObjectHash = nil

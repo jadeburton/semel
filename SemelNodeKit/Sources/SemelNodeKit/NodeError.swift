@@ -32,12 +32,25 @@ public enum NodeError: Error, CustomStringConvertible {
 
     /// The state the engine writes to every output port of a node this error stopped, or
     /// nil when the error is the node's own and reaches the port as its message.
+    ///
+    /// Spelled out case by case rather than with a `default`, so that a case added here with
+    /// a state behind it has to say which one, instead of being published as an error
+    /// carrying its own description.
     public var publishedState: NoValueReason? {
         switch self {
         case .inputValuePending:     return .pending
         case .inputValueNotProduced: return .inputNotProduced
         case .inputValueInError:     return .inputInError
-        default:                     return nil
+
+        case .nodeNotFound,
+             .onlyOneWireShouldBeConnectedToInput,
+             .other,
+             .processNotSupported,
+             .cannotHaveProperties,
+             .cannotDeleteNodeWithOutputs,
+             .graphSpecBadIntegrity,
+             .nameCollision:
+            return nil
         }
     }
 

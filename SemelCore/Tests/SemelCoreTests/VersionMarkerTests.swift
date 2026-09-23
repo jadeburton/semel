@@ -123,6 +123,24 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertNil(port.dataObjectHash)
     }
 
+    /// The restating is a migration of one encoding, not a sweep of every error: a file the
+    /// user removed while a formula still named it says so, and keeps saying so.
+    func test_aPreservedFilesOwnErrorSurvivesTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/gone.c')")
+            .findOrCreateMatchingNode()
+        try file.writeToOutputPort(
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(nodeID: try file.requireID(),
+                                                                   nameSymbolID: "output".asSymbolID()))
+        XCTAssertEqual(port.valueKind, .error)
+        XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "Deleted")
+    }
+
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
     /// the restating above cannot cost a cache hit or a re-push.
     func test_aPushedFilesContentSurvivesTheRebuild() throws {

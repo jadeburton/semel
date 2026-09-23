@@ -198,11 +198,12 @@ public enum ErrorReport {
     /// else's failure, and is folded into the causes the wires reach upstream of it; a node with
     /// anything else to say is a cause and is reported. A carrier with nothing failing
     /// upstream is as far as the walk can go, which means the node that failed has been
-    /// collected, so the carrier stands in for its own cause. A chain below a value that
-    /// was never produced never reaches here: nothing in it is a carrier, because a node
-    /// stopped by an input that has no value publishes that state rather than a failure. That fold reaches exactly as far as the wires do: a
-    /// chain of carriers folds onto its topmost, while sibling consumers of one absent node
-    /// share no wire to walk along and are a cause each. The collector is what keeps the
+    /// collected, so the carrier stands in for its own cause. A chain below a value that was
+    /// never produced never reaches here: nothing in it is a carrier, because a node stopped
+    /// by an input that has no value publishes that state rather than a failure. The fold
+    /// reaches exactly as far as the wires do: a chain of carriers folds onto its topmost,
+    /// while sibling consumers of one absent node share no wire to walk along and are a
+    /// cause each. The collector is what keeps the
     /// second shape away from a report — `collectIfUnreferenced` takes a node only once
     /// `hasNoOutputWires` holds of it, so every consumer goes before the node it reads, and
     /// a graph holding carriers whose cause has been collected is not one an idle pass sees.

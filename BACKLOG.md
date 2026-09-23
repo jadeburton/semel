@@ -400,7 +400,11 @@ after the symptom, not by anything the running system could say about itself. A 
 verb walks the graph and reports every invariant that does not hold: a wire whose endpoint
 node or port is gone, a node whose `graphSpec` no longer parses or names a type the server
 does not link (B-83), a product with no producer, a folder manifest naming a child that
-does not exist, an error port with no message, a cache entry whose key no longer parses. It
+does not exist, an error port with no message, a cache entry whose key no longer parses.
+"A product with no producer" is the one the prompt cannot report on its own: an `OutputFile`
+whose required input has no wire holds `initializing`, which is a state and not a failure,
+and the engine's "inconsistent input" catch in `Node.tryComputeOutput` is a not-ready signal
+rather than an error, so nothing says anything until `check` does. It
 reports and repairs nothing; `reset` is the repair, and `check` is how one learns whether it
 is needed and what to file when it is. Run by the end-to-end harness after every build so
 the fixtures prove the invariants, and offered to a user before `reset` is suggested.
