@@ -25,14 +25,18 @@ final class TreeBuilderTests: SemelCoreTestCase {
         XCTAssertEqual(try manifest.entry(at: "Timeline.o")?.hash.resolveAsString(), "timeline")
     }
 
-    func test_aFileWithoutAValueStopsTheTreeWithItsReason() throws {
-        let built = try process(["Models.o": .value(try "models".intern()),
-                                 "Timeline.o": .noValue(reason: .error(messageDataObjectHash: try "compile failed".intern()))])
+    /// A file that failed stops the tree, and the tree says so as its own state rather than
+    /// repeating the compiler's sentence: a report folds it onto the node that failed.
+    func test_aFileWithoutAValueStopsTheTreeAsACarriedState() throws {
+        let node = try TreeBuilder(thisNode: NodeRecord(id: 1, kind: TreeBuilder.kind))
+        let output = node.processWithCatch(input: ProcessInput(inputValues: [TreeBuilder.inputPort: [
+            "Models.o": .value(try "models".intern()),
+            "Timeline.o": .noValue(reason: .error(messageDataObjectHash: try "compile failed".intern())),
+        ]]))
 
-        guard case .noValue(.error(let messageHash)) = built else {
-            return XCTFail("expected the compiler's error")
+        guard case .noValue(.inputInError) = try XCTUnwrap(output.outputValues[TreeBuilder.outputPort]) else {
+            return XCTFail("expected the carried state")
         }
-        XCTAssertEqual(try messageHash.resolveAsString(), "compile failed")
     }
 
     func test_noWiresIsAnEmptyTree() throws {

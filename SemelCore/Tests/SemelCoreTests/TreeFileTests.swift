@@ -47,16 +47,20 @@ final class TreeFileTests: SemelCoreTestCase {
         XCTAssertTrue(message.contains("missing.png") && message.contains("Assets.car"), message)
     }
 
-    /// A tree that has not been produced — the tool failed — stops every file of it with
-    /// the tool's reason, so the failure is reported where it happened, once.
-    func test_aTreeWithoutAValuePassesItsReasonThrough() throws {
-        let reason = NoValueReason.error(messageDataObjectHash: try "actool failed".intern())
+    /// A tree that failed stops every file of it, and each says so as its own state rather
+    /// than repeating the tool's sentence, so the failure is reported where it happened,
+    /// once, with the files counted under it.
+    func test_aTreeWithoutAValueStopsEveryFileAsACarriedState() throws {
+        let node = try TreeFile(thisNode: NodeRecord(id: 1, kind: TreeFile.kind,
+                                                     properties: [TreeFile.nameProperty: "Assets.car"]))
+        let output = node.processWithCatch(input: ProcessInput(inputValues: [TreeFile.treeInputPort: [
+            "tree": .noValue(reason: .error(messageDataObjectHash: try "actool failed".intern())),
+        ]]))
 
-        let output = try process(name: "Assets.car", tree: .noValue(reason: reason))
-
-        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[TreeFile.outputPort]) else {
-            return XCTFail("expected the tool's error")
+        for port in [TreeFile.outputPort, TreeFile.fileMetadataOutputPort] {
+            guard case .noValue(.inputInError) = try XCTUnwrap(output.outputValues[port]) else {
+                return XCTFail("expected the carried state on \(port)")
+            }
         }
-        XCTAssertEqual(try messageHash.resolveAsString(), "actool failed")
     }
 }

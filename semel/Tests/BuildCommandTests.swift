@@ -63,6 +63,23 @@ final class BuildCommandTests: XCTestCase {
                              name: "product".asSymbolID())
     }
 
+    /// A product whose source failed: one node with something of its own to say, which is
+    /// what a report counts and what a scripted build's exit status rests on.
+    private func publishFailedProduct(_ name: String, message: String) throws {
+        _ = try BuildEngine.shared.inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
+        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')").findOrCreateMatchingNode()
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')").findOrCreateMatchingNode()
+        try Wire.connectWire(database: BuildEngine.shared.database,
+                             fromNodeID: try source.requireID(),
+                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
+                             toNodeID: try product.requireID(),
+                             toSymbolID: OutputFile.inputPort.asSymbolID(),
+                             name: "product".asSymbolID())
+        // Written after the wiring, which puts every output of its target back to pending.
+        try source.writeToOutputPort(StaticFile.outputPort,
+                                     value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+    }
+
     /// With no loop running the wait returns at once, so the macro's three steps are
     /// observable in order: the push happened, the wait settled, the report ran.
     func test_buildPushesWaitsAndReports() throws {
@@ -88,9 +105,9 @@ final class BuildCommandTests: XCTestCase {
     }
 
     /// A build error is what the exit status is for: the `errors` report has to count,
-    /// not just print. An output file nothing feeds carries an error from creation.
+    /// not just print. A product whose source failed is one error, named at the source.
     func test_aBuildErrorIsCounted() throws {
-        _ = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed.a')").findOrCreateMatchingNode()
+        try publishFailedProduct("broken.a", message: "the source is gone")
 
         interpreter.handleCommand("build src")
 
@@ -123,7 +140,7 @@ final class BuildCommandTests: XCTestCase {
     /// A partial product set beside a non-zero exit would only mislead.
     func test_aBuildThatReportedErrorsExportsNothing() throws {
         try publishProduct("lib.a", contents: "archive")
-        _ = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed.a')").findOrCreateMatchingNode()
+        try publishFailedProduct("broken.a", message: "the source is gone")
         let destination = makeTempDirectory()
 
         interpreter.handleCommand("build src --into \(destination.path)")

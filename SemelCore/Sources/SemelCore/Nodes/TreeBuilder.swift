@@ -33,13 +33,11 @@ struct TreeBuilder: Node {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         var entries: [TreeManifestEntry] = []
         for (key, value) in (input.inputValues[Self.inputPort] ?? [:]).sorted(by: { $0.key < $1.key }) {
-            switch value {
-            case .noValue(let reason):
-                // Whatever stopped one file stops the tree, with the same reason.
-                return .init(outputValues: [Self.outputPort: .noValue(reason: reason)], inputWireSpecs: [:])
-            case .value(let hash):
-                entries.append(TreeManifestEntry(path: key, hash: hash, mode: FileMetadata.defaultMode))
-            }
+            // Whatever stopped one file stops the tree: demanding the value hands the engine
+            // what stood in the way, and it writes the state that follows.
+            entries.append(TreeManifestEntry(path: key,
+                                             hash: try value.expectValue(),
+                                             mode: FileMetadata.defaultMode))
         }
         let tree = TreeManifest(entries: entries)
         return .init(outputValues: [Self.outputPort: .value(try tree.toJSON().intern())], inputWireSpecs: [:])

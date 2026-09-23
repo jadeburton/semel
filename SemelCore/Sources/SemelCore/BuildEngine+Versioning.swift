@@ -50,7 +50,28 @@ extension BuildEngine {
         if !isFresh {
             Debug.log("Semel \(recorded ?? "of unknown version") built this graph; now \(Semel.version). Rebuilding.")
             try reset()
+            try restateThePortsOfPreservedNodes()
         }
         try database.metadata.upsert(key: Self.semelVersionKey, value: Semel.version)
+    }
+
+    /// The rebuild deletes what it can, but `reset()` preserves the input file system with
+    /// its ports, and those ports were written by another Semel — which may have spelled a
+    /// reason differently from this one. A preserved node is a file: it either holds its
+    /// content or has never had any, so a port holding an error is restated as the one thing
+    /// such a port can truthfully be. A file that was pushed keeps its content and is not
+    /// touched; one that was not is waiting to be, which is what the state says.
+    private func restateThePortsOfPreservedNodes() throws {
+        for node in try database.node.selectAll() {
+            guard let nodeID = node.id else {
+                continue
+            }
+            for port in try database.outputPort.selectAll(nodeID: nodeID) where port.valueKind == .error {
+                var restated = port
+                restated.valueKind = .initializing
+                restated.dataObjectHash = nil
+                try database.outputPort.insertOrUpdate(restated)
+            }
+        }
     }
 }

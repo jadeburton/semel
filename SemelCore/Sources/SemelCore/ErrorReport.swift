@@ -157,19 +157,20 @@ public enum ErrorReport {
     /// The message a port is carrying, or nil when it carries nothing worth reporting.
     ///
     /// Decided by the port's state, not by its text. A port holding a value or waiting for
-    /// one has no failure to report, and neither has a port that has simply never been
-    /// processed — reporting that would announce an error for every node in a fresh graph.
-    /// A node that did not run because an input failed has no message of its own, so the
-    /// sentence for that state is written here, once, where the report is rendered. An error
-    /// with no text at all is still an error, and the one kind a reader cannot diagnose, so
-    /// it is reported as exactly that rather than dropped.
+    /// one has no failure to report; neither has a port where no value has ever been
+    /// produced, nor one whose node could not produce because of such a port — nothing has
+    /// failed anywhere above either of them, and reporting the first would announce an error
+    /// for every node in a fresh graph. A node that did not run because an input failed has
+    /// no message of its own, so it reports the sentence its state reads as. An error with no
+    /// text at all is still an error, and the one kind a reader cannot diagnose, so it is
+    /// reported as exactly that rather than dropped.
     public static func reportableMessage(of port: OutputPort) -> String? {
         switch port.valueKind {
-        case .value, .pending, .initializing:
+        case .value, .pending, .initializing, .inputNotProduced:
             return nil
 
         case .inputInError:
-            return "\(NodeError.inputValueInError)"
+            return "\(NoValueReason.inputInError)"
 
         case .error:
             let message = (try? port.dataObjectHash?.resolveAsString()) ?? ""
@@ -196,10 +197,10 @@ public enum ErrorReport {
     /// A node whose every reportable port is carried from an input is carrying someone
     /// else's failure, and is folded into the causes the wires reach upstream of it; a node with
     /// anything else to say is a cause and is reported. A carrier with nothing failing
-    /// upstream is as far as the walk can go. If what it reads has simply never run — an
-    /// unpushed file's port, which nothing will ever process — then nothing has failed and
-    /// the carrier is not reported at all. Otherwise the node that failed is not in the graph
-    /// and the carrier stands in for its own cause. That fold reaches exactly as far as the wires do: a
+    /// upstream is as far as the walk can go, which means the node that failed has been
+    /// collected, so the carrier stands in for its own cause. A chain below a value that
+    /// was never produced never reaches here: nothing in it is a carrier, because a node
+    /// stopped by an input that has no value publishes that state rather than a failure. That fold reaches exactly as far as the wires do: a
     /// chain of carriers folds onto its topmost, while sibling consumers of one absent node
     /// share no wire to walk along and are a cause each. The collector is what keeps the
     /// second shape away from a report — `collectIfUnreferenced` takes a node only once
@@ -237,10 +238,11 @@ public enum ErrorReport {
 
             // A report is best effort: a wire the database cannot hand over leaves the
             // carrier standing in for its own cause, which is still one line rather than none.
-            let upstream = FatalErrors.attempt({ try database.wire.select(goingToNodeID: nodeID) }) ?? []
+            let upstream = FatalErrors.attempt({ try database.wire.select(goingToNodeID: nodeID) })?
+                .map(\.fromNodeID) ?? []
 
             var found: Set<ObjectID> = []
-            for source in Set(upstream.map(\.fromNodeID)) where reporting[source] != nil {
+            for source in Set(upstream) where reporting[source] != nil {
                 if carriers.contains(source) {
                     found.formUnion(causeIDs(of: source, walking: walking.union([nodeID])))
                 } else {
@@ -248,36 +250,17 @@ public enum ErrorReport {
                 }
             }
 
-            // Nothing failing upstream, which is two different situations. Something upstream
-            // that has never run is one of them: nothing has failed, so there is nothing to
-            // report, and the carrier and everything below it drop out of the report — naming
-            // the file nobody pushed is B-92's. Otherwise the cause is not in the graph at
-            // all, and this carrier stands in for it: that folds the carriers wired below it
-            // onto this one and reaches no further, siblings of it having no wire between
-            // them to be folded along.
-            let result: Set<ObjectID>
-            if !found.isEmpty {
-                result = found
-            } else {
-                result = readsAPortThatHasNotRun(upstream) ? [] : [nodeID]
-            }
+            // Nothing failing upstream: the cause has been collected, and this carrier
+            // stands in for it. That folds the carriers wired below it onto this one
+            // and reaches no further, siblings of it having no wire between them to be folded
+            // along.
+            let result = found.isEmpty ? [nodeID] : found
 
             // Memoised per node rather than per (node, path), which is exact for a DAG and
             // is what makes one answer serve every carrier below it. Wire creation rejects a
             // cycle, so the `walking` guard above is a belt on a graph that cannot have one.
             walked[nodeID] = result
             return result
-        }
-
-        /// Whether any of these wires brings a value from a port nothing has processed — the
-        /// state an unpushed file's port keeps, since nothing will ever make it run.
-        func readsAPortThatHasNotRun(_ wires: [Wire]) -> Bool {
-            wires.contains { wire in
-                let port = FatalErrors.attempt({
-                    try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
-                }) ?? nil
-                return port?.valueKind == .initializing
-            }
         }
 
         for carrier in carriers {

@@ -97,11 +97,6 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
         outputPorts: [statusOutputPort]
     )
 
-    public func didCreate() throws -> ProcessOutput? {
-        .init(outputValues: [Self.statusOutputPort: .noValue(reason: .error(messageDataObjectHash: try "Missing".intern()))],
-              inputWireSpecs: [:])
-    }
-
     var isPinned: Bool {
         get throws {
             guard let nodeValue = try read() else {
@@ -119,7 +114,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
                 switch reason {
                 case .pending:
                     return "Updating.."
-                case .initializing, .inputInError, .error:
+                case .initializing, .inputNotProduced, .inputInError, .error:
                     // Every one of these is a product that is not there. Which of them it is
                     // is a question for the report, not for a one-word status.
                     return "Error"
@@ -135,23 +130,17 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
         let oldDescription = describeValue(previousStatus)
         let newDescription = describeValue(inputValue)
 
-        let outputValue: NodeValue
-
-        switch inputValue {
-
-        case .noValue(let reason):
-            outputValue = .noValue(reason: reason)
-
-        case .value:
-            outputValue = .value(try "Product is up to date".intern())
-
-        }
-
         if newDescription != oldDescription {
             BuildEngine.notice("\(path): \(newDescription)")
         }
 
-        return .init(outputValues: [Self.statusOutputPort: outputValue], inputWireSpecs: [:])
+        // The notice is said first, because demanding the value is how this node reports a
+        // product it cannot publish: the engine writes the state that follows from what
+        // stood in the way, rather than this node repeating the failure of another.
+        _ = try inputValue.expectValue()
+
+        return .init(outputValues: [Self.statusOutputPort: .value(try "Product is up to date".intern())],
+                     inputWireSpecs: [:])
     }
 
     func read() throws -> NodeValue? {

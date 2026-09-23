@@ -73,13 +73,26 @@ final class CascadeCollapseTests: SemelCoreTestCase {
                                                            outputSymbolID: "output".asSymbolID())
     }
 
-    private func connect(_ from: ObjectID, to: ObjectID, name: String) throws {
+    private func connect(_ from: ObjectID, to: ObjectID, name: String,
+                         fromPort: String = "output", toPort: String = "input") throws {
         try Wire.connectWire(database: database,
                              fromNodeID: from,
-                             fromSymbolID: "output".asSymbolID(),
+                             fromSymbolID: fromPort.asSymbolID(),
                              toNodeID: to,
-                             toSymbolID: "input".asSymbolID(),
+                             toSymbolID: toPort.asSymbolID(),
                              name: name.asSymbolID())
+    }
+
+    /// A node that reads its input by demanding a value, which is how a tool reads the files
+    /// it compiles: what it publishes when there is none to be had is the engine's answer,
+    /// not the node's.
+    private func makeDemanding(tag: String) throws -> ObjectID {
+        try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
+                                  properties: ["tag": tag], graphSpec: nil).requireID()
+    }
+
+    private func run(_ nodeID: ObjectID) throws {
+        try database.node.select(nodeID: nodeID).makeNode().processWithPreCheck()
     }
 
     /// One header every consumer reads, each consumer feeding one shared sink: the shape a
@@ -240,8 +253,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
     /// A `StaticFile` nobody has pushed has no inputs, so nothing will ever make it run and
     /// its port holds the initializing state for good. A node that demands its value cannot
-    /// run either, and says so by its own state rather than by a sentence. Neither is a
-    /// failure a reader can act on, so the report passes over both.
+    /// produce one either, and says that — not that anything failed. Neither is a failure a
+    /// reader can act on, so the report passes over both.
     func test_anUnpushedFileAndItsConsumerPublishStatesTheReportPassesOver() throws {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
             .findOrCreateMatchingNode()
@@ -252,7 +265,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         try consumer.makeNode().processWithPreCheck()
 
         XCTAssertEqual(try reason(of: try file.requireID()), .initializing)
-        XCTAssertEqual(try reason(of: try consumer.requireID()), .inputInError)
+        XCTAssertEqual(try reason(of: try consumer.requireID()), .inputNotProduced)
 
         engine.reportIdleTimeErrors()
 
@@ -260,8 +273,94 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     }
 
     /// The kind the port carries, which is the reason in the form the graph stores.
-    private func reason(of nodeID: ObjectID) throws -> OutputPort.ValueKind? {
-        try database.outputPort.select(nodeID: nodeID, nameSymbolID: "output".asSymbolID())?.valueKind
+    private func reason(of nodeID: ObjectID, port: String = "output") throws -> OutputPort.ValueKind? {
+        try database.outputPort.select(nodeID: nodeID, nameSymbolID: port.asSymbolID())?.valueKind
+    }
+
+    // MARK: - A pipeline, processed
+
+    /// The chain a compile is: a source file, a compiler, a linker, a product. With the file
+    /// nobody pushed at the top of it, nothing in the chain has failed — so however deep the
+    /// chain runs, the report says nothing about any of it.
+    func test_anUnpushedFileIsSilentAtEveryDepthOfTheChain() throws {
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/main.c')")
+            .findOrCreateMatchingNode()
+        let compiler = try makeDemanding(tag: "compiler")
+        let linker   = try makeDemanding(tag: "linker")
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')")
+            .findOrCreateMatchingNode()
+
+        try connect(try file.requireID(), to: compiler, name: "source")
+        try connect(compiler, to: linker, name: "object")
+        try connect(linker, to: try product.requireID(), name: "product")
+
+        try run(compiler)
+        try run(linker)
+        try run(try product.requireID())
+
+        XCTAssertEqual(try reason(of: compiler), .inputNotProduced)
+        XCTAssertEqual(try reason(of: linker), .inputNotProduced, "the state carries down the chain")
+        XCTAssertEqual(try reason(of: try product.requireID(), port: OutputFile.statusOutputPort),
+                       .inputNotProduced)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
+    }
+
+    /// The same chain with a compile that failed: one node has something to say and the rest
+    /// carry it, so the report names the compiler once and counts the two below it.
+    func test_aFailedCompileIsNamedOnceWithTheChainCountedUnderIt() throws {
+        let compiler = try makeDemanding(tag: "compiler")
+        let linker   = try makeDemanding(tag: "linker")
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')")
+            .findOrCreateMatchingNode()
+
+        try connect(compiler, to: linker, name: "object")
+        try connect(linker, to: try product.requireID(), name: "product")
+        try fail(compiler, with: "undefined symbol 'main'")
+
+        try run(linker)
+        try run(try product.requireID())
+
+        XCTAssertEqual(try reason(of: linker), .inputInError)
+        XCTAssertEqual(try reason(of: try product.requireID(), port: OutputFile.statusOutputPort),
+                       .inputInError, "the product carries the failure rather than repeating it")
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.count, 1)
+        XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool"])
+        XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [2])
+        XCTAssertEqual(captured[0][0].items,
+                       [ErrorReport.Item(ports: ["output"], message: "undefined symbol 'main'")])
+    }
+
+    /// A tree pipeline is a chain like any other: a merger that could not merge because one
+    /// of its trees failed says so as a state, rather than repeating the sentence the tool
+    /// wrote, and the report still names the tool once.
+    func test_aFailureThroughATreeIsNamedOnceWithTheTreeCountedUnderIt() throws {
+        let tool = try makeDemanding(tag: "tool")
+        let (merger, _) = try GraphSpecNode.parse("TreeMerger()").findOrCreateMatchingNode()
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')")
+            .findOrCreateMatchingNode()
+
+        try connect(tool, to: try merger.requireID(), name: "assets")
+        try connect(try merger.requireID(), to: try product.requireID(), name: "product",
+                    fromPort: TreeMerger.outputPort)
+        try fail(tool, with: "xcstringstool failed")
+
+        try run(try merger.requireID())
+        try run(try product.requireID())
+
+        XCTAssertEqual(try reason(of: try merger.requireID(), port: TreeMerger.outputPort), .inputInError,
+                       "the merger carries the failure rather than repeating its message")
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.count, 1)
+        XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool"])
+        XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [2])
     }
 
     // MARK: - The rule

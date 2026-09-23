@@ -20,6 +20,8 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
         case initializing = 6
         /// Did not run, because an input is in error.
         case inputInError = 7
+        /// Could not produce, because an input has never been produced.
+        case inputNotProduced = 8
     }
 
     public var nodeID: ObjectID

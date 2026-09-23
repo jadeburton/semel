@@ -12,11 +12,14 @@
 public enum NodeError: Error, CustomStringConvertible {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
-    /// Thrown by `expectValue()` when the value asked for is not there to be had. It is
-    /// control flow rather than a message: the engine turns it into `NoValueReason` before
-    /// anything is written to a port, so a node carrying it says so by its state.
+    /// Thrown by `expectValue()` when the value asked for is not there to be had. These
+    /// three are control flow rather than messages: the engine turns each into the
+    /// `NoValueReason` the node publishes, before anything is written to a port, so a node
+    /// stopped by one of them says so by its state.
     case inputValueInError
     case inputValuePending
+    /// Thrown when an input has never had a value and nothing has failed to make one.
+    case inputValueNotProduced
     case other(message: String)
     case processNotSupported
     case cannotHaveProperties
@@ -26,6 +29,17 @@ public enum NodeError: Error, CustomStringConvertible {
     /// a duplicate makes every path through that folder ambiguous — `childNode` would
     /// take whichever the database returned first.
     case nameCollision(path: String, existingKind: UInt)
+
+    /// The state the engine writes to every output port of a node this error stopped, or
+    /// nil when the error is the node's own and reaches the port as its message.
+    public var publishedState: NoValueReason? {
+        switch self {
+        case .inputValuePending:     return .pending
+        case .inputValueNotProduced: return .inputNotProduced
+        case .inputValueInError:     return .inputInError
+        default:                     return nil
+        }
+    }
 
     public var description: String {
         switch self {
@@ -37,6 +51,8 @@ public enum NodeError: Error, CustomStringConvertible {
             return "an input is in error"
         case .inputValuePending:
             return "an input has no value yet"
+        case .inputValueNotProduced:
+            return "an input has never been produced"
         case .other(let message):
             return message
         case .processNotSupported:

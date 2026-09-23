@@ -338,23 +338,21 @@ extension Node {
         try GraphSpecNode.parse(specString).findOrCreateMatchingNode()
     }
 
-    /// The output for a thrown error: the reason it puts on every port, decided here.
+    /// The output for a thrown error: the reason it puts on every port, decided here and
+    /// nowhere else.
     ///
-    /// Two of these are states rather than failures of this node, and each has a case of its
-    /// own so that nothing downstream has to read a sentence to tell them apart. The error
-    /// is translated on the way to the port and never interned as text.
+    /// An error that stopped this node without being its own failure — an input pending, an
+    /// input in error, an input that has never been produced — is a state, and each has a
+    /// case of its own so that nothing downstream reads a sentence to tell them apart.
+    /// `NodeError.publishedState` is the table; the error is translated on the way to the
+    /// port and never interned as text.
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
-        switch error {
-        case NodeError.inputValuePending:
-            return buildOutput(reason: .pending)
-
-        case NodeError.inputValueInError:
-            return buildOutput(reason: .inputInError)
-
-        default:
-            let message = reportedMessage(for: error)
-            return buildOutput(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
+        if let state = (error as? NodeError)?.publishedState {
+            return buildOutput(reason: state)
         }
+
+        let message = reportedMessage(for: error)
+        return buildOutput(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
     }
 
     /// One reason on every output port, with the dynamic wire specs the graph already holds

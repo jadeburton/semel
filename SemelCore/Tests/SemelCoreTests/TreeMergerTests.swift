@@ -22,6 +22,14 @@ final class TreeMergerTests: SemelCoreTestCase {
         return try XCTUnwrap(output.outputValues[TreeMerger.outputPort])
     }
 
+    /// What the node publishes when it demands a value it cannot have: the throw reaches the
+    /// engine, which writes the state onto every output port.
+    private func processCatchingTheState(_ trees: [String: NodeValue]) throws -> NodeValue {
+        let node = try TreeMerger(thisNode: NodeRecord(id: 1, kind: TreeMerger.kind))
+        let output = node.processWithCatch(input: ProcessInput(inputValues: [TreeMerger.inputPort: trees]))
+        return try XCTUnwrap(output.outputValues[TreeMerger.outputPort])
+    }
+
     func test_mergesEveryEntryOfEveryTree() throws {
         let merged = try process(["assets": try tree(["Assets.car", "AppIcon60x60@2x.png"]),
                                   "strings": try tree(["en.lproj/Localizable.strings"])])
@@ -42,13 +50,26 @@ final class TreeMergerTests: SemelCoreTestCase {
         XCTAssertTrue(message.contains("Assets.car") && message.contains("assets") && message.contains("more"), message)
     }
 
-    func test_aTreeWithoutAValueStopsTheMergeWithItsReason() throws {
-        let merged = try process(["assets": try tree(["Assets.car"]),
-                                  "strings": .noValue(reason: .error(messageDataObjectHash: try "xcstringstool failed".intern()))])
+    /// A tree that failed stops the merge, and the merger says that as its own state rather
+    /// than repeating the tool's sentence: the failure belongs to the node that failed, and a
+    /// report that reads the merger's state folds it onto that node instead of naming both.
+    func test_aTreeWithoutAValueStopsTheMergeAsACarriedState() throws {
+        let merged = try processCatchingTheState(
+            ["assets": try tree(["Assets.car"]),
+             "strings": .noValue(reason: .error(messageDataObjectHash: try "xcstringstool failed".intern()))])
 
-        guard case .noValue(.error(let messageHash)) = merged else {
-            return XCTFail("expected the tool's error")
+        guard case .noValue(.inputInError) = merged else {
+            return XCTFail("expected the carried state, got \(merged)")
         }
-        XCTAssertEqual(try messageHash.resolveAsString(), "xcstringstool failed")
+    }
+
+    /// A tree that has never been produced is not a failure, so what stops the merge is not
+    /// one either.
+    func test_aTreeThatHasNeverBeenProducedStopsTheMergeWithoutAFailure() throws {
+        let merged = try processCatchingTheState(["assets": .noValue(reason: .initializing)])
+
+        guard case .noValue(.inputNotProduced) = merged else {
+            return XCTFail("expected the not-produced state, got \(merged)")
+        }
     }
 }

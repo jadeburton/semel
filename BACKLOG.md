@@ -511,25 +511,27 @@ the linker picks whichever copy it finds — `semel` and `semelserv` disagreed a
 protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
 `rm .build/debug.yaml` does not touch it.
 
-**B-92** `open` — **A file nobody pushed is an error that hides itself.**
-A `StaticFile` the formula names but nobody has pushed publishes `noValue(.error)` carrying
-the placeholder string `initializing`; `ErrorReport.reportableMessage(of:)` filters that string out
-of every report, and `ConfigFilter` and `ConfigMerger` skip such wires so that an unwritten
-override means "nothing to add". `ConfigMerger`'s own comment names the cost: a genuine
-upstream failure looks the same as a file nobody wrote, and the tool downstream reports
-the setting it is missing rather than the reason. The first thing every hand-written
-build does is exactly this — `hello.fmla` reads `<../clang.cfg>`, `build` pushes one
-folder, and `docs/tutorial/first-node.md` has to spend a paragraph on `push clang.cfg`
-because forgetting it is (untested, read from the code) a wall of missing-setting errors
-with nothing naming the file. B-71 fixed this for one xcconfig; do it once for all:
-a first-class `.absent` reason distinct from `.error`, reported once at idle as the cause
-("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), with the nodes that
-deliberately tolerate an absent input saying so in their descriptor rather than by string
-comparison. `build` could then also offer to push what the formula names outside its
-folder, or at least say that it did not. The reasons themselves are cases —
-`NoValueReason.initializing` is a port nothing has processed, `inputInError` a node whose
-input failed, and each is asked about by case — so what remains here is the reporting: an
-unpushed file is a state nobody is told about, and B-92 is the line that names it.
+**B-92** `open` — **A file nobody pushed is a state nobody is told about.**
+A `StaticFile` the formula names but nobody has pushed publishes `noValue(.initializing)`:
+no value has ever been produced there, and the node has no inputs, so nothing ever will.
+Nothing has failed, so nothing is reported — the nodes below it publish `inputNotProduced`
+and are passed over for the same reason, and `ConfigFilter` and `ConfigMerger` skip such
+wires on purpose, so that an override file nobody wrote means "nothing to add" rather than
+an unbuildable project. The cost is that a tool downstream reports the setting it is
+missing rather than the reason it is missing, and that **until this item ships, a mistyped
+or unpushed path in a formula produces no error report at all** — only `[missing]` beside
+the file in `ls` and one `Error` beside the product. The first thing every hand-written
+build does is exactly this: `hello.fmla` reads `<../clang.cfg>`, `build` pushes one folder,
+and `docs/tutorial/first-node.md` has to spend a paragraph on `push clang.cfg` because
+forgetting it is a wall of missing-setting errors with nothing naming the file. B-71 fixed
+this for one xcconfig; do it once for all: the idle report names the state as the cause
+("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), walking from the
+unproduced port to the formula that names it, with the nodes that deliberately tolerate an
+absent input saying so in their descriptor. `build` could then also offer to push what the
+formula names outside its folder, or at least say that it did not. Two states are still
+spelled as sentences and belong in the same pass: a removed file's `error("Deleted")`
+(`StaticFile`, `Folder`) and a folder's `error("Deleted/Nonexistent")`.
+
 
 ## App bundles
 

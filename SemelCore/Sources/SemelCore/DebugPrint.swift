@@ -88,9 +88,11 @@ extension BuildEngine {
         case .pending:
             return "[ 🟡 pending ]"
         case .initializing:
-            return "[ 🟡 not yet processed ]"
+            return "[ 🟡 \(NoValueReason.initializing) ]"
+        case .inputNotProduced:
+            return "[ 🟡 \(NoValueReason.inputNotProduced) ]"
         case .inputInError:
-            return "[ ❌ an input is in error ]"
+            return "[ ❌ \(NoValueReason.inputInError) ]"
         case .error:
             let message = (try? outputPort.dataObjectHash?.resolveAsString()) ?? "<no message>"
             return "[ ❌ \(message) ]"
