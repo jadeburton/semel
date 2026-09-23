@@ -18,13 +18,13 @@ final class SettingArgumentTests: XCTestCase {
 
     // MARK: - clang, -target
 
-    func test_clangRejectsATripleByQuotingIt() {
+    func test_clangRejectsATripleItCannotParse() {
         let target = SettingArgument.clangTarget(key: "clang.preprocessor.target", value: "nonsense-triple")
 
         XCTAssertTrue(target.isMentioned(in: "error: unknown target triple 'nonsense-triple'"))
         XCTAssertEqual(target.sentence,
-                       "`clang.preprocessor.target` is `nonsense-triple`; `clang -print-targets` "
-                     + "lists the architectures this toolchain builds for, which is a triple's first word.")
+                       "`clang.preprocessor.target` is `nonsense-triple`; `clang -print-target-triple` "
+                     + "prints the triple this toolchain builds for when none is given.")
     }
 
     func test_clangRejectsAKnownTripleItCannotBuildFor() {
@@ -36,6 +36,15 @@ final class SettingArgumentTests: XCTestCase {
             """))
     }
 
+    /// The phrases are the evidence, not the value: clang rewrites a triple it could not
+    /// read before quoting it, so the setting's own text is absent from the complaint
+    /// about it. `-target riscv64-apple-macos14.0` produces this.
+    func test_clangRejectsATripleWithoutQuotingWhatWasPassed() {
+        let target = SettingArgument.clangTarget(key: "clang.compiler.target", value: "riscv64-apple-macos14.0")
+
+        XCTAssertTrue(target.isMentioned(in: "error: unknown target triple 'unknown-apple-macosx14.0.0'"))
+    }
+
     // MARK: - clang, -isysroot and -L
 
     func test_clangNamesASysrootItCannotFind() {
@@ -43,8 +52,8 @@ final class SettingArgumentTests: XCTestCase {
 
         XCTAssertTrue(sdk.isMentioned(in: "clang: warning: no such sysroot directory: '/no/such/sdk' [-Wmissing-sysroot]"))
         XCTAssertEqual(sdk.sentence,
-                       "`clang.preprocessor.sdkPath` is `/no/such/sdk`; `xcrun --show-sdk-path` "
-                     + "prints the path of an SDK installed here.")
+                       "`clang.preprocessor.sdkPath` is `/no/such/sdk`; `xcrun --sdk <name> "
+                     + "--show-sdk-path` prints the path of an SDK installed here.")
     }
 
     /// The case the sysroot's phrase list exists to exclude: an ordinary type error quotes
@@ -61,24 +70,31 @@ final class SettingArgumentTests: XCTestCase {
             """))
     }
 
+    /// The one flag whose value is evidence. A linker cites libraries rather than headers,
+    /// so the search path appears only in the warning that is about it.
     func test_theLinkerNamesASearchPathItCannotFind() {
         let sdk = SettingArgument.clangLibrarySearchPath(key: "clang.linker.sdkPath",
                                                          value: "/no/such/sdk",
                                                          searchPath: "/no/such/sdk/usr/lib")
 
         XCTAssertTrue(sdk.isMentioned(in: "ld: warning: search path '/no/such/sdk/usr/lib' not found"))
-        XCTAssertTrue(sdk.isMentioned(in: "ld: library 'System' not found"))
+        // A linker's own failure carries no severity word, which is why the matcher drops
+        // only quoted source and not every line without one.
+        XCTAssertTrue(sdk.isMentioned(in: """
+            ld: library 'System' not found
+            clang: error: linker command failed with exit code 1 (use -v to see invocation)
+            """))
     }
 
     // MARK: - swiftc
 
-    func test_swiftcRejectsATripleByQuotingIt() {
+    func test_swiftcRejectsATripleItCannotParse() {
         let target = SettingArgument.swiftTarget(key: "swift.compiler.target", value: "nonsense")
 
         XCTAssertTrue(target.isMentioned(in: "error: unknown target 'nonsense'"))
         XCTAssertEqual(target.sentence,
-                       "`swift.compiler.target` is `nonsense`; `swiftc -print-target-info` "
-                     + "prints the triple this toolchain builds for by default.")
+                       "`swift.compiler.target` is `nonsense`; `swiftc -print-target-info -target "
+                     + "nonsense` says whether this toolchain builds for it.")
     }
 
     func test_swiftcRejectsAnArchitectureItHasNoFrontendFor() {
@@ -101,8 +117,56 @@ final class SettingArgumentTests: XCTestCase {
             <unknown>:0: error: unable to load standard library for target 'arm64-apple-macosx26.0'
             """))
         XCTAssertEqual(sdk.sentence,
-                       "`swift.compiler.sdk` is `macosx`; `xcodebuild -showsdks` lists the SDKs "
-                     + "installed here, as `-sdk <name>` names them.")
+                       "`swift.compiler.sdk` is `macosx`; `xcrun --sdk macosx --show-sdk-path` "
+                     + "resolves the name this key takes.")
+    }
+
+    /// The failure that made the target's value no evidence: with a target declared, as
+    /// `prepare` writes one, swiftc quotes it verbatim in a run that is entirely about the
+    /// SDK. Captured from `swiftc -sdk /no/such/sdk -target arm64-apple-macos14.0`.
+    func test_anSDKThatCannotBeLoadedNamesTheSDKAndNotTheTarget() {
+        let settings: [SettingArgument] = [
+            .swiftSDK(key: "swift.compiler.sdk", value: "macosx"),
+            .swiftTarget(key: "swift.compiler.target", value: "arm64-apple-macos14.0"),
+        ]
+
+        XCTAssertEqual(SettingArgument.sentences(for: settings, matching: """
+            warning: no such SDK: /no/such/sdk
+            <unknown>:0: warning: no such sysroot directory: '/no/such/sdk'
+            <unknown>:0: error: unable to load standard library for target 'arm64-apple-macos14.0'
+            """),
+                       ["`swift.compiler.sdk` is `macosx`; `xcrun --sdk macosx --show-sdk-path` "
+                      + "resolves the name this key takes."])
+    }
+
+    // MARK: - Source the tool quoted back
+
+    // Both compilers print the source around an error, so the phrases would otherwise be
+    // matched against the user's own text. These two are what `clang -c snippet2.c` and
+    // `swiftc -c snippet.swift` print for files whose offending line contains a phrase.
+
+    func test_aPhraseInSourceClangQuotedIsNotClangComplaining() {
+        let target = SettingArgument.clangTarget(key: "clang.compiler.target", value: "arm64-apple-macos14.0")
+
+        XCTAssertFalse(target.isMentioned(in: """
+            snippet2.c:1:47: error: expected ';' after top level declarator
+                1 | const char *s = "error: unknown target triple"
+                  |                                               ^
+                  |                                               ;
+            1 error generated.
+            """))
+    }
+
+    func test_aPhraseInSourceSwiftcQuotedIsNotSwiftcComplaining() {
+        let target = SettingArgument.swiftTarget(key: "swift.compiler.target", value: "arm64-apple-macos14.0")
+
+        XCTAssertFalse(target.isMentioned(in: """
+            snippet.swift:2:1: error: cannot find 'foo' in scope
+            1 | let s = "error: unknown target triple"
+            2 | foo(s)
+              | `- error: cannot find 'foo' in scope
+            3 |
+            """))
     }
 
     // MARK: - Nothing matched

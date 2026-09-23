@@ -133,7 +133,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         let message = try failureMessage(output, port: ClangPreprocessor.output)
         XCTAssertTrue(message.contains("error: unknown target triple 'nonsense-triple'"), "got \(message)")
         XCTAssertTrue(message.contains("`clang.preprocessor.target` is `nonsense-triple`"), "got \(message)")
-        XCTAssertTrue(message.contains("clang -print-targets"), "got \(message)")
+        XCTAssertTrue(message.contains("clang -print-target-triple"), "got \(message)")
     }
 
     func test_anSDKPathClangCannotFindIsReportedWithTheSettingItCameFrom() throws {
@@ -147,7 +147,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
         let message = try failureMessage(output, port: ClangPreprocessor.output)
         XCTAssertTrue(message.contains("`clang.preprocessor.sdkPath` is `/no/such/sdk`"), "got \(message)")
-        XCTAssertTrue(message.contains("xcrun --show-sdk-path"), "got \(message)")
+        XCTAssertTrue(message.contains("xcrun --sdk <name> --show-sdk-path"), "got \(message)")
     }
 
     /// An ordinary compile error is about the source, not the command line, and gains

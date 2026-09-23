@@ -309,11 +309,17 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
     /// The SDK reaches the command line as the path xcrun resolved the name to, so the
     /// sentence is the only place the name the config file states appears.
+    ///
+    /// The failure this stands in for is an SDK that resolves but cannot serve the target —
+    /// a macOS SDK under an iOS triple, which is what a half-converted iOS package builds
+    /// with. A *misspelled* SDK name never reaches the tool: `resolveSDKPath` returns nil
+    /// and the node throws first. Captured from
+    /// `swiftc -sdk "$(xcrun --sdk macosx --show-sdk-path)" -target arm64-apple-ios17.0`.
     func test_anSDKSwiftcCannotLoadIsReportedWithTheSettingThatNamesIt() throws {
         executor.exitCode = 1
         executor.errorOutput = """
-            <unknown>:0: warning: no such sysroot directory: '/no/such/sdk'
-            <unknown>:0: error: unable to load standard library for target 'arm64-apple-macosx26.0'
+            <unknown>:0: warning: using sysroot for 'MacOSX' but targeting 'iPhone'
+            <unknown>:0: error: unable to load standard library for target 'arm64-apple-ios17.0'
             """
 
         var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
@@ -323,7 +329,7 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
         let message = try failureMessage(output, port: SwiftCompiler.outputObject)
         XCTAssertTrue(message.contains("`swift.compiler.sdk` is `macosx`"), "got \(message)")
-        XCTAssertTrue(message.contains("xcodebuild -showsdks"), "got \(message)")
+        XCTAssertTrue(message.contains("xcrun --sdk macosx --show-sdk-path"), "got \(message)")
     }
 
     /// An error in the source is about the source: nothing is added.

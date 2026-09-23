@@ -257,8 +257,8 @@ extension SimplifiedToolExecuteResult {
     /// `settings` are the arguments the node built from settings. Each one the tool's
     /// output complains about adds a closing sentence naming the setting behind the
     /// argument, so a rejected `-target` reads as a key to change rather than as a triple
-    /// the reader never typed. A run that complains about none of them says exactly what
-    /// it said before.
+    /// the reader never typed. A run that complains about none of them carries only the
+    /// status and the tool's output.
     public func failureMessage(tool: String = "the tool", settings: [SettingArgument] = []) -> String {
         let printed = [errorOutput, infoOutput]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

@@ -43,7 +43,7 @@ final class ToolFailureMessageTests: XCTestCase {
                        """
                        clang exited with status 1:
                        error: unknown target triple 'nonsense-triple'
-                       `clang.preprocessor.target` is `nonsense-triple`; `clang -print-targets` lists the architectures this toolchain builds for, which is a triple's first word.
+                       `clang.preprocessor.target` is `nonsense-triple`; `clang -print-target-triple` prints the triple this toolchain builds for when none is given.
                        """)
     }
 
