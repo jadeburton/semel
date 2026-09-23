@@ -62,20 +62,29 @@ final class EndToEndRun {
     // MARK: - 1. Materialise
 
     /// A fixture project copies the whole `Fixtures` tree to `<root>/tree`; an external
-    /// project copies the cached checkout's subfolder parent there. Either way `base` is
-    /// what the build folder is relative to.
+    /// project copies the cached checkout's subfolder parent there, except that a
+    /// subfolder of `"."` nests the checkout one level under `tree`, named after the
+    /// project, instead of copying it to `tree` directly — `build`'s folder argument
+    /// cannot be the base itself (`push .` resolves to nothing to push), so a project
+    /// whose build folder is the checkout's own root needs a real subfolder to name; its
+    /// `buildFolder` is then `project.name`. Either way `base` is what the build folder
+    /// is relative to.
     func materialise() throws {
         let tree = root.appendingPathComponent("tree", isDirectory: true)
         switch project.source {
         case .fixture:
             try FileManager.default.copyItem(at: EndToEndEnvironment.fixtures, to: tree)
-            base = tree
         case .git(let url, let commit, let subfolder):
             let checkout = try CloneCache.checkout(name: project.name, url: url, commit: commit)
-            let parent = subfolder == "." ? checkout : checkout.appendingPathComponent(subfolder).deletingLastPathComponent()
-            try FileManager.default.copyItem(at: parent, to: tree)
-            base = tree
+            if subfolder == "." {
+                try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: checkout, to: tree.appendingPathComponent(project.name, isDirectory: true))
+            } else {
+                let parent = checkout.appendingPathComponent(subfolder).deletingLastPathComponent()
+                try FileManager.default.copyItem(at: parent, to: tree)
+            }
         }
+        base = tree
     }
 
     // MARK: - 2. Configure
@@ -168,9 +177,11 @@ final class EndToEndRun {
         throw EndToEndFailure(step: "determinism", message: "\(notExempt.count) difference(s) between out1 and out2:\n  \(listed)\(more)")
     }
 
-    /// Whether `mayDiffer` names `difference.path`, exactly or as a suffix.
+    /// Whether `mayDiffer` names `difference.path`, exactly or as a trailing path: a
+    /// component boundary is required, so `Assets.car` names only paths ending
+    /// `/Assets.car`, not an unrelated file that merely ends with the same characters.
     static func exempt(_ difference: TreeDiff.Difference, by mayDiffer: [String]) -> Bool {
-        mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix($0) }
+        mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix("/" + $0) }
     }
 
     // MARK: - 6b. A second mount

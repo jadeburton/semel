@@ -9,9 +9,13 @@ for what differed from this text.
   first (`Project.alsoPush`).
 - `prepare` writes the namespaces a kept formula selects.
 - `TreeDiff` resolves the root through `realpath` because `/tmp` is a symlink on macOS.
-- `Project.mayDiffer` is empty for every roster entry: `SwiftLinker` makes `.staticArchive`
-  output deterministic (B-72), so the two export trees match byte for byte with no
-  exemptions.
+- `Project.mayDiffer` is empty for every roster entry except `icecubes-app`: `SwiftLinker`
+  makes `.staticArchive` output deterministic (B-72), so the two export trees match byte for
+  byte with no exemptions elsewhere. `icecubes-app` names what the Apple toolchain itself
+  does not reproduce byte for byte — every bundle's `Assets.car` (B-89: `actool`'s `.icon`
+  renditions and, independent of a `.icon` input, its appearance table's entry order) and
+  four executables carrying a duplicate `_objc_msgSend` GOT entry (B-90) — until one of
+  those items closes.
 
 ## 1. Why
 
@@ -102,18 +106,26 @@ struct Project {
 | `swift-my-app` | fixture `.` | `swift/MyApp` | `macos` | the converter's products; confirmed when the roster is written |
 | `swift-hello-app` | fixture `.` | `swift/HelloApp` | `ios-simulator` | `Hello.app/Hello`, `Hello.app/Info.plist`, `Hello.app/PkgInfo`, `Hello.app/Assets.car` |
 | `icecubes` | git `https://github.com/Dimillian/IceCubesApp.git` at `3dc60a80a66db2c3a92c517b38398246ef4ea1b9`, subfolder `Packages` | `Packages` | `ios-simulator` | `libConversations.a`, `libExplore.a`, `libLists.a`, `libNotifications.a`, `libTimeline.a` |
+| `icecubes-app` | git `https://github.com/Dimillian/IceCubesApp.git` at `3dc60a80a66db2c3a92c517b38398246ef4ea1b9`, subfolder `.` | `icecubes-app` | `ios-simulator` | `Ice Cubes.app/Ice Cubes`, `Ice Cubes.app/Info.plist`, `Ice Cubes.app/Assets.car`, and each of the four `.appex` bundles' executables under `PlugIns/` |
 
 The base of a fixture run is the `Fixtures` copy; for `c-hello` the base is the copy and
 the build folder `c`. The base of an external run is the copy of the subfolder's parent,
-so IceCubes builds `Packages` with `Dependencies` beside it, as `C1/icecubes` does.
+so IceCubes builds `Packages` with `Dependencies` beside it, as `C1/icecubes` does. A
+subfolder of `.` names the checkout's own root as what the build folder builds; since
+`build`'s folder argument cannot be the base itself, the checkout is nested one level under
+base instead, named after the project — `icecubes-app`'s build folder is `icecubes-app`.
 
 The IceCubes formula is what `prepare` writes: one `package(p)` function over the
-converter and five `include`s, the consumption roots. Nothing hand-written is needed.
+converter and five `include`s, the consumption roots, for `icecubes`; for `icecubes-app`,
+`XcodeProjectConverter`'s formula for the application target and its four embedded
+extensions. Nothing hand-written is needed for either.
 
 `swift-hello-app` depends on the `SemelApple` nodes (B-64) being on `main`; until then
 that fixture is listed in the roster and its test skips with a message naming B-64.
 
-Timeouts: two minutes for a fixture, fifteen for IceCubes.
+Timeouts: two minutes for a fixture, fifteen for `icecubes`, twenty-five for
+`icecubes-app` — `prepare` and each cold build share the one budget, and the app build
+also vendors packages.
 
 ## 4. What one run does
 

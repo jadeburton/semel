@@ -77,7 +77,52 @@ enum Projects {
         // Two cold builds of five minutes each are enough; the fixtures prove the third.
         twoMounts: false)
 
+    /// The application itself, through `XcodeProjectConverter`: the whole checkout is the
+    /// project's root, so `buildFolder` names the checkout (see `Project.Source.git`'s
+    /// `"."` case). `Ice Cubes.app` is `PRODUCT_NAME`, not the target name; the four
+    /// extensions embedded under `PlugIns/` keep their target names for both the bundle
+    /// and the executable inside it — `IceCubesAppWidgetsExtensionExtension` doubled
+    /// "Extension" is the project's own naming, not a typo here.
+    static let icecubesApp = Project(
+        name: "icecubes-app",
+        source: .git(url: "https://github.com/Dimillian/IceCubesApp.git",
+                     commit: "3dc60a80a66db2c3a92c517b38398246ef4ea1b9",
+                     subfolder: "."),
+        buildFolder: "icecubes-app",
+        platform: "ios-simulator",
+        expectedProducts: [
+            "Ice Cubes.app/Ice Cubes",
+            "Ice Cubes.app/Info.plist",
+            "Ice Cubes.app/Assets.car",
+            "Ice Cubes.app/PlugIns/IceCubesNotifications.appex/IceCubesNotifications",
+            "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex/IceCubesShareExtension",
+            "Ice Cubes.app/PlugIns/IceCubesActionExtension.appex/IceCubesActionExtension",
+            "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
+        ],
+        // A cold build takes several minutes locally; `prepare` shares the same budget,
+        // and the GitHub macOS runner this also has to fit is roughly half the speed.
+        buildTimeout: 25 * 60,
+        mayDiffer: [
+            // actool's output is not byte-reproducible (B-89): the `.icon` renditions it
+            // derives for the app carry a fresh UUID and pid, and an asset catalog with
+            // more than one appearance can have its appearance table's entry order vary
+            // regardless of a `.icon` input — the widgets extension's catalog has no
+            // `.icon` and still hit it. A bare name, not a full path, so the exemption
+            // reaches every target's `Assets.car`.
+            "Assets.car",
+            // The linker picks between two duplicate `_objc_msgSend` GOT entries
+            // non-deterministically wherever a target's objects carry the duplicate pair
+            // (B-90); `IceCubesActionExtension` links a single entry and needs none.
+            "Ice Cubes.app/Ice Cubes",
+            "Ice Cubes.app/PlugIns/IceCubesNotifications.appex/IceCubesNotifications",
+            "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex/IceCubesShareExtension",
+            "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
+        ],
+        // A cold build takes several minutes; the third build the fixtures prove is not
+        // worth a third here.
+        twoMounts: false)
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes]
+    static let external: [Project] = [icecubes, icecubesApp]
     static let all: [Project] = fixtures + external
 }

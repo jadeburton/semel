@@ -11,6 +11,18 @@ final class RosterTests: XCTestCase {
         XCTAssertEqual(Set(Projects.all.map(\.name)).count, Projects.all.count)
     }
 
+    /// `materialise` nests a `.git(subfolder: ".")` checkout under its own name, so
+    /// `buildFolder` has to spell that name back (`Project.Source.git`'s doc comment).
+    func test_aCheckoutRootedProjectBuildsTheFolderNamedAfterIt() {
+        for project in Projects.all {
+            guard case .git(_, _, let subfolder) = project.source, subfolder == "." else {
+                continue
+            }
+            XCTAssertEqual(project.buildFolder, project.name,
+                           "\(project.name): materialise nests the checkout under its name")
+        }
+    }
+
     func test_everyFixtureFolderAndItsFormulaAreInTheRepository() {
         for project in Projects.fixtures {
             let folder = EndToEndEnvironment.fixtures.appendingPathComponent(project.buildFolder, isDirectory: true)

@@ -21,7 +21,18 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    func test_icecubesAppBuildsTwiceForTheSimulator() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.icecubesApp)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("icecubes-app\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
-        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes"])
+        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes", "icecubes-app"])
     }
 }

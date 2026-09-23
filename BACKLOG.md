@@ -482,17 +482,29 @@ for IceCubes. An include that brings only funcs, not products, or a package conv
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
-**B-89** `open` — **`actool` renditions from a `.icon` input are not byte-reproducible.**
-`actool` embeds a fresh UUID, its pid and a mach timestamp in the names of the renditions
-it generates from an Icon Composer `.icon` bundle, so IceCubesApp's `Assets.car` differs
-between two identical cold builds (eight rendition names plus a reordered appearance
-table) even though the catalog's inputs and actool's arguments are character-for-character
-the same in both builds. The two extensions' `Assets.car` files, compiled from `.xcassets`
-alone, are byte-identical across the same two builds — the `.icon` input is the trigger.
-To find: an actool flag or environment variable that fixes the rendition identifier, or
-whether `--output-format` or a newer Xcode's `.icon` handling avoids it; failing that, the
-harness exempts `Assets.car` from `TreeDiff` for a project with a `.icon` input, named per
-project. Evidence: the diagnosis's section 4.
+**B-89** `open` — **`actool` output is not byte-reproducible: `.icon` renditions carry a
+UUID and pid, and the appearance table's order varies.** Two separate causes, both in
+IceCubesApp's compiled asset catalogs. First, `actool` embeds a fresh UUID, its pid and a
+mach timestamp in the names of the renditions it generates from an Icon Composer `.icon`
+bundle, so the app's `Assets.car` differs between two identical cold builds (eight
+rendition names) even though the catalog's inputs and actool's arguments are
+character-for-character the same in both builds; only the app's catalog carries a `.icon`
+input. Second, and independent of a `.icon` input: an asset catalog with more than one
+appearance can have its appearance table's entry order vary between two identical
+compiles. The widgets extension's catalog — 18,856 bytes, two colorsets with light and
+dark appearances and an appiconset, no `.icon` — differed in exactly this way in one of
+three two-build comparisons, 16 bytes in all: the two entry names `UIAppearanceAny` and
+`UIAppearanceDark` written in swapped order, and the four
+key indices pointing at them following suit; `xcrun assetutil --info` on the two files
+differs only in a timestamp field that is the file's own mtime, confirming the content
+itself is the same table, reordered. To find: an actool flag or environment variable that
+fixes the rendition identifier or the appearance order, whether actool has a
+single-threaded mode that makes the appearance table's order stable, or whether
+`--output-format` or a newer Xcode's `.icon` handling avoids the first cause; failing that,
+the harness exempts `Assets.car` from `TreeDiff` for a project with a catalog carrying
+either an `.icon` input or more than one appearance, named per project. Evidence: the
+diagnosis's section 4. The roster exempts every `Assets.car` of `icecubes-app`; removing
+that exemption is this item's exit.
 
 **B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
 IceCubesApp's linked executable carries two GOT entries binding the same import,
@@ -502,7 +514,16 @@ does `LC_UUID`, while every symbol, address and fixup is identical. All inputs t
 are the same hash in both builds. To find: the linker option that makes GOT emission
 deterministic (`-no_deduplicate` is already passed by clang's driver in debug; check
 `-fixup_chains` and `-ld_classic` behaviour), or confirm the duplicate originates from a
-specific input. Evidence: the diagnosis's section 3.
+specific input. Evidence: the diagnosis's section 3. Further evidence, from `icecubes-app`'s
+two-build comparisons: carrying the duplicate pair is necessary but not sufficient — which
+of the executables carrying the pair flips varies — three of the four `.appex` executables
+in one run, the app's own executable in another — while `IceCubesActionExtension` links a
+single `_objc_msgSend` GOT entry (`dyld_info -fixups` shows one `_objc_msgSend$` line
+against two for every other target) and has been identical in both runs; comparing its link
+inputs against `IceCubesNotifications`'s is the shortest route to the input that introduces
+the second entry. The roster exempts `Ice Cubes.app`'s executable and three of its four
+extensions' (every one but `IceCubesActionExtension`'s) for `icecubes-app`; removing that
+exemption is this item's exit.
 
 ## End-to-end roster
 
@@ -510,15 +531,6 @@ Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for somethi
 does not exercise. What is said about each project below is from memory of the project, not
 from a clone: pin a commit, run `semel-swift prepare`, and let the first failure list correct
 the entry. The gap list a project produces is worth more than its eventual pass.
-
-**B-75** `open` — **The roster builds IceCubes's packages, not the app.**
-`Projects.icecubes` clones with `subfolder: "Packages"` and expects five `lib*.a`; nothing
-in `swift test` goes through `XcodeProjectConverter` (B-65), so the app path has no
-end-to-end coverage. Add an entry rooted at the repository: `prepare` on the folder holding
-`IceCubesApp.xcodeproj`, expected products `IceCubesApp.app/IceCubesApp`, `Info.plist`,
-`Assets.car` and the four `.appex` bundles. To check first: that `prepare` on a harness
-clone settles the xcconfig `.template` (B-70) without a hand step. A `simctl install` /
-`launch` smoke check is optional and needs a booted simulator, so opt-in on top of opt-in.
 
 **B-76** `open` — **A roster source for a clone plus a hand-written formula.**
 `Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes

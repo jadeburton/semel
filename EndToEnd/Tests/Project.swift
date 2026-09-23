@@ -15,9 +15,11 @@ struct Project {
         /// run is the copy of the whole `Fixtures` tree, whatever the folder.
         case fixture(folder: String)
         /// A repository at one commit; `subfolder` is the folder under the checkout that
-        /// the build folder is relative to, `"."` for the checkout itself. The base of
-        /// the run is the copy of the subfolder's parent, so a tree of packages builds
-        /// with `Dependencies` beside it.
+        /// the build folder is relative to. The base of the run is the copy of the
+        /// subfolder's parent, so a tree of packages builds with `Dependencies` beside it.
+        /// `"."` means the checkout's own root holds what `buildFolder` names; since a
+        /// build folder cannot be the base itself, the checkout is nested one level under
+        /// base instead, named after `name` — so `buildFolder` must equal `name`.
         case git(url: String, commit: String, subfolder: String)
     }
 
