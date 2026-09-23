@@ -255,9 +255,24 @@ frame and the client sees a closed connection. Deleting one shared header produc
 error entries at idle, 494 of them the identical unlabelled `ClangCompiler … inputValueInError`,
 because only `.pending` blocks processing and errors propagate through every consumer;
 deleting the whole project produced none, since everything was collected. The fixes are
-separate items: the `debug` tree (global visited set; text in the frame body), the idle
-error report collapsing a cascade to its cause, `[missing]` split into its states, the
-missing batch around `rm` (B-53), and `ProjectBuilder`'s mid-flight printer (B-50).
+separate items: the `debug` tree (B-94), the idle error report collapsing a cascade to its
+cause, `[missing]` split into its states, the missing batch around `rm` (B-53), and
+`ProjectBuilder`'s mid-flight printer (B-50).
+
+**B-94** `open` — **`debug` on a few hundred nodes burns a minute of one core, then closes the connection.**
+`d` against a prepared IceCubesApp graph runs `semelserv` at 100 % of one core for about a
+minute and ends with `The operation couldn't be completed. (SemelCLI.ConnectionError error
+2.)`, which is `ConnectionError.closed`: the server refused the reply frame. Two causes, both
+recorded under B-74's reproduction: the dependency tree keeps its visited set per node, so a
+`StaticFile` shared by a thousand consumers is visited a thousand times and the walk
+enumerates paths rather than nodes; and the rendered text rides inside the frame JSON under
+the 1 MiB cap, so past about 600 nodes the frame is rejected and the client sees a closed
+socket. The single busy core is not a missing parallelism: the walk is exponential in the
+sharing, and a global visited set makes it linear, after which one core is plenty. Fix: one
+visited set for the whole walk, the text streamed as the frame body rather than embedded in
+its JSON (or paged), and a client message for a refused frame that says what was too large
+instead of "error 2". Acceptance: `debug` on the 1,019-node C fixture from B-74 returns in
+well under a second.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
@@ -292,6 +307,67 @@ and leaves the `semelserv` it started running. Two shapes fix it: put the server
 client's process group, so a signal delivered to the group reaches both; or have `semelserv`
 exit when its socket file disappears, which also covers a user who deletes the socket by
 hand.
+
+## Command line
+
+What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C fixture
+(2026-09-23); the engine-side items these lean on are B-50 (artifact diff at idle) and B-81
+(settle summary).
+
+**B-95** `open` — **Nothing tells the user when the build is done and the artifacts are there.**
+After `push` or `build` the prompt returns at once and the graph settles in the background;
+the only way to know when to `cp` or `export` is to poll `errors` or `ls output:`, or to run
+`wait`, which blocks with no indication of progress. Wanted: a live indicator redrawn in
+place rather than scrolled, in two sizes. Minimal: one line with the number of pending
+nodes, which may rise while the cascade is still generating work, and a final line when the
+graph settles. Maximal: the active nodes listed, a dashboard. The data is already counted —
+`BuildEngine.processSomeNodes` knows scheduled and computed per batch — so the work is a
+protocol message carrying the counts on each batch and a terminal renderer; B-30 role 3's
+subscription is the transport it grows into. Open, and to decide before building: whether
+the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
+(a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
+verb and left with a key).
+
+**B-96** `open` — **`rm` says nothing about what it removed.**
+`FilePlugin.handleRemove` prints only when the wildcard matched nothing; on any match it is
+silent, so `rm *.*` in a folder of packages looks like a no-op when it removed the dotted
+files and left the folders — `*` matches within one segment and `*.*` needs a literal dot,
+as in a shell, so that outcome is correct and unannounced. The server already returns the
+removed paths (`RequestHandler+Files.remove`). Print them, or a count with the folders
+named; and when a pattern matched files but no folder, say so. `push` has the same silence
+on success (`handlePush` prints only its errors) and takes the same fix.
+
+**B-97** `open` — **A node's error message is shown in its debug form, with `\n` and quotes.**
+A missing configuration prints as
+`other(message: "Missing configuration. Add these to a semel.config …:\n\nclang.linker.target=…\n…")`,
+one line, escaped newlines, the whole thing in quotes, and the user cannot paste it. Cause:
+`Node.swift` interns a thrown error as `"\(error)"` (lines 239 and 399), and `NodeError` is
+not `CustomStringConvertible`, so `.other(message:)` renders as its case description. The
+client's `ErrorRecordRenderer` already prints a multi-line message as an indented block;
+it never gets the chance. Fix: give `NodeError` a `description` that is the message for
+`.other` and a sentence for each other case, and intern that. Then the configuration message
+itself: the `=…` are the template's placeholders, not truncation, and `tools clang.linker`
+prints the four `toolDescriptor.*` keys with the installed tool's real values as a
+paste-ready block (`ToolNamespaceRenderer`), so the message should name that command for
+those and list placeholders only for the keys that need the user's choice, `target` among
+them.
+
+**B-98** `open` — **A tool's own error is repeated without the setting that caused it.**
+`ClangPreprocessor` failing with clang's `error: unknown target triple '…'` shows the user
+clang's line and nothing else. The node knows which setting produced the flag
+(`clang.preprocessor.target` → `-target`), where the value came from (which `semel.config`,
+or prepare's template), and what values the installed toolchain accepts (`tools clang`
+lists them). A tool failure whose stderr names an argument the node built from a setting
+should say so: the key, the value, the file it was read from, and the command that lists
+valid values. Applies to every tool node; start with `-target`/`-sdk`, the two a new user
+gets wrong.
+
+**B-99** `open` — **The CLI marks failure with ❌ and success with nothing.**
+`ErrorRecordRenderer` opens every error with ❌; no positive event has a mark, so a screen
+of output reads as all bad news or none. Use emoji judiciously and consistently: one for an
+artifact appearing (B-50's reporter), one for a settle with no errors (B-81's summary), one
+for a cache hit if the summary distinguishes it, and nothing else. Pin the set in the
+renderer tests the way the ❌ format is pinned, so it cannot drift per command.
 
 ## Design, correctness and code quality
 
