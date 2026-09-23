@@ -106,13 +106,17 @@ extension RequestHandler {
     /// Deletes every match in the input file system. Deletions that succeed stand even if a
     /// later one fails; the failures are reported together, and the paths that were removed
     /// are not repeated back in that case.
+    ///
+    /// Files and folders come back apart because the client says each differently: a
+    /// wildcard can match every file of a folder without matching the folder.
     func remove(pattern: String) throws -> DaemonResponse {
         let root    = try engine.inputFileSystem
         let matcher = FileWildcardMatcher(input: InternalFileSystemLister(folder: root))
         let matches = try matcher.findAllMatching(pathOrWildcard: Path(pattern))
 
-        var removedPaths: [String] = []
-        var failures:     [String] = []
+        var removedFiles:   [String] = []
+        var removedFolders: [String] = []
+        var failures:       [String] = []
 
         for match in matches {
             guard let child = try root.childNode(path: match.path) else {
@@ -124,13 +128,17 @@ extension RequestHandler {
                 continue
             }
             try deletable.deleteInInputFileSystem()
-            removedPaths.append(match.path.string)
+            if case .folder = match.kind {
+                removedFolders.append(match.path.string)
+            } else {
+                removedFiles.append(match.path.string)
+            }
         }
 
         guard failures.isEmpty else {
             throw HandlerFailure.node(description: failures.joined(separator: "\n"))
         }
-        return .remove(removedPaths: removedPaths)
+        return .remove(removedFiles: removedFiles, removedFolders: removedFolders)
     }
 
     // MARK: - fetch

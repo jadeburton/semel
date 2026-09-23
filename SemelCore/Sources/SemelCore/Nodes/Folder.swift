@@ -167,31 +167,49 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         BuildEngine.shared?.signalWorkAvailable()
     }
 
-    /// Rebuilds the manifest of every folder marked dirty. Returns how many it rebuilt, so
-    /// a caller can tell whether anything downstream may now be scheduled.
+    /// Rebuilds the manifest of every folder marked dirty, and collects the folders that
+    /// their last child took with it. Returns how many manifests it rebuilt, so a caller
+    /// can tell whether anything downstream may now be scheduled.
+    ///
+    /// A collected folder marks *its* parent dirty, so the marks are drained in rounds
+    /// until none is left; the rounds walk up the tree and there are at most as many as it
+    /// is deep.
     @discardableResult
     static func flushDirtyManifests() throws -> Int {
         let database = DatabaseLayer.shared!
         var flushed = 0
-        for key in try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix) {
-            guard let nodeID = ObjectID(key.dropFirst(manifestDirtyKeyPrefix.count)) else {
-                continue
+        while true {
+            let keys = try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix)
+            guard !keys.isEmpty else {
+                return flushed
             }
-            try database.metadata.delete(key: key)
-            // The folder may have been collected since it was marked; then there is
-            // nothing to rebuild and the row was all that was left of it.
-            guard let nodeRecord = try? database.node.select(nodeID: nodeID),
-                  let folder = try nodeRecord.makeNode() as? Folder else {
-                continue
+            for key in keys {
+                guard let nodeID = ObjectID(key.dropFirst(manifestDirtyKeyPrefix.count)) else {
+                    continue
+                }
+                try database.metadata.delete(key: key)
+                // The folder may have been collected since it was marked; then there is
+                // nothing to rebuild and the row was all that was left of it.
+                guard let nodeRecord = try? database.node.select(nodeID: nodeID),
+                      let folder = try nodeRecord.makeNode() as? Folder else {
+                    continue
+                }
+                guard try !folder.isAbandoned() else {
+                    try folder.delete()
+                    continue
+                }
+                try folder.refreshOutputs()
+                flushed += 1
             }
-            try folder.refreshOutputs()
-            flushed += 1
         }
-        return flushed
     }
 
     /// Rebuilds one folder's manifest if it is marked dirty. Called on the way into a
     /// direct read of the manifest port.
+    ///
+    /// A read rebuilds; it never collects, since the caller is about to read the port of
+    /// the node it would delete. A folder whose last child has gone is marked again
+    /// instead, and the next pass collects it.
     static func flushManifestIfDirty(nodeID: ObjectID) throws {
         let database = DatabaseLayer.shared!
         let key = manifestDirtyKey(nodeID)
@@ -203,6 +221,9 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             return
         }
         try folder.refreshOutputs()
+        if try folder.isAbandoned() {
+            try folder.markManifestDirty()
+        }
     }
 
     public func onChildAdded(nodeID: ObjectID) throws {
@@ -214,18 +235,25 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     }
 
     public func onChildDeleted(nodeID: ObjectID) throws {
-        // Rebuilt at once, not deferred: a deletion is followed by the self-delete check
-        // below, and a folder that then dies must not leave a dirty mark behind.
-        try refreshOutputs()
+        // Deferred like every other child change: a rebuild here is O(children) and a
+        // collector takes children one at a time, so rebuilding as they go costs one walk
+        // of the folder per file it holds. The self-delete check is deferred with it, for
+        // the same reason — it reads every child too.
+        try markManifestDirty()
+    }
 
-        // Only self-delete when the folder is truly empty. Using canBeDeleted() here is wrong:
-        // it returns true whenever all *remaining* children are individually deletable, which
-        // causes premature self-deletion while other children still exist in the DB. When the
-        // second child's cascade later calls notifyParentOfChildDeletion(), the parent is gone
-        // and the lookup throws nodeNotFound, aborting the cascade and leaving orphaned nodes.
-        if try thisNode.allChildren.isEmpty && !(canBePinned() && isPinned) && hasNoOutputWires() && hasNoInputWires() {
-            try delete()
-        }
+    /// Whether nothing holds this folder in the graph any more: no children, no pin of its
+    /// own, and no wires either way.
+    ///
+    /// Emptiness rather than `canBeDeleted()`: that one answers whether the *remaining*
+    /// children could each be collected, which is true while children still exist, and a
+    /// folder deleted from under them leaves their cascade looking for a parent that is
+    /// gone — a `nodeNotFound` mid-cascade and orphaned nodes behind it.
+    private func isAbandoned() throws -> Bool {
+        try thisNode.allChildren.isEmpty
+            && !(canBePinned() && isPinned)
+            && hasNoOutputWires()
+            && hasNoInputWires()
     }
 
     public var isPinned: Bool {
