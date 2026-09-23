@@ -88,11 +88,16 @@ public final class DatabaseLayer {
         }
     }
 
-    private func translatingVolumeFailures<T>(_ work: () throws -> T) throws -> T {
+    /// `reporting` is the file the translated error names. It defaults to this database's
+    /// own, which is the file every read and write is against; a caller writing somewhere
+    /// else — a copy taken aside — passes that destination, so the message names the file
+    /// the failure was about.
+    private func translatingVolumeFailures<T>(reporting pathToReport: String? = nil,
+                                              _ work: () throws -> T) throws -> T {
         do {
             return try work()
         } catch {
-            throw DatabaseVolumeError.translating(error, filePath: filePath)
+            throw DatabaseVolumeError.translating(error, filePath: pathToReport ?? filePath)
         }
     }
 
@@ -205,10 +210,11 @@ public final class DatabaseLayer {
     /// so it is one file that opens anywhere.
     ///
     /// Inside the same boundary every other access goes through, so a full or read-only
-    /// volume is reported as the machine's failure and not as a bare SQLite code. What a
-    /// failed copy wrote is removed: half a database looks like evidence and is not.
+    /// volume is reported as the machine's failure and not as a bare SQLite code — naming
+    /// the copy, since that is the file being written. What a failed copy wrote is removed:
+    /// half a database looks like evidence and is not.
     public func copyAside(to destinationPath: String) throws {
-        try translatingVolumeFailures {
+        try translatingVolumeFailures(reporting: destinationPath) {
             do {
                 let destination = try DatabaseQueue(path: destinationPath)
                 try dbQueue.backup(to: destination)

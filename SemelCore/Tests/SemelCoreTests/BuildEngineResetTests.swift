@@ -221,9 +221,17 @@ final class BuildEngineResetTests: SemelCoreTestCase {
                           failure.unrecoverableDescription)
             XCTAssertTrue(failure.unrecoverableDescription.contains("nothing was reset"),
                           failure.unrecoverableDescription)
-            XCTAssertTrue(failure.underlying is DatabaseVolumeError,
-                          "the machine's failure, told apart at the database layer's boundary, "
-                          + "got \(failure.underlying)")
+            guard let volume = failure.underlying as? DatabaseVolumeError else {
+                return XCTFail("the machine's failure, told apart at the database layer's "
+                             + "boundary, got \(failure.underlying)")
+            }
+            // The file that could not be written is the copy, not the database being read
+            // from, and a message naming the live graph would send the reader to the wrong
+            // file.
+            XCTAssertEqual(volume.filePath, failure.destinationPath,
+                           "the nested error names the copy, not the graph it was read from")
+            XCTAssertTrue(volume.unrecoverableDescription.contains(failure.destinationPath),
+                          volume.unrecoverableDescription)
         }
 
         XCTAssertNotNil(try fileEngine.database.node.find(nodeID: doomedID),

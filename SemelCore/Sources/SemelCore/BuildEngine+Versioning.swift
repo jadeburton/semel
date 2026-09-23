@@ -62,9 +62,11 @@ extension BuildEngine {
             let archivedGraphPath = try reset(clearCache: true)
             try restateThePortsOfPreservedNodes()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
-            // in the home unexplained. Through the channel every other one-line status goes
-            // through — a `notice` event for an attached client, the server's own terminal
-            // otherwise — and not `Debug.log`, which a release build compiles out.
+            // in the home unexplained. This runs from `BuildEngine.start()`, before a
+            // server installs its reporter and before any client can be listening, so the
+            // line goes to `noticeReporter`'s default and lands on the process's own
+            // stdout — `semelserv`'s terminal. That default is the channel here, chosen
+            // over `Debug.log`, which a release build compiles out.
             if let archivedGraphPath {
                 Self.notice("Semel \(recorded ?? "of unknown version") built this graph; "
                           + "it was copied to \(archivedGraphPath), which is yours to delete.")
