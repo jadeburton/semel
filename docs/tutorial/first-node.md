@@ -592,12 +592,12 @@ reset
 ```
 
 ```
-Graph copied to /Users/you/Library/Application Support/semel/graph.sqlite.broken-2026-09-23T101500Z
+Graph copied to /Users/you/Library/Application Support/semel/graph.sqlite.broken-2026-09-23T101500Z — yours to delete.
 Rebuild started.
 ```
 
-That copy is the only record of the graph the reset threw away; delete it once you are
-sure you do not need it. `reset --cache` discards the cached builds as well, which is the
+That copy is the only record of the graph the reset threw away, and nothing removes it for
+you: delete it once you are sure you do not need it. `reset --cache` discards the cached builds as well, which is the
 answer to a cached result you believe is wrong and costs a cold build of everything in the
 home.
 

@@ -4,7 +4,34 @@
 //
 
 import Foundation
+import SemelDatabaseModels
 import SemelNodeKit
+
+/// The graph could not be copied aside, so the reset stopped before it deleted anything.
+///
+/// Unrecoverable, for the reason the copy is taken first: it is the reset's first write,
+/// and what stops it — a volume with no room, a home that cannot be written to, a file
+/// SQLite cannot read — stops everything the reset would do next. The path it tried to
+/// write is in the message, because that is what the reader has to make room for.
+public struct GraphCopyFailedError: UnrecoverableError {
+    public let destinationPath: String
+    public let underlying: Error
+
+    public init(destinationPath: String, underlying: Error) {
+        self.destinationPath = destinationPath
+        self.underlying      = underlying
+    }
+
+    public var unrecoverableDescription: String {
+        let reason = (underlying as? any UnrecoverableError)?.unrecoverableDescription ?? "\(underlying)"
+        return """
+            The graph could not be copied to \(destinationPath), so nothing was reset.
+            The graph is as it was.
+
+            \(reason)
+            """
+    }
+}
 
 extension BuildEngine {
 
@@ -27,11 +54,11 @@ extension BuildEngine {
     /// the same inputs.
     ///
     /// A reset is also a graph's last moment, and the state it discards is the evidence
-    /// for whatever made the reset necessary, so the database file is copied aside first.
+    /// for whatever made the reset necessary, so the database file is copied aside before
+    /// anything is deleted — and only then, since a reset that finds nothing to discard
+    /// destroys nothing and leaves the live file standing as its own record.
     @discardableResult
     public func reset(clearCache: Bool = false) throws -> String? {
-        let archivedGraphPath = try copyGraphAside()
-
         // 1. Collect node IDs to preserve.
         var preservedIDs = Set<ObjectID>()
 
@@ -49,8 +76,15 @@ extension BuildEngine {
         let allNodes  = try database.node.selectAll()
         let deleteIDs = allNodes.compactMap(\.id).filter { !preservedIDs.contains($0) }
 
-        // 3. Bulk delete — wires, output ports and nodes — in one transaction.
-        //    An empty delete set is not an early exit: the rebuild in step 4 still has to
+        // 3. Copy the graph aside, while it still holds what is about to go. A fresh home
+        //    holds nothing beyond the roots and a reset there discards nothing, so it is
+        //    not worth a copy; a cache the user asked to discard is state in this same
+        //    file, and is.
+        let discardsSomething = try !deleteIDs.isEmpty || (clearCache && database.cacheEntry.count() > 0)
+        let archivedGraphPath = try discardsSomething ? copyGraphAside() : nil
+
+        // 4. Bulk delete — wires, output ports and nodes — in one transaction.
+        //    An empty delete set is not an early exit: the rebuild in step 6 still has to
         //    run, otherwise `reset` on an already-clean graph silently does nothing.
         //    Every step throws: a delete that fails rolls the whole transaction back and
         //    `reset` reports it, rather than skipping the row and committing a graph with
@@ -88,14 +122,14 @@ extension BuildEngine {
             }
         }
 
-        // 4. Discard the cached builds, when asked. Outside the delete above, which an
+        // 5. Discard the cached builds, when asked. Outside the delete above, which an
         //    already-clean graph skips: a cache wipe the user asked for has to happen
         //    whether or not there was a node left to remove.
         if clearCache {
             _ = try database.cacheEntry.deleteAll()
         }
 
-        // 5. Reschedule ProjectFinder so it re-reads the input manifests and
+        // 6. Reschedule ProjectFinder so it re-reads the input manifests and
         //    recreates all ProjectBuilder nodes and the downstream build graph.
         try pfNode.setScheduled(true)
 
@@ -103,19 +137,29 @@ extension BuildEngine {
     }
 
     /// The copy of the graph database a reset leaves behind, named for the moment it was
-    /// taken so that repeated resets each keep their own. Best effort in one respect only:
-    /// an in-memory database has no file, and answers nil.
+    /// taken so that repeated resets each keep their own. Answers nil for an in-memory
+    /// database, which has no file.
+    ///
+    /// A failure here stops the reset with the graph untouched, and says so: the copy is
+    /// the first thing a reset writes, so what breaks it — a full disk, a read-only home,
+    /// a damaged file — is what would break every write the reset makes next.
     private func copyGraphAside() throws -> String? {
-        let path = try database.copyAside(suffix: ".broken-\(Self.archiveTimestamp(Date()))")
-        if let path {
-            Debug.log("Reset: the graph was copied to \(path).")
+        guard let destinationPath = database.pathForCopyAside(suffix: ".broken-\(Self.archiveTimestamp(Date()))") else {
+            return nil
         }
-        return path
+        do {
+            try database.copyAside(to: destinationPath)
+        } catch {
+            throw GraphCopyFailedError(destinationPath: destinationPath, underlying: error)
+        }
+        Debug.log("Reset: the graph was copied to \(destinationPath).")
+        return destinationPath
     }
 
     /// ISO 8601, to the second and in UTC, with the colons left out: a file name that
-    /// sorts by age and survives being copied to any file system.
-    private static func archiveTimestamp(_ date: Date) -> String {
+    /// sorts by age and survives being copied to any file system. A copy taken inside the
+    /// same second as an earlier one is told apart by `pathForCopyAside`.
+    static func archiveTimestamp(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = TimeZone(identifier: "UTC")
         formatter.formatOptions = [.withFullDate, .withTime, .withTimeZone]

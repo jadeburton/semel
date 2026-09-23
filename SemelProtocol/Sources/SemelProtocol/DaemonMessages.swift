@@ -153,8 +153,8 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case errors(records: [ErrorRecord])
     case tools(namespaces: [ToolNamespaceRecord])
     /// Where the graph the reset discarded was copied to, so the state that made the reset
-    /// necessary can still be read. Absent when the server holds its graph in memory and
-    /// has no file to copy.
+    /// necessary can still be read. Absent when there was nothing to discard, and when the
+    /// server holds its graph in memory and has no file to copy.
     case reset(archivedGraphPath: String?)
     /// The description of the graph travels in the frame body, as UTF-8. A few hundred
     /// nodes describe themselves in more than the megabyte the JSON section allows, and

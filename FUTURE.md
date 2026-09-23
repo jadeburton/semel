@@ -125,12 +125,13 @@ questions about settled decisions, recorded so they are argued rather than re-di
   every tool names a missing setting while nothing names the missing file. B-71 was this
   problem, fixed for one file; B-92 is the report line that names it for all of them.
 
-- **`reset` throws away the valuable state (B-93).** The graph is rebuildable from the
-  input plus the cache, and the cache is content-addressed — but `reset` deletes the
-  cache too (`BuildEngine+Reset.swift`), which is the only reason it costs a cold build
-  of everything in the home. That cost is what makes leaving the tutorial a fifty-line,
-  order-dependent section: a graph that still holds a node of a type the server no
-  longer links is a dead end (B-83), and the way out is expensive.
+- **`reset` threw away the valuable state (B-93, fixed).** The graph is rebuildable from
+  the input plus the cache, and the cache is content-addressed — but `reset` also deleted
+  the cache, which was the only reason it cost a cold build of everything in the home.
+  That cost is what made leaving the tutorial a fifty-line, order-dependent section: a
+  graph that still holds a node of a type the server no longer links is a dead end (B-83),
+  and the way out was expensive. `reset` keeps the cache, `reset --cache` is the command
+  that discards it, and the graph a reset discards is copied aside rather than lost.
 
 - **No defaults is right; a person paying for it by hand is not.** The configuration
   design (2026-08-30) argues this well and accepts "a real ergonomic cost". The guarantee

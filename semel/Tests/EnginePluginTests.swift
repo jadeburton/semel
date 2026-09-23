@@ -163,14 +163,18 @@ final class EnginePluginTests: XCTestCase {
         try run("reset")
 
         XCTAssertEqual(context.messages, [
-            "Graph copied to /semel-home/graph.sqlite.broken-2026-09-23T101500Z",
+            "Graph copied to /semel-home/graph.sqlite.broken-2026-09-23T101500Z — yours to delete.",
             "Rebuild started.",
         ])
     }
 
-    /// A misspelled flag is a request the user did not mean, not a plain reset.
+    /// A misspelled flag is a request the user did not mean, not a plain reset — and what
+    /// the user reads is `"\(error)"`, which reaches `description` and not
+    /// `errorDescription`.
     func test_resetRejectsAnOptionItDoesNotKnow() throws {
-        XCTAssertThrowsError(try run("reset", ["--caches"]))
+        XCTAssertThrowsError(try run("reset", ["--caches"])) { error in
+            XCTAssertEqual("\(error)", "reset: unknown option '--caches'")
+        }
 
         XCTAssertEqual(connection.daemonRequests, [])
     }

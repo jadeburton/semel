@@ -176,6 +176,24 @@ final class VersionMarkerTests: SemelCoreTestCase {
                        "a new Semel may compute different outputs from the same inputs")
     }
 
+    /// Nobody typed this reset, so nobody is watching a reply for the copy it leaves in the
+    /// home. It is said on the server's own channel instead — `Debug.log` is compiled out of
+    /// a release build, which would leave the file there unexplained.
+    func test_aVersionChangeSaysWhereTheGraphItDiscardedWent() throws {
+        let path   = try makeTemporaryDatabasePath()
+        let engine = try makeEngine(try DatabaseLayer(filePath: path))
+        let saidLines = LineRecorder()
+        engine.noticeReporter = { line in saidLines.record(line) }
+        _ = try makeDerivedNode()
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.0-older")
+
+        try engine.reconcileVersionMarkers()
+
+        let line = try XCTUnwrap(saidLines.lines.first, "the copy has to be announced")
+        XCTAssertTrue(line.contains(path + ".broken-"), "it names the copy, got: \(line)")
+        XCTAssertTrue(line.contains("yours to delete"), "it says whose the file is, got: \(line)")
+    }
+
     func test_theInputFileSystemSurvivesAVersionChange() throws {
         let engine = try makeEngine(try DatabaseLayer())
         let source = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
@@ -194,6 +212,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
             .appendingPathComponent("semel-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
         return folder.appendingPathComponent("graph.sqlite").path
     }
 
@@ -272,5 +291,19 @@ final class VersionMarkerTests: SemelCoreTestCase {
                       error.unrecoverableDescription)
         XCTAssertFalse(error.unrecoverableDescription.lowercased().contains("delete"),
                        "deleting the file destroys the only record of the broken graph")
+        // Committed rows live in the write-ahead log until a checkpoint, so a move that
+        // leaves the siblings behind loses the newest evidence and hands a stale log to
+        // the database SQLite creates next at the same path.
+        XCTAssertTrue(error.unrecoverableDescription.contains("-wal"),
+                      "the siblings move with it: \(error.unrecoverableDescription)")
+        XCTAssertTrue(error.unrecoverableDescription.contains("-shm"),
+                      error.unrecoverableDescription)
     }
+}
+
+/// Collects what was said on a channel a test swapped out, as a reference so the closure
+/// that records has something to write into.
+final class LineRecorder {
+    private(set) var lines: [String] = []
+    func record(_ line: String) { lines.append(line) }
 }

@@ -175,26 +175,51 @@ public final class DatabaseLayer {
 
     // ── Copying the file aside ───────────────────────────────────────────────
 
-    /// Writes a self-contained copy of this database beside the original, under the same
-    /// name with `suffix` appended, and answers the path it wrote. Answers nil for an
-    /// in-memory database, which has no file and no state worth keeping past the process.
+    /// Where a copy of this database taken with `suffix` goes: beside the original, under
+    /// the same name with `suffix` appended, and with `-2`, `-3` … appended again while a
+    /// file of that name is already there. A copy taken earlier is evidence, and evidence
+    /// is never overwritten — two copies taken inside the same second are two files. Nil
+    /// for an in-memory database, which has no file and no state worth keeping past the
+    /// process.
+    public func pathForCopyAside(suffix: String) -> String? {
+        guard let filePath else {
+            return nil
+        }
+        let preferredPath = filePath + suffix
+        guard FileManager.default.fileExists(atPath: preferredPath) else {
+            return preferredPath
+        }
+        var discriminator = 2
+        while FileManager.default.fileExists(atPath: "\(preferredPath)-\(discriminator)") {
+            discriminator += 1
+        }
+        return "\(preferredPath)-\(discriminator)"
+    }
+
+    /// Writes a self-contained copy of this database to `destinationPath`, which
+    /// `pathForCopyAside(suffix:)` answers.
     ///
     /// Through SQLite's own backup rather than a file copy: the database runs in WAL mode,
     /// so committed rows live in `graph.sqlite-wal` until a checkpoint moves them, and
     /// copying the one file alone would leave them out. The copy is written without WAL,
     /// so it is one file that opens anywhere.
-    @discardableResult
-    public func copyAside(suffix: String) throws -> String? {
-        guard let filePath else {
-            return nil
+    ///
+    /// Inside the same boundary every other access goes through, so a full or read-only
+    /// volume is reported as the machine's failure and not as a bare SQLite code. What a
+    /// failed copy wrote is removed: half a database looks like evidence and is not.
+    public func copyAside(to destinationPath: String) throws {
+        try translatingVolumeFailures {
+            do {
+                let destination = try DatabaseQueue(path: destinationPath)
+                try dbQueue.backup(to: destination)
+            } catch {
+                for path in [destinationPath, destinationPath + "-wal",
+                             destinationPath + "-shm", destinationPath + "-journal"] {
+                    try? FileManager.default.removeItem(atPath: path)
+                }
+                throw error
+            }
         }
-        let destinationPath = filePath + suffix
-        if FileManager.default.fileExists(atPath: destinationPath) {
-            try FileManager.default.removeItem(atPath: destinationPath)
-        }
-        let destination = try DatabaseQueue(path: destinationPath)
-        try dbQueue.backup(to: destination)
-        return destinationPath
     }
 
     // ── Schema fingerprint ───────────────────────────────────────────────────

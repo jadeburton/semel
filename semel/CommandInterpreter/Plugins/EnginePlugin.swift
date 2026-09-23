@@ -95,7 +95,9 @@ final class EnginePlugin: CommandPlugin {
 
         let response = try context.request(.reset(clearCache: clearCache)).0
         if case .reset(let archivedGraphPath) = response, let archivedGraphPath {
-            context.outputMessage("Graph copied to \(archivedGraphPath)")
+            // Said with what to do about it: nothing prunes these copies, and a file in
+            // someone's home that nobody claims is a file nobody dares remove.
+            context.outputMessage("Graph copied to \(archivedGraphPath) — yours to delete.")
         }
         context.outputMessage(clearCache ? "Cache discarded. Rebuild started." : "Rebuild started.")
     }

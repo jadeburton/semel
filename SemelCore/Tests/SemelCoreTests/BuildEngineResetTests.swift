@@ -99,12 +99,36 @@ final class BuildEngineResetTests: SemelCoreTestCase {
 
     // MARK: - The graph that was discarded
 
+    /// A directory of its own, removed when the test ends, so a test that writes archives
+    /// beside a database leaves nothing behind.
     private func makeTemporaryDatabasePath() throws -> String {
         let folder = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("semel-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
         return folder.appendingPathComponent("graph.sqlite").path
+    }
+
+    /// An engine over a database on disk, which is what an archive needs. Opening another
+    /// database reassigns `DatabaseLayer.shared`, so whatever the suite set is put back.
+    private func makeFileBackedEngine(at path: String) throws -> BuildEngine {
+        let sharedDatabase = DatabaseLayer.shared
+        let sharedEngine   = BuildEngine.shared
+        addTeardownBlock {
+            DatabaseLayer.shared = sharedDatabase
+            BuildEngine.shared   = sharedEngine
+        }
+        let fileEngine = try BuildEngine(database: try DatabaseLayer(filePath: path),
+                                         startProcessingLoop: false)
+        BuildEngine.shared = fileEngine
+        return fileEngine
+    }
+
+    @discardableResult
+    private func makeDerivedNode(role: String) throws -> ObjectID {
+        let (node, _) = try GraphSpecNode.parse("Configuration(role: '\(role)').output").findOrCreateMatchingNode()
+        return try node.requireID()
     }
 
     /// A reset is the moment the state that made it necessary is destroyed. The file is
@@ -112,11 +136,8 @@ final class BuildEngineResetTests: SemelCoreTestCase {
     /// the bug that prompted the reset is unreadable afterwards.
     func test_reset_copiesTheGraphAsideAndNamesTheCopy() throws {
         let path       = try makeTemporaryDatabasePath()
-        let database   = try DatabaseLayer(filePath: path)
-        let fileEngine = try BuildEngine(database: database, startProcessingLoop: false)
-        BuildEngine.shared = fileEngine
-        let (doomed, _) = try GraphSpecNode.parse("Configuration(role: 'doomed').output").findOrCreateMatchingNode()
-        let doomedID = try doomed.requireID()
+        let fileEngine = try makeFileBackedEngine(at: path)
+        let doomedID   = try makeDerivedNode(role: "doomed")
 
         let archivedPath = try XCTUnwrap(fileEngine.reset(), "a file-backed graph is copied aside")
 
@@ -131,9 +152,97 @@ final class BuildEngineResetTests: SemelCoreTestCase {
                         "the copy is the evidence: it still holds the node the reset deleted")
     }
 
+    /// Two resets in quick succession take two copies under the same timestamp, and the
+    /// first one holds the more: it was taken before the first reset emptied the graph.
+    /// Overwriting it would destroy exactly the evidence this feature is for.
+    func test_reset_neverOverwritesAnEarlierCopy() throws {
+        let path       = try makeTemporaryDatabasePath()
+        let fileEngine = try makeFileBackedEngine(at: path)
+
+        try makeDerivedNode(role: "first")
+        let firstArchive = try XCTUnwrap(fileEngine.reset())
+        try makeDerivedNode(role: "second")
+        let secondArchive = try XCTUnwrap(fileEngine.reset())
+
+        XCTAssertNotEqual(firstArchive, secondArchive, "a second copy is a second file")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstArchive),
+                      "the earlier copy survives the later reset")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondArchive))
+    }
+
+    /// A reset that discards nothing — a fresh home, where the graph holds the input root,
+    /// the output root and ProjectFinder and nothing else — has no evidence to keep, and
+    /// littering the home with copies of an empty database helps nobody.
+    func test_reset_onAGraphWithNothingDerived_takesNoCopy() throws {
+        let path       = try makeTemporaryDatabasePath()
+        let fileEngine = try makeFileBackedEngine(at: path)
+
+        XCTAssertNil(try fileEngine.reset(), "nothing was discarded, so nothing was copied")
+
+        let leftBehind = try FileManager.default
+            .contentsOfDirectory(atPath: (path as NSString).deletingLastPathComponent)
+            .filter { $0.contains(".broken-") }
+        XCTAssertEqual(leftBehind, [], "a fresh home is left as it was")
+    }
+
+    /// The cache is state in the same file, so discarding it is worth a copy even when
+    /// there is no derived node left to delete.
+    func test_resetClearingTheCache_copiesTheGraphAsideEvenWithNothingToDelete() throws {
+        let path       = try makeTemporaryDatabasePath()
+        let fileEngine = try makeFileBackedEngine(at: path)
+        try cacheOneBuiltOutput()
+        _ = try fileEngine.reset()   // leaves the graph clean and the cache full
+
+        XCTAssertNotNil(try fileEngine.reset(clearCache: true),
+                        "the cache about to be discarded is state worth copying")
+    }
+
+    /// A home that cannot be written to is one of the conditions a repair command is typed
+    /// under, so the copy is the first thing that meets it. The reset stops there, with the
+    /// graph untouched, and the message names the copy, the file it tried to write and the
+    /// machine's failure underneath — not a bare SQLite code.
+    func test_reset_whenTheCopyCannotBeWritten_stopsAndSaysSo() throws {
+        let path       = try makeTemporaryDatabasePath()
+        let fileEngine = try makeFileBackedEngine(at: path)
+        let doomedID   = try makeDerivedNode(role: "doomed")
+
+        let home = (path as NSString).deletingLastPathComponent
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: home)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: home)
+        }
+
+        XCTAssertThrowsError(try fileEngine.reset()) { error in
+            guard let failure = error as? GraphCopyFailedError else {
+                return XCTFail("expected GraphCopyFailedError, got \(error)")
+            }
+            XCTAssertTrue(failure.destinationPath.hasPrefix(path + ".broken-"))
+            XCTAssertTrue(failure.unrecoverableDescription.contains(failure.destinationPath),
+                          failure.unrecoverableDescription)
+            XCTAssertTrue(failure.unrecoverableDescription.contains("nothing was reset"),
+                          failure.unrecoverableDescription)
+            XCTAssertTrue(failure.underlying is DatabaseVolumeError,
+                          "the machine's failure, told apart at the database layer's boundary, "
+                          + "got \(failure.underlying)")
+        }
+
+        XCTAssertNotNil(try fileEngine.database.node.find(nodeID: doomedID),
+                        "a reset that could not keep the evidence deletes nothing")
+    }
+
     /// An in-memory graph has no file, so there is nothing to copy and nothing to name.
     func test_reset_onAnInMemoryGraph_namesNoCopy() throws {
+        try makeDerivedNode(role: "doomed")
+
         XCTAssertNil(try engine.reset())
+    }
+
+    /// The name has to sort by age and survive being copied anywhere, which is what the
+    /// colon-free UTC form buys. Pinned, because a formatter option is easy to change and
+    /// the cost is silent.
+    func test_theArchiveNameCarriesAnISO8601UTCTimestamp() {
+        XCTAssertEqual(BuildEngine.archiveTimestamp(Date(timeIntervalSince1970: 1_758_600_000)),
+                       "2025-09-23T040000Z")
     }
 
     // A reset that finds nothing to delete still has to kick off the rebuild —

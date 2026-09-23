@@ -289,3 +289,12 @@ enum CommandParserError: Error, LocalizedError {
         }
     }
 }
+
+/// The interpreter prints `"\(error)"`, which reaches `description` and never
+/// `errorDescription`, so the sentences above are said through this.
+extension CommandParserError: CustomStringConvertible {
+    // Not `"\(self)"` as the fallback: interpolating a `CustomStringConvertible` calls
+    // `description`, so that would recurse. Every case answers a sentence, so it is a
+    // fallback no case reaches.
+    var description: String { errorDescription ?? "the command could not be parsed" }
+}

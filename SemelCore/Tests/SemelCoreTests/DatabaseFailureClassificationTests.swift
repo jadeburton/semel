@@ -114,8 +114,13 @@ final class DatabaseFailureClassificationTests: SemelCoreTestCase {
 
         XCTAssertThrowsError(try fileDatabase.write { _ in throw failure(.SQLITE_CORRUPT) }) { error in
             guard let volume = error as? DatabaseVolumeError else { return XCTFail("got \(error)") }
-            XCTAssertTrue(volume.unrecoverableDescription.lowercased().contains("delete"),
-                          "a damaged file cannot be repaired from inside the build: \(volume.unrecoverableDescription)")
+            let message = volume.unrecoverableDescription
+            // A damaged file cannot be repaired from inside the build, and it is also the
+            // only record of how it came to be damaged — the same answer `reset` and the
+            // schema gate give: move it aside, siblings included.
+            XCTAssertTrue(message.contains("Move the file aside"), message)
+            XCTAssertFalse(message.lowercased().contains("delete"), message)
+            XCTAssertTrue(message.contains("-wal") && message.contains("-shm"), message)
         }
     }
 }

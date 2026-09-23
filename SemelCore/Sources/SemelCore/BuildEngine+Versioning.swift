@@ -21,9 +21,12 @@ public struct DatabaseSchemaChangedError: UnrecoverableError {
     public var unrecoverableDescription: String {
         """
         The database schema changed since \(filePath) was created.
-        Move that file aside — `mv "\(filePath)" "\(filePath).broken"` — and push your sources again.
-        The moved file is the only record of what that graph held, which is worth keeping
-        if the schema is not the whole story.
+        Move that file aside, with its `-wal` and `-shm` siblings, and push your sources again:
+
+            mv "\(filePath)"* <another directory>/
+
+        Those files are the only record of what that graph held, which is worth keeping if
+        the schema is not the whole story.
         """
     }
 }
@@ -56,8 +59,16 @@ extension BuildEngine {
             // With the cache, because a cache key says nothing about which Semel computed
             // the entry: a rebuild that reads the old entries back publishes exactly the
             // artifacts this marker exists to replace.
-            try reset(clearCache: true)
+            let archivedGraphPath = try reset(clearCache: true)
             try restateThePortsOfPreservedNodes()
+            // The one reset nobody asked for, so the one whose copy would otherwise appear
+            // in the home unexplained. Through the channel every other one-line status goes
+            // through — a `notice` event for an attached client, the server's own terminal
+            // otherwise — and not `Debug.log`, which a release build compiles out.
+            if let archivedGraphPath {
+                Self.notice("Semel \(recorded ?? "of unknown version") built this graph; "
+                          + "it was copied to \(archivedGraphPath), which is yours to delete.")
+            }
         }
         try database.metadata.upsert(key: Self.semelVersionKey, value: Semel.version)
     }
