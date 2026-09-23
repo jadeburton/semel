@@ -97,4 +97,89 @@
   pushes. With local engines the bookkeeping is per machine anyway, so there is nothing
   left for it to buy.
 
+## What the tutorial taught us
+
+`docs/tutorial/first-node.md` (2026-09-21) was written by walking every step through
+against the binaries, and it is read here as evidence about the design: wherever the
+document has to explain, warn or apologise, the reason is in Semel. The correctness
+principles hold up — hermetic input, identity by spec, no defaults — and the friction is
+where a person pays for one of them by hand, or where the engine holds what the person
+needs and has no channel to say it. Three items are filed (B-91 to B-93); the rest are
+questions about settled decisions, recorded so they are argued rather than re-discovered.
+
+- **The engine has no output channel (B-91).** The protocol carries products and errors;
+  everything else leaves through `Debug.log`, compiled out of a release build. So the
+  tutorial's Part 2 — the one that shows the work Semel does not do — needs three
+  terminals, a debug build and two internal log lines, and even the engine's own count
+  (`batch: N scheduled, M computed`) does not separate a cache hit from a recomputation.
+  "Why did this rebuild?" is the first question anyone asks a build system whose promise
+  is *never twice*, and nothing in the design answers it.
+
+- **A missing file is encoded as a hidden error (B-92).** A `StaticFile` nobody pushed
+  publishes `noValue(.error)` carrying the string `initializing`; `ErrorReport` hides
+  that string, `ConfigFilter` and `ConfigMerger` skip such wires, and the `ConfigMerger`
+  comment already names the cost: a genuine upstream failure looks the same as a file
+  nobody wrote. The tutorial's `push clang.cfg` step exists because `build` pushes one
+  folder and the formula reaches outside it with `<../clang.cfg>`; forget it and the
+  likely result is every tool naming a missing setting and nothing naming the missing
+  file. B-71 was this problem, fixed for one file.
+
+- **`reset` throws away the valuable state (B-93).** The graph is rebuildable from the
+  input plus the cache, and the cache is content-addressed — but `reset` deletes the
+  cache too (`BuildEngine+Reset.swift`), which is the only reason it costs a cold build
+  of everything in the home. That cost is what makes leaving the tutorial a fifty-line,
+  order-dependent section: a graph that still holds a node of a type the server no
+  longer links is a dead end (B-83), and the way out is expensive.
+
+- **No defaults is right; a person paying for it by hand is not.** The configuration
+  design (2026-08-30) argues this well and accepts "a real ergonomic cost". The guarantee
+  needs the values declared in the input file system; it does not need a person to type
+  them, and it does not need them in the same file as the project's intent. Tool
+  version, SDK path and architecture are facts about the machine, and they change with
+  it; `cStandard` and the deployment target are the project's, and belong in the
+  checkout. One file holds both, which is why the end-to-end harness needs a `.template`
+  with placeholders and why the reader adds seven lines by hand after being told not to
+  write the file (`tools clang` now prints the machine half ready to paste, B-86; the
+  project half is still typed). Swift has the right shape already (`prepare` writes the machine facts);
+  `ConfigMerger` and "variants are files" mean a generated machine file merged with a
+  checked-in project file fits the design as it is. Separately: every hand-written
+  formula repeats `rawConfig()` / `config(prefix:)` / `ConfigFilter` wiring although the
+  prefix is derived from the node's type name (`SettingNamespace`), so the engine already
+  knows which slice a `ClangCompiler` wants.
+
+- **A node type's identity is stored three ways.** A hand-assigned `kind` integer, the
+  type name inside every stored `graphSpec`, and the schema fingerprint. Renaming a type
+  already forces the database to be deleted (B-29), and `TypeRegistry` already looks
+  types up by name; whether `kind` still earns its place is worth asking. Hand-assigned
+  numbers collide across branches — the backlog IDs did exactly that in the same week.
+
+- **Isolation is per user, work is per project.** B-40 (a scoped `reset`) was dropped as
+  moot because users no longer share a graph; projects still do. Pushes are base-relative,
+  so two folders both named `hello` under different bases land at the same `input:/hello`
+  (read from `FilePlugin`, not run). "Extensible" in the README overstates what is
+  possible: node types are compiled into the server and their identity lives in a
+  long-lived database, so every experiment leaves something in the real graph. A
+  throwaway home (`SEMEL_HOME`, or a `--home` flag on both binaries) would make the
+  tutorial's clean-up "delete the folder".
+
+- **The node API exposes the engine's internals.** `inputValues` is an unordered
+  dictionary, so every author has to remember to sort (the tutorial does; B-04 is the
+  same class of bug); a sorted list on the API would remove it. `.required` blocks on a
+  pending wire but not on an errored one, so each node invents its own missing-value
+  policy — `ConfigFilter` skips, `LineCounter` throws — where the descriptor could state
+  it. Authors import `SemelDatabaseModels` for `NodeRecord`, repeat the `thisNode`
+  boilerplate, and are pure only by discipline.
+
+- **The 15 ms cache floor is a wall-clock decision.** Whether an entry exists depends on
+  how long processing took (`Cache.saveCacheForAllInputsAndOutputs`), so a shared cache
+  fills differently with machine speed and load. Harmless to correctness, odd in a
+  project built on determinism, and it made the tutorial's own node uncacheable. A
+  declared per-type property would be predictable.
+
+- **The easiest spelling in the formula language is the wrong one.** `%%f%%` names a wire
+  after the mounted path and so puts the path into the product; `%%f.0%%` is the
+  capture. The mistake was made in this tutorial's own spec and caught only by the
+  two-home byte comparison. B-49 makes the tools mount-independent; a template can bring
+  the mount path straight back.
+
 

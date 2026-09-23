@@ -220,6 +220,19 @@ cache, 0 errors`) instead of printing them through `Debug.log`. `docs/tutorial/f
 Part 2 reads the server's debug log for exactly this reason and should be rewritten around
 the summary once it exists.
 
+**B-93** `open` — **`reset` deletes the cache, which is the only reason it is expensive.**
+`BuildEngine+Reset.swift` keeps the input file system, the output root and `ProjectFinder`,
+deletes every other node, and then `cacheEntry.deleteAll()`. The graph is rebuildable from
+the input plus the cache, and the cache is content-addressed and keyed on nothing the
+graph's node IDs know about — so dropping it buys nothing except a cold build of every
+project in the home. Keep the cache: a `reset` then costs one pass of cache lookups, which
+makes it the cheap answer to a graph holding a node type the server no longer links (B-83)
+and to whatever else leaves a graph in a state nobody wants to debug. The one thing a cache
+wipe is for — an entry believed wrong — is a different command (`reset --cache`, or the
+integrity check `FUTURE.md` wants). Reopens the question B-40 dropped: with a cheap
+home-wide reset, per-project scoping may not be needed at all; with an expensive one, it is.
+`docs/tutorial/first-node.md` "Cleaning up" is the text this shortens.
+
 ## Performance
 
 **B-53** `open` — **`rm` of a large folder is still quadratic.**
@@ -368,6 +381,21 @@ of output reads as all bad news or none. Use emoji judiciously and consistently:
 artifact appearing (B-50's reporter), one for a settle with no errors (B-81's summary), one
 for a cache hit if the summary distinguishes it, and nothing else. Pin the set in the
 renderer tests the way the ❌ format is pinned, so it cannot drift per command.
+
+**B-91** `open` — **The engine has no channel for anything but products and errors.**
+`DaemonMessages` carry what was published and what failed; everything the engine knows
+about *why* — which wire changed, which nodes were scheduled, which of them ran and which
+came from the cache — leaves through `Debug.log`, and a release build compiles that out.
+Even the debug line does not answer the question: `processSomeNodes` counts every
+processed node as "computed", cache hits included. B-81 is the first step (a settle summary
+with the three totals, over the protocol), and B-95's live indicator wants the same counts
+per batch, so the three share one transport. This item is the rest of the channel: an
+`explain <product>` (or `why`) command that walks upstream from a product to the wires
+whose values changed since the last settle and names them, and a per-node record of
+*ran* vs *from cache* that the summary and `explain` both read. Without it Semel cannot
+demonstrate its own defining property from its own prompt — `docs/tutorial/first-node.md`
+Part 2 needs three terminals and a debug build to show a cache hit. See FUTURE.md, "What
+the tutorial taught us".
 
 ## Design, correctness and code quality
 
@@ -518,6 +546,23 @@ missing inputs: <the file just deleted>" while leaving the previous binary linke
 type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
 can do better than a documented workaround.
+
+**B-92** `open` — **A file nobody pushed is an error that hides itself.**
+A `StaticFile` the formula names but nobody has pushed publishes `noValue(.error)` carrying
+the placeholder string `initializing`; `ErrorReport.reportableMessage(of:)` filters that string out
+of every report, and `ConfigFilter` and `ConfigMerger` skip such wires so that an unwritten
+override means "nothing to add". `ConfigMerger`'s own comment names the cost: a genuine
+upstream failure looks the same as a file nobody wrote, and the tool downstream reports
+the setting it is missing rather than the reason. The first thing every hand-written
+build does is exactly this — `hello.fmla` reads `<../clang.cfg>`, `build` pushes one
+folder, and `docs/tutorial/first-node.md` has to spend a paragraph on `push clang.cfg`
+because forgetting it is (untested, read from the code) a wall of missing-setting errors
+with nothing naming the file. B-71 fixed this for one xcconfig; do it once for all:
+a first-class `.absent` reason distinct from `.error`, reported once at idle as the cause
+("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), with the nodes that
+deliberately tolerate an absent input saying so in their descriptor rather than by string
+comparison. `build` could then also offer to push what the formula names outside its
+folder, or at least say that it did not.
 
 ## App bundles
 
