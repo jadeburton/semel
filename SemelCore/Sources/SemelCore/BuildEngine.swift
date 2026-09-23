@@ -432,8 +432,22 @@ public final class BuildEngine {
             return true
         }
         if shouldSignal {
-            Task { await workSignal.signal() }
+            sendLoopSignal()
         }
+    }
+
+    /// How many signals have reached the loop. One batch of any size sends one, however
+    /// many mutations asked for a pass inside it, which is what a batch is for and what a
+    /// test can hold it to.
+    private var loopSignalsSentCount = 0
+
+    var loopSignalsSent: Int {
+        batchLock.withLock { loopSignalsSentCount }
+    }
+
+    private func sendLoopSignal() {
+        batchLock.withLock { loopSignalsSentCount += 1 }
+        Task { await workSignal.signal() }
     }
 
     // MARK: - Signalling
@@ -474,9 +488,7 @@ public final class BuildEngine {
         guard !inBatch else {
             return
         }
-        Task {
-            await workSignal.signal()
-        }
+        sendLoopSignal()
     }
 
     // MARK: - Processing
