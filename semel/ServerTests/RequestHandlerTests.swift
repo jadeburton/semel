@@ -164,8 +164,9 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         try source.writeToOutputPort("output", value: .noValue(
             reason: .error(messageDataObjectHash: try "the file is gone".intern())))
         for carrier in carriers {
-            try carrier.writeToOutputPort("output", value: .noValue(
-                reason: .error(messageDataObjectHash: try "\(NodeError.inputValueInError)".intern())))
+            // The state a node publishes when it did not run because its input failed: no
+            // message of its own, which is what makes it foldable.
+            try carrier.writeToOutputPort("output", value: .noValue(reason: .inputInError))
         }
 
         let (response, _) = try daemon(.errors)

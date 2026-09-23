@@ -116,7 +116,10 @@ extension NodeRecord {
 
         try nodeRecord.writePendingToAllOutputsOfNode()
 
-        let output = try node.didCreate() ?? node.buildErrorOutput(withError: NodeError.initializing)
+        // A node that says nothing at creation publishes the state it is in: created, not
+        // yet processed. Not an error, so a report passes over it and a graph of fresh nodes
+        // does not read as a graph of failures.
+        let output = try node.didCreate() ?? node.buildOutput(reason: .initializing)
 
         try node.writeToOutputs(output: output)
 

@@ -51,6 +51,37 @@ public struct SampleTool: Node {
     }
 }
 
+/// A node that insists on its input's value, the way a tool reads the files it compiles.
+///
+/// The insisting is the point: `expectValue()` throws when there is no value to be had, and
+/// what the engine does with that throw — write the state, not a sentence — is what a test
+/// of the states needs a node for.
+public struct DemandingSampleTool: Node {
+    public static let kind: UInt = 987_104
+
+    static let input  = "input"
+    static let output = "output"
+
+    public var thisNode: NodeRecord
+
+    public init(thisNode: NodeRecord) throws {
+        self.thisNode = thisNode
+    }
+
+    public static let descriptor = NodeDescriptor(
+        inputPorts: [.required(input)],
+        outputPorts: [output]
+    )
+
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        var text = ""
+        for wireKey in (input.inputValues[Self.input] ?? [:]).keys.sorted() {
+            text += try input.inputValues[Self.input]![wireKey]!.expectValue().resolveAsString()
+        }
+        return .init(outputValues: [Self.output: .value(try text.intern())], inputWireSpecs: [:])
+    }
+}
+
 /// A second type, for the tests that need two that must not share a cache key or a kind.
 public struct OtherSampleTool: Node {
     public static let kind: UInt = 987_102

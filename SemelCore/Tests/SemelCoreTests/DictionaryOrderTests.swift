@@ -112,7 +112,7 @@ final class DictionaryOrderTests: XCTestCase {
             "carries each node's remembered messages forward, node by node",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: byNode":
             "collects each node's distinct messages into a set",
-        "SemelCore/Sources/SemelCore/ErrorReport.swift: messages.keys":
+        "SemelCore/Sources/SemelCore/ErrorReport.swift: reporting.keys":
             "starts a count per cause; the entries are sorted by label and then by node",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: counts":
             "builds one entry per cause, and the entries are sorted before they are returned",

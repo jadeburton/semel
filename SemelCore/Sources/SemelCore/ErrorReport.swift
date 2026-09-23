@@ -88,8 +88,10 @@ public enum ErrorReport {
                              database: DatabaseLayer,
                              downstreamCarrierCount: Int = 0) -> Entry {
         let items = messages.sorted().map { message -> Item in
+            // Matched by what each port reports rather than by the text it stores, so that a
+            // port whose state is its whole message is named alongside the rest.
             let portNames = ports
-                .filter { ((try? $0.dataObjectHash?.resolveAsString()) ?? "") == message }
+                .filter { reportableMessage(of: $0) == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
             return Item(ports: portNames, message: message)
@@ -154,16 +156,25 @@ public enum ErrorReport {
 
     /// The message a port is carrying, or nil when it carries nothing worth reporting.
     ///
-    /// `initializing` is the placeholder every node holds between being created and first
-    /// processing, so reporting it would announce an error for every node in a fresh graph.
-    /// An error with no text at all is still an error, and the one kind a reader cannot
-    /// diagnose, so it is reported as exactly that rather than dropped.
+    /// Decided by the port's state, not by its text. A port holding a value or waiting for
+    /// one has no failure to report, and neither has a port that has simply never been
+    /// processed — reporting that would announce an error for every node in a fresh graph.
+    /// A node that did not run because an input failed has no message of its own, so the
+    /// sentence for that state is written here, once, where the report is rendered. An error
+    /// with no text at all is still an error, and the one kind a reader cannot diagnose, so
+    /// it is reported as exactly that rather than dropped.
     public static func reportableMessage(of port: OutputPort) -> String? {
-        let message = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-        guard message != NodeError.initializingMessage else {
+        switch port.valueKind {
+        case .value, .pending, .initializing:
             return nil
+
+        case .inputInError:
+            return "\(NodeError.inputValueInError)"
+
+        case .error:
+            let message = (try? port.dataObjectHash?.resolveAsString()) ?? ""
+            return message.isEmpty ? Self.emptyMessage : message
         }
-        return message.isEmpty ? Self.emptyMessage : message
     }
 
     /// What stands in for an error whose message is empty.
@@ -171,25 +182,24 @@ public enum ErrorReport {
 
     // MARK: - Folding a cascade onto its cause
 
-    /// Whether a message says only that something upstream of the node failed.
+    /// Whether a port says only that something upstream of its node failed.
     ///
-    /// A port holds its error as `NoValueReason.error(messageDataObjectHash:)` — the hash of
-    /// the interned sentence, and nothing about which `NodeError` wrote it — so the sentence
-    /// is the only signal there is. The comparison is against the one constant
-    /// `NodeError.inputValueInError` renders, the way `initializing` is matched, rather than
-    /// against a sentence spelled out twice.
-    public static func isCarriedFromAnInput(_ message: String) -> Bool {
-        message == NodeError.inputValueInErrorMessage
+    /// The port holds that as a state of its own, so the question is answered by asking what
+    /// the port is rather than by reading what it says.
+    public static func isCarriedFromAnInput(_ port: OutputPort) -> Bool {
+        port.valueKind == .inputInError
     }
 
     /// The nodes worth reporting, each with the number of nodes downstream that fail only
     /// because it did.
     ///
-    /// A node whose every message is carried from an input is carrying someone else's
-    /// failure, and is folded into the causes the wires reach upstream of it; a node with
+    /// A node whose every reportable port is carried from an input is carrying someone
+    /// else's failure, and is folded into the causes the wires reach upstream of it; a node with
     /// anything else to say is a cause and is reported. A carrier with nothing failing
-    /// upstream is as far as the walk can go — the node that failed is not in the graph — so
-    /// it stands in for its own cause. That fold reaches exactly as far as the wires do: a
+    /// upstream is as far as the walk can go. If what it reads has simply never run — an
+    /// unpushed file's port, which nothing will ever process — then nothing has failed and
+    /// the carrier is not reported at all. Otherwise the node that failed is not in the graph
+    /// and the carrier stands in for its own cause. That fold reaches exactly as far as the wires do: a
     /// chain of carriers folds onto its topmost, while sibling consumers of one absent node
     /// share no wire to walk along and are a cause each. The collector is what keeps the
     /// second shape away from a report — `collectIfUnreferenced` takes a node only once
@@ -198,18 +208,18 @@ public enum ErrorReport {
     public static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                               database: DatabaseLayer) -> [ObjectID: Int] {
 
-        var messages: [ObjectID: Set<String>] = [:]
+        var reporting: [ObjectID: [OutputPort]] = [:]
         for (nodeID, ports) in byNode {
-            let reportable = Set(ports.compactMap(reportableMessage))
+            let reportable = ports.filter { reportableMessage(of: $0) != nil }
             if !reportable.isEmpty {
-                messages[nodeID] = reportable
+                reporting[nodeID] = reportable
             }
         }
 
-        let carriers = Set(messages.filter { $0.value.allSatisfy(isCarriedFromAnInput) }.keys)
+        let carriers = Set(reporting.filter { $0.value.allSatisfy(isCarriedFromAnInput) }.keys)
 
         var counts: [ObjectID: Int] = [:]
-        for nodeID in messages.keys where !carriers.contains(nodeID) {
+        for nodeID in reporting.keys where !carriers.contains(nodeID) {
             counts[nodeID] = 0
         }
 
@@ -227,11 +237,10 @@ public enum ErrorReport {
 
             // A report is best effort: a wire the database cannot hand over leaves the
             // carrier standing in for its own cause, which is still one line rather than none.
-            let upstream = FatalErrors.attempt({ try database.wire.select(goingToNodeID: nodeID) })?
-                .map(\.fromNodeID) ?? []
+            let upstream = FatalErrors.attempt({ try database.wire.select(goingToNodeID: nodeID) }) ?? []
 
             var found: Set<ObjectID> = []
-            for source in Set(upstream) where messages[source] != nil {
+            for source in Set(upstream.map(\.fromNodeID)) where reporting[source] != nil {
                 if carriers.contains(source) {
                     found.formUnion(causeIDs(of: source, walking: walking.union([nodeID])))
                 } else {
@@ -239,16 +248,36 @@ public enum ErrorReport {
                 }
             }
 
-            // Nothing failing upstream: the carrier stands in for its own cause, which folds
-            // the carriers wired below it onto this one and reaches no further — siblings of
-            // it have no wire between them to be folded along.
-            let result = found.isEmpty ? [nodeID] : found
+            // Nothing failing upstream, which is two different situations. Something upstream
+            // that has never run is one of them: nothing has failed, so there is nothing to
+            // report, and the carrier and everything below it drop out of the report — naming
+            // the file nobody pushed is B-92's. Otherwise the cause is not in the graph at
+            // all, and this carrier stands in for it: that folds the carriers wired below it
+            // onto this one and reaches no further, siblings of it having no wire between
+            // them to be folded along.
+            let result: Set<ObjectID>
+            if !found.isEmpty {
+                result = found
+            } else {
+                result = readsAPortThatHasNotRun(upstream) ? [] : [nodeID]
+            }
 
             // Memoised per node rather than per (node, path), which is exact for a DAG and
             // is what makes one answer serve every carrier below it. Wire creation rejects a
             // cycle, so the `walking` guard above is a belt on a graph that cannot have one.
             walked[nodeID] = result
             return result
+        }
+
+        /// Whether any of these wires brings a value from a port nothing has processed — the
+        /// state an unpushed file's port keeps, since nothing will ever make it run.
+        func readsAPortThatHasNotRun(_ wires: [Wire]) -> Bool {
+            wires.contains { wire in
+                let port = FatalErrors.attempt({
+                    try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
+                }) ?? nil
+                return port?.valueKind == .initializing
+            }
         }
 
         for carrier in carriers {

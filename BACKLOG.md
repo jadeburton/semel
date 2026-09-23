@@ -393,20 +393,6 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
-**B-101** `open` — **`initializing` is an error message the engine recognises by its text.**
-A fresh node's output port is stored as `noValue(.error)` carrying the interned string
-`initializing`, and `ErrorReport.reportableMessage` keeps a new graph from reading as a
-graph full of failures by comparing that text against `NodeError.initializingMessage`. A
-sentinel matched by string is the wrong shape for a state: `NoValueReason` wants a third
-case, `initializing`, so the report filters by case and the string goes. It is persisted
-in `OutputPort.valueKind`, so the change bumps `Semel.version`, and it has one consumer
-that depends on the encoding: `ConfigMerger` runs against an override file nobody has
-pushed *because* the placeholder arrives as `error`, which `allInputsAreSatisfied` does
-not wait on, where `pending` would stall it. So the new case has to say, per consumer,
-whether it counts as pending or as error, and `ConfigMerger`'s own comment names that
-separation as the work to do. Belongs with B-43: an error standing in for "nothing there"
-is the dataflow rule being bent.
-
 **B-103** `open` — **Nothing checks the graph's invariants short of failing on them.**
 The week's silent corruptions — a wire dropped because two shared a key, a folder manifest
 rebuilt per child, an error whose message was empty — were each found by a test written
@@ -540,10 +526,10 @@ a first-class `.absent` reason distinct from `.error`, reported once at idle as 
 ("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), with the nodes that
 deliberately tolerate an absent input saying so in their descriptor rather than by string
 comparison. `build` could then also offer to push what the formula names outside its
-folder, or at least say that it did not. A second string comparison waits on the same
-reason: `ErrorReport.isCarriedFromAnInput` tells a node carrying someone else's failure
-from one that failed itself by matching `NodeError.inputValueInErrorMessage`, a port
-holding only the hash of its message — fold that caller into the first-class reason too.
+folder, or at least say that it did not. The reasons themselves are cases —
+`NoValueReason.initializing` is a port nothing has processed, `inputInError` a node whose
+input failed, and each is asked about by case — so what remains here is the reporting: an
+unpushed file is a state nobody is told about, and B-92 is the line that names it.
 
 ## App bundles
 

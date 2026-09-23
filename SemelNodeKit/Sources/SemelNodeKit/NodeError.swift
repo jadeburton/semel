@@ -12,31 +12,20 @@
 public enum NodeError: Error, CustomStringConvertible {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
+    /// Thrown by `expectValue()` when the value asked for is not there to be had. It is
+    /// control flow rather than a message: the engine turns it into `NoValueReason` before
+    /// anything is written to a port, so a node carrying it says so by its state.
     case inputValueInError
     case inputValuePending
     case other(message: String)
     case processNotSupported
     case cannotHaveProperties
     case cannotDeleteNodeWithOutputs
-    /// The placeholder every node carries between being created and first processing. Its
-    /// text is `Self.initializingMessage`, which the engine matches to keep a graph full of
-    /// fresh nodes from reading as a graph full of failures.
-    case initializing
     case graphSpecBadIntegrity(currentShapeNode: String, expectedShapeNode: String, log: String)
     /// Two children of one folder may never share a name. The tree is walked by name, so
     /// a duplicate makes every path through that folder ambiguous — `childNode` would
     /// take whichever the database returned first.
     case nameCollision(path: String, existingKind: UInt)
-
-    /// The text of `.initializing`, named so the engine's filter and this description are
-    /// one string rather than two that must agree.
-    public static let initializingMessage = "initializing"
-
-    /// The text of `.inputValueInError`, named for the same reason: an error reaches a port
-    /// as the hash of its interned message and nothing else, so a report that wants to tell
-    /// a node carrying someone else's failure from a node that failed itself has only this
-    /// sentence to match on. `ErrorReport` matches it.
-    public static let inputValueInErrorMessage = "an input is in error"
 
     public var description: String {
         switch self {
@@ -45,7 +34,7 @@ public enum NodeError: Error, CustomStringConvertible {
         case .onlyOneWireShouldBeConnectedToInput:
             return "an input port takes one wire, and more than one is connected"
         case .inputValueInError:
-            return Self.inputValueInErrorMessage
+            return "an input is in error"
         case .inputValuePending:
             return "an input has no value yet"
         case .other(let message):
@@ -56,8 +45,6 @@ public enum NodeError: Error, CustomStringConvertible {
             return "this node takes no properties"
         case .cannotDeleteNodeWithOutputs:
             return "a node whose outputs are still wired cannot be deleted"
-        case .initializing:
-            return Self.initializingMessage
         case .graphSpecBadIntegrity(let currentShapeNode, let expectedShapeNode, let log):
             return "the graph does not match its spec: it holds \(currentShapeNode) where " +
                    "\(expectedShapeNode) is expected\n\(log)"

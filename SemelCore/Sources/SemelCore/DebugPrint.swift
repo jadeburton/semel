@@ -87,6 +87,10 @@ extension BuildEngine {
             return "[ \(hash.truncated(to: 12))  \(preview.truncated(to: 20)) ]"
         case .pending:
             return "[ 🟡 pending ]"
+        case .initializing:
+            return "[ 🟡 not yet processed ]"
+        case .inputInError:
+            return "[ ❌ an input is in error ]"
         case .error:
             let message = (try? outputPort.dataObjectHash?.resolveAsString()) ?? "<no message>"
             return "[ ❌ \(message) ]"

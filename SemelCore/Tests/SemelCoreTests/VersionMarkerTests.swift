@@ -83,6 +83,24 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try storedVersion(engine), Semel.version)
     }
 
+    /// A port's reason is stored as a number, and `0.1.2` wrote a node that had not run as an
+    /// error carrying the word `initializing` where `0.1.3` writes a state of its own. A graph
+    /// stamped with the older version is rebuilt rather than read against this version's
+    /// meaning, so no port keeps a reason nothing writes.
+    func test_aGraphFromBeforeTheReasonsWereStatesIsRebuilt() throws {
+        let engine  = try makeEngine(try DatabaseLayer())
+        let derived = try makeDerivedNode()
+        try engine.database.node.select(nodeID: derived).writeToOutputPort(
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "initializing".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertThrowsError(try engine.database.node.select(nodeID: derived),
+                             "a graph whose port reasons mean something else must be rebuilt")
+        XCTAssertEqual(try storedVersion(engine), Semel.version)
+    }
+
     func test_theInputFileSystemSurvivesAVersionChange() throws {
         let engine = try makeEngine(try DatabaseLayer())
         let source = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)

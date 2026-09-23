@@ -61,8 +61,12 @@ extension RequestHandler {
                 mode = FileMetadata.defaultMode
                 if status == .none {
                     switch reason {
-                    case .pending: status = .pending
-                    case .error:   status = .error
+                    case .pending:
+                        status = .pending
+                    case .initializing, .inputInError, .error:
+                        // One word for three states, which is the half of B-74 that waits on
+                        // `[missing]` being split into the states it stands for.
+                        status = .error
                     }
                 }
             }

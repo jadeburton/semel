@@ -19,7 +19,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     private var captured: [[ErrorReport.Entry]] = []
     private var database: DatabaseLayer { engine.database }
 
-    /// The sentence a node carries when its only problem is that something upstream failed.
+    /// The sentence a report writes for a node whose only problem is that something upstream
+    /// failed. The node carries a state, not a message; this is how that state reads.
     private let carried = "\(NodeError.inputValueInError)"
 
     override func setUpWithError() throws {
@@ -49,12 +50,27 @@ final class CascadeCollapseTests: SemelCoreTestCase {
                                   properties: ["tag": tag], graphSpec: nil).requireID()
     }
 
-    /// Wiring a node writes pending to every output of its target, so the errors are put on
+    /// Wiring a node writes pending to every output of its target, so the states are put on
     /// last — a graph is wired before it fails, too.
     private func fail(_ nodeID: ObjectID, with message: String) throws {
         try database.node.select(nodeID: nodeID)
             .writeToOutputPort("output",
                                value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+    }
+
+    /// What a node publishes when it did not run because an input is in error: a state with
+    /// no message of its own, which is what the engine writes for a thrown
+    /// `NodeError.inputValueInError`.
+    private func carry(_ nodeID: ObjectID) throws {
+        try database.node.select(nodeID: nodeID)
+            .writeToOutputPort("output", value: .noValue(reason: .inputInError))
+    }
+
+    /// A port of this node carrying one reason, built rather than stored: the rule reads a
+    /// port, and a test of the rule need not write one.
+    private func port(_ nodeID: ObjectID, _ reason: NoValueReason) throws -> OutputPort {
+        try NodeValue.noValue(reason: reason).asOutputPort(nodeID: nodeID,
+                                                           outputSymbolID: "output".asSymbolID())
     }
 
     private func connect(_ from: ObjectID, to: ObjectID, name: String) throws {
@@ -84,7 +100,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         try fail(source, with: "the file is gone")
         for carrier in carriers {
-            try fail(carrier, with: carried)
+            try carry(carrier)
         }
 
         return source
@@ -127,7 +143,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         let consumer = try makeConsumer(tag: "only")
         try connect(source, to: consumer, name: "header")
         try fail(source, with: "the file is gone")
-        try fail(consumer, with: carried)
+        try carry(consumer)
 
         engine.reportIdleTimeErrors()
 
@@ -159,8 +175,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         let head = try makeConsumer(tag: "head")
         let tail = try makeConsumer(tag: "tail")
         try connect(head, to: tail, name: "part")
-        try fail(head, with: carried)
-        try fail(tail, with: carried)
+        try carry(head)
+        try carry(tail)
 
         engine.reportIdleTimeErrors()
 
@@ -179,7 +195,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         try connect(second, to: consumer, name: "second")
         try fail(first, with: "the file is gone")
         try fail(second, with: "the file is gone")
-        try fail(consumer, with: carried)
+        try carry(consumer)
 
         engine.reportIdleTimeErrors()
 
@@ -207,7 +223,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         let consumer = try makeConsumer(tag: "consumer")
         try connect(source, to: consumer, name: "header")
         try fail(source, with: "the file is gone")
-        try fail(consumer, with: carried)
+        try carry(consumer)
 
         engine.reportIdleTimeErrors()
 
@@ -220,26 +236,68 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         XCTAssertEqual(captured[1].map(\.label), ["TreeMerger"])
     }
 
+    // MARK: - The states a live graph writes
+
+    /// A `StaticFile` nobody has pushed has no inputs, so nothing will ever make it run and
+    /// its port holds the initializing state for good. A node that demands its value cannot
+    /// run either, and says so by its own state rather than by a sentence. Neither is a
+    /// failure a reader can act on, so the report passes over both.
+    func test_anUnpushedFileAndItsConsumerPublishStatesTheReportPassesOver() throws {
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
+            .findOrCreateMatchingNode()
+        let consumer = try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
+                                                 properties: [:], graphSpec: nil)
+        try connect(try file.requireID(), to: try consumer.requireID(), name: "config")
+
+        try consumer.makeNode().processWithPreCheck()
+
+        XCTAssertEqual(try reason(of: try file.requireID()), .initializing)
+        XCTAssertEqual(try reason(of: try consumer.requireID()), .inputInError)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
+    }
+
+    /// The kind the port carries, which is the reason in the form the graph stores.
+    private func reason(of nodeID: ObjectID) throws -> OutputPort.ValueKind? {
+        try database.outputPort.select(nodeID: nodeID, nameSymbolID: "output".asSymbolID())?.valueKind
+    }
+
     // MARK: - The rule
 
-    /// The one sentence that means "someone else failed". A port carries the hash of its
-    /// message and nothing else, so this comparison is all the engine has to tell a carrier
-    /// from a cause.
-    func test_onlyTheInputInErrorSentenceIsCarried() {
-        XCTAssertTrue(ErrorReport.isCarriedFromAnInput("\(NodeError.inputValueInError)"))
-        XCTAssertFalse(ErrorReport.isCarriedFromAnInput("\(NodeError.inputValuePending)"))
-        XCTAssertFalse(ErrorReport.isCarriedFromAnInput("the file is gone"))
-        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(ErrorReport.emptyMessage))
+    /// One state means "someone else failed", and the report asks the port which state it is
+    /// in rather than reading what it says.
+    func test_onlyTheInputInErrorStateIsCarried() throws {
+        let nodeID = try makeConsumer(tag: "any")
+
+        XCTAssertTrue(ErrorReport.isCarriedFromAnInput(try port(nodeID, .inputInError)))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .error(messageDataObjectHash: "boom".intern()))))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .initializing)))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .pending)))
+    }
+
+    /// A state that is not a failure is not reported: a node between its creation and its
+    /// first processing would otherwise put every fresh graph in the error report, and a
+    /// node that did not run says the one sentence there is to say for it.
+    func test_whatEachStateReportsAsAMessage() throws {
+        let nodeID = try makeConsumer(tag: "any")
+
+        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, .initializing)))
+        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, .pending)))
+        XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, .inputInError)), carried)
+        XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, .error(messageDataObjectHash: "boom".intern()))),
+                       "boom")
     }
 
     /// A node carrying an input error *and* something of its own is a cause: the something
     /// of its own is what a reader can act on.
-    func test_aNodeIsACarrierOnlyWhenEveryMessageIsCarried() throws {
+    func test_aNodeIsACarrierOnlyWhenEveryPortIsCarried() throws {
         let source   = try makeFile(path: "input:/shared.h")
         let consumer = try makeConsumer(tag: "consumer")
         try connect(source, to: consumer, name: "header")
         try fail(source, with: "the file is gone")
-        try fail(consumer, with: carried)
+        try carry(consumer)
         try database.node.select(nodeID: consumer)
             .writeToOutputPort("errorLog",
                                value: .noValue(reason: .error(messageDataObjectHash: try "and a log".intern())))
