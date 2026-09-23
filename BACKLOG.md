@@ -362,6 +362,20 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
+**B-101** `open` — **`initializing` is an error message the engine recognises by its text.**
+A fresh node's output port is stored as `noValue(.error)` carrying the interned string
+`initializing`, and `ErrorReport.reportableMessage` keeps a new graph from reading as a
+graph full of failures by comparing that text against `NodeError.initializingMessage`. A
+sentinel matched by string is the wrong shape for a state: `NoValueReason` wants a third
+case, `initializing`, so the report filters by case and the string goes. It is persisted
+in `OutputPort.valueKind`, so the change bumps `Semel.version`, and it has one consumer
+that depends on the encoding: `ConfigMerger` runs against an override file nobody has
+pushed *because* the placeholder arrives as `error`, which `allInputsAreSatisfied` does
+not wait on, where `pending` would stall it. So the new case has to say, per consumer,
+whether it counts as pending or as error, and `ConfigMerger`'s own comment names that
+separation as the work to do. Belongs with B-43: an error standing in for "nothing there"
+is the dataflow rule being bent.
+
 **B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
 Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFilter`,
 `GraphShape` is `GraphSpec`, "expectation" is "spec" everywhere, and `searchKey` is
