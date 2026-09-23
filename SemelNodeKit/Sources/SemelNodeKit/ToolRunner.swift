@@ -237,7 +237,7 @@ extension SimplifiedToolExecuteResult {
     /// nothing to compile for the platform produces one.
     public func asTreeNodeValue(folder: String) throws -> NodeValue {
         guard exitCode == 0 else {
-            return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
+            return .noValue(reason: .error(messageDataObjectHash: try failureMessage().intern()))
         }
         let files = outputTrees[folder] ?? []
         let entries = try files.map { file in
@@ -245,10 +245,23 @@ extension SimplifiedToolExecuteResult {
         }
         return .value(try TreeManifest(entries: entries).toJSON().intern())
     }
+
+    /// What a failed run says: the exit status, then whatever the tool printed on either
+    /// stream. Both, because tools differ in where their diagnostics go — actool under
+    /// `--output-format human-readable-text` writes them to stdout — and the status alone
+    /// is what is left when a run says nothing at all.
+    public func failureMessage(tool: String = "the tool") -> String {
+        let printed = [errorOutput, infoOutput]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let headline = "\(tool) exited with status \(exitCode)"
+        return printed.isEmpty ? headline : "\(headline):\n\(printed)"
+    }
 }
 
 extension SimplifiedToolExecuteResult {
-    /// The single output file as a wire value, or the tool's error output if it failed.
+    /// The single output file as a wire value, or what the failed run said.
     ///
     /// Lived on the Clang compiler until the Swift linker turned out to need it too. It is
     /// how any node turns a tool result into something the graph can carry, so it belongs
@@ -261,7 +274,7 @@ extension SimplifiedToolExecuteResult {
                 return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
             }
         } else {
-            return .noValue(reason: .error(messageDataObjectHash: try errorOutput.intern()))
+            return .noValue(reason: .error(messageDataObjectHash: try failureMessage().intern()))
         }
     }
 }

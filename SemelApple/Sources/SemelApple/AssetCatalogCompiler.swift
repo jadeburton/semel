@@ -147,19 +147,12 @@ public struct AssetCatalogCompiler: Node {
                      inputWireSpecs: specs)
     }
 
-    /// What a failed run says. With `--output-format human-readable-text` actool writes its
-    /// diagnostics to stdout, so both streams are quoted, after the exit status, which is
-    /// what is left when a run says nothing at all; a run that exits cleanly and writes no
-    /// partial plist is named as that.
+    /// What a failed run says: the tool's own failure message, naming actool, or, for a run
+    /// that exits cleanly and writes no partial plist, that.
     static func failureMessage(for result: SimplifiedToolExecuteResult) -> String {
-        let printed = [result.errorOutput, result.infoOutput]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n")
-        let headline = result.exitCode == 0
+        result.exitCode == 0
             ? "actool exited with status 0 and wrote no '\(partialInfoPlistFile)'"
-            : "actool exited with status \(result.exitCode)"
-        return printed.isEmpty ? headline : "\(headline):\n\(printed)"
+            : result.failureMessage(tool: "actool")
     }
 
     private static func pending(inputWireSpecs: [String: [String: String]]) -> ProcessOutput {
