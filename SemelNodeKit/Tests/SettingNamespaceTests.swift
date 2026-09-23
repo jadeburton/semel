@@ -47,4 +47,63 @@ final class SettingNamespaceTests: XCTestCase {
         XCTAssertEqual(derivedSettingNamespace(forTypeName: "HTTPTool"), "http")
         XCTAssertEqual(derivedSettingNamespace(forTypeName: "ABTool"), "ab")
     }
+
+    // MARK: - What a missing key tells the reader
+
+    /// The keys a project has to decide for itself get `=…`, the place its answer goes.
+    func test_aMissingChoiceIsListedWithAPlaceholder() {
+        var settings = RequiredSettings(properties: [:], namespace: "clang.linker")
+        _ = settings.value("target")
+
+        XCTAssertEqual(messageFrom(settings), """
+            Missing configuration. Add these to a semel.config in the input file system:
+
+            clang.linker.target=…
+            """)
+    }
+
+    /// The toolchain's own identity has one correct spelling, which `tools` prints. Listing
+    /// those keys with `=…` would invite the reader to invent it.
+    func test_missingToolDescriptorKeysNameTheToolsCommandInsteadOfAPlaceholder() {
+        var settings = RequiredSettings(properties: [:], namespace: "clang.linker")
+        _ = ToolDescriptor(required: &settings, properties: [:])
+
+        XCTAssertEqual(messageFrom(settings), """
+            Missing configuration. Add these to a semel.config in the input file system:
+
+            clang.linker.toolDescriptor.architecture
+            clang.linker.toolDescriptor.name
+            clang.linker.toolDescriptor.platform
+            clang.linker.toolDescriptor.version
+
+            Run 'tools clang.linker' for those: it prints the clang.linker.toolDescriptor \
+            settings of the tool installed on this machine, as a block to paste.
+            """)
+    }
+
+    /// Both kinds at once is the common case — a fresh config file has neither — and the
+    /// two lists stay apart so the placeholders mark only the open questions.
+    func test_choicesAndToolDescriptorKeysAreListedSeparately() {
+        var settings = RequiredSettings(properties: [:], namespace: "clang.linker")
+        _ = settings.value("target")
+        _ = settings.value("toolDescriptor.name")
+
+        let message = messageFrom(settings)
+        XCTAssertTrue(message.contains("clang.linker.target=…"), message)
+        XCTAssertTrue(message.contains("\nclang.linker.toolDescriptor.name\n"), message)
+        XCTAssertFalse(message.contains("toolDescriptor.name=…"), message)
+        XCTAssertTrue(message.contains("Run 'tools clang.linker'"), message)
+    }
+
+    /// The message reads as its own words rather than as the enum case wrapping it: that
+    /// is what lets the terminal print it as an indented block of pasteable lines.
+    private func messageFrom(_ settings: RequiredSettings) -> String {
+        do {
+            try settings.check()
+            XCTFail("expected a missing-configuration error")
+            return ""
+        } catch {
+            return "\(error)"
+        }
+    }
 }
