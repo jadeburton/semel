@@ -214,7 +214,6 @@ constant is the better one: it keeps every entry a bug fix did not touch. Test: 
 node with two implementation versions produces two keys; a graph rebuilt under the new
 version hits nothing from the old.
 
-
 ## Performance
 
 **B-74** `open` — **`[missing]` is one word for two states.**
