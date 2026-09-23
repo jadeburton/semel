@@ -21,9 +21,9 @@ public enum Role: String, Codable, Equatable, Sendable {
 }
 
 public enum ProtocolVersion {
-    /// Version 2 moves `debug`'s text from the reply's JSON to the frame body. A peer that
-    /// speaks version 1 would decode the reply as an empty answer and print nothing, so
-    /// the mismatch is worth a rejection that names both numbers.
+    /// Version 2 carries `debug`'s text in the frame body; version 1 carried it in the
+    /// reply's JSON. A peer speaking the older one decodes such a reply as an empty answer
+    /// and prints nothing, which is why the mismatch is worth a rejection naming both.
     public static let current = 2
 }
 

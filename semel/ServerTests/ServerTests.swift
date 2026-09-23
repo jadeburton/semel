@@ -102,6 +102,25 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertTrue(text.contains(marker), "the text arrives whole, not truncated")
     }
 
+    /// The other half of B-94: a reply that does not fit is answered, not dropped with the
+    /// socket. `errors` carries its records in the JSON, so one enormous message is over
+    /// the cap, and what comes back names the request and both sizes.
+    func test_aReplyThatCannotBeFramedComesBackAsAnErrorNamingIt() throws {
+        try describeSomethingLargerThanTheJSONCap(marker: "MARKER")
+        let client = try connect()
+
+        let (response, _) = try client.send(.daemon(.errors), body: nil)
+
+        guard case .error(.replyTooLarge(let request, let bytes, let limit)) = response else {
+            return XCTFail("expected a replyTooLarge error, got \(response)")
+        }
+        XCTAssertEqual(request, "errors")
+        XCTAssertEqual(limit, Int(Frame.maximumJSONLength))
+        XCTAssertGreaterThan(bytes, limit)
+        // And the connection survives it: the next command still answers.
+        XCTAssertEqual(try daemon(client, .wait).0, .ok)
+    }
+
     /// One node carrying an error message of a megabyte and a half: the same volume of
     /// `debug` text a few hundred real nodes produce, without the few hundred nodes.
     private func describeSomethingLargerThanTheJSONCap(marker: String) throws {

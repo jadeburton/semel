@@ -106,6 +106,31 @@ final class FrameStreamTests: XCTestCase {
         XCTAssertEqual(reply?.correlationID, 9)
     }
 
+    /// B-94. A frame over a protocol limit is refused where it is built, with nothing
+    /// written, so the sender can answer its peer instead of leaving it with a socket that
+    /// closed and no reason.
+    func test_anOverLimitFrameIsRefusedAndLeavesTheStreamUsable() throws {
+        let server = try acceptOne()
+        let arrived = expectation(description: "the frame after the refusal")
+        var frames: [Frame] = []
+        server.onFrame = { frame in
+            frames.append(frame)
+            arrived.fulfill()
+        }
+        server.onClose = { _ in XCTFail("a refused frame must not close the stream") }
+        server.start()
+
+        let tooMuchJSON = Data(count: Int(Frame.maximumJSONLength) + 1)
+        XCTAssertThrowsError(try clientStream?.send(Frame(kind: .request, correlationID: 1, json: tooMuchJSON))) { error in
+            XCTAssertEqual(error as? FrameError,
+                           .jsonTooLarge(declared: Frame.maximumJSONLength + 1, limit: Frame.maximumJSONLength))
+        }
+        try clientStream?.send(Frame(kind: .request, correlationID: 2, json: Data("{}".utf8)))
+
+        wait(for: [arrived], timeout: 5)
+        XCTAssertEqual(frames.map(\.correlationID), [2])
+    }
+
     func test_closingOneEndClosesTheOther() throws {
         let server = try acceptOne()
         let closed = expectation(description: "server saw close")
