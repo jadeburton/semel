@@ -150,9 +150,11 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [0, 0])
     }
 
-    /// Deleting a whole project collects the node that failed and leaves nothing upstream to
-    /// blame, so the walk stops at the topmost carrier and reports that one rather than
-    /// reporting nothing — or reporting all of them.
+    /// A carrier whose cause is not in the graph has nothing upstream to blame, so the walk
+    /// stops at it rather than reporting nothing. A chain is what folds: the topmost carrier
+    /// stands in for the cause and the carriers wired below it fold onto it. Siblings of it
+    /// would be a cause each — the collector is what keeps that shape from reaching a
+    /// report, by taking every consumer of a node before the node itself.
     func test_aCarrierWithNothingFailingUpstreamStandsInForItsOwnCause() throws {
         let head = try makeConsumer(tag: "head")
         let tail = try makeConsumer(tag: "tail")

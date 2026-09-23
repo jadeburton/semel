@@ -188,9 +188,13 @@ public enum ErrorReport {
     /// A node whose every message is carried from an input is carrying someone else's
     /// failure, and is folded into the causes the wires reach upstream of it; a node with
     /// anything else to say is a cause and is reported. A carrier with nothing failing
-    /// upstream is as far as the walk can go — the node that failed has been collected — so
-    /// it stands in for its own cause and is reported once, with whatever it carries folded
-    /// under it.
+    /// upstream is as far as the walk can go — the node that failed is not in the graph — so
+    /// it stands in for its own cause. That fold reaches exactly as far as the wires do: a
+    /// chain of carriers folds onto its topmost, while sibling consumers of one absent node
+    /// share no wire to walk along and are a cause each. The collector is what keeps the
+    /// second shape away from a report — `collectIfUnreferenced` takes a node only once
+    /// `hasNoOutputWires` holds of it, so every consumer goes before the node it reads, and
+    /// a graph holding carriers whose cause has been collected is not one an idle pass sees.
     public static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                               database: DatabaseLayer) -> [ObjectID: Int] {
 
@@ -235,7 +239,14 @@ public enum ErrorReport {
                 }
             }
 
+            // Nothing failing upstream: the carrier stands in for its own cause, which folds
+            // the carriers wired below it onto this one and reaches no further — siblings of
+            // it have no wire between them to be folded along.
             let result = found.isEmpty ? [nodeID] : found
+
+            // Memoised per node rather than per (node, path), which is exact for a DAG and
+            // is what makes one answer serve every carrier below it. Wire creation rejects a
+            // cycle, so the `walking` guard above is a belt on a graph that cannot have one.
             walked[nodeID] = result
             return result
         }

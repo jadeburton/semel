@@ -254,6 +254,9 @@ failure to act on. Split the state and give each its own word. `FolderRemovalSca
 and `FolderRemovalAfterBuildTests` hold the removal side — the folder and its products are
 gone once the collector has run, with nothing listed `[missing]` behind them — so what the
 split is owed is a case that leaves a product's input in error and reads the listing.
+Unmeasured alongside it: the idle report's upstream walk costs one indexed wire query per
+carrying node per idle pass — tens of milliseconds at the 500-node cascade B-74 was opened
+by — and no scale test holds that number.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
@@ -537,7 +540,10 @@ a first-class `.absent` reason distinct from `.error`, reported once at idle as 
 ("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), with the nodes that
 deliberately tolerate an absent input saying so in their descriptor rather than by string
 comparison. `build` could then also offer to push what the formula names outside its
-folder, or at least say that it did not.
+folder, or at least say that it did not. A second string comparison waits on the same
+reason: `ErrorReport.isCarriedFromAnInput` tells a node carrying someone else's failure
+from one that failed itself by matching `NodeError.inputValueInErrorMessage`, a port
+holding only the hash of its message — fold that caller into the first-class reason too.
 
 ## App bundles
 
