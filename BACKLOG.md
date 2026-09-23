@@ -16,29 +16,6 @@ the toolchain, SDK and system libraries, reset between builds. The container dig
 input?" stops being a question only an audit can answer. Also the natural home for the
 Remote Runner role (B-30).
 
-**B-04** `open` — **Prevent non-deterministic Dictionary iteration.**
-The known instance is fixed: `SwiftFormulaConverter.generateFormula` walked
-`externalManifests` in dictionary order, so two vendored packages vending the same product
-or target name resolved differently per process (reproduced at 5 failures in 12 runs); it
-now walks them sorted by folder, lexically first wins. A second known instance is fixed:
-`XcodeBuildSettings.resolve`'s eight-round fixed-point loop substituted `$(NAME)`
-references in dictionary order, so `PRODUCT_MODULE_NAME` could see `PRODUCT_NAME`
-half-expanded and permanently mangle the module name; it now resolves each key by first
-resolving what it names, which makes the result independent of iteration order. The
-two-process byte-for-byte diff
-is built: `SemelEndToEndTests` builds every fixture and every pinned external project cold
-twice, in two `semelserv` processes over two fresh homes, and `TreeDiff` requires the
-export trees to match, static archives included. What remains is a
-source-scanning test as a backstop. A
-wholesale `DeterministicDictionary` is judged high-cost and low-yield: most
-dictionaries here are accumulated into, which is safe. Two sites worth a look for the
-source scan:
-`ClangPreprocessor` and `ClangIncludeFinder` build file lists straight from input
-dictionaries; harmless if the lists only feed sandbox materialisation, not if they reach a
-command line. `Node.applySpecs` walked its wire specs in dictionary order, which decided
-*which* of two wires a port pair could not hold was the one kept — the identity of a
-dropped product varied per process; it is sorted, and the pair holds both wires.
-
 **B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
 Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,
 hostname, wall-clock. Any output difference means the key is under-specified. The systematic
