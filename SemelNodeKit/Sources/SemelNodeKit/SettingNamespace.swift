@@ -93,17 +93,37 @@ public struct RequiredSettings {
         return value
     }
 
+    /// Reports every missing key, splitting them by who knows the answer.
+    ///
+    /// A `toolDescriptor.*` key describes the toolchain installed on this machine, and
+    /// `tools <namespace>` prints all four with that toolchain's own values as a block to
+    /// paste, so writing `=…` beside them would invite the reader to invent a value that
+    /// only has one correct spelling. Every other key is the project's own choice, and
+    /// `=…` is where that choice goes.
     public func check() throws {
         guard !missing.isEmpty else {
             return
         }
 
-        throw NodeError.other(message: """
-            Missing configuration. Add these to a semel.config in the input file system:
+        let toolDescriptorPrefix = "\(namespace).toolDescriptor."
+        let sorted     = missing.sorted()
+        let describing = sorted.filter { $0.hasPrefix(toolDescriptorPrefix) }
+        let choices    = sorted.filter { !$0.hasPrefix(toolDescriptorPrefix) }
 
-            \(missing.sorted().map { "\($0)=…" }.joined(separator: "\n"))
+        var paragraphs = ["Missing configuration. Add these to a semel.config in the input file system:"]
 
-            """)
+        if !choices.isEmpty {
+            paragraphs.append(choices.map { "\($0)=…" }.joined(separator: "\n"))
+        }
+
+        if !describing.isEmpty {
+            paragraphs.append(describing.joined(separator: "\n"))
+            paragraphs.append("Run 'tools \(namespace)' for those: it prints the " +
+                              "toolDescriptor keys and the machine settings of the tool " +
+                              "installed here, as a block to paste.")
+        }
+
+        throw NodeError.other(message: paragraphs.joined(separator: "\n\n"))
     }
 }
 

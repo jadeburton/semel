@@ -136,6 +136,6 @@ public enum ErrorReport {
     /// processing, so reporting it would announce an error for every node in a fresh graph.
     public static func reportableMessage(of port: OutputPort) -> String? {
         let message = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-        return message.isEmpty || message == "initializing" ? nil : message
+        return message.isEmpty || message == NodeError.initializingMessage ? nil : message
     }
 }

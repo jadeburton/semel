@@ -7,12 +7,25 @@
 
 import SemelNodeKit
 
-enum WireError: Error {
+/// Wiring refused. Sentences rather than case names, because the engine interns a thrown
+/// error's text onto the failing node's output ports.
+enum WireError: Error, CustomStringConvertible {
     /// Wire names are unique per (toNodeID, toSymbolID) — i.e. per input port on the target node.
     case attemptToCreateWireWithDuplicateName(_ name: String)
     case failedToDeleteWire
     /// Adding this wire would form a cycle in the dependency graph.
     case circularReference(fromNodeID: ObjectID, toNodeID: ObjectID)
+
+    var description: String {
+        switch self {
+        case .attemptToCreateWireWithDuplicateName(let name):
+            return "an input port already has a different wire named '\(name)'"
+        case .failedToDeleteWire:
+            return "a wire could not be disconnected"
+        case .circularReference(let fromNodeID, let toNodeID):
+            return "wiring node \(fromNodeID) into node \(toNodeID) would make the graph circular"
+        }
+    }
 }
 
 // Wire management

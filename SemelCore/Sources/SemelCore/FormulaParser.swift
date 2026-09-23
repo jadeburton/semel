@@ -196,7 +196,12 @@ enum WireDictEntry: Equatable {
 
 // MARK: - Errors
 
-enum FormulaParseError: Error, LocalizedError {
+/// A formula the user wrote by hand rejected, in words.
+///
+/// Both protocols, for one sentence: the engine interns a thrown error's text by
+/// interpolating it, which asks for `CustomStringConvertible` and never reaches
+/// `errorDescription` — that answers `localizedDescription` alone.
+enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
     case unexpectedToken(FormulaToken, expected: String)
     case unexpectedCharacter(Character, context: String)
     case unterminatedLiteralString(context: String)
@@ -210,7 +215,7 @@ enum FormulaParseError: Error, LocalizedError {
     case forEachRequiresAtLeastOneItem
     case duplicateDefinition(kind: String, name: String)
 
-    var errorDescription: String? {
+    var description: String {
         switch self {
         case .unexpectedToken(let token, let expected):
             return "Unexpected token: \(token) — expected: \(expected)"
@@ -237,6 +242,11 @@ enum FormulaParseError: Error, LocalizedError {
         case .duplicateDefinition(let kind, let name):
             return "\(kind) '\(name)' is defined both by the formula and by a formula it includes"
         }
+    }
+
+    /// The same sentence through `LocalizedError`, for a caller that asks that way.
+    var errorDescription: String? {
+        description
     }
 }
 

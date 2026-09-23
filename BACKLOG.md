@@ -329,21 +329,6 @@ removed paths (`RequestHandler+Files.remove`). Print them, or a count with the f
 named; and when a pattern matched files but no folder, say so. `push` has the same silence
 on success (`handlePush` prints only its errors) and takes the same fix.
 
-**B-97** `open` — **A node's error message is shown in its debug form, with `\n` and quotes.**
-A missing configuration prints as
-`other(message: "Missing configuration. Add these to a semel.config …:\n\nclang.linker.target=…\n…")`,
-one line, escaped newlines, the whole thing in quotes, and the user cannot paste it. Cause:
-`Node.swift` interns a thrown error as `"\(error)"` (lines 239 and 399), and `NodeError` is
-not `CustomStringConvertible`, so `.other(message:)` renders as its case description. The
-client's `ErrorRecordRenderer` already prints a multi-line message as an indented block;
-it never gets the chance. Fix: give `NodeError` a `description` that is the message for
-`.other` and a sentence for each other case, and intern that. Then the configuration message
-itself: the `=…` are the template's placeholders, not truncation, and `tools clang.linker`
-prints the four `toolDescriptor.*` keys with the installed tool's real values as a
-paste-ready block (`ToolNamespaceRenderer`), so the message should name that command for
-those and list placeholders only for the keys that need the user's choice, `target` among
-them.
-
 **B-98** `open` — **A tool's own error is repeated without the setting that caused it.**
 `ClangPreprocessor` failing with clang's `error: unknown target triple '…'` shows the user
 clang's line and nothing else. The node knows which setting produced the flag
