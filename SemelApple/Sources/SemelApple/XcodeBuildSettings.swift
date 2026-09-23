@@ -126,6 +126,11 @@ struct XcodeBuildSettings {
         // written wins. A Dictionary's iteration order is seeded per process, so an
         // unsorted walk would give the key a different value from one run to the next,
         // and that value reaches the command line the formula states (B-04).
+        //
+        // Lexical order also picks the winner Xcode picks. Two patterns that both match
+        // one SDK are prefix-nested, and the broader of them ends `*]`; `*` sorts below
+        // every character an SDK name continues with, so the broader pattern is written
+        // first and the more specific one has the last word.
         for (key, value) in layer.sorted(by: { $0.key < $1.key }) {
             guard let bracket = key.firstIndex(of: "[") else {
                 result[key] = value

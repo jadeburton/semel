@@ -13,10 +13,10 @@ import XCTest
 /// disagreement moves.
 ///
 /// Most dictionaries here are accumulated into, which is safe whatever the order, so a
-/// blanket ban would be noise. This is the middle course: a scan for the two shapes that
-/// turn a dictionary into a sequence, with every existing one classified. A hit that is
-/// not in the allowlist is a walk nobody has classified yet — sort it, or add it here with
-/// the reason its order cannot escape.
+/// blanket ban would be noise. This is the middle course: a scan for the shapes that turn
+/// a dictionary into a sequence, with every existing one classified. A hit that is not in
+/// the allowlist is a walk nobody has classified yet — sort it, or add it here with the
+/// reason its order cannot escape.
 ///
 /// A source scan rather than a lint rule, for the reason `HermeticityTests` gives: it has
 /// to run where every other test runs and fail the same way.
@@ -36,100 +36,122 @@ final class DictionaryOrderTests: XCTestCase {
             .deletingLastPathComponent()   // repository root
     }
 
-    /// Every folder of non-test sources a build runs through, relative to the root.
-    private static let scannedFolders = [
+    /// Every non-test source a build runs through: each package's `Sources`, the root
+    /// package's library targets, and the three executables' `main.swift`, which are
+    /// targets of one file. A path here is a folder to walk or a single file.
+    private static let scannedPaths = [
         "SemelNodeKit/Sources", "SemelDatabaseModels/Sources", "SemelCore/Sources",
         "SemelSwift/Sources", "SemelClang/Sources", "SemelApple/Sources",
+        "SemelProtocol/Sources", "SemelExamples/Sources",
         "semel/CommandInterpreter", "semel/Server", "semel/Transport", "semel-swift/Library",
+        "semel/main.swift", "semel-server/main.swift", "semel-swift/main.swift",
     ]
 
     /// The walks that need no sort, each with why its order cannot reach anything a build
-    /// produces. Keyed by the file's name and the text walked rather than by line, so a
-    /// walk that moves keeps its entry and a new walk earns its own.
+    /// produces. Keyed by the file's path from the repository root and the text walked
+    /// rather than by line, so a walk that moves keeps its entry, a walk in another file
+    /// of the same name cannot borrow it, and a new walk earns its own.
     ///
-    /// Three kinds of entry are here: a walk of an array that merely looks like a walk of
-    /// a dictionary, a walk that accumulates into a dictionary or a set (where only the
-    /// result is kept, and it is the same result in any order), and a walk whose order is
-    /// imposed again further down.
+    /// Four kinds of entry are here: a walk of an array that merely looks like a walk of a
+    /// dictionary, a walk that accumulates into a dictionary or a set (where only the
+    /// result is kept, and it is the same result in any order), a walk whose order is
+    /// imposed again further down, and a walk over live connections.
     private static let classifiedWalks: [String: String] = [
         // ── arrays of pairs: ordered already, by whoever built them ──────────────
-        "ClangPreprocessor.swift: inputs.headerFolderManifests":
+        "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: inputs.headerFolderManifests":
             "an array, sorted by wire key where it is decoded",
-        "SwiftCompiler.swift: moduleMapFolderManifests":
+        "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: moduleMapFolderManifests":
             "an array, sorted by wire key where it is decoded",
-        "SwiftLinker.swift: libraryFolderManifests":
+        "SemelSwift/Sources/SemelSwift/SwiftLinker.swift: libraryFolderManifests":
             "an array, sorted by wire key where it is decoded",
-        "SwiftFormulaConverter.swift: externalPackages":
+        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: externalPackages":
             "an array, sorted by package folder so a name conflict resolves the same way twice",
-        "SwiftPackageReader.swift: ancestors":
+        "SemelSwift/Sources/SemelSwift/SwiftPackageReader.swift: ancestors":
             "an array, built longest path first so the most specific prefix matches",
-        "XcodeFormulaEmitter.swift: sourceFolders":
+        "SemelApple/Sources/SemelApple/XcodeFormulaEmitter.swift: sourceFolders":
             "an array, in the order the project file lists the target's folders",
-        "ProjectFinder.swift: folderManifests":
+        "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: folderManifests":
             "an array of the decoded manifests",
-        "GeneratedFiles.swift: platformSettings(toolName: entry.toolName, platform: platform,":
+        "semel-swift/Library/GeneratedFiles.swift: platformSettings(toolName: entry.toolName, platform: platform,":
             "an array of pairs the function returns in the order it states them",
-        "Preparation.swift: [(GeneratedFiles.formulaFileName, formula), (GeneratedFiles.configFileName, config)]":
+        "semel-swift/Library/Preparation.swift: [(GeneratedFiles.formulaFileName, formula), (GeneratedFiles.configFileName, config)]":
             "a literal array of the two files to write",
-        "Folder.swift: [(Folder.kind,     Folder.pinnedOutputPort),":
+        "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.pinnedOutputPort),":
             "a literal array of the two kinds a child can be",
 
         // ── accumulated into a dictionary or a set: the result is order-free ─────
-        "ClangPreprocessor.swift: headerInputFiles":
+        "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: headerInputFiles":
             "the headers are materialised in the sandbox at their wire keys, which are unique paths; no header name reaches the command line",
-        "SwiftFormulaConverter.swift: input.inputValues[Self.externalPackageJSONs] ?? [:]":
+        "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: inputs.includePathLists":
+            "flattened into a set of include paths, which becomes wire-spec dictionaries and a count",
+        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: input.inputValues[Self.externalPackageJSONs] ?? [:]":
             "collects the manifests into a dictionary by package folder",
-        "SwiftFormulaConverter.swift: input.inputValues[Self.targetFolders] ?? [:]":
+        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: input.inputValues[Self.targetFolders] ?? [:]":
             "collects the manifests into a dictionary by folder",
-        "XcodeProjectConverter.swift: xcconfigValues":
+        "SemelApple/Sources/SemelApple/XcodeProjectConverter.swift: xcconfigValues":
             "collects the xcconfig texts into a dictionary by path",
-        "ProjectBuilder.swift: inputs":
+        "SemelCore/Sources/SemelCore/Nodes/ProjectBuilder.swift: inputs":
             "collects the decoded manifests into a dictionary by folder",
-        "ProjectFinder.swift: allWatchedFolderManifests ?? [:]":
+        "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: allWatchedFolderManifests ?? [:]":
             "collects the manifests into an array whose only use is keyed by folder path, and the watched paths into a set",
-        "ConfigFilter.swift: merged":
+        "SemelCore/Sources/SemelCore/Nodes/ConfigFilter.swift: merged":
             "selects the qualified settings into a dictionary, rendered sorted",
-        "ConfigurationText.swift: other":
+        "SemelNodeKit/Sources/SemelNodeKit/ConfigurationText.swift: other":
             "merges one settings dictionary into another",
-        "InfoPlistBuilder.swift: thisNode.properties":
+        "SemelApple/Sources/SemelApple/InfoPlistBuilder.swift: thisNode.properties":
             "each property is one plist entry under its own key, and a plist serialises its keys sorted",
-        "LocalFileSystemTool.swift: environment":
+        "SemelNodeKit/Sources/SemelNodeKit/LocalFileSystemTool.swift: environment":
             "lays the node's environment over the sandbox's, by name",
-        "Node.swift: output.outputValues":
+        "SemelCore/Sources/SemelCore/Node.swift: output.outputValues":
             "writes each value to the port it is keyed by",
-        "Node.swift: output.inputWireSpecs":
+        "SemelCore/Sources/SemelCore/Node.swift: output.inputWireSpecs":
             "applies each port's specs to that port, and applySpecs sorts the wires within it",
-        "BuildEngine.swift: byNode":
+        "SemelCore/Sources/SemelCore/BuildEngine.swift: byNode":
             "collects each node's distinct messages into a set",
-        "BuildEngine.swift: current":
-            "collects the entries, which are reported sorted by label",
-        "FormulaParser.swift: templateEnv":
+        "SemelCore/Sources/SemelCore/BuildEngine.swift: current":
+            "collects the entries, which are reported sorted by label and then by node",
+        "SemelCore/Sources/SemelCore/FormulaParser.swift: templateEnv":
             "each binding expands its own marker, and no two bindings share one",
-        "TreeMerger.swift: merged.values":
+        "SemelCore/Sources/SemelCore/Nodes/TreeMerger.swift: merged.values":
             "a TreeManifest sorts its entries by path when it is built",
-        "SwiftFormulaConverter.swift: specs.keys":
+        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: specs.keys":
             "the missing paths are counted and reported sorted",
-        "ToolRunner.swift: toolsByDescriptor.keys":
-            "both readers impose an order: the error text sorts, and the tools reply sorts by version",
+        "SemelNodeKit/Sources/SemelNodeKit/ToolRunner.swift: toolsByDescriptor.keys":
+            "every reader imposes an order: the error text sorts, and both the tools reply and the written config sort by version",
+        "SemelApple/Sources/SemelApple/XcodeBuildSettings.swift: values.values":
+            "collects the names still referenced into a set, returned sorted",
 
         // ── the order is imposed again further down ─────────────────────────────
-        "XcodeProject.swift: objects":
+        "SemelApple/Sources/SemelApple/XcodeProject.swift: objects":
             "appends the borrowed files, which each target sorts once every group is read",
-        "GraphSpec.swift: otherPorts":
+        "SemelCore/Sources/SemelCore/GraphSpec.swift: otherPorts":
             "every port is compared; which mismatch is quoted first varies, the verdict does not",
+        "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: { fileName, nodeValue in":
+            "the discovered and extra sources are sorted by path once the two halves are joined",
+        "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: { wireKey, nodeValue in":
+            "the module maps are sorted by path two lines below",
+        "semel/Server/RequestHandler.swift: byNode":
+            "the entries are sorted by label and then by node before they become records",
 
         // ── a set of live objects, not a sequence anything is derived from ──────
-        "ConnectionRegistry.swift: connections.values":
+        "semel/Server/ConnectionRegistry.swift: connections.values":
             "delivers to each connected client; they are independent of one another",
-        "SocketConnection.swift: waiters.values":
+        "semel/CommandInterpreter/SocketConnection.swift: waiters.values":
             "fails each outstanding request; they are independent of one another",
     ]
 
-    private static func swiftSources(under folder: URL) throws -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil) else {
+    /// The Swift files at `path`, which is a folder to walk or a single file. Sorted, so a
+    /// failure lists its hits the same way twice.
+    private static func swiftSources(at path: URL) throws -> [URL] {
+        if path.pathExtension == "swift" {
+            return FileManager.default.fileExists(atPath: path.path) ? [path] : []
+        }
+        guard let enumerator = FileManager.default.enumerator(at: path, includingPropertiesForKeys: nil) else {
             return []
         }
-        return enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        return enumerator.compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+            .sorted { $0.path < $1.path }
     }
 
     /// The dictionary view a line turns into a sequence — `specs.keys` of
@@ -138,19 +160,40 @@ final class DictionaryOrderTests: XCTestCase {
     private static let viewRegex = try! NSRegularExpression(
         pattern: #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.(?:keys|values))\s*(?:\)|\.(?:map|filter|compactMap|flatMap|joined|reduce)\b)"#)
 
-    /// What `line` walks, or nil when it walks nothing: the subject of a
-    /// `for (key, value) in …` loop, or the dictionary view it turns into a sequence.
-    ///
-    /// `continuation` is the line after, consulted only when the statement is plainly
-    /// unfinished, so that a subject sorted on the next line is not read as unsorted.
-    static func walkedText(inLine line: String, continuation: String) -> String? {
-        let code = line.trimmingCharacters(in: .whitespaces)
-        guard !code.hasPrefix("//") else { return nil }
-        let statement = code.contains("{") ? code : code + " " + continuation.trimmingCharacters(in: .whitespaces)
-        guard !statement.contains(".sorted") else { return nil }
+    /// A call whose closure takes two bindings — `byNode.map { nodeID, ports in … }` — which
+    /// is how a dictionary is walked without naming `keys` or `values` at all. Group 1 is
+    /// the receiver when the line carries it, group 2 the bindings.
+    private static let pairClosureRegex = try! NSRegularExpression(
+        pattern: #"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)?\.(?:map|compactMap|flatMap|forEach|filter|reduce)\s*\{\s*\(?\s*([A-Za-z_][A-Za-z0-9_]*\s*,\s*[A-Za-z_][A-Za-z0-9_]*)\s*\)?\s+in\b"#)
 
-        if code.contains("for ("), !code.contains(".enumerated()"), !code.contains("zip("),
-           let inRange = code.range(of: ") in ") {
+    /// What `line` walks, or nil when it walks nothing: the subject of a `for` loop that
+    /// binds a pair or names `keys` or `values`, the dictionary view it turns into a
+    /// sequence, or the receiver of a call whose closure takes two bindings.
+    ///
+    /// `previous` and `continuation` are its neighbours, consulted only where the
+    /// statement plainly runs into them, so that a sort one line above or below is not
+    /// read as absent.
+    static func walkedText(inLine line: String, previous: String = "", continuation: String = "") -> String? {
+        let code = line.trimmingCharacters(in: .whitespaces)
+        guard !code.hasPrefix("//"), !code.hasPrefix("///") else { return nil }
+
+        var statement = code
+        if code.hasPrefix(".") {
+            statement = previous.trimmingCharacters(in: .whitespaces) + " " + statement
+        }
+        if !code.contains("{") {
+            statement += " " + continuation.trimmingCharacters(in: .whitespaces)
+        }
+        // An enumerated or zipped sequence is ordered by construction, and a sorted one
+        // says so on the spot.
+        guard !statement.contains(".sorted"), !statement.contains(".enumerated()"),
+              !statement.contains("zip(") else {
+            return nil
+        }
+
+        // `for case .remote(_, let url) in …` matches a pattern; it does not bind a pair.
+        if code.hasPrefix("for "), !code.hasPrefix("for case "), let inRange = code.range(of: " in ") {
+            let binding = String(code[code.index(code.startIndex, offsetBy: 4)..<inRange.lowerBound])
             var subject = String(code[inRange.upperBound...])
             if let whereRange = subject.range(of: " where ") {
                 subject = String(subject[..<whereRange.lowerBound])
@@ -158,34 +201,62 @@ final class DictionaryOrderTests: XCTestCase {
             while subject.hasSuffix("{") || subject.hasSuffix(" ") {
                 subject.removeLast()
             }
-            return subject.isEmpty ? nil : subject
+            let walksAPair = binding.contains(",")
+            let walksAView = subject.hasSuffix(".keys") || subject.hasSuffix(".values")
+            return (walksAPair || walksAView) && !subject.isEmpty ? subject : nil
         }
 
         let range = NSRange(code.startIndex..., in: code)
-        guard let match = viewRegex.firstMatch(in: code, range: range),
-              let viewRange = Range(match.range(at: 1), in: code) else {
+        if let match = viewRegex.firstMatch(in: code, range: range),
+           let viewRange = Range(match.range(at: 1), in: code) {
+            let view = String(code[viewRange])
+            // `Set(dict.keys)` asks what is in the dictionary, not in what order.
+            return code.contains("Set(\(view))") ? nil : view
+        }
+
+        guard let match = pairClosureRegex.firstMatch(in: code, range: range),
+              let bindingRange = Range(match.range(at: 2), in: code) else {
             return nil
         }
-        let view = String(code[viewRange])
-        // `Set(dict.keys)` asks what is in the dictionary, not in what order.
-        return code.contains("Set(\(view))") ? nil : view
+        // The receiver when the line carries it; the bindings when the call is a
+        // continuation of the line above, which is as much as the line itself says.
+        if let receiverRange = Range(match.range(at: 1), in: code) {
+            return String(code[receiverRange])
+        }
+        return "{ \(code[bindingRange]) in"
     }
 
-    func test_everyWalkOfADictionaryIsSortedOrClassified() throws {
-        var unclassified: [String] = []
+    /// Every walk the scan finds, as `<path from the root>: <text walked>`, with the line
+    /// it is on.
+    private static func walks() throws -> [(key: String, location: String)] {
+        var found: [(key: String, location: String)] = []
 
-        for folder in Self.scannedFolders {
-            let url = Self.repositoryRoot.appendingPathComponent(folder, isDirectory: true)
-            for file in try Self.swiftSources(under: url) {
+        for path in scannedPaths {
+            let url = repositoryRoot.appendingPathComponent(path)
+            let sources = try swiftSources(at: url)
+            XCTAssertFalse(sources.isEmpty, "no Swift file under '\(path)': the scan covers nothing there")
+
+            for file in sources {
+                let relativePath = file.path.replacingOccurrences(of: repositoryRoot.path + "/", with: "")
                 let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
                 for (index, line) in lines.enumerated() {
-                    let continuation = index + 1 < lines.count ? lines[index + 1] : ""
-                    guard let walked = Self.walkedText(inLine: line, continuation: continuation) else { continue }
-                    guard Self.classifiedWalks["\(file.lastPathComponent): \(walked)"] == nil else { continue }
-                    unclassified.append("\(folder)/\(file.lastPathComponent):\(index + 1): \(walked)")
+                    guard let walked = walkedText(inLine: line,
+                                                  previous: index > 0 ? lines[index - 1] : "",
+                                                  continuation: index + 1 < lines.count ? lines[index + 1] : "") else {
+                        continue
+                    }
+                    found.append((key: "\(relativePath): \(walked)", location: "\(relativePath):\(index + 1)"))
                 }
             }
         }
+
+        return found
+    }
+
+    func test_everyWalkOfADictionaryIsSortedOrClassified() throws {
+        let unclassified = try Self.walks()
+            .filter { Self.classifiedWalks[$0.key] == nil }
+            .map { "\($0.location): \($0.key.components(separatedBy: ": ").last ?? "")" }
 
         XCTAssertTrue(unclassified.isEmpty, """
             These walk a dictionary in its own iteration order, which is seeded per process. \
@@ -198,38 +269,36 @@ final class DictionaryOrderTests: XCTestCase {
     /// The allowlist names walks that are still there; a sort or a deletion must not
     /// leave an entry behind for a later walk of the same text to inherit.
     func test_everyClassifiedWalkIsStillThere() throws {
-        var found = Set<String>()
+        let found = Set(try Self.walks().map(\.key))
 
-        for folder in Self.scannedFolders {
-            let url = Self.repositoryRoot.appendingPathComponent(folder, isDirectory: true)
-            for file in try Self.swiftSources(under: url) {
-                let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
-                for (index, line) in lines.enumerated() {
-                    let continuation = index + 1 < lines.count ? lines[index + 1] : ""
-                    guard let walked = Self.walkedText(inLine: line, continuation: continuation) else { continue }
-                    found.insert("\(file.lastPathComponent): \(walked)")
-                }
-            }
-        }
-
-        for key in Self.classifiedWalks.keys {
-            XCTAssertTrue(found.contains(key), "classified walk no longer exists: \(key)")
+        for key in Self.classifiedWalks.keys.sorted() {
+            XCTAssertTrue(found.contains(key), "classified walk is not in the sources: \(key)")
         }
     }
 
     /// What the scan reads and what it passes over, stated on examples rather than left to
     /// the codebase to demonstrate.
     func test_theScanReadsTheShapesItClaimsTo() {
-        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings {", continuation: ""), "settings")
-        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings where key.isEmpty {", continuation: ""), "settings")
-        XCTAssertEqual(Self.walkedText(inLine: "let names = Array(byName.keys)", continuation: ""), "byName.keys")
-        XCTAssertEqual(Self.walkedText(inLine: "let all = table.values.map(\\.name)", continuation: ""), "table.values")
+        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings {"), "settings")
+        XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings where key.isEmpty {"), "settings")
+        XCTAssertEqual(Self.walkedText(inLine: "for value in table.values where value.isEmpty {"), "table.values")
+        XCTAssertEqual(Self.walkedText(inLine: "for key in table.keys {"), "table.keys")
+        XCTAssertEqual(Self.walkedText(inLine: "let names = Array(byName.keys)"), "byName.keys")
+        XCTAssertEqual(Self.walkedText(inLine: "let all = table.values.map(\\.name)"), "table.values")
+        XCTAssertEqual(Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in"), "byNode")
+        XCTAssertEqual(Self.walkedText(inLine: ".map { key, value in one(key, value) }",
+                                       previous: "let files = table"), "{ key, value in")
 
-        XCTAssertNil(Self.walkedText(inLine: "for (key, value) in settings.sorted(by: { $0.key < $1.key }) {", continuation: ""))
-        XCTAssertNil(Self.walkedText(inLine: "for (index, item) in items.enumerated() {", continuation: ""))
-        XCTAssertNil(Self.walkedText(inLine: "// for (key, value) in settings {", continuation: ""))
-        XCTAssertNil(Self.walkedText(inLine: "let one = table.values.first", continuation: ""))
-        XCTAssertNil(Self.walkedText(inLine: "guard Set(specs.keys).isSubset(of: arrived) else {", continuation: ""))
-        XCTAssertNil(Self.walkedText(inLine: "for (key, value) in settings", continuation: "    .sorted(by: { $0.key < $1.key }) {"))
+        XCTAssertNil(Self.walkedText(inLine: "for (key, value) in settings.sorted(by: { $0.key < $1.key }) {"))
+        XCTAssertNil(Self.walkedText(inLine: "for (index, item) in items.enumerated() {"))
+        XCTAssertNil(Self.walkedText(inLine: "for case .remote(_, let url) in targets.flatMap(\\.products) {"))
+        XCTAssertNil(Self.walkedText(inLine: "for item in items {"))
+        XCTAssertNil(Self.walkedText(inLine: "// for (key, value) in settings {"))
+        XCTAssertNil(Self.walkedText(inLine: "let one = table.values.first"))
+        XCTAssertNil(Self.walkedText(inLine: "guard Set(specs.keys).isSubset(of: arrived) else {"))
+        XCTAssertNil(Self.walkedText(inLine: "for (key, value) in settings",
+                                     continuation: "    .sorted(by: { $0.key < $1.key }) {"))
+        XCTAssertNil(Self.walkedText(inLine: ".map { key, value in one(key, value) }",
+                                     previous: "let files = table.sorted { $0.key < $1.key }"))
     }
 }

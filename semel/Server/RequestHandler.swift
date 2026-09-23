@@ -151,15 +151,18 @@ public final class RequestHandler {
         let byNode     = Dictionary(grouping: errorPorts, by: \.nodeID)
 
         let entries = byNode.map { nodeID, ports in
-            ErrorReport.entry(forNodeID: nodeID,
-                              ports:     ports,
-                              messages:  Set(ports.compactMap(ErrorReport.reportableMessage)),
-                              database:  database)
+            (nodeID, ErrorReport.entry(forNodeID: nodeID,
+                                       ports:     ports,
+                                       messages:  Set(ports.compactMap(ErrorReport.reportableMessage)),
+                                       database:  database))
         }
 
-        // Sorted by label, the same order the idle-time event uses, so the reply and the
-        // event list the same failures the same way.
-        return entries.sorted { $0.label < $1.label }.map(ErrorRecord.init)
+        // Sorted by label and then by node, the same total order the idle-time event uses,
+        // so the reply and the event list the same failures the same way. The node breaks
+        // a tie between two labels that are equal — two nodes of a type with no path share
+        // one — which a sort by label alone leaves to the order the dictionary was walked
+        // in, and that order is seeded per process.
+        return entries.sorted { ($0.1.label, $0.0) < ($1.1.label, $1.0) }.map { ErrorRecord($0.1) }
     }
 
     /// The installed tools per namespace, unrendered; the client prints them as config
