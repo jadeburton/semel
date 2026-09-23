@@ -3,7 +3,7 @@
 //  SemelCLITests
 //
 //  B-99. The prompt's marks are a set, not a habit: pinned here so a new one cannot be
-//  added by a command that felt like it, and so the three that exist keep their meanings.
+//  added by a command that felt like it, and so the two that exist keep their meanings.
 //
 
 @testable import SemelCLI
