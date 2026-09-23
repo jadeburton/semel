@@ -7,18 +7,27 @@
 import SemelNodeKit
 import XCTest
 
-/// B-53. Removing a folder of a few thousand files costs what removing one of a few
-/// hundred costs times the ratio of the two sizes, not times its square. The cost sits in
-/// the parent's manifest: a rebuild per collected child, each O(children), is the shape
-/// B-25 took out of `push`, and the collector walks into it from the other side.
+/// B-53. Removing the files of a folder costs the same handful of manifest rebuilds
+/// whatever the folder holds: a rebuild per collected child, each O(children), is the
+/// shape B-25 took out of `push`, and the collector walks into it from the other side.
 ///
-/// Both tests time the removal and the collection, never the push that set them up, and
-/// compare 3000 files against 1000. Linear is a ratio near 3 and quadratic near 9; the
-/// bound sits between them, far enough from 3 that a loaded machine does not trip it.
+/// The cost is asserted in rebuilds rather than in seconds, as `Folder.manifestRebuildCount`
+/// is there for and `FolderManifestRebuildTests` does for a push: the defect is a count,
+/// a count separates the two states by the size of the folder, and a stopwatch has to be
+/// given a band wide enough to survive a loaded machine. Each test runs two sizes and
+/// holds the count to a constant, which is what "grows linearly with the folder" means
+/// when the per-file work is what is at issue.
 final class FolderRemovalScaleTests: SemelCoreTestCase {
 
-    /// 3000 against 1000 files. Linear work lands near 3.
-    private static let growthBound = 5.0
+    /// The two folder sizes every growth test uses. Quadruple the files for a count that
+    /// must not move; small enough that the whole file is about a second.
+    private static let sizes = (small: 50, large: 200)
+
+    /// Removing the files of one folder leaves one dirty mark behind however many files it
+    /// walked, so the flush rebuilds that folder's manifest once. The allowance is for the
+    /// folders above it, which a removal also touches — and it is far below the one rebuild
+    /// per file that the count reaches when a deletion rebuilds as it goes.
+    private static let rebuildAllowance = 3
 
     private var engine: BuildEngine!
 
@@ -36,23 +45,26 @@ final class FolderRemovalScaleTests: SemelCoreTestCase {
 
     // MARK: - Growth
 
-    /// `rm <folder>`: the folder goes with its files.
-    func test_removingAWholeFolderGrowsLinearlyWithItsSize() throws {
-        let small = try timeRemoving(1000) { folder in folder }
-        let large = try timeRemoving(3000) { folder in folder }
+    /// `rm <folder>/*`: the files go and the folder stays, so every collected child reaches
+    /// a parent that is still there. This is the removal that rebuilds per child.
+    func test_removingTheContentsOfAFolderRebuildsItsManifestOnceNotPerFile() throws {
+        let small = try removalOfAFolderOf(Self.sizes.small) { folder in "\(folder)/*" }
+        let large = try removalOfAFolderOf(Self.sizes.large) { folder in "\(folder)/*" }
 
-        XCTAssertLessThan(large / small, Self.growthBound,
-                          "1000 files: \(small)s, 3000 files: \(large)s")
+        XCTAssertLessThanOrEqual(small.rebuilds, Self.rebuildAllowance, small.described)
+        XCTAssertEqual(large.rebuilds, small.rebuilds,
+                       "the count must not follow the folder's size — \(large.described)")
     }
 
-    /// `rm <folder>/*`: the files go and the folder stays, so every collected child
-    /// reaches a parent that is still there — the manifest rebuild per child.
-    func test_removingTheContentsOfAFolderGrowsLinearlyWithItsSize() throws {
-        let small = try timeRemoving(1000) { folder in "\(folder)/*" }
-        let large = try timeRemoving(3000) { folder in "\(folder)/*" }
+    /// `rm <folder>`: the folder goes with its files, and nothing under it is rebuilt on
+    /// the way out.
+    func test_removingAWholeFolderRebuildsNoManifestPerFile() throws {
+        let small = try removalOfAFolderOf(Self.sizes.small) { folder in folder }
+        let large = try removalOfAFolderOf(Self.sizes.large) { folder in folder }
 
-        XCTAssertLessThan(large / small, Self.growthBound,
-                          "1000 files: \(small)s, 3000 files: \(large)s")
+        XCTAssertLessThanOrEqual(small.rebuilds, Self.rebuildAllowance, small.described)
+        XCTAssertEqual(large.rebuilds, small.rebuilds,
+                       "the count must not follow the folder's size — \(large.described)")
     }
 
     // MARK: - What is left behind
@@ -143,17 +155,35 @@ final class FolderRemovalScaleTests: SemelCoreTestCase {
         }
     }
 
-    /// Pushes `count` files into a folder of their own, removes what `pattern` names and
-    /// collects, and returns how long the removal and the collection took together.
-    private func timeRemoving(_ count: Int, pattern: (String) -> String) throws -> TimeInterval {
+    /// What one removal cost: the manifests rebuilt by it, and the seconds it took, which
+    /// are carried for a failure message to quote and are never asserted on.
+    private struct RemovalCost {
+        let files:    Int
+        let rebuilds: Int
+        let seconds:  TimeInterval
+
+        var described: String {
+            "\(files) files: \(rebuilds) rebuilds in \(String(format: "%.3f", seconds))s"
+        }
+    }
+
+    /// Pushes `count` files into a folder of their own, reads the manifest so the folder
+    /// starts clean, then removes what `pattern` names and collects. The push is set-up and
+    /// is outside everything the cost counts.
+    private func removalOfAFolderOf(_ count: Int, pattern: (String) -> String) throws -> RemovalCost {
         let folder = "tree\(count)"
         try pushFiles(count, into: folder)
+        _ = try manifest(of: folder)
 
+        let rebuiltBefore = Folder.manifestRebuildCount
         let start = Date.now
         try remove(pattern: pattern(folder))
         try collect()
         try Folder.flushDirtyManifests()
-        return Date.now.timeIntervalSince(start)
+
+        return RemovalCost(files: count,
+                           rebuilds: Folder.manifestRebuildCount - rebuiltBefore,
+                           seconds: Date.now.timeIntervalSince(start))
     }
 
     // MARK: - Reading the graph back

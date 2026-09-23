@@ -118,17 +118,10 @@ final class FilePlugin: CommandPlugin {
             }
         }
 
-        guard !nameEachPath else {
+        guard !nameEachPath, let counts = Self.countedTogether(files: files, folders: folders) else {
             return
         }
-        var line = "Pushed \(Self.counted(files, "file"))"
-        if folders > 0 {
-            line += " and \(Self.counted(folders, "folder"))"
-        }
-        if unchanged > 0 {
-            line += ", \(unchanged) unchanged"
-        }
-        context.outputMessage(line)
+        context.outputMessage("Pushed \(counts)" + (unchanged > 0 ? ", \(unchanged) unchanged" : ""))
     }
 
     /// What pushing one entry did, for the report the whole push makes at the end.
@@ -229,14 +222,11 @@ final class FilePlugin: CommandPlugin {
             return
         }
 
+        // Naming the folders it took is also how a removal says which it did *not*: `*`
+        // matches within one segment and `*.*` needs a literal dot, as in a shell, so a
+        // pattern can take every file of a folder and leave the folder standing, and the
+        // report then names files and no folder.
         reportRemoval(files: removedFiles, folders: removedFolders, context: context)
-
-        // A `*` matches within one segment and `*.*` needs a literal dot, as in a shell, so
-        // a pattern can take every file of a folder and leave the folder standing. That is
-        // the right outcome and nothing else in the output would show it.
-        if removedFolders.isEmpty, fullPattern.containsWildcard {
-            context.outputMessage("rm: \(pathOrWildcard): matched files only, no folder")
-        }
     }
 
     // MARK: - Reporting what a verb touched
@@ -247,20 +237,45 @@ final class FilePlugin: CommandPlugin {
     private static let pathsNamedIndividually = 20
 
     /// What `rm` says when it succeeds: a line per path while the list is short enough to
-    /// read, and a count once it is not — with the folders named at any size, since a
-    /// folder is the shape of what happened and the files are what fill the screen.
+    /// read, and a count once it is not — the folders first, since a folder is the shape of
+    /// what happened and the files are what fill the screen.
     private func reportRemoval(files: [String], folders: [String], context: any CommandContext) {
         guard files.count + folders.count > Self.pathsNamedIndividually else {
             folders.forEach { context.outputMessage("Removed folder: \($0)") }
             files.forEach { context.outputMessage("Removed file: \($0)") }
             return
         }
+        guard let counts = Self.countedTogether(files: files.count, folders: folders.count) else {
+            return
+        }
 
-        var line = "Removed \(Self.counted(files.count, "file"))"
+        var line = "Removed \(counts)"
         if !folders.isEmpty {
-            line += " and \(Self.counted(folders.count, "folder")): \(folders.joined(separator: ", "))"
+            line += ": \(Self.named(folders))"
         }
         context.outputMessage(line)
+    }
+
+    /// "12 files and 3 folders", leaving out whichever of the two is none, and nothing at
+    /// all when both are.
+    private static func countedTogether(files: Int, folders: Int) -> String? {
+        var parts: [String] = []
+        if files > 0 {
+            parts.append(counted(files, "file"))
+        }
+        if folders > 0 {
+            parts.append(counted(folders, "folder"))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " and ")
+    }
+
+    /// Names paths up to the count a short list prints in full, and says how many it left
+    /// out: a wildcard can match folders by the hundred, and a line naming all of them is
+    /// the wall of text the count exists to replace.
+    private static func named(_ paths: [String]) -> String {
+        let named = paths.prefix(pathsNamedIndividually)
+        let rest  = paths.count - named.count
+        return named.joined(separator: ", ") + (rest > 0 ? ", and \(rest) more" : "")
     }
 
     private static func counted(_ count: Int, _ noun: String) -> String {

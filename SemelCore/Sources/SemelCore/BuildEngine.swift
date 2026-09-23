@@ -436,9 +436,12 @@ public final class BuildEngine {
         }
     }
 
-    /// How many signals have reached the loop. One batch of any size sends one, however
-    /// many mutations asked for a pass inside it, which is what a batch is for and what a
-    /// test can hold it to.
+    // MARK: - Signalling
+
+    /// How many signals have been sent to the loop — counted as each is dispatched, which
+    /// the loop then receives in order. One batch of any size sends one, however many
+    /// mutations asked for a pass inside it, which is what a batch is for and what a test
+    /// can hold it to.
     private var loopSignalsSentCount = 0
 
     var loopSignalsSent: Int {
@@ -449,8 +452,6 @@ public final class BuildEngine {
         batchLock.withLock { loopSignalsSentCount += 1 }
         Task { await workSignal.signal() }
     }
-
-    // MARK: - Signalling
 
     /// Safe to call from any actor or thread. A signal will never be lost:
     /// if the engine is currently draining, the pending count is incremented

@@ -248,8 +248,7 @@ error entries at idle, 494 of them the identical unlabelled `ClangCompiler … i
 because only `.pending` blocks processing and errors propagate through every consumer;
 deleting the whole project produced none, since everything was collected. The fixes are
 separate items: the idle error report collapsing a cascade to its cause, `[missing]` split
-into its states, the missing batch around `rm` (B-53), and `ProjectBuilder`'s mid-flight
-printer (B-50). The `debug` tree is fixed.
+into its states, and `ProjectBuilder`'s mid-flight printer (B-50). The `debug` tree is fixed.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and

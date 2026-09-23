@@ -235,10 +235,10 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     }
 
     public func onChildDeleted(nodeID: ObjectID) throws {
-        // Deferred like every other child change (B-53): a collector removing N children
-        // of one folder rebuilt its manifest N times, each rebuild O(N), which is what a
-        // push cost before B-25. The self-delete check goes with it, for the same reason —
-        // it reads every child.
+        // Deferred like every other child change: a rebuild here is O(children) and a
+        // collector takes children one at a time, so rebuilding as they go costs one walk
+        // of the folder per file it holds. The self-delete check is deferred with it, for
+        // the same reason — it reads every child too.
         try markManifestDirty()
     }
 

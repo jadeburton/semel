@@ -138,16 +138,29 @@ final class FilePluginTests: XCTestCase {
     }
 
     /// `*` matches within one segment, so `*.*` takes the dotted files and leaves the
-    /// folders — correct, and invisible without a word for it.
-    func test_aWildcardThatMatchedNoFolderSaysSo() throws {
+    /// folders. Naming what went is what says so: files, and no folder.
+    func test_aWildcardThatTookNoFolderNamesOnlyFiles() throws {
         connection.reply(.ok)
         connection.reply(.remove(removedFiles: ["a.c", "b.c"], removedFolders: []))
         connection.reply(.ok)
 
         try run("rm", ["*.*"])
 
-        XCTAssertEqual(context.messages, ["Removed file: a.c", "Removed file: b.c",
-                                          "rm: *.*: matched files only, no folder"])
+        XCTAssertEqual(context.messages, ["Removed file: a.c", "Removed file: b.c"])
+    }
+
+    /// The folder list is capped like the file list: a pattern can match folders by the
+    /// hundred, and the count exists to keep them off the screen.
+    func test_aLongRmCapsTheFolderListItNames() throws {
+        connection.reply(.ok)
+        connection.reply(.remove(removedFiles: [], removedFolders: (0..<25).map { "pkg\($0)" }))
+        connection.reply(.ok)
+
+        try run("rm", ["pkg*"])
+
+        XCTAssertEqual(context.messages, ["Removed 25 folders: "
+                                          + (0..<20).map { "pkg\($0)" }.joined(separator: ", ")
+                                          + ", and 5 more"])
     }
 
     func test_rmOfNothingIsAnError() throws {
