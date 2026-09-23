@@ -57,7 +57,10 @@ final class FolderRemovalScaleTests: SemelCoreTestCase {
     }
 
     /// `rm <folder>`: the folder goes with its files, and nothing under it is rebuilt on
-    /// the way out.
+    /// the way out. A pinned count, not a discriminating one: the folder deletes itself
+    /// before its children are removed, so `onChildDeleted` is never reached on this path
+    /// and a per-child rebuild could not show here; the test above is the one that catches
+    /// that.
     func test_removingAWholeFolderRebuildsNoManifestPerFile() throws {
         let small = try removalOfAFolderOf(Self.sizes.small) { folder in folder }
         let large = try removalOfAFolderOf(Self.sizes.large) { folder in folder }
