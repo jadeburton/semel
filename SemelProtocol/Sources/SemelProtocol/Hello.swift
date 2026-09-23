@@ -21,7 +21,10 @@ public enum Role: String, Codable, Equatable, Sendable {
 }
 
 public enum ProtocolVersion {
-    public static let current = 1
+    /// Version 2 moves `debug`'s text from the reply's JSON to the frame body. A peer that
+    /// speaks version 1 would decode the reply as an empty answer and print nothing, so
+    /// the mismatch is worth a rejection that names both numbers.
+    public static let current = 2
 }
 
 public struct Hello: Codable, Equatable, Sendable {

@@ -84,6 +84,34 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(client, .wait).0, .ok)
     }
 
+    /// B-94. A prepared app's graph describes itself in megabytes. The JSON section of a
+    /// frame is capped at 1 MiB, because its declared length is checked before anything is
+    /// allocated; the body is not, so the text rides there and a large reply crosses the
+    /// socket whole instead of closing the connection under the client.
+    func test_aDebugReplyLargerThanTheJSONCapArrivesWhole() throws {
+        let marker = "MARKER-\(UUID().uuidString)"
+        try describeSomethingLargerThanTheJSONCap(marker: marker)
+        let client = try connect()
+
+        let (response, body) = try daemon(client, .debug)
+
+        XCTAssertEqual(response, .debug)
+        let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
+        XCTAssertGreaterThan(text.utf8.count, Int(Frame.maximumJSONLength),
+                             "the reply has to be over the cap for this to prove anything")
+        XCTAssertTrue(text.contains(marker), "the text arrives whole, not truncated")
+    }
+
+    /// One node carrying an error message of a megabyte and a half: the same volume of
+    /// `debug` text a few hundred real nodes produce, without the few hundred nodes.
+    private func describeSomethingLargerThanTheJSONCap(marker: String) throws {
+        let node = try NodeRecord.createNode(database: database, kind: Configuration.kind,
+                                             properties: ["role": "big"], graphSpec: nil)
+        let message = marker + String(repeating: "x", count: 3 * Int(Frame.maximumJSONLength) / 2)
+        try node.writeToOutputPort(Configuration.outputPort,
+                                   value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+    }
+
     func test_anUndecodableRequestIsAnsweredNotDropped() throws {
         // Reach under SocketConnection: a raw frame whose JSON names no known case.
         let client = try connect()

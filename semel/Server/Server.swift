@@ -186,7 +186,7 @@ public final class Server {
         stream.onClose = { _ in answered.signal() }
         stream.start()
         if let hello = try? Frame.request(.hello(Hello(role: .daemon)), correlationID: 1) {
-            stream.send(hello)
+            try? stream.send(hello)
         }
         _ = answered.wait(timeout: .now() + timeout)
         // Read where it is written: on a timeout the stream's queue may still be mid-frame,

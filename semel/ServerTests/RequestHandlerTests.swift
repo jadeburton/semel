@@ -88,12 +88,13 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(.wait).0, .ok)
     }
 
-    func test_debugReturnsTheGraphDescription() throws {
-        let (response, _) = try daemon(.debug)
+    /// The description is the reply's body, not a field in its JSON: it runs to megabytes
+    /// on a real graph, and the JSON section of a frame is capped at one.
+    func test_debugReturnsTheGraphDescriptionAsTheReplyBody() throws {
+        let (response, body) = try daemon(.debug)
 
-        guard case .debug(let text) = response else {
-            return XCTFail("expected debug text, got \(response)")
-        }
+        XCTAssertEqual(response, .debug)
+        let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
         XCTAssertTrue(text.hasPrefix("BUILD GRAPH STATE ("), text)
     }
 

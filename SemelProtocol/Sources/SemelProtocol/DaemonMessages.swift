@@ -140,7 +140,12 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case fetch(mode: UInt16)
     case errors(records: [ErrorRecord])
     case tools(namespaces: [ToolNamespaceRecord])
-    case debug(text: String)
+    /// The description of the graph travels in the frame body, as UTF-8. A few hundred
+    /// nodes describe themselves in more than the megabyte the JSON section allows, and
+    /// that cap is not a number to raise: a declared JSON length is checked before the
+    /// bytes are read, so it bounds what a header alone can ask this process to allocate.
+    /// The body's own limit is three orders of magnitude higher for exactly this traffic.
+    case debug
 }
 
 // MARK: - Events

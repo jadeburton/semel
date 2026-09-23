@@ -45,8 +45,11 @@ final class MessageJSONTests: XCTestCase {
         }
     }
 
-    func test_currentProtocolVersionIsOne() {
-        XCTAssertEqual(ProtocolVersion.current, 1)
+    /// Pinned so that a change to the message set is a change to this number too: the
+    /// version is what lets a mismatched pair say so instead of misreading each other.
+    func test_currentProtocolVersionIsTwo() {
+        XCTAssertEqual(ProtocolVersion.current, 2)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 2, "a hello sent with no version named speaks the current one")
     }
 
     // MARK: - Daemon requests
@@ -119,11 +122,17 @@ final class MessageJSONTests: XCTestCase {
             .errors(records: [record]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
-            .debug(text: "⬢ Folder #1"),
+            .debug,
         ]
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
         }
+    }
+
+    /// The graph's description is the reply's *body*, so the reply itself carries nothing
+    /// and stays far under the cap on a frame's JSON however large the graph is.
+    func test_encodesTheDebugReplyWithoutItsText() throws {
+        XCTAssertEqual(try json(Response.daemon(.debug)), #"{"daemon":{"debug":{}}}"#)
     }
 
     func test_roundTripsEveryErrorResponse() throws {
@@ -133,6 +142,7 @@ final class MessageJSONTests: XCTestCase {
             .nodeError(description: "wire missing"),
             .roleNotOffered(role: .runner),
             .malformedRequest(description: "unknown case"),
+            .replyTooLarge(request: "debug", bytes: 3_000_000, limit: 1_048_576),
             .unrecoverable(message: "object store is read-only"),
         ]
         for error in errors {
