@@ -326,16 +326,6 @@ the indicator is opt-in or opt-out, and how the user keeps typing commands while
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
 verb and left with a key).
 
-**B-98** `open` — **A tool's own error is repeated without the setting that caused it.**
-`ClangPreprocessor` failing with clang's `error: unknown target triple '…'` shows the user
-clang's line and nothing else. The node knows which setting produced the flag
-(`clang.preprocessor.target` → `-target`), where the value came from (which `semel.config`,
-or prepare's template), and what values the installed toolchain accepts (`tools clang`
-lists them). A tool failure whose stderr names an argument the node built from a setting
-should say so: the key, the value, the file it was read from, and the command that lists
-valid values. Applies to every tool node; start with `-target`/`-sdk`, the two a new user
-gets wrong.
-
 **B-99** `open` — **The CLI marks failure with ❌ and success with nothing.**
 `ErrorRecordRenderer` opens every error with ❌; no positive event has a mark, so a screen
 of output reads as all bad news or none. Use emoji judiciously and consistently: one for an

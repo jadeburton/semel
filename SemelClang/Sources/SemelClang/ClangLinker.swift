@@ -124,16 +124,25 @@ public struct ClangLinker: Node {
     func process(inputs: ClangLinkerInputs) throws -> ClangLinkerOutputs {
 
         var arguments = [String]()
+        // The arguments built from settings, collected as they are appended so a linker
+        // diagnostic about one of them can name the key behind it (B-98).
+        var settings = [SettingArgument]()
+        let namespace = ClangLinkerConfiguration.settingNamespace
 
         arguments.append(contentsOf: inputs.configuration.arguments)
 
         arguments.append("-target");
         arguments.append(inputs.configuration.target)
+        settings.append(.clangTarget(key: "\(namespace).target", value: inputs.configuration.target))
 
         arguments.append("-L"); arguments.append(".")
 
         if let sdkPath = inputs.configuration.sdkPath {
-            arguments.append("-L"); arguments.append(sdkPath + "/usr/lib")
+            let searchPath = sdkPath + "/usr/lib"
+            arguments.append("-L"); arguments.append(searchPath)
+            settings.append(.clangLibrarySearchPath(key: "\(namespace).sdkPath",
+                                                    value: sdkPath,
+                                                    searchPath: searchPath))
         }
 
         arguments.append("-lSystem")
@@ -185,7 +194,7 @@ public struct ClangLinker: Node {
         let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
         let metadataValue = NodeValue.value(try metadataJSON.intern())
 
-        return .init(output: try result.asOutputNodeValue(),
+        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
                      infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: metadataValue)
     }

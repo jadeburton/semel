@@ -222,6 +222,10 @@ public struct ClangPreprocessor: Node {
         let outputFilename = inputs.inputSourceFile.filePath + ".p"
 
         var arguments = [String]()
+        // The arguments built from settings, collected as they are appended so a clang
+        // diagnostic about one of them can name the key behind it (B-98).
+        var settings = [SettingArgument]()
+        let namespace = ClangPreprocessorConfiguration.settingNamespace
 
         // Preprocess only.
         let language = Self.language(for: inputs.inputSourceFile.filePath)
@@ -244,9 +248,11 @@ public struct ClangPreprocessor: Node {
             // paths (-nostdinc would do that, breaking C++ standard-library headers
             // which live in the toolchain, not the SDK).
             arguments.append("-isysroot"); arguments.append(sdkPath)
+            settings.append(.clangSysroot(key: "\(namespace).sdkPath", value: sdkPath))
         }
 
         arguments.append("-target"); arguments.append(inputs.configuration.target)
+        settings.append(.clangTarget(key: "\(namespace).target", value: inputs.configuration.target))
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o"); arguments.append(outputFilename)
         arguments.append(contentsOf: inputs.configuration.arguments)
@@ -262,7 +268,7 @@ public struct ClangPreprocessor: Node {
                                       inputFiles: inputFiles,
                                       expectedOutputFileNames: [outputFilename])
 
-        return .init(output: try result.asOutputNodeValue(),
+        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
                      errorLog: .value(try result.errorOutput.intern()),
                      infoLog: .value(try result.infoOutput.intern()),
                      headerInputFilesWireSpecs: headerInputFilesWireSpecs,

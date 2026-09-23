@@ -340,6 +340,10 @@ struct SwiftCompiler: Node {
         let interfaceOutput = "\(moduleName).swiftinterface"
 
         var arguments = [String]()
+        // The arguments built from settings, collected as they are appended so a swiftc
+        // diagnostic about one of them can name the key behind it (B-98).
+        var settings = [SettingArgument]()
+        let namespace = SwiftCompilerConfiguration.settingNamespace
 
         let sdk = inputs.configuration.sdk
         try verifySDKVersion(inputs.configuration.sdkVersion, sdk: sdk)
@@ -349,9 +353,11 @@ struct SwiftCompiler: Node {
                                          + "(swift.compiler.sdk names it as `xcrun --sdk` would)")
         }
         arguments.append("-sdk");                            arguments.append(sdkPath)
+        settings.append(.swiftSDK(key: "\(namespace).sdk", value: sdk))
 
         if let target = inputs.configuration.target {
             arguments.append("-target");                     arguments.append(target)
+            settings.append(.swiftTarget(key: "\(namespace).target", value: target))
         }
 
         arguments.append("-module-name");                    arguments.append(moduleName)
@@ -430,7 +436,8 @@ struct SwiftCompiler: Node {
         let interfaceBytes = result.outputFiles[interfaceOutput] ?? []
 
         guard result.exitCode == 0 else {
-            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try result.errorOutput.intern()))
+            let message = result.failureMessage(tool: "swiftc", settings: settings)
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
             return .init(outputObject: error,
                          outputModule: error,
                          outputInterface: error,

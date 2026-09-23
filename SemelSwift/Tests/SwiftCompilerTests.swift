@@ -277,6 +277,71 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         let importPaths = arguments.indices.filter { arguments[$0] == "-I" }.map { arguments[$0 + 1] }
         XCTAssertEqual(importPaths, ["modules", "modules/CAtomic"])
     }
+
+    // MARK: - What a rejected argument says (B-98)
+
+    // swiftc's complaint names the argument it rejected and never the setting that produced
+    // it. The failed output carries swiftc's line and then the key and value behind it.
+
+    private func failureMessage(_ output: ProcessOutput, port: String) throws -> String {
+        guard case .noValue(.error(let hash)) = output.outputValues[port] else {
+            XCTFail("expected an error on \(port), got \(String(describing: output.outputValues[port]))")
+            return ""
+        }
+        return try hash.resolveAsString()
+    }
+
+    func test_aTripleSwiftcRejectsIsReportedWithTheSettingItCameFrom() throws {
+        executor.exitCode = 1
+        executor.errorOutput = "error: unknown target 'nonsense'"
+
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")]),
+                                  extraConfiguration: ["target=nonsense"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "// app".intern())]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let message = try failureMessage(output, port: SwiftCompiler.outputObject)
+        XCTAssertTrue(message.contains("error: unknown target 'nonsense'"), "got \(message)")
+        XCTAssertTrue(message.contains("`swift.compiler.target` is `nonsense`"), "got \(message)")
+        XCTAssertTrue(message.contains("swiftc -print-target-info"), "got \(message)")
+    }
+
+    /// The SDK reaches the command line as the path xcrun resolved the name to, so the
+    /// sentence is the only place the name the config file states appears.
+    func test_anSDKSwiftcCannotLoadIsReportedWithTheSettingThatNamesIt() throws {
+        executor.exitCode = 1
+        executor.errorOutput = """
+            <unknown>:0: warning: no such sysroot directory: '/no/such/sdk'
+            <unknown>:0: error: unable to load standard library for target 'arm64-apple-macosx26.0'
+            """
+
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "// app".intern())]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let message = try failureMessage(output, port: SwiftCompiler.outputObject)
+        XCTAssertTrue(message.contains("`swift.compiler.sdk` is `macosx`"), "got \(message)")
+        XCTAssertTrue(message.contains("xcodebuild -showsdks"), "got \(message)")
+    }
+
+    /// An error in the source is about the source: nothing is added.
+    func test_anErrorInTheSourceNamesNoSetting() throws {
+        executor.exitCode = 1
+        executor.errorOutput = "input:/app/Sources/App.swift:1:1: error: cannot find 'foo' in scope"
+
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")]),
+                                  extraConfiguration: ["target=arm64-apple-macos14.0"]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "foo()".intern())]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertEqual(try failureMessage(output, port: SwiftCompiler.outputObject), """
+            swiftc exited with status 1:
+            input:/app/Sources/App.swift:1:1: error: cannot find 'foo' in scope
+            """)
+    }
 }
 
 // MARK: - Optimisation level

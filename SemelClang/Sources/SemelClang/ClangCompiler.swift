@@ -114,6 +114,13 @@ public struct ClangCompiler: Node {
         arguments.append("-target"); arguments.append(inputs.configuration.target)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
+        // The one argument here built from a setting: a clang diagnostic about the triple
+        // names the key behind it (B-98).
+        let settings: [SettingArgument] = [
+            .clangTarget(key: "\(ClangCompilerConfiguration.settingNamespace).target",
+                         value: inputs.configuration.target),
+        ]
+
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
 
         let result = try tool.execute(
@@ -122,7 +129,7 @@ public struct ClangCompiler: Node {
             inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)],
             expectedOutputFileNames: [outputFilename])
 
-        return .init(output: try result.asOutputNodeValue(),
+        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
                      errorLog: .value(try result.errorOutput.intern()),
                      infoLog: .value(try result.infoOutput.intern()))
     }

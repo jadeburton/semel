@@ -235,9 +235,12 @@ extension SimplifiedToolExecuteResult {
     /// interned, the manifest's hash on the wire. The tool's error output if it failed.
     /// A folder the tool left empty is an empty tree, which is a value — a catalog with
     /// nothing to compile for the platform produces one.
-    public func asTreeNodeValue(folder: String) throws -> NodeValue {
+    public func asTreeNodeValue(folder: String,
+                                tool: String = "the tool",
+                                settings: [SettingArgument] = []) throws -> NodeValue {
         guard exitCode == 0 else {
-            return .noValue(reason: .error(messageDataObjectHash: try failureMessage().intern()))
+            let message = failureMessage(tool: tool, settings: settings)
+            return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
         }
         let files = outputTrees[folder] ?? []
         let entries = try files.map { file in
@@ -250,13 +253,25 @@ extension SimplifiedToolExecuteResult {
     /// stream. Both, because tools differ in where their diagnostics go — actool under
     /// `--output-format human-readable-text` writes them to stdout — and the status alone
     /// is what is left when a run says nothing at all.
-    public func failureMessage(tool: String = "the tool") -> String {
+    ///
+    /// `settings` are the arguments the node built from settings. Each one the tool's
+    /// output complains about adds a closing sentence naming the setting behind the
+    /// argument, so a rejected `-target` reads as a key to change rather than as a triple
+    /// the reader never typed. A run that complains about none of them says exactly what
+    /// it said before.
+    public func failureMessage(tool: String = "the tool", settings: [SettingArgument] = []) -> String {
         let printed = [errorOutput, infoOutput]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         let headline = "\(tool) exited with status \(exitCode)"
-        return printed.isEmpty ? headline : "\(headline):\n\(printed)"
+        let message = printed.isEmpty ? headline : "\(headline):\n\(printed)"
+
+        let explained = SettingArgument.sentences(for: settings, matching: printed)
+        guard !explained.isEmpty else {
+            return message
+        }
+        return ([message] + explained).joined(separator: "\n")
     }
 }
 
@@ -266,7 +281,8 @@ extension SimplifiedToolExecuteResult {
     /// Lived on the Clang compiler until the Swift linker turned out to need it too. It is
     /// how any node turns a tool result into something the graph can carry, so it belongs
     /// with the tool types rather than with one toolchain.
-    public func asOutputNodeValue() throws -> NodeValue {
+    public func asOutputNodeValue(tool: String = "the tool",
+                                  settings: [SettingArgument] = []) throws -> NodeValue {
         if exitCode == 0 {
             if let outputFile = outputFiles.values.first {
                 return .value(try outputFile.intern())
@@ -274,7 +290,8 @@ extension SimplifiedToolExecuteResult {
                 return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
             }
         } else {
-            return .noValue(reason: .error(messageDataObjectHash: try failureMessage().intern()))
+            let message = failureMessage(tool: tool, settings: settings)
+            return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
         }
     }
 }
