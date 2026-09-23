@@ -78,8 +78,11 @@ final class SettingArgumentTests: XCTestCase {
                                                          searchPath: "/no/such/sdk/usr/lib")
 
         XCTAssertTrue(sdk.isMentioned(in: "ld: warning: search path '/no/such/sdk/usr/lib' not found"))
-        // A linker's own failure carries no severity word, which is why the matcher drops
-        // only quoted source and not every line without one.
+        // The second phrase stands in for a machine whose default SDK is unusable, where
+        // the explicit search path is the only one `ld` has: a bad search path beside a
+        // working default SDK only warns. It also shows why the matcher drops quoted
+        // source rather than every line without a severity word — a linker's own failure
+        // carries none.
         XCTAssertTrue(sdk.isMentioned(in: """
             ld: library 'System' not found
             clang: error: linker command failed with exit code 1 (use -v to see invocation)

@@ -132,8 +132,14 @@ public extension SettingArgument {
     /// The SDK path a link turns into `-L <sdkPath>/usr/lib`. The linker echoes the search
     /// path — `ld: warning: search path '/no/such/sdk/usr/lib' not found` — and that path
     /// is evidence where other arguments' values are not: a linker cites libraries rather
-    /// than headers, so it appears in no diagnostic that is about something else. Its own
-    /// failure is `ld: library 'System' not found`.
+    /// than headers, so it appears in no diagnostic that is about something else.
+    ///
+    /// A search path that is not there does not by itself fail the link: the driver hands
+    /// `ld` a `-syslibroot` for the machine's default SDK, so `-lSystem` resolves from
+    /// there and the warning is all the run says. The warning is what identifies the
+    /// setting in a link that fails for another reason, which is when a reader needs it.
+    /// `ld: library 'System' not found` is the failure of a machine whose default SDK is
+    /// unusable, where the explicit search path is the only one there is.
     static func clangLibrarySearchPath(key: String, value: String, searchPath: String) -> SettingArgument {
         .init(key: key,
               value: value,
