@@ -76,8 +76,8 @@ final class SettingNamespaceTests: XCTestCase {
             clang.linker.toolDescriptor.platform
             clang.linker.toolDescriptor.version
 
-            Run 'tools clang.linker' for those: it prints the clang.linker.toolDescriptor \
-            settings of the tool installed on this machine, as a block to paste.
+            Run 'tools clang.linker' for those: it prints the toolDescriptor keys and the \
+            machine settings of the tool installed here, as a block to paste.
             """)
     }
 

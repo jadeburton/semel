@@ -16,7 +16,9 @@ import SemelNodeKit
 
 // MARK: - Errors
 
-enum GraphSpecApplierError: Error {
+/// A spec that could not be turned into live nodes and wires. Sentences rather than case
+/// names, because the engine interns a thrown error's text onto the failing node's ports.
+enum GraphSpecApplierError: Error, CustomStringConvertible {
     /// The type name in the spec string is not registered in TypeRegistry.
     case unknownTypeName(String)
     /// A required static input port has no wire connected after node creation.
@@ -27,6 +29,21 @@ enum GraphSpecApplierError: Error {
     case missingOutputPortInChildShape(typeName: String)
 
     case emtpyStringWireName
+
+    var description: String {
+        switch self {
+        case .unknownTypeName(let typeName):
+            return "no node type is registered under the name '\(typeName)'"
+        case .requiredPortUnwired(let typeName, let portName):
+            return "\(typeName)'s required input '\(portName)' has nothing connected to it"
+        case .couldNotResolveShape(let typeName):
+            return "the \(typeName) this node asks for could not be found or created"
+        case .missingOutputPortInChildShape(let typeName):
+            return "the \(typeName) feeding this node names no output port to take a value from"
+        case .emtpyStringWireName:
+            return "a wire was asked for under an empty name"
+        }
+    }
 }
 
 // MARK: - graphSpecProperties — extracting init-time properties from a live node

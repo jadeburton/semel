@@ -183,6 +183,41 @@ final class ErrorReportTests: SemelCoreTestCase {
                        "no tool exists at '/usr/bin/nonesuch'")
     }
 
+    /// A mistake in a formula the user wrote by hand is the most likely error of all to be
+    /// read, and `LocalizedError` alone does not reach it: interpolation asks for
+    /// `CustomStringConvertible`, and `errorDescription` answers only `localizedDescription`.
+    /// The sentence the parser builds has to be the sentence the port carries.
+    ///
+    /// A token the lexer rejects is wrapped in a `FormulaLexerError`, which carries the
+    /// source location and a description of its own. The errors raised while evaluating a
+    /// parsed formula — an unknown name among them — are thrown bare, so they are the ones
+    /// that reach the port as the type's own spelling.
+    func test_aFormulaErrorIsReportedAsTheParsersSentence() throws {
+        let builder = try ProjectBuilder(thisNode: NodeRecord(id: 1, kind: ProjectBuilder.kind))
+        let broken = """
+            product 'MyProduct' =
+                Configuration(moduleName: noSuchName).output
+            """
+        let input = ProcessInput(inputValues: [
+            ProjectBuilder.projectFileInputPort:  ["input:/proj/build.fmla": .value(try broken.intern())],
+            ProjectBuilder.productInputPort:      [:],
+            ProjectBuilder.foldersInputPort:      [:],
+            ProjectBuilder.graphImportsInputPort: [:],
+        ])
+
+        do {
+            _ = try builder.process(input: input)
+            return XCTFail("expected the formula to fail to parse")
+        } catch {
+            let output = builder.buildErrorOutput(withError: error)
+            guard case .noValue(.error(let messageHash)) =
+                    output.outputValues[ProjectBuilder.statusOutputPort] else {
+                return XCTFail("expected an error value")
+            }
+            XCTAssertEqual(try messageHash.resolveAsString(), "Undefined identifier 'noSuchName'")
+        }
+    }
+
     // MARK: - What counts as reportable
 
     /// Every node holds "initializing" between being created and first processing, so

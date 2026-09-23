@@ -119,8 +119,8 @@ public struct RequiredSettings {
         if !describing.isEmpty {
             paragraphs.append(describing.joined(separator: "\n"))
             paragraphs.append("Run 'tools \(namespace)' for those: it prints the " +
-                              "\(namespace).toolDescriptor settings of the tool installed on " +
-                              "this machine, as a block to paste.")
+                              "toolDescriptor keys and the machine settings of the tool " +
+                              "installed here, as a block to paste.")
         }
 
         throw NodeError.other(message: paragraphs.joined(separator: "\n\n"))
