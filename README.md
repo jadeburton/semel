@@ -1,7 +1,7 @@
 # Semel
 ## A build system
 
-[![CI](https://github.com/jadeburton/build_system/actions/workflows/swift.yml/badge.svg?branch=main&style=flat-square)](https://github.com/jadeburton/build_system/actions/workflows/swift.yml?style=flat-square) [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-0078d7?logo=apple&logoColor=white&style=flat-square)](https://www.apple.com/macos/) [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+[![CI](https://github.com/jadeburton/semel/actions/workflows/swift.yml/badge.svg?branch=main&style=flat-square)](https://github.com/jadeburton/semel/actions/workflows/swift.yml?style=flat-square) [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-0078d7?logo=apple&logoColor=white&style=flat-square)](https://www.apple.com/macos/) [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 Semel pro semper: once and for all. Semel is a functional build system that aggressively caches all stages of a build, together with a fully hermetic, private filesystem that reduces the chance of corrupt or missing files or versioning issues. 
 
@@ -14,9 +14,10 @@ The engine models a build as a persistent directed graph of **Nodes** (compilati
 - **Swift & Clang support** — compiles `.swift` modules and C/C++ translation units with full header dependency tracking
 - **Interactive REPL** — inspect and drive builds from a shell-like command line
 - **Persistent graph** — the build graph survives restarts; the engine resumes from the last known state
-- **Extensible** - Write your own Node types in a package of their own and put them into the graph — [the tutorial](docs/tutorial/first-node.md) does it in forty lines
+- **Extensible** - Write your own Node types as a Swift package the server links, and put them into the graph — [the tutorial](docs/tutorial/first-node.md) does it in forty lines
 - **Intuitive language** - A declarative language for specifying what Nodes are needed to derive a given product
-- **Shared cache over multiple users** - A server process combines all graphs to allow intrinsic reuse and caching
+- **No defaults** - Every tool a build runs is named in a config file down to its version, so a cached result means the same thing on every machine and after every upgrade
+- **One graph per user, shared cache planned** - Each developer's machine runs its own engine over a private graph; a central cache server that lets them share compiled results is designed and not yet built (`FUTURE.md`, "Settled direction")
 
 ## Requirements
 
@@ -49,13 +50,14 @@ Start the engine — `semelserv` holds the graph and does the work — then the 
 `semel` opens an interactive prompt against the running server. Everything the server
 persists — the graph database and the object store — lives under
 `~/Library/Application Support/semel`, whatever directory it was launched from; the banner
-prints the database path. Available commands:
+prints the database path. `SEMEL_HOME` moves that root and `SEMEL_SOCKET` the daemon's
+socket, which is how the tests give each server a home of its own. Available commands:
 
 ### Navigation
 
 | Command | Description |
 |---------|-------------|
-| `ls [path]` | List nodes in the current directory |
+| `ls [path]` (`list`) | List nodes in the current directory |
 | `cd [path]` | Change current directory |
 | `pwd` | Print current location |
 
@@ -71,8 +73,8 @@ cd -i sources/
 | Command | Description |
 |---------|-------------|
 | `push <path>` | Push a file or directory from disk into the input file system |
-| `rm <path>` | Remove a file or directory from the input file system |
-| `cp [-i\|-o] <src> [dest]` | Copy a file out of the internal file system to disk |
+| `rm <path>` (`remove`) | Remove a file or directory from the input file system |
+| `cp [-i\|-o] <src> [dest]` (`copy`) | Copy a file out of the internal file system to disk |
 | `export <folder> --into <dir>` | Copy every product under `<folder>` of the output file system into `<dir>`, keeping the tree below it |
 
 Paths support wildcards (`*`, `**`, `?`):
@@ -112,6 +114,19 @@ against a graph already broken the same way prints nothing) — which makes it a
 ```sh
 .build/release/semel 'base /path/to/repo' 'build Packages --into ./out'
 ```
+
+### Configuration
+
+Semel has no defaults. Every tool a build runs is declared in a config file in the input
+file system — `semel.config` beside a Swift package or Xcode project, `clang.cfg` or
+whatever a hand-written formula names — down to the tool's version string, because the
+version is part of what makes a cached result reusable. A tool given no setting fails and
+names the key it wants and the file to put it in; a key nothing reads is reported once
+the graph settles. Settings are keyed by namespace, `clang.compiler.target=…`, and each
+node selects its own slice, so a change to one tool's setting leaves every other tool's
+cache entries valid. `tools` prints the tool blocks for this machine ready to paste, and
+`semel-swift prepare` writes the whole file for a Swift tree. The design is in
+`docs/superpowers/specs/2026-08-30-semel-configuration-design.md`.
 
 ### Building a Swift package
 
@@ -242,37 +257,64 @@ tool, and another toolchain gets one of its own if it needs one.
 ### Testing against real projects
 
 `swift test` builds the fixtures under `EndToEnd/Fixtures` — a C program, a C++ one,
-a Swift package with a path dependency and a SwiftUI app for the simulator — through
-`semelserv`, `semel` and `semel-swift` together, each twice in two fresh homes, and
-requires the two export trees to match byte for byte, static archives included.
-`SEMEL_E2E_EXTERNAL=1 swift test
---filter SemelEndToEndTests` adds the real projects pinned in `EndToEnd/Tests/Projects.swift`,
-fetched once into `~/Library/Caches/semel/end-to-end`; CI runs those nightly.
-`SEMEL_E2E_KEEP=1` keeps a run's directory under `/tmp/semel-tests` for inspection.
+the tutorial's project, a Swift package with a path dependency and a SwiftUI app for the
+simulator — through `semelserv`, `semel` and `semel-swift` together, each twice in two
+fresh homes, and requires the two export trees to match byte for byte, static archives
+included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
+projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, and the
+app itself from its Xcode project — fetched once into `~/Library/Caches/semel/end-to-end`
+(`SEMEL_E2E_CACHE` moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's
+directory under `/tmp/semel-tests` for inspection.
 
 ## Architecture
 
+Three executables, built from the root package:
+
 ```
-semel/          CLI executable — REPL and command plugins
-SemelCore/       Core library
-  BuildEngine          Async process loop, batch scheduling, deferred deletion
+semel-server/    semelserv — the composition root: registers the toolchains, starts the
+                 engine, listens on the socket. One per user.
+semel/           semel — the prompt; opens a connection to semelserv and nothing else
+  CommandInterpreter/  SemelCLI: the REPL, its command plugins and renderers
+  Server/              SemelServer: the engine behind one RequestHandler, sessions, events
+  Transport/           SemelTransport: the Unix-socket listener and frame stream
+semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
+                 writes semel.fmla and semel.config (SemelSwiftTool)
+```
+
+The packages they link:
+
+```
+SemelCore/       The engine
+  BuildEngine          Async process loop, batch scheduling, deferred deletion; +Reset, +Versioning
+  Cache                Content-addressed cache of a node's outputs, keyed on type, properties and every input
+  GraphSpec            A node's demand for an upstream subgraph, as text; GraphSpecApplier matches it against the graph
   FormulaParser        Reads .fmla text into a graph spec
+  ErrorReport          How a node's errors are written out, at settle and on request
   Nodes/
     StaticFile         Raw file content node
     Folder             Directory manifest node
     OutputFile         Publishes a built artifact
     ProjectFinder      Discovers project files
     ProjectBuilder     Orchestrates a full project build
+    ProductPresence    Which products exist, and what changed since the last pass
     Configuration      Build configuration node
     ConfigFilter       Selects one node's settings out of a config file
+    ConfigMerger       Lays one config file over another
+    TreeBuilder, TreeFile, TreeMerger   Trees of files on a port, and folder products
   Database             GRDB-backed persistence layer
 SemelNodeKit/    Node-authoring API — no dependency on the engine
   Node                 Protocol for all build steps; wraps a NodeRecord
+  NodeDescriptor       The ports a node type declares
   ConfigurationText    key=value per line, the shape settings travel in
   SettingNamespace     Where a node's settings live in a config file
   DataObjectStore      Content-addressed blob store
-  TypeRegistry          Deserialises nodes by kind ID
+  TypeRegistry         Deserialises nodes by kind ID
   ToolDiscovery        The tools each toolchain declares, registered under the version found
+  ToolRunner           Runs a tool in an isolated sandbox
+  ToolSandbox          What a tool is allowed to know about the directory it runs in
+  SemelPaths           Where the home, database, object store and socket live
+SemelProtocol/   The wire protocol between semel and semelserv: typed requests and
+                 responses, frames, and the connection a client holds
 SemelSwift/      Swift toolchain node types
   SwiftCompiler          Compiles .swift → .o + .swiftmodule
   SwiftLinker            Links object files into an executable or library
@@ -287,6 +329,7 @@ SemelApple/      Apple platform node types — what an app bundle needs beyond c
   AssetCatalogCompiler   actool over .xcassets and .icon folders → Assets.car + icons (a tree)
   StringCatalogCompiler  xcstringstool over an .xcstrings → one .lproj per language (a tree)
   InfoPlistBuilder       Merges base, partial plists and keys; resolves $(VAR)
+  XcodeProjectConverter  Turns an .xcodeproj and its xcconfig into a formula for the app and its extensions
 SemelExamples/   Nodes that exist to be read
   LineCounter            One `name: count` line per input wire — the tutorial's reference copy
 SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, …)
