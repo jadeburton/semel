@@ -210,7 +210,8 @@ final class MessageJSONTests: XCTestCase {
         let data = Data(#"{"cache":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
-            XCTAssertTrue(String(describing: error).contains(#"["cache"]"#), String(describing: error))
+            let message = Self.decodingMessage(of: error)
+            XCTAssertTrue(message.contains(#"["cache"]"#), message)
         }
     }
 
@@ -220,7 +221,26 @@ final class MessageJSONTests: XCTestCase {
         let data = Data(#"{"daemon":{"reset":{}},"cache":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
-            XCTAssertTrue(String(describing: error).contains(#"["cache", "daemon"]"#), String(describing: error))
+            let message = Self.decodingMessage(of: error)
+            XCTAssertTrue(message.contains(#"["cache", "daemon"]"#), message)
+        }
+    }
+
+    /// The decoder's own sentence. `String(describing:)` of a `DecodingError` quotes that
+    /// sentence, and whether the quotes inside it are escaped differs between Swift
+    /// toolchains, so a test that reads the sentence goes to the context it is stored in.
+    private static func decodingMessage(of error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return String(describing: error)
+        }
+        switch decodingError {
+        case .dataCorrupted(let context),
+             .keyNotFound(_, let context),
+             .typeMismatch(_, let context),
+             .valueNotFound(_, let context):
+            return context.debugDescription
+        @unknown default:
+            return String(describing: error)
         }
     }
 
