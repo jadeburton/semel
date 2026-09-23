@@ -214,16 +214,6 @@ constant is the better one: it keeps every entry a bug fix did not touch. Test: 
 node with two implementation versions produces two keys; a graph rebuilt under the new
 version hits nothing from the old.
 
-**B-81** `open` — **`build` reports what it published, not what it did.**
-A cache hit and a full recompute print byte-identical output at the prompt — the same three
-lines whether every node ran `processWithCatch` or every node used the cache — and that
-distinction lives only in `semelserv`'s stdout, which a release build compiles out.
-`BuildEngine.processSomeNodes` already counts scheduled and computed per batch and
-`Cache.loadCachedOutputs` already knows a hit from a miss; carry those totals to the client
-over the protocol as a one-line settle summary (e.g. `12 nodes scheduled, 3 computed, 9 from
-cache, 0 errors`) instead of printing them through `Debug.log`. `docs/tutorial/first-node.md`
-Part 2 reads the server's debug log for exactly this reason and should be rewritten around
-the summary once it exists.
 
 ## Performance
 
@@ -278,8 +268,7 @@ hand.
 ## Command line
 
 What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C fixture
-(2026-09-23); the engine-side items these lean on are B-50 (artifact diff at idle) and B-81
-(settle summary).
+(2026-09-23); the engine-side item these lean on is B-50 (artifact diff at idle).
 
 **B-95** `open` — **Nothing tells the user when the build is done and the artifacts are there.**
 After `push` or `build` the prompt returns at once and the graph settles in the background;
@@ -287,35 +276,28 @@ the only way to know when to `cp` or `export` is to poll `errors` or `ls output:
 `wait`, which blocks with no indication of progress. Wanted: a live indicator redrawn in
 place rather than scrolled, in two sizes. Minimal: one line with the number of pending
 nodes, which may rise while the cascade is still generating work, and a final line when the
-graph settles. Maximal: the active nodes listed, a dashboard. The data is already counted —
-`BuildEngine.processSomeNodes` knows scheduled and computed per batch — so the work is a
-protocol message carrying the counts on each batch and a terminal renderer; B-30 role 3's
-subscription is the transport it grows into. Open, and to decide before building: whether
+graph settles. Maximal: the active nodes listed, a dashboard. The final line exists as the
+settle summary, and what is missing is everything before it: the data is already counted —
+`BuildEngine.processSomeNodes` knows scheduled, computed and from-cache per batch and the
+summary accumulates them — so the work is a protocol message carrying the counts on each
+batch rather than only at idle, and a terminal renderer; B-30 role 3's subscription is the
+transport it grows into. Open, and to decide before building: whether
 the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
 verb and left with a key).
 
-**B-99** `open` — **The CLI marks failure with ❌ and success with nothing.**
-`ErrorRecordRenderer` opens every error with ❌; no positive event has a mark, so a screen
-of output reads as all bad news or none. Use emoji judiciously and consistently: one for an
-artifact appearing (B-50's reporter), one for a settle with no errors (B-81's summary), one
-for a cache hit if the summary distinguishes it, and nothing else. Pin the set in the
-renderer tests the way the ❌ format is pinned, so it cannot drift per command.
-
 **B-91** `open` — **The engine has no channel for anything but products and errors.**
-`DaemonMessages` carry what was published and what failed; everything the engine knows
-about *why* — which wire changed, which nodes were scheduled, which of them ran and which
-came from the cache — leaves through `Debug.log`, and a release build compiles that out.
-Even the debug line does not answer the question: `processSomeNodes` counts every
-processed node as "computed", cache hits included. B-81 is the first step (a settle summary
-with the three totals, over the protocol), and B-95's live indicator wants the same counts
+`DaemonMessages` carry what was published, what failed, and one settle's totals; everything
+else the engine knows about *why* — which wire changed, which nodes were scheduled, which
+of them ran and which came from the cache, node by node — leaves through `Debug.log`, and
+a release build compiles that out. The settle summary is the first step and carries the
+three totals over the protocol; B-95's live indicator wants the same counts
 per batch, so the three share one transport. This item is the rest of the channel: an
 `explain <product>` (or `why`) command that walks upstream from a product to the wires
 whose values changed since the last settle and names them, and a per-node record of
-*ran* vs *from cache* that the summary and `explain` both read. Without it Semel cannot
-demonstrate its own defining property from its own prompt — `docs/tutorial/first-node.md`
-Part 2 needs three terminals and a debug build to show a cache hit. See FUTURE.md, "What
-the tutorial taught us".
+*ran* vs *from cache* that the summary and `explain` both read. The totals say that four
+of ten nodes ran; only the record says which four. See FUTURE.md, "What the tutorial
+taught us".
 
 ## Design, correctness and code quality
 
