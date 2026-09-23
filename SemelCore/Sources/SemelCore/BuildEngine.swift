@@ -387,22 +387,28 @@ public final class BuildEngine {
 
         // Only nodes with at least one newly-appearing message. Reporting an error that has
         // already been reported on every settle is how a report stops being read.
-        var entries: [ErrorReport.Entry] = []
+        var entries: [(nodeID: ObjectID, entry: ErrorReport.Entry)] = []
+
         for (nodeID, messages) in current {
             let newMessages = messages.subtracting(lastReportedErrors[nodeID] ?? [])
             guard !newMessages.isEmpty else { continue }
 
-            entries.append(ErrorReport.entry(forNodeID: nodeID,
-                                             ports: byNode[nodeID] ?? [],
-                                             messages: newMessages,
-                                             database: database))
+            entries.append((nodeID, ErrorReport.entry(forNodeID: nodeID,
+                                                      ports: byNode[nodeID] ?? [],
+                                                      messages: newMessages,
+                                                      database: database)))
         }
 
         lastReportedErrors = current
 
-        // Sorted so a report reads the same from run to run; `current` is a dictionary.
+        // Sorted by label and then by node, so a report reads the same from run to run:
+        // `current` is a dictionary, whose order is seeded per process, and two nodes can
+        // carry one label — two of a type with no path do. A sort by label alone leaves
+        // those two in the order the walk found them, `sort` being no more stable than the
+        // key it is given. `RequestHandler` orders the `errors` reply the same way, which
+        // is what lets the reply and this event list the same failures alike.
         if !entries.isEmpty {
-            errorReporter(entries.sorted { $0.label < $1.label })
+            errorReporter(entries.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }.map(\.entry))
         }
     }
 

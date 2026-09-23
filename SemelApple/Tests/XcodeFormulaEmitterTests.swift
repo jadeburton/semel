@@ -150,6 +150,37 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertEqual(keys["UIDeviceFamily"] as? [Int], [1, 2], "family 7 is visionOS, not built here")
     }
 
+    /// Two settings can name one plist key: `X_Generation` stands for an empty `X`, and
+    /// `X_iPad` for `X~ipad` a project may also write literally. Which of them the key
+    /// ends up holding must not depend on `Dictionary`'s iteration order, which is seeded
+    /// per process: the setting sorting last wins, the same way on every run.
+    func test_twoSettingsNamingOnePlistKeyResolveTheSameWayOnEveryRun() throws {
+        let emitter = try emitter()
+        let app = try XCTUnwrap(emitter.project.targets.first(where: \.isApplication))
+        let generated = ["UILaunchScreen", "UIApplicationShortcutItems", "UIApplicationSceneManifest"]
+        let iPad = ["UIStatusBarStyle", "UIUserInterfaceStyle", "UILaunchStoryboardName"]
+
+        var values = ["PRODUCT_NAME": "Ice Cubes", "PRODUCT_BUNDLE_IDENTIFIER": "com.example.app"]
+        for key in generated {
+            values["INFOPLIST_KEY_\(key)_Generation"] = "YES"
+            values["INFOPLIST_KEY_\(key)"] = "from the literal setting"
+        }
+        for key in iPad {
+            values["INFOPLIST_KEY_\(key)_iPad"] = "from the _iPad setting"
+            values["INFOPLIST_KEY_\(key)~ipad"] = "from the ~ipad setting"
+        }
+        let settings = XcodeBuildSettings(values: values)
+
+        let keys = try TargetIdentity(target: app, settings: settings, sdk: "iphonesimulator").generatedInfoPlistKeys(settings: settings)
+
+        for key in generated {
+            XCTAssertNotNil(keys[key] as? [String: Bool], "\(key) holds what `\(key)_Generation` stands for")
+        }
+        for key in iPad {
+            XCTAssertEqual(keys["\(key)~ipad"] as? String, "from the ~ipad setting")
+        }
+    }
+
     // MARK: - Extensions
 
     /// An extension the app embeds is a bundle of its own under the app's `PlugIns/`:

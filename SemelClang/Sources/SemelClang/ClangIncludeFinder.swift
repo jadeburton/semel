@@ -80,7 +80,11 @@ public struct ClangIncludeFinder: Node {
 
             var inputSourceFiles: [FileNameAndContent] = []
 
-            for (headerFileName, nodeValue) in sourceFiles {
+            // Sorted, not straight out of the dictionary: each file's include paths are
+            // concatenated into the one value this node outputs, and a Dictionary's
+            // iteration order is seeded per process, so an unsorted walk gives the same
+            // set of sources a different output hash from one run to the next (B-04).
+            for (headerFileName, nodeValue) in sourceFiles.sorted(by: { $0.key < $1.key }) {
                 inputSourceFiles.append(.init(filePath: headerFileName, hash: try nodeValue.expectValue()))
             }
 
