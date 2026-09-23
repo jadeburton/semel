@@ -222,14 +222,6 @@ the summary once it exists.
 
 ## Performance
 
-**B-53** `open` — **`rm` of a large folder is still quadratic.**
-B-25 made a push mark the folder dirty and rebuild its manifest once (3000 files: 45 s to
-5 s), but `onChildDeleted` still rebuilds at once, because the folder's self-delete check
-follows it — so a large `rm` rebuilds the parent manifest per deleted child, the way push
-used to. Same fix shape if it ever matters: mark dirty, and move the self-delete check to
-the flush. Also: `rm` opens no batch the way `push` does (`FilePlugin.handleRemove` versus
-`handlePush`), so the engine drains repeatedly while the walk is still unpinning.
-
 **B-74** `open` — **Nothing tests a large `rm`, and four things go wrong in one.**
 Removing a prepared IceCubesApp from the input file system (2026-09-20) showed: the folder
 and the products under `output:` listed as `[missing]` until settle, `debug` failing on a
@@ -238,9 +230,9 @@ suites exercises `rm` through the CLI, the largest deletion test removes a folde
 files, and the end-to-end harness never removes anything after a build. Two tests are
 owed, and they are the acceptance for the fixes:
 
-1. A `SemelCore` scale test beside `FolderManifestRebuildTests`: push a few thousand files,
-   `rm` the folder, assert the cost grows linearly and the folder node is gone after the
-   collector runs. B-53's verification.
+1. `FolderRemovalScaleTests` is that `SemelCore` scale test: it pushes a few thousand
+   files, removes them, and holds the cost to linear growth and the folder node to gone
+   once the collector has run.
 2. A `SemelEndToEndTests` step, or a `SemelCLITests` case over `InProcessConnection`: after
    a build, `rm` the build folder, `wait`, then `ls input:` and `ls output:` show nothing
    under it, no `[missing]` entry, and the idle error report is empty.
@@ -312,15 +304,6 @@ subscription is the transport it grows into. Open, and to decide before building
 the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
 verb and left with a key).
-
-**B-96** `open` — **`rm` says nothing about what it removed.**
-`FilePlugin.handleRemove` prints only when the wildcard matched nothing; on any match it is
-silent, so `rm *.*` in a folder of packages looks like a no-op when it removed the dotted
-files and left the folders — `*` matches within one segment and `*.*` needs a literal dot,
-as in a shell, so that outcome is correct and unannounced. The server already returns the
-removed paths (`RequestHandler+Files.remove`). Print them, or a count with the folders
-named; and when a pattern matched files but no folder, say so. `push` has the same silence
-on success (`handlePush` prints only its errors) and takes the same fix.
 
 **B-97** `open` — **A node's error message is shown in its debug form, with `\n` and quotes.**
 A missing configuration prints as
