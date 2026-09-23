@@ -12,12 +12,11 @@ import XCTest
 
 final class MarkTests: XCTestCase {
 
-    /// The whole vocabulary. A fourth mark is a decision, and it belongs in this list
+    /// The whole vocabulary. A third mark is a decision, and it belongs in this list
     /// before it belongs in any renderer.
     func test_theMarksAreExactlyThese() {
-        XCTAssertEqual(Mark.failure,   "❌")
-        XCTAssertEqual(Mark.settled,   "✅")
-        XCTAssertEqual(Mark.fromCache, "⚡️")
+        XCTAssertEqual(Mark.failure, "❌")
+        XCTAssertEqual(Mark.settled, "✅")
     }
 }
 
@@ -33,11 +32,11 @@ final class SettleSummaryRendererTests: XCTestCase {
                        "✅ 12 nodes scheduled, 12 computed, 0 from cache, 0 errors")
     }
 
-    /// The case the summary exists for. One hit is enough for the mark: a settle where
-    /// *nothing* ran is rare even in a build that did almost nothing.
-    func test_aSettleWithAnyCacheHitIsMarkedAsACacheHit() {
+    /// The case the summary exists for wears the same mark: the cache fact is a column,
+    /// not a glyph, and the mark says only whether anything is broken.
+    func test_aSettleWithCacheHitsWearsTheSameMark() {
         XCTAssertEqual(line(scheduled: 12, computed: 3, fromCache: 9, errors: 0),
-                       "⚡️ 12 nodes scheduled, 3 computed, 9 from cache, 0 errors")
+                       "✅ 12 nodes scheduled, 3 computed, 9 from cache, 0 errors")
     }
 
     /// The same mark the error records above it carry, so a failed build reads as one
@@ -62,7 +61,7 @@ final class SettleSummaryRendererTests: XCTestCase {
     /// three numbers need not add up and the line must not pretend they do.
     func test_scheduledNeedNotEqualComputedPlusCached() {
         XCTAssertEqual(line(scheduled: 5, computed: 1, fromCache: 1, errors: 0),
-                       "⚡️ 5 nodes scheduled, 1 computed, 1 from cache, 0 errors")
+                       "✅ 5 nodes scheduled, 1 computed, 1 from cache, 0 errors")
     }
 }
 

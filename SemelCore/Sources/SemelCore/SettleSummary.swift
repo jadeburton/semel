@@ -12,19 +12,25 @@
 /// The totals for one settle: everything between the engine leaving idle and reaching it
 /// again, however many batches that took.
 ///
-/// `scheduled` is not `computed + fromCache`. A node is fetched as scheduled, and then
-/// found to be waiting on an input that is still pending or unreadable; it is unscheduled
-/// without producing an output, and something downstream schedules it again later. The
-/// gap between the first number and the other two is that.
+/// Every number counts *nodes*, each one once. A settle takes as many batches as the
+/// cascade needs and one node can appear in several of them, so a node woken three times
+/// is one scheduled node, and a node that ran in an early batch and hit the cache in a
+/// later one is one node, counted by what it did last.
+///
+/// `scheduled` is therefore not `computed + fromCache`, and the gap is the nodes that did
+/// neither: a node fetched as scheduled and then found to be waiting on an input that is
+/// still pending or unreadable is unscheduled without producing an output, and something
+/// downstream schedules it again later. Counting it under `scheduled` alone is the honest
+/// answer — it was woken, and it did nothing.
 public struct SettleSummary: Equatable, Sendable {
 
-    /// Nodes the engine fetched as scheduled.
+    /// Distinct nodes the engine fetched as scheduled.
     public var scheduled = 0
 
-    /// Nodes that ran their own `process`.
+    /// Distinct nodes whose last result in this settle was one they ran themselves.
     public var computed = 0
 
-    /// Nodes whose outputs came from a cache entry instead of running.
+    /// Distinct nodes whose last result in this settle came from a cache entry.
     public var fromCache = 0
 
     /// Errors the settle-time error report named, counted the way the `errors` command

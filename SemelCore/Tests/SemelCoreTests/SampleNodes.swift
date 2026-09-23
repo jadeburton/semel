@@ -15,7 +15,8 @@ import SemelDatabaseModels
 import SemelNodeKit
 
 /// A node with the shape the cache cares about: a configuration port, a content port, and
-/// somewhere to put a result. It does nothing when processed — no test here runs it.
+/// somewhere to put a result. Processing it does no work worth the name — it interns a
+/// fixed string — so a test that drives it is testing the engine around it.
 public struct SampleTool: Node {
     public static let kind: UInt = 987_101
 

@@ -11,46 +11,36 @@ import SemelProtocol
 /// The marks the prompt is allowed to use, all of them, in one place.
 ///
 /// A mark per event type would end as a mark per command, and a screen with one of
-/// everything on it says nothing. Three earn their place: a failure, a settle that had
-/// none, and a settle the cache answered part of — the distinction Semel exists to make
-/// and the one a user cannot otherwise see. Anything else prints unmarked until there is
-/// a reason it cannot.
+/// everything on it says nothing. Two earn their place, and they are a pair: a mark says
+/// good or bad and nothing else. A fact the line already carries in words — how much of
+/// the work the cache answered — does not want a glyph of its own; a second good-news
+/// symbol splits the one reading the mark exists for, and leaves the reader deciding
+/// whether it is a warning. Anything else prints unmarked until there is a reason it
+/// cannot.
 enum Mark {
-    /// A node that failed. `ErrorRecordRenderer` opens every record with it.
+    /// A node that failed. `ErrorRecordRenderer` opens every record with it, and a settle
+    /// summary carrying a non-zero error count opens with it too.
     static let failure = "❌"
 
-    /// A settle that produced no errors and did all of its work.
+    /// A settle that left the graph with no errors in it.
     static let settled = "✅"
-
-    /// A settle that produced no errors and skipped some of the work, because the cache
-    /// had the answer.
-    static let fromCache = "⚡️"
 }
 
 enum SettleSummaryRenderer {
 
     /// One line for one settle, or nothing when the settle had nothing to do.
     ///
-    /// The counts are the engine's, passed through: `scheduled` is what was woken, and it
-    /// exceeds `computed + fromCache` by however many nodes were woken before their
-    /// inputs were ready. The mark is the only reading the client adds.
+    /// The counts are the engine's, passed through: each is a number of distinct nodes,
+    /// and `scheduled` exceeds `computed + fromCache` by however many nodes were woken
+    /// before their inputs were ready. The mark is the only reading the client adds, and
+    /// it reads one thing — whether the graph is broken.
     static func line(scheduled: Int, computed: Int, fromCache: Int, errors: Int) -> String? {
         guard scheduled > 0 else {
             return nil
         }
 
-        // A settle where nothing ran at all is the rare case, even when almost nothing
-        // did: a rebuilt manifest or a reread include list recomputes beside twenty cache
-        // hits. The mark therefore says whether the cache answered any of it, which is
-        // the question, rather than whether it answered all of it, which is nearly never.
-        let mark: String = {
-            if errors > 0 {
-                return Mark.failure
-            }
-            return fromCache > 0 ? Mark.fromCache : Mark.settled
-        }()
-
-        let nodes  = scheduled == 1 ? "node"  : "nodes"
+        let mark      = errors > 0 ? Mark.failure : Mark.settled
+        let nodes     = scheduled == 1 ? "node"  : "nodes"
         let errorWord = errors == 1 ? "error" : "errors"
 
         return "\(mark) \(scheduled) \(nodes) scheduled, \(computed) computed, "

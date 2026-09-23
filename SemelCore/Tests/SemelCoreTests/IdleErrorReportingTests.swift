@@ -58,6 +58,33 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         XCTAssertEqual(captured.count, 1)
     }
 
+    /// What is newly appearing decides what is printed; what is currently wrong decides
+    /// what is counted. A rebuild that breaks the same node the same way prints nothing
+    /// new and still counts the failure, so the settle summary cannot say "0 errors" over
+    /// a graph the `errors` command calls broken.
+    func test_aStandingErrorIsCountedOnEverySettleThoughItIsReportedOnce() throws {
+        try makeFailingFile(path: "input:/a.c", message: "boom")
+
+        XCTAssertEqual(engine.reportIdleTimeErrors(), 1)
+        XCTAssertEqual(engine.reportIdleTimeErrors(), 1, "the graph is still broken")
+        XCTAssertEqual(captured.count, 1, "and the reader has been told once")
+    }
+
+    /// Counted per port, which is what the `errors` command calls an error: one node
+    /// failing on two ports is two.
+    func test_theCountIsPerPortAndNotPerNode() throws {
+        let nodeRecord = try NodeRecord.createNode(database: engine.database,
+                                                   kind: StaticFile.kind,
+                                                   properties: ["path": "input:/a.c"],
+                                                   graphSpec: nil)
+        for port in ["output", "errorLog"] {
+            try nodeRecord.writeToOutputPort(port,
+                                             value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
+        }
+
+        XCTAssertEqual(engine.reportIdleTimeErrors(), 2)
+    }
+
     func test_nothingIsReportedWhenThereAreNoErrors() throws {
         engine.reportIdleTimeErrors()
 

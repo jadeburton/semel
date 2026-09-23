@@ -19,11 +19,14 @@ git clone <repo-url> && cd semel
 swift build
 ```
 
+A debug build, not `-c release`: two steps in Part 3 read the running commentary
+`semelserv` prints, and that is compiled out of a release build.
+
 You will want three terminals open, and the document says which one each step is in:
 
 | Terminal | What runs in it |
 |---|---|
-| **server** | `semelserv`, started once and left alone. Nothing in this tutorial reads what it prints. |
+| **server** | `semelserv`, started once and left alone. Parts 1 and 2 read nothing of what it prints; two steps in Part 3 do. |
 | **prompt** | `semel`. Unlabelled fences are either what you type here or what something printed; the sentence before each says which. |
 | **shell** | an ordinary shell in the checkout; `sh` fences are typed here unless the step names another terminal. |
 
@@ -141,17 +144,19 @@ Push file: hello/src/main.c
 output:/hello/config.txt: OK
 output:/hello/hello.dylib: OK
 output:/hello/hello: OK
-✅ 66 nodes scheduled, 32 computed, 0 from cache, 0 errors
+✅ 23 nodes scheduled, 23 computed, 0 from cache, 0 errors
 Settled.
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
 The line with the tick is the *settle summary*: one line per settle, saying what the engine
-did. Nothing came from the cache, because there was no cache to come from — this graph had
+did. Every number counts nodes, each one once, however many times the engine came back to
+it. Nothing came from the cache, because there was no cache to come from — this graph had
 never been built. Part 2 is about that column. The counts are from one walk-through and
-yours will differ a little; `scheduled` is larger than `computed` plus `from cache` because
-a node can be woken before the thing it is waiting for has arrived, and is then woken again.
+yours will differ a little; the two right-hand numbers usually add up to the first, and
+fall short of it when a node is woken, found to be waiting on something, and never gets as
+far as producing anything before the graph settles.
 
 `--into` expands the `~` the same way `base` does, and the products land beside your
 sources rather than in the checkout. In the **shell** terminal:
@@ -226,8 +231,8 @@ the settle summary, and three of its four numbers are the experiment:
   earlier build had already produced that exact answer.
 
 Being **rescheduled** and being **recomputed** are different things, and most of Semel's
-speed is the gap between them. The mark on the line says which way it went: ✅ when
-everything the settle woke had to be done, ⚡️ when some of it did not.
+speed is the gap between them. The mark on the line is not about that gap — it says only
+whether the settle left anything broken, ✅ for no and ❌ for yes.
 
 The counts below are from one walk-through and yours will differ. What matters is how they
 move between the experiments.
@@ -270,28 +275,28 @@ Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
 output:/hello/hello: OK
 output:/hello/hello.dylib: OK
-⚡️ 10 nodes scheduled, 8 computed, 1 from cache, 0 errors
+✅ 9 nodes scheduled, 8 computed, 1 from cache, 0 errors
 Settled.
 No errors.
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Ten nodes woken out of the thirty-five in this graph, and eight of them
+`config.txt` not. Nine nodes woken out of the thirty-five in this graph, and eight of them
 ran: the project finder and the include finder, then one preprocessor and one compiler —
 `hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
-because both products take that object, then the two output files. The one hit is the node
-that reads `hello.fmla`, which did not change, and it is why the line carries a ⚡️ rather
-than a ✅.
+because both products take that object, then the two output files. The ninth is the node
+that reads `hello.fmla`, which did not change: one hit, in a settle that otherwise did
+everything.
 
 **3. Put it back.** Undo the edit and build. The prompt prints exactly what it printed
 last time, line for line — the same file pushed, the same two products republished — with
 one line different:
 
 ```
-⚡️ 10 nodes scheduled, 4 computed, 5 from cache, 0 errors
+✅ 9 nodes scheduled, 4 computed, 5 from cache, 0 errors
 ```
 
-The same ten nodes were woken. Four ran; five did not, and those five are the preprocessor,
+The same nine nodes were woken. Four ran; five did not, and those five are the preprocessor,
 the compiler, both linkers and the formula reader — the entire chain that had just been
 rebuilt, cache hits from end to end. A *cache entry* is keyed on the node's type, its
 properties and the name and content of everything wired to it; time appears nowhere, so a
@@ -319,13 +324,13 @@ Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 output:/hello/hello: OK
 output:/hello/hello.dylib: OK
-⚡️ 24 nodes scheduled, 11 computed, 7 from cache, 0 errors
+✅ 18 nodes scheduled, 11 computed, 7 from cache, 0 errors
 Settled.
 No errors.
 ```
 
 Not one C file changed, and both programs were relinked — the linkers' settings really did
-change. What did not happen is the interesting part. Twenty-four nodes woken, against ten
+change. What did not happen is the interesting part. Eighteen nodes woken, against nine
 for a one-character edit to a source file: the config file feeds every tool in the build,
 so touching it wakes nearly the whole graph. Seven of those were answered from the cache,
 and those seven are all six preprocessors and compilers plus the formula reader.

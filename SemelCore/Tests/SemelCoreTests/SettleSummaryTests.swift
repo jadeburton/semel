@@ -2,10 +2,10 @@
 //  SettleSummaryTests.swift
 //  SemelCore
 //
-//  B-81. The engine counted every node it processed as "computed", cache hits included,
-//  so the one distinction the summary exists to draw was the one it could not make.
-//  These run a real processing loop, as SettleTests does, because the totals are
-//  accumulated across a settle and read where the loop reaches idle.
+//  B-81. The summary exists to tell a node that ran from one the cache answered, so these
+//  hold it to that distinction on a real cache hit rather than on a stub. They run a real
+//  processing loop, as SettleTests does, because the totals are accumulated across a
+//  settle and read where the loop reaches idle.
 //
 
 @testable import SemelCore
@@ -76,8 +76,8 @@ final class SettleSummaryTests: SemelCoreTestCase {
 
     /// The same graph built a second time. Rescheduling the node is what a cascade does
     /// when a wire wakes; its inputs are unchanged, so its key is unchanged, so the cache
-    /// answers and nothing runs. That is the distinction the summary carries, and counting
-    /// every processed node as computed hid it.
+    /// answers and nothing runs. A node processed on that pass belongs under `fromCache`
+    /// and nowhere else, which is the whole distinction the summary carries.
     func test_aSecondBuildOfTheSameGraphComputesNothingAndComesFromTheCache() async throws {
         let tool = try makeToolWiredToAConfiguration()
         engine.signalWorkAvailable()

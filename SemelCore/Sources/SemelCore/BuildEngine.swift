@@ -160,7 +160,7 @@ public final class BuildEngine {
                 continue
             }
 
-            settleTotals.errors = reportIdleTimeErrors()
+            settleTally.errors = reportIdleTimeErrors()
             reportUnclaimedConfigKeys()
             reportSettleSummary()
 
@@ -378,15 +378,29 @@ public final class BuildEngine {
     /// Compares current error state against the last-reported state and prints only
     /// newly-appearing errors, using the same format as the `errors` command.
     ///
-    /// Returns how many errors it reported, counted per port carrying a message — the way
-    /// the `errors` command counts them, so the settle summary's number and a report of
-    /// the same failures agree.
+    /// Returns how many errors the graph is carrying, counted the way the `errors` command
+    /// counts them — per port, over the causes a report folds a cascade onto — so that the
+    /// number is what that command would answer if it were asked at this moment.
+    /// Deliberately not the size of the report: a build that breaks a node and a rebuild
+    /// that breaks it again identically leave the graph equally broken, and a summary
+    /// reading "0 errors" two lines above `errors` listing one is the kind of
+    /// disagreement the count exists to prevent. What is newly appearing decides what is
+    /// *printed*; what is currently wrong decides what is *counted*.
     @discardableResult
     func reportIdleTimeErrors() -> Int {
         // A report, so best effort: a failure here delays the error listing to the next idle.
         guard let errorPorts = FatalErrors.attempt({ try database.outputPort.selectAllErrors() }) else {
             return 0
         }
+
+        // What the `errors` verb would answer if it were asked at this moment: the same
+        // fold, over everything the graph carries rather than over what is newly appearing.
+        // Through `entries` rather than by counting ports, because a carrier folded onto
+        // its cause is not an error the verb lists, and a count that included one would say
+        // more than the report beside it shows.
+        let errorCount = ErrorReport.entries(forErrorPorts: errorPorts, database: database) { _, messages in messages }
+            .flatMap { $0.entry.items }
+            .reduce(0) { $0 + $1.ports.count }
 
         // The "current" error map. `ErrorReport.reportableMessage` is the one place that
         // decides what a port's message is and which placeholder is not one.
@@ -420,19 +434,65 @@ public final class BuildEngine {
         lastReportedErrors = reported
 
         guard !entries.isEmpty else {
-            return 0
+            return errorCount
         }
 
         errorReporter(entries.map(\.entry))
-        return entries.flatMap { $0.entry.items }.reduce(0) { $0 + $1.ports.count }
+        return errorCount
     }
 
     // MARK: - Settle summary
 
-    /// The totals accumulated since the engine last went idle. Written by
+    /// What one settle has seen so far, kept per node rather than per batch.
+    ///
+    /// A settle takes as many batches as the cascade needs, and one node can be fetched by
+    /// several of them: woken, found to be waiting on an input, unscheduled, woken again
+    /// when that input arrives. Counting fetches would report that node several times over
+    /// under a line that says "nodes", so each container here is keyed on the node.
+    private struct SettleTally {
+
+        /// Every node the settle fetched as scheduled, once each.
+        var scheduledNodeIDs: Set<ObjectID> = []
+
+        /// Nodes whose most recent result in this settle was one they ran themselves.
+        var computedNodeIDs: Set<ObjectID> = []
+
+        /// Nodes whose most recent result in this settle came from a cache entry. Disjoint
+        /// from `computedNodeIDs`: a node moves between the two as it produces results, so
+        /// a node that ran in one batch and hit in a later one is a hit, and one that hit
+        /// a stale entry and had to run is not. A fetch that produced no result at all
+        /// leaves both alone, so a node not ready does not undo what it did earlier.
+        var fromCacheNodeIDs: Set<ObjectID> = []
+
+        /// Set from the settle-time error report rather than accumulated here.
+        var errors = 0
+
+        mutating func noteScheduled(_ nodeIDs: [ObjectID]) {
+            scheduledNodeIDs.formUnion(nodeIDs)
+        }
+
+        mutating func noteResult(nodeID: ObjectID, fromCache: Bool) {
+            computedNodeIDs.remove(nodeID)
+            fromCacheNodeIDs.remove(nodeID)
+            if fromCache {
+                fromCacheNodeIDs.insert(nodeID)
+            } else {
+                computedNodeIDs.insert(nodeID)
+            }
+        }
+
+        var summary: SettleSummary {
+            SettleSummary(scheduled: scheduledNodeIDs.count,
+                          computed:  computedNodeIDs.count,
+                          fromCache: fromCacheNodeIDs.count,
+                          errors:    errors)
+        }
+    }
+
+    /// What the settle has seen since the engine last left idle. Written by
     /// `processSomeNodes` and by the settle-time error report, both on the loop's own
     /// task, and read and cleared by `reportSettleSummary` on that same task.
-    private var settleTotals = SettleSummary()
+    private var settleTally = SettleTally()
 
     /// Hands one settle's totals to whoever is reading, and starts the next settle's count.
     ///
@@ -441,8 +501,8 @@ public final class BuildEngine {
     /// where the interesting case — a build where everything came from the cache — is one
     /// line among it.
     private func reportSettleSummary() {
-        let summary = settleTotals
-        settleTotals = SettleSummary()
+        let summary = settleTally.summary
+        settleTally = SettleTally()
 
         guard summary.scheduled > 0 else {
             return
@@ -613,9 +673,13 @@ public final class BuildEngine {
         let cachedCount   = computedResults.filter(\.fromCache).count
         let computedCount = computedResults.count - cachedCount
 
-        settleTotals.scheduled += nodeRecords.count
-        settleTotals.computed  += computedCount
-        settleTotals.fromCache += cachedCount
+        settleTally.noteScheduled(nodeRecords.compactMap(\.id))
+        for result in computedResults {
+            guard let nodeID = result.nodeRecord.id else {
+                continue
+            }
+            settleTally.noteResult(nodeID: nodeID, fromCache: result.fromCache)
+        }
 
         Debug.log("batch: \(nodeRecords.count) scheduled, \(computedCount) computed, \(cachedCount) from cache")
 
@@ -669,7 +733,9 @@ public final class BuildEngine {
                 } catch {
                     if result.fromCache {
                         // Cached output is stale — fall back to a full sequential reprocess
-                        // using the current (post-phase-2) graph state.
+                        // using the current (post-phase-2) graph state. The node ran after
+                        // all, so the summary must not call it a hit.
+                        settleTally.noteResult(nodeID: nodeID, fromCache: false)
                         Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
                         try node.processWithPreCheck()
                     } else {

@@ -22,6 +22,7 @@ final class SettleTimeErrorCountingTests: XCTestCase {
     private var engine: BuildEngine!
     private var interpreter: CommandInterpreter!
     private var externalRoot: URL!
+    private var handler: RequestHandler!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -32,7 +33,7 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         let database = try DatabaseLayer()
         engine = try BuildEngine(database: database, startProcessingLoop: true)
         BuildEngine.shared = engine
-        let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+        handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
         let connection = InProcessConnection(handler: handler)
         interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)
         // Subscribes, so the settle-time event this suite is about actually reaches the
@@ -46,6 +47,7 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         engine = nil
         BuildEngine.shared = nil
         interpreter = nil
+        handler = nil
         super.tearDown()
     }
 
@@ -119,6 +121,49 @@ final class SettleTimeErrorCountingTests: XCTestCase {
 
         XCTAssertGreaterThan(interpreter.errorsReported, errorsAfterFirstBuild)
         XCTAssertFalse(FileManager.default.fileExists(atPath: secondDestination.path))
+    }
+
+    /// The order is what lets the summary's error count agree with the records above it:
+    /// the engine reports the failures and then the totals, and a subscribed client sees
+    /// them in that order, once each, through the real codec.
+    func test_aSubscribedClientSeesTheErrorsThenTheSummaryForOneSettle() throws {
+        let watcher = InProcessConnection(handler: handler)
+        let received = EventLog()
+        watcher.onEvent = { [received] event in received.append(event) }
+        _ = try watcher.send(.hello(Hello(role: .daemon)), body: nil)
+        _ = try watcher.send(.daemon(.subscribe), body: nil)
+
+        try writeBrokenFormula()
+        interpreter.handleCommand("build src")
+
+        let kinds = received.all.compactMap { event -> String? in
+            switch event {
+            case .daemon(.errors):  return "errors"
+            case .daemon(.settled): return "settled"
+            case .daemon(.notice):  return nil
+            }
+        }
+        XCTAssertEqual(kinds, ["errors", "settled"],
+                       "one report and one summary, the summary last")
+
+        guard case .daemon(.settled(_, _, _, let errors))? = received.all.last else {
+            return XCTFail("expected the settle summary last, got \(received.all)")
+        }
+        XCTAssertGreaterThan(errors, 0, "the summary counts the failure the report named")
+    }
+
+    /// Events arrive on the engine's task and are read from the test's thread.
+    private final class EventLog {
+        private let lock = NSLock()
+        private var storage: [Event] = []
+
+        func append(_ event: Event) {
+            lock.withLock { storage.append(event) }
+        }
+
+        var all: [Event] {
+            lock.withLock { storage }
+        }
     }
 
     /// The live loop runs `reportIdleTimeErrors` on every idle pass; a report with
