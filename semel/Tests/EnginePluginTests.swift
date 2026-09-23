@@ -109,7 +109,7 @@ final class EnginePluginTests: XCTestCase {
     }
 
     func test_debugPrintsTheTextItGetsBack() throws {
-        connection.reply(.debug(text: "BUILD GRAPH STATE (0 nodes)"))
+        connection.reply(.debug, body: Data("BUILD GRAPH STATE (0 nodes)".utf8))
 
         try run("debug")
 
@@ -143,6 +143,20 @@ final class EnginePluginTests: XCTestCase {
 
         XCTAssertThrowsError(try run("nudge")) { error in
             XCTAssertEqual((error as? ServerError)?.description, "wire missing")
+        }
+    }
+
+    /// B-94. A reply the server cannot frame reached the prompt as a closed socket and
+    /// "error 2". The user is told which command was refused, how large its answer was and
+    /// what the limit is.
+    func test_aRefusedReplySaysWhatWasTooLargeAndHowLarge() {
+        connection.responses.append((.error(.replyTooLarge(request: "debug", bytes: 3_000_000, limit: 1_048_576)), nil))
+
+        XCTAssertThrowsError(try run("debug")) { error in
+            let message = (error as? ServerError)?.description ?? "\(error)"
+            XCTAssertTrue(message.contains("`debug`"),   message)
+            XCTAssertTrue(message.contains("3000000"),   message)
+            XCTAssertTrue(message.contains("1048576"),   message)
         }
     }
 }

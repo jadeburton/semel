@@ -84,6 +84,53 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(client, .wait).0, .ok)
     }
 
+    /// B-94. A prepared app's graph describes itself in megabytes. The JSON section of a
+    /// frame is capped at 1 MiB, because its declared length is checked before anything is
+    /// allocated; the body is not, so the text rides there and a large reply crosses the
+    /// socket whole instead of closing the connection under the client.
+    func test_aDebugReplyLargerThanTheJSONCapArrivesWhole() throws {
+        let marker = "MARKER-\(UUID().uuidString)"
+        try describeSomethingLargerThanTheJSONCap(marker: marker)
+        let client = try connect()
+
+        let (response, body) = try daemon(client, .debug)
+
+        XCTAssertEqual(response, .debug)
+        let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
+        XCTAssertGreaterThan(text.utf8.count, Int(Frame.maximumJSONLength),
+                             "the reply has to be over the cap for this to prove anything")
+        XCTAssertTrue(text.contains(marker), "the text arrives whole, not truncated")
+    }
+
+    /// The other half of B-94: a reply that does not fit is answered, not dropped with the
+    /// socket. `errors` carries its records in the JSON, so one enormous message is over
+    /// the cap, and what comes back names the request and both sizes.
+    func test_aReplyThatCannotBeFramedComesBackAsAnErrorNamingIt() throws {
+        try describeSomethingLargerThanTheJSONCap(marker: "MARKER")
+        let client = try connect()
+
+        let (response, _) = try client.send(.daemon(.errors), body: nil)
+
+        guard case .error(.replyTooLarge(let request, let bytes, let limit)) = response else {
+            return XCTFail("expected a replyTooLarge error, got \(response)")
+        }
+        XCTAssertEqual(request, "errors")
+        XCTAssertEqual(limit, Int(Frame.maximumJSONLength))
+        XCTAssertGreaterThan(bytes, limit)
+        // And the connection survives it: the next command still answers.
+        XCTAssertEqual(try daemon(client, .wait).0, .ok)
+    }
+
+    /// One node carrying an error message of a megabyte and a half: the same volume of
+    /// `debug` text a few hundred real nodes produce, without the few hundred nodes.
+    private func describeSomethingLargerThanTheJSONCap(marker: String) throws {
+        let node = try NodeRecord.createNode(database: database, kind: Configuration.kind,
+                                             properties: ["role": "big"], graphSpec: nil)
+        let message = marker + String(repeating: "x", count: 3 * Int(Frame.maximumJSONLength) / 2)
+        try node.writeToOutputPort(Configuration.outputPort,
+                                   value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+    }
+
     func test_anUndecodableRequestIsAnsweredNotDropped() throws {
         // Reach under SocketConnection: a raw frame whose JSON names no known case.
         let client = try connect()
@@ -117,6 +164,27 @@ final class ServerTests: RequestHandlerTestCase {
         wait(for: [delivered], timeout: 5)
         XCTAssertEqual(subscriberEvents, [.daemon(.notice(line: "output:/app: written"))])
         XCTAssertTrue(bystanderEvents.isEmpty)
+    }
+
+    /// An event carries everything in its JSON, so one over the cap cannot be sent. It is
+    /// dropped — nobody is waiting on it — and the connection carries the next one, rather
+    /// than every subscriber losing its socket over a diagnostic. `semelserv` says so on
+    /// its standard error, which is the only trace such an event leaves.
+    func test_anEventTooLargeToFrameIsDroppedAndTheNextOneStillArrives() throws {
+        let subscriber = try connect()
+        let delivered  = expectation(description: "the event after the over-size one")
+        var events: [Event] = []
+        subscriber.onEvent = { event in
+            events.append(event)
+            delivered.fulfill()
+        }
+        _ = try daemon(subscriber, .subscribe)
+
+        BuildEngine.notice(String(repeating: "x", count: Int(Frame.maximumJSONLength) + 1))
+        BuildEngine.notice("output:/app: written")
+
+        wait(for: [delivered], timeout: 5)
+        XCTAssertEqual(events, [.daemon(.notice(line: "output:/app: written"))])
     }
 
     // MARK: - Sessions

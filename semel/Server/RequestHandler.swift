@@ -124,7 +124,7 @@ public final class RequestHandler {
                 // wants every case.
                 return (.daemon(.ok), nil)
             case .debug:
-                return (.daemon(.debug(text: try engine.graphDescription())), nil)
+                return (.daemon(.debug), Data(try engine.graphDescription().utf8))
             case .subscribe:
                 session.isSubscribed = true
                 return (.daemon(.ok), nil)

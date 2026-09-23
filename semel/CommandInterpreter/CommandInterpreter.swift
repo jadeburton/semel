@@ -152,9 +152,22 @@ public final class CommandInterpreter: CommandContext {
         } catch CommandInterpreterError.quit {
             return .quit
         } catch {
-            outputError(error.localizedDescription)
+            outputError(Self.userFacingMessage(for: error))
         }
         return errorsReported == errorsBefore ? .success : .failed
+    }
+
+    /// What a failure is shown as.
+    ///
+    /// Interpolation rather than `localizedDescription`, because the errors that reach here
+    /// are Swift enums: `localizedDescription` answers for one only if it conforms to
+    /// `LocalizedError`, and for the rest it is "The operation couldn't be completed.
+    /// (SemelCLI.ConnectError error 0.)" — a sentence that names neither the failure nor
+    /// anything to do about it. Interpolation prints the `CustomStringConvertible`
+    /// description these types carry; a Foundation error prints its own message with its
+    /// domain and code around it, which is more than it said before, not less.
+    static func userFacingMessage(for error: Error) -> String {
+        "\(error)"
     }
 
     /// Only `CommandInterpreterError.quit` escapes; every other error is reported here so
@@ -211,7 +224,7 @@ public final class CommandInterpreter: CommandContext {
         } catch let error as ServerError {
             outputError(error.description)
         } catch {
-            outputError(error.localizedDescription)
+            outputError(Self.userFacingMessage(for: error))
         }
     }
 

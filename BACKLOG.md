@@ -255,24 +255,9 @@ frame and the client sees a closed connection. Deleting one shared header produc
 error entries at idle, 494 of them the identical unlabelled `ClangCompiler … inputValueInError`,
 because only `.pending` blocks processing and errors propagate through every consumer;
 deleting the whole project produced none, since everything was collected. The fixes are
-separate items: the `debug` tree (B-94), the idle error report collapsing a cascade to its
-cause, `[missing]` split into its states, the missing batch around `rm` (B-53), and
-`ProjectBuilder`'s mid-flight printer (B-50).
-
-**B-94** `open` — **`debug` on a few hundred nodes burns a minute of one core, then closes the connection.**
-`d` against a prepared IceCubesApp graph runs `semelserv` at 100 % of one core for about a
-minute and ends with `The operation couldn't be completed. (SemelCLI.ConnectionError error
-2.)`, which is `ConnectionError.closed`: the server refused the reply frame. Two causes, both
-recorded under B-74's reproduction: the dependency tree keeps its visited set per node, so a
-`StaticFile` shared by a thousand consumers is visited a thousand times and the walk
-enumerates paths rather than nodes; and the rendered text rides inside the frame JSON under
-the 1 MiB cap, so past about 600 nodes the frame is rejected and the client sees a closed
-socket. The single busy core is not a missing parallelism: the walk is exponential in the
-sharing, and a global visited set makes it linear, after which one core is plenty. Fix: one
-visited set for the whole walk, the text streamed as the frame body rather than embedded in
-its JSON (or paged), and a client message for a refused frame that says what was too large
-instead of "error 2". Acceptance: `debug` on the 1,019-node C fixture from B-74 returns in
-well under a second.
+separate items: the idle error report collapsing a cascade to its cause, `[missing]` split
+into its states, the missing batch around `rm` (B-53), and `ProjectBuilder`'s mid-flight
+printer (B-50). The `debug` tree is fixed.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
@@ -502,7 +487,12 @@ registration rather than the plan, and removing one gives "couldn't build … be
 missing inputs: <the file just deleted>" while leaving the previous binary linked with the
 type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
 (`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
-can do better than a documented workaround.
+can do better than a documented workaround. A second instance, found while bumping
+`ProtocolVersion.current` (B-94): a `public static let` used as a default argument is emitted
+into every caller's object file, so modules compiled before the change keep the old value and
+the linker picks whichever copy it finds — `semel` and `semelserv` disagreed about the
+protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
+`rm .build/debug.yaml` does not touch it.
 
 ## App bundles
 

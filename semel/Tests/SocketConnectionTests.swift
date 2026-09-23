@@ -47,7 +47,7 @@ final class SocketConnectionTests: XCTestCase {
             let stream = FrameStream(connection: connection, queue: self.serverQueue)
             stream.onFrame = { frame in
                 if let reply = answer(frame) {
-                    stream.send(reply)
+                    try? stream.send(reply)
                 }
             }
             stream.start()
@@ -104,36 +104,37 @@ final class SocketConnectionTests: XCTestCase {
                 } else {
                     text = "?"
                 }
-                if let reply = try? Frame.response(.daemon(.debug(text: text)), correlationID: waiting.correlationID) {
-                    self.serverStream?.send(reply)
+                if let reply = try? Frame.response(.daemon(.debug), correlationID: waiting.correlationID,
+                                                   body: Data(text.utf8)) {
+                    try? self.serverStream?.send(reply)
                 }
             }
             return nil
         }
         let connection = try SocketConnection.connect(to: socketPath)
         let group = DispatchGroup()
-        var results: [String: Response] = [:]
+        var results: [String: String] = [:]
         let lock = NSLock()
 
         for pattern in ["first", "second"] {
             group.enter()
             DispatchQueue.global().async {
                 defer { group.leave() }
-                if let (response, _) = try? connection.send(.daemon(.list(fileSystem: .input, pattern: pattern)), body: nil) {
-                    lock.withLock { results[pattern] = response }
+                if let (_, body) = try? connection.send(.daemon(.list(fileSystem: .input, pattern: pattern)), body: nil) {
+                    lock.withLock { results[pattern] = String(decoding: body ?? Data(), as: UTF8.self) }
                 }
             }
         }
 
         XCTAssertEqual(group.wait(timeout: .now() + 5), .success)
-        XCTAssertEqual(results["first"],  .daemon(.debug(text: "first")))
-        XCTAssertEqual(results["second"], .daemon(.debug(text: "second")))
+        XCTAssertEqual(results["first"],  "first")
+        XCTAssertEqual(results["second"], "second")
     }
 
     func test_anEventReachesOnEvent() throws {
         startServer { frame in
             if let event = try? Frame.event(.daemon(.notice(line: "built"))) {
-                self.serverStream?.send(event)
+                try? self.serverStream?.send(event)
             }
             return try? Frame.response(.daemon(.ok), correlationID: frame.correlationID)
         }
@@ -164,6 +165,21 @@ final class SocketConnectionTests: XCTestCase {
         XCTAssertThrowsError(try connection.send(.daemon(.reset), body: nil)) { error in
             XCTAssertEqual(error as? ConnectionError, .closed)
         }
+    }
+
+    /// B-94. The interpreter prints `localizedDescription`, which for a Swift error that
+    /// says nothing about itself is "the operation couldn't be completed … error 2". Every
+    /// case here has to reach the user as words, and a closed connection has to name what
+    /// to look at.
+    func test_aConnectionFailureReachesTheUserAsWords() {
+        let closed = ConnectionError.closed.localizedDescription
+
+        XCTAssertTrue(closed.contains("closed before it answered"), closed)
+        XCTAssertTrue(closed.contains("semelserv"), closed)
+        XCTAssertFalse(closed.contains("error 2"), closed)
+
+        let unavailable = ConnectionError.unavailable(path: "/tmp/s.sock", underlying: "refused").localizedDescription
+        XCTAssertTrue(unavailable.contains("/tmp/s.sock"), unavailable)
     }
 
     func test_connectingToNothingFailsWithThePath() {

@@ -45,8 +45,11 @@ final class ServerConnection {
 
     /// Writes an already-encoded event to this client. Called from the registry, on any
     /// thread; FrameStream serializes the send on this connection's queue.
+    ///
+    /// An event too large to frame is dropped: nobody is waiting on it, and a client in
+    /// the middle of a command can lose a notice where it cannot lose its connection.
     func deliver(_ frame: Frame) {
-        stream.send(frame)
+        try? stream.send(frame)
     }
 
     // MARK: - Requests
@@ -61,20 +64,41 @@ final class ServerConnection {
             request = try frame.request()
         } catch {
             if let reply = Self.reply(toUndecodable: frame) {
-                stream.send(reply)
+                try? stream.send(reply)
             }
             return
         }
         let (response, body) = handler.handle(request, body: frame.body.isEmpty ? nil : frame.body, session: session)
         do {
-            stream.send(try Frame.response(response, correlationID: frame.correlationID, body: body ?? Data()))
+            try stream.send(try Frame.response(response, correlationID: frame.correlationID, body: body ?? Data()))
         } catch {
-            // Only an over-limit reply fails to frame; the client learns of it as an error
-            // rather than a silence.
-            let failure = Response.error(.nodeError(description: "the reply could not be framed: \(error)"))
-            if let fallback = try? Frame.response(failure, correlationID: frame.correlationID) {
-                stream.send(fallback)
+            // Only an over-limit reply fails to frame, and nothing has been written, so the
+            // client hears what was refused and how large it was — an answer it can act on,
+            // where a closed socket would leave it with a number.
+            if let fallback = try? Frame.response(Self.tooLarge(request, error: error),
+                                                  correlationID: frame.correlationID) {
+                try? stream.send(fallback)
             }
+        }
+    }
+
+    /// The reply to a reply that does not fit. `Frame.maximumJSONLength` bounds what a
+    /// declared length alone can make this process allocate, so the answer is to say so,
+    /// naming the request and the size, and not to raise the limit.
+    private static func tooLarge(_ request: Request, error: Error) -> Response {
+        guard case FrameError.jsonTooLarge(let declared, let limit) = error else {
+            return .error(.nodeError(description: "the reply could not be framed: \(error)"))
+        }
+        return .error(.replyTooLarge(request: name(of: request), bytes: Int(declared), limit: Int(limit)))
+    }
+
+    /// What to call a request in a message to the user: the verb, without its arguments.
+    private static func name(of request: Request) -> String {
+        switch request {
+        case .hello:
+            return "hello"
+        case .daemon(let daemonRequest):
+            return String(describing: daemonRequest).prefix(while: { $0 != "(" }).description
         }
     }
 
