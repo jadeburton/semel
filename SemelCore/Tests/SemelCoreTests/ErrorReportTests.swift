@@ -137,6 +137,52 @@ final class ErrorReportTests: SemelCoreTestCase {
         XCTAssertTrue(message.contains("reset"), message)
     }
 
+    // MARK: - A thrown error's own words
+
+    /// What a node throws reaches the report as the sentence the node wrote, not as the
+    /// enum case's debug form. The debug form puts the whole message on one line, inside
+    /// `other(message: "…")`, with every newline escaped — unreadable, and impossible to
+    /// paste the config lines out of.
+    func test_aThrownNodeErrorIsReportedAsItsMessage() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+        let written = "Missing configuration. Add these to a semel.config:\nclang.linker.target=…"
+
+        let output = node.buildErrorOutput(withError: NodeError.other(message: written))
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(), written)
+    }
+
+    /// A case with no message of its own still has to read as a sentence, for the same
+    /// reason: `inputValueInError` is the enum's spelling, not an explanation.
+    func test_aNodeErrorWithoutAMessageIsReportedAsASentence() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+
+        let output = node.buildErrorOutput(withError: NodeError.inputValueInError)
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(), "an input is in error")
+    }
+
+    /// A tool that cannot be found on this machine is a node failure like any other, and
+    /// reaches the report by the same route.
+    func test_aMissingToolIsReportedAsASentenceNamingThePath() throws {
+        let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
+
+        let output = node.buildErrorOutput(
+            withError: LocalFileSystemToolError.toolNotFound(path: "/usr/bin/nonesuch"))
+
+        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
+            return XCTFail("expected an error value")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(),
+                       "no tool exists at '/usr/bin/nonesuch'")
+    }
+
     // MARK: - What counts as reportable
 
     /// Every node holds "initializing" between being created and first processing, so

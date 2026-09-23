@@ -382,7 +382,7 @@ public final class BuildEngine {
         for (nodeID, ports) in byNode {
             let msgs = Set(ports.compactMap { port -> String? in
                 let msg = (try? port.dataObjectHash?.resolveAsString()) ?? ""
-                return msg.isEmpty || msg == "initializing" ? nil : msg
+                return msg.isEmpty || msg == NodeError.initializingMessage ? nil : msg
             })
             if !msgs.isEmpty { current[nodeID] = msgs }
         }
