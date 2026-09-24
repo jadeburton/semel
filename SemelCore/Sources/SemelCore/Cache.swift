@@ -181,7 +181,8 @@ struct CacheKeyEntry: Codable {
 }
 
 /// A cached ProcessOutput as stored. Lives with the cache rather than with the node
-/// protocol, which is what it was filed under by accident of history.
+/// protocol. A field added here is non-optional, so an entry written before it fails to
+/// decode and misses, rather than decoding short with a default and hitting wrongly.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
     let inputWireSpecs: [String: [String: String]]
