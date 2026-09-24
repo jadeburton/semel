@@ -29,13 +29,13 @@ jobs:
           xcrun simctl list runtimes | grep -i ios || true
 
       - name: Build
-        run: swift build
+        run: scripts/build.sh
 
       - name: Build the external projects twice each
         env:
           SEMEL_E2E_EXTERNAL: "1"
           SEMEL_E2E_KEEP: "1"
-        run: swift test --filter SemelEndToEndTests
+        run: scripts/build.sh test --filter SemelEndToEndTests
 
       - name: Keep the run roots on failure
         if: failure()
