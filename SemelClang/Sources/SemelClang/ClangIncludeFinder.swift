@@ -1,9 +1,9 @@
 // ClangIncludeFinder.swift
 // semel
 //
-// Takes a .c or .h source file as input and outputs a newline-separated list
-// of quoted #include paths found in that file (system angle-bracket includes
-// are intentionally ignored).
+// Takes the .c or .h source files wired to its input port and outputs a
+// newline-separated list of the quoted #include paths found in them (system
+// angle-bracket includes are intentionally ignored).
 
 import Foundation
 import SemelNodeKit
@@ -105,16 +105,20 @@ public struct ClangIncludeFinder: Node {
     }
 
     func process(inputs: ClangIncludeFinderInputs) throws -> ClangIncludeFinderOutputs {
-        var aggregatedIncludePathList = ""
+        var aggregatedIncludePaths: [String] = []
 
         for sourceFileValue in inputs.inputSourceFiles {
             let containingFolderOfSourceFile = Path(sourceFileValue.filePath).deletingLastComponent ?? .empty
             let sourceContent = (try? sourceFileValue.contentAsString) ?? ""
-            let includePathList = Self.extractIncludePaths(sourceFileContent: sourceContent).map { (containingFolderOfSourceFile / $0).string }
 
-            aggregatedIncludePathList.append(includePathList.joined(separator: "\n"))
+            aggregatedIncludePaths += Self.extractIncludePaths(sourceFileContent: sourceContent)
+                .map { (containingFolderOfSourceFile / $0).string }
         }
 
-        return .init(includePathList: .value(try aggregatedIncludePathList.intern()))
+        // One path per line throughout, including at the seam between two sources: the
+        // reader of this value splits it on newlines, so a source's last path written
+        // hard against the next source's first would name a file that does not exist.
+        // The sources arrive in wire-key order, so the value is the same twice (B-04).
+        return .init(includePathList: .value(try aggregatedIncludePaths.joined(separator: "\n").intern()))
     }
 }
