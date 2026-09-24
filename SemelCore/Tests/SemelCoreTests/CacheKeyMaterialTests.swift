@@ -50,6 +50,14 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         ])
     }
 
+    /// One wire carrying whatever a test hands it: a value, or a reason there is none.
+    private func makeInput(carrying value: NodeValue, wire: String = "src/hello.c.p") throws -> ProcessInput {
+        ProcessInput(inputValues: [
+            SampleTool.configuration: ["configuration": .value(try "toolDescriptor.name=sample".intern())],
+            SampleTool.input: [wire: value],
+        ])
+    }
+
     /// The lines of a material's text, which is what a reader diffs and what the key is
     /// the hash of.
     private func lines(of material: CacheKeyMaterial) throws -> [String] {
@@ -185,6 +193,53 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         XCTAssertNotEqual(try plain.cacheKey(), try forging.cacheKey())
         XCTAssertNotEqual(try plain.cacheKey(), try quoted.cacheKey())
         XCTAssertNotEqual(try forging.cacheKey(), try quoted.cacheKey())
+    }
+
+    // MARK: - A wire carrying no value
+
+    /// A wire can reach a key carrying a reason instead of a value: only `.pending` stops a
+    /// node from running. The reason is coded whole, payload included — collapsing a
+    /// failure to the word `error` would hash two different upstream failures alike, and a
+    /// node that reads its input's error text emits something different for each.
+    func test_twoFailuresWithDifferentMessagesDoNotShareAKey() throws {
+        let tool = try makeCompilerNode()
+        let firstMessage = try "undefined symbol 'a'".intern()
+
+        let first = try tool.buildCacheKeyMaterial(
+            input: try makeInput(carrying: .noValue(reason: .error(messageDataObjectHash: firstMessage))))
+        let second = try tool.buildCacheKeyMaterial(
+            input: try makeInput(carrying: .noValue(reason: .error(
+                messageDataObjectHash: try "undefined symbol 'b'".intern()))))
+        let cascade = try tool.buildCacheKeyMaterial(
+            input: try makeInput(carrying: .noValue(reason: .inputInError)))
+
+        let firstText = try first.canonicalText()
+        XCTAssertTrue(firstText.contains(firstMessage), "the message is in the text, got: \(firstText)")
+        XCTAssertNotEqual(try first.cacheKey(), try second.cacheKey(),
+                          "two failures carrying different messages are two different inputs")
+        XCTAssertNotEqual(try first.cacheKey(), try cascade.cacheKey(),
+                          "a failure of its own and one above it are two different inputs")
+    }
+
+    /// The other half of coding a reason by hand: it has to come back. An entry whose input
+    /// carried a reason is decodable, and the reason it carried survives the round trip
+    /// with its payload — otherwise the material would account for a key it cannot
+    /// recompute.
+    func test_aWiredReasonComesBackFromTheStoredMaterial() throws {
+        let tool        = try makeCompilerNode()
+        let messageHash = try "undefined symbol 'main'".intern()
+        let input = try makeInput(carrying: .noValue(reason: .error(messageDataObjectHash: messageHash)))
+        let key   = try store(tool, input: input)
+
+        XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key), "the entry decodes, reasons and all")
+
+        let material = try storedMaterial(key: key)
+        let entry = try XCTUnwrap(material.inputs.first { $0.port == SampleTool.input })
+        guard case .noValue(let reason) = entry.value, case .error(let hash) = reason else {
+            return XCTFail("the wire came back carrying \(entry.value)")
+        }
+        XCTAssertEqual(hash, messageHash)
+        XCTAssertEqual(try material.cacheKey(), key, "and the material still accounts for the key")
     }
 
     // MARK: - An entry without material
