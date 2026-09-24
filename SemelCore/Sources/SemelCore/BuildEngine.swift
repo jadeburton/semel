@@ -347,7 +347,14 @@ public final class BuildEngine {
             fileNodeIDs.formUnion(wires.map(\.fromNodeID))
         }
 
-        for fileNodeID in fileNodeIDs {
+        // Which files have something to say, and what it is. The path each line names is
+        // looked up here rather than for every candidate: a file whose unclaimed set is
+        // unchanged or empty prints nothing, and asking the database for its node would
+        // be a query per settle for a line nobody sees. The order of this pass reaches
+        // nothing — every guard and every record below is that file's own.
+        var warnings: [(path: String, nodeID: ObjectID, unclaimed: [String])] = []
+
+        for fileNodeID in fileNodeIDs.sorted() {
             guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: fileNodeID) }) else {
                 continue
             }
@@ -362,10 +369,24 @@ public final class BuildEngine {
                 continue
             }
 
-            let fileNode = FatalErrors.attempt({ try database.node.find(nodeID: fileNodeID) }) ?? nil
-            let path = fileNode?.properties["path"] ?? "config file \(fileNodeID)"
-            unclaimedConfigKeyReporter("⚠️  \(path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
+            warnings.append((path: configFilePath(ofNodeID: fileNodeID), nodeID: fileNodeID, unclaimed: unclaimed))
         }
+
+        // In path order: a Set's iteration order is seeded per process, and a node's id
+        // records the order its graph was written — phase 2 applies results as tasks
+        // finish — so the path is the only one of the three that reads the same in two
+        // builds of the same tree (B-04).
+        for warning in warnings.sorted(by: { ($0.path, $0.nodeID) < ($1.path, $1.nodeID) }) {
+            unclaimedConfigKeyReporter("⚠️  \(warning.path) contains unused configuration key(s): \(warning.unclaimed.joined(separator: ", "))")
+        }
+    }
+
+    /// The path recorded on a config file's node, or a stand-in naming the node when the
+    /// database cannot hand that node over — this report is best effort, and a line that
+    /// names the node is worth more than no line at all.
+    private func configFilePath(ofNodeID fileNodeID: ObjectID) -> String {
+        let fileNode = FatalErrors.attempt({ try database.node.find(nodeID: fileNodeID) }) ?? nil
+        return fileNode?.properties["path"] ?? "config file \(fileNodeID)"
     }
 
     // MARK: - Idle-time error reporting

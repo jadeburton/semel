@@ -152,8 +152,29 @@ final class ClangIncludeFinderTests: SemelClangTestCase {
             input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires]))
         let outputs = try finder.process(inputs: inputs)
 
-        let expected = names.sorted().map { "src/" + Self.headerName(forSource: $0) }.joined()
+        let expected = names.sorted().map { "src/" + Self.headerName(forSource: $0) }.joined(separator: "\n")
         XCTAssertEqual(try outputs.includePathList.expectValue().resolveAsString(), expected)
+    }
+
+    /// Two sources on the one wire, each with two includes: the aggregate is a path per
+    /// line throughout, including where one source's list meets the next. Without a
+    /// separator at that seam the last path of one source and the first of the next read
+    /// as one line, which names a file that does not exist; the consumer splits this
+    /// value on newlines to learn which headers to wire.
+    func test_aggregatesWithOnePathPerLineAcrossSources() throws {
+        let wires: [String: NodeValue] = [
+            "src/a.c": .value(try "#include \"a1.h\"\n#include \"a2.h\"\n".intern()),
+            "src/b.c": .value(try "#include \"b1.h\"\n#include \"b2.h\"\n".intern()),
+        ]
+
+        let finder = try ClangIncludeFinder(thisNode: NodeRecord(id: 1, kind: ClangIncludeFinder.kind))
+        let inputs = try ClangIncludeFinder.ClangIncludeFinderInputs(
+            input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires]))
+        let outputs = try finder.process(inputs: inputs)
+
+        let aggregate = try outputs.includePathList.expectValue().resolveAsString()
+        XCTAssertEqual(aggregate.split(separator: "\n").map(String.init),
+                       ["src/a1.h", "src/a2.h", "src/b1.h", "src/b2.h"])
     }
 
     /// `src/b.c` includes `b.h`: one header per source, named after it, so the aggregate
