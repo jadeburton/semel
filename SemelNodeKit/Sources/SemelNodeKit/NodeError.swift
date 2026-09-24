@@ -12,25 +12,47 @@
 public enum NodeError: Error, CustomStringConvertible {
     case nodeNotFound
     case onlyOneWireShouldBeConnectedToInput
+    /// Thrown by `expectValue()` when the value asked for is not there to be had. These
+    /// three are control flow rather than messages: the engine turns each into the
+    /// `NoValueReason` the node publishes, before anything is written to a port, so a node
+    /// stopped by one of them says so by its state.
     case inputValueInError
     case inputValuePending
+    /// Thrown when an input has never had a value and nothing has failed to make one.
+    case inputValueNotProduced
     case other(message: String)
     case processNotSupported
     case cannotHaveProperties
     case cannotDeleteNodeWithOutputs
-    /// The placeholder every node carries between being created and first processing. Its
-    /// text is `Self.initializingMessage`, which the engine matches to keep a graph full of
-    /// fresh nodes from reading as a graph full of failures.
-    case initializing
     case graphSpecBadIntegrity(currentShapeNode: String, expectedShapeNode: String, log: String)
     /// Two children of one folder may never share a name. The tree is walked by name, so
     /// a duplicate makes every path through that folder ambiguous — `childNode` would
     /// take whichever the database returned first.
     case nameCollision(path: String, existingKind: UInt)
 
-    /// The text of `.initializing`, named so the engine's filter and this description are
-    /// one string rather than two that must agree.
-    public static let initializingMessage = "initializing"
+    /// The state the engine writes to every output port of a node this error stopped, or
+    /// nil when the error is the node's own and reaches the port as its message.
+    ///
+    /// Spelled out case by case rather than with a `default`, so that a case added here with
+    /// a state behind it has to say which one, instead of being published as an error
+    /// carrying its own description.
+    public var publishedState: NoValueReason? {
+        switch self {
+        case .inputValuePending:     return .pending
+        case .inputValueNotProduced: return .inputNotProduced
+        case .inputValueInError:     return .inputInError
+
+        case .nodeNotFound,
+             .onlyOneWireShouldBeConnectedToInput,
+             .other,
+             .processNotSupported,
+             .cannotHaveProperties,
+             .cannotDeleteNodeWithOutputs,
+             .graphSpecBadIntegrity,
+             .nameCollision:
+            return nil
+        }
+    }
 
     public var description: String {
         switch self {
@@ -42,6 +64,8 @@ public enum NodeError: Error, CustomStringConvertible {
             return "an input is in error"
         case .inputValuePending:
             return "an input has no value yet"
+        case .inputValueNotProduced:
+            return "an input has never been produced"
         case .other(let message):
             return message
         case .processNotSupported:
@@ -50,8 +74,6 @@ public enum NodeError: Error, CustomStringConvertible {
             return "this node takes no properties"
         case .cannotDeleteNodeWithOutputs:
             return "a node whose outputs are still wired cannot be deleted"
-        case .initializing:
-            return Self.initializingMessage
         case .graphSpecBadIntegrity(let currentShapeNode, let expectedShapeNode, let log):
             return "the graph does not match its spec: it holds \(currentShapeNode) where " +
                    "\(expectedShapeNode) is expected\n\(log)"

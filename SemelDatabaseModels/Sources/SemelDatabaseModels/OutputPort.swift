@@ -9,10 +9,19 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
         public static let dataObjectHash = Column(CodingKeys.dataObjectHash)
     }
 
+    /// What a port is carrying. The raw values are written into every graph, so a new one
+    /// takes a number of its own and a graph holding the old meaning of a number is refused
+    /// by the version marker rather than read with this table.
     public enum ValueKind: UInt8, Codable {
         case value = 1
         case pending = 2
         case error = 5
+        /// Created and not yet processed.
+        case initializing = 6
+        /// Did not run, because an input is in error.
+        case inputInError = 7
+        /// Could not produce, because an input has never been produced.
+        case inputNotProduced = 8
     }
 
     public var nodeID: ObjectID
@@ -84,12 +93,14 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
-    /// Returns all output ports that are currently in an error state, across all nodes.
+    /// Every port across the graph that has no value because something failed: this node,
+    /// or something upstream of it. A port carrying an input's failure is here so that a
+    /// report can count what one failure stopped; a port that has simply not been processed
+    /// is not, because nothing has failed.
     public func selectAllErrors() throws -> [OutputPort] {
-        try read { db in
-            try OutputPort
-                .filter(OutputPort.Columns.valueKind == OutputPort.ValueKind.error.rawValue)
-                .fetchAll(db)
+        let failed = [OutputPort.ValueKind.error.rawValue, OutputPort.ValueKind.inputInError.rawValue]
+        return try read { db in
+            try OutputPort.filter(failed.contains(OutputPort.Columns.valueKind)).fetchAll(db)
         }
     }
 }

@@ -338,33 +338,44 @@ extension Node {
         try GraphSpecNode.parse(specString).findOrCreateMatchingNode()
     }
 
+    /// The output for a thrown error: the reason it puts on every port, decided here and
+    /// nowhere else.
+    ///
+    /// An error that stopped this node without being its own failure — an input pending, an
+    /// input in error, an input that has never been produced — is a state, and each has a
+    /// case of its own so that nothing downstream reads a sentence to tell them apart.
+    /// `NodeError.publishedState` is the table; the error is translated on the way to the
+    /// port and never interned as text.
     func buildErrorOutput(withError error: Error) -> ProcessOutput {
+        if let state = (error as? NodeError)?.publishedState {
+            return buildOutput(reason: state)
+        }
+
+        let message = reportedMessage(for: error)
+        return buildOutput(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
+    }
+
+    /// One reason on every output port, with the dynamic wire specs the graph already holds
+    /// preserved.
+    func buildOutput(reason: NoValueReason) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
 
-        switch error {
-        case NodeError.inputValuePending:
-            for outputPort in descriptor.outputPorts {
-                outputValues[outputPort] = .noValue(reason: .pending)
-            }
-
-        default:
-            let message = reportedMessage(for: error)
-            for outputPort in descriptor.outputPorts {
-                outputValues[outputPort] = .noValue(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
-            }
+        for outputPort in descriptor.outputPorts {
+            outputValues[outputPort] = .noValue(reason: reason)
         }
 
         // Reconstruct existing dynamic wire specs from the live graph so
-        // applySpecs's step 1 doesn't delete them on error.
-        // A brand-new node that errors on first run has no wires yet, so the
-        // dict is empty for it — which is also correct (nothing to preserve).
+        // applySpecs's step 1 doesn't delete them when the node publishes no values.
+        // A brand-new node has no wires yet, so the dict is empty for it — which is also
+        // correct (nothing to preserve).
 
         var wireSpecs = [String: [String: String]]()
 
         for port in descriptor.dynamicInputPorts {
-            // Already building an error result, so a further failure here just means this
-            // port's specs cannot be preserved — skip it rather than escalate. Unless it is
-            // the machine failing, which the fatal handler hears about either way.
+            // Already building a result that publishes nothing, so a further failure here
+            // just means this port's specs cannot be preserved — skip it rather than
+            // escalate. Unless it is the machine failing, which the fatal handler hears
+            // about either way.
             let toSymbolID = port.asSymbolID()
             guard let nodeID = try? requireID(),
                   let wires = FatalErrors.attempt({

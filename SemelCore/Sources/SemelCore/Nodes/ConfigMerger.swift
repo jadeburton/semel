@@ -52,17 +52,18 @@ public struct ConfigMerger: Node {
     /// Failing instead would make every project with nothing to override unbuildable until
     /// someone wrote an empty file for it.
     ///
-    /// What arrives is an *error*, not an absence: a `StaticFile` nobody has pushed publishes
-    /// `noValue(.error)` carrying `initializing`. The node still runs, because
-    /// `allInputsAreSatisfied` waits on `pending` but not on `error` — otherwise requiring
-    /// these ports would have made an unwritten override stall the build rather than mean
-    /// "nothing to add".
+    /// What arrives is not an absence: a `StaticFile` nobody has pushed publishes
+    /// `noValue(.initializing)`, having no inputs and so nothing that would ever make it run.
+    /// The node still runs on that, because `allInputsAreSatisfied` waits on `pending` and on
+    /// nothing else — otherwise requiring these ports would make an unwritten override stall
+    /// the build rather than mean "nothing to add".
     ///
-    /// The cost is that a genuine upstream failure looks the same as a file nobody wrote, so
-    /// a broken base config would leave a partial configuration here and the tool downstream
-    /// would report the setting it is missing rather than the reason it is missing. The two
-    /// are separable — `initializing` is the ghost marker, and `ErrorReport` already keys on
-    /// it — but this does not yet separate them.
+    /// The cost is that this node treats a file nobody wrote and a genuine upstream failure
+    /// alike, so a broken base config leaves a partial configuration here and the tool
+    /// downstream reports the setting it is missing rather than the reason it is missing. The
+    /// two are distinguishable — `initializing` is the state of a port nothing has processed,
+    /// where a failure is `inputInError` or an error of its own — and telling the reader
+    /// which one it met is B-92.
     ///
     /// One wire per port is the intent, and both callers of this write exactly one. Wires are
     /// merged in sorted key order anyway, so that two of them cannot resolve differently

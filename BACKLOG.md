@@ -244,33 +244,19 @@ B-102 and B-103 are what keeps the everyday path from reaching it.
 
 ## Performance
 
-**B-74** `open` — **Nothing tests a large `rm`, and four things go wrong in one.**
-Removing a prepared IceCubesApp from the input file system (2026-09-20) showed: the folder
-and the products under `output:` listed as `[missing]` until settle, `debug` failing on a
-graph of a few hundred nodes, and a wall of errors during the cascade. Nothing in the
-suites exercises `rm` through the CLI, the largest deletion test removes a folder of two
-files, and the end-to-end harness never removes anything after a build. Two tests are
-owed, and they are the acceptance for the fixes:
-
-1. `FolderRemovalScaleTests` is that `SemelCore` scale test: it pushes a few thousand
-   files, removes them, and holds the cost to linear growth and the folder node to gone
-   once the collector has run.
-2. A `SemelEndToEndTests` step, or a `SemelCLITests` case over `InProcessConnection`: after
-   a build, `rm` the build folder, `wait`, then `ls input:` and `ls output:` show nothing
-   under it, no `[missing]` entry, and the idle error report is empty.
-
-What the reproduction (C fixture grown to 1,019 nodes) found, for whoever writes them:
-`[missing]` means only "exists and not pinned" (`InternalFileSystemLister.swift:38`), and an
-`OutputFile` reads pinned from its *input* port, so an artifact whose input errored shows
-the same word; both are collected at settle. `debug`'s dependency tree keeps its visited set
-per node and so enumerates paths (one shared `StaticFile` visited 999 times), and the text
-rides in the frame JSON under the 1 MiB cap, so past about 600 nodes the server refuses the
-frame and the client sees a closed connection. Deleting one shared header produced 500
-error entries at idle, 494 of them the identical unlabelled `ClangCompiler … inputValueInError`,
-because only `.pending` blocks processing and errors propagate through every consumer;
-deleting the whole project produced none, since everything was collected. The fixes are
-separate items: the idle error report collapsing a cascade to its cause, `[missing]` split
-into its states, and `ProjectBuilder`'s mid-flight printer (B-50). The `debug` tree is fixed.
+**B-74** `open` — **`[missing]` is one word for two states.**
+`ls` prints `[missing]` for anything that exists and is not pinned
+(`InternalFileSystemLister.swift:38`). That covers a file on its way out of the input file
+system, and it also covers an artifact under `output:` whose build failed, because an
+`OutputFile` reads pinned from its *input* port and an input in error is not pinned. One
+word for both tells the reader nothing: the first state settles by itself, the second is a
+failure to act on. Split the state and give each its own word. `FolderRemovalScaleTests`
+and `FolderRemovalAfterBuildTests` hold the removal side — the folder and its products are
+gone once the collector has run, with nothing listed `[missing]` behind them — so what the
+split is owed is a case that leaves a product's input in error and reads the listing.
+Unmeasured alongside it: the idle report's upstream walk costs one indexed wire query per
+carrying node per idle pass — tens of milliseconds at the 500-node cascade B-74 was opened
+by — and no scale test holds that number.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
@@ -407,20 +393,6 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
-**B-101** `open` — **`initializing` is an error message the engine recognises by its text.**
-A fresh node's output port is stored as `noValue(.error)` carrying the interned string
-`initializing`, and `ErrorReport.reportableMessage` keeps a new graph from reading as a
-graph full of failures by comparing that text against `NodeError.initializingMessage`. A
-sentinel matched by string is the wrong shape for a state: `NoValueReason` wants a third
-case, `initializing`, so the report filters by case and the string goes. It is persisted
-in `OutputPort.valueKind`, so the change bumps `Semel.version`, and it has one consumer
-that depends on the encoding: `ConfigMerger` runs against an override file nobody has
-pushed *because* the placeholder arrives as `error`, which `allInputsAreSatisfied` does
-not wait on, where `pending` would stall it. So the new case has to say, per consumer,
-whether it counts as pending or as error, and `ConfigMerger`'s own comment names that
-separation as the work to do. Belongs with B-43: an error standing in for "nothing there"
-is the dataflow rule being bent.
-
 **B-103** `open` — **Nothing checks the graph's invariants short of failing on them.**
 The week's silent corruptions — a wire dropped because two shared a key, a folder manifest
 rebuilt per child, an error whose message was empty — were each found by a test written
@@ -428,7 +400,11 @@ after the symptom, not by anything the running system could say about itself. A 
 verb walks the graph and reports every invariant that does not hold: a wire whose endpoint
 node or port is gone, a node whose `graphSpec` no longer parses or names a type the server
 does not link (B-83), a product with no producer, a folder manifest naming a child that
-does not exist, an error port with no message, a cache entry whose key no longer parses. It
+does not exist, an error port with no message, a cache entry whose key no longer parses.
+"A product with no producer" is the one the prompt cannot report on its own: an `OutputFile`
+whose required input has no wire holds `initializing`, which is a state and not a failure,
+and the engine's "inconsistent input" catch in `Node.tryComputeOutput` is a not-ready signal
+rather than an error, so nothing says anything until `check` does. It
 reports and repairs nothing; `reset` is the repair, and `check` is how one learns whether it
 is needed and what to file when it is. Run by the end-to-end harness after every build so
 the fixtures prove the invariants, and offered to a user before `reset` is suggested.
@@ -539,22 +515,27 @@ the linker picks whichever copy it finds — `semel` and `semelserv` disagreed a
 protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
 `rm .build/debug.yaml` does not touch it.
 
-**B-92** `open` — **A file nobody pushed is an error that hides itself.**
-A `StaticFile` the formula names but nobody has pushed publishes `noValue(.error)` carrying
-the placeholder string `initializing`; `ErrorReport.reportableMessage(of:)` filters that string out
-of every report, and `ConfigFilter` and `ConfigMerger` skip such wires so that an unwritten
-override means "nothing to add". `ConfigMerger`'s own comment names the cost: a genuine
-upstream failure looks the same as a file nobody wrote, and the tool downstream reports
-the setting it is missing rather than the reason. The first thing every hand-written
-build does is exactly this — `hello.fmla` reads `<../clang.cfg>`, `build` pushes one
-folder, and `docs/tutorial/first-node.md` has to spend a paragraph on `push clang.cfg`
-because forgetting it is (untested, read from the code) a wall of missing-setting errors
-with nothing naming the file. B-71 fixed this for one xcconfig; do it once for all:
-a first-class `.absent` reason distinct from `.error`, reported once at idle as the cause
-("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), with the nodes that
-deliberately tolerate an absent input saying so in their descriptor rather than by string
-comparison. `build` could then also offer to push what the formula names outside its
-folder, or at least say that it did not.
+**B-92** `open` — **A file nobody pushed is a state nobody is told about.**
+A `StaticFile` the formula names but nobody has pushed publishes `noValue(.initializing)`:
+no value has ever been produced there, and the node has no inputs, so nothing ever will.
+Nothing has failed, so nothing is reported — the nodes below it publish `inputNotProduced`
+and are passed over for the same reason, and `ConfigFilter` and `ConfigMerger` skip such
+wires on purpose, so that an override file nobody wrote means "nothing to add" rather than
+an unbuildable project. The cost is that a tool downstream reports the setting it is
+missing rather than the reason it is missing, and that **until this item ships, a mistyped
+or unpushed path in a formula produces no error report at all** — only `[missing]` beside
+the file in `ls` and one `Error` beside the product. The first thing every hand-written
+build does is exactly this: `hello.fmla` reads `<../clang.cfg>`, `build` pushes one folder,
+and `docs/tutorial/first-node.md` has to spend a paragraph on `push clang.cfg` because
+forgetting it is a wall of missing-setting errors with nothing naming the file. B-71 fixed
+this for one xcconfig; do it once for all: the idle report names the state as the cause
+("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), walking from the
+unproduced port to the formula that names it, with the nodes that deliberately tolerate an
+absent input saying so in their descriptor. `build` could then also offer to push what the
+formula names outside its folder, or at least say that it did not. Two states are still
+spelled as sentences and belong in the same pass: a removed file's `error("Deleted")`
+(`StaticFile`, `Folder`) and a folder's `error("Deleted/Nonexistent")`.
+
 
 ## App bundles
 

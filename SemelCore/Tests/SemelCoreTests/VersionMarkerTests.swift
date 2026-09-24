@@ -83,6 +83,81 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try storedVersion(engine), Semel.version)
     }
 
+    /// A port's reason is stored as a number, and `0.1.2` wrote a node that had not run as an
+    /// error carrying the word `initializing` where `0.1.3` writes a state of its own. A graph
+    /// stamped with the older version is rebuilt rather than read against this version's
+    /// meaning, so no port keeps a reason nothing writes.
+    func test_aGraphFromBeforeTheReasonsWereStatesIsRebuilt() throws {
+        let engine  = try makeEngine(try DatabaseLayer())
+        let derived = try makeDerivedNode()
+        try engine.database.node.select(nodeID: derived).writeToOutputPort(
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "initializing".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertThrowsError(try engine.database.node.select(nodeID: derived),
+                             "a graph whose port reasons mean something else must be rebuilt")
+        XCTAssertEqual(try storedVersion(engine), Semel.version)
+    }
+
+    /// A file the formula names and nobody pushed lives in the input file system, which the
+    /// rebuild preserves — port rows and all. Its port holds what another Semel wrote there,
+    /// so the rebuild restates it: a preserved file with no value has never had one, and
+    /// leaving the old spelling would have it read as a failure with a word for a message.
+    func test_aPreservedFilesPortIsRestatedByTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
+            .findOrCreateMatchingNode()
+        try file.writeToOutputPort(
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "initializing".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
+
+        try engine.reconcileVersionMarkers()
+
+        let fileID = try file.requireID()
+        XCTAssertNotNil(try engine.database.node.select(nodeID: fileID), "a pushed file survives a rebuild")
+        let port = try XCTUnwrap(engine.database.outputPort.select(nodeID: fileID,
+                                                                   nameSymbolID: "output".asSymbolID()))
+        XCTAssertEqual(port.valueKind, .initializing)
+        XCTAssertNil(port.dataObjectHash)
+    }
+
+    /// The restating is a migration of one encoding, not a sweep of every error: a file the
+    /// user removed while a formula still named it says so, and keeps saying so.
+    func test_aPreservedFilesOwnErrorSurvivesTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/gone.c')")
+            .findOrCreateMatchingNode()
+        try file.writeToOutputPort(
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(nodeID: try file.requireID(),
+                                                                   nameSymbolID: "output".asSymbolID()))
+        XCTAssertEqual(port.valueKind, .error)
+        XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "Deleted")
+    }
+
+    /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
+    /// the restating above cannot cost a cache hit or a re-push.
+    func test_aPushedFilesContentSurvivesTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
+            .findOrCreateMatchingNode()
+        _ = try XCTUnwrap(file.nodeAsAny() as? StaticFile).replaceContent(try "target=arm64".intern())
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(nodeID: try file.requireID(),
+                                                                   nameSymbolID: "output".asSymbolID()))
+        XCTAssertEqual(port.valueKind, .value)
+        XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "target=arm64")
+    }
+
     func test_theInputFileSystemSurvivesAVersionChange() throws {
         let engine = try makeEngine(try DatabaseLayer())
         let source = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)

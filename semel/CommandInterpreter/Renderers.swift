@@ -37,6 +37,13 @@ enum ErrorRecordRenderer {
             }
         }
 
+        // The cascade under the failure, as a count rather than a line per node carrying it.
+        switch record.downstreamCarrierCount {
+        case ..<1: break
+        case 1:    result.append("   · and 1 node downstream carries it")
+        default:   result.append("   · and \(record.downstreamCarrierCount) nodes downstream carry it")
+        }
+
         result.append("")
         return result
     }

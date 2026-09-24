@@ -39,16 +39,10 @@ struct TreeFile: Node, FileMetadataProvider {
         guard let treeValue = input.inputValues[Self.treeInputPort]?.first?.value else {
             throw NodeError.other(message: "TreeFile '\(name)': nothing is wired to its tree port")
         }
-        let manifest: TreeManifest
-        switch treeValue {
-        case .noValue(let reason):
-            // Whatever stopped the tree stops every file of it, with the same reason.
-            return .init(outputValues: [Self.outputPort: .noValue(reason: reason),
-                                        Self.fileMetadataOutputPort: .noValue(reason: reason)],
-                         inputWireSpecs: [:])
-        case .value(let hash):
-            manifest = try TypeRegistry.decodeAndCast(encodedJSON: try hash.resolveAsString())
-        }
+        // Whatever stopped the tree stops every file of it: demanding the value hands the
+        // engine what stood in the way, and it writes the state that follows onto both ports.
+        let manifest: TreeManifest = try TypeRegistry.decodeAndCast(
+            encodedJSON: try treeValue.expectValue().resolveAsString())
 
         guard let entry = manifest.entry(at: name) else {
             let message = "no file '\(name)' in the tree; it holds: " + manifest.entries.map(\.path).joined(separator: ", ")

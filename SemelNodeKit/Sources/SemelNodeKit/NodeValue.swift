@@ -6,9 +6,56 @@
 import Foundation
 import SemelDatabaseModels
 
+/// Why a port is carrying no value.
+///
+/// Each of these is a state the engine asks about by case. A reason that means "not a
+/// value" but is not a failure of this node — a port that has never been processed, a node
+/// whose input failed — is its own case rather than an `error` carrying a sentence, so that
+/// anything deciding what to do about it reads the case instead of matching the text.
 public enum NoValueReason: Codable {
+    /// The node is waiting for something: a consumer must wait with it.
     case pending
+    /// No value has ever been produced here. A port holds this from its node's creation
+    /// until something produces one, and a file nobody pushed holds it for good, having no
+    /// inputs and so nothing that would ever make it run. Not a failure — a graph full of
+    /// fresh nodes is not a graph full of failures — and not something to wait on either, so
+    /// a node reading it runs and makes of it what it can.
+    case initializing
+    /// The node could not produce a value because an input has never had one. Nothing has
+    /// failed anywhere above it, so a report says nothing about it.
+    case inputNotProduced
+    /// The node did not run because one of its inputs is in error. It has nothing of its own
+    /// to say, and a report folds it onto whatever failed upstream.
+    case inputInError
+    /// This node failed, and the message is its own.
     case error(messageDataObjectHash: DataObjectHash)
+}
+
+extension NoValueReason: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .pending:          return "waiting for a value"
+        case .initializing:     return "no value has been produced"
+        case .inputNotProduced: return "\(NodeError.inputValueNotProduced)"
+        case .inputInError:     return "\(NodeError.inputValueInError)"
+        case .error(let messageDataObjectHash):
+            return (try? messageDataObjectHash.resolveAsString()) ?? "an error with no message"
+        }
+    }
+}
+
+extension NoValueReason {
+    /// The error a consumer throws when it demanded a value and met this reason instead.
+    ///
+    /// This is the one table: a node may demand its value and let the throw be translated,
+    /// or a reader may ask what a reason means to a consumer, and the two answer alike.
+    public var thrownByAConsumer: NodeError {
+        switch self {
+        case .pending:                         return .inputValuePending
+        case .initializing, .inputNotProduced: return .inputValueNotProduced
+        case .inputInError, .error:            return .inputValueInError
+        }
+    }
 }
 
 public enum NodeValue: Codable {
@@ -20,12 +67,9 @@ extension NodeValue {
     public func expectValue() throws -> DataObjectHash {
         switch self {
         case .noValue(let reason):
-            switch reason {
-            case .pending:
-                throw NodeError.inputValuePending
-            case .error:
-                throw NodeError.inputValueInError
-            }
+            // A consumer asking for a value it cannot have is told what stood in the way,
+            // and the engine writes that as this node's own state.
+            throw reason.thrownByAConsumer
         case .value(let value):
             return value
         }
@@ -74,6 +118,15 @@ extension NodeValue {
         case .pending:
             self = .noValue(reason: .pending)
 
+        case .initializing:
+            self = .noValue(reason: .initializing)
+
+        case .inputNotProduced:
+            self = .noValue(reason: .inputNotProduced)
+
+        case .inputInError:
+            self = .noValue(reason: .inputInError)
+
         case .error:
             self = try .noValue(reason: .error(messageDataObjectHash: port.dataObjectHash ?? "<unknown>".intern()))
 
@@ -98,6 +151,24 @@ extension NodeValue {
                 return .init(nodeID: nodeID,
                              nameSymbolID: outputSymbolID,
                              valueKind: .pending,
+                             dataObjectHash: nil)
+
+            case .initializing:
+                return .init(nodeID: nodeID,
+                             nameSymbolID: outputSymbolID,
+                             valueKind: .initializing,
+                             dataObjectHash: nil)
+
+            case .inputNotProduced:
+                return .init(nodeID: nodeID,
+                             nameSymbolID: outputSymbolID,
+                             valueKind: .inputNotProduced,
+                             dataObjectHash: nil)
+
+            case .inputInError:
+                return .init(nodeID: nodeID,
+                             nameSymbolID: outputSymbolID,
+                             valueKind: .inputInError,
                              dataObjectHash: nil)
 
             case .error(let messageDataObjectHash):

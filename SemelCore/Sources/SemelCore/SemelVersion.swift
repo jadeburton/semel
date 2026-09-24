@@ -17,5 +17,10 @@ public enum Semel {
     /// named wires its consumers demand. The `Wire` table's key says so too, and a database
     /// keyed the other way is caught by the schema check before this marker is read: that
     /// one is not a reset but a stopped launch, telling the user which file to delete.
-    public static let version = "0.1.2"
+    ///
+    /// 0.1.3: a port's reason for having no value is a state — `initializing`,
+    /// `inputNotProduced`, `inputInError` — where it was an error carrying a sentence.
+    /// Stored graphs hold the reason as a number per port, and the numbers an older graph
+    /// holds mean something else, so the rebuild also restates the ports it preserves.
+    public static let version = "0.1.3"
 }

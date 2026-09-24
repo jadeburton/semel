@@ -375,40 +375,39 @@ public final class BuildEngine {
             return
         }
 
-        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
-
         // The "current" error map. `ErrorReport.reportableMessage` is the one place that
         // decides what a port's message is and which placeholder is not one.
+        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
+
         var current: [ObjectID: Set<String>] = [:]
         for (nodeID, ports) in byNode {
             let messages = Set(ports.compactMap(ErrorReport.reportableMessage))
             if !messages.isEmpty { current[nodeID] = messages }
         }
 
-        // Only nodes with at least one newly-appearing message. Reporting an error that has
-        // already been reported on every settle is how a report stops being read.
-        var entries: [(nodeID: ObjectID, entry: ErrorReport.Entry)] = []
-
-        for (nodeID, messages) in current {
-            let newMessages = messages.subtracting(lastReportedErrors[nodeID] ?? [])
-            guard !newMessages.isEmpty else { continue }
-
-            entries.append((nodeID, ErrorReport.entry(forNodeID: nodeID,
-                                                      ports: byNode[nodeID] ?? [],
-                                                      messages: newMessages,
-                                                      database: database)))
+        // Only the causes, and of those only the ones with a newly-appearing message.
+        // Reporting an error that has already been reported on every settle is how a report
+        // stops being read. `ErrorReport` decides the rest — which nodes are causes, how the
+        // cascade under each is counted, and the order — so that this event and the `errors`
+        // verb's reply list the same failures alike.
+        let entries = ErrorReport.entries(forErrorPorts: errorPorts, database: database) { nodeID, messages in
+            messages.subtracting(lastReportedErrors[nodeID] ?? [])
         }
 
-        lastReportedErrors = current
+        // What a node is known to have been reported for, kept message by message: a carrier
+        // folded into its cause is reported for nothing, so it keeps nothing, and the day its
+        // own cause is collected and it becomes the cause, its message still counts as new.
+        var reported: [ObjectID: Set<String>] = [:]
+        for (nodeID, messages) in current {
+            reported[nodeID] = messages.intersection(lastReportedErrors[nodeID] ?? [])
+        }
+        for entry in entries {
+            reported[entry.nodeID] = current[entry.nodeID]
+        }
+        lastReportedErrors = reported
 
-        // Sorted by label and then by node, so a report reads the same from run to run:
-        // `current` is a dictionary, whose order is seeded per process, and two nodes can
-        // carry one label — two of a type with no path do. A sort by label alone leaves
-        // those two in the order the walk found them, `sort` being no more stable than the
-        // key it is given. `RequestHandler` orders the `errors` reply the same way, which
-        // is what lets the reply and this event list the same failures alike.
         if !entries.isEmpty {
-            errorReporter(entries.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }.map(\.entry))
+            errorReporter(entries.map(\.entry))
         }
     }
 

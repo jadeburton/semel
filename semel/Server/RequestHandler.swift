@@ -146,23 +146,16 @@ public final class RequestHandler {
 
     // MARK: - Engine verbs
 
+    /// Every failure the graph is holding, cascades folded onto their causes and ordered —
+    /// all of it decided by `ErrorReport`, which the idle-time event goes through too, so
+    /// the reply and the event list the same failures the same way. The selection is the
+    /// only difference: this verb is asked for everything, where the event reports what is
+    /// newly appearing.
     private func errorRecords() throws -> [ErrorRecord] {
-        let errorPorts = try database.outputPort.selectAllErrors()
-        let byNode     = Dictionary(grouping: errorPorts, by: \.nodeID)
-
-        let entries = byNode.map { nodeID, ports in
-            (nodeID, ErrorReport.entry(forNodeID: nodeID,
-                                       ports:     ports,
-                                       messages:  Set(ports.compactMap(ErrorReport.reportableMessage)),
-                                       database:  database))
-        }
-
-        // Sorted by label and then by node, the same total order the idle-time event uses,
-        // so the reply and the event list the same failures the same way. The node breaks
-        // a tie between two labels that are equal — two nodes of a type with no path share
-        // one — which a sort by label alone leaves to the order the dictionary was walked
-        // in, and that order is seeded per process.
-        return entries.sorted { ($0.1.label, $0.0) < ($1.1.label, $1.0) }.map { ErrorRecord($0.1) }
+        ErrorReport.entries(forErrorPorts: try database.outputPort.selectAllErrors(),
+                            database: database,
+                            select: { _, messages in messages })
+            .map { ErrorRecord($0.entry) }
     }
 
     /// The installed tools per namespace, unrendered; the client prints them as config
@@ -233,6 +226,7 @@ extension ErrorRecord {
     /// protocol package must not import the engine.
     init(_ entry: ErrorReport.Entry) {
         self.init(label:   entry.label,
-                  entries: entry.items.map { ErrorEntry(ports: $0.ports, message: $0.message) })
+                  entries: entry.items.map { ErrorEntry(ports: $0.ports, message: $0.message) },
+                  downstreamCarrierCount: entry.downstreamCarrierCount)
     }
 }

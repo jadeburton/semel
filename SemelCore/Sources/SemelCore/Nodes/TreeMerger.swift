@@ -37,14 +37,11 @@ struct TreeMerger: Node {
         var from: [String: String] = [:]
 
         for (key, value) in (input.inputValues[Self.inputPort] ?? [:]).sorted(by: { $0.key < $1.key }) {
-            let manifest: TreeManifest
-            switch value {
-            case .noValue(let reason):
-                // Whatever stopped one tree stops the merge, with the same reason.
-                return .init(outputValues: [Self.outputPort: .noValue(reason: reason)], inputWireSpecs: [:])
-            case .value(let hash):
-                manifest = try TypeRegistry.decodeAndCast(encodedJSON: try hash.resolveAsString())
-            }
+            // Whatever stopped one tree stops the merge, and demanding the value is how this
+            // node says so: the engine writes the state that follows from what stood in the
+            // way, rather than this node repeating a sentence another node wrote.
+            let manifest: TreeManifest = try TypeRegistry.decodeAndCast(
+                encodedJSON: try value.expectValue().resolveAsString())
             for entry in manifest.entries {
                 if let earlier = from[entry.path] {
                     let message = "two trees hold '\(entry.path)': \(earlier) and \(key)"

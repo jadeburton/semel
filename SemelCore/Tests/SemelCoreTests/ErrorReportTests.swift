@@ -155,17 +155,20 @@ final class ErrorReportTests: SemelCoreTestCase {
         XCTAssertEqual(try messageHash.resolveAsString(), written)
     }
 
-    /// A case with no message of its own still has to read as a sentence, for the same
-    /// reason: `inputValueInError` is the enum's spelling, not an explanation.
-    func test_aNodeErrorWithoutAMessageIsReportedAsASentence() throws {
+    /// A node that did not run because its input failed has nothing of its own to say, so it
+    /// publishes the state rather than a sentence: the thrown error is control flow, and the
+    /// engine turns it into a reason before anything reaches a port.
+    func test_aNodeWhoseInputFailedPublishesTheStateRatherThanAMessage() throws {
         let node = try SampleTool(thisNode: NodeRecord(id: 1, kind: SampleTool.kind))
 
         let output = node.buildErrorOutput(withError: NodeError.inputValueInError)
 
-        guard case .noValue(.error(let messageHash)) = output.outputValues[SampleTool.output] else {
-            return XCTFail("expected an error value")
+        XCTAssertEqual(output.outputValues.count, SampleTool.descriptor.outputPorts.count)
+        for (port, value) in output.outputValues {
+            guard case .noValue(.inputInError) = value else {
+                return XCTFail("expected the input-in-error state on \(port), got \(value)")
+            }
         }
-        XCTAssertEqual(try messageHash.resolveAsString(), "an input is in error")
     }
 
     /// A tool that cannot be found on this machine is a node failure like any other, and
@@ -220,12 +223,14 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     // MARK: - What counts as reportable
 
-    /// Every node holds "initializing" between being created and first processing, so
-    /// reporting it would announce an error for every node in a fresh graph.
-    func test_theInitializingPlaceholderIsNotReportable() throws {
+    /// Every node holds the initializing state between being created and first processing,
+    /// so reporting it would announce an error for every node in a fresh graph.
+    func test_aPortThatHasNotBeenProcessedIsNotReportable() throws {
         let nodeID = try makeNode(kind: Configuration.kind)
+        let initializing = try NodeValue.noValue(reason: .initializing)
+            .asOutputPort(nodeID: nodeID, outputSymbolID: "output".asSymbolID())
 
-        XCTAssertNil(ErrorReport.reportableMessage(of: try port(nodeID, "output", "initializing")))
+        XCTAssertNil(ErrorReport.reportableMessage(of: initializing))
         XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, "output", "")), ErrorReport.emptyMessage)
         XCTAssertEqual(ErrorReport.reportableMessage(of: try port(nodeID, "output", "real")), "real")
     }

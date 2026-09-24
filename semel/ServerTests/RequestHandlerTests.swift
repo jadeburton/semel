@@ -142,6 +142,47 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
     }
 
+    /// B-74. Twenty nodes reading one deleted file all say "an input is in error" and none
+    /// of them can be fixed; the reply names the file once and counts the rest. The event
+    /// says the same, because both are built by `ErrorReport`.
+    func test_errorsFoldsACascadeOntoItsCauseInBothTheReplyAndTheEvent() throws {
+        let source = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
+                                               properties: ["path": "input:/shared.h"], graphSpec: nil)
+        var carriers: [NodeRecord] = []
+        for index in 1...20 {
+            let carrier = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
+                                                    properties: ["tag": "\(index)"], graphSpec: nil)
+            // Wired before it fails: connecting writes pending to every output of the target.
+            try Wire.connectWire(database: database,
+                                 fromNodeID: try source.requireID(),
+                                 fromSymbolID: "output".asSymbolID(),
+                                 toNodeID: try carrier.requireID(),
+                                 toSymbolID: "input".asSymbolID(),
+                                 name: "header".asSymbolID())
+            carriers.append(carrier)
+        }
+        try source.writeToOutputPort("output", value: .noValue(
+            reason: .error(messageDataObjectHash: try "the file is gone".intern())))
+        for carrier in carriers {
+            // The state a node publishes when it did not run because its input failed: no
+            // message of its own, which is what makes it foldable.
+            try carrier.writeToOutputPort("output", value: .noValue(reason: .inputInError))
+        }
+
+        let (response, _) = try daemon(.errors)
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(response, .errors(records: [
+            ErrorRecord(label: "StaticFile  'input:/shared.h'",
+                        entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
+                        downstreamCarrierCount: 20),
+        ]))
+        guard case .errors(let records) = response else {
+            return XCTFail("expected errors, got \(response)")
+        }
+        XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
+    }
+
     func test_errorsIsEmptyWhenNothingFailed() throws {
         XCTAssertEqual(try daemon(.errors).0, .errors(records: []))
     }

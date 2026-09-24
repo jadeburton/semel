@@ -68,10 +68,15 @@ public struct ErrorRecord: Codable, Equatable, Sendable {
     /// builder, the type name otherwise. Decided server-side, where the graph is.
     public let label:   String
     public let entries: [ErrorEntry]
+    /// How many nodes downstream of this one fail only because this one did. A cascade is
+    /// sent as its cause plus this count, not as a record per node that carries it: one
+    /// deleted header stops every node that reads it, and the header is what can be fixed.
+    public let downstreamCarrierCount: Int
 
-    public init(label: String, entries: [ErrorEntry]) {
-        self.label   = label
-        self.entries = entries
+    public init(label: String, entries: [ErrorEntry], downstreamCarrierCount: Int = 0) {
+        self.label                  = label
+        self.entries                = entries
+        self.downstreamCarrierCount = downstreamCarrierCount
     }
 }
 

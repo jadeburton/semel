@@ -115,14 +115,15 @@ questions about settled decisions, recorded so they are argued rather than re-di
   "Why did this rebuild?" is the first question anyone asks a build system whose promise
   is *never twice*, and nothing in the design answers it.
 
-- **A missing file is encoded as a hidden error (B-92).** A `StaticFile` nobody pushed
-  publishes `noValue(.error)` carrying the string `initializing`; `ErrorReport` hides
-  that string, `ConfigFilter` and `ConfigMerger` skip such wires, and the `ConfigMerger`
-  comment already names the cost: a genuine upstream failure looks the same as a file
-  nobody wrote. The tutorial's `push clang.cfg` step exists because `build` pushes one
-  folder and the formula reaches outside it with `<../clang.cfg>`; forget it and the
-  likely result is every tool naming a missing setting and nothing naming the missing
-  file. B-71 was this problem, fixed for one file.
+- **A missing file is a state nobody is told about (B-92).** A `StaticFile` nobody pushed
+  publishes `noValue(.initializing)` — no value has ever been produced there, and with no
+  inputs, nothing ever will. That is not a failure, so no report names it: the nodes below
+  it publish `inputNotProduced` and are passed over too, `ConfigFilter` and `ConfigMerger`
+  skip such wires deliberately, and what a reader gets is `[missing]` in `ls` and one
+  `Error` beside the product. The tutorial's `push clang.cfg` step exists because `build`
+  pushes one folder and the formula reaches outside it with `<../clang.cfg>`; forget it and
+  every tool names a missing setting while nothing names the missing file. B-71 was this
+  problem, fixed for one file; B-92 is the report line that names it for all of them.
 
 - **`reset` throws away the valuable state (B-93).** The graph is rebuildable from the
   input plus the cache, and the cache is content-addressed — but `reset` deletes the

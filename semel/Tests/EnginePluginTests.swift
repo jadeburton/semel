@@ -81,6 +81,41 @@ final class EnginePluginTests: XCTestCase {
         ])
     }
 
+    /// B-74. A cascade arrives as its cause and a count of what carries it, and prints as
+    /// one line under the failure — twenty nodes saying "an input is in error" name no fix
+    /// the file above them does not. `ErrorReport.lines` is the twin of this on the engine's
+    /// side, and prints the same line.
+    func test_errorsPrintsTheCascadeUnderACauseAsOneLine() throws {
+        connection.reply(.errors(records: [
+            ErrorRecord(label: "StaticFile  'input:/shared.h'",
+                        entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
+                        downstreamCarrierCount: 20),
+        ]))
+
+        try run("errors")
+
+        XCTAssertEqual(context.messages, [
+            "1 error across 1 node:\n",
+            "❌ StaticFile  'input:/shared.h'",
+            "   · output: the file is gone",
+            "   · and 20 nodes downstream carry it",
+            "",
+        ])
+    }
+
+    func test_oneNodeDownstreamPrintsAsOne() throws {
+        connection.reply(.errors(records: [
+            ErrorRecord(label: "StaticFile  'input:/shared.h'",
+                        entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
+                        downstreamCarrierCount: 1),
+        ]))
+
+        try run("errors")
+
+        XCTAssertEqual(context.messages.last(where: { $0.contains("·") }),
+                       "   · and 1 node downstream carries it")
+    }
+
     func test_waitSendsWaitAndReportsSettled() throws {
         try run("wait")
 

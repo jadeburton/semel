@@ -45,7 +45,7 @@ public struct ConfigFilter: Node {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let prefix = thisNode.properties[Self.prefixProperty] ?? ""
 
-        // A wire named in the spec before its file exists is a ghost, and one whose file
+        // A wire whose file has never been written carries no value, and one whose file
         // failed to read is not this node's business to explain — either way it contributes
         // nothing, rather than failing every tool downstream over a config file nobody wrote
         // yet. The tool that actually needs a setting is what can say which one is missing
