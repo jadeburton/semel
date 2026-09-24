@@ -258,6 +258,7 @@ extension CheckFinding.Kind {
     init(_ kind: GraphCheck.Kind) {
         switch kind {
         case .danglingWire:          self = .danglingWire
+        case .missingOutputPort:     self = .missingOutputPort
         case .unreadableGraphSpec:   self = .unreadableGraphSpec
         case .unlinkedNodeType:      self = .unlinkedNodeType
         case .productWithNoProducer: self = .productWithNoProducer

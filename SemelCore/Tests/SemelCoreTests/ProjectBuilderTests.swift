@@ -14,14 +14,26 @@ import SemelNodeKit
 final class ProjectBuilderTests: SemelCoreTestCase {
 
     /// A builder reads its own `products` port to report what appeared or disappeared, so
-    /// processing one needs a graph database — an empty one; nothing here is persisted.
-    /// Without this the class only passed after another suite had left a database behind.
+    /// processing one needs a graph database holding the builder and its ports, and
+    /// nothing else. Without this the class only passed after another suite had left a
+    /// database behind.
     override func setUpWithError() throws {
         try super.setUpWithError()
         _ = try DatabaseLayer()
     }
 
     // MARK: - Helpers
+
+    /// A builder as `createNode` leaves one: a row, and a row for every port its type
+    /// declares. The builder reads its own `products` port, and a node missing that row is
+    /// a damaged graph rather than a fresh one.
+    private func makeBuilderNode(properties: [String: String]) throws -> NodeRecord {
+        var node = NodeRecord(parentNodeID: nil, kind: ProjectBuilder.kind, name: nil,
+                              properties: properties, scheduled: false, graphSpec: nil)
+        node.id = try DatabaseLayer.shared.node.insert(node)
+        try node.writePendingToAllOutputsOfNode()
+        return node
+    }
 
     /// One product, wired to a node that needs nothing — the product's shape is
     /// irrelevant here, only the output path it is wrapped in.
@@ -33,9 +45,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     private func productPaths(projectFile: String,
                               properties: [String: String] = [:],
                               formula: String? = nil) throws -> [String] {
-        let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
-                        properties: properties, scheduled: false, graphSpec: nil)
-        let builder = try ProjectBuilder(thisNode: node)
+        let builder = try ProjectBuilder(thisNode: try makeBuilderNode(properties: properties))
         let input = ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  [projectFile: .value(try (formula ?? oneProduct).intern())],
             ProjectBuilder.productInputPort:      [:],
@@ -100,8 +110,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
 
     private func process(formula: String,
                          includes: [String: NodeValue] = [:]) throws -> ProcessOutput {
-        let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
-                              properties: ["outputFolder": "input:/repo"], scheduled: false, graphSpec: nil)
+        let node = try makeBuilderNode(properties: ["outputFolder": "input:/repo"])
         return try ProjectBuilder(thisNode: node).process(input: ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  ["input:/repo/semel.fmla": .value(try formula.intern())],
             ProjectBuilder.productInputPort:      [:],
@@ -191,8 +200,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     private let stampedTreeNode = "Configuration(projectRoot: 'input:/repo', role: 'catalog').output"
 
     private func process(formula: String, trees: [String: NodeValue]) throws -> ProcessOutput {
-        let node = NodeRecord(id: 1, kind: ProjectBuilder.kind, name: nil,
-                              properties: ["outputFolder": "input:/repo"], scheduled: false, graphSpec: nil)
+        let node = try makeBuilderNode(properties: ["outputFolder": "input:/repo"])
         return try ProjectBuilder(thisNode: node).process(input: ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  ["input:/repo/semel.fmla": .value(try formula.intern())],
             ProjectBuilder.productInputPort:      [:],

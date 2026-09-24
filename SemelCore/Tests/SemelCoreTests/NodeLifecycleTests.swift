@@ -58,6 +58,23 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         }
     }
 
+    // MARK: - Reading a port
+
+    /// Every node is given a row per declared port when it is created, so a port with no
+    /// row is a graph something damaged. The read says so, naming the node and the port,
+    /// rather than answering an error nobody raised.
+    func test_readingAnOutputPortWithNoRowThrowsNamingTheNodeAndThePort() throws {
+        let file = try pushFile("src/hello.c")
+        let nodeID = try file.thisNode.requireID()
+        _ = try database.outputPort.delete(nodeID: nodeID, nameSymbolID: StaticFile.outputPort.asSymbolID())
+
+        XCTAssertThrowsError(try file.thisNode.readFromOutputPort(StaticFile.outputPort)) { error in
+            let text = "\(error)"
+            XCTAssertTrue(text.contains("#\(nodeID)"), text)
+            XCTAssertTrue(text.contains("'\(StaticFile.outputPort)'"), text)
+        }
+    }
+
     // MARK: - Name collisions
 
     /// Two children of one folder sharing a name makes the tree ambiguous: `childNode`

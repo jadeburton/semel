@@ -123,7 +123,7 @@ final class GraphCheckTests: SemelCoreTestCase {
 
         XCTAssertEqual(findings, [GraphCheck.Finding(
             kind: .graphCouldNotBeRead, subject: "the node table",
-            sentence: "it could not be read, so wires, graph specs, products, folder manifests and "
+            sentence: "it could not be read, so wires, output ports, graph specs, products, folder manifests and "
                     + "error ports were not checked")])
     }
 
@@ -214,6 +214,50 @@ final class GraphCheckTests: SemelCoreTestCase {
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .danglingWire)
         XCTAssertEqual(findings.first?.sentence, "Configuration #\(try source.requireID()) has no output port 'goneAway'")
+    }
+
+    /// The same end asked the question the other end is asked: a port dropped from a type
+    /// leaves its row behind, and a wire still hanging off that row is handed whatever it
+    /// last held, forever, by a port nothing will ever write again.
+    func test_findsAWireFromAnOutputPortItsTypeDoesNotDeclare() throws {
+        let source   = try makeConfiguration(role: "source")
+        let consumer = try makeConfiguration(role: "consumer")
+
+        try database.outputPort.insertOrUpdate(
+            OutputPort(nodeID:         try source.requireID(),
+                       nameSymbolID:   "goneAway".asSymbolID(),
+                       valueKind:      .pending,
+                       dataObjectHash: nil))
+        _ = try database.wire.insert(Wire(fromNodeID:   try source.requireID(),
+                                          fromSymbolID: "goneAway".asSymbolID(),
+                                          toNodeID:     try consumer.requireID(),
+                                          toSymbolID:   Configuration.inputPort.asSymbolID(),
+                                          name:         "link".asSymbolID()))
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings.count, 1, "\(findings)")
+        XCTAssertEqual(findings.first?.kind, .danglingWire)
+        XCTAssertEqual(findings.first?.sentence,
+                       "Configuration #\(try source.requireID()) declares no output port 'goneAway'")
+    }
+
+    // MARK: - A port its type declares and the node holds no row for
+
+    /// Every node is given a row per declared port when it is created, so one without is a
+    /// node something damaged — and a read of that port has nothing true to answer.
+    func test_findsANodeHoldingNoRowForAnOutputPortItsTypeDeclares() throws {
+        let node = try makeConfiguration(role: "source")
+        _ = try database.outputPort.delete(nodeID: try node.requireID(),
+                                           nameSymbolID: Configuration.outputPort.asSymbolID())
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings.count, 1, "\(findings)")
+        XCTAssertEqual(findings.first?.kind, .missingOutputPort)
+        XCTAssertEqual(findings.first?.subject, "Configuration #\(try node.requireID())")
+        XCTAssertEqual(findings.first?.sentence,
+                       "its type declares the output port 'output', and it holds no row for it")
     }
 
     // MARK: - A graph spec that cannot be read back, or names a type nobody links
