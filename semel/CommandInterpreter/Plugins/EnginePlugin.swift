@@ -41,6 +41,17 @@ final class EnginePlugin: CommandPlugin {
     /// asked for another pass. What a script needs between `push` and `errors`, and what
     /// the prompt otherwise never says — a command returns while the build runs behind it.
     private func handleWait(context: any CommandContext) throws {
+        // A batch holds back the very signal the wait would wait on (B-61), so this would
+        // block until the commit that nobody can type while it blocks.
+        guard context.openBatchDepth == 0 else {
+            context.outputError("wait: a batch is open; `commit` ends it and waits")
+            return
+        }
+        try Self.waitForSettle(context: context)
+    }
+
+    /// The wait itself, for `wait` and for the `commit` that ends a batch.
+    static func waitForSettle(context: any CommandContext) throws {
         // Before, not after: the settle-time event this unblocks (see the idle-time error
         // reporter) can fire and count *during* this request, ahead of `outputMessage`
         // below ever running.
