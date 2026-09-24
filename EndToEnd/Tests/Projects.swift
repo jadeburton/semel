@@ -75,7 +75,10 @@ enum Projects {
         expectedProducts: ["libConversations.a", "libExplore.a", "libLists.a", "libNotifications.a", "libTimeline.a"],
         buildTimeout: 15 * 60,
         // Two cold builds of five minutes each are enough; the fixtures prove the third.
-        twoMounts: false)
+        twoMounts: false,
+        // And the fourth: a perturbed build costs another five minutes here, while the
+        // fixtures cover every toolchain this project uses in seconds.
+        perturbed: false)
 
     /// The application itself, through `XcodeProjectConverter`: the whole checkout is the
     /// project's root, so `buildFolder` names the checkout (see `Project.Source.git`'s
@@ -119,8 +122,11 @@ enum Projects {
             "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
         ],
         // A cold build takes several minutes; the third build the fixtures prove is not
-        // worth a third here.
-        twoMounts: false)
+        // worth a third here, and neither is the perturbed fourth — run time is the
+        // constraint for this project, not coverage: `actool`, both linkers and both
+        // compilers are perturbed by the fixtures on every push.
+        twoMounts: false,
+        perturbed: false)
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
     static let external: [Project] = [icecubes, icecubesApp]

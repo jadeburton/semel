@@ -16,13 +16,6 @@ the toolchain, SDK and system libraries, reset between builds. The container dig
 input?" stops being a question only an audit can answer. Also the natural home for the
 Remote Runner role (B-30).
 
-**B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
-Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,
-hostname, wall-clock. Any output difference means the key is under-specified. The systematic
-version of how the SDK bug was found; belongs in the test suite, run once per node type.
-Its home is `EndToEndRun`: an extra cold build with a perturbed environment, and the same
-`TreeDiff` against the first.
-
 **B-17** `open` — **`ToolDescriptor.recursiveHash` is designed but never populated.**
 The slot exists on every tool descriptor and is read from
 `properties["toolDescriptor.recursiveHash"]`, but nothing ever sets it, so it is always nil.

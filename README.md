@@ -260,9 +260,11 @@ tool, and another toolchain gets one of its own if it needs one.
 
 `swift test` builds the fixtures under `EndToEnd/Fixtures` — a C program, a C++ one,
 the tutorial's project, a Swift package with a path dependency and a SwiftUI app for the
-simulator — through `semelserv`, `semel` and `semel-swift` together, each twice in two
-fresh homes, and requires the two export trees to match byte for byte, static archives
-included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
+simulator — through `semelserv`, `semel` and `semel-swift` together, each four times in
+four fresh homes: twice over the same copy, once from a copy at another mount, and once
+with the environment perturbed — a different `TMPDIR`, working directory, locale and time
+zone, none of which is in a cache key. All four export trees must match byte for byte,
+static archives included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
 projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, and the
 app itself from its Xcode project — fetched once into `~/Library/Caches/semel/end-to-end`
 (`SEMEL_E2E_CACHE` moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's

@@ -14,7 +14,7 @@ swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
 swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
 swift test --package-path SemelExamples      # the tutorial's reference node (~4)
 swift test --package-path SemelCore    # the engine tests (~350)
-swift test                                   # the CLI, transport, server and end-to-end fixture tests (~191)
+swift test                                   # the CLI, transport, server and end-to-end fixture tests (~276)
 SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
 ```
 
@@ -51,8 +51,9 @@ belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`
 names and the configuration text format ended up there. A toolchain node never puts an
 absolute sandbox path on a command line: `ToolSandbox` in `SemelNodeKit` is the contract,
 and `/semel` is the name a tool is told when it insists on recording its directory. The
-harness's cold builds — each in its own sandbox, the third from a copy at a second mount —
-are what catch a node that breaks it.
+harness's cold builds — each in its own sandbox, the third from a copy at a second mount,
+the fourth under a perturbed `TMPDIR`, working directory, locale and time zone — are what
+catch a node that breaks it.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on
@@ -62,7 +63,9 @@ with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
 `EndToEnd/Tests` is the one place the three executables are run together, as a user
 runs them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel` and
-`semel-swift` against it, and builds each project twice to compare the bytes.
+`semel-swift` against it, and builds each project up to four times to compare the bytes:
+twice over one copy, once from a copy at a second mount, once under a perturbed
+environment.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
