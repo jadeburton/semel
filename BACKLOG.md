@@ -232,14 +232,6 @@ One binary, three modes, sharing a wire protocol:
    and it is where the path authorisation and sync machinery came from. The artifact events
    CLIs subscribe to are B-50's settle diffs. What remains of B-30 is roles 1 and 2.
 
-**B-73** `open` — **A crashed or Ctrl-C'd client orphans its `semelserv`.**
-The end-to-end harness stops every server it starts with SIGTERM, but only on the paths it
-controls; a `semel` test process that crashes or is killed does not reach its own cleanup
-and leaves the `semelserv` it started running. Two shapes fix it: put the server in the
-client's process group, so a signal delivered to the group reaches both; or have `semelserv`
-exit when its socket file disappears, which also covers a user who deletes the socket by
-hand.
-
 ## Command line
 
 What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C fixture

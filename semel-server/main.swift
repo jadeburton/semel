@@ -3,8 +3,9 @@
 //  semelserv
 //
 //  The engine behind a Unix-domain socket. Start it in a terminal or under launchd; it
-//  logs to standard output and error and stops cleanly on SIGINT or SIGTERM. One per
-//  user: a second instance finds the first through the socket file and exits.
+//  logs to standard output and error and stops cleanly on SIGINT or SIGTERM, or when its
+//  socket file is deleted. One per user: a second instance finds the first through the
+//  socket file and exits.
 //
 
 import Foundation
@@ -46,6 +47,19 @@ do {
 var engineStarted   = false
 var runningServer: Server?
 
+/// The orderly stop: a signal, or the socket file disappearing once the server listens.
+/// Safe before the engine and the server exist, when there is only the file to clean up.
+func stopCleanly() {
+    if engineStarted {
+        BuildEngine.shared.stopProcessingLoop()
+    }
+    guard let runningServer else {
+        try? FileManager.default.removeItem(atPath: socketPath)
+        exit(0)
+    }
+    runningServer.terminate(code: 0)
+}
+
 // Signals: ignore the default disposition, then handle on a queue so the stop runs on an
 // ordinary thread with the listener's locks available. Installed before the engine, so a
 // signal during startup unwinds what exists instead of killing the process where it
@@ -55,16 +69,7 @@ var signalSources: [DispatchSourceSignal] = []
 for signalNumber in [SIGINT, SIGTERM] {
     signal(signalNumber, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: signalQueue)
-    source.setEventHandler {
-        if engineStarted {
-            BuildEngine.shared.stopProcessingLoop()
-        }
-        guard let runningServer else {
-            try? FileManager.default.removeItem(atPath: socketPath)
-            exit(0)
-        }
-        runningServer.terminate(code: 0)
-    }
+    source.setEventHandler { stopCleanly() }
     source.resume()
     signalSources.append(source)
 }
@@ -87,6 +92,7 @@ let handler = RequestHandler(engine: BuildEngine.shared,
                              database: DatabaseLayer.shared,
                              databasePath: SemelPaths.database.path)
 let server = Server(handler: handler, socketPath: socketPath)
+server.onSocketFileRemoved = stopCleanly
 runningServer = server
 
 // A machine failure ends the process, but only after the client that hit it has its

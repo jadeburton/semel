@@ -6,7 +6,7 @@
 //  SocketConnection over a loopback socket in a temporary directory. What is pinned: the
 //  daemon verbs work end to end, events reach subscribed clients only, a client that
 //  vanishes mid-push leaves no batch open, a second server on the same path is refused,
-//  and stop removes the socket file.
+//  stop removes the socket file, and removing it stops the server.
 //
 
 @testable import SemelCLI
@@ -355,6 +355,55 @@ final class ServerTests: RequestHandlerTestCase {
         for client in clients {
             client.close()
         }
+    }
+
+    /// B-73. A client that dies without stopping its server leaves nothing else to end the
+    /// process; deleting the socket file does. The hook stands in for the executable's
+    /// stop so the terminate that follows runs without ending the test process.
+    func test_removingTheSocketFileTerminatesTheServer() throws {
+        let terminated = expectation(description: "terminate called")
+        var code: Int32?
+        server.onSocketFileRemoved = { [server] in
+            server?.terminate(code: 0) { exitCode in
+                code = exitCode
+                terminated.fulfill()
+            }
+        }
+
+        try FileManager.default.removeItem(atPath: socketPath)
+
+        wait(for: [terminated], timeout: 5)
+        XCTAssertEqual(code, 0)
+        XCTAssertTrue(server.isStopping)
+    }
+
+    /// A socket file put where the deleted one was belongs to whoever put it there — most
+    /// likely a second server started after the first lost its file — so the first stops
+    /// without unlinking it.
+    func test_aSocketFileReplacedByAnotherIsLeftInPlaceByTheStop() throws {
+        let terminated = expectation(description: "terminate called")
+        server.onSocketFileRemoved = { [server] in
+            server?.terminate(code: 0) { _ in terminated.fulfill() }
+        }
+
+        try FileManager.default.removeItem(atPath: socketPath)
+        FileManager.default.createFile(atPath: socketPath, contents: Data())
+
+        wait(for: [terminated], timeout: 5)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: socketPath))
+    }
+
+    /// The server's own stop removes the file too; that removal must not come back as a
+    /// second stop.
+    func test_stopDoesNotReportItsOwnRemovalOfTheSocketFile() {
+        let reported = expectation(description: "socket file removal reported")
+        reported.isInverted = true
+        server.onSocketFileRemoved = { reported.fulfill() }
+
+        server.stop()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: socketPath))
+        wait(for: [reported], timeout: 1)
     }
 
     func test_fatalHandlingRefusesNewWorkThenTerminates() throws {

@@ -2,9 +2,9 @@
 // SemelServer
 //
 // The listener and the process-level rules around it: probe a socket file that is
-// already there, refuse to run twice, unwind everything on stop, and turn an
-// unrecoverable error into a refusal of new work followed by an exit. No signals here;
-// the executable wires those.
+// already there, refuse to run twice, stop when the socket file goes, unwind everything
+// on stop, and turn an unrecoverable error into a refusal of new work followed by an
+// exit. No signals here; the executable wires those.
 
 import Foundation
 import Network
@@ -43,6 +43,16 @@ public final class Server {
     /// One member per live client connection, left when the connection's session has been
     /// unwound. `stop` waits on it so a shutdown does not cut a reply in half.
     private let liveConnections = DispatchGroup()
+
+    /// Under `lock`. The socket file as the listener created it, and the watch on its
+    /// directory; see `watchSocketFile`.
+    private var socketIdentity: FileIdentity?
+    private var socketWatch: DispatchSourceFileSystemObject?
+
+    /// Run on the listener's queue when the socket file is deleted, renamed away or
+    /// replaced while the server is listening. Unset, the server terminates with code 0;
+    /// the executable sets it so the stop is the same one its signals take.
+    public var onSocketFileRemoved: (() -> Void)?
 
     public init(handler: RequestHandler, socketPath: String) {
         self.handler    = handler
@@ -111,24 +121,33 @@ public final class Server {
             throw ServerError.cannotListen(path: socketPath, underlying: "\(failure)")
         }
         handler.eventSink = registry
+        watchSocketFile()
     }
 
     /// Stops accepting, closes every client, waits for the sessions to unwind, and removes
-    /// the socket file. Idempotent.
+    /// the socket file if it is still the one the listener created. Idempotent.
+    ///
+    /// The watch is cancelled before the file is removed, so the server's own removal is
+    /// never reported back to it as a reason to stop.
     public func stop() {
-        let victim = lock.withLock { () -> SocketListener? in
+        let (victim, watch, identity) = lock.withLock {
+            () -> (SocketListener?, DispatchSourceFileSystemObject?, FileIdentity?) in
             stopping = true
-            let current = listener
-            listener = nil
+            let current = (listener, socketWatch, socketIdentity)
+            listener    = nil
+            socketWatch = nil
             return current
         }
+        watch?.cancel()
         victim?.cancel()
         registry.closeAll()
         // A bound, not a guarantee: a connection parked in `wait` cannot answer until the
         // engine settles, and the process must still be able to stop. Two seconds is long
         // enough for a reply already on the wire and short enough not to hang a shutdown.
         _ = liveConnections.wait(timeout: .now() + 2)
-        try? FileManager.default.removeItem(atPath: socketPath)
+        if identity == nil || FileIdentity(path: socketPath) == identity {
+            try? FileManager.default.removeItem(atPath: socketPath)
+        }
     }
 
     /// Stops the server once and ends the process. Signals, the fatal handler and a test
@@ -147,6 +166,52 @@ public final class Server {
         }
         stop()
         exit(code)
+    }
+
+    // MARK: - Socket file
+
+    /// A server whose socket file is gone can never be reached again, and nothing else
+    /// would end it: a client that started it and then crashed, or a user who deleted the
+    /// file, leaves it running with no way in. So the server watches the file and stops
+    /// when it goes.
+    ///
+    /// The watch is on the directory, not the file: `open(2)` refuses a socket file with
+    /// EOPNOTSUPP even under O_EVTONLY, so there is no descriptor for a vnode source on it.
+    /// A directory's vnode reports `.write` whenever an entry is added, removed or renamed,
+    /// and `.delete` when the directory itself goes, which covers every way the file can
+    /// disappear without a timer. Each event is only a hint to look again; the file is
+    /// gone when nothing is at the path or something else is.
+    private func watchSocketFile() {
+        guard let identity = FileIdentity(path: socketPath) else {
+            return
+        }
+        let directoryPath = URL(fileURLWithPath: socketPath).deletingLastPathComponent().path
+        let directory     = open(directoryPath, O_EVTONLY)
+        guard directory >= 0 else {
+            return
+        }
+        let watch = DispatchSource.makeFileSystemObjectSource(fileDescriptor: directory,
+                                                              eventMask: [.write, .delete, .rename],
+                                                              queue: queue)
+        watch.setEventHandler { [weak self] in self?.socketDirectoryChanged() }
+        watch.setCancelHandler { close(directory) }
+        lock.withLock {
+            socketIdentity = identity
+            socketWatch    = watch
+        }
+        watch.resume()
+    }
+
+    private func socketDirectoryChanged() {
+        let (alreadyStopping, identity) = lock.withLock { (stopping, socketIdentity) }
+        guard !alreadyStopping, FileIdentity(path: socketPath) != identity else {
+            return
+        }
+        if let onSocketFileRemoved {
+            onSocketFileRemoved()
+        } else {
+            terminate(code: 0)
+        }
     }
 
     // MARK: - Connections
@@ -208,5 +273,21 @@ public final class Server {
             // EX_SOFTWARE, as FatalErrors.defaultHandler uses.
             terminate(code: 70, exit: terminateHook)
         }
+    }
+}
+
+/// Which file is at a path, as the file system tells files apart: a file deleted and
+/// another created at the same path compare unequal. Nil when nothing is there.
+struct FileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+
+    init?(path: String) {
+        var status = stat()
+        guard lstat(path, &status) == 0 else {
+            return nil
+        }
+        device = status.st_dev
+        inode  = status.st_ino
     }
 }
