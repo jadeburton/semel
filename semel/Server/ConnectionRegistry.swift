@@ -64,6 +64,7 @@ final class ConnectionRegistry: EventSink {
         case .daemon(.errors):  return "errors"
         case .daemon(.notice):  return "notice"
         case .daemon(.settled): return "settled"
+        case .daemon(.artifacts): return "artifacts"
         }
     }
 }

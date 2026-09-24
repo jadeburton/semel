@@ -194,6 +194,25 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertNil(port.dataObjectHash)
     }
 
+    /// B-50. The artifact snapshot table arrived with 0.1.5, so a database from before it
+    /// opens with the table there and empty — `createTables` is `IF NOT EXISTS`, which
+    /// creates what is missing, so the schema check has nothing to object to. The version
+    /// marker is what reacts: the graph is rebuilt, and the first settle of that launch
+    /// reconciles an empty table against it rather than reporting nothing ever again.
+    func test_aGraphFromBeforeTheArtifactSnapshotsIsRebuiltAgainstAnEmptyTable() throws {
+        let engine = try makeEngine(try DatabaseLayer(filePath: try makeTemporaryDatabasePath()))
+        let derived = try makeDerivedNode()
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.4")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertThrowsError(try engine.database.node.select(nodeID: derived),
+                             "a graph built before the snapshots must be rebuilt")
+        XCTAssertTrue(try engine.database.artifactSnapshot.selectAll().isEmpty,
+                      "derived state, so an empty table is a correct starting point")
+        XCTAssertEqual(try storedVersion(engine), Semel.version)
+    }
+
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
     /// the restating above cannot cost a cache hit or a re-push.
     func test_aPushedFilesContentSurvivesTheRebuild() throws {

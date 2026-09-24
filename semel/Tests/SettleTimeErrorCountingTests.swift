@@ -138,18 +138,69 @@ final class SettleTimeErrorCountingTests: XCTestCase {
 
         let kinds = received.all.compactMap { event -> String? in
             switch event {
-            case .daemon(.errors):  return "errors"
-            case .daemon(.settled): return "settled"
-            case .daemon(.notice):  return nil
+            case .daemon(.errors):    return "errors"
+            case .daemon(.settled):   return "settled"
+            case .daemon(.artifacts): return "artifacts"
+            case .daemon(.notice):    return nil
             }
         }
         XCTAssertEqual(kinds, ["errors", "settled"],
-                       "one report and one summary, the summary last")
+                       "one report and one summary, the summary last, and no product to speak of")
 
         guard case .daemon(.settled(_, _, _, let errors))? = received.all.last else {
             return XCTFail("expected the settle summary last, got \(received.all)")
         }
         XCTAssertGreaterThan(errors, 0, "the summary counts the failure the report named")
+    }
+
+    /// B-50. The third report of a settle is what it produced, and it comes under the
+    /// summary: the diff is read against the totals and the failures above it, not
+    /// between them.
+    func test_aSubscribedClientSeesTheArtifactsAfterTheSummaryForOneSettle() throws {
+        let watcher = InProcessConnection(handler: handler)
+        let received = EventLog()
+        watcher.onEvent = { [received] event in received.append(event) }
+        _ = try watcher.send(.hello(Hello(role: .daemon)), body: nil)
+        _ = try watcher.send(.daemon(.subscribe), body: nil)
+
+        try publishProduct("lib.a", contents: "archive")
+        engine.waitUntilIdleBlocking()
+
+        let kinds = received.all.compactMap { event -> String? in
+            switch event {
+            case .daemon(.errors):    return "errors"
+            case .daemon(.settled):   return "settled"
+            case .daemon(.artifacts): return "artifacts"
+            case .daemon(.notice):    return nil
+            }
+        }
+        XCTAssertEqual(kinds, ["settled", "artifacts"], "the diff comes under the summary")
+
+        guard case .daemon(.artifacts(let appeared, let changed, let disappeared))? = received.all.last else {
+            return XCTFail("expected the artifact diff last, got \(received.all)")
+        }
+        XCTAssertEqual(appeared, ["output:/src/lib.a"])
+        XCTAssertEqual(changed, [])
+        XCTAssertEqual(disappeared, [])
+    }
+
+    /// A product under `output:/src`, wired to a static file standing in for its builder.
+    /// Inside a batch, so the loop is woken once and the whole product is one settle.
+    private func publishProduct(_ name: String, contents: String) throws {
+        engine.beginBatch()
+        defer { engine.endBatch() }
+
+        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')")
+            .findOrCreateMatchingNode()
+        _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')")
+            .findOrCreateMatchingNode()
+        try Wire.connectWire(database: engine.database,
+                             fromNodeID: try source.requireID(),
+                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
+                             toNodeID: try product.requireID(),
+                             toSymbolID: OutputFile.inputPort.asSymbolID(),
+                             name: "product".asSymbolID())
     }
 
     /// Events arrive on the engine's task and are read from the test's thread.

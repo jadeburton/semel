@@ -125,37 +125,18 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
         }
     }
 
+    /// Publishes what its input carries, and says nothing about it.
+    ///
+    /// What the user is told about a product is the difference between two settles, which
+    /// the engine works out from the artifact snapshot table (B-50). A status transition
+    /// seen here is a step inside a build — `pending` on the way to the same bytes as
+    /// before is the common one — and a functional system hides those.
+    ///
+    /// Demanding the value is how this node reports a product it cannot publish: the
+    /// engine writes the state that follows from what stood in the way, rather than this
+    /// node repeating the failure of another.
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        func describeValue(_ value: NodeValue) -> String {
-            switch value {
-            case .noValue(let reason):
-                switch reason {
-                case .pending:
-                    return "Updating.."
-                case .initializing, .inputNotProduced, .inputInError, .deleted, .error:
-                    // Every one of these is a product that is not there. Which of them it is
-                    // is a question for the report, not for a one-word status.
-                    return "Error"
-                }
-            case .value:
-                return "OK"
-            }
-        }
-
-        let inputValue = input.inputValues[Self.inputPort]!.first!.value
-        let previousStatus = try thisNode.readFromOutputPort(Self.statusOutputPort)
-
-        let oldDescription = describeValue(previousStatus)
-        let newDescription = describeValue(inputValue)
-
-        if newDescription != oldDescription {
-            BuildEngine.notice("\(path): \(newDescription)")
-        }
-
-        // The notice is said first, because demanding the value is how this node reports a
-        // product it cannot publish: the engine writes the state that follows from what
-        // stood in the way, rather than this node repeating the failure of another.
-        _ = try inputValue.expectValue()
+        _ = try input.inputValues[Self.inputPort]!.first!.value.expectValue()
 
         return .init(outputValues: [Self.statusOutputPort: .value(try "Product is up to date".intern())],
                      inputWireSpecs: [:])

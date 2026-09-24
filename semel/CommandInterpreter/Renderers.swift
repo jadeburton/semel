@@ -50,6 +50,43 @@ enum SettleSummaryRenderer {
     }
 }
 
+enum ArtifactChangeRenderer {
+
+    /// How many paths one kind names before it reports a count instead — the number
+    /// `rm` and `push` cap their lists at, for the same reason: a cold build of a large
+    /// project produces thousands of appearances, and a wall of paths buries the settle
+    /// summary above it.
+    static let pathsNamedIndividually = 20
+
+    /// The lines that go under the settle summary: one per artifact, in the order
+    /// appeared, changed, disappeared, each group in path order.
+    ///
+    /// Unmarked and indented, because they belong to the line above them. A mark says
+    /// good or bad and nothing else, and an artifact that changed is neither — a product
+    /// that failed is in the error report, under the mark that means it.
+    ///
+    /// **The cap is per kind, not over the three together.** A settle that publishes ten
+    /// thousand products and removes one has to show the removal: capping the combined
+    /// list in order would spend the whole budget on appearances and drop the one line
+    /// worth reading. So each kind names up to `pathsNamedIndividually` paths and then
+    /// says how many it left out.
+    static func lines(appeared: [String], changed: [String], disappeared: [String]) -> [String] {
+        linesForKind(appeared, "appeared")
+            + linesForKind(changed, "changed")
+            + linesForKind(disappeared, "disappeared")
+    }
+
+    private static func linesForKind(_ paths: [String], _ verb: String) -> [String] {
+        var lines = paths.prefix(pathsNamedIndividually).map { "   \(verb): \($0)" }
+
+        let rest = paths.count - lines.count
+        if rest > 0 {
+            lines.append("   and \(rest) more \(verb)")
+        }
+        return lines
+    }
+}
+
 enum ErrorRecordRenderer {
 
     /// A heading, then one line per distinct message naming the ports that carry it, or

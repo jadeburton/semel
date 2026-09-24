@@ -47,9 +47,10 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsNine() {
-        XCTAssertEqual(ProtocolVersion.current, 9)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 9, "a hello sent with no version named speaks the current one")
+    func test_currentProtocolVersionIsTen() {
+        XCTAssertEqual(ProtocolVersion.current, 10)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 10,
+                       "a hello sent with no version named speaks the current one")
     }
 
     func test_encodesSettledEvent() throws {
@@ -59,6 +60,21 @@ final class MessageJSONTests: XCTestCase {
 
     func test_roundTripsSettledEvent() throws {
         let event = Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 1))
+
+        XCTAssertEqual(try roundTrip(event), event)
+    }
+
+    func test_encodesArtifactsEvent() throws {
+        let event = Event.daemon(.artifacts(appeared: ["output:/app"], changed: [], disappeared: ["output:/old"]))
+
+        XCTAssertEqual(try json(event),
+                       #"{"daemon":{"artifacts":{"appeared":["output:\/app"],"changed":[],"disappeared":["output:\/old"]}}}"#)
+    }
+
+    func test_roundTripsArtifactsEvent() throws {
+        let event = Event.daemon(.artifacts(appeared: ["output:/app"],
+                                            changed: ["output:/lib.a"],
+                                            disappeared: ["output:/old"]))
 
         XCTAssertEqual(try roundTrip(event), event)
     }

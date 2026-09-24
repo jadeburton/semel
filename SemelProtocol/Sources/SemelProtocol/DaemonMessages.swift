@@ -233,7 +233,7 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
 // MARK: - Events
 
 /// What the engine reports from its background task, carried to every subscribed
-/// connection. B-50's settle diffs become a fourth case.
+/// connection.
 public enum DaemonEvent: Codable, Equatable, Sendable {
     case errors(records: [ErrorRecord])
     case notice(line: String)
@@ -246,4 +246,15 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
     /// `scheduled` is not `computed + fromCache`: a node fetched as scheduled whose
     /// inputs are not yet satisfied is unscheduled again without producing either.
     case settled(scheduled: Int, computed: Int, fromCache: Int, errors: Int)
+    /// What the settle did to the products, as the difference between this settle and the
+    /// last: paths that gained a value nothing had reported, paths whose bytes are not
+    /// the ones last reported, and paths whose node was collected. Delivered after
+    /// `settled` for the same settle.
+    ///
+    /// Three lists rather than a list of (path, kind) pairs: every reader groups by kind
+    /// to say anything about them, and a client classifies by which list a path arrived
+    /// in rather than by a word. A product that failed is in none of them — that belongs
+    /// to `errors`, and saying it twice in two vocabularies is what this event exists to
+    /// stop.
+    case artifacts(appeared: [String], changed: [String], disappeared: [String])
 }

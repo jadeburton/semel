@@ -163,6 +163,10 @@ public final class BuildEngine {
             settleTally.errors = reportIdleTimeErrors()
             reportUnclaimedConfigKeys()
             reportSettleSummary()
+            // Last of the three: what a settle produced is read against what it broke and
+            // against the totals above it, and a list of paths between the failures and
+            // the line that counts them would separate the two halves of one report.
+            reportArtifactChanges()
 
             await idle.markIdle()
             await workSignal.wait()
@@ -306,6 +310,50 @@ public final class BuildEngine {
     /// no engine is installed, which is only the case in tests that build nodes by hand.
     public static func notice(_ line: String) {
         (shared?.noticeReporter ?? { print($0) })(line)
+    }
+
+    /// Where one settle's artifact diff goes — what appeared, what changed, what went
+    /// away, as paths rather than lines, for the reason the error reporter hands over
+    /// entries: the wording and the cap belong to whatever terminal is reading. An engine
+    /// with no server has nobody to tell, so the default is silence.
+    public var artifactReporter: (ArtifactChanges) -> Void = { _ in }
+
+    // MARK: - Artifact change tracking
+
+    /// Guards the two candidate sets below. The write path reaches them from whichever
+    /// thread is mutating the graph; the settle report empties them on the loop's task.
+    let artifactCandidateLock = NSLock()
+
+    /// Artifacts the write path woke since the last report, and the node that carries
+    /// each. Touched, not changed: every consumer of a written port is put back to
+    /// pending, so a settle that republished the same bytes lands here too and is
+    /// filtered out by the comparison against its snapshot hash.
+    ///
+    /// The node id travels with the path so the report needs no search: a candidate is
+    /// one lookup by primary key, which is what keeps the steady path off O(all
+    /// artifacts).
+    var touchedArtifacts: [String: ObjectID] = [:]
+
+    /// Artifacts whose node was collected since the last report. Captured as an event
+    /// because nothing survives to be compared.
+    var collectedArtifactPaths: Set<String> = []
+
+    /// Whether the whole table has been reconciled against the graph since this engine
+    /// was constructed. A restart loses the candidate sets, so the first report of a
+    /// launch walks everything once and every report after it is the steady path.
+    var artifactsHaveBeenReconciled = false
+
+    /// Records that the write path woke an artifact. Called from
+    /// `writePendingToAllOutputsOfNode`, which is every path by which a node's inputs can
+    /// come to mean something else: a port write cascading to its consumers, a wire
+    /// connected, a wire disconnected.
+    func noteArtifactTouched(path: String, nodeID: ObjectID) {
+        artifactCandidateLock.withLock { touchedArtifacts[path] = nodeID }
+    }
+
+    /// Records that an artifact's node was collected.
+    func noteArtifactCollected(path: String) {
+        artifactCandidateLock.withLock { _ = collectedArtifactPaths.insert(path) }
     }
 
     /// Finds every config file feeding a `ConfigFilter` and prints its unclaimed keys, but
@@ -845,6 +893,12 @@ extension BuildEngine {
 
             if (try? node.hasNoOutputWires()) == true &&
                (try? node.hasNoInputWires()) == true {
+                // Where an artifact disappears. The one event-shaped case of the settle
+                // diff: once the node is gone there is no value left to compare against
+                // the hash the reader was told, so the collection itself is the record.
+                if nodeRecord.kind == OutputFile.kind, let path = nodeRecord.properties["path"] {
+                    noteArtifactCollected(path: path)
+                }
                 try node.delete()
                 deletedCount += 1
             }

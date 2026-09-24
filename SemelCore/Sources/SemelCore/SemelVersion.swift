@@ -35,5 +35,11 @@ public enum Semel {
     /// 0.1.4: the last two reasons spelled as sentences are states — a source that was
     /// pushed and removed, and a folder nobody has pushed into. Stored graphs hold those as
     /// errors carrying a word, so the rebuild restates the ports it preserves again.
-    public static let version = "0.1.4"
+    ///
+    /// 0.1.5: the graph's database holds an `ArtifactSnapshot` table — what the user was
+    /// last told about each product — beside the graph, so the settle diff and the state
+    /// it describes commit together (B-50). The table is derived state and starts empty,
+    /// which a database created before it does too: the first settle of the first launch
+    /// reconciles it against the graph.
+    public static let version = "0.1.5"
 }

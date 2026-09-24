@@ -138,9 +138,9 @@ not six. What remains:
 
 Granularity is per package, not per product: a dependency that also vends an executable
 loses it. Acceptable until a real case shows up. The inferred-roots plan (converter
-dependency lists unioned in `ProjectFinder`, a `publishProducts` property, B-50 hiding the
-flap) was declined the same day: a port, a protocol parameter, a property and an ordering
-constraint to approximate what one line of formula states.
+dependency lists unioned in `ProjectFinder`, a `publishProducts` property, the settle diff
+hiding the flap) was declined the same day: a port, a protocol parameter, a property and an
+ordering constraint to approximate what one line of formula states.
 
 **B-55** `open` — **C targets in a Swift package: what the first case did not need.**
 B-54 builds swift-cmark and CAtomic inside IceCubesApp's graph (39f27b1): a target whose
@@ -217,12 +217,16 @@ One binary, three modes, sharing a wire protocol:
    of which CLIs are open — local CLI to local daemon, one user, one graph. Do not write it
    for multiple users: that is the shared-build-server model the cache server superseded,
    and it is where the path authorisation and sync machinery came from. The artifact events
-   CLIs subscribe to are B-50's settle diffs. What remains of B-30 is roles 1 and 2.
+   CLIs subscribe to exist: the `artifacts` event carries one settle's diff — appeared,
+   changed, disappeared — against the `ArtifactSnapshot` table, and what a daemon serving
+   several worktrees adds to it is a subscription per path prefix, a retention window and a
+   full resync from that table for a client beyond it. What remains of B-30 is roles 1 and 2.
 
 ## Command line
 
 What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C fixture
-(2026-09-23); the engine-side item these lean on is B-50 (artifact diff at idle).
+(2026-09-23); the engine-side report these lean on is the settle-time artifact diff, which
+the `artifacts` event carries.
 
 **B-95** `open` — **Nothing tells the user when the build is done and the artifacts are there.**
 After `push` or `build` the prompt returns at once and the graph settles in the background;
@@ -262,10 +266,10 @@ finding is filed as a bug and the row is what the next person opens — so `Erro
 should converge on it. Its output is pinned by tests on both sides of the wire, so the
 change carries those test updates with it.
 
-One surface over, the same word-for-several-states problem B-74 settled for the listing:
-`OutputFile.describeValue` folds five `NoValueReason` cases onto the single word `Error`,
-so a product the build announces as `output:/x: Error` is the one `ls` calls
-`[not produced]`. The build's own notices should use the listing's words.
+One surface over, the same word-for-several-states problem B-74 settled for the listing
+does not arise for artifacts: an artifact's states reach the user through the settle diff,
+which says appeared, changed or disappeared, and through the error report, which says the
+rest. What a product that is not there reads as is the `ls` and `errors` vocabulary alone.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
@@ -294,12 +298,10 @@ and the child callbacks are its propagation mechanism** — the structural analo
 `writeToOutputPort` scheduling downstream nodes. Nothing is wrong with it except that nothing
 declares it, so it reads as a node reaching out to write itself.
 
-*`OutputFile` — dissolvable, not formalisable.* It reads its own previous output port only to
-decide whether to print a status change. The engine already computes exactly that:
-`writeToOutputPort` returns false when the value is unchanged. Move change-notification to the
-engine — which has to happen anyway when printing becomes structured logging aimed at showing
-system *state* rather than a flowing event log — and the self-read has no reason to exist.
-B-50 is exactly that move; this case needs no work of its own.
+*`OutputFile` — dissolved.* It read its own previous output port to decide whether to print
+a status change. Change-notification moved to the engine, which reports one settle's
+artifact diff against a snapshot table, and the self-read went with the printing. Nothing
+is left of this case.
 
 *A correction to our own comment.* `Folder.pinnedOutputPort` is marked HACK for storing state
 in a "fake" output. That is too harsh. Putting the state in an output port is what keeps it
@@ -346,54 +348,6 @@ Closing that needs the SDK to be a graph input — the gigabyte-of-headers probl
 B-03's container digest. The invariant the original TODO stated (every node input exists
 inside the input file system or is derived from it) is still worth writing into `AGENTS.md`;
 nothing there says it.
-
-**B-50** `open` — **Report artifact changes at idle, as the difference between settles.**
-The system is functional, so the internal steps are hidden and the user-visible story of a
-push is: *the graph settled; these artifacts appeared, changed, disappeared*. Today the only
-artifact report is `OutputFile` printing its own status transitions mid-flight — it reads
-its previous output port to decide whether to print (the self-read B-43 wants dissolved),
-reports intermediate mutations a functional system should hide, and formats differently
-from the error report.
-
-Semantics: only the diff between the last settle and this one. An artifact that went
-`value → pending → same value` reports nothing. Appeared / content-changed / disappeared
-only; error states stay with the existing idle error report.
-
-Trigger — global idle, the same settle that drives `reportIdleTimeErrors`. Each engine is
-single-user (FUTURE.md "Settled direction": local engines, shared cache), so the graph
-does go quiet after a push and the settle is the natural report boundary. A per-subtree
-quiescence trigger (reachability tags on the cascade, per-partition in-flight counters)
-was designed on 2026-09-09 for a shared graph that never idles; that graph is superseded
-and the design is not needed. Keep the reporter taking a path prefix anyway — it costs
-nothing and keeps a subtree report possible for a local daemon serving several
-worktrees — but do not build a second quiescence signal.
-
-Mechanism — designed for thousands of artifacts, never O(all) on the steady path:
-- An `ArtifactSnapshot` table (path, last-reported content hash) in the *same* database as
-  the graph, deliberately: a client told "appeared" must find the artifact, so the report
-  and the state it describes commit together. This is the durable "last conceptual
-  snapshot".
-- Candidates at settle come from the write path: a small locked in-memory set of touched
-  `OutputFile` paths. Touched is not changed — `writePendingToAllOutputsOfNode` means every
-  woken node touches — so each candidate is compared against its snapshot hash, which is
-  what makes an identical rebuild silent. The first settle after launch reconciles the
-  whole table once, since a restart loses the set.
-- Disappeared is captured where `OutputFile` nodes die (`processPendingDeletions`); no row
-  survives to be compared, so it is the one genuinely event-shaped case.
-- Output goes through one reporter closure (test-capturable, like
-  `unclaimedConfigKeyReporter`). `OutputFile.process` stops printing entirely, which
-  dissolves the third B-43 case and closes the old two-formats complaint for artifacts the
-  way `ErrorReport` closed it for errors.
-
-Deliberately not built yet, but shaped for it: these settle diffs are the events `semelserv`
-(B-30 role 3, the local daemon) will stream to subscribed CLIs — `(generation, path, kind,
-hash)` with a retention window, full resync from the snapshot table for a client beyond the
-window. A subscription is a path prefix, so a CLI opened in one worktree sees only that
-worktree's artifacts.
-
-Presentation at scale is the one open question: a cold build of a 10,000-file project
-produces 10,000 appearances, and 10,000 lines is not a report. Decide list-vs-summarise and
-the threshold when wiring the terminal reporter; the mechanism is indifferent to it.
 
 **B-61** `open` — **`wait` across connections.**
 Two things a socket server must settle before `wait` is offered to more than one client: a
