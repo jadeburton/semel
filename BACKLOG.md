@@ -255,23 +255,17 @@ taught us".
 
 ## Design, correctness and code quality
 
-**B-105** `open` — **Two loose ends `check` left behind.**
-`GraphCheck.danglingWires` asks the two ends of a wire different questions: the source port
-by *row* and the destination port against the node's *descriptor*, so an output port dropped
-from a type but still present as a row passes silently — check the from-port against the
-source node's descriptor too, when its type is linked. Separately, a node is named two ways
-in one product: `Type #id 'path'` in a check finding, `Type  'path'` (two spaces, id as a
-last resort) in `ErrorReport.label`. The finding's form is the one to keep — a finding is
-filed as a bug and the row is what the next person opens — but `ErrorReport`'s output is
-pinned on both sides of the wire, so converging them is its own change with its own test
-updates. A third: `NodeRecord.readFromOutputPort` fabricates `error("No value ever
-existed")` when a port row is absent, which `writePendingToAllOutputsOfNode` makes
-impossible — so it is a node holding fewer port rows than its descriptor declares, a
-finding `check` should name, and the read should throw rather than invent a sentence
-nobody can act on. A fourth, one surface over: `OutputFile.describeValue` folds five
-`NoValueReason` cases onto the single word `Error`, so a product the build announces as
-`output:/x: Error` is the one `ls` calls `[not produced]` — the same word-for-several-states
-problem B-74 settled for the listing, still in the build's own notices.
+**B-105** `open` — **A node is named two ways in one product.**
+A `check` finding names a node `Type #id 'path'`; `ErrorReport.label` names it `Type  'path'`
+(two spaces, the id only as a last resort). The finding's form is the one to keep — a
+finding is filed as a bug and the row is what the next person opens — so `ErrorReport.label`
+should converge on it. Its output is pinned by tests on both sides of the wire, so the
+change carries those test updates with it.
+
+One surface over, the same word-for-several-states problem B-74 settled for the listing:
+`OutputFile.describeValue` folds five `NoValueReason` cases onto the single word `Error`,
+so a product the build announces as `output:/x: Error` is the one `ls` calls
+`[not produced]`. The build's own notices should use the listing's words.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
