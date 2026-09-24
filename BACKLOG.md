@@ -188,11 +188,6 @@ entirely in-process.
 
 ## Performance
 
-**B-74** `open` — **The idle report's upstream walk is unmeasured.**
-It costs one indexed wire query per carrying node per idle pass — tens of milliseconds at
-the 500-node cascade this entry was opened by — and no scale test holds that number. Measure
-it against a cascade of that size before deciding whether the walk needs to change.
-
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
 stops at the first objection, so leaf children cost no instantiation at all. What remains is
@@ -262,7 +257,7 @@ finding is filed as a bug and the row is what the next person opens — so `Erro
 should converge on it. Its output is pinned by tests on both sides of the wire, so the
 change carries those test updates with it.
 
-One surface over, the same word-for-several-states problem B-74 settled for the listing:
+One surface over, the same word-for-several-states problem the listing settled:
 `OutputFile.describeValue` folds five `NoValueReason` cases onto the single word `Error`,
 so a product the build announces as `output:/x: Error` is the one `ls` calls
 `[not produced]`. The build's own notices should use the listing's words.
