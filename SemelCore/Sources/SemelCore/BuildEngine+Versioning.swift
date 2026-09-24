@@ -56,10 +56,12 @@ extension BuildEngine {
         let isFresh = try recorded == nil && database.node.selectAll().isEmpty
         if !isFresh {
             Debug.log("Semel \(recorded ?? "of unknown version") built this graph; now \(Semel.version). Rebuilding.")
-            // With the cache, because a cache key says nothing about which Semel computed
-            // the entry: a rebuild that reads the old entries back publishes exactly the
-            // artifacts this marker exists to replace.
-            let archivedGraphPath = try reset(clearCache: true)
+            // Without the cache: a key carries the `implementationVersion` of the node type
+            // that wrote the entry, so a type whose output changed misses on its own key
+            // and the rest answer the rebuild from entries an upgrade has no reason to
+            // discard. The rebuild is a pass of cache lookups rather than a cold build of
+            // every project in the home.
+            let archivedGraphPath = try reset()
             try restateThePortsOfPreservedNodes()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
             // in the home unexplained. This runs from `BuildEngine.start()`, before a

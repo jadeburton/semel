@@ -62,6 +62,13 @@ public struct SampleTool: Node {
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         Self.cacheKeyMaterialForTests
     }
+
+    /// Which implementation of this node type a test is standing in for. A shipped node
+    /// type declares a constant and bumps it by editing the source; a test needs two
+    /// implementations of one type within a single run, which only a variable gives.
+    static var implementationVersionForTests: Int = 1
+
+    public static var implementationVersion: Int { implementationVersionForTests }
 }
 
 /// A node that insists on its input's value, the way a tool reads the files it compiles.

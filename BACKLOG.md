@@ -201,19 +201,6 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
-**B-102** `open` — **A cache entry does not know which code produced it.**
-`Cache.swift` keys an entry on the node's inputs, its properties, the tool descriptors and
-whatever `cacheKeyMaterial` adds (the SDK fingerprint), and on nothing that identifies the
-node implementation itself. An upgrade that changes what `SwiftCompiler` or `TreeMerger`
-emits for the same inputs reuses the old entries, and the only defence is a manual cache
-wipe. Put a code version in the key: a per-node-type version constant the node declares
-(`static let implementationVersion`), bumped when its output for equal inputs changes, or the
-engine's build hash as the blunt form. Either makes an upgrade invalidate entries lazily on
-the next lookup, with no command and no cold build of what did not change. The per-node
-constant is the better one: it keeps every entry a bug fix did not touch. Test: the same
-node with two implementation versions produces two keys; a graph rebuilt under the new
-version hits nothing from the old.
-
 ## Performance
 
 **B-74** `open` — **`[missing]` is one word for two states.**

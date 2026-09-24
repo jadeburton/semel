@@ -102,6 +102,8 @@ final class DictionaryOrderTests: XCTestCase {
             "each property is one plist entry under its own key, and a plist serialises its keys sorted",
         "SemelNodeKit/Sources/SemelNodeKit/LocalFileSystemTool.swift: environment":
             "lays the node's environment over the sandbox's, by name",
+        "SemelCore/Sources/SemelCore/Cache.swift: decodedCacheEntry.inputWireSpecs.values":
+            "asks the same question of every spec and answers whether all of them say yes",
         "SemelCore/Sources/SemelCore/Node.swift: output.outputValues":
             "writes each value to the port it is keyed by",
         "SemelCore/Sources/SemelCore/Node.swift: output.inputWireSpecs":

@@ -116,6 +116,32 @@ extension GraphSpecNode {
     }
 }
 
+extension GraphSpecNode {
+
+    /// Whether a stored spec names only node types this Semel links, at every depth — the
+    /// question a reader of stored spec text has to ask before acting on it, since the text
+    /// outlives the Semel that wrote it. A spec that does not parse answers false: it
+    /// cannot be applied either.
+    ///
+    /// `outputs` is not walked, for the same reason `adding(property:)` does not: nothing
+    /// is matched or created through an output wire.
+    static func namesOnlyRegisteredTypes(spec: String) -> Bool {
+        guard let specNode = try? parse(spec) else {
+            return false
+        }
+        return specNode.namesOnlyRegisteredTypes()
+    }
+
+    private func namesOnlyRegisteredTypes() -> Bool {
+        guard (try? TypeRegistry.kind(forTypeName: typeName)) != nil else {
+            return false
+        }
+        return inputs.allSatisfy { port in
+            port.wires.allSatisfy { $0.node.namesOnlyRegisteredTypes() }
+        }
+    }
+}
+
 // MARK: - Serialisation
 
 extension GraphSpecNode {

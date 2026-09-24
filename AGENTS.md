@@ -155,6 +155,29 @@ as the wrong type. Never reused, for the same reason. `TypeRegistry.register` re
 different types claiming one number, so a collision between two branches fails at start-up
 rather than at some later decode — renumber the newer one.
 
+## Bumping a node's `implementationVersion`
+
+A node type also carries `static var implementationVersion: Int`, defaulted to 1 in the
+`Node` extension, and it is part of every cache key that type produces. Bump it — by
+declaring `static let implementationVersion = 2` on the type, and raising it from there —
+whenever the node emits something different for inputs it once emitted something else
+for: a different command line, a changed output format, a fix to what it publishes on a
+port, a change to the specs it demands on `inputWireSpecs`. The entries the older code
+wrote are then a miss on the new key, and every node type the change did not touch keeps
+hitting, which is why the version is per type rather than one stamp on the engine.
+
+Renaming a node type is the case that reaches further than the type being renamed: every
+node that emits the old name — in a spec on `inputWireSpecs`, in formula text — emits
+something different for the same inputs, so each of those types is bumped too. A cache
+entry whose specs name a type this Semel does not register is a miss whether or not
+anyone remembered (`loadCachedOutputs`), which catches the specs but not the formula text.
+
+Not a bump: anything the node's output does not show — a refactor, or a faster route to the
+same bytes. A new input property or input port needs none either, because both are in the
+key and move it on their own. A new or renamed *output* port does need one: an entry
+written before it holds nothing for that port. When in doubt, bump — a needless bump costs
+one rebuild of one node type, and a missed one publishes what the older code computed.
+
 ## Glossary
 
 Semel borrows few names from other build systems on purpose: a borrowed name imports its
@@ -173,7 +196,7 @@ the nearest standard equivalent and how Semel's differs.
 | tree (`TreeManifest`) | Bazel TreeArtifact, a directory output | N files on one port: a manifest of relative paths with content hashes and modes, interned like any value. A tool that decides its own file set (`actool`) fills one through `expectedOutputFolders`; `TreeFile(name:, tree:)` puts one entry back on a port of its own; `TreeMerger` makes several trees one, a collision being an error. |
 | pinned | GC root | "Held alive by user intent rather than by references": a pushed file or folder. Unpinned nodes exist only while something depends on them. Not memory pinning. |
 | `Folder`, `StaticFile`, `OutputFile`, `Configuration` | source file, output file | Nodes that *are* rather than convert (the "-er" exception). `StaticFile` and `Folder` are filled by the push path, not by wires (B-43). |
-| cache entry | remote cache / action cache entry | Keyed on node type, properties and every input wire's name *and* value — the path is part of the key because tools embed it (B-49). Holds object-store hashes, not bytes. |
+| cache entry | remote cache / action cache entry | Keyed on node type, its `implementationVersion`, the node's properties and every input wire's name *and* value — the path is part of the key because tools embed it (B-49). Holds object-store hashes, not bytes. |
 | tool vs node | — | A tool is a binary (`swiftc`) with a `ToolDescriptor`; a node (`SwiftCompiler`) is the graph step that runs it in a sandbox. Config namespaces name nodes (`swift.compiler`), and `toolDescriptor.*` under them names the tool. |
 | config namespace | — | The dot-prefix a node's settings live under in `semel.config`, derived from the type name; a `ConfigFilter` selects it. No defaults, no inheritance. |
 

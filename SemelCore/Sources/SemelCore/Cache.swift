@@ -60,14 +60,15 @@ extension Node {
             .toJSON()
     }
 
-    /// The node's own contribution: its type, its properties less the excluded ones, and
-    /// whatever it declares it reads from outside its inputs (`cacheKeyMaterial`). A node
-    /// without a `projectRoot` property, with no material and nothing else excluded, adds
-    /// nothing beyond its type and properties — the key format such a node has always had.
+    /// The node's own contribution: its type and the implementation of that type, its
+    /// properties less the excluded ones, and whatever it declares it reads from outside
+    /// its inputs (`cacheKeyMaterial`). The implementation version is what makes an entry
+    /// say which code produced it: a type that changes what it emits for equal inputs bumps
+    /// it and stops hitting what it wrote before, while every other type keeps its entries.
     private func nodeCacheKey(input: ProcessInput) throws -> String {
         let excluded = Self.cacheKeyExcludedProperties
         let properties = thisNode.properties.filter { !excluded.contains($0.key) }
-        var key = "\(String(describing: type(of: self)))\n\(properties.asPlainText())"
+        var key = "\(String(describing: type(of: self)))@\(Self.implementationVersion)\n\(properties.asPlainText())"
         if let material = try cacheKeyMaterial(input: input) {
             key.append("\n\(material)")
         }
@@ -115,6 +116,16 @@ extension Node {
         }
 
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
+            return nil
+        }
+
+        // An entry's specs demand a subgraph by naming node types, and a node type carries
+        // no version for a type other than its own: a Semel that drops or renames a type
+        // leaves entries of every *other* type naming something it cannot make. Handing
+        // such an entry back fails the node on a type nothing can build, where a miss
+        // recomputes and demands what this Semel does link.
+        let demandedSpecs = decodedCacheEntry.inputWireSpecs.values.flatMap(\.values)
+        guard demandedSpecs.allSatisfy({ GraphSpecNode.namesOnlyRegisteredTypes(spec: $0) }) else {
             return nil
         }
 
