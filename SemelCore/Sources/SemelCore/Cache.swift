@@ -111,11 +111,6 @@ extension Node {
         guard let cacheEntry = try database.cacheEntry.select(hash: cacheKey) else {
             return nil
         }
-        // Refresh the timestamp so this entry is treated as recently used by the LRU eviction
-        // policy. Best effort: a stale timestamp only makes the entry evictable sooner.
-        FatalErrors.attempt {
-            try database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
-        }
 
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
             return nil
@@ -133,6 +128,17 @@ extension Node {
         let demandedSpecs = decodedCacheEntry.inputWireSpecs.values.flatMap(\.values)
         guard demandedSpecs.allSatisfy({ GraphSpecNode.namesOnlyRegisteredTypes(spec: $0) }) else {
             return nil
+        }
+
+        // Below every reason this lookup can answer nothing, so only a row that was used
+        // counts as recently used. Eviction is by timestamp, so refreshing a row before
+        // reading it makes the rejected ones the hardest to evict — an entry this Semel
+        // cannot decode, or one demanding a type it does not link, would hold its slot in
+        // the cache against the entries that do get used.
+        //
+        // Best effort: a stale timestamp only makes the entry evictable sooner.
+        FatalErrors.attempt {
+            try database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
         }
 
         Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
@@ -165,7 +171,13 @@ extension Node {
 
         let thresholdDuration = 0.015 // 15ms
 
-        if processingDuration < thresholdDuration {
+        // The floor is about new work: a build cheaper than storing and fetching it back is
+        // not worth a row. It is not about a row already standing under this key whose
+        // content this Semel cannot read — that row is a slot nothing can use, and this
+        // build is the only thing that can put a usable entry in it. Left alone it would
+        // wait for the whole cache to turn over under it. So the floor is asked second, and
+        // a build of any cost replaces such a row.
+        if processingDuration < thresholdDuration && !holdsAnUnreadableEntry(cacheKey: cacheKey) {
             return
         }
 
@@ -185,6 +197,17 @@ extension Node {
         // Best effort: an untrimmed cache is over its limit until the next save trims it.
         FatalErrors.attempt { try database.cacheEntry.trimToLimit(cacheEntryLimit) }
     }
+
+    /// Whether a row stands under this key that this Semel cannot decode — the entries an
+    /// older or newer shape of `ProcessCacheEntry` left behind. One lookup by primary key,
+    /// asked only of a build under the storage floor, which is the one case where the
+    /// answer decides anything.
+    private func holdsAnUnreadableEntry(cacheKey: String) -> Bool {
+        guard let row = (FatalErrors.attempt { try database.cacheEntry.select(hash: cacheKey) }) ?? nil else {
+            return false
+        }
+        return (try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(row.content))) == nil
+    }
 }
 
 /// One line of a key's material: the word that says what the line is about, and the thing
@@ -199,10 +222,52 @@ private func cacheKeyLine(_ keyword: String, _ item: some Encodable) throws -> S
 
 /// One wired input as it contributes to a cache key: which port and which wire it arrived
 /// on, and what it carried. All three are part of the build's identity.
+///
+/// Coded by hand so that a line reads `"value":"<hash>"` rather than the two wrappers the
+/// synthesized encoding of a two-case enum over a string gives — the field a reader of a
+/// diff scans is the one worth keeping short. A wire carrying no value keeps its reason
+/// whole under a key of its own: which case it is *and* what that case carries, because
+/// two failures with different messages are two different builds and must not hash alike.
 struct CacheKeyEntry: Codable {
     let port: String
     let wire: String
     let value: NodeValue
+
+    init(port: String, wire: String, value: NodeValue) {
+        self.port  = port
+        self.wire  = wire
+        self.value = value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case port
+        case wire
+        case value
+        case noValue
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(port, forKey: .port)
+        try container.encode(wire, forKey: .wire)
+        switch value {
+        case .value(let hash):
+            try container.encode(hash, forKey: .value)
+        case .noValue(let reason):
+            try container.encode(reason, forKey: .noValue)
+        }
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        port = try container.decode(String.self, forKey: .port)
+        wire = try container.decode(String.self, forKey: .wire)
+        if let hash = try container.decodeIfPresent(DataObjectHash.self, forKey: .value) {
+            value = .value(hash)
+        } else {
+            value = .noValue(reason: try container.decode(NoValueReason.self, forKey: .noValue))
+        }
+    }
 }
 
 /// One of the node's own properties as it contributes to a cache key.

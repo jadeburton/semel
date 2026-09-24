@@ -51,13 +51,11 @@ public struct CacheEntryDataAccess: DataAccessType {
         }
     }
 
-    public func insert(_ cacheEntry: CacheEntry) throws {
-        try write { db in try cacheEntry.insert(db) }
-    }
-
-    /// Stores the entry whether or not its key is already taken. What a caller wants when
-    /// the row under that key is one it could not read: the key is the same build, and the
-    /// entry it can read is the better of the two.
+    /// Stores the entry whether or not its key is already taken. Replacing rather than
+    /// refusing is what the cache path wants: a key is a build, and a row already under it
+    /// is either the same build or one this Semel could not read, and in both cases the
+    /// entry being written is the one worth keeping. An insert that refused would fail on
+    /// a constraint the caller cannot act on.
     public func save(_ cacheEntry: CacheEntry) throws {
         try write { db in try cacheEntry.save(db) }
     }

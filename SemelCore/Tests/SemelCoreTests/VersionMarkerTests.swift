@@ -219,7 +219,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
     /// pins is the engine's half of it: an upgrade discards nothing by itself.
     func test_aVersionChangeKeepsTheCachedBuilds() throws {
         let engine = try makeEngine(try DatabaseLayer())
-        try engine.database.cacheEntry.insert(.init(hash: "an-entry-built-by-the-older-semel",
+        try engine.database.cacheEntry.save(.init(hash: "an-entry-built-by-the-older-semel",
                                                     content: [UInt8]("{}".utf8),
                                                     cost: 100,
                                                     timestamp: Date()))

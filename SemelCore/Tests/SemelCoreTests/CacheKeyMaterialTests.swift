@@ -37,10 +37,30 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
 
     private func makeInput(sourcePath: String = "src/hello.c.p",
                            contents: String = "int main(){}") throws -> ProcessInput {
-        ProcessInput(inputValues: [
+        try makeInput(wires: [sourcePath], contents: contents)
+    }
+
+    /// One input per named wire, all carrying the same content: what a test of the wire
+    /// *names* in a key wants, the value being the part it is not about.
+    private func makeInput(wires: [String], contents: String = "int main(){}") throws -> ProcessInput {
+        let value = NodeValue.value(try contents.intern())
+        return ProcessInput(inputValues: [
             SampleTool.configuration: ["configuration": .value(try "toolDescriptor.name=sample".intern())],
-            SampleTool.input: [sourcePath: .value(try contents.intern())],
+            SampleTool.input: Dictionary(uniqueKeysWithValues: wires.map { ($0, value) }),
         ])
+    }
+
+    /// The lines of a material's text, which is what a reader diffs and what the key is
+    /// the hash of.
+    private func lines(of material: CacheKeyMaterial) throws -> [String] {
+        try material.canonicalText().split(separator: "\n").map(String.init)
+    }
+
+    /// A row under `key` holding content of a shape this Semel does not read.
+    private func storeAnUnreadableRow(key: String, timestamp: Date = Date()) throws {
+        let withoutMaterial = #"{"outputValues":{},"inputWireSpecs":{}}"#
+        try engine.database.cacheEntry.save(.init(hash: key, content: [UInt8](withoutMaterial.utf8),
+                                                  cost: 1, timestamp: timestamp))
     }
 
     private func builtOutput() throws -> ProcessOutput {
@@ -128,6 +148,45 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
                       "the line that differs names the wire that differs, got: \(differing[0].0)")
     }
 
+    // MARK: - A value cannot forge a line
+
+    /// The reason each line carries JSON rather than plain text. A wire name holding a
+    /// newline would otherwise put a line of its own into the text, and two builds whose
+    /// names differ only in where that newline sits would hash alike — a collision, which
+    /// is the one failure a cache must never have.
+    func test_twoMaterialsDifferingOnlyInWhereANewlineSitsDoNotShareAKey() throws {
+        let tool = try makeCompilerNode()
+
+        let first  = try tool.buildCacheKeyMaterial(input: try makeInput(wires: ["a\nb", "c"]))
+        let second = try tool.buildCacheKeyMaterial(input: try makeInput(wires: ["a", "b\nc"]))
+
+        XCTAssertEqual(try lines(of: first).count, 4, "one node line, one configuration wire, two input wires")
+        XCTAssertEqual(try lines(of: second).count, 4, "the newline is escaped, so it adds no line")
+        XCTAssertNotEqual(try first.cacheKey(), try second.cacheKey())
+    }
+
+    /// The same for the text a node declares about what it read from outside its inputs,
+    /// which is raw text of the node's own choosing — including a newline and the quotes
+    /// that would otherwise close a JSON string early.
+    func test_aFingerprintCannotForgeALineWithANewlineOrAQuote() throws {
+        let tool = try makeCompilerNode()
+        defer { SampleTool.cacheKeyMaterialForTests = nil }
+
+        SampleTool.cacheKeyMaterialForTests = "sdk=a"
+        let plain = try tool.buildCacheKeyMaterial(input: try makeInput())
+        SampleTool.cacheKeyMaterialForTests = "sdk=a\ninput {\"port\":\"input\",\"value\":\"forged\",\"wire\":\"x\"}"
+        let forging = try tool.buildCacheKeyMaterial(input: try makeInput())
+        SampleTool.cacheKeyMaterialForTests = "sdk=\"a\""
+        let quoted = try tool.buildCacheKeyMaterial(input: try makeInput())
+
+        XCTAssertEqual(try lines(of: plain).count, 4, "one node line, one fingerprint, two input wires")
+        XCTAssertEqual(try lines(of: forging).count, 4, "a fingerprint holding a whole input line is still one line")
+        XCTAssertEqual(try lines(of: quoted).count, 4)
+        XCTAssertNotEqual(try plain.cacheKey(), try forging.cacheKey())
+        XCTAssertNotEqual(try plain.cacheKey(), try quoted.cacheKey())
+        XCTAssertNotEqual(try forging.cacheKey(), try quoted.cacheKey())
+    }
+
     // MARK: - An entry without material
 
     /// An entry written before the material was stored is a miss rather than a hit whose
@@ -137,9 +196,7 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         let tool  = try makeCompilerNode()
         let input = try makeInput()
         let key   = try tool.buildCacheKeyMaterial(input: input).cacheKey()
-        let withoutMaterial = #"{"outputValues":{},"inputWireSpecs":{}}"#
-        try engine.database.cacheEntry.insert(.init(hash: key, content: [UInt8](withoutMaterial.utf8),
-                                                    cost: 1, timestamp: Date()))
+        try storeAnUnreadableRow(key: key)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key),
                      "an entry whose key nothing accounts for is not an entry to hand back")
@@ -149,6 +206,68 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key),
                                    "the build that missed on it replaces it")
         XCTAssertEqual(try loaded.outputValues[SampleTool.output]?.expectValue().resolveAsString(), "OBJECT")
+    }
+
+    /// The storage floor is about new work: a build cheaper than storing it is not worth a
+    /// row. A row already standing that this Semel cannot read is not new work — nothing
+    /// else replaces it, and it holds its slot until the whole cache turns over under it.
+    /// So a build of any cost replaces it.
+    func test_anUnreadableRowIsReplacedEvenByABuildUnderTheStorageFloor() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+        let material = try tool.buildCacheKeyMaterial(input: input)
+        let key = try material.cacheKey()
+        try storeAnUnreadableRow(key: key)
+
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.001,
+                                                 output: try builtOutput())
+
+        XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key),
+                        "the row nothing could read is the one this build was allowed to store over")
+    }
+
+    /// And the floor itself still holds where it is about new work.
+    func test_aBuildUnderTheStorageFloorStoresNothingWhereNoRowStands() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+        let material = try tool.buildCacheKeyMaterial(input: input)
+
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.001,
+                                                 output: try builtOutput())
+
+        XCTAssertNil(try engine.database.cacheEntry.select(hash: try material.cacheKey()),
+                     "an entry that costs more to store than to recompute is not worth a row")
+    }
+
+    // MARK: - What a lookup counts as recently used
+
+    /// Eviction is by timestamp, so a lookup that refreshed a row before reading it would
+    /// make the rows it rejects the hardest ones to evict.
+    func test_aRejectedRowIsNotMadeRecentlyUsedByTheLookupThatRejectsIt() throws {
+        let tool    = try makeCompilerNode()
+        let key     = try tool.buildCacheKeyMaterial(input: try makeInput()).cacheKey()
+        let longAgo = Date(timeIntervalSince1970: 1_000_000)
+        try storeAnUnreadableRow(key: key, timestamp: longAgo)
+
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
+
+        let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: key))
+        XCTAssertEqual(row.timestamp.timeIntervalSince1970, longAgo.timeIntervalSince1970, accuracy: 1,
+                       "a row nothing could use is not a row that was used")
+    }
+
+    /// The other half: a row that is handed back is recently used, which is what the
+    /// refresh is for.
+    func test_aRowThatIsHandedBackIsMadeRecentlyUsed() throws {
+        let tool    = try makeCompilerNode()
+        let key     = try store(tool, input: try makeInput())
+        let longAgo = Date(timeIntervalSince1970: 1_000_000)
+        try engine.database.cacheEntry.updateTimestampAndCost(hash: key, cost: 1, timestamp: longAgo)
+
+        XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key))
+
+        let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: key))
+        XCTAssertGreaterThan(row.timestamp, longAgo)
     }
 
     // MARK: - Reading it back
@@ -186,5 +305,36 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         let description = engine.cacheEntryDescription(key: String(repeating: "0", count: 64))
 
         XCTAssertTrue(description.contains("no cache entry"), "got: \(description)")
+    }
+
+    /// A row this Semel cannot read is the state a reader meets least often and can check
+    /// least easily, so it is said in full: what the row is, and what becomes of it.
+    func test_aRowThisSemelCannotReadIsDescribedRatherThanPrintedEmpty() throws {
+        let key = String(repeating: "a", count: 64)
+        try storeAnUnreadableRow(key: key)
+
+        let description = engine.cacheEntryDescription(key: key)
+
+        XCTAssertTrue(description.contains("cache entry \(key)"), "got: \(description)")
+        XCTAssertTrue(description.contains("not of a shape this Semel reads"), "got: \(description)")
+        XCTAssertTrue(description.contains("replaces it"), "it says what becomes of it, got: \(description)")
+    }
+
+    /// A row whose material does not account for the key it is filed under is damaged —
+    /// the one thing this dump exists to make visible, so it cannot be answered with a
+    /// material that looks perfectly ordinary.
+    func test_aRowWhoseMaterialDoesNotHashToItsKeyIsCalledDamaged() throws {
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let entry    = ProcessCacheEntry(outputValues: [:], inputWireSpecs: [:], keyMaterial: material)
+        let wrongKey = String(repeating: "b", count: 64)
+        try engine.database.cacheEntry.save(.init(hash: wrongKey, content: [UInt8](try entry.toJSON().utf8),
+                                                  cost: 1, timestamp: Date()))
+
+        let description = engine.cacheEntryDescription(key: wrongKey)
+
+        XCTAssertTrue(description.contains("The entry is damaged."), "got: \(description)")
+        XCTAssertTrue(description.contains(try material.cacheKey()),
+                      "it names the key the material does account for, got: \(description)")
     }
 }

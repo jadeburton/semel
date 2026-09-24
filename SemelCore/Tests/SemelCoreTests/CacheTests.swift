@@ -84,14 +84,15 @@ final class CacheTests: SemelCoreTestCase {
     ///
     /// Re-recorded a third time for the key material (B-13). The key is the hash of the
     /// material's canonical text, which is one line per thing the key covers rather than
-    /// one blob per port, and each input line carries the port it arrived on as well as
-    /// the wire and the value. A stored entry keyed the other way does not decode against
-    /// the material it has to carry, so the discard costs nothing beyond what that already
-    /// costs.
+    /// one blob per port; each input line carries the port it arrived on as well as the
+    /// wire and the value, and a value is its hash rather than the two wrappers a
+    /// two-case enum encodes into, the value being the field a reader of a diff scans. A
+    /// stored entry keyed the other way does not decode against the material it has to
+    /// carry, so the discard costs nothing beyond what that already costs.
     func test_theKeyFormatHasNotDrifted() throws {
         let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
 
-        XCTAssertEqual(key, "644a5f9055a680067b8a097b76bd7e831209553840baed5f77e7289a64b5a4d7")
+        XCTAssertEqual(key, "1445768a2073611d49cfbe9dc6e25f0d6b9442a4e4163629621a87876ee5b8cf")
     }
 
     // MARK: - What the key covers
