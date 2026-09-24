@@ -32,20 +32,26 @@ import XCTest
 /// once, a dictionary gathered into a `Set` — a membership question — and an unstable
 /// `sort` over keys that tie.
 ///
-/// Three walks the scan cannot see, for want of a rule that is exact rather than
-/// suggestive:
+/// A sort is credited to a walk on two conditions, both of them about that walk rather
+/// than about what is near it: the sort closes the expression the walk is in, and no
+/// operator at the walk's own bracket depth stands between the two. So
+/// `specs.keys.filter { … }.sorted()` is sorted and `byNode.map { key, value in key } +
+/// extras.sorted()` is not — the `+` says the sort is of the other operand.
+///
+/// What the scan cannot see, for want of a rule that is exact rather than suggestive:
 ///
 /// - a dictionary or a set passed to a function that walks it elsewhere. The walk is in
 ///   the callee, on a parameter whose declaration is the only thing that says where its
 ///   order came from, and no rule over single lines reaches it.
-/// - a subject sorted two or more lines from its walk. The scan reads the line, the line
-///   above when the statement runs on from it, and the line below when it runs into it,
-///   and it counts a `.sorted` only where it applies to the walked subject itself — a
-///   sort of something else nearby is not a sort of the walk. A sort further away than
-///   that is not read, so such a walk is a hit, to be classified with the sort as its
-///   reason.
-/// - a set that never says it is one. A name is a set here because its declaration says
-///   `Set`, so a set handed back by a function into an inferred binding reads as an array.
+/// - a subject sorted further away than the scan reads. It reads the line, the line above
+///   where the line begins with a `.` that runs on from it, and the line below where the
+///   line carries no `{` to end the statement. A sort beyond that leaves a hit, to be
+///   classified with the sort as its reason.
+/// - a set that never says it is one. A name is a set here because a declaration in its
+///   file says `Set`, so a set handed back by a function into an inferred binding reads
+///   as an array — and, in the other direction, a name declared a set anywhere in a file
+///   reads as a set throughout it, which costs a classification where the same name is an
+///   array elsewhere in that file.
 final class DictionaryOrderTests: XCTestCase {
 
     /// The repository root, relative to this file.
@@ -88,6 +94,8 @@ final class DictionaryOrderTests: XCTestCase {
             "an array, sorted by wire key where it is decoded",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: externalPackages":
             "an array, sorted by package folder so a name conflict resolves the same way twice",
+        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key })":
+            "the root package's own pair, then the external manifests sorted by package folder; both halves state their order, and the sort is asked about because it belongs to the second of them",
         "SemelSwift/Sources/SemelSwift/SwiftPackageReader.swift: ancestors":
             "an array, built longest path first so the most specific prefix matches",
         "SemelApple/Sources/SemelApple/XcodeFormulaEmitter.swift: sourceFolders":
@@ -251,23 +259,60 @@ final class DictionaryOrderTests: XCTestCase {
         setNames.contains(text) || text.hasPrefix("Set(")
     }
 
-    /// Whether `expression` states the order it hands on — sorted, enumerated or zipped.
-    /// The sort has to be what the expression ends in, so that a `.sorted` applied to
-    /// some other receiver, or nested inside a call whose result is the subject, does not
-    /// pass as sorting the walk.
+    /// Whether `expression`, read from the walk it begins with, states the order it hands
+    /// on — sorted, enumerated or zipped. Two things have to hold, and together they are
+    /// what "the sort is a sort of this walk" means at the level of text:
+    ///
+    /// - the sort closes the expression, so nothing is applied to the sorted sequence
+    ///   afterwards and the sort is not nested in a call whose result travels on;
+    /// - nothing between the walk and the sort is an operator at the walk's own bracket
+    ///   depth. `byNode.map { key, value in key } + extras.sorted()` sorts `extras`, and
+    ///   the `+` is how that is known.
     static func isOrdered(_ expression: String) -> Bool {
         var text = expression.trimmingCharacters(in: .whitespaces)
         while text.hasSuffix("{") {
             text = String(text.dropLast()).trimmingCharacters(in: .whitespaces)
         }
         guard !text.isEmpty else { return false }
-        if text.hasPrefix("zip(") { return true }
 
-        for keyword in [".sorted", ".enumerated"] {
+        for keyword in [".sorted", ".enumerated", "zip"] {
             var searchStart = text.startIndex
             while let found = text.range(of: keyword, range: searchStart..<text.endIndex) {
-                if closesTheExpression(text[found.upperBound...]) { return true }
+                if !carriesAnOperator(text[..<found.lowerBound]),
+                   closesTheExpression(text[found.upperBound...]) {
+                    return true
+                }
                 searchStart = found.upperBound
+            }
+        }
+        return false
+    }
+
+    /// Whether `statement` sorts the walk `locator` names, `locator` being the walked text
+    /// as the line spells it. The statement is read from where the walk starts, so a sort
+    /// of something earlier in the line is not read as sorting the walk.
+    private static func statementSorts(_ locator: String, in statement: String) -> Bool {
+        guard let walk = statement.range(of: locator) else { return false }
+        return isOrdered(String(statement[walk.lowerBound...]))
+    }
+
+    /// Whether `between` carries an operator at the depth the walk sits at — a `+`, a
+    /// comma, a comparison — which puts what follows it in a different operand from the
+    /// walk, so that a sort beyond it sorts something else.
+    ///
+    /// Three kinds of punctuation are not among them, none of which parts an expression
+    /// from its own sort: `=` and `:`, which separate a walk from its name or its type,
+    /// and the postfix `!` and `?` of `values[port]!.sorted()`, which stay in the chain.
+    private static func carriesAnOperator(_ between: Substring) -> Bool {
+        var depth = 0
+        for character in between {
+            switch character {
+            case "(", "{", "[":
+                depth += 1
+            case ")", "}", "]":
+                depth -= 1
+            default:
+                if depth <= 0, "+-*/%,;<>&|^~".contains(character) { return true }
             }
         }
         return false
@@ -356,19 +401,16 @@ final class DictionaryOrderTests: XCTestCase {
             return walksAPair || walksAView || isSet(subject, setNames: setNames) ? subject : nil
         }
 
-        // A sort the statement ends in sorts what the statement walked, however the walk
-        // reached it; a sort nested inside the statement sorts something else.
-        let statementIsSorted = isOrdered(statement)
-
         let range = NSRange(code.startIndex..., in: code)
         if let match = viewRegex.firstMatch(in: code, range: range),
            let viewRange = Range(match.range(at: 1), in: code) {
             let view = String(code[viewRange])
             // `Set(dict.keys)` asks what is in the dictionary, not in what order.
-            return code.contains("Set(\(view))") || statementIsSorted ? nil : view
+            return code.contains("Set(\(view))") || statementSorts(view, in: statement) ? nil : view
         }
 
-        if !statementIsSorted, let convertedSet = convertedSet(inCode: code, setNames: setNames) {
+        if let convertedSet = convertedSet(inCode: code, setNames: setNames),
+           !statementSorts(convertedSet, in: statement) {
             return convertedSet
         }
 
@@ -382,13 +424,11 @@ final class DictionaryOrderTests: XCTestCase {
         // and in that case the receiver is what that line's expression ends with.
         if let receiverRange = Range(match.range(at: 1), in: code) {
             let receiver = String(code[receiverRange])
-            return isOrdered(receiver) || statementIsSorted ? nil : receiver
+            return statementSorts(receiver, in: statement) ? nil : receiver
         }
-        if statementIsSorted {
-            return nil
-        }
-        if let callInStatement = statement.range(of: String(code[callRange])),
-           isOrdered(String(statement[..<callInStatement.lowerBound])) {
+        let call = String(code[callRange])
+        if let callInStatement = statement.range(of: call),
+           isOrdered(String(statement[..<callInStatement.lowerBound])) || statementSorts(call, in: statement) {
             return nil
         }
         return "{ \(code[bindingRange]) in"
@@ -485,10 +525,21 @@ final class DictionaryOrderTests: XCTestCase {
         XCTAssertEqual(Self.walkedText(inLine: "for (key, value) in settings where ordered.sorted().isEmpty {"),
                        "settings")
 
+        // A sort that ends the statement but belongs to the other side of an operator is
+        // a sort of that other operand, and the walk is still a walk.
+        XCTAssertEqual(Self.walkedText(inLine: "let names = byNode.map { key, value in key } + extras.sorted()"),
+                       "byNode")
+        XCTAssertEqual(Self.walkedText(inLine: "let all = specs.keys.map { one($0) } + extras.sorted()"),
+                       "specs.keys")
+        XCTAssertEqual(Self.walkedText(inLine: "let lines = visited.map { $0.name } + extras.sorted()",
+                                       setNames: ["visited"]), "visited")
+
         // The converse: a sort the statement ends in does sort what it walked, however
         // many steps the walk took to reach it.
         XCTAssertNil(Self.walkedText(inLine: "let missing = specs.keys.filter { absent($0) }.sorted()"))
         XCTAssertNil(Self.walkedText(inLine: "let entries = byNode.map { nodeID, ports in one(nodeID, ports) }.sorted()"))
+        XCTAssertNil(Self.walkedText(inLine: "let ordered = visited.map { $0.name }.sorted()", setNames: ["visited"]))
+        XCTAssertNil(Self.walkedText(inLine: "let pairs = zip(keys, values).map { key, value in one(key, value) }"))
     }
 
     /// The set shapes, on examples: a set is seeded per process exactly as a dictionary

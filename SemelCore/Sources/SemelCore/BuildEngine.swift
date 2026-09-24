@@ -347,28 +347,38 @@ public final class BuildEngine {
             fileNodeIDs.formUnion(wires.map(\.fromNodeID))
         }
 
-        // Sorted, not in the set's own order: each of these files is a warning line, and
-        // a Set's iteration order is seeded per process, so walking it as it comes prints
-        // the same warnings shuffled differently from one run to the next (B-04).
-        for fileNodeID in fileNodeIDs.sorted() {
-            guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: fileNodeID) }) else {
+        // In path order, which means looking the paths up before reporting rather than as
+        // each line is printed. Each of these files is a warning line: a Set's iteration
+        // order is seeded per process, and a node's id records the order its graph was
+        // written — phase 2 applies results as tasks finish — so the path is the only one
+        // of the three that reads the same in two builds of the same tree (B-04).
+        let filesInPathOrder = fileNodeIDs.map { (nodeID: $0, path: configFilePath(ofNodeID: $0)) }.sorted { ($0.path, $0.nodeID) < ($1.path, $1.nodeID) }
+
+        for file in filesInPathOrder {
+            guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: file.nodeID) }) else {
                 continue
             }
 
-            guard unclaimed != (lastReportedUnclaimedKeys[fileNodeID] ?? []) else {
+            guard unclaimed != (lastReportedUnclaimedKeys[file.nodeID] ?? []) else {
                 continue
             }
 
-            lastReportedUnclaimedKeys[fileNodeID] = unclaimed
+            lastReportedUnclaimedKeys[file.nodeID] = unclaimed
 
             guard !unclaimed.isEmpty else {
                 continue
             }
 
-            let fileNode = FatalErrors.attempt({ try database.node.find(nodeID: fileNodeID) }) ?? nil
-            let path = fileNode?.properties["path"] ?? "config file \(fileNodeID)"
-            unclaimedConfigKeyReporter("⚠️  \(path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
+            unclaimedConfigKeyReporter("⚠️  \(file.path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
         }
+    }
+
+    /// The path recorded on a config file's node, or a stand-in naming the node when the
+    /// database cannot hand that node over — this report is best effort, and a line that
+    /// names the node is worth more than no line at all.
+    private func configFilePath(ofNodeID fileNodeID: ObjectID) -> String {
+        let fileNode = FatalErrors.attempt({ try database.node.find(nodeID: fileNodeID) }) ?? nil
+        return fileNode?.properties["path"] ?? "config file \(fileNodeID)"
     }
 
     // MARK: - Idle-time error reporting
