@@ -12,13 +12,18 @@
 import Foundation
 import GRDB
 
-/// Something inside a `withReadSnapshot` tried to write.
+/// A `SQLITE_READONLY` raised inside a `withReadSnapshot`, which has two causes and cannot
+/// tell them apart from the code alone.
 ///
-/// SQLite answers that with `SQLITE_READONLY`, the same code a read-only volume gives, and
-/// the volume is what this layer would otherwise blame — stopping the process and sending
-/// the reader to check permissions on a disk that is fine. Deliberately *not* an
-/// `UnrecoverableError`: the machine is in order and the caller is not, so this fails the
-/// operation and leaves the process running to report it.
+/// The first is the caller's: something inside the snapshot tried to write, and the read
+/// connection refused it. The second is the machine's, and is easy to miss — in WAL mode a
+/// *reader* writes too, to the `-shm` and `-wal` siblings, when it is the first to open
+/// them after they grow or when it has to recover them after a crash. A volume that cannot
+/// take that bookkeeping refuses a plain read with the same code.
+///
+/// Deliberately not an `UnrecoverableError`. The first cause is a bug in this process and
+/// the second is a fact about the disk, and blaming the disk by stopping would be wrong
+/// half the time — so this fails the operation and leaves the process running to say both.
 public struct WriteInsideReadSnapshotError: Error, CustomStringConvertible {
     public let underlying: GRDB.DatabaseError
 
@@ -27,9 +32,12 @@ public struct WriteInsideReadSnapshotError: Error, CustomStringConvertible {
     }
 
     public var description: String {
-        "a write was attempted inside a read snapshot, which holds a read-only connection "
-            + "(\(underlying.extendedResultCode)): \(underlying.message ?? "no message"). "
-            + "Use withTransaction for work that writes."
+        "a read snapshot was refused as read-only (\(underlying.extendedResultCode)): "
+            + "\(underlying.message ?? "no message"). "
+            + "Look first for a write inside the snapshot — that is the cause this process "
+            + "can fix, and `withTransaction` is where work that writes belongs. If nothing "
+            + "in it writes, the volume holding the database cannot take the write-ahead "
+            + "log's own bookkeeping, which a reader does too."
     }
 }
 

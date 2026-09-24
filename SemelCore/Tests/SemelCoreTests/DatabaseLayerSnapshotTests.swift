@@ -87,19 +87,41 @@ final class DatabaseLayerSnapshotTests: SemelCoreTestCase {
 
     // MARK: - A write from inside
 
-    /// SQLite refuses it with `SQLITE_READONLY`, which is also what a read-only *volume*
-    /// gives — and the layer's boundary would otherwise translate that into the
+    /// SQLite refuses it with `SQLITE_READONLY`, which outside a snapshot means the
+    /// *volume* is read-only — and the layer's boundary would translate that into the
     /// unrecoverable error that stops the process and blames the reader's disk. Inside a
-    /// snapshot that diagnosis is wrong twice over, so the code is re-read as the caller's
-    /// bug and the process lives to report it.
-    func test_aWriteInsideASnapshotIsNamedAsTheCallersBugNotTheVolumes() throws {
+    /// snapshot the code is ambiguous, since a WAL reader writes its siblings too, so it
+    /// is re-read as an ordinary error that names both causes and lets the process live to
+    /// report them.
+    func test_aWriteInsideASnapshotIsNotBlamedOnTheVolumeAlone() throws {
         XCTAssertThrowsError(try database.withReadSnapshot {
             _ = try database.node.insert(NodeRecord(kind: Configuration.kind))
         }) { error in
             XCTAssertTrue(error is WriteInsideReadSnapshotError, "got \(type(of: error)): \(error)")
-            XCTAssertFalse(error is DatabaseVolumeError, "the volume is not what is wrong")
-            XCTAssertTrue("\(error)".hasPrefix("a write was attempted inside a read snapshot"), "\(error)")
+            XCTAssertFalse(error is DatabaseVolumeError, "the volume is not the only thing this can be")
+            XCTAssertTrue("\(error)".contains("a write inside the snapshot"), "\(error)")
+            XCTAssertTrue("\(error)".contains("write-ahead log"), "the other cause is named too: \(error)")
         }
+    }
+
+    /// The reverse nesting. `withTransaction` finds a connection already published, so it
+    /// opens no transaction of its own — it runs the work on the read connection it
+    /// found, where every write is refused. There is no rollback scope either, and nothing
+    /// to roll back: the work never got to write anything.
+    func test_aWriteTransactionInsideASnapshotTakesTheReadConnection() throws {
+        var bodyRan = false
+
+        XCTAssertThrowsError(try database.withReadSnapshot {
+            try database.withTransaction {
+                bodyRan = true
+                _ = try database.node.insert(NodeRecord(kind: Configuration.kind))
+            }
+        }) { error in
+            XCTAssertTrue(error is WriteInsideReadSnapshotError, "got \(type(of: error)): \(error)")
+        }
+
+        XCTAssertTrue(bodyRan, "the inner call runs the work on the connection it found, rather than opening one")
+        XCTAssertEqual(try database.node.select(kind: Configuration.kind).count, 0, "and nothing was written")
     }
 
     /// Only a read-only refusal is re-read. Anything else the work throws is the caller's

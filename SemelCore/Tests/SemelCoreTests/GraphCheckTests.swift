@@ -112,6 +112,72 @@ final class GraphCheckTests: SemelCoreTestCase {
             sentence: "it could not be read, so whatever it had to say is missing from this report")])
     }
 
+    /// With no nodes to compare against, every wire in the graph looks like it points at
+    /// nothing. An unreadable table must not become a finding per row: the checks that rest
+    /// on it are skipped, and the one line that stays says which.
+    func test_anUnreadableNodeTableSkipsTheChecksThatRestOnItRatherThanFailingEveryRow() throws {
+        try makeHealthyGraph()
+        try database.dbQueue.write { try $0.execute(sql: "DROP TABLE Node") }
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings, [GraphCheck.Finding(
+            kind: .graphCouldNotBeRead, subject: "the node table",
+            sentence: "it could not be read, so wires, graph specs, products and folder manifests "
+                    + "were not checked")])
+    }
+
+    /// The same the other way round: with no wires, every required input port is a product
+    /// nothing produces. The product here is wired and sound, which is what makes the
+    /// finding it would otherwise draw a false one.
+    func test_anUnreadableWireTableSkipsTheChecksThatRestOnIt() throws {
+        let source = try makeConfiguration(role: "source")
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
+        try Wire.connectWire(database: database,
+                             fromNodeID:   try source.requireID(),
+                             fromSymbolID: Configuration.outputPort.asSymbolID(),
+                             toNodeID:     try product.requireID(),
+                             toSymbolID:   OutputFile.inputPort.asSymbolID(),
+                             name:         "link".asSymbolID())
+        try Folder.flushDirtyManifests()
+        XCTAssertEqual(GraphCheck.run(database: database).findings, [], "the graph is sound to begin with")
+
+        try database.dbQueue.write { try $0.execute(sql: "DROP TABLE Wire") }
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings, [GraphCheck.Finding(
+            kind: .graphCouldNotBeRead, subject: "the wire table",
+            sentence: "it could not be read, so wires and products were not checked")])
+    }
+
+    /// Without the marks, a folder waiting for its rebuild is a folder whose manifest
+    /// disagrees with its children — the engine working as designed, reported as a defect.
+    func test_anUnreadableMetadataTableSkipsTheManifestCheck() throws {
+        try push("src/hello.c", contents: "int hello(void) { return 0; }")
+        try database.dbQueue.write { try $0.execute(sql: "DROP TABLE Metadata") }
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings, [GraphCheck.Finding(
+            kind: .graphCouldNotBeRead, subject: "the metadata table",
+            sentence: "it could not be read, so folder manifests were not checked")])
+    }
+
+    /// First, whatever its kind sorts as: it is what the rest of the report has to be read
+    /// against, and a reader who takes a short list for a short list of problems has been
+    /// misled by the order alone.
+    func test_whatCouldNotBeReadIsSaidBeforeTheFindings() throws {
+        let (node, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
+        try Folder.flushDirtyManifests()
+        try database.dbQueue.write { try $0.execute(sql: "DROP TABLE CacheEntry") }
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings.map(\.kind), [.graphCouldNotBeRead, .productWithNoProducer], "\(findings)")
+        XCTAssertEqual(findings.last?.subject, "OutputFile #\(try node.requireID()) 'output:/app'")
+    }
+
     // MARK: - A wire whose endpoint node is gone
 
     func test_findsAWireIntoANodeThatDoesNotExist() throws {

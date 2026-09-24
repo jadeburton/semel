@@ -149,12 +149,16 @@ public final class DatabaseLayer {
     ///
     /// A write reached from inside takes this same read connection, and SQLite refuses it
     /// with `SQLITE_READONLY` — so the read-only intent is enforced rather than merely
-    /// stated. That code otherwise means the *volume* is read-only, which the boundary
-    /// translates into an unrecoverable `DatabaseVolumeError` that stops the process and
-    /// tells the reader to check permissions on their disk. Inside a snapshot that
-    /// diagnosis would be wrong twice over, so the code is re-read here as what it
-    /// actually is: `WriteInsideReadSnapshotError`, an ordinary error naming the caller's
-    /// bug, which fails the operation instead of the machine.
+    /// stated. Outside a snapshot that code means the *volume* is read-only, and the
+    /// boundary translates it into an unrecoverable `DatabaseVolumeError` that stops the
+    /// process and sends the reader to check permissions on their disk. Inside one it is
+    /// ambiguous: a WAL reader writes too — to the `-shm` and `-wal` siblings, when it is
+    /// first to open them after they grow or has to recover them after a crash — so a
+    /// volume that cannot take that bookkeeping refuses a plain read with the same code.
+    /// Stopping would be the wrong answer to the caller's bug and only one of the two
+    /// possible answers to the disk's, so the code is re-read here as
+    /// `WriteInsideReadSnapshotError`, an ordinary error that names both causes and fails
+    /// the operation instead of the machine.
     ///
     /// Nesting works both ways round, and only one of them is useful.
     /// `withReadSnapshot` inside `withTransaction` participates in that write transaction,
@@ -181,10 +185,10 @@ public final class DatabaseLayer {
         }
     }
 
-    /// Re-reads a `SQLITE_READONLY` raised inside a snapshot as the caller's write rather
-    /// than as the volume's state. The inner boundary has already translated it, so the
-    /// GRDB error is unwrapped from that translation before it is judged; anything else
-    /// passes through as it was.
+    /// Re-reads a `SQLITE_READONLY` raised inside a snapshot as the ambiguous thing it is,
+    /// rather than as the volume's state alone. The inner boundary has already translated
+    /// it, so the GRDB error is unwrapped from that translation before it is judged;
+    /// anything else passes through as it was.
     private static func namingAWriteInsideASnapshot(_ error: Error) -> Error {
         let databaseError = (error as? DatabaseVolumeError)?.underlying ?? (error as? GRDB.DatabaseError)
         guard let databaseError, databaseError.resultCode == .SQLITE_READONLY else {

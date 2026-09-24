@@ -111,24 +111,35 @@ public struct GraphCheck {
                       scheduledNodeCount: 0)
     }
 
+    /// A check whose prerequisite table could not be read does not run at all.
+    ///
+    /// An empty table and an unreadable one look alike from inside a check, and every
+    /// answer that follows is wrong in the same direction: with no nodes, every wire is
+    /// dangling; with no wires, every required port is unproduced; with no metadata, every
+    /// folder awaiting a rebuild is a folder whose manifest disagrees. One unreadable
+    /// table would become a finding per row, burying the one line that says what actually
+    /// happened — so the checks it carries are skipped, and that line says which.
     private static func walk(database: DatabaseLayer) -> Report {
         let context = Context(database: database)
 
         var findings: [Finding] = []
-        findings += danglingWires(context)
-        findings += graphSpecs(context)
-        findings += productsWithNoProducer(context)
-        findings += folderManifests(context)
+        if context.canRun(.nodes, .wires)    { findings += danglingWires(context) }
+        if context.canRun(.nodes)            { findings += graphSpecs(context) }
+        if context.canRun(.nodes, .wires)    { findings += productsWithNoProducer(context) }
+        if context.canRun(.nodes, .metadata) { findings += folderManifests(context) }
+        // Neither of these rests on a table another check needs: a port in error says so
+        // by itself, and a cache key is a string in a column of its own. A node table the
+        // walk could not read costs the first its labels, not its findings.
         findings += errorPortsWithoutMessages(context)
         findings += cacheKeys(context)
-        // Last, so that what the walk could not look at is listed beside what it found.
-        findings += context.unreadable.sorted().map { what in
-            Finding(kind: .graphCouldNotBeRead, subject: what,
-                    sentence: "it could not be read, so whatever it had to say is missing from this report")
-        }
 
-        return Report(findings: findings.sorted { ($0.kind.rawValue, $0.subject, $0.sentence)
-                                                < ($1.kind.rawValue, $1.subject, $1.sentence) },
+        findings.sort { ($0.kind.rawValue, $0.subject, $0.sentence)
+                      < ($1.kind.rawValue, $1.subject, $1.sentence) }
+
+        // Ahead of the rest rather than sorted among them: what the walk could not look at
+        // is what the rest of the report has to be read against, so it goes first whatever
+        // its kind sorts as.
+        return Report(findings: context.unreadableFindings + findings,
                       scheduledNodeCount: context.nodes.filter(\.scheduled).count)
     }
 
@@ -140,11 +151,34 @@ public struct GraphCheck {
     /// is the same name for the next thousand, and the check was otherwise three symbol
     /// queries per wire. Single-threaded by construction — one `run`, one instance, never
     /// escaping the walk — so the caches need no lock.
+    /// A table the walk reads before any check runs, and the checks that cannot answer
+    /// without it. Read up front precisely so that a check knows whether to run at all,
+    /// rather than discovering it half way through a loop.
+    private enum Prerequisite: String {
+        case nodes    = "the node table"
+        case wires    = "the wire table"
+        case metadata = "the metadata table"
+
+        /// What is not asked when this cannot be read, in the words a reader knows the
+        /// checks by.
+        var checksItCarries: [String] {
+            switch self {
+            case .nodes:    return ["wires", "graph specs", "products", "folder manifests"]
+            case .wires:    return ["wires", "products"]
+            case .metadata: return ["folder manifests"]
+            }
+        }
+    }
+
     private final class Context {
         let database:  DatabaseLayer
         var nodes:     [NodeRecord] = []
         var nodesByID: [ObjectID: NodeRecord] = [:]
         var wires:     [Wire] = []
+        /// Folders whose manifest is waiting to be rebuilt, which is the engine working as
+        /// designed. Read with the rest, so `metadata` being unreadable is known before
+        /// the manifest check would otherwise report every pending folder.
+        var dirtyFolderIDs: Set<ObjectID> = []
 
         /// What the walk asked for and did not get, named once however many rows wanted
         /// it. A set, because a point query that fails for one row fails for every row,
@@ -156,10 +190,46 @@ public struct GraphCheck {
 
         init(database: DatabaseLayer) {
             self.database = database
-            nodes = read("the node table") { try database.node.selectAll() } ?? []
-            wires = read("the wire table") { try database.wire.selectAll() } ?? []
+            nodes = read(Prerequisite.nodes.rawValue) { try database.node.selectAll() } ?? []
+            wires = read(Prerequisite.wires.rawValue) { try database.wire.selectAll() } ?? []
             nodesByID = Dictionary(nodes.compactMap { node in node.id.map { ($0, node) } },
                                    uniquingKeysWith: { first, _ in first })
+
+            let dirtyKeys = read(Prerequisite.metadata.rawValue) {
+                try database.metadata.selectKeys(withPrefix: Folder.manifestDirtyKeyPrefix)
+            } ?? []
+            dirtyFolderIDs = Set(dirtyKeys.compactMap { ObjectID($0.dropFirst(Folder.manifestDirtyKeyPrefix.count)) })
+        }
+
+        /// A list as a sentence says it: commas between, "and" before the last. A finding
+        /// is prose a person reads, not a field a machine splits.
+        private func listed(_ items: [String]) -> String {
+            guard let last = items.last, items.count > 1 else {
+                return items.first ?? ""
+            }
+            return items.dropLast().joined(separator: ", ") + " and " + last
+        }
+
+        /// Whether every table a check rests on was readable.
+        func canRun(_ prerequisites: Prerequisite...) -> Bool {
+            !prerequisites.contains { unreadable.contains($0.rawValue) }
+        }
+
+        /// One finding per thing the walk could not read, in a fixed order. A table some
+        /// check rests on says which checks went unasked, so a short report is not mistaken
+        /// for a short list of problems.
+        var unreadableFindings: [Finding] {
+            unreadable.sorted().map { what in
+                guard let prerequisite = Prerequisite(rawValue: what) else {
+                    return Finding(kind: .graphCouldNotBeRead, subject: what,
+                                   sentence: "it could not be read, so whatever it had to say is "
+                                           + "missing from this report")
+                }
+                return Finding(kind: .graphCouldNotBeRead, subject: what,
+                               sentence: "it could not be read, so "
+                                       + listed(prerequisite.checksItCarries)
+                                       + " were not checked")
+            }
         }
 
         /// One read, with `what` recorded when it fails. Every query the walk makes goes
@@ -374,11 +444,6 @@ public struct GraphCheck {
     /// rebuild is deliberately not triggered here — reading a port must not be what repairs
     /// it, in the one command that repairs nothing.
     private static func folderManifests(_ context: Context) -> [Finding] {
-        let dirtyKeys = context.read("the metadata table") {
-            try context.database.metadata.selectKeys(withPrefix: Folder.manifestDirtyKeyPrefix)
-        } ?? []
-        let dirtyIDs = Set(dirtyKeys.compactMap { ObjectID($0.dropFirst(Folder.manifestDirtyKeyPrefix.count)) })
-
         var childNames: [ObjectID: Set<String>] = [:]
         for node in context.nodes {
             guard let parentNodeID = node.parentNodeID, let name = node.name else {
@@ -394,7 +459,7 @@ public struct GraphCheck {
         var findings: [Finding] = []
 
         for node in context.nodes where node.kind == Folder.kind {
-            guard let nodeID = node.id, !dirtyIDs.contains(nodeID), let manifestSymbolID,
+            guard let nodeID = node.id, !context.dirtyFolderIDs.contains(nodeID), let manifestSymbolID,
                   let manifest = readManifest(ofFolder: nodeID, nameSymbolID: manifestSymbolID, in: context) else {
                 continue
             }
