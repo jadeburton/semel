@@ -56,10 +56,14 @@ extension BuildEngine {
         let isFresh = try recorded == nil && database.node.selectAll().isEmpty
         if !isFresh {
             Debug.log("Semel \(recorded ?? "of unknown version") built this graph; now \(Semel.version). Rebuilding.")
-            // With the cache, because a cache key says nothing about which Semel computed
-            // the entry: a rebuild that reads the old entries back publishes exactly the
-            // artifacts this marker exists to replace.
-            let archivedGraphPath = try reset(clearCache: true)
+            // Without the cache, on one premise: a key carries the node type's
+            // `implementationVersion`, so a type that changed what it emits for equal
+            // inputs and *declared* a new version misses on its own key, while the types a
+            // release left alone answer the rebuild from their entries rather than
+            // building every project in the home cold. The premise is the author's, not
+            // the mechanism's — AGENTS.md is where it is asked for — and a release where
+            // nobody bumped republishes what the older code computed.
+            let archivedGraphPath = try reset()
             try restateThePortsOfPreservedNodes()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
             // in the home unexplained. This runs from `BuildEngine.start()`, before a

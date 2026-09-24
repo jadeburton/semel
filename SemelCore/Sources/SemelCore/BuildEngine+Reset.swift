@@ -50,8 +50,9 @@ extension BuildEngine {
     /// keyed on nothing a node ID knows, so the rebuilt graph hits the entries the
     /// deleted one left: a reset costs one pass of cache lookups rather than a cold build
     /// of every project in the home. `clearCache` is for the one case the key cannot
-    /// cover — an entry believed wrong, or a Semel that computes different outputs from
-    /// the same inputs.
+    /// cover — an entry believed wrong. A Semel that computes different outputs from the
+    /// same inputs is covered: the node type that changed carries a new
+    /// `implementationVersion` and misses on its own key.
     ///
     /// A reset is also a graph's last moment, and the state it discards is the evidence
     /// for whatever made the reset necessary, so the database file is copied aside before

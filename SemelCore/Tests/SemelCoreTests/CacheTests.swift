@@ -57,6 +57,15 @@ final class CacheTests: SemelCoreTestCase {
         ])
     }
 
+    /// A result of the shape `SampleTool.process` returns, for the tests that need an
+    /// entry in the cache rather than a particular value in it.
+    private func builtOutput() throws -> ProcessOutput {
+        ProcessOutput(outputValues: [SampleTool.output:   .value(try "OBJECT".intern()),
+                                     SampleTool.errorLog: .value(""),
+                                     SampleTool.infoLog:  .value("")],
+                      inputWireSpecs: [:])
+    }
+
     // MARK: - Machine-derived inputs
 
     /// Pins the key format. A cache key is a promise that identical inputs mean an
@@ -68,10 +77,14 @@ final class CacheTests: SemelCoreTestCase {
     /// format did not. That cost the original provenance — it no longer proves the
     /// environment hook left keys untouched — but it buys something better going forward,
     /// because SampleTool exists only for these tests and will not be moved again.
+    ///
+    /// Re-recorded a second time for `implementationVersion` (B-102): the version of the
+    /// node type's implementation joined the key, which is one deliberate discard of every
+    /// entry in exchange for every later upgrade discarding only what it touched.
     func test_theKeyFormatHasNotDrifted() throws {
         let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
 
-        XCTAssertEqual(key, "102e7cf2a0a9219f558f27e4a9051479857dec7e0455e8440469b8e32d920e87")
+        XCTAssertEqual(key, "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419")
     }
 
     // MARK: - What the key covers
@@ -143,6 +156,112 @@ final class CacheTests: SemelCoreTestCase {
 
         XCTAssertNotEqual(compilerKey, preprocessorKey ?? "",
                           "the node type is part of the key")
+    }
+
+    // MARK: - Which implementation produced the entry
+
+    /// B-102. The inputs, the properties and the tool descriptors say what was built; none
+    /// of them says which code built it. A node type that changes what it emits for equal
+    /// inputs declares a new `implementationVersion`, and every key that type produces
+    /// becomes a different key — so an entry of the older implementation is a miss rather
+    /// than a wrong hit.
+    func test_twoImplementationVersionsOfOneNodeTypeDoNotShareAKey() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+        defer { SampleTool.implementationVersionForTests = 1 }
+
+        SampleTool.implementationVersionForTests = 1
+        let first = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        SampleTool.implementationVersionForTests = 2
+        let second = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        SampleTool.implementationVersionForTests = 1
+        let firstAgain = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        XCTAssertNotEqual(first, second, "the implementation that produced an entry belongs in its key")
+        XCTAssertEqual(first, firstAgain, "the same implementation keys the same way")
+    }
+
+    /// What a per-node constant buys over a version stamped on the whole engine: a bump
+    /// invalidates the entries of the one type whose output changed, and every other type
+    /// keeps hitting.
+    func test_aBumpedVersionMissesWhileATypeAtTheSameVersionHits() throws {
+        defer { SampleTool.implementationVersionForTests = 1 }
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+        let (otherRecord, _) = try GraphSpecNode.parse("OtherSampleTool()").findOrCreateMatchingNode()
+        let other = try OtherSampleTool(thisNode: otherRecord)
+
+        let toolKey  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
+        let otherKey = try XCTUnwrap(other.buildCacheKeyFromAllInputs(input: input))
+        try tool.saveCacheForAllInputsAndOutputs(cacheKey: toolKey, processingDuration: 0.1,
+                                                 output: builtOutput())
+        try other.saveCacheForAllInputsAndOutputs(cacheKey: otherKey, processingDuration: 0.1,
+                                                  output: builtOutput())
+
+        SampleTool.implementationVersionForTests = 2
+
+        let keyAfterTheBump = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: keyAfterTheBump),
+                     "a bumped type hits nothing its older implementation left")
+        XCTAssertEqual(try other.buildCacheKeyFromAllInputs(input: input), otherKey,
+                       "one type's bump does not move another type's key")
+        XCTAssertNotNil(try other.loadCachedOutputs(cacheKey: otherKey),
+                        "a type whose output did not change keeps its entries")
+    }
+
+    /// A node type says nothing about its implementation until its output changes, so the
+    /// shipped types carry no version of their own.
+    func test_aNodeTypeThatDeclaresNoVersionIsAtOne() {
+        XCTAssertEqual(OtherSampleTool.implementationVersion, 1)
+    }
+
+    // MARK: - What a stored entry still means
+
+    /// An entry carries the specs its node demanded, and a spec names node types by name.
+    /// A Semel that does not link a named type cannot replay such a spec, so the entry is a
+    /// miss: the node recomputes and demands what this Semel can make, rather than failing
+    /// on a type nothing can build. The node's own `implementationVersion` cannot cover
+    /// this — the type that went is somebody else's.
+    func test_anEntryDemandingATypeThisSemelDoesNotLinkIsAMiss() throws {
+        let tool = try makeCompilerNode()
+        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let output = ProcessOutput(
+            outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
+            inputWireSpecs: [SampleTool.input: ["wire0": "RetiredSampleTool(path: 'input:/x.c').output"]])
+        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key),
+                     "a spec naming a type this Semel cannot make is not an entry to hand back")
+    }
+
+    /// The retired type can sit anywhere in the demanded subgraph, so the whole spec tree
+    /// is read and not only the node at its root.
+    func test_anEntryDemandingARetiredTypeDeeperInASpecIsAMissToo() throws {
+        let tool = try makeCompilerNode()
+        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let spec = "Configuration(role: 'x', input: [\"a\": RetiredSampleTool().output]).output"
+        let output = ProcessOutput(
+            outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
+            inputWireSpecs: [SampleTool.input: ["wire0": spec]])
+        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
+    }
+
+    /// The common entry, which every spec of it names a linked type: it comes back.
+    func test_anEntryWhoseSpecsNameLinkedTypesIsAHit() throws {
+        let tool = try makeCompilerNode()
+        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let output = ProcessOutput(
+            outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
+            inputWireSpecs: [SampleTool.input: ["wire0": "StaticFile(path: 'input:/x.c').output"]])
+        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+
+        let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
+        XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"],
+                       "StaticFile(path: 'input:/x.c').output")
     }
 
     // MARK: - What a node reads from outside its inputs

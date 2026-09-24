@@ -47,6 +47,15 @@ public protocol Node: WithKind, WithChildren {
     /// recomputation, because an unscheduled node never rebuilds its key.
     func cacheKeyMaterial(input: ProcessInput) throws -> String?
 
+    /// Which implementation of this node type produced an output. Bump when this node's
+    /// output for equal inputs changes; the cache key carries it, so an entry written by
+    /// the implementation before the bump is a miss rather than a wrong hit.
+    ///
+    /// The bump is per node type on purpose. A version stamped on the engine as a whole
+    /// would invalidate the entries of every type a release touched and every type it did
+    /// not, which costs a cold build of everything in the home for a fix to one node.
+    static var implementationVersion: Int { get }
+
     /// Properties that are part of a node's identity but not of its cache key: a value
     /// the key deliberately strips from elsewhere, which would otherwise return through
     /// the properties. `projectRoot` is the one every node has reason to exclude.
@@ -117,6 +126,10 @@ public extension Node {
     func cacheKeyMaterial(input: ProcessInput) throws -> String? {
         nil
     }
+
+    /// A node type is at its first implementation until what it emits for equal inputs
+    /// changes, so the constant is declared only by a type that has changed.
+    static var implementationVersion: Int { 1 }
 
     // The literal must agree with `Node.projectRootProperty` in SemelCore's Cache.swift,
     // which SemelNodeKit cannot see.

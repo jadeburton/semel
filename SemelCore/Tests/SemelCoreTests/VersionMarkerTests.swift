@@ -158,11 +158,13 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "target=arm64")
     }
 
-    /// A plain `reset` keeps the cache, because the key covers the inputs. It says nothing
-    /// about which Semel computed the entry, so the rebuild a version change asks for has
-    /// to discard the entries too — otherwise it republishes the very artifacts the marker
-    /// exists to replace.
-    func test_aVersionChangeDiscardsTheCachedBuildsToo() throws {
+    /// A version change rebuilds the graph and keeps the cache, on the premise the key
+    /// carries: a node type that changed what it emits for equal inputs declares a new
+    /// `implementationVersion` and so misses on its own entries, while every type a release
+    /// left alone answers its rebuild from the cache instead of building the whole home
+    /// cold (B-102). The premise is a discipline AGENTS.md asks of the author, so what this
+    /// pins is the engine's half of it: an upgrade discards nothing by itself.
+    func test_aVersionChangeKeepsTheCachedBuilds() throws {
         let engine = try makeEngine(try DatabaseLayer())
         try engine.database.cacheEntry.insert(.init(hash: "an-entry-built-by-the-older-semel",
                                                     content: [UInt8]("{}".utf8),
@@ -172,8 +174,8 @@ final class VersionMarkerTests: SemelCoreTestCase {
 
         try engine.reconcileVersionMarkers()
 
-        XCTAssertEqual(try engine.database.cacheEntry.count(), 0,
-                       "a new Semel may compute different outputs from the same inputs")
+        XCTAssertEqual(try engine.database.cacheEntry.count(), 1,
+                       "an entry an upgrade did not invalidate is an entry worth keeping")
     }
 
     /// Nobody typed this reset, so nobody is watching a reply for the copy it leaves in the

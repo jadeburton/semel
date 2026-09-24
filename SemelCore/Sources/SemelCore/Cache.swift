@@ -60,14 +60,15 @@ extension Node {
             .toJSON()
     }
 
-    /// The node's own contribution: its type, its properties less the excluded ones, and
-    /// whatever it declares it reads from outside its inputs (`cacheKeyMaterial`). A node
-    /// without a `projectRoot` property, with no material and nothing else excluded, adds
-    /// nothing beyond its type and properties — the key format such a node has always had.
+    /// The node's own contribution: its type and the implementation of that type, its
+    /// properties less the excluded ones, and whatever it declares it reads from outside
+    /// its inputs (`cacheKeyMaterial`). The implementation version is what makes an entry
+    /// say which code produced it: a type that changes what it emits for equal inputs bumps
+    /// it and stops hitting what it wrote before, while every other type keeps its entries.
     private func nodeCacheKey(input: ProcessInput) throws -> String {
         let excluded = Self.cacheKeyExcludedProperties
         let properties = thisNode.properties.filter { !excluded.contains($0.key) }
-        var key = "\(String(describing: type(of: self)))\n\(properties.asPlainText())"
+        var key = "\(String(describing: type(of: self)))@\(Self.implementationVersion)\n\(properties.asPlainText())"
         if let material = try cacheKeyMaterial(input: input) {
             key.append("\n\(material)")
         }
@@ -115,6 +116,20 @@ extension Node {
         }
 
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
+            return nil
+        }
+
+        // An entry's specs demand a subgraph by naming node types, and a node type carries
+        // no version for a type other than its own: a Semel that drops or renames a type
+        // leaves entries of every *other* type naming something it cannot make. Applying
+        // such an entry is recoverable — the throw writes an error value on every output
+        // port and both hit paths reprocess — so this saves a replay that was going to be
+        // thrown away, along with its warning and the error values the ports carry
+        // meanwhile. The cost is one parse of each stored spec, which `applySpecs` repeats
+        // a few lines into the hit it allows: the check at most doubles a parse the path
+        // pays anyway.
+        let demandedSpecs = decodedCacheEntry.inputWireSpecs.values.flatMap(\.values)
+        guard demandedSpecs.allSatisfy({ GraphSpecNode.namesOnlyRegisteredTypes(spec: $0) }) else {
             return nil
         }
 
@@ -166,7 +181,8 @@ struct CacheKeyEntry: Codable {
 }
 
 /// A cached ProcessOutput as stored. Lives with the cache rather than with the node
-/// protocol, which is what it was filed under by accident of history.
+/// protocol. A field added here is non-optional, so an entry written before it fails to
+/// decode and misses, rather than decoding short with a default and hitting wrongly.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
     let inputWireSpecs: [String: [String: String]]
