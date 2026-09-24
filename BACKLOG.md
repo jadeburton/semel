@@ -472,9 +472,20 @@ protocol version inside one test binary. That one needs `rm -rf .build/arm64-app
 **B-104** `open` — **Two states are still spelled as sentences.**
 A removed file's `error("Deleted")` (`StaticFile`, `Folder`) and a folder's
 `error("Deleted/Nonexistent")` are states written as text, so anything that wants to tell
-them apart from a node's own failure has to read the words. Give each its own
-`NoValueReason` case, as B-92 did for the rest of the table, and the report decides what to
-say about them where it decides everything else.
+them apart from a node's own failure has to read the words — where B-92 could read the rest
+of the table by case. Give each its own `NoValueReason` case and let the report decide what
+to say about them where it decides everything else.
+
+Say what it decides, or the follow-up lands the enum and leaves the sentence. A folder is
+never `initializing` — `Folder.didCreate()` writes both of its ports, `manifest` with a
+(possibly empty) listing and `pinned` with `.value("")` or `error("Deleted")` — so B-92's
+rule never fires on one, and what a reader actually sees for a nested push path is
+`❌ Folder 'input:/src' · pinned: Deleted` for a folder nobody ever pushed. A folder that
+was never pinned should read `src/ has not been pushed`, the way a file does; one that was
+pushed and removed should read `src/ was deleted`. The `· <ports>: ` prefix belongs in the
+same pass: `output:` and `pinned:` carry nothing when the entry's one item names the node's
+whole output-port set, and dropping it there is a rule for `ErrorReport.lines` and
+`ErrorRecordRenderer.lines` together rather than a special case for one message.
 
 
 ## App bundles

@@ -22,7 +22,9 @@ public enum NoValueReason: Codable {
     /// a node reading it runs and makes of it what it can.
     case initializing
     /// The node could not produce a value because an input has never had one. Nothing has
-    /// failed anywhere above it, so a report says nothing about it.
+    /// failed anywhere above it, so the node has nothing of its own to say: a report folds it
+    /// onto the source that will never produce, or passes over it when there is no such
+    /// source, every node in a fresh graph being one input away from this state.
     case inputNotProduced
     /// The node did not run because one of its inputs is in error. It has nothing of its own
     /// to say, and a report folds it onto whatever failed upstream.

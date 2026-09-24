@@ -32,12 +32,15 @@ public struct ConfigMerger: Node {
     /// `settings(on:in:)` reads as nothing to add. An override file that may or may not exist
     /// is expressible either way; what required rules out is the formula omitting the input.
     ///
-    /// Both sides tolerate an absent value, which is the same thing `settings(on:in:)` does
-    /// with one and the reason a report does not name a file whose only readers are here.
+    /// The override is the one input in the design that may name a file nobody ever writes,
+    /// so it is the one port that tolerates an absent value and the one a report says
+    /// nothing about. The base is the settings this node starts from: a formula naming a
+    /// base nobody pushed is a formula whose configuration is missing, and the report names
+    /// the file rather than leaving the tools below to list the settings they lack.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(basePort), .required(overridePort)],
         outputPorts: [outputPort],
-        inputPortsToleratingAbsentValue: [basePort, overridePort]
+        inputPortsToleratingAbsentValue: [overridePort]
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
@@ -62,12 +65,12 @@ public struct ConfigMerger: Node {
     /// nothing else — otherwise requiring these ports would make an unwritten override stall
     /// the build rather than mean "nothing to add".
     ///
-    /// The cost is that this node treats a file nobody wrote and a genuine upstream failure
-    /// alike, so a broken base config leaves a partial configuration here and the tool
-    /// downstream reports the setting it is missing rather than the reason it is missing. The
-    /// two are distinguishable — `initializing` is the state of a port nothing has processed,
-    /// where a failure is `inputInError` or an error of its own — and telling the reader
-    /// which one it met is B-92.
+    /// This node treats a file nobody wrote and a genuine upstream failure alike, and it is
+    /// the report rather than this loop that tells the reader which it met. The two are
+    /// distinguishable by state — `initializing` is the state of a port nothing has
+    /// processed, where a failure is `inputInError` or an error of its own — so an unpushed
+    /// base is named as the file it is, and a broken one is named where it broke. Only the
+    /// override is silent, because only the override is allowed to be absent.
     ///
     /// One wire per port is the intent, and both callers of this write exactly one. Wires are
     /// merged in sorted key order anyway, so that two of them cannot resolve differently

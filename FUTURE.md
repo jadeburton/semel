@@ -124,9 +124,10 @@ questions about settled decisions, recorded so they are argued rather than re-di
   `<../clang.cfg>`; forget it and every tool named a missing setting while nothing named the
   missing file. B-71 was this problem, fixed for one file; B-92 is the report line for all
   of them — `clang.cfg has not been pushed`, with the chain below it counted. What decides
-  silence is the port, not the node's type: `ConfigFilter` and `ConfigMerger` declare that
-  they read an absent value as nothing to add, which is what keeps an override file nobody
-  wrote out of the report and leaves everything else in it.
+  the one exception is the port, not the node's type: `ConfigMerger.override` declares that
+  it reads an absent value as nothing to add, because an override file nobody wrote is the
+  expected state. Every other port, the merger's own `base` and the filter's `input`
+  included, is a port whose file the formula says must exist.
 
 - **`reset` threw away the valuable state (B-93, fixed).** The graph is rebuildable from
   the input plus the cache, and the cache is content-addressed — but `reset` also deleted

@@ -217,9 +217,9 @@ public enum ErrorReport {
     ///
     /// A source node's port holding the initializing state will hold it for good, so the
     /// only question is whether anyone is waiting. A consumer that reads an absent value as
-    /// nothing to add says so on the port it reads — that is how a config file written for
-    /// the config nodes alone stays out of a report while the same file feeding a tool does
-    /// not. One wire query per such port, and a graph whose files are all pushed has none.
+    /// nothing to add says so on the port it reads, and a file whose every reader says that
+    /// is one the formula allows never to exist. One wire query per candidate port, and a
+    /// graph whose files are all pushed has no candidates.
     static func unpushedFiles(amongPorts ports: [OutputPort],
                               database: DatabaseLayer) -> [ObjectID: String] {
 
@@ -250,7 +250,7 @@ public enum ErrorReport {
             }
 
             // A report is best effort: wires the database cannot hand over leave the file
-            // unnamed, which is the state before this rule existed rather than a wrong line.
+            // unnamed, which costs a line rather than printing a wrong one.
             let consumers = FatalErrors.attempt({
                 try database.wire.select(comingFromNodeID: port.nodeID, fromSymbolID: port.nameSymbolID)
             }) ?? []
@@ -283,9 +283,13 @@ public enum ErrorReport {
     }
 
     /// What each node has to say, for a caller keeping track of what it has already said.
+    ///
+    /// `unpushedFiles` is a parameter so that a caller making several passes over one set of
+    /// ports works it out once; leaving it out asks for it here.
     public static func messagesByNode(forPorts ports: [OutputPort],
-                                      database: DatabaseLayer) -> [ObjectID: Set<String>] {
-        let unpushed = unpushedFiles(amongPorts: ports, database: database)
+                                      database: DatabaseLayer,
+                                      unpushedFiles: [ObjectID: String]? = nil) -> [ObjectID: Set<String>] {
+        let unpushed = unpushedFiles ?? Self.unpushedFiles(amongPorts: ports, database: database)
 
         var result: [ObjectID: Set<String>] = [:]
         for port in ports {
@@ -312,8 +316,8 @@ public enum ErrorReport {
     /// A second way of carrying someone else's state, and folded the same way — the node
     /// below a file nobody pushed has nothing of its own to say either. It differs in what
     /// happens when the walk finds no cause: a failure that was collected leaves its carrier
-    /// standing in for it, where an absence with no cause above it is the fresh-graph state
-    /// a report has always passed over.
+    /// standing in for it, where an absence with no cause above it is the state of a node
+    /// whose turn has not come, which a report passes over.
     public static func isCarriedFromAnAbsentInput(_ port: OutputPort) -> Bool {
         port.valueKind == .inputNotProduced
     }
@@ -321,19 +325,21 @@ public enum ErrorReport {
     /// The nodes worth reporting, each with the number of nodes downstream that fail only
     /// because it did.
     ///
-    /// A node whose every reportable port is carried from an input is carrying someone
-    /// else's failure, and is folded into the causes the wires reach upstream of it; a node with
-    /// anything else to say is a cause and is reported. A carrier with nothing failing
-    /// upstream is as far as the walk can go, which means the node that failed has been
-    /// collected, so the carrier stands in for its own cause. A chain below a value that was
-    /// never produced never reaches here: nothing in it is a carrier, because a node stopped
-    /// by an input that has no value publishes that state rather than a failure. The fold
-    /// reaches exactly as far as the wires do: a chain of carriers folds onto its topmost,
-    /// while sibling consumers of one absent node share no wire to walk along and are a
-    /// cause each. The collector is what keeps the
-    /// second shape away from a report — `collectIfUnreferenced` takes a node only once
-    /// `hasNoOutputWires` holds of it, so every consumer goes before the node it reads, and
-    /// a graph holding carriers whose cause has been collected is not one an idle pass sees.
+    /// A node whose every listed port carries someone else's state — an input that failed,
+    /// or an input that never had a value — is folded into the causes the wires reach
+    /// upstream of it; a node with anything of its own to say is a cause and is reported.
+    /// The two kinds of carrier are folded alike and part company only where the walk ends.
+    /// A carrier of a failure with nothing failing upstream is as far as the walk can go,
+    /// which means the node that failed has been collected, so the carrier stands in for its
+    /// own cause; a carrier of an absence with nothing above it is a node whose turn has not
+    /// come, which is the state of every node in a fresh graph, so it is dropped.
+    ///
+    /// The fold reaches exactly as far as the wires do: a chain of carriers folds onto its
+    /// topmost, while sibling consumers of one absent node share no wire to walk along and
+    /// are a cause each. The collector is what keeps the second shape away from a report —
+    /// `collectIfUnreferenced` takes a node only once `hasNoOutputWires` holds of it, so
+    /// every consumer goes before the node it reads, and a graph holding carriers whose
+    /// cause has been collected is not one an idle pass sees.
     public static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                               database: DatabaseLayer) -> [ObjectID: Int] {
         causes(amongErrorPorts: byNode,
@@ -439,13 +445,17 @@ public enum ErrorReport {
     /// error map is a dictionary, whose order is seeded per process, and two nodes can carry
     /// one label — two of a type with no path do. A sort by label alone leaves those two in
     /// the order the walk found them, `sort` being no more stable than the key it is given.
+    ///
+    /// `unpushedFiles` is a parameter for the same reason it is one on `messagesByNode`: the
+    /// engine makes three passes over one idle pass's ports and works the files out once.
     public static func entries(forErrorPorts errorPorts: [OutputPort],
                                database: DatabaseLayer,
+                               unpushedFiles: [ObjectID: String]? = nil,
                                select: (ObjectID, Set<String>) -> Set<String>)
                                -> [(nodeID: ObjectID, entry: Entry)] {
 
         let byNode   = Dictionary(grouping: errorPorts, by: \.nodeID)
-        let unpushed = unpushedFiles(amongPorts: errorPorts, database: database)
+        let unpushed = unpushedFiles ?? Self.unpushedFiles(amongPorts: errorPorts, database: database)
         let counts   = causes(amongErrorPorts: byNode, database: database, unpushedFiles: unpushed)
 
         var reported: [(nodeID: ObjectID, entry: Entry)] = []

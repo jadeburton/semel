@@ -126,7 +126,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// The report names the one node that can be fixed.
     func test_aCascadeIsReportedAsItsCauseAlone() throws {
         try makeCascade(consumers: 20)
-        XCTAssertEqual(Set(try database.outputPort.selectAllForErrorReport().map(\.nodeID)).count, 22,
+        XCTAssertEqual(Set(try ErrorReport.portsToReport(database: database).map(\.nodeID)).count, 22,
                        "the cause and every node downstream of it are in error")
 
         engine.reportIdleTimeErrors()
@@ -417,7 +417,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
             .writeToOutputPort("errorLog",
                                value: .noValue(reason: .error(messageDataObjectHash: try "and a log".intern())))
 
-        let byNode = Dictionary(grouping: try database.outputPort.selectAllForErrorReport(), by: \.nodeID)
+        let byNode = Dictionary(grouping: try ErrorReport.portsToReport(database: database), by: \.nodeID)
 
         XCTAssertEqual(ErrorReport.causes(amongErrorPorts: byNode, database: database),
                        [source: 0, consumer: 0])

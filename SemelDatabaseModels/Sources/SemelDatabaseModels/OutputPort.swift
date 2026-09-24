@@ -105,9 +105,14 @@ public struct OutputPortDataAccess: DataAccessType {
     /// has never produced never will. The same state on a node that does take inputs means
     /// only that its turn has not come, and every node in a fresh graph holds it.
     ///
-    /// One scan of the ports. SQLite stops at the first true branch of an `OR`, so the node
-    /// lookup — by primary key — happens only for the ports in that fourth state.
-    public func selectAllForErrorReport(sourceNodeKinds: [UInt] = []) throws -> [OutputPort] {
+    /// One scan of the ports. The node lookup — by primary key — sits behind an `AND` whose
+    /// left side is the state test, and SQLite stops at the first false branch of an `AND`,
+    /// so the lookup happens only for the ports already in that fourth state.
+    ///
+    /// `sourceNodeKinds` takes no default: an empty list is a valid answer from a registry
+    /// with no source types in it, and a caller that meant to pass one and did not would
+    /// silently get a report that never names a file.
+    public func selectAllForErrorReport(sourceNodeKinds: [UInt]) throws -> [OutputPort] {
         let carried: [OutputPort.ValueKind] = [.error, .inputInError, .inputNotProduced]
         let carriedList = carried.map { _ in "?" }.joined(separator: ", ")
         var arguments   = carried.map { Int64($0.rawValue) }

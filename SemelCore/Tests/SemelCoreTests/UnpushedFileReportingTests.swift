@@ -5,12 +5,12 @@
 //  B-92. A file the formula names and nobody has pushed has no inputs, so nothing will
 //  ever make it run: its port holds the initializing state for good, and every node that
 //  needs its value publishes "an input has never been produced". Neither state is a
-//  failure, so a report used to pass over the whole chain and a mistyped path in a formula
-//  produced no error report at all.
+//  failure of the node holding it, and neither is something a reader can act on.
 //
-//  The report names the file instead — once, with the chain below it counted — and stays
-//  silent about a file whose only readers are the config nodes, which take an absent value
-//  as nothing to add and say so in their descriptors.
+//  The file is, so the file is the line: named once, with the chain below it counted. The
+//  exception is a port whose node reads an absent value as nothing to add and says so in
+//  its descriptor — `ConfigMerger.override`, the one input a formula may point at a file
+//  that need never exist.
 //
 
 @testable import SemelCore
@@ -64,6 +64,11 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     private func run(_ nodeID: ObjectID) throws {
         try database.node.select(nodeID: nodeID).makeNode().processWithPreCheck()
+    }
+
+    /// The file behind a node id, for a test that pushes content into it.
+    private func staticFile(_ nodeID: ObjectID) throws -> StaticFile {
+        try StaticFile(thisNode: try database.node.select(nodeID: nodeID))
     }
 
     private func reason(of nodeID: ObjectID, port: String = "output") throws -> OutputPort.ValueKind? {
@@ -171,13 +176,16 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     // MARK: - Where the knowledge lives
 
-    /// The rule reads the port, not the node's type. Which ports say so is a short list and
-    /// is stated here, so that adding a node that tolerates an absent value is a change to
-    /// that node and to this line, and never to the report.
-    func test_onlyTheConfigNodesTolerateAnAbsentValue() {
-        XCTAssertTrue(ConfigFilter.descriptor.toleratesAbsentValue(onInputPort: ConfigFilter.inputPort))
-        XCTAssertTrue(ConfigMerger.descriptor.toleratesAbsentValue(onInputPort: ConfigMerger.basePort))
+    /// The rule reads the port, not the node's type. The set has one member, and it is
+    /// stated here so that admitting a second is a change to that node and to this line,
+    /// and never to the report.
+    func test_onlyAConfigMergersOverrideToleratesAnAbsentValue() {
         XCTAssertTrue(ConfigMerger.descriptor.toleratesAbsentValue(onInputPort: ConfigMerger.overridePort))
+
+        // The settings a merge starts from and the file a filter selects out of are both
+        // files the formula says must exist.
+        XCTAssertFalse(ConfigMerger.descriptor.toleratesAbsentValue(onInputPort: ConfigMerger.basePort))
+        XCTAssertFalse(ConfigFilter.descriptor.toleratesAbsentValue(onInputPort: ConfigFilter.inputPort))
 
         // Optional at creation is a different question: `inherit` may be left unwired, and a
         // wire that is there is one whose value this node demands.
@@ -186,19 +194,20 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         XCTAssertFalse(DemandingSampleTool.descriptor.toleratesAbsentValue(onInputPort: DemandingSampleTool.input))
     }
 
-    // MARK: - A file the config nodes tolerate
+    // MARK: - The one port that tolerates an absence
 
     /// An override file nobody wrote means "nothing to add", which is what makes a formula
-    /// able to name one at all. `ConfigMerger` says so on the port, and the report reads the
-    /// port rather than the node's type.
-    func test_anUnpushedOverrideReadOnlyByAConfigMergerIsSilent() throws {
-        let file = try makeUnpushedFile(path: "input:/override.cfg")
-        let base = try makeUnpushedFile(path: "input:/base.cfg")
+    /// able to name one at all — `6502emu.fmla` lays a project-local `clang.cfg` over the
+    /// shared one. The base beside it is a file that must exist, so the two ports of one
+    /// node answer differently and the report reads the port rather than the node's type.
+    func test_anUnpushedOverrideIsSilentWhileTheBaseBesideItIsNamed() throws {
+        let override = try makeUnpushedFile(path: "input:/override.cfg")
+        let base     = try makeUnpushedFile(path: "input:/base.cfg")
         let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
                                                properties: [:], graphSpec: nil).requireID()
 
         try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
-        try connect(file, to: merger, name: "override", toPort: ConfigMerger.overridePort)
+        try connect(override, to: merger, name: "override", toPort: ConfigMerger.overridePort)
         try run(merger)
 
         XCTAssertEqual(try reason(of: merger, port: ConfigMerger.outputPort), .value,
@@ -206,43 +215,71 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/base.cfg'"]])
     }
 
-    /// The same for `ConfigFilter`, whose one input port takes an absent config file as an
-    /// empty selection rather than as a failure.
-    func test_anUnpushedConfigReadOnlyByAConfigFilterIsSilent() throws {
-        let file = try makeUnpushedFile(path: "input:/clang.cfg")
-        let filter = try NodeRecord.createNode(database: database, kind: ConfigFilter.kind,
-                                               properties: [ConfigFilter.prefixProperty: "clang.compiler"],
-                                               graphSpec: nil).requireID()
+    /// With the base pushed, the override alone leaves nothing to say.
+    func test_anUnpushedOverrideOverAPushedBaseIsSilent() throws {
+        let override = try makeUnpushedFile(path: "input:/override.cfg")
+        let base     = try makeUnpushedFile(path: "input:/base.cfg")
+        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
+                                               properties: [:], graphSpec: nil).requireID()
 
-        try connect(file, to: filter, name: "config", toPort: ConfigFilter.inputPort)
-        try run(filter)
+        try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
+        try connect(override, to: merger, name: "override", toPort: ConfigMerger.overridePort)
+        _ = try staticFile(base).replaceContent(try "clang.compiler.target=x".intern())
+        try run(merger)
 
         engine.reportIdleTimeErrors()
 
         XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
     }
 
-    /// One tolerant reader does not excuse an intolerant one: the tutorial's `clang.cfg`
-    /// feeds the filters *and* a product that publishes the file whole, and the product is
-    /// what makes the absence worth a line.
-    func test_aFileOneReaderToleratesAndAnotherNeedsIsStillNamed() throws {
+    /// The tutorial's case, and the reason B-92 exists: `clang.cfg` reaches the tools
+    /// through a `ConfigFilter`, which contributes nothing rather than failing, so without
+    /// this line the reader gets a wall of missing settings and nothing naming the file.
+    /// The filter still runs and still publishes an empty selection; only the report
+    /// changes.
+    func test_anUnpushedConfigReadOnlyByAConfigFilterIsNamed() throws {
         let file = try makeUnpushedFile(path: "input:/clang.cfg")
         let filter = try NodeRecord.createNode(database: database, kind: ConfigFilter.kind,
                                                properties: [ConfigFilter.prefixProperty: "clang.compiler"],
                                                graphSpec: nil).requireID()
-        let product = try makeDemanding(tag: "product")
 
         try connect(file, to: filter, name: "config", toPort: ConfigFilter.inputPort)
-        try connect(file, to: product, name: "config")
         try run(filter)
-        try run(product)
+
+        XCTAssertEqual(try reason(of: filter, port: ConfigFilter.outputPort), .value,
+                       "the filter selects nothing rather than failing")
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/clang.cfg'"]])
+        XCTAssertEqual(captured[0][0].items,
+                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
+        XCTAssertEqual(captured[0][0].downstreamCarrierCount, 0,
+                       "the filter produced a value, so nothing carries the absence")
+    }
+
+    /// One tolerant reader does not excuse an intolerant one: a file laid over a base as an
+    /// override and read by a tool besides is named, because the tool needs it.
+    func test_aFileOneReaderToleratesAndAnotherNeedsIsStillNamed() throws {
+        let file = try makeUnpushedFile(path: "input:/override.cfg")
+        let base = try makeUnpushedFile(path: "input:/base.cfg")
+        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
+                                               properties: [:], graphSpec: nil).requireID()
+        let tool = try makeDemanding(tag: "tool")
+
+        try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
+        try connect(file, to: merger, name: "override", toPort: ConfigMerger.overridePort)
+        try connect(file, to: tool, name: "config")
+        _ = try staticFile(base).replaceContent(try "clang.compiler.target=x".intern())
+        try run(merger)
+        try run(tool)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/override.cfg'"]])
     }
 
     // MARK: - A file that was pushed and then removed
@@ -254,8 +291,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         let compiler = try makeDemanding(tag: "compiler")
 
         try connect(file, to: compiler, name: "source")
-        _ = try (database.node.select(nodeID: file).makeNode() as! StaticFile).replaceContent(try "int main(){}".intern())
-        _ = try (database.node.select(nodeID: file).makeNode() as! StaticFile).replaceContent(nil)
+        _ = try staticFile(file).replaceContent(try "int main(){}".intern())
+        _ = try staticFile(file).replaceContent(nil)
         try run(compiler)
 
         XCTAssertEqual(try reason(of: file), .error)
@@ -275,7 +312,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         let compiler = try makeDemanding(tag: "compiler")
 
         try connect(file, to: compiler, name: "source")
-        _ = try (database.node.select(nodeID: file).makeNode() as! StaticFile).replaceContent(try "int main(){}".intern())
+        _ = try staticFile(file).replaceContent(try "int main(){}".intern())
         try run(compiler)
 
         engine.reportIdleTimeErrors()

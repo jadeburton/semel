@@ -107,7 +107,7 @@ final class DictionaryOrderTests: XCTestCase {
         "SemelCore/Sources/SemelCore/Node.swift: output.inputWireSpecs":
             "applies each port's specs to that port, and applySpecs sorts the wires within it",
         "SemelNodeKit/Sources/SemelNodeKit/TypeRegistry.swift: kindCache.values":
-            "hands the registered types to a caller with a question to ask of each; the one caller collects kinds into a set for a query",
+            "hands the registered types to a caller with a question to ask of each; the one caller collects the kinds that answer it into an `IN (…)` list, which has no order",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: byNode.values":
             "flattens the ports back into one sequence, read port by port into a dictionary by node",
         "SemelCore/Sources/SemelCore/BuildEngine.swift: current":
