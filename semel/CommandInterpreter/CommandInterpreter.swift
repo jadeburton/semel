@@ -129,6 +129,14 @@ public final class CommandInterpreter: CommandContext {
             countErrorRecords(records)
         case .daemon(.notice(let line)):
             outputMessage(line)
+        case .daemon(.settled(let scheduled, let computed, let fromCache, let errors)):
+            guard let line = SettleSummaryRenderer.line(scheduled: scheduled,
+                                                        computed:  computed,
+                                                        fromCache: fromCache,
+                                                        errors:    errors) else {
+                return
+            }
+            outputMessage(line)
         }
     }
 

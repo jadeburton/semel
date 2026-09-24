@@ -28,15 +28,16 @@ public enum ProtocolVersion {
     /// say so instead. Nothing enforces it: the test that pins the number only fires when
     /// someone changes the number.
     ///
-    /// Version 5's `reset` carries a flag for whether the cache goes too, and answers with
-    /// the path its copy of the graph was written to; every earlier version's took no
-    /// argument and answered `ok`. Version 4's `ErrorRecord` carries the size of the cascade
-    /// under a failure, where version 3's carried a record per node in it. Version 3's
-    /// `remove` reply carries files and folders apart, where version 2's carried one list.
-    /// Version 2 carries `debug`'s text in the frame body; version 1 carried it in the
-    /// reply's JSON. A peer speaking an older one decodes such a reply as an empty answer
-    /// and prints nothing, which is why the mismatch is worth a rejection naming both.
-    public static let current = 5
+    /// Version 6 adds the `settled` event, which carries one settle's totals. Version 5's
+    /// `reset` carries a flag for whether the cache goes too, and answers with the path its
+    /// copy of the graph was written to; every earlier version's took no argument and
+    /// answered `ok`. Version 4's `ErrorRecord` carries the size of the cascade under a
+    /// failure, where version 3's carried a record per node in it. Version 3's `remove`
+    /// reply carries files and folders apart, where version 2's carried one list. Version 2
+    /// carries `debug`'s text in the frame body; version 1 carried it in the reply's JSON. A
+    /// peer speaking an older one decodes such a reply as an empty answer and prints
+    /// nothing, which is why the mismatch is worth a rejection naming both.
+    public static let current = 6
 }
 
 public struct Hello: Codable, Equatable, Sendable {
