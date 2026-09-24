@@ -172,12 +172,6 @@ cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost ×
 rather than uniformly. On a shared cache, have each client ignore a small percentage of hits
 and recompute: coverage is sampling-rate × fleet-size.
 
-**B-13** `open` — **Store key material alongside each entry.**
-Today a mismatch says two builds disagreed and nothing about why. Recording node type,
-`codeVersion`, properties, input wire keys and hashes, and `cacheKeyEnvironment` makes a
-mismatch diffable and lets keys be recomputed offline. (Update: `codeVersion` was deleted, 
-as this is not a reliable enough mechanism.)
-
 **B-14** `open` — **No blob GC.**
 Unreferenced objects accumulate in the object store with no collector. Not urgent.
 

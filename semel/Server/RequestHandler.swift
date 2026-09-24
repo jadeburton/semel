@@ -127,8 +127,11 @@ public final class RequestHandler {
                 // Answered in `handle`, before the queue. Unreachable here, and the switch
                 // wants every case.
                 return (.daemon(.ok), nil)
-            case .debug:
-                return (.daemon(.debug), Data(try engine.graphDescription().utf8))
+            case .debug(let cacheKey):
+                guard let cacheKey else {
+                    return (.daemon(.debug), Data(try engine.graphDescription().utf8))
+                }
+                return (.daemon(.debug), Data(engine.cacheEntryDescription(key: cacheKey).utf8))
             case .subscribe:
                 session.isSubscribed = true
                 return (.daemon(.ok), nil)

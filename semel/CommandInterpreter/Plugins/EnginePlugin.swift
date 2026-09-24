@@ -12,7 +12,7 @@ final class EnginePlugin: CommandPlugin {
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
-        case "d", "debug":  try handleDebug(context: context)
+        case "d", "debug":  try handleDebug(tokens: tokens, context: context)
         case "n", "nudge":  _ = try context.request(.nudge)
         case "e", "errors": try handleErrors(context: context)
         case "check":       try handleCheck(context: context)
@@ -25,10 +25,18 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - debug
 
-    /// The graph's description arrives as the reply's body rather than inside its JSON:
-    /// the text runs to megabytes on a real project, and the JSON section is capped.
-    private func handleDebug(context: any CommandContext) throws {
-        let (response, body) = try context.request(.debug)
+    /// `debug [<cache key>]`: the whole graph, or the key material of one cache entry —
+    /// the text that entry's key is the hash of. Two machines that disagreed about a build
+    /// compare two of those texts; a hash on its own says only that they disagreed.
+    ///
+    /// Either description arrives as the reply's body rather than inside its JSON: the
+    /// graph's text runs to megabytes on a real project, and the JSON section is capped.
+    private func handleDebug(tokens: [String], context: any CommandContext) throws {
+        guard tokens.count <= 1 else {
+            context.outputError("debug: takes at most one argument, the key of a cache entry")
+            return
+        }
+        let (response, body) = try context.request(.debug(cacheKey: tokens.first))
         guard case .debug = response else {
             return
         }

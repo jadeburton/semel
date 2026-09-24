@@ -91,7 +91,10 @@ extension Node {
             return
         }
 
-        let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+        // The material once, and the key from it: the entry this saves is keyed on exactly
+        // what it stores beside it.
+        let keyMaterial = try? buildCacheKeyMaterial(input: input)
+        let cacheKey    = keyMaterial.flatMap { try? $0.cacheKey() }
         var didWriteCachedOutput = false
 
         if let cachedOutput = try? loadCachedOutputs(cacheKey: cacheKey) {
@@ -112,7 +115,7 @@ extension Node {
             // Failing to save a cache entry must not fail a build — unless the failure is
             // the machine's, which no later node will survive either.
             do {
-                try saveCacheForAllInputsAndOutputs(cacheKey: cacheKey,
+                try saveCacheForAllInputsAndOutputs(keyMaterial: keyMaterial,
                                                     processingDuration: Date.now.timeIntervalSince(startTime),
                                                     output: output)
             } catch {
@@ -125,7 +128,8 @@ extension Node {
     /// output without making any graph mutations.  Safe to call concurrently with
     /// other nodes.  Returns nil if this node is not ready to process (no input
     /// ports, inputs pending, required wires missing, etc.).
-    func tryComputeOutput() -> (output: ProcessOutput, cacheKey: String?, fromCache: Bool, computeStart: Date)? {
+    func tryComputeOutput() -> (output: ProcessOutput, keyMaterial: CacheKeyMaterial?,
+                                fromCache: Bool, computeStart: Date)? {
         guard hasInputPorts() else {
             return nil
         }
@@ -149,14 +153,15 @@ extension Node {
             return nil
         }
 
-        let cacheKey = try? buildCacheKeyFromAllInputs(input: input)
+        let keyMaterial = try? buildCacheKeyMaterial(input: input)
+        let cacheKey    = keyMaterial.flatMap { try? $0.cacheKey() }
 
         if let cached = try? loadCachedOutputs(cacheKey: cacheKey) {
-            return (cached, cacheKey, true, .now)
+            return (cached, keyMaterial, true, .now)
         }
 
         let computeStart = Date.now
-        return (processWithCatch(input: input), cacheKey, false, computeStart)
+        return (processWithCatch(input: input), keyMaterial, false, computeStart)
     }
 }
 

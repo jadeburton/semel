@@ -55,6 +55,13 @@ public struct CacheEntryDataAccess: DataAccessType {
         try write { db in try cacheEntry.insert(db) }
     }
 
+    /// Stores the entry whether or not its key is already taken. What a caller wants when
+    /// the row under that key is one it could not read: the key is the same build, and the
+    /// entry it can read is the better of the two.
+    public func save(_ cacheEntry: CacheEntry) throws {
+        try write { db in try cacheEntry.save(db) }
+    }
+
     public func delete(hash: String) throws -> Bool {
         try write { db in
             try CacheEntry.filter(Column("hash") == hash).deleteAll(db) > 0
