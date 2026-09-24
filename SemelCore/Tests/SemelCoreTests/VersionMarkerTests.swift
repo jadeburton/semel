@@ -319,6 +319,30 @@ final class VersionMarkerTests: SemelCoreTestCase {
         }
     }
 
+    /// B-106. The wires arriving at an input port are indexed by the name they arrive under,
+    /// which is what makes the duplicate-name guard a lookup instead of a walk of the fan. A
+    /// database that holds the wires but not that index answers the lookup by reading the
+    /// whole fan, so the launch stops on it rather than running the graph at the cost the
+    /// index exists to spare. Dropping the index is the whole difference between such a file
+    /// and this one.
+    func test_aDatabaseWithoutTheIndexOnAPortsWireNamesIsRefused() throws {
+        let path     = try makeTemporaryDatabasePath()
+        let database = try DatabaseLayer(filePath: path)
+        try database.dbQueue.write { db in
+            try db.drop(index: "index_Wire_on_toNodeID_toSymbolID_name")
+        }
+
+        let engine = try makeEngine(database)
+
+        XCTAssertThrowsError(try engine.reconcileVersionMarkers()) { error in
+            guard let schemaError = error as? DatabaseSchemaChangedError else {
+                return XCTFail("expected DatabaseSchemaChangedError, got \(error)")
+            }
+            XCTAssertTrue(schemaError.unrecoverableDescription.contains(path),
+                          "the user has to know which file to delete, got: \(schemaError.unrecoverableDescription)")
+        }
+    }
+
     func test_aChangedSchemaStopsTheLaunchAndNamesTheFile() throws {
         let path     = try makeTemporaryDatabasePath()
         let database = try DatabaseLayer(filePath: path)

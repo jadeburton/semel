@@ -37,6 +37,20 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
                 t.column("name", .integer).notNull()
                 t.primaryKey(["fromNodeID", "fromSymbolID", "toNodeID", "toSymbolID", "name"])
             }
+
+            // A wire's name is unique per input port, and a port takes a fan of wires as
+            // wide as the graph demands, so asking whether a name is taken has to be a
+            // lookup rather than a walk of the fan. The primary key leads with the source
+            // and cannot serve that question; the index on `toNodeID` alone answers it with
+            // every wire arriving at the node. These are the three columns the question is
+            // asked in (B-106).
+            //
+            // Not unique: the key that says a name belongs to one source is enforced where
+            // the rule lives, in `connectWire`, which refuses the second source with a
+            // sentence. A constraint here would answer it with an SQLite error instead.
+            try db.create(indexOn: "Wire",
+                          columns: ["toNodeID", "toSymbolID", "name"],
+                          options: .ifNotExists)
         }
     }
 }
@@ -82,6 +96,19 @@ public struct WireDataAccess: DataAccessType {
         try read(countingRows: { db in
             try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
                             Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
+        })
+    }
+
+    /// Every wire arriving at `(goingToNodeID, toSymbolID)` under `name` — an indexed
+    /// lookup, so it costs the same whatever else arrives at that port. Rows rather than one
+    /// row: the schema permits two sources to reach a port under one name, `connectWire` is
+    /// what refuses it, and what a graph damaged past that rule holds is the caller's to
+    /// judge rather than this method's to hide.
+    public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) throws -> [Wire] {
+        try read(countingRows: { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID &&
+                            Wire.Columns.name == name).fetchAll(db)
         })
     }
 

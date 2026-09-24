@@ -35,5 +35,10 @@ public enum Semel {
     /// 0.1.4: the last two reasons spelled as sentences are states — a source that was
     /// pushed and removed, and a folder nobody has pushed into. Stored graphs hold those as
     /// errors carrying a word, so the rebuild restates the ports it preserves again.
-    public static let version = "0.1.4"
+    ///
+    /// 0.1.5: the wires arriving at an input port are indexed by the name they arrive under,
+    /// so wiring a fan into one port does not re-read the fan per wire. An index is part of
+    /// the schema, and a database created without it is caught by the schema check before
+    /// this marker is read — a stopped launch rather than a reset, as 0.1.2's key change was.
+    public static let version = "0.1.5"
 }

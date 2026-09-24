@@ -105,6 +105,10 @@ extension Wire {
     /// `name`, but comes from a *different* source than `(fromNodeID, fromSymbolID)`.
     /// A wire with the same name AND the same source is a harmless duplicate — the
     /// caller's earlier guard will catch and skip it.
+    ///
+    /// The name is looked up, not searched for among the wires at the port: a port takes a
+    /// fan as wide as the graph demands, and reading that fan to guard one connection makes
+    /// wiring a fan of N cost O(N²) row reads (B-106).
     static func wireExistsWithSameName(database: DatabaseLayer,
                                        fromNodeID: ObjectID,
                                        fromSymbolID: ObjectID,
@@ -112,8 +116,8 @@ extension Wire {
                                        toSymbolID: ObjectID,
                                        name: ObjectID) throws -> Bool {
 
-        try database.wire.select(goingToNodeID: toNodeID, toSymbolID: toSymbolID)
-            .contains { $0.name == name && ($0.fromNodeID != fromNodeID || $0.fromSymbolID != fromSymbolID) }
+        try database.wire.select(goingToNodeID: toNodeID, toSymbolID: toSymbolID, name: name)
+            .contains { $0.fromNodeID != fromNodeID || $0.fromSymbolID != fromSymbolID }
     }
 
     func deleteWire(database: DatabaseLayer) throws {
