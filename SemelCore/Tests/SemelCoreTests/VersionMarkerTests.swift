@@ -320,26 +320,38 @@ final class VersionMarkerTests: SemelCoreTestCase {
     }
 
     /// B-106. The wires arriving at an input port are indexed by the name they arrive under,
-    /// which is what makes the duplicate-name guard a lookup instead of a walk of the fan. A
-    /// database that holds the wires but not that index answers the lookup by reading the
-    /// whole fan, so the launch stops on it rather than running the graph at the cost the
-    /// index exists to spare. Dropping the index is the whole difference between such a file
-    /// and this one.
-    func test_aDatabaseWithoutTheIndexOnAPortsWireNamesIsRefused() throws {
-        let path     = try makeTemporaryDatabasePath()
-        let database = try DatabaseLayer(filePath: path)
-        try database.dbQueue.write { db in
+    /// which is what makes the duplicate-name guard a lookup instead of a walk of the fan.
+    /// An index changes what a lookup costs and not what a row means, so a database that
+    /// holds the wires without it is one to index rather than one to refuse: opening it
+    /// creates the index, the fingerprint it then presents is a fresh one's, the launch goes
+    /// on, and the guard is a lookup from the first wire connected. Dropping the index is
+    /// the whole difference between such a file and this one.
+    func test_aDatabaseWithoutTheIndexOnAPortsWireNamesGainsItWhenItIsOpened() throws {
+        let path = try makeTemporaryDatabasePath()
+        try DatabaseLayer(filePath: path).dbQueue.write { db in
             try db.drop(index: "index_Wire_on_toNodeID_toSymbolID_name")
         }
 
-        let engine = try makeEngine(database)
+        let database = try DatabaseLayer(filePath: path)
 
-        XCTAssertThrowsError(try engine.reconcileVersionMarkers()) { error in
-            guard let schemaError = error as? DatabaseSchemaChangedError else {
-                return XCTFail("expected DatabaseSchemaChangedError, got \(error)")
-            }
-            XCTAssertTrue(schemaError.unrecoverableDescription.contains(path),
-                          "the user has to know which file to delete, got: \(schemaError.unrecoverableDescription)")
+        XCTAssertEqual(try database.schemaFingerprint(), try DatabaseLayer.expectedSchemaFingerprint(),
+                       "an indexed file and a fresh one are the same schema")
+        XCTAssertNoThrow(try makeEngine(database).reconcileVersionMarkers(),
+                         "so nothing stops the launch and no graph is discarded")
+        let plan = try planForTheWireNameGuard(database)
+        XCTAssertTrue(plan.contains("index_Wire_on_toNodeID_toSymbolID_name"),
+                      "and the guard is a lookup, got: \(plan)")
+    }
+
+    /// How SQLite says it would answer the question `wireExistsWithSameName` asks.
+    private func planForTheWireNameGuard(_ database: DatabaseLayer) throws -> String {
+        try database.dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                EXPLAIN QUERY PLAN
+                SELECT * FROM "Wire" WHERE "toNodeID" = ? AND "toSymbolID" = ? AND "name" = ?
+                """, arguments: [1, 2, 3])
+                .map { $0["detail"] as String? ?? "" }
+                .joined(separator: "\n")
         }
     }
 

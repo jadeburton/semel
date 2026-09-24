@@ -45,6 +45,13 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
             // every wire arriving at the node. These are the three columns the question is
             // asked in (B-106).
             //
+            // Outside the table's own `ifNotExists`, and so created whether the table was
+            // just made or was already there. An index changes what a lookup costs and not
+            // what a row means, so a database holding wires without it is a database to
+            // index rather than one to refuse: `createTables` runs on every open and the
+            // schema fingerprint is taken after it, so such a file gains the index and then
+            // presents the fingerprint a fresh one does.
+            //
             // Not unique: the key that says a name belongs to one source is enforced where
             // the rule lives, in `connectWire`, which refuses the second source with a
             // sentence. A constraint here would answer it with an SQLite error instead.
@@ -68,9 +75,12 @@ public struct WireDataAccess: DataAccessType {
     /// separates a lookup from a scan by the size of the graph, where a stopwatch has to be
     /// given a band wide enough to survive a loaded machine.
     ///
-    /// Rows handed back, which is what a caller pays to walk. It is not what SQLite touched
-    /// answering the query: a lookup the planner has no index for reads the table and
-    /// returns one row, and it takes `EXPLAIN QUERY PLAN` to tell those apart.
+    /// Rows returned, not statements run: a guard that reads a whole fan to answer one
+    /// question is one statement and as many rows as the fan holds, and it is the rows that
+    /// say so. Nor is it what SQLite touched answering the query — a lookup the planner has
+    /// no index for reads the table and returns one row, and it takes `EXPLAIN QUERY PLAN`
+    /// to tell those apart. Named for what it counts, so a counter of statements can sit
+    /// beside it under a name of its own.
     public static var rowsRead = 0
 
     /// Fetches rows and counts them into `rowsRead`. Every read of the table that can hand
