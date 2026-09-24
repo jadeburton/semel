@@ -347,7 +347,10 @@ public final class BuildEngine {
             fileNodeIDs.formUnion(wires.map(\.fromNodeID))
         }
 
-        for fileNodeID in fileNodeIDs {
+        // Sorted, not in the set's own order: each of these files is a warning line, and
+        // a Set's iteration order is seeded per process, so walking it as it comes prints
+        // the same warnings shuffled differently from one run to the next (B-04).
+        for fileNodeID in fileNodeIDs.sorted() {
             guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: fileNodeID) }) else {
                 continue
             }

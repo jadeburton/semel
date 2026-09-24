@@ -96,6 +96,26 @@ final class UnclaimedConfigKeyReportingTests: SemelCoreTestCase {
                        "a regression must be reported again — the earlier suppression must not swallow it forever")
     }
 
+    /// Several config files with standing unclaimed keys, reported in the one call: the
+    /// warnings come out in the order their files entered the graph, and in that order in
+    /// every process. The files are gathered into a `Set`, whose iteration order is seeded
+    /// per process, so a walk of it as it comes prints the same warnings shuffled
+    /// differently from one run to the next, and someone comparing two runs of the same
+    /// build reads the shuffle as a change (B-04).
+    func test_severalFilesAreReportedInOneOrder() throws {
+        let paths = (1...6).map { "input:/f\($0).config" }
+        for path in paths {
+            try writeConfigFile(path: path,
+                                content: "swift.compier.sdkVersion=26.5",
+                                prefixes: ["swift.compiler"])
+        }
+
+        engine.reportUnclaimedConfigKeys()
+
+        XCTAssertEqual(captured.count, paths.count)
+        XCTAssertEqual(captured.compactMap { line in paths.first { line.contains($0) } }, paths)
+    }
+
     func test_suppressionIsPerConfigFileNotGlobal() throws {
         try writeConfigFile(path: "input:/semel.config",
                             content: "swift.compier.sdkVersion=26.5",
