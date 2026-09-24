@@ -305,7 +305,7 @@ final class DictionaryOrderTests: XCTestCase {
     /// and the postfix `!` and `?` of `values[port]!.sorted()`, which stay in the chain.
     private static func carriesAnOperator(_ between: Substring) -> Bool {
         var depth = 0
-        for character in between {
+        for character in literalsCollapsed(between) {
             switch character {
             case "(", "{", "[":
                 depth += 1
@@ -318,13 +318,51 @@ final class DictionaryOrderTests: XCTestCase {
         return false
     }
 
+    /// `text` with each string literal collapsed to a single `_`, so that a bracket or an
+    /// operator written inside one counts as neither structure nor separator — the `(` of
+    /// `byNode.map { key, value in "(" } + extras.sorted()` leaves the `+` where the scan
+    /// can see it — while the literal still counts as something standing there. Both the
+    /// plain form, where a `\"` does not end the literal, and the raw form `#"…"#`, which
+    /// ends only at `"#`, are read.
+    private static func literalsCollapsed(_ text: Substring) -> String {
+        var collapsed = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if text[index...].hasPrefix("#\"") {
+                var scan = text.index(index, offsetBy: 2)
+                while scan < text.endIndex, !text[scan...].hasPrefix("\"#") {
+                    scan = text.index(after: scan)
+                }
+                index = scan < text.endIndex ? text.index(scan, offsetBy: 2) : text.endIndex
+                collapsed.append("_")
+            } else if text[index] == "\"" {
+                var scan = text.index(after: index)
+                while scan < text.endIndex, text[scan] != "\"" {
+                    if text[scan] == "\\", text.index(after: scan) < text.endIndex {
+                        scan = text.index(after: scan)
+                    }
+                    scan = text.index(after: scan)
+                }
+                index = scan < text.endIndex ? text.index(after: scan) : text.endIndex
+                collapsed.append("_")
+            } else {
+                collapsed.append(text[index])
+                index = text.index(after: index)
+            }
+        }
+
+        return collapsed
+    }
+
     /// Whether `tail` is all that is left of an expression once its sort is named: the
     /// sort's own arguments or closure and nothing else. A bracket `tail` closes but did
     /// not open belongs to something the sort is nested in, and anything at all after the
-    /// call is applied to the sorted sequence rather than being it.
+    /// call is applied to the sorted sequence rather than being it. Brackets inside a
+    /// string literal are text, and are collapsed away before the depth is read.
     private static func closesTheExpression(_ tail: Substring) -> Bool {
         var depth = 0
-        for character in tail {
+        for character in literalsCollapsed(tail) {
             switch character {
             case "(", "{", "[":
                 depth += 1
@@ -533,6 +571,13 @@ final class DictionaryOrderTests: XCTestCase {
                        "specs.keys")
         XCTAssertEqual(Self.walkedText(inLine: "let lines = visited.map { $0.name } + extras.sorted()",
                                        setNames: ["visited"]), "visited")
+
+        // A bracket inside a string literal is text, not structure: counting it would
+        // leave the `+` below at a depth the scan does not read, and the walk would pass
+        // as sorted by a sort of `extras`.
+        XCTAssertEqual(Self.walkedText(inLine: #"let names = byNode.map { key, value in "(" } + extras.sorted()"#),
+                       "byNode")
+        XCTAssertNil(Self.walkedText(inLine: #"let names = byNode.map { key, value in key }.sorted { $0 + ")" < $1 }"#))
 
         // The converse: a sort the statement ends in does sort what it walked, however
         // many steps the walk took to reach it.

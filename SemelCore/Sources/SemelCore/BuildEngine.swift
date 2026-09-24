@@ -347,29 +347,37 @@ public final class BuildEngine {
             fileNodeIDs.formUnion(wires.map(\.fromNodeID))
         }
 
-        // In path order, which means looking the paths up before reporting rather than as
-        // each line is printed. Each of these files is a warning line: a Set's iteration
-        // order is seeded per process, and a node's id records the order its graph was
-        // written — phase 2 applies results as tasks finish — so the path is the only one
-        // of the three that reads the same in two builds of the same tree (B-04).
-        let filesInPathOrder = fileNodeIDs.map { (nodeID: $0, path: configFilePath(ofNodeID: $0)) }.sorted { ($0.path, $0.nodeID) < ($1.path, $1.nodeID) }
+        // Which files have something to say, and what it is. The path each line names is
+        // looked up here rather than for every candidate: a file whose unclaimed set is
+        // unchanged or empty prints nothing, and asking the database for its node would
+        // be a query per settle for a line nobody sees. The order of this pass reaches
+        // nothing — every guard and every record below is that file's own.
+        var warnings: [(path: String, nodeID: ObjectID, unclaimed: [String])] = []
 
-        for file in filesInPathOrder {
-            guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: file.nodeID) }) else {
+        for fileNodeID in fileNodeIDs.sorted() {
+            guard let unclaimed = FatalErrors.attempt({ try unclaimedConfigKeys(inFileNodeID: fileNodeID) }) else {
                 continue
             }
 
-            guard unclaimed != (lastReportedUnclaimedKeys[file.nodeID] ?? []) else {
+            guard unclaimed != (lastReportedUnclaimedKeys[fileNodeID] ?? []) else {
                 continue
             }
 
-            lastReportedUnclaimedKeys[file.nodeID] = unclaimed
+            lastReportedUnclaimedKeys[fileNodeID] = unclaimed
 
             guard !unclaimed.isEmpty else {
                 continue
             }
 
-            unclaimedConfigKeyReporter("⚠️  \(file.path) contains unused configuration key(s): \(unclaimed.joined(separator: ", "))")
+            warnings.append((path: configFilePath(ofNodeID: fileNodeID), nodeID: fileNodeID, unclaimed: unclaimed))
+        }
+
+        // In path order: a Set's iteration order is seeded per process, and a node's id
+        // records the order its graph was written — phase 2 applies results as tasks
+        // finish — so the path is the only one of the three that reads the same in two
+        // builds of the same tree (B-04).
+        for warning in warnings.sorted(by: { ($0.path, $0.nodeID) < ($1.path, $1.nodeID) }) {
+            unclaimedConfigKeyReporter("⚠️  \(warning.path) contains unused configuration key(s): \(warning.unclaimed.joined(separator: ", "))")
         }
     }
 
