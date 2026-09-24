@@ -73,7 +73,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
         if let content {
             changed = try thisNode.writeToOutputPort(Self.outputPort, value: .value(content))
         } else {
-            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .error(messageDataObjectHash: "Deleted".intern())))
+            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .deleted))
         }
 
         if changed {

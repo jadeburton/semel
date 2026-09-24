@@ -194,7 +194,11 @@ entirely in-process.
 system, and it also covers an artifact under `output:` whose build failed, because an
 `OutputFile` reads pinned from its *input* port and an input in error is not pinned. One
 word for both tells the reader nothing: the first state settles by itself, the second is a
-failure to act on. Split the state and give each its own word. `FolderRemovalScaleTests`
+failure to act on. Split the state and give each its own word. The port now says which is
+which by case — B-104 gave a removed source `NoValueReason.deleted` and a folder nobody
+pushed into `initializing`, where a failed build leaves `error` or `inputInError` — so what
+is left is the lister, which asks `isPinned` and throws the reason away, and
+`RequestHandler+Files`, which folds every one of them onto `.error`. `FolderRemovalScaleTests`
 and `FolderRemovalAfterBuildTests` hold the removal side — the folder and its products are
 gone once the collector has run, with nothing listed `[missing]` behind them — so what the
 split is owed is a case that leaves a product's input in error and reads the listing.
@@ -435,24 +439,6 @@ into every caller's object file, so modules compiled before the change keep the 
 the linker picks whichever copy it finds — `semel` and `semelserv` disagreed about the
 protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
 `rm .build/debug.yaml` does not touch it.
-
-**B-104** `open` — **Two states are still spelled as sentences.**
-A removed file's `error("Deleted")` (`StaticFile`, `Folder`) and a folder's
-`error("Deleted/Nonexistent")` are states written as text, so anything that wants to tell
-them apart from a node's own failure has to read the words — where B-92 could read the rest
-of the table by case. Give each its own `NoValueReason` case and let the report decide what
-to say about them where it decides everything else.
-
-Say what it decides, or the follow-up lands the enum and leaves the sentence. A folder is
-never `initializing` — `Folder.didCreate()` writes both of its ports, `manifest` with a
-(possibly empty) listing and `pinned` with `.value("")` or `error("Deleted")` — so B-92's
-rule never fires on one, and what a reader actually sees for a nested push path is
-`❌ Folder 'input:/src' · pinned: Deleted` for a folder nobody ever pushed. A folder that
-was never pinned should read `src/ has not been pushed`, the way a file does; one that was
-pushed and removed should read `src/ was deleted`. The `· <ports>: ` prefix belongs in the
-same pass: `output:` and `pinned:` carry nothing when the entry's one item names the node's
-whole output-port set, and dropping it there is a rule for `ErrorReport.lines` and
-`ErrorRecordRenderer.lines` together rather than a special case for one message.
 
 
 ## App bundles

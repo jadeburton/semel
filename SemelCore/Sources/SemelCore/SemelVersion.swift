@@ -31,5 +31,9 @@ public enum Semel {
     /// `inputNotProduced`, `inputInError` — where it was an error carrying a sentence.
     /// Stored graphs hold the reason as a number per port, and the numbers an older graph
     /// holds mean something else, so the rebuild also restates the ports it preserves.
-    public static let version = "0.1.3"
+    ///
+    /// 0.1.4: the last two reasons spelled as sentences are states — a source that was
+    /// pushed and removed, and a folder nobody has pushed into. Stored graphs hold those as
+    /// errors carrying a word, so the rebuild restates the ports it preserves again.
+    public static let version = "0.1.4"
 }

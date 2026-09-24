@@ -44,20 +44,50 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     // MARK: - Grouping
 
-    /// A node that fails usually fails on every port at once for the same reason. Naming the
-    /// ports together says that in one line; a line per port says the same thing three times
-    /// and hides how many distinct problems there actually are.
-    func test_portsSharingAMessageAreNamedTogether() throws {
+    /// A node that fails usually fails on every port at once for the same reason. The ports
+    /// are gathered onto one item rather than onto a line each, which is what keeps a
+    /// report from saying the same thing three times and hiding how many distinct problems
+    /// there are.
+    func test_portsSharingAMessageAreGatheredOntoOneItem() throws {
         let nodeID = try makeNode(kind: Configuration.kind)
         let ports = [try port(nodeID, "output", "boom"),
                      try port(nodeID, "infoLog", "boom"),
                      try port(nodeID, "errorLog", "boom")]
 
+        let entry = ErrorReport.entry(forNodeID: nodeID, ports: ports,
+                                      messages: ["boom"], database: database)
+
+        XCTAssertEqual(entry.items,
+                       [ErrorReport.Item(ports: ["errorLog", "infoLog", "output"], message: "boom")])
+    }
+
+    // MARK: - The port prefix
+
+    /// B-104. The port names tell one item from another, and an entry with one item has
+    /// nothing to tell apart: the item names every port the report has for that node, so
+    /// the prefix repeats the heading in the engine's own vocabulary and is left out.
+    func test_theOnlyItemOnAnEntryIsWrittenWithoutItsPorts() throws {
+        let nodeID = try makeNode(kind: Configuration.kind)
+        let ports = [try port(nodeID, "output", "boom"),
+                     try port(nodeID, "errorLog", "boom")]
+
         let lines = ErrorReport.lines(forNodeID: nodeID, ports: ports,
                                       messages: ["boom"], database: database)
 
+        XCTAssertEqual(lines.filter { $0.contains("·") }, ["   · boom"])
+    }
+
+    /// Two messages are two items, and then the ports say which is which.
+    func test_theirPortsAreNamedAsSoonAsThereIsMoreThanOneItem() throws {
+        let nodeID = try makeNode(kind: Configuration.kind)
+        let ports = [try port(nodeID, "output", "boom"),
+                     try port(nodeID, "errorLog", "bang")]
+
+        let lines = ErrorReport.lines(forNodeID: nodeID, ports: ports,
+                                      messages: ["boom", "bang"], database: database)
+
         XCTAssertEqual(lines.filter { $0.contains("·") },
-                       ["   · errorLog, infoLog, output: boom"])
+                       ["   · errorLog: bang", "   · output: boom"])
     }
 
     func test_distinctMessagesGetTheirOwnLines() throws {
@@ -90,7 +120,9 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     /// A missing-configuration error spans several lines and is the most common multi-line
     /// case there is, so it has to stay readable rather than being folded onto one line.
-    func test_aMultiLineMessageIsIndentedUnderItsPorts() throws {
+    /// With no ports to announce, the first line sits on the bullet and the rest are
+    /// indented under it.
+    func test_aMultiLineMessageIsIndentedUnderItsFirstLine() throws {
         let nodeID = try makeNode(kind: Configuration.kind)
         let message = "Missing configuration. Add these:\n\nclang.compiler.target=…\n"
         let ports = [try port(nodeID, "output", message)]
@@ -99,9 +131,25 @@ final class ErrorReportTests: SemelCoreTestCase {
                                       messages: [message], database: database)
 
         XCTAssertEqual(Array(lines[1 ..< lines.count - 1]),
+                       ["   · Missing configuration. Add these:",
+                        "     clang.compiler.target=…"])
+    }
+
+    /// With the ports announced, the block is indented under them.
+    func test_aMultiLineMessageBesideAnotherIsIndentedUnderItsPorts() throws {
+        let nodeID = try makeNode(kind: Configuration.kind)
+        let message = "Missing configuration. Add these:\n\nclang.compiler.target=…\n"
+        let ports = [try port(nodeID, "output", message),
+                     try port(nodeID, "errorLog", "boom")]
+
+        let lines = ErrorReport.lines(forNodeID: nodeID, ports: ports,
+                                      messages: [message, "boom"], database: database)
+
+        XCTAssertEqual(Array(lines[1 ..< lines.count - 1]),
                        ["   · output:",
                         "     Missing configuration. Add these:",
-                        "     clang.compiler.target=…"])
+                        "     clang.compiler.target=…",
+                        "   · errorLog: boom"])
     }
 
     // MARK: - Labels

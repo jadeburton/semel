@@ -146,7 +146,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
                        "twenty consumers and the sink they feed")
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
                        ["❌ StaticFile  'input:/shared.h'",
-                        "   · output: the file is gone",
+                        "   · the file is gone",
                         "   · and 21 nodes downstream carry it",
                         ""])
     }
@@ -161,7 +161,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]).filter { $0.contains("·") },
-                       ["   · output: the file is gone", "   · and 1 node downstream carries it"])
+                       ["   · the file is gone", "   · and 1 node downstream carries it"])
     }
 
     /// A node that has something of its own to say is a cause, wherever it sits: its message

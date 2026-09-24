@@ -507,8 +507,9 @@ public struct GraphCheck {
     private static func errorPortsWithoutMessages(_ context: Context) -> [Finding] {
         let errorPorts = context.read("the output-port table") { try ErrorReport.portsToReport(database: context.database) } ?? []
 
-        // By case, not by text: a port carrying an input's failure has no message of its
-        // own and is not supposed to have one.
+        // By case, not by text: a port carrying an input's failure, and one carrying a
+        // source that was removed, have no message of their own and are not supposed to.
+        // Only a node that failed and said nothing is the defect this names.
         return errorPorts.filter { $0.valueKind == .error }.compactMap { port in
             let portName = context.name(ofSymbol: port.nameSymbolID)
             switch message(of: port) {

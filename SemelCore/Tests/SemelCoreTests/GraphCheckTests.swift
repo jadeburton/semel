@@ -362,6 +362,22 @@ final class GraphCheckTests: SemelCoreTestCase {
                      + "object store, so what failed is lost")
     }
 
+    /// B-104. A removed source carries no message and is not supposed to: it is a state,
+    /// and the report writes the sentence for it from the path. The finding is about a node
+    /// that failed and said nothing, which this is not.
+    func test_doesNotFindARemovedSourceCarryingNoMessage() throws {
+        let node = try makeConfiguration(role: "source")
+
+        try database.outputPort.insertOrUpdate(
+            OutputPort(nodeID:         try node.requireID(),
+                       nameSymbolID:   Configuration.outputPort.asSymbolID(),
+                       valueKind:      .deleted,
+                       dataObjectHash: nil))
+
+        XCTAssertEqual(GraphCheck.run(database: database).findings.filter { $0.kind == .errorWithoutMessage },
+                       [])
+    }
+
     // MARK: - A cache entry whose key is not the shape a key has
 
     func test_findsACacheEntryWhoseKeyIsNotAHash() throws {

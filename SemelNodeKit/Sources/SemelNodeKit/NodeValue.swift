@@ -29,6 +29,12 @@ public enum NoValueReason: Codable {
     /// The node did not run because one of its inputs is in error. It has nothing of its own
     /// to say, and a report folds it onto whatever failed upstream.
     case inputInError
+    /// A source that was pushed and then removed. The node exists because something still
+    /// names it, and the value it carried is gone — a state of the outside world
+    /// rather than a failure of the node, and the one thing a reader can act on, so a
+    /// report names the source and folds what it stopped underneath. A consumer meeting it
+    /// is stopped the way a failure stops one.
+    case deleted
     /// This node failed, and the message is its own.
     case error(messageDataObjectHash: DataObjectHash)
 }
@@ -40,6 +46,7 @@ extension NoValueReason: CustomStringConvertible {
         case .initializing:     return "no value has been produced"
         case .inputNotProduced: return "\(NodeError.inputValueNotProduced)"
         case .inputInError:     return "\(NodeError.inputValueInError)"
+        case .deleted:          return "the source was deleted"
         case .error(let messageDataObjectHash):
             return (try? messageDataObjectHash.resolveAsString()) ?? "an error with no message"
         }
@@ -55,7 +62,9 @@ extension NoValueReason {
         switch self {
         case .pending:                         return .inputValuePending
         case .initializing, .inputNotProduced: return .inputValueNotProduced
-        case .inputInError, .error:            return .inputValueInError
+        // A source that is gone stops a consumer the way a failure does: the value it asked
+        // for will not arrive, and nothing it can do makes one.
+        case .inputInError, .deleted, .error:  return .inputValueInError
         }
     }
 }
@@ -129,6 +138,9 @@ extension NodeValue {
         case .inputInError:
             self = .noValue(reason: .inputInError)
 
+        case .deleted:
+            self = .noValue(reason: .deleted)
+
         case .error:
             self = try .noValue(reason: .error(messageDataObjectHash: port.dataObjectHash ?? "<unknown>".intern()))
 
@@ -171,6 +183,12 @@ extension NodeValue {
                 return .init(nodeID: nodeID,
                              nameSymbolID: outputSymbolID,
                              valueKind: .inputInError,
+                             dataObjectHash: nil)
+
+            case .deleted:
+                return .init(nodeID: nodeID,
+                             nameSymbolID: outputSymbolID,
+                             valueKind: .deleted,
                              dataObjectHash: nil)
 
             case .error(let messageDataObjectHash):

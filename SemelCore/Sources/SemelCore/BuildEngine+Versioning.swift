@@ -81,27 +81,51 @@ extension BuildEngine {
 
     /// The rebuild deletes what it can, but `reset()` preserves the input file system, the
     /// output root and `ProjectFinder` with their ports — and those ports were written by
-    /// another Semel, which spelled one of this version's states as an error carrying a word.
-    /// A port still holding that word means "nothing has been produced here", so it is
-    /// restated as the state that says so. Every other error is left alone: what a node said
-    /// about itself is still what it said.
+    /// another Semel, which spelled some of this version's states as an error carrying a
+    /// word. A port still holding one of those words is restated as the state that says the
+    /// same thing. Every other error is left alone: what a node said about itself is still
+    /// what it said.
     ///
-    /// Reading the message is what a migration is for, and this is the only place allowed to:
-    /// the text below is 0.1.2's encoding, data rather than vocabulary, and nothing outside
-    /// this function may compare against it.
+    /// Reading the message is what a migration is for, and this is the only place allowed
+    /// to: the words below are older encodings, data rather than vocabulary, and nothing
+    /// outside this function may compare against them.
+    ///
+    /// One of them was written for two states at once, which is the defect the states
+    /// replace: 0.1.3 wrote "Deleted" both for a source the user removed and for a folder
+    /// nobody had ever pushed into, and only the port it sits on tells those apart.
     private func restateThePortsOfPreservedNodes() throws {
         let placeholderOfVersion0_1_2 = "initializing"
+        let removedInVersion0_1_3     = "Deleted"
+        let unpinnedInVersion0_1_3    = "Deleted/Nonexistent"
 
         for node in try database.node.selectAll() {
             guard let nodeID = node.id else {
                 continue
             }
             for port in try database.outputPort.selectAll(nodeID: nodeID) where port.valueKind == .error {
-                guard (try? port.dataObjectHash?.resolveAsString()) == placeholderOfVersion0_1_2 else {
+                let restatedKind: OutputPort.ValueKind
+
+                switch try? port.dataObjectHash?.resolveAsString() {
+                case placeholderOfVersion0_1_2:
+                    restatedKind = .initializing
+
+                case unpinnedInVersion0_1_3:
+                    restatedKind = .deleted
+
+                case removedInVersion0_1_3:
+                    // A folder wrote this from its creation, before anyone had pushed into
+                    // it; anything else wrote it when what it held was taken away.
+                    restatedKind = node.kind == Folder.kind
+                                && port.nameSymbolID.resolveSymbol() == Folder.pinnedOutputPort
+                                 ? .initializing
+                                 : .deleted
+
+                default:
                     continue
                 }
+
                 var restated = port
-                restated.valueKind = .initializing
+                restated.valueKind = restatedKind
                 restated.dataObjectHash = nil
                 try database.outputPort.insertOrUpdate(restated)
             }

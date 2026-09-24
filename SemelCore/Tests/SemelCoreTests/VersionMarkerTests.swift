@@ -123,14 +123,14 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertNil(port.dataObjectHash)
     }
 
-    /// The restating is a migration of one encoding, not a sweep of every error: a file the
-    /// user removed while a formula still named it says so, and keeps saying so.
-    func test_aPreservedFilesOwnErrorSurvivesTheRebuild() throws {
+    /// The restating is a migration of the encodings that were states, not a sweep of every
+    /// error: what a node said about itself is still what it said.
+    func test_aPreservedNodesOwnErrorSurvivesTheRebuild() throws {
         let engine = try makeEngine(try DatabaseLayer())
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/gone.c')")
             .findOrCreateMatchingNode()
         try file.writeToOutputPort(
-            "output", value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "undefined symbol 'main'".intern())))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.2")
 
         try engine.reconcileVersionMarkers()
@@ -138,7 +138,60 @@ final class VersionMarkerTests: SemelCoreTestCase {
         let port = try XCTUnwrap(engine.database.outputPort.select(nodeID: try file.requireID(),
                                                                    nameSymbolID: "output".asSymbolID()))
         XCTAssertEqual(port.valueKind, .error)
-        XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "Deleted")
+        XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "undefined symbol 'main'")
+    }
+
+    /// B-104. 0.1.3 wrote a removed source as an error carrying a word, and the rebuild
+    /// restates it as the state that says the same thing.
+    func test_aPreservedFileRemovedByAnOlderSemelIsRestatedAsDeleted() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/gone.c')")
+            .findOrCreateMatchingNode()
+        try file.writeToOutputPort(
+            "output", value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.3")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(nodeID: try file.requireID(),
+                                                                   nameSymbolID: "output".asSymbolID()))
+        XCTAssertEqual(port.valueKind, .deleted)
+        XCTAssertNil(port.dataObjectHash)
+    }
+
+    /// 0.1.3 wrote that same word on a folder nobody had ever pushed into, which is the
+    /// other state: the port it sits on is what tells the two apart.
+    func test_aPreservedFolderNobodyPushedIntoIsRestatedAsInitializing() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: false)
+        try folder.writeToOutputPort(
+            Folder.pinnedOutputPort,
+            value: .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.3")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(
+            nodeID: try folder.requireID(), nameSymbolID: Folder.pinnedOutputPort.asSymbolID()))
+        XCTAssertEqual(port.valueKind, .initializing)
+        XCTAssertNil(port.dataObjectHash)
+    }
+
+    /// And the word 0.1.3 wrote when the user took a folder back out is the deleted state.
+    func test_aPreservedFolderUnpinnedByAnOlderSemelIsRestatedAsDeleted() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        try folder.writeToOutputPort(
+            Folder.pinnedOutputPort,
+            value: .noValue(reason: .error(messageDataObjectHash: try "Deleted/Nonexistent".intern())))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.3")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(
+            nodeID: try folder.requireID(), nameSymbolID: Folder.pinnedOutputPort.asSymbolID()))
+        XCTAssertEqual(port.valueKind, .deleted)
+        XCTAssertNil(port.dataObjectHash)
     }
 
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so

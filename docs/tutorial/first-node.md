@@ -562,7 +562,7 @@ says so:
 
 ```
 ❌ ProjectBuilder  'input:/hello/hello.fmla'
-   · products, status: no type is registered for kind 37
+   · no type is registered for kind 37
 ```
 
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
