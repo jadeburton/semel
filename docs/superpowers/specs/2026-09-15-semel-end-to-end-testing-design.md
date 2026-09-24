@@ -220,7 +220,7 @@ machine that runs them, the runner's Xcode and a developer's both work without e
 
 - A warm third build in `home1`, to show the second run is cache hits. Needs a way to
   observe hits from the client; B-11 territory.
-- Perturbations privileges rule out: a different host name, and a wall clock moved rather
+- Perturbations that privileges rule out: a different host name, and a wall clock moved rather
   than merely allowed to advance between the builds.
 - More external projects, one per shape: a macOS command-line package, an `.xcodeproj`
   once B-65 lands. Each is one roster value.
