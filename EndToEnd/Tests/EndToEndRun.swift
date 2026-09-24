@@ -118,8 +118,15 @@ final class EndToEndRun {
             var commands = ["base \(buildBase.path)"]
             commands += project.alsoPush.map { "push \($0)" }
             commands.append("build \(project.buildFolder) --into \(out.path)")
+            // The graph's own invariants, asked of it after every build in the roster, so
+            // that the fixtures are what proves them: a wire into a node that is gone, a
+            // manifest naming a child that is not there, a product nothing produces. Each
+            // finding counts as an error at the prompt, so a broken invariant leaves the
+            // session non-zero and the failure below carries the findings in its tail.
+            commands.append("check")
             try Self.run("semel", arguments: commands, environment: server.environment,
-                         timeout: project.buildTimeout, step: "build (\(homeName))", serverLog: { server.logTail })
+                         timeout: project.buildTimeout, step: "build and check (\(homeName))",
+                         serverLog: { server.logTail })
         } catch {
             server.killIfRunning()
             throw error

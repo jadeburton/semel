@@ -319,22 +319,6 @@ arguably more correct, since a push *is* an event that should run the node. But
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
-**B-103** `open` — **Nothing checks the graph's invariants short of failing on them.**
-The week's silent corruptions — a wire dropped because two shared a key, a folder manifest
-rebuilt per child, an error whose message was empty — were each found by a test written
-after the symptom, not by anything the running system could say about itself. A `check`
-verb walks the graph and reports every invariant that does not hold: a wire whose endpoint
-node or port is gone, a node whose `graphSpec` no longer parses or names a type the server
-does not link (B-83), a product with no producer, a folder manifest naming a child that
-does not exist, an error port with no message, a cache entry whose key no longer parses.
-"A product with no producer" is the one the prompt cannot report on its own: an `OutputFile`
-whose required input has no wire holds `initializing`, which is a state and not a failure,
-and the engine's "inconsistent input" catch in `Node.tryComputeOutput` is a not-ready signal
-rather than an error, so nothing says anything until `check` does. It
-reports and repairs nothing; `reset` is the repair, and `check` is how one learns whether it
-is needed and what to file when it is. Run by the end-to-end harness after every build so
-the fixtures prove the invariants, and offered to a user before `reset` is suggested.
-
 **B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
 Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFilter`,
 `GraphShape` is `GraphSpec`, "expectation" is "spec" everywhere, and `searchKey` is

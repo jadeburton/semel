@@ -89,6 +89,20 @@ enum ErrorRecordRenderer {
     }
 }
 
+enum CheckFindingRenderer {
+
+    /// One line per finding: what it is about, then what is wrong with it. Marked as a
+    /// failure, because an invariant that does not hold is one — the mark says good or bad
+    /// and nothing else, and `check` has exactly those two things to say.
+    static func line(for finding: CheckFinding) -> String {
+        "\(Mark.failure) \(finding.subject): \(finding.sentence)"
+    }
+
+    /// What a graph with nothing wrong with it reads as. Said rather than left silent: a
+    /// command that prints nothing is indistinguishable from one that did not run.
+    static let nothingFound = "\(Mark.settled) no findings"
+}
+
 enum ToolNamespaceRenderer {
 
     /// The installed tools as the settings a `semel.config` needs — one block per

@@ -25,6 +25,12 @@ final class EnginePluginTests: XCTestCase {
         try EnginePlugin().handle(verb: verb, tokens: tokens, context: context)
     }
 
+    /// The sentence every reset ends with: the repair points at the command that says what
+    /// was wrong before the next one destroys the evidence.
+    private static let checkOffer =
+        "Run `check` before the next reset: it names the invariants a graph is breaking, "
+      + "which this one has just discarded."
+
     func test_errorsWithNoneSaysSo() throws {
         connection.reply(.errors(records: []))
 
@@ -136,13 +142,47 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "send"])
     }
 
+    // MARK: - check
+
+    func test_checkWithNoFindingsSaysSo() throws {
+        connection.reply(.check, body: try MessageCoder.encode([CheckFinding]()))
+
+        try run("check")
+
+        XCTAssertEqual(connection.daemonRequests, [.check])
+        XCTAssertEqual(context.messages, ["✅ no findings"])
+        XCTAssertEqual(context.errors, [], "a clean graph is not an error")
+    }
+
+    /// One line per finding, and each counted — a scripted run over a graph that broke an
+    /// invariant has to exit non-zero, the way one that reported an error does.
+    func test_checkPrintsALinePerFindingAndCountsEachAsAnError() throws {
+        let findings = [
+            CheckFinding(kind: .productWithNoProducer, subject: "OutputFile #12 'output:/app'",
+                         sentence: "nothing is wired to its required input port 'input', so it can never be produced"),
+            CheckFinding(kind: .errorWithoutMessage, subject: "ClangLinker #40",
+                         sentence: "its port 'output' is in error with no message, so nothing says what failed"),
+        ]
+        connection.reply(.check, body: try MessageCoder.encode(findings))
+
+        try run("check")
+
+        XCTAssertEqual(context.errors, [
+            "❌ OutputFile #12 'output:/app': nothing is wired to its required input port 'input', "
+          + "so it can never be produced",
+            "❌ ClangLinker #40: its port 'output' is in error with no message, so nothing says what failed",
+        ])
+    }
+
+    // MARK: - reset
+
     func test_resetKeepsTheCacheAndAnnouncesTheRebuild() throws {
         connection.reply(.reset(archivedGraphPath: nil))
 
         try run("reset")
 
         XCTAssertEqual(connection.daemonRequests, [.reset(clearCache: false)])
-        XCTAssertEqual(context.messages, ["Rebuild started."])
+        XCTAssertEqual(context.messages, ["Rebuild started.", Self.checkOffer])
     }
 
     /// The cache is what makes a reset cheap, so discarding it is asked for by name.
@@ -152,7 +192,7 @@ final class EnginePluginTests: XCTestCase {
         try run("reset", ["--cache"])
 
         XCTAssertEqual(connection.daemonRequests, [.reset(clearCache: true)])
-        XCTAssertEqual(context.messages, ["Cache discarded. Rebuild started."])
+        XCTAssertEqual(context.messages, ["Cache discarded. Rebuild started.", Self.checkOffer])
     }
 
     /// The graph a reset discards is copied aside, and the only way to find that copy is
@@ -165,6 +205,7 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, [
             "Graph copied to /semel-home/graph.sqlite.broken-2026-09-23T101500Z — yours to delete.",
             "Rebuild started.",
+            Self.checkOffer,
         ])
     }
 

@@ -69,6 +69,18 @@ public struct NodeDescriptor {
         }
     }
 
+    /// The ports that must be wired for the node to produce anything. A required port with
+    /// no wire is a node waiting for a value nothing will ever send, which is what
+    /// `GraphCheck` reports and what nothing else can see.
+    public var requiredInputPorts: [String] {
+        inputPorts.compactMap {
+            if case .required(let name) = $0 {
+                return name
+            }
+            return nil
+        }
+    }
+
     public var optionalStaticInputPorts: [String] {
         inputPorts.compactMap {
             if case .optional(let name) = $0 {

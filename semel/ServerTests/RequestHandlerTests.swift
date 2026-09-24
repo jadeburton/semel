@@ -103,6 +103,29 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(text.hasPrefix("BUILD GRAPH STATE ("), text)
     }
 
+    /// The findings are the reply's body for the reason the graph description is: a badly
+    /// broken graph has one per node, and the frame's JSON section is capped at a megabyte.
+    func test_checkReturnsItsFindingsAsTheReplyBody() throws {
+        let (node, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
+
+        let (response, body) = try daemon(.check)
+
+        XCTAssertEqual(response, .check)
+        let findings = try MessageCoder.decode([CheckFinding].self, from: try XCTUnwrap(body))
+        XCTAssertEqual(findings, [
+            CheckFinding(kind: .productWithNoProducer,
+                         subject: "OutputFile #\(try node.requireID()) 'output:/app'",
+                         sentence: "nothing is wired to its required input port 'input', so it can never be produced"),
+        ])
+    }
+
+    func test_checkOverAGraphWithNothingWrongWithItAnswersNoFindings() throws {
+        let (response, body) = try daemon(.check)
+
+        XCTAssertEqual(response, .check)
+        XCTAssertEqual(try MessageCoder.decode([CheckFinding].self, from: try XCTUnwrap(body)), [])
+    }
+
     func test_toolsListsEveryNamespaceEvenWhenNoToolIsInstalled() throws {
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
 

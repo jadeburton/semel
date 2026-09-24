@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsSix() {
-        XCTAssertEqual(ProtocolVersion.current, 6)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 6, "a hello sent with no version named speaks the current one")
+    func test_currentProtocolVersionIsSeven() {
+        XCTAssertEqual(ProtocolVersion.current, 7)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 7, "a hello sent with no version named speaks the current one")
     }
 
     func test_encodesSettledEvent() throws {
@@ -97,6 +97,7 @@ final class MessageJSONTests: XCTestCase {
             .remove(pattern: "src/*.o"),
             .fetch(fileSystem: .output, path: "bin/app"),
             .errors,
+            .check,
             .tools,
             .reset(clearCache: false),
             .reset(clearCache: true),
@@ -142,9 +143,36 @@ final class MessageJSONTests: XCTestCase {
             .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
             .reset(archivedGraphPath: nil),
             .debug,
+            .check,
         ]
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
+        }
+    }
+
+    /// The findings are the reply's *body*, so the reply itself carries nothing — a graph
+    /// with a broken invariant per node would otherwise put the reply over the cap on a
+    /// frame's JSON, in the one command that exists for a graph in that state.
+    func test_encodesTheCheckReplyWithoutItsFindings() throws {
+        XCTAssertEqual(try json(Response.daemon(.check)), #"{"daemon":{"check":{}}}"#)
+    }
+
+    func test_encodesACheckFindingAsKindSubjectAndSentence() throws {
+        let finding = CheckFinding(kind: .productWithNoProducer,
+                                   subject: "OutputFile #12 'output:/app'",
+                                   sentence: "nothing is wired to its required input port 'input'")
+
+        XCTAssertEqual(try json(finding),
+                       #"{"kind":"productWithNoProducer","sentence":"nothing is wired to its required input port 'input'","subject":"OutputFile #12 'output:\/app'"}"#)
+    }
+
+    func test_roundTripsEveryCheckFindingKind() throws {
+        let kinds: [CheckFinding.Kind] = [.danglingWire, .unreadableGraphSpec, .unlinkedNodeType,
+                                          .productWithNoProducer, .missingManifestChild,
+                                          .errorWithoutMessage, .unreadableCacheKey]
+        for kind in kinds {
+            let finding = CheckFinding(kind: kind, subject: "a", sentence: "b")
+            XCTAssertEqual(try roundTrip([finding]), [finding])
         }
     }
 
