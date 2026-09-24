@@ -46,6 +46,10 @@ public struct GraphCheck {
         case errorWithoutMessage
         /// A cache entry whose key is not of the shape a key is written in.
         case unreadableCacheKey
+        /// Part of the graph could not be read at all, so this walk is incomplete. Not an
+        /// invariant of the graph but a fact about the answer, and a finding for the same
+        /// reason the others are: silence would read as a clean bill of health.
+        case graphCouldNotBeRead
     }
 
     /// One invariant that does not hold: what kind it is, what it is about, and what is
@@ -89,16 +93,22 @@ public struct GraphCheck {
     /// at, and `productWithNoProducer` and `danglingWire` are the two that say so. The
     /// report's `scheduledNodeCount` is how a caller tells the reader which graph it was.
     ///
-    /// Does not throw. A check is asked for when something is already wrong, so a table it
-    /// cannot read costs its own findings and not the report: the machine's own failures
-    /// still reach the fatal handler through `FatalErrors.attempt`.
+    /// Does not throw, and never answers an empty report it cannot stand behind. A table
+    /// it cannot read costs that table's findings rather than the whole report — but the
+    /// failure itself is reported, as `graphCouldNotBeRead`, because a check that could
+    /// not look is not a check that found nothing. The machine's own failures still reach
+    /// the fatal handler through `FatalErrors.attempt` on the way.
     public static func run(database: DatabaseLayer) -> Report {
         // One read for the whole walk. Outside one, the nodes and the wires are two states:
         // a node created between the two scans leaves a wire that appears to point at
-        // nothing, which is a finding against a graph that is perfectly sound. A failure of
-        // the read itself is the machine's, and reaches the fatal handler on the way here.
+        // nothing, which is a finding against a graph that is perfectly sound.
         FatalErrors.attempt { try database.withReadSnapshot { walk(database: database) } }
-            ?? Report(findings: [], scheduledNodeCount: 0)
+            // The read itself failed, so not one question was asked. Under the default
+            // fatal handler this is unreachable — it stops the process — but a server that
+            // installs its own gets here, and must not be told the graph is clean.
+            ?? Report(findings: [Finding(kind: .graphCouldNotBeRead, subject: "the graph database",
+                                         sentence: "it could not be read, so nothing was checked")],
+                      scheduledNodeCount: 0)
     }
 
     private static func walk(database: DatabaseLayer) -> Report {
@@ -111,6 +121,11 @@ public struct GraphCheck {
         findings += folderManifests(context)
         findings += errorPortsWithoutMessages(context)
         findings += cacheKeys(context)
+        // Last, so that what the walk could not look at is listed beside what it found.
+        findings += context.unreadable.sorted().map { what in
+            Finding(kind: .graphCouldNotBeRead, subject: what,
+                    sentence: "it could not be read, so whatever it had to say is missing from this report")
+        }
 
         return Report(findings: findings.sorted { ($0.kind.rawValue, $0.subject, $0.sentence)
                                                 < ($1.kind.rawValue, $1.subject, $1.sentence) },
@@ -127,19 +142,35 @@ public struct GraphCheck {
     /// escaping the walk — so the caches need no lock.
     private final class Context {
         let database:  DatabaseLayer
-        let nodes:     [NodeRecord]
-        let nodesByID: [ObjectID: NodeRecord]
-        let wires:     [Wire]
+        var nodes:     [NodeRecord] = []
+        var nodesByID: [ObjectID: NodeRecord] = [:]
+        var wires:     [Wire] = []
+
+        /// What the walk asked for and did not get, named once however many rows wanted
+        /// it. A set, because a point query that fails for one row fails for every row,
+        /// and a report of one damaged table should not be ten thousand lines.
+        private(set) var unreadable: Set<String> = []
 
         private var namesBySymbolID: [ObjectID: String] = [:]
         private var symbolIDsByName: [String: ObjectID?] = [:]
 
         init(database: DatabaseLayer) {
             self.database = database
-            nodes = FatalErrors.attempt { try database.node.selectAll() } ?? []
-            wires = FatalErrors.attempt { try database.wire.selectAll() } ?? []
+            nodes = read("the node table") { try database.node.selectAll() } ?? []
+            wires = read("the wire table") { try database.wire.selectAll() } ?? []
             nodesByID = Dictionary(nodes.compactMap { node in node.id.map { ($0, node) } },
                                    uniquingKeysWith: { first, _ in first })
+        }
+
+        /// One read, with `what` recorded when it fails. Every query the walk makes goes
+        /// through here, so nothing the database refuses can leave the report looking
+        /// clean. The machine's own failures still reach the fatal handler first.
+        func read<T>(_ what: String, _ work: () throws -> T) -> T? {
+            guard let value = FatalErrors.attempt(work) else {
+                unreadable.insert(what)
+                return nil
+            }
+            return value
         }
 
         /// A symbol's text, through the table rather than through `resolveSymbol()`: an id
@@ -149,7 +180,7 @@ public struct GraphCheck {
             if let known = namesBySymbolID[symbolID] {
                 return known
             }
-            let symbol = FatalErrors.attempt { try database.symbol.select(symbolID: symbolID) } ?? nil
+            let symbol = read("the symbol table") { try database.symbol.select(symbolID: symbolID) } ?? nil
             let name = symbol?.name ?? "#\(symbolID)"
             namesBySymbolID[symbolID] = name
             return name
@@ -162,7 +193,7 @@ public struct GraphCheck {
             if let known = symbolIDsByName[name] {
                 return known
             }
-            let id = FatalErrors.attempt { try database.symbol.selectID(name: name) } ?? nil
+            let id = read("the symbol table") { try database.symbol.selectID(name: name) } ?? nil
             symbolIDsByName[name] = id
             return id
         }
@@ -231,7 +262,7 @@ public struct GraphCheck {
                 continue
             }
 
-            let fromPort = FatalErrors.attempt {
+            let fromPort = context.read("the output-port table") {
                 try context.database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
             } ?? nil
             if fromPort == nil {
@@ -343,7 +374,7 @@ public struct GraphCheck {
     /// rebuild is deliberately not triggered here — reading a port must not be what repairs
     /// it, in the one command that repairs nothing.
     private static func folderManifests(_ context: Context) -> [Finding] {
-        let dirtyKeys = FatalErrors.attempt {
+        let dirtyKeys = context.read("the metadata table") {
             try context.database.metadata.selectKeys(withPrefix: Folder.manifestDirtyKeyPrefix)
         } ?? []
         let dirtyIDs = Set(dirtyKeys.compactMap { ObjectID($0.dropFirst(Folder.manifestDirtyKeyPrefix.count)) })
@@ -388,7 +419,7 @@ public struct GraphCheck {
     private static func readManifest(ofFolder nodeID: ObjectID,
                                      nameSymbolID: ObjectID,
                                      in context: Context) -> FolderManifest? {
-        guard let port = (FatalErrors.attempt {
+        guard let port = (context.read("the output-port table") {
                   try context.database.outputPort.select(nodeID: nodeID, nameSymbolID: nameSymbolID)
               } ?? nil),
               port.valueKind == .value,
@@ -409,7 +440,7 @@ public struct GraphCheck {
     /// decided by the port's state and by whether an object resolves, never by what a
     /// message says.
     private static func errorPortsWithoutMessages(_ context: Context) -> [Finding] {
-        let errorPorts = FatalErrors.attempt { try context.database.outputPort.selectAllErrors() } ?? []
+        let errorPorts = context.read("the output-port table") { try context.database.outputPort.selectAllErrors() } ?? []
 
         // By case, not by text: a port carrying an input's failure has no message of its
         // own and is not supposed to have one.
@@ -461,7 +492,7 @@ public struct GraphCheck {
     /// computed by a Semel that would compute a different one from the same inputs. That is
     /// B-102's ground: the key would have to carry the code's version to catch it.
     private static func cacheKeys(_ context: Context) -> [Finding] {
-        let hashes = FatalErrors.attempt { try context.database.cacheEntry.selectAllHashes() } ?? []
+        let hashes = context.read("the cache table") { try context.database.cacheEntry.selectAllHashes() } ?? []
 
         return hashes.filter { !isHexadecimal($0) }.map { hash in
             Finding(kind: .unreadableCacheKey, subject: "cache entry '\(hash)'",

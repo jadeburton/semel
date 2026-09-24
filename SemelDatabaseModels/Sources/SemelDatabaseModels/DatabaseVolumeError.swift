@@ -12,6 +12,27 @@
 import Foundation
 import GRDB
 
+/// Something inside a `withReadSnapshot` tried to write.
+///
+/// SQLite answers that with `SQLITE_READONLY`, the same code a read-only volume gives, and
+/// the volume is what this layer would otherwise blame — stopping the process and sending
+/// the reader to check permissions on a disk that is fine. Deliberately *not* an
+/// `UnrecoverableError`: the machine is in order and the caller is not, so this fails the
+/// operation and leaves the process running to report it.
+public struct WriteInsideReadSnapshotError: Error, CustomStringConvertible {
+    public let underlying: GRDB.DatabaseError
+
+    public init(underlying: GRDB.DatabaseError) {
+        self.underlying = underlying
+    }
+
+    public var description: String {
+        "a write was attempted inside a read snapshot, which holds a read-only connection "
+            + "(\(underlying.extendedResultCode)): \(underlying.message ?? "no message"). "
+            + "Use withTransaction for work that writes."
+    }
+}
+
 /// The database's volume is out of room or out of reach, or the file is damaged. Raised by
 /// `DatabaseLayer` in place of the GRDB error it translates; the original is kept.
 public struct DatabaseVolumeError: UnrecoverableError {

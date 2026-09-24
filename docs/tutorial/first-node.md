@@ -581,7 +581,7 @@ reset
 ```
 Graph copied to /Users/you/Library/Application Support/semel/graph.sqlite.broken-2026-09-23T101500Z — yours to delete.
 Rebuild started.
-Run `check` before the next reset: it names the invariants a graph is breaking, which this one has just discarded.
+Run `check` before the next reset: it names the invariants a graph is breaking — the evidence a reset discards.
 ```
 
 That copy is the only record of the graph the reset threw away, and nothing removes it for

@@ -264,6 +264,7 @@ extension CheckFinding.Kind {
         case .missingManifestChild:  self = .missingManifestChild
         case .errorWithoutMessage:   self = .errorWithoutMessage
         case .unreadableCacheKey:    self = .unreadableCacheKey
+        case .graphCouldNotBeRead:   self = .graphCouldNotBeRead
         }
     }
 }

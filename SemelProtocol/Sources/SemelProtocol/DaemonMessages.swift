@@ -95,6 +95,7 @@ public struct CheckFinding: Codable, Equatable, Sendable {
         case missingManifestChild
         case errorWithoutMessage
         case unreadableCacheKey
+        case graphCouldNotBeRead
     }
 
     public let kind:     Kind

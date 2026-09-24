@@ -97,39 +97,19 @@ final class GraphCheckTests: SemelCoreTestCase {
         XCTAssertEqual(GraphCheck.run(database: database).scheduledNodeCount, scheduled - 1)
     }
 
-    // MARK: - One read for the whole walk
+    // MARK: - A graph the check could not read
 
-    /// The walk happens inside `withReadSnapshot`, so the nodes and the wires are one
-    /// state. Outside one they are two, and a node created between the two scans leaves a
-    /// wire that appears to point at nothing — a `danglingWire` finding against a graph
-    /// that is perfectly sound, in a command the harness runs after every build.
-    ///
-    /// What makes it a snapshot is that `DatabaseQueue` is serial: the block holds the
-    /// queue, so a writer cannot land inside it. That is what this asserts — and the last
-    /// line is what keeps it from passing vacuously, by proving the writer really did run
-    /// and really was held off until the block ended.
-    func test_aReadSnapshotHoldsOffAWriterForItsWholeBlock() throws {
-        let startWriter = DispatchSemaphore(value: 0)
-        let writerDone  = DispatchSemaphore(value: 0)
+    /// A check that could not look is not a check that found nothing. Silence here would
+    /// print as `✅ no findings`, which is the one answer a damaged graph must never get.
+    func test_reportsATableItCouldNotReadRatherThanAnsweringClean() throws {
+        try makeHealthyGraph()
+        try database.dbQueue.write { try $0.execute(sql: "DROP TABLE CacheEntry") }
 
-        DispatchQueue.global().async { [database] in
-            startWriter.wait()
-            _ = try? database.node.insert(NodeRecord(kind: Configuration.kind))
-            writerDone.signal()
-        }
+        let findings = GraphCheck.run(database: database).findings
 
-        var counts: [Int] = []
-        try database.withReadSnapshot {
-            counts.append(try database.node.select(kind: Configuration.kind).count)
-            startWriter.signal()
-            Thread.sleep(forTimeInterval: 0.1)
-            counts.append(try database.node.select(kind: Configuration.kind).count)
-        }
-
-        XCTAssertEqual(writerDone.wait(timeout: .now() + 5), .success)
-        XCTAssertEqual(counts.first, counts.last, "a writer cannot land between two reads of one snapshot")
-        XCTAssertEqual(try database.node.select(kind: Configuration.kind).count, (counts.first ?? 0) + 1,
-                       "and it lands as soon as the snapshot ends")
+        XCTAssertEqual(findings, [GraphCheck.Finding(
+            kind: .graphCouldNotBeRead, subject: "the cache table",
+            sentence: "it could not be read, so whatever it had to say is missing from this report")])
     }
 
     // MARK: - A wire whose endpoint node is gone

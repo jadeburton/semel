@@ -172,7 +172,8 @@ final class MessageJSONTests: XCTestCase {
     func test_roundTripsEveryCheckFindingKind() throws {
         let kinds: [CheckFinding.Kind] = [.danglingWire, .unreadableGraphSpec, .unlinkedNodeType,
                                           .productWithNoProducer, .missingManifestChild,
-                                          .errorWithoutMessage, .unreadableCacheKey]
+                                          .errorWithoutMessage, .unreadableCacheKey,
+                                          .graphCouldNotBeRead]
         for kind in kinds {
             let finding = CheckFinding(kind: kind, subject: "a", sentence: "b")
             XCTAssertEqual(try roundTrip([finding]), [finding])

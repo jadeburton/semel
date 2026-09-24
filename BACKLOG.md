@@ -272,6 +272,17 @@ taught us".
 
 ## Design, correctness and code quality
 
+**B-105** `open` — **Two loose ends `check` left behind.**
+`GraphCheck.danglingWires` asks the two ends of a wire different questions: the source port
+by *row* and the destination port against the node's *descriptor*, so an output port dropped
+from a type but still present as a row passes silently — check the from-port against the
+source node's descriptor too, when its type is linked. Separately, a node is named two ways
+in one product: `Type #id 'path'` in a check finding, `Type  'path'` (two spaces, id as a
+last resort) in `ErrorReport.label`. The finding's form is the one to keep — a finding is
+filed as a bug and the row is what the next person opens — but `ErrorReport`'s output is
+pinned on both sides of the wire, so converging them is its own change with its own test
+updates.
+
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
 A node's outputs are supposed to be a function of its inputs. Three types are not, and none

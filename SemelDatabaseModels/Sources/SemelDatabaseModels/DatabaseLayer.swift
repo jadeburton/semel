@@ -147,10 +147,22 @@ public final class DatabaseLayer {
     /// two reads, and conclude the graph is broken when it is merely busy. Inside one of
     /// these that cannot happen.
     ///
-    /// A write reached from inside takes this same read connection and SQLite refuses it,
-    /// so the read-only intent is enforced rather than merely stated. Nesting inside
-    /// `withTransaction` participates in that write transaction, as every other nesting
-    /// here does.
+    /// A write reached from inside takes this same read connection, and SQLite refuses it
+    /// with `SQLITE_READONLY` — so the read-only intent is enforced rather than merely
+    /// stated. That code otherwise means the *volume* is read-only, which the boundary
+    /// translates into an unrecoverable `DatabaseVolumeError` that stops the process and
+    /// tells the reader to check permissions on their disk. Inside a snapshot that
+    /// diagnosis would be wrong twice over, so the code is re-read here as what it
+    /// actually is: `WriteInsideReadSnapshotError`, an ordinary error naming the caller's
+    /// bug, which fails the operation instead of the machine.
+    ///
+    /// Nesting works both ways round, and only one of them is useful.
+    /// `withReadSnapshot` inside `withTransaction` participates in that write transaction,
+    /// as every other nesting here does. `withTransaction` inside a snapshot is the
+    /// reverse: the inner call finds a connection already published, so it opens no
+    /// transaction of its own and takes the read connection — every write in it is
+    /// refused, and there is no rollback scope, because there is nothing to roll back.
+    /// Reach for this only where nothing writes.
     public func withReadSnapshot<T>(_ work: () throws -> T) throws -> T {
         if DatabaseLayer.currentDB != nil {
             return try work()
@@ -159,10 +171,26 @@ public final class DatabaseLayer {
         return try translatingVolumeFailures {
             try dbQueue.read { db in
                 try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
-                    try work()
+                    do {
+                        return try work()
+                    } catch {
+                        throw Self.namingAWriteInsideASnapshot(error)
+                    }
                 }
             }
         }
+    }
+
+    /// Re-reads a `SQLITE_READONLY` raised inside a snapshot as the caller's write rather
+    /// than as the volume's state. The inner boundary has already translated it, so the
+    /// GRDB error is unwrapped from that translation before it is judged; anything else
+    /// passes through as it was.
+    private static func namingAWriteInsideASnapshot(_ error: Error) -> Error {
+        let databaseError = (error as? DatabaseVolumeError)?.underlying ?? (error as? GRDB.DatabaseError)
+        guard let databaseError, databaseError.resultCode == .SQLITE_READONLY else {
+            return error
+        }
+        return WriteInsideReadSnapshotError(underlying: databaseError)
     }
 
     // ── Initialisers ─────────────────────────────────────────────────────────
