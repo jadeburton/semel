@@ -102,6 +102,7 @@ rm build/**
 | Command | Description |
 |---------|-------------|
 | `base [path]` | Show or set the external base directory for `push` |
+| `begin` … `commit` | Hold the engine between several pushes so it settles once, on the `commit`, which also waits for that settle. Every `push` already does this for its own files; this is for a script whose tree arrives over several commands. `wait` refuses while a batch is open |
 | `q` / `quit` / `exit` | Exit |
 
 Commands can be prefixed with `semel` (e.g. `semel ls`) for scripting.

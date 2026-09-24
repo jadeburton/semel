@@ -32,6 +32,7 @@ public final class CommandInterpreter: CommandContext {
     var baseDirectory: String
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
+    var openBatchDepth = 0
 
     func outputMessage(_ message: String) { print(message) }
     func outputError(_ errorMessage: String) {

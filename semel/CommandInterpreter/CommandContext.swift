@@ -14,6 +14,12 @@ protocol CommandContext: AnyObject {
     var baseDirectory: String { get set }
     var currentFileSystem: FileSystemForCommand { get set }
     var currentDirectoryPath: Path { get set }
+
+    /// How many batches `begin` has opened and `commit` has not yet closed. The server
+    /// keeps its own count per session; this one is what lets `wait` refuse instead of
+    /// blocking on a signal the open batch is holding back.
+    var openBatchDepth: Int { get set }
+
     func outputMessage(_ message: String)
     func outputError(_ message: String)
 

@@ -55,6 +55,7 @@ final class TestCommandContext: CommandContext {
     var baseDirectory: String
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
+    var openBatchDepth = 0
 
     private(set) var messages: [String] = []
     private(set) var errors: [String] = []

@@ -142,6 +142,18 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "send"])
     }
 
+    /// A wait with a batch open would block for good: the batch holds the very signal the
+    /// wait is waiting on (B-61). Refused, naming the command that ends the batch.
+    func test_waitWithABatchOpenIsRefusedAndSendsNothing() throws {
+        context.openBatchDepth = 1
+
+        try run("wait")
+
+        XCTAssertEqual(connection.daemonRequests, [])
+        XCTAssertEqual(context.errors, ["wait: a batch is open; `commit` ends it and waits"])
+        XCTAssertEqual(context.resetErrorRecordAccountingCallCount, 0)
+    }
+
     // MARK: - check
 
     func test_checkWithNoFindingsSaysSo() throws {
