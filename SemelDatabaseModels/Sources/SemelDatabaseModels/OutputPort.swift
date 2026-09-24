@@ -22,6 +22,8 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
         case inputInError = 7
         /// Could not produce, because an input has never been produced.
         case inputNotProduced = 8
+        /// A source that was pushed and then removed.
+        case deleted = 9
     }
 
     public var nodeID: ObjectID
@@ -95,12 +97,12 @@ public struct OutputPortDataAccess: DataAccessType {
 
     /// Every port across the graph a report has to look at.
     ///
-    /// Three of the states are here always: a port that failed, one whose node did not run
-    /// because an input failed, and one whose node could not produce because an input never
-    /// had a value. The last two carry no problem of their own — they are here so a report
-    /// can count what one cause stopped.
+    /// Four of the states are here always: a port that failed, one carrying a source that
+    /// was removed, one whose node did not run because an input failed, and one whose node
+    /// could not produce because an input never had a value. The last two carry no problem
+    /// of their own — they are here so a report can count what one cause stopped.
     ///
-    /// The fourth, a port nothing has processed, is here only for the kinds named in
+    /// The fifth, a port nothing has processed, is here only for the kinds named in
     /// `sourceNodeKinds`: a node with no input ports will never run, so a port of one that
     /// has never produced never will. The same state on a node that does take inputs means
     /// only that its turn has not come, and every node in a fresh graph holds it.
@@ -113,7 +115,7 @@ public struct OutputPortDataAccess: DataAccessType {
     /// with no source types in it, and a caller that meant to pass one and did not would
     /// silently get a report that never names a file.
     public func selectAllForErrorReport(sourceNodeKinds: [UInt]) throws -> [OutputPort] {
-        let carried: [OutputPort.ValueKind] = [.error, .inputInError, .inputNotProduced]
+        let carried: [OutputPort.ValueKind] = [.error, .deleted, .inputInError, .inputNotProduced]
         let carriedList = carried.map { _ in "?" }.joined(separator: ", ")
         var arguments   = carried.map { Int64($0.rawValue) }
 

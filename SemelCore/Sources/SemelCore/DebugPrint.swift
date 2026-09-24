@@ -93,6 +93,8 @@ extension BuildEngine {
             return "[ 🟡 \(NoValueReason.inputNotProduced) ]"
         case .inputInError:
             return "[ ❌ \(NoValueReason.inputInError) ]"
+        case .deleted:
+            return "[ ❌ \(NoValueReason.deleted) ]"
         case .error:
             let message = (try? outputPort.dataObjectHash?.resolveAsString()) ?? "<no message>"
             return "[ ❌ \(message) ]"

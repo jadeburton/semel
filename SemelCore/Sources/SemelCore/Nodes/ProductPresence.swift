@@ -52,9 +52,9 @@ enum ProductPresence {
             case .noValue(.pending):
                 existsNow = existedBefore
             case .noValue(.initializing), .noValue(.inputNotProduced),
-                 .noValue(.inputInError), .noValue(.error):
+                 .noValue(.inputInError), .noValue(.deleted), .noValue(.error):
                 // A product with no value is not there, whether its builder failed, its
-                // input failed, or it has never run.
+                // input failed, a source it was built from was removed, or it has never run.
                 existsNow = false
             case nil:
                 // No wire at all: the product left the formula. Note this arrives a pass

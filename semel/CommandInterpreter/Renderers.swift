@@ -54,11 +54,21 @@ enum ErrorRecordRenderer {
 
     /// A heading, then one line per distinct message naming the ports that carry it, or
     /// an indented block when a message spans lines. Ends with a blank line.
+    ///
+    /// One entry carrying one port is written without the port's name, the same rule
+    /// `ErrorReport.lines` follows on the engine's side: the names are there to tell one
+    /// entry from another and to say which of a node's ports a message came from, and a
+    /// lone port does neither, so `output:` on a file and `pinned:` on a folder repeat the
+    /// heading and carry nothing. Anywhere the record accounts for more than one thing the
+    /// names stay, which is what keeps these lines agreeing with the count above them —
+    /// that count is a sum of ports.
     static func lines(for record: ErrorRecord) -> [String] {
         var result = ["\(Mark.failure) \(record.label)"]
+        let namesPorts = !(record.entries.count == 1 && record.entries[0].ports.count == 1)
 
         for entry in record.entries {
             let portNames = entry.ports.joined(separator: ", ")
+            let prefix    = namesPorts ? "\(portNames): " : ""
 
             let body = entry.message
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -67,15 +77,18 @@ enum ErrorRecordRenderer {
                 .filter { !$0.isEmpty }
 
             guard !body.isEmpty else {
-                result.append("   · \(portNames): (no details)")
+                result.append("   · \(prefix)(no details)")
                 continue
             }
 
             if body.count == 1 {
-                result.append("   · \(portNames): \(body[0])")
-            } else {
+                result.append("   · \(prefix)\(body[0])")
+            } else if namesPorts {
                 result.append("   · \(portNames):")
                 result.append(contentsOf: body.map { "     \($0)" })
+            } else {
+                result.append("   · \(body[0])")
+                result.append(contentsOf: body.dropFirst().map { "     \($0)" })
             }
         }
 

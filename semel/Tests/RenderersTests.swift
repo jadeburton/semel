@@ -72,7 +72,7 @@ final class ErrorRecordRendererMarkTests: XCTestCase {
                                  entries: [ErrorEntry(ports: ["output"], message: "boom")])
 
         XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
-                       ["❌ StaticFile  'input:/a.c'", "   · output: boom", ""])
+                       ["❌ StaticFile  'input:/a.c'", "   · boom", ""])
     }
 
     /// A file nobody has pushed reads the same over the wire as it does on the engine's own
@@ -86,8 +86,59 @@ final class ErrorRecordRendererMarkTests: XCTestCase {
 
         XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
                        ["❌ StaticFile  'input:/clang.cfg'",
-                        "   · output: clang.cfg has not been pushed",
+                        "   · clang.cfg has not been pushed",
                         "   · and 2 nodes downstream carry it",
+                        ""])
+    }
+
+    /// B-104. A folder is a source too, and the state it publishes sits on a port whose
+    /// name is the engine's business: the line names the path to push and nothing else.
+    /// `UnpushedFileReportingTests` pins the engine's side of this pair.
+    func test_anUnpushedFolderReadsTheSameThroughThisRenderer() {
+        let record = ErrorRecord(label: "Folder  'input:/src'",
+                                 entries: [ErrorEntry(ports: ["pinned"],
+                                                      message: "src/ has not been pushed")])
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ Folder  'input:/src'", "   · src/ has not been pushed", ""])
+    }
+
+    /// One message across several ports keeps their names, as it does on the engine's
+    /// side. The count printed above these lines is a sum of ports, so a heading saying
+    /// two errors sits above a line naming two ports.
+    func test_onePortIsTheConditionRatherThanOneEntry() {
+        let record = ErrorRecord(label: "StaticFile  'input:/a.c'",
+                                 entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")])
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ StaticFile  'input:/a.c'", "   · errorLog, output: boom", ""])
+    }
+
+    /// The names come back as soon as there is more than one entry: that is what they are
+    /// for, and a record with two messages has something to tell apart.
+    func test_theirPortsAreNamedAsSoonAsThereIsMoreThanOneEntry() {
+        let record = ErrorRecord(label: "ClangCompiler  'input:/a.c'",
+                                 entries: [ErrorEntry(ports: ["errorLog"], message: "bang"),
+                                           ErrorEntry(ports: ["output"], message: "boom")])
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ ClangCompiler  'input:/a.c'",
+                        "   · errorLog: bang",
+                        "   · output: boom",
+                        ""])
+    }
+
+    /// A message spanning lines with no port names to announce puts its first line on the
+    /// bullet and indents the rest, which is the engine's twin of this line for line.
+    func test_aMultiLineMessageWithoutPortNamesOpensOnTheBullet() {
+        let record = ErrorRecord(label: "ClangLinker  'input:/semel.fmla'",
+                                 entries: [ErrorEntry(ports: ["output"],
+                                                      message: "Missing configuration. Add these:\n\nclang.linker.target=…")])
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ ClangLinker  'input:/semel.fmla'",
+                        "   · Missing configuration. Add these:",
+                        "     clang.linker.target=…",
                         ""])
     }
 }

@@ -12,6 +12,11 @@
 //  its descriptor — `ConfigMerger.override`, the one input a formula may point at a file
 //  that need never exist.
 //
+//  B-104 brought the folders under the same rule and gave the other state a name. A folder
+//  is a source too: it publishes "nobody has pushed into me" on `pinned` while its readers
+//  wire from `manifest`, so what is asked is whether anything in the graph needs the node.
+//  A source that was pushed and then removed holds `deleted`, and reads as the path again.
+//
 
 @testable import SemelCore
 import SemelDatabaseModels
@@ -116,7 +121,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
                        ["❌ StaticFile  'input:/main.c'",
-                        "   · output: main.c has not been pushed",
+                        "   · main.c has not been pushed",
                         "   · and 1 node downstream carries it",
                         ""])
     }
@@ -128,6 +133,17 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
                        "src/main.c has not been pushed")
         XCTAssertEqual(ErrorReport.unpushedFileMessage(path: "input:/clang.cfg"),
                        "clang.cfg has not been pushed")
+    }
+
+    /// A tree ends in a separator, so a line about a folder is not read as a line about a
+    /// file of the same name; a source that was removed says so in its own sentence.
+    func test_theSentencesASourcesStateReadsAs() {
+        XCTAssertEqual(ErrorReport.unpushedFileMessage(path: "input:/src", isTree: true),
+                       "src/ has not been pushed")
+        XCTAssertEqual(ErrorReport.deletedSourceMessage(path: "input:/src/main.c"),
+                       "src/main.c was deleted")
+        XCTAssertEqual(ErrorReport.deletedSourceMessage(path: "input:/src", isTree: true),
+                       "src/ was deleted")
     }
 
     /// The `errors` verb asks for everything the graph holds rather than for what is newly
@@ -284,9 +300,10 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     // MARK: - A file that was pushed and then removed
 
-    /// A file that was pushed and later deleted holds an error of its own, which reads as
-    /// the sentence it always has. Nothing about a never-pushed file changes that.
-    func test_aDeletedFileStillReportsItsOwnError() throws {
+    /// A file that was pushed and later removed is in a state of its own, which the report
+    /// names by the path the reader would push again. Its consumers read it as an input in
+    /// error and fold under it.
+    func test_aDeletedFileIsNamedByItsPath() throws {
         let file     = try makeUnpushedFile(path: "input:/gone.c")
         let compiler = try makeDemanding(tag: "compiler")
 
@@ -295,15 +312,72 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         _ = try staticFile(file).replaceContent(nil)
         try run(compiler)
 
-        XCTAssertEqual(try reason(of: file), .error)
         XCTAssertEqual(try reason(of: compiler), .inputInError)
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
         XCTAssertEqual(captured[0].map(\.label), ["StaticFile  'input:/gone.c'"])
-        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["output"], message: "Deleted")])
-        XCTAssertEqual(captured[0][0].downstreamCarrierCount, 1)
+        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
+                       ["❌ StaticFile  'input:/gone.c'",
+                        "   · gone.c was deleted",
+                        "   · and 1 node downstream carries it",
+                        ""])
+    }
+
+    // MARK: - B-104: a folder is a source too
+
+    /// An unpinned folder in the input file system, the way a formula naming a tree finds
+    /// one nobody has pushed into.
+    private func makeUnpushedFolder(path: String) throws -> ObjectID {
+        try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path(path), pinned: false).requireID()
+    }
+
+    /// The item B-104 is about. A folder nobody pushed reads the way a file nobody pushed
+    /// does: the path to push, not a word about the port that carries the state.
+    func test_anUnpushedFolderSomethingNeedsIsNamedByThePathToPush() throws {
+        let folder   = try makeUnpushedFolder(path: "src")
+        let compiler = try makeDemanding(tag: "compiler")
+
+        try connect(folder, to: compiler, name: "sources", fromPort: Folder.folderManifestOutputPort)
+        try run(compiler)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder  'input:/src'"]])
+        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
+                       ["❌ Folder  'input:/src'",
+                        "   · src/ has not been pushed",
+                        ""])
+    }
+
+    /// A folder nobody reads is no more a problem than a file nobody reads.
+    func test_anUnpushedFolderNothingReadsIsSilent() throws {
+        _ = try makeUnpushedFolder(path: "spare")
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
+    }
+
+    /// A folder that was pushed into and then removed is a different state from one nobody
+    /// ever pushed, and reads as a different sentence.
+    func test_aRemovedFolderIsNamedAsDeleted() throws {
+        let folderRecord = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        let compiler     = try makeDemanding(tag: "compiler")
+
+        try connect(try folderRecord.requireID(), to: compiler, name: "sources",
+                    fromPort: Folder.folderManifestOutputPort)
+        try run(compiler)
+        try XCTUnwrap(folderRecord.makeNode() as? Folder).setPinned(false)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder  'input:/src'"]])
+        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
+                       ["❌ Folder  'input:/src'",
+                        "   · src/ was deleted",
+                        ""])
     }
 
     /// A file that has been pushed is no one's problem, however many nodes read it.

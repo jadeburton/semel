@@ -48,7 +48,8 @@ final class EnginePluginTests: XCTestCase {
         try run("errors")
 
         // The count goes through `countErrorRecords`, not `outputError`, so the same
-        // settle report the idle-time event already counted is not counted twice.
+        // settle report the idle-time event already counted is not counted twice. It is a
+        // sum of ports, which is why the line keeps their names: two errors, two ports.
         XCTAssertEqual(context.messages, [
             "2 errors across 1 node:\n",
             "❌ StaticFile  'input:/a.c'",
@@ -61,8 +62,8 @@ final class EnginePluginTests: XCTestCase {
     }
 
     /// A missing-configuration message spans lines and carries the config lines the reader
-    /// has to paste, so it prints as an indented block under the ports rather than folded
-    /// onto one line. This is the path a node's error takes once it arrives as the words
+    /// has to paste, so it prints as an indented block rather than folded onto one line.
+    /// This is the path a node's error takes once it arrives as the words
     /// the node wrote instead of as the debug form of the case carrying them.
     func test_errorsPrintsAMultiLineMessageAsAnIndentedBlock() throws {
         let message = """
@@ -80,8 +81,7 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, [
             "1 error across 1 node:\n",
             "❌ ClangLinker  'input:/semel.fmla'",
-            "   · output:",
-            "     Missing configuration. Add these to a semel.config in the input file system:",
+            "   · Missing configuration. Add these to a semel.config in the input file system:",
             "     clang.linker.target=…",
             "",
         ])
@@ -103,7 +103,7 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, [
             "1 error across 1 node:\n",
             "❌ StaticFile  'input:/shared.h'",
-            "   · output: the file is gone",
+            "   · the file is gone",
             "   · and 20 nodes downstream carry it",
             "",
         ])

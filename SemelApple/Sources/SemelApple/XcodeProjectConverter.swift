@@ -104,10 +104,11 @@ public struct XcodeProjectConverter: Node {
         case .noValue(.pending):
             return pending("waiting for \(projectFilePath)", specs: specs)
         case .noValue(.initializing), .noValue(.inputNotProduced),
-             .noValue(.inputInError), .noValue(.error):
+             .noValue(.inputInError), .noValue(.deleted), .noValue(.error):
             // A file node that has never been processed is a file nobody pushed: a
             // `StaticFile` with no inputs has nothing to wait for, so this is as far as it
-            // goes and the remedy is the same one a missing file gets.
+            // goes, and a file that was removed leaves the same hole. The remedy is the one
+            // a missing file gets.
             return failed("\(projectFilePath) is not in the input file system; push the project's folder", specs: specs)
         case .value(let hash):
             projectHash = hash

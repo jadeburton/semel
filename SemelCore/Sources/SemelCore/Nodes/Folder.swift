@@ -36,9 +36,19 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 //        self.parentNode?.canBePin
     }
 
+    /// A folder arrives with both of its ports written.
+    ///
+    /// `manifest` carries a listing from the start, empty until something is pushed under
+    /// it: a node reading a folder as a tree reads a folder with nothing in it as a tree
+    /// with nothing in it, and gets to decide for itself whether that is a problem.
+    ///
+    /// `pinned` carries the state of a value nobody has produced, which is what a folder
+    /// nobody pushed into is — the same state a file nobody pushed holds, so a report
+    /// names the two alike. A folder outside the input file system cannot be pinned at all
+    /// and holds a value instead, so it is never mistaken for one waiting to be pushed.
     public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
-                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .error(messageDataObjectHash: try "Deleted".intern())) : .value("")], // HACK
+                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .initializing) : .value("")], // HACK
               inputWireSpecs: [:])
     }
 
@@ -262,12 +272,19 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         }
     }
 
+    /// Both directions are refused on a folder that cannot be pinned, not only the pin.
+    /// Such a folder holds a value on this port from its creation and is outside the input
+    /// file system, so there is nothing for the user to have taken away: unpinning one
+    /// would leave it saying it was deleted, in a report line naming a path the reader
+    /// never pushed.
     func setPinned(_ pinned: Bool) throws {
-        if !canBePinned() && pinned {
+        guard canBePinned() else {
             return
         }
+        // Unpinning is the user taking the folder back out of the input file system, which
+        // is the deleted state and not the never-produced one a fresh folder holds.
         try thisNode.writeToOutputPort(Self.pinnedOutputPort,
-                                       value: pinned ? .value("true".intern()) : .noValue(reason: .error(messageDataObjectHash: "Deleted/Nonexistent".intern())))
+                                       value: pinned ? .value("true".intern()) : .noValue(reason: .deleted))
 
         try notifyParentOfChildContentChange()
     }

@@ -114,7 +114,7 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
                 switch reason {
                 case .pending:
                     return "Updating.."
-                case .initializing, .inputNotProduced, .inputInError, .error:
+                case .initializing, .inputNotProduced, .inputInError, .deleted, .error:
                     // Every one of these is a product that is not there. Which of them it is
                     // is a question for the report, not for a one-word status.
                     return "Error"

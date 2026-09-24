@@ -16,6 +16,10 @@ import SemelNodeKit
 public enum ErrorReport {
 
     /// One distinct message a node is carrying, and the ports carrying it.
+    ///
+    /// The ports travel with every item, whether or not a renderer writes them out: they
+    /// are how a caller counts the failures behind a report, and `lines` is where the
+    /// question of writing them is answered.
     public struct Item: Equatable {
         public let ports:   [String]
         public let message: String
@@ -76,9 +80,10 @@ public enum ErrorReport {
     /// The lines for one node's errors: a heading, then one entry per distinct message.
     ///
     /// Grouped by message rather than by port, because a node that fails usually fails on all
-    /// of its ports at once with the same reason — `errorLog, infoLog, output: …` says that in
-    /// one line, where a line per port says the same thing three times and buries how many
-    /// distinct problems there actually are.
+    /// of its ports at once with the same reason — gathering them onto one item says that
+    /// once, where an item per port says the same thing three times and buries how many
+    /// distinct problems there actually are. Whether the ports are then written out is the
+    /// renderers' question, answered in `lines`.
     ///
     /// `messages` is the caller's selection. Passing fewer than the node has is how the engine
     /// reports only what is new.
@@ -87,12 +92,12 @@ public enum ErrorReport {
                              messages: Set<String>,
                              database: DatabaseLayer,
                              downstreamCarrierCount: Int = 0,
-                             unpushedFiles: [ObjectID: String] = [:]) -> Entry {
+                             sourceMessages: [ObjectID: String] = [:]) -> Entry {
         let items = messages.sorted().map { message -> Item in
             // Matched by what each port reports rather than by the text it stores, so that a
             // port whose state is its whole message is named alongside the rest.
             let portNames = ports
-                .filter { self.message(of: $0, unpushedFiles: unpushedFiles) == message }
+                .filter { self.message(of: $0, sourceMessages: sourceMessages) == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
             return Item(ports: portNames, message: message)
@@ -105,11 +110,23 @@ public enum ErrorReport {
     /// The lines for one entry: a heading, then one line per item, or an indented block
     /// when a message spans lines. `SemelCLI` has a twin of this over the wire record; the
     /// two must stay identical, and `IdleErrorReportingTests` pins this one's output.
+    ///
+    /// One item carrying one port is written without the port's name. The names are there
+    /// to tell one item from another and to say which of a node's ports a message came
+    /// from, and a lone port does neither — `output:` on a file and `pinned:` on a folder
+    /// repeat the heading in the engine's own vocabulary and carry nothing.
+    ///
+    /// The names stay wherever the entry accounts for more than one thing, which is also
+    /// what keeps the report agreeing with the counts printed beside it: those are sums of
+    /// ports, so a heading reading `3 errors` sits above lines naming three ports. One item
+    /// and its port count are what both renderers can see, which is what keeps this one
+    /// rule on both sides of the wire instead of a special case per message.
     public static func lines(for entry: Entry) -> [String] {
         var result = ["❌ \(entry.label)"]
+        let namesPorts = !(entry.items.count == 1 && entry.items[0].ports.count == 1)
 
         for item in entry.items {
-            let portNames = item.ports.joined(separator: ", ")
+            let prefix = namesPorts ? "\(item.ports.joined(separator: ", ")): " : ""
 
             let body = item.message
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -118,15 +135,18 @@ public enum ErrorReport {
                 .filter { !$0.isEmpty }
 
             guard !body.isEmpty else {
-                result.append("   · \(portNames): (no details)")
+                result.append("   · \(prefix)(no details)")
                 continue
             }
 
             if body.count == 1 {
-                result.append("   · \(portNames): \(body[0])")
-            } else {
-                result.append("   · \(portNames):")
+                result.append("   · \(prefix)\(body[0])")
+            } else if namesPorts {
+                result.append("   · \(item.ports.joined(separator: ", ")):")
                 result.append(contentsOf: body.map { "     \($0)" })
+            } else {
+                result.append("   · \(body[0])")
+                result.append(contentsOf: body.dropFirst().map { "     \($0)" })
             }
         }
 
@@ -165,6 +185,10 @@ public enum ErrorReport {
     /// no message of its own, so it reports the sentence its state reads as. An error with no
     /// text at all is still an error, and the one kind a reader cannot diagnose, so it is
     /// reported as exactly that rather than dropped.
+    ///
+    /// A removed source reads as its state too. The sentence the report prefers names the
+    /// path, which takes the graph around the port rather than the port alone, so this is
+    /// what a caller without that reading falls back to.
     public static func reportableMessage(of port: OutputPort) -> String? {
         switch port.valueKind {
         case .value, .pending, .initializing, .inputNotProduced:
@@ -172,6 +196,9 @@ public enum ErrorReport {
 
         case .inputInError:
             return "\(NoValueReason.inputInError)"
+
+        case .deleted:
+            return "\(NoValueReason.deleted)"
 
         case .error:
             let message = (try? port.dataObjectHash?.resolveAsString()) ?? ""
@@ -182,16 +209,28 @@ public enum ErrorReport {
     /// What stands in for an error whose message is empty.
     public static let emptyMessage = "an error with no message"
 
-    // MARK: - A source that will never produce
+    // MARK: - What a source's state reads as
 
-    /// What a report says about a file the formula names and nobody has pushed.
+    /// How a source is named in a report line: the path relative to the input file system,
+    /// because that is what `push` takes — the reader can act on the line by typing it. The
+    /// label above it carries the full path.
     ///
-    /// The path relative to the input file system, because that is what `push` takes: the
-    /// reader can act on this line by typing it. The label above it carries the full path.
-    public static func unpushedFileMessage(path: String) -> String {
+    /// A folder ends in a separator, the way a tree is written everywhere else in Semel, so
+    /// that a line about one is not read as a line about a file of the same name.
+    static func sourcePath(_ path: String, isTree: Bool) -> String {
         let full = Path(path)
         let relative = full.relative(to: Path(FileSystemName.input)) ?? full
-        return "\(relative.string) has not been pushed"
+        return isTree ? "\(relative.string)/" : relative.string
+    }
+
+    /// What a report says about a source the formula names and nobody has pushed.
+    public static func unpushedFileMessage(path: String, isTree: Bool = false) -> String {
+        "\(sourcePath(path, isTree: isTree)) has not been pushed"
+    }
+
+    /// What a report says about a source that was pushed and then removed.
+    public static func deletedSourceMessage(path: String, isTree: Bool = false) -> String {
+        "\(sourcePath(path, isTree: isTree)) was deleted"
     }
 
     /// The kinds whose nodes declare no input ports.
@@ -213,15 +252,32 @@ public enum ErrorReport {
         try database.outputPort.selectAllForErrorReport(sourceNodeKinds: sourceNodeKinds)
     }
 
-    /// The files nobody has pushed that something needs, and the sentence each reads as.
+    /// What the sources in this set of ports have to say for themselves, by node.
     ///
-    /// A source node's port holding the initializing state will hold it for good, so the
-    /// only question is whether anyone is waiting. A consumer that reads an absent value as
-    /// nothing to add says so on the port it reads, and a file whose every reader says that
-    /// is one the formula allows never to exist. One wire query per candidate port, and a
-    /// graph whose files are all pushed has no candidates.
-    static func unpushedFiles(amongPorts ports: [OutputPort],
-                              database: DatabaseLayer) -> [ObjectID: String] {
+    /// A source's state is not a message: it is the graph around it — a node with no
+    /// inputs, a path the reader can type, and a consumer that needs what it does not have
+    /// — that turns the state into a line. This is that reading, for both of the states a
+    /// source can be in that a report has to explain, in one walk of the ports.
+    ///
+    /// **Nobody has pushed it.** A source node's port holding the initializing state will
+    /// hold it for good, so the only question is whether anyone is waiting. A consumer that
+    /// reads an absent value as nothing to add says so on the port it reads, and a source
+    /// whose every reader says that is one the formula allows never to exist. One wire
+    /// query per candidate node, and a graph whose sources are all pushed has no candidates.
+    ///
+    /// The readers asked about are the node's, not the port's. A source need not carry its
+    /// absence on the port its readers wire from: a folder says it has never been pushed
+    /// into on `pinned` while a formula reading it as a tree wires from `manifest`, where
+    /// an empty listing is what a folder with nothing in it has to offer. What is being
+    /// asked is whether anything in the graph needs this source, and that is a question
+    /// about the node.
+    ///
+    /// **It was pushed and then removed.** Named whether or not anything still reads it,
+    /// which is where the two part company: a source that never existed is a fact about a
+    /// formula nobody has finished, while one that was there and went is a change to the
+    /// graph's inputs, and it is the same line a reader needed when a removal broke a build.
+    static func sourceMessages(amongPorts ports: [OutputPort],
+                               database: DatabaseLayer) -> [ObjectID: String] {
 
         var descriptors: [UInt: NodeDescriptor] = [:]
         var result: [ObjectID: String] = [:]
@@ -242,58 +298,67 @@ public enum ErrorReport {
             return type.descriptor
         }
 
-        for port in ports where port.valueKind == .initializing {
-            guard result[port.nodeID] == nil,
-                  let record = FatalErrors.attempt({ try database.node.find(nodeID: port.nodeID) }) ?? nil,
-                  let path = record.properties["path"] else {
-                continue
-            }
-
-            // A report is best effort: wires the database cannot hand over leave the file
+        /// Whether anything wired below this node demands what it does not have.
+        func anythingNeeds(_ nodeID: ObjectID) -> Bool {
+            // A report is best effort: wires the database cannot hand over leave the source
             // unnamed, which costs a line rather than printing a wrong one.
             let consumers = FatalErrors.attempt({
-                try database.wire.select(comingFromNodeID: port.nodeID, fromSymbolID: port.nameSymbolID)
+                try database.wire.select(comingFromNodeID: nodeID)
             }) ?? []
 
-            let needed = consumers.contains { wire in
+            return consumers.contains { wire in
                 guard let descriptor = descriptor(ofNodeID: wire.toNodeID) else {
                     return true
                 }
                 return !descriptor.toleratesAbsentValue(onInputPort: wire.toSymbolID.resolveSymbol())
             }
+        }
 
-            if needed {
-                result[port.nodeID] = unpushedFileMessage(path: path)
+        for port in ports where port.valueKind == .initializing || port.valueKind == .deleted {
+            guard result[port.nodeID] == nil,
+                  let record = FatalErrors.attempt({ try database.node.find(nodeID: port.nodeID) }) ?? nil,
+                  let path = record.properties["path"] else {
+                continue
+            }
+            let isTree = record.kind == Folder.kind
+
+            if port.valueKind == .deleted {
+                result[port.nodeID] = deletedSourceMessage(path: path, isTree: isTree)
+            } else if anythingNeeds(port.nodeID) {
+                result[port.nodeID] = unpushedFileMessage(path: path, isTree: isTree)
             }
         }
 
         return result
     }
 
-    /// The message a port carries, with the files nobody has pushed already worked out.
-    ///
-    /// A port that has never been processed says nothing by itself; it is the graph around
-    /// it — a node with no inputs, and a consumer that needs what it does not have — that
-    /// turns it into a line, and `unpushedFiles` is that reading.
-    static func message(of port: OutputPort, unpushedFiles: [ObjectID: String]) -> String? {
+    /// The message a port carries, with what the sources say already worked out.
+    static func message(of port: OutputPort, sourceMessages: [ObjectID: String]) -> String? {
+        // A port that has never been processed says nothing by itself, so it has a line
+        // only when the reading above gave it one.
         if port.valueKind == .initializing {
-            return unpushedFiles[port.nodeID]
+            return sourceMessages[port.nodeID]
+        }
+        // A removed source always has a line; naming its path is better than its state, and
+        // the state is what is left when the node has no path.
+        if port.valueKind == .deleted {
+            return sourceMessages[port.nodeID] ?? reportableMessage(of: port)
         }
         return reportableMessage(of: port)
     }
 
     /// What each node has to say, for a caller keeping track of what it has already said.
     ///
-    /// `unpushedFiles` is a parameter so that a caller making several passes over one set of
-    /// ports works it out once; leaving it out asks for it here.
+    /// `sourceMessages` is a parameter so that a caller making several passes over one set
+    /// of ports works the sources out once; leaving it out asks for them here.
     public static func messagesByNode(forPorts ports: [OutputPort],
                                       database: DatabaseLayer,
-                                      unpushedFiles: [ObjectID: String]? = nil) -> [ObjectID: Set<String>] {
-        let unpushed = unpushedFiles ?? Self.unpushedFiles(amongPorts: ports, database: database)
+                                      sourceMessages: [ObjectID: String]? = nil) -> [ObjectID: Set<String>] {
+        let sourced = sourceMessages ?? Self.sourceMessages(amongPorts: ports, database: database)
 
         var result: [ObjectID: Set<String>] = [:]
         for port in ports {
-            guard let message = message(of: port, unpushedFiles: unpushed) else {
+            guard let message = message(of: port, sourceMessages: sourced) else {
                 continue
             }
             result[port.nodeID, default: []].insert(message)
@@ -344,17 +409,17 @@ public enum ErrorReport {
                               database: DatabaseLayer) -> [ObjectID: Int] {
         causes(amongErrorPorts: byNode,
                database: database,
-               unpushedFiles: unpushedFiles(amongPorts: byNode.values.flatMap { $0 }, database: database))
+               sourceMessages: sourceMessages(amongPorts: byNode.values.flatMap { $0 }, database: database))
     }
 
     static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                        database: DatabaseLayer,
-                       unpushedFiles: [ObjectID: String]) -> [ObjectID: Int] {
+                       sourceMessages: [ObjectID: String]) -> [ObjectID: Int] {
 
         var reporting: [ObjectID: [OutputPort]] = [:]
         for (nodeID, ports) in byNode {
             let listed = ports.filter {
-                message(of: $0, unpushedFiles: unpushedFiles) != nil || isCarriedFromAnAbsentInput($0)
+                message(of: $0, sourceMessages: sourceMessages) != nil || isCarriedFromAnAbsentInput($0)
             }
             if !listed.isEmpty {
                 reporting[nodeID] = listed
@@ -446,23 +511,23 @@ public enum ErrorReport {
     /// one label — two of a type with no path do. A sort by label alone leaves those two in
     /// the order the walk found them, `sort` being no more stable than the key it is given.
     ///
-    /// `unpushedFiles` is a parameter for the same reason it is one on `messagesByNode`: the
-    /// engine makes three passes over one idle pass's ports and works the files out once.
+    /// `sourceMessages` is a parameter for the same reason it is one on `messagesByNode`: the
+    /// engine makes three passes over one idle pass's ports and works the sources out once.
     public static func entries(forErrorPorts errorPorts: [OutputPort],
                                database: DatabaseLayer,
-                               unpushedFiles: [ObjectID: String]? = nil,
+                               sourceMessages: [ObjectID: String]? = nil,
                                select: (ObjectID, Set<String>) -> Set<String>)
                                -> [(nodeID: ObjectID, entry: Entry)] {
 
         let byNode   = Dictionary(grouping: errorPorts, by: \.nodeID)
-        let unpushed = unpushedFiles ?? Self.unpushedFiles(amongPorts: errorPorts, database: database)
-        let counts   = causes(amongErrorPorts: byNode, database: database, unpushedFiles: unpushed)
+        let sourced = sourceMessages ?? Self.sourceMessages(amongPorts: errorPorts, database: database)
+        let counts   = causes(amongErrorPorts: byNode, database: database, sourceMessages: sourced)
 
         var reported: [(nodeID: ObjectID, entry: Entry)] = []
 
         for (nodeID, carriedCount) in counts {
             let ports    = byNode[nodeID] ?? []
-            let selected = select(nodeID, Set(ports.compactMap { message(of: $0, unpushedFiles: unpushed) }))
+            let selected = select(nodeID, Set(ports.compactMap { message(of: $0, sourceMessages: sourced) }))
             guard !selected.isEmpty else {
                 continue
             }
@@ -472,7 +537,7 @@ public enum ErrorReport {
                                            messages: selected,
                                            database: database,
                                            downstreamCarrierCount: carriedCount,
-                                           unpushedFiles: unpushed)))
+                                           sourceMessages: sourced)))
         }
 
         return reported.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }
