@@ -130,7 +130,7 @@ public struct GraphCheck {
         // Neither of these rests on a table another check needs: a port in error says so
         // by itself, and a cache key is a string in a column of its own. A node table the
         // walk could not read costs the first its labels, not its findings.
-        findings += errorPortsWithoutMessages(context)
+        if context.canRun(.nodes)            { findings += errorPortsWithoutMessages(context) }
         findings += cacheKeys(context)
 
         findings.sort { ($0.kind.rawValue, $0.subject, $0.sentence)
@@ -163,7 +163,7 @@ public struct GraphCheck {
         /// checks by.
         var checksItCarries: [String] {
             switch self {
-            case .nodes:    return ["wires", "graph specs", "products", "folder manifests"]
+            case .nodes:    return ["wires", "graph specs", "products", "folder manifests", "error ports"]
             case .wires:    return ["wires", "products"]
             case .metadata: return ["folder manifests"]
             }
@@ -505,7 +505,7 @@ public struct GraphCheck {
     /// decided by the port's state and by whether an object resolves, never by what a
     /// message says.
     private static func errorPortsWithoutMessages(_ context: Context) -> [Finding] {
-        let errorPorts = context.read("the output-port table") { try context.database.outputPort.selectAllErrors() } ?? []
+        let errorPorts = context.read("the output-port table") { try ErrorReport.portsToReport(database: context.database) } ?? []
 
         // By case, not by text: a port carrying an input's failure has no message of its
         // own and is not supposed to have one.

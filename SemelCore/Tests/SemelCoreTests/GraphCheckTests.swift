@@ -123,8 +123,8 @@ final class GraphCheckTests: SemelCoreTestCase {
 
         XCTAssertEqual(findings, [GraphCheck.Finding(
             kind: .graphCouldNotBeRead, subject: "the node table",
-            sentence: "it could not be read, so wires, graph specs, products and folder manifests "
-                    + "were not checked")])
+            sentence: "it could not be read, so wires, graph specs, products, folder manifests and "
+                    + "error ports were not checked")])
     }
 
     /// The same the other way round: with no wires, every required input port is a product
