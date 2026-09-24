@@ -121,9 +121,13 @@ extension Node {
 
         // An entry's specs demand a subgraph by naming node types, and a node type carries
         // no version for a type other than its own: a Semel that drops or renames a type
-        // leaves entries of every *other* type naming something it cannot make. Handing
-        // such an entry back fails the node on a type nothing can build, where a miss
-        // recomputes and demands what this Semel does link.
+        // leaves entries of every *other* type naming something it cannot make. Applying
+        // such an entry is recoverable — the throw writes an error value on every output
+        // port and both hit paths reprocess — so this saves a replay that was going to be
+        // thrown away, along with its warning and the error values the ports carry
+        // meanwhile. The cost is one parse of each stored spec, which `applySpecs` repeats
+        // a few lines into the hit it allows: the check at most doubles a parse the path
+        // pays anyway.
         let demandedSpecs = decodedCacheEntry.inputWireSpecs.values.flatMap(\.values)
         guard demandedSpecs.allSatisfy({ GraphSpecNode.namesOnlyRegisteredTypes(spec: $0) }) else {
             return nil

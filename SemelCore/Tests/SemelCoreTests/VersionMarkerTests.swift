@@ -158,11 +158,12 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "target=arm64")
     }
 
-    /// A version change rebuilds the graph and keeps the cache. A key carries the
-    /// `implementationVersion` of the node type that wrote the entry, so an entry from an
-    /// older implementation cannot be hit: the type whose output changed misses on its own
-    /// key, and every type a release left alone answers its rebuild from the cache instead
-    /// of building the whole home cold (B-102).
+    /// A version change rebuilds the graph and keeps the cache, on the premise the key
+    /// carries: a node type that changed what it emits for equal inputs declares a new
+    /// `implementationVersion` and so misses on its own entries, while every type a release
+    /// left alone answers its rebuild from the cache instead of building the whole home
+    /// cold (B-102). The premise is a discipline AGENTS.md asks of the author, so what this
+    /// pins is the engine's half of it: an upgrade discards nothing by itself.
     func test_aVersionChangeKeepsTheCachedBuilds() throws {
         let engine = try makeEngine(try DatabaseLayer())
         try engine.database.cacheEntry.insert(.init(hash: "an-entry-built-by-the-older-semel",

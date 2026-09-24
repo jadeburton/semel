@@ -172,6 +172,21 @@ something different for the same inputs, so each of those types is bumped too. A
 entry whose specs name a type this Semel does not register is a miss whether or not
 anyone remembered (`loadCachedOutputs`), which catches the specs but not the formula text.
 
+Changing how an interned value is *encoded* fans out the same way, and further than it
+looks. A `TreeManifest` or a `FolderManifest` that gains a field with a default still
+decodes from a blob the older encoding wrote, so the change is invisible to every key: a
+node that *emits* one from plain inputs keeps its key and hands the old shape back on a
+hit, where the consumer reads it under the new schema and takes the default for a fact.
+`FolderTreeBuilder`, `TreeBuilder` and `TreeMerger` emit one, as does any tool node filling
+a tree through `expectedOutputFolders`, and each of them is bumped when the encoding of
+what it emits changes. A node that only *consumes* such a value needs nothing: what it
+reads is re-interned under the new encoding, which is a different hash on an input wire,
+which moves its key on its own.
+
+A new field on `ProcessCacheEntry` is declared non-optional, so an entry written before the
+field fails to decode and is a miss. An optional one decodes short and hits, with the field
+at its default, as though the Semel that wrote the entry had meant that value.
+
 Not a bump: anything the node's output does not show — a refactor, or a faster route to the
 same bytes. A new input property or input port needs none either, because both are in the
 key and move it on their own. A new or renamed *output* port does need one: an entry

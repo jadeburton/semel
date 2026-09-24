@@ -4,9 +4,18 @@
 //
 
 public enum Semel {
-    /// The release version. Bumped by hand: it is recorded in every graph database and a
-    /// mismatch at launch resets the graph (B-29), so bumping it is how a release that
-    /// computes different outputs from the same inputs gets those outputs recomputed.
+    /// The release version. Bumped by hand, and it guards the graph's encoding: it is
+    /// recorded in every graph database, and a mismatch at launch rebuilds the graph and
+    /// keeps the cache (B-29, B-102). Bump it when a stored graph means something else to
+    /// this release — a renamed node type embedded in every graphSpec, a port's reason
+    /// stored as a number whose meaning moved.
+    ///
+    /// It is not what makes a changed output recompute. A node type that emits something
+    /// different for equal inputs bumps its own `implementationVersion`, which moves the
+    /// keys that type produces and leaves every other type's entries hitting; a graph
+    /// rebuild alone would republish what the older code computed. AGENTS.md says when to
+    /// bump that one.
+    ///
     /// Deliberately not a hash of the binary — that would reset on every rebuild of Semel,
     /// including a comment change, and nobody developing Semel would ever see a cache hit.
     ///
