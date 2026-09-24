@@ -52,6 +52,17 @@ final class MessageJSONTests: XCTestCase {
         XCTAssertEqual(Hello(role: .daemon).protocolVersion, 6, "a hello sent with no version named speaks the current one")
     }
 
+    func test_encodesSettledEvent() throws {
+        XCTAssertEqual(try json(Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 0))),
+                       #"{"daemon":{"settled":{"computed":3,"errors":0,"fromCache":9,"scheduled":12}}}"#)
+    }
+
+    func test_roundTripsSettledEvent() throws {
+        let event = Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 1))
+
+        XCTAssertEqual(try roundTrip(event), event)
+    }
+
     // MARK: - Daemon requests
 
     func test_encodesListRequestUnderItsRole() throws {
@@ -62,7 +73,12 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_encodesAPayloadFreeRequestAsAnEmptyObject() throws {
-        XCTAssertEqual(try json(Request.daemon(.reset)), #"{"daemon":{"reset":{}}}"#)
+        XCTAssertEqual(try json(Request.daemon(.nudge)), #"{"daemon":{"nudge":{}}}"#)
+    }
+
+    func test_encodesTheResetFlagUnderItsLabel() throws {
+        XCTAssertEqual(try json(Request.daemon(.reset(clearCache: true))),
+                       #"{"daemon":{"reset":{"clearCache":true}}}"#)
     }
 
     func test_encodesHelloRequestBesideTheRoles() throws {
@@ -82,7 +98,8 @@ final class MessageJSONTests: XCTestCase {
             .fetch(fileSystem: .output, path: "bin/app"),
             .errors,
             .tools,
-            .reset,
+            .reset(clearCache: false),
+            .reset(clearCache: true),
             .nudge,
             .wait,
             .debug,
@@ -122,6 +139,8 @@ final class MessageJSONTests: XCTestCase {
             .errors(records: [record]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
+            .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
+            .reset(archivedGraphPath: nil),
             .debug,
         ]
         for response in responses {
@@ -182,17 +201,6 @@ final class MessageJSONTests: XCTestCase {
         XCTAssertEqual(try roundTrip(event), event)
     }
 
-    func test_encodesSettledEvent() throws {
-        XCTAssertEqual(try json(Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 0))),
-                       #"{"daemon":{"settled":{"computed":3,"errors":0,"fromCache":9,"scheduled":12}}}"#)
-    }
-
-    func test_roundTripsSettledEvent() throws {
-        let event = Event.daemon(.settled(scheduled: 12, computed: 3, fromCache: 9, errors: 1))
-
-        XCTAssertEqual(try roundTrip(event), event)
-    }
-
     // MARK: - Decoding what we do not know
 
     /// A peer built against a newer message set will send cases this build has never
@@ -229,7 +237,7 @@ final class MessageJSONTests: XCTestCase {
     /// A known role beside an unknown one must not decode silently as the known role; both
     /// keys belong in the error, sorted so the message is stable.
     func test_decodingAKnownRoleBesideAnUnknownOneNamesBoth() {
-        let data = Data(#"{"daemon":{"reset":{}},"cache":{}}"#.utf8)
+        let data = Data(#"{"daemon":{"nudge":{}},"cache":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
             let message = Self.decodingMessage(of: error)
