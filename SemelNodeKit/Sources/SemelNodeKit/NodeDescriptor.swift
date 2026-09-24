@@ -23,9 +23,28 @@ public struct NodeDescriptor {
     public let inputPorts: [InputPort]
     public let outputPorts: [String]
 
-    public init(inputPorts: [InputPort] = [], outputPorts: [String]) {
+    /// The input ports whose node reads an absent value as nothing to add.
+    ///
+    /// A separate question from `required`/`optional`, which is about whether the formula
+    /// has to name the input at all. This one is about the value that arrives on a wire that
+    /// *is* there: a config node takes a file nobody has written as an empty set of
+    /// settings, which is what lets a formula name an override file that may never exist.
+    /// Every other port needs what it is wired to, so a source that will never produce is a
+    /// problem worth naming — `ErrorReport` reads this to tell the two apart without
+    /// listing node types.
+    public let inputPortsToleratingAbsentValue: Set<String>
+
+    public init(inputPorts: [InputPort] = [],
+                outputPorts: [String],
+                inputPortsToleratingAbsentValue: Set<String> = []) {
         self.inputPorts = inputPorts
         self.outputPorts = outputPorts
+        self.inputPortsToleratingAbsentValue = inputPortsToleratingAbsentValue
+    }
+
+    /// Whether a value that will never arrive on this port is something the node minds.
+    public func toleratesAbsentValue(onInputPort name: String) -> Bool {
+        inputPortsToleratingAbsentValue.contains(name)
     }
 
     /// Whether the graph has anything to hand this node.

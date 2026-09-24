@@ -86,12 +86,13 @@ public enum ErrorReport {
                              ports: [OutputPort],
                              messages: Set<String>,
                              database: DatabaseLayer,
-                             downstreamCarrierCount: Int = 0) -> Entry {
+                             downstreamCarrierCount: Int = 0,
+                             unpushedFiles: [ObjectID: String] = [:]) -> Entry {
         let items = messages.sorted().map { message -> Item in
             // Matched by what each port reports rather than by the text it stores, so that a
             // port whose state is its whole message is named alongside the rest.
             let portNames = ports
-                .filter { reportableMessage(of: $0) == message }
+                .filter { self.message(of: $0, unpushedFiles: unpushedFiles) == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
             return Item(ports: portNames, message: message)
@@ -181,6 +182,121 @@ public enum ErrorReport {
     /// What stands in for an error whose message is empty.
     public static let emptyMessage = "an error with no message"
 
+    // MARK: - A source that will never produce
+
+    /// What a report says about a file the formula names and nobody has pushed.
+    ///
+    /// The path relative to the input file system, because that is what `push` takes: the
+    /// reader can act on this line by typing it. The label above it carries the full path.
+    public static func unpushedFileMessage(path: String) -> String {
+        let full = Path(path)
+        let relative = full.relative(to: Path(FileSystemName.input)) ?? full
+        return "\(relative.string) has not been pushed"
+    }
+
+    /// The kinds whose nodes declare no input ports.
+    ///
+    /// Such a node is a source: the graph never schedules it, so a port of one that has
+    /// never produced a value never will. Asked of the registry rather than kept as a list,
+    /// which would go stale the day a type is added.
+    static var sourceNodeKinds: [UInt] {
+        TypeRegistry.registeredTypes.compactMap { type in
+            guard let nodeType = type as? any Node.Type, !nodeType.descriptor.hasInputs else {
+                return nil
+            }
+            return nodeType.kind
+        }
+    }
+
+    /// Every port a report has to look at, for the two callers that make one.
+    public static func portsToReport(database: DatabaseLayer) throws -> [OutputPort] {
+        try database.outputPort.selectAllForErrorReport(sourceNodeKinds: sourceNodeKinds)
+    }
+
+    /// The files nobody has pushed that something needs, and the sentence each reads as.
+    ///
+    /// A source node's port holding the initializing state will hold it for good, so the
+    /// only question is whether anyone is waiting. A consumer that reads an absent value as
+    /// nothing to add says so on the port it reads — that is how a config file written for
+    /// the config nodes alone stays out of a report while the same file feeding a tool does
+    /// not. One wire query per such port, and a graph whose files are all pushed has none.
+    static func unpushedFiles(amongPorts ports: [OutputPort],
+                              database: DatabaseLayer) -> [ObjectID: String] {
+
+        var descriptors: [UInt: NodeDescriptor] = [:]
+        var result: [ObjectID: String] = [:]
+
+        /// The descriptor for a node id, kept by kind: one graph holds thousands of nodes
+        /// of a handful of types.
+        func descriptor(ofNodeID nodeID: ObjectID) -> NodeDescriptor? {
+            guard let record = FatalErrors.attempt({ try database.node.find(nodeID: nodeID) }) ?? nil else {
+                return nil
+            }
+            if let known = descriptors[record.kind] {
+                return known
+            }
+            guard let type = try? TypeRegistry.type(kind: record.kind) as? any Node.Type else {
+                return nil
+            }
+            descriptors[record.kind] = type.descriptor
+            return type.descriptor
+        }
+
+        for port in ports where port.valueKind == .initializing {
+            guard result[port.nodeID] == nil,
+                  let record = FatalErrors.attempt({ try database.node.find(nodeID: port.nodeID) }) ?? nil,
+                  let path = record.properties["path"] else {
+                continue
+            }
+
+            // A report is best effort: wires the database cannot hand over leave the file
+            // unnamed, which is the state before this rule existed rather than a wrong line.
+            let consumers = FatalErrors.attempt({
+                try database.wire.select(comingFromNodeID: port.nodeID, fromSymbolID: port.nameSymbolID)
+            }) ?? []
+
+            let needed = consumers.contains { wire in
+                guard let descriptor = descriptor(ofNodeID: wire.toNodeID) else {
+                    return true
+                }
+                return !descriptor.toleratesAbsentValue(onInputPort: wire.toSymbolID.resolveSymbol())
+            }
+
+            if needed {
+                result[port.nodeID] = unpushedFileMessage(path: path)
+            }
+        }
+
+        return result
+    }
+
+    /// The message a port carries, with the files nobody has pushed already worked out.
+    ///
+    /// A port that has never been processed says nothing by itself; it is the graph around
+    /// it — a node with no inputs, and a consumer that needs what it does not have — that
+    /// turns it into a line, and `unpushedFiles` is that reading.
+    static func message(of port: OutputPort, unpushedFiles: [ObjectID: String]) -> String? {
+        if port.valueKind == .initializing {
+            return unpushedFiles[port.nodeID]
+        }
+        return reportableMessage(of: port)
+    }
+
+    /// What each node has to say, for a caller keeping track of what it has already said.
+    public static func messagesByNode(forPorts ports: [OutputPort],
+                                      database: DatabaseLayer) -> [ObjectID: Set<String>] {
+        let unpushed = unpushedFiles(amongPorts: ports, database: database)
+
+        var result: [ObjectID: Set<String>] = [:]
+        for port in ports {
+            guard let message = message(of: port, unpushedFiles: unpushed) else {
+                continue
+            }
+            result[port.nodeID, default: []].insert(message)
+        }
+        return result
+    }
+
     // MARK: - Folding a cascade onto its cause
 
     /// Whether a port says only that something upstream of its node failed.
@@ -189,6 +305,17 @@ public enum ErrorReport {
     /// the port is rather than by reading what it says.
     public static func isCarriedFromAnInput(_ port: OutputPort) -> Bool {
         port.valueKind == .inputInError
+    }
+
+    /// Whether a port says only that a value its node needed was never produced.
+    ///
+    /// A second way of carrying someone else's state, and folded the same way — the node
+    /// below a file nobody pushed has nothing of its own to say either. It differs in what
+    /// happens when the walk finds no cause: a failure that was collected leaves its carrier
+    /// standing in for it, where an absence with no cause above it is the fresh-graph state
+    /// a report has always passed over.
+    public static func isCarriedFromAnAbsentInput(_ port: OutputPort) -> Bool {
+        port.valueKind == .inputNotProduced
     }
 
     /// The nodes worth reporting, each with the number of nodes downstream that fail only
@@ -209,16 +336,35 @@ public enum ErrorReport {
     /// a graph holding carriers whose cause has been collected is not one an idle pass sees.
     public static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                               database: DatabaseLayer) -> [ObjectID: Int] {
+        causes(amongErrorPorts: byNode,
+               database: database,
+               unpushedFiles: unpushedFiles(amongPorts: byNode.values.flatMap { $0 }, database: database))
+    }
+
+    static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
+                       database: DatabaseLayer,
+                       unpushedFiles: [ObjectID: String]) -> [ObjectID: Int] {
 
         var reporting: [ObjectID: [OutputPort]] = [:]
         for (nodeID, ports) in byNode {
-            let reportable = ports.filter { reportableMessage(of: $0) != nil }
-            if !reportable.isEmpty {
-                reporting[nodeID] = reportable
+            let listed = ports.filter {
+                message(of: $0, unpushedFiles: unpushedFiles) != nil || isCarriedFromAnAbsentInput($0)
+            }
+            if !listed.isEmpty {
+                reporting[nodeID] = listed
             }
         }
 
-        let carriers = Set(reporting.filter { $0.value.allSatisfy(isCarriedFromAnInput) }.keys)
+        let carriers = Set(reporting.filter {
+            $0.value.allSatisfy { isCarriedFromAnInput($0) || isCarriedFromAnAbsentInput($0) }
+        }.keys)
+
+        /// Whether a carrier with no cause above it has anything of its own to stand in for.
+        /// A failure whose cause has been collected does; a value that was never produced
+        /// does not, and passing over it is what keeps a fresh graph out of the report.
+        func standsInForItsOwnCause(_ nodeID: ObjectID) -> Bool {
+            reporting[nodeID]?.contains(where: isCarriedFromAnInput) ?? false
+        }
 
         var counts: [ObjectID: Int] = [:]
         for nodeID in reporting.keys where !carriers.contains(nodeID) {
@@ -254,8 +400,12 @@ public enum ErrorReport {
             // Nothing failing upstream: the cause has been collected, and this carrier
             // stands in for it. That folds the carriers wired below it onto this one
             // and reaches no further, siblings of it having no wire between them to be folded
-            // along.
-            let result = found.isEmpty ? [nodeID] : found
+            // along. A carrier of an absence has no such cause to stand in for and drops out
+            // of the report, as every node between its creation and its first run does.
+            var result = found
+            if found.isEmpty && standsInForItsOwnCause(nodeID) {
+                result = [nodeID]
+            }
 
             // Memoised per node rather than per (node, path), which is exact for a DAG and
             // is what makes one answer serve every carrier below it. Wire creation rejects a
@@ -294,14 +444,15 @@ public enum ErrorReport {
                                select: (ObjectID, Set<String>) -> Set<String>)
                                -> [(nodeID: ObjectID, entry: Entry)] {
 
-        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
-        let counts = causes(amongErrorPorts: byNode, database: database)
+        let byNode   = Dictionary(grouping: errorPorts, by: \.nodeID)
+        let unpushed = unpushedFiles(amongPorts: errorPorts, database: database)
+        let counts   = causes(amongErrorPorts: byNode, database: database, unpushedFiles: unpushed)
 
         var reported: [(nodeID: ObjectID, entry: Entry)] = []
 
         for (nodeID, carriedCount) in counts {
             let ports    = byNode[nodeID] ?? []
-            let selected = select(nodeID, Set(ports.compactMap(reportableMessage)))
+            let selected = select(nodeID, Set(ports.compactMap { message(of: $0, unpushedFiles: unpushed) }))
             guard !selected.isEmpty else {
                 continue
             }
@@ -310,7 +461,8 @@ public enum ErrorReport {
                                            ports: ports,
                                            messages: selected,
                                            database: database,
-                                           downstreamCarrierCount: carriedCount)))
+                                           downstreamCarrierCount: carriedCount,
+                                           unpushedFiles: unpushed)))
         }
 
         return reported.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }

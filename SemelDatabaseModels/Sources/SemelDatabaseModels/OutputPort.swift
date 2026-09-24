@@ -93,14 +93,42 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
-    /// Every port across the graph that has no value because something failed: this node,
-    /// or something upstream of it. A port carrying an input's failure is here so that a
-    /// report can count what one failure stopped; a port that has simply not been processed
-    /// is not, because nothing has failed.
-    public func selectAllErrors() throws -> [OutputPort] {
-        let failed = [OutputPort.ValueKind.error.rawValue, OutputPort.ValueKind.inputInError.rawValue]
+    /// Every port across the graph a report has to look at.
+    ///
+    /// Three of the states are here always: a port that failed, one whose node did not run
+    /// because an input failed, and one whose node could not produce because an input never
+    /// had a value. The last two carry no problem of their own — they are here so a report
+    /// can count what one cause stopped.
+    ///
+    /// The fourth, a port nothing has processed, is here only for the kinds named in
+    /// `sourceNodeKinds`: a node with no input ports will never run, so a port of one that
+    /// has never produced never will. The same state on a node that does take inputs means
+    /// only that its turn has not come, and every node in a fresh graph holds it.
+    ///
+    /// One scan of the ports. SQLite stops at the first true branch of an `OR`, so the node
+    /// lookup — by primary key — happens only for the ports in that fourth state.
+    public func selectAllForErrorReport(sourceNodeKinds: [UInt] = []) throws -> [OutputPort] {
+        let carried: [OutputPort.ValueKind] = [.error, .inputInError, .inputNotProduced]
+        let carriedList = carried.map { _ in "?" }.joined(separator: ", ")
+        var arguments   = carried.map { Int64($0.rawValue) }
+
+        // No source kinds to ask about means no port is in that fourth state worth looking
+        // at, and an empty `IN ()` is not SQL.
+        var unproduced = "0"
+        if !sourceNodeKinds.isEmpty {
+            let kindList = sourceNodeKinds.map { _ in "?" }.joined(separator: ", ")
+            unproduced = "(p.valueKind = ? AND EXISTS "
+                       + "(SELECT 1 FROM Node n WHERE n.id = p.nodeID AND n.kind IN (\(kindList))))"
+            arguments.append(Int64(OutputPort.ValueKind.initializing.rawValue))
+            arguments.append(contentsOf: sourceNodeKinds.map(Int64.init))
+        }
+
         return try read { db in
-            try OutputPort.filter(failed.contains(OutputPort.Columns.valueKind)).fetchAll(db)
+            try OutputPort.fetchAll(db, sql: """
+                SELECT p.nodeID, p.nameSymbolID, p.valueKind, p.dataObjectHash
+                FROM OutputPort p
+                WHERE p.valueKind IN (\(carriedList)) OR \(unproduced)
+                """, arguments: StatementArguments(arguments))
         }
     }
 }

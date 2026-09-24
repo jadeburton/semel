@@ -152,7 +152,7 @@ public final class RequestHandler {
     /// only difference: this verb is asked for everything, where the event reports what is
     /// newly appearing.
     private func errorRecords() throws -> [ErrorRecord] {
-        ErrorReport.entries(forErrorPorts: try database.outputPort.selectAllErrors(),
+        ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
                             database: database,
                             select: { _, messages in messages })
             .map { ErrorRecord($0.entry) }

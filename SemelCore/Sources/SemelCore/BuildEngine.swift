@@ -389,7 +389,7 @@ public final class BuildEngine {
     @discardableResult
     func reportIdleTimeErrors() -> Int {
         // A report, so best effort: a failure here delays the error listing to the next idle.
-        guard let errorPorts = FatalErrors.attempt({ try database.outputPort.selectAllErrors() }) else {
+        guard let errorPorts = FatalErrors.attempt({ try ErrorReport.portsToReport(database: database) }) else {
             return 0
         }
 
@@ -402,15 +402,9 @@ public final class BuildEngine {
             .flatMap { $0.entry.items }
             .reduce(0) { $0 + $1.ports.count }
 
-        // The "current" error map. `ErrorReport.reportableMessage` is the one place that
-        // decides what a port's message is and which placeholder is not one.
-        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
-
-        var current: [ObjectID: Set<String>] = [:]
-        for (nodeID, ports) in byNode {
-            let messages = Set(ports.compactMap(ErrorReport.reportableMessage))
-            if !messages.isEmpty { current[nodeID] = messages }
-        }
+        // The "current" error map. `ErrorReport` is the one place that decides what a port's
+        // message is and which placeholder is not one.
+        let current = ErrorReport.messagesByNode(forPorts: errorPorts, database: database)
 
         // Only the causes, and of those only the ones with a newly-appearing message.
         // Reporting an error that has already been reported on every settle is how a report

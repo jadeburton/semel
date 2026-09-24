@@ -37,9 +37,13 @@ public struct ConfigFilter: Node {
         self.thisNode = thisNode
     }
 
+    /// The input tolerates an absent value: a config file nobody has written selects to
+    /// nothing rather than failing every tool below it. Declaring that on the port is what
+    /// keeps such a file out of the error report without the report knowing this type.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(inputPort)],
-        outputPorts: [outputPort]
+        outputPorts: [outputPort],
+        inputPortsToleratingAbsentValue: [inputPort]
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

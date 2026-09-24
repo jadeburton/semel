@@ -126,7 +126,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// The report names the one node that can be fixed.
     func test_aCascadeIsReportedAsItsCauseAlone() throws {
         try makeCascade(consumers: 20)
-        XCTAssertEqual(Set(try database.outputPort.selectAllErrors().map(\.nodeID)).count, 22,
+        XCTAssertEqual(Set(try database.outputPort.selectAllForErrorReport().map(\.nodeID)).count, 22,
                        "the cause and every node downstream of it are in error")
 
         engine.reportIdleTimeErrors()
@@ -253,9 +253,10 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
     /// A `StaticFile` nobody has pushed has no inputs, so nothing will ever make it run and
     /// its port holds the initializing state for good. A node that demands its value cannot
-    /// produce one either, and says that — not that anything failed. Neither is a failure a
-    /// reader can act on, so the report passes over both.
-    func test_anUnpushedFileAndItsConsumerPublishStatesTheReportPassesOver() throws {
+    /// produce one either, and says that — not that anything failed. The states are what the
+    /// graph writes; the file is what the reader can act on, so the file is the line and the
+    /// consumer is counted under it. `UnpushedFileReportingTests` is the rest of that rule.
+    func test_anUnpushedFileIsTheLineAndItsConsumerIsCountedUnderIt() throws {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
             .findOrCreateMatchingNode()
         let consumer = try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
@@ -269,7 +270,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/clang.cfg'"]])
+        XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [1])
     }
 
     /// The kind the port carries, which is the reason in the form the graph stores.
@@ -281,8 +283,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
     /// The chain a compile is: a source file, a compiler, a linker, a product. With the file
     /// nobody pushed at the top of it, nothing in the chain has failed — so however deep the
-    /// chain runs, the report says nothing about any of it.
-    func test_anUnpushedFileIsSilentAtEveryDepthOfTheChain() throws {
+    /// chain runs, the one thing to say about it is the file at the top.
+    func test_anUnpushedFileIsNamedOnceHoweverDeepTheChain() throws {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/main.c')")
             .findOrCreateMatchingNode()
         let compiler = try makeDemanding(tag: "compiler")
@@ -305,7 +307,9 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertTrue(captured.isEmpty, "reported: \(captured)")
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/main.c'"]])
+        XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [3],
+                       "the compiler, the linker and the product below them")
     }
 
     /// The same chain with a compile that failed: one node has something to say and the rest
@@ -374,6 +378,18 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .error(messageDataObjectHash: "boom".intern()))))
         XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .initializing)))
         XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .pending)))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnInput(try port(nodeID, .inputNotProduced)))
+    }
+
+    /// The second way of carrying someone else's state: a node stopped by a value that was
+    /// never produced. Read by case, like the first.
+    func test_onlyTheInputNotProducedStateIsCarriedFromAnAbsence() throws {
+        let nodeID = try makeConsumer(tag: "any")
+
+        XCTAssertTrue(ErrorReport.isCarriedFromAnAbsentInput(try port(nodeID, .inputNotProduced)))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnAbsentInput(try port(nodeID, .inputInError)))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnAbsentInput(try port(nodeID, .initializing)))
+        XCTAssertFalse(ErrorReport.isCarriedFromAnAbsentInput(try port(nodeID, .pending)))
     }
 
     /// A state that is not a failure is not reported: a node between its creation and its
@@ -401,7 +417,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
             .writeToOutputPort("errorLog",
                                value: .noValue(reason: .error(messageDataObjectHash: try "and a log".intern())))
 
-        let byNode = Dictionary(grouping: try database.outputPort.selectAllErrors(), by: \.nodeID)
+        let byNode = Dictionary(grouping: try database.outputPort.selectAllForErrorReport(), by: \.nodeID)
 
         XCTAssertEqual(ErrorReport.causes(amongErrorPorts: byNode, database: database),
                        [source: 0, consumer: 0])

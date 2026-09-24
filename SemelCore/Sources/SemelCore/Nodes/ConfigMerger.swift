@@ -31,9 +31,13 @@ public struct ConfigMerger: Node {
     /// whether or not anyone has pushed it — the wire is simply carrying no value, which
     /// `settings(on:in:)` reads as nothing to add. An override file that may or may not exist
     /// is expressible either way; what required rules out is the formula omitting the input.
+    ///
+    /// Both sides tolerate an absent value, which is the same thing `settings(on:in:)` does
+    /// with one and the reason a report does not name a file whose only readers are here.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(basePort), .required(overridePort)],
-        outputPorts: [outputPort]
+        outputPorts: [outputPort],
+        inputPortsToleratingAbsentValue: [basePort, overridePort]
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {

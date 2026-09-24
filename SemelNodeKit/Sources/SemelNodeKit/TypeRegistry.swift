@@ -48,6 +48,13 @@ public enum TypeRegistry {
         nameCache[typeName]
     }
 
+    /// Every registered type, for a caller with a question to ask of all of them rather
+    /// than of one. The registry is a few dozen entries, so asking is cheap; what is not
+    /// cheap is a caller keeping its own list, which goes stale the day a type is added.
+    public static var registeredTypes: [any WithKind.Type] {
+        Array(kindCache.values)
+    }
+
     public static func type(kind: UInt) throws -> WithKind.Type {
         guard let type = kindCache[kind] else {
             throw TypeRegistryError.unknownKind(kind)

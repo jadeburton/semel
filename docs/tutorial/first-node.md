@@ -172,7 +172,9 @@ Hello, World 1!
 `push` copied your files into Semel's own input file system — the engine never reads your
 disk during a build, only what was pushed. `build` is `push`, wait until the graph settles,
 report errors, and copy the products out. `clang.cfg` needs its own `push` because `build`
-pushes the folder you name and that file is not in it.
+pushes the folder you name and that file is not in it. Forget it and the report names the
+file itself — `clang.cfg has not been pushed` — under the wall of missing-setting errors
+from the tools that then have nothing to read.
 
 ### What you just ran
 

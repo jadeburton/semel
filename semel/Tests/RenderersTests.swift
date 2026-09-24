@@ -74,4 +74,20 @@ final class ErrorRecordRendererMarkTests: XCTestCase {
         XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
                        ["❌ StaticFile  'input:/a.c'", "   · output: boom", ""])
     }
+
+    /// A file nobody has pushed reads the same over the wire as it does on the engine's own
+    /// terminal, down to the count of what it stopped. `UnpushedFileReportingTests` pins the
+    /// other side of this pair.
+    func test_anUnpushedFileReadsTheSameThroughThisRenderer() {
+        let record = ErrorRecord(label: "StaticFile  'input:/clang.cfg'",
+                                 entries: [ErrorEntry(ports: ["output"],
+                                                      message: "clang.cfg has not been pushed")],
+                                 downstreamCarrierCount: 2)
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ StaticFile  'input:/clang.cfg'",
+                        "   · output: clang.cfg has not been pushed",
+                        "   · and 2 nodes downstream carry it",
+                        ""])
+    }
 }
