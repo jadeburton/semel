@@ -456,26 +456,23 @@ the linker picks whichever copy it finds — `semel` and `semelserv` disagreed a
 protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
 `rm .build/debug.yaml` does not touch it.
 
-**B-92** `open` — **A file nobody pushed is a state nobody is told about.**
-A `StaticFile` the formula names but nobody has pushed publishes `noValue(.initializing)`:
-no value has ever been produced there, and the node has no inputs, so nothing ever will.
-Nothing has failed, so nothing is reported — the nodes below it publish `inputNotProduced`
-and are passed over for the same reason, and `ConfigFilter` and `ConfigMerger` skip such
-wires on purpose, so that an override file nobody wrote means "nothing to add" rather than
-an unbuildable project. The cost is that a tool downstream reports the setting it is
-missing rather than the reason it is missing, and that **until this item ships, a mistyped
-or unpushed path in a formula produces no error report at all** — only `[missing]` beside
-the file in `ls` and one `Error` beside the product. The first thing every hand-written
-build does is exactly this: `hello.fmla` reads `<../clang.cfg>`, `build` pushes one folder,
-and `docs/tutorial/first-node.md` has to spend a paragraph on `push clang.cfg` because
-forgetting it is a wall of missing-setting errors with nothing naming the file. B-71 fixed
-this for one xcconfig; do it once for all: the idle report names the state as the cause
-("`input:/clang.cfg` is named by `hello.fmla` and was never pushed"), walking from the
-unproduced port to the formula that names it, with the nodes that deliberately tolerate an
-absent input saying so in their descriptor. `build` could then also offer to push what the
-formula names outside its folder, or at least say that it did not. Two states are still
-spelled as sentences and belong in the same pass: a removed file's `error("Deleted")`
-(`StaticFile`, `Folder`) and a folder's `error("Deleted/Nonexistent")`.
+**B-104** `open` — **Two states are still spelled as sentences.**
+A removed file's `error("Deleted")` (`StaticFile`, `Folder`) and a folder's
+`error("Deleted/Nonexistent")` are states written as text, so anything that wants to tell
+them apart from a node's own failure has to read the words — where B-92 could read the rest
+of the table by case. Give each its own `NoValueReason` case and let the report decide what
+to say about them where it decides everything else.
+
+Say what it decides, or the follow-up lands the enum and leaves the sentence. A folder is
+never `initializing` — `Folder.didCreate()` writes both of its ports, `manifest` with a
+(possibly empty) listing and `pinned` with `.value("")` or `error("Deleted")` — so B-92's
+rule never fires on one, and what a reader actually sees for a nested push path is
+`❌ Folder 'input:/src' · pinned: Deleted` for a folder nobody ever pushed. A folder that
+was never pinned should read `src/ has not been pushed`, the way a file does; one that was
+pushed and removed should read `src/ was deleted`. The `· <ports>: ` prefix belongs in the
+same pass: `output:` and `pinned:` carry nothing when the entry's one item names the node's
+whole output-port set, and dropping it there is a rule for `ErrorReport.lines` and
+`ErrorRecordRenderer.lines` together rather than a special case for one message.
 
 
 ## App bundles

@@ -23,9 +23,32 @@ public struct NodeDescriptor {
     public let inputPorts: [InputPort]
     public let outputPorts: [String]
 
-    public init(inputPorts: [InputPort] = [], outputPorts: [String]) {
+    /// The input ports whose node reads an absent value as nothing to add.
+    ///
+    /// A separate question from `required`/`optional`, which is about whether the formula
+    /// has to name the input at all. This one is about the value arriving on a wire that
+    /// *is* there, and it has one reader: `ErrorReport`, deciding whether a source that will
+    /// never produce a value is worth a line. A port not named here needs what it is wired
+    /// to, so an unpushed file feeding it is named; a port named here is one where a file
+    /// nobody wrote is the expected state and naming it would be noise.
+    ///
+    /// The set is deliberately small — `ConfigMerger.override` is its member, the one input
+    /// in the design a formula may name for a file that need never exist. It still earns its
+    /// place as an axis: a project with a local override builds clean because the port says
+    /// so, and the report learns that without being taught any node's type.
+    public let inputPortsToleratingAbsentValue: Set<String>
+
+    public init(inputPorts: [InputPort] = [],
+                outputPorts: [String],
+                inputPortsToleratingAbsentValue: Set<String> = []) {
         self.inputPorts = inputPorts
         self.outputPorts = outputPorts
+        self.inputPortsToleratingAbsentValue = inputPortsToleratingAbsentValue
+    }
+
+    /// Whether a value that will never arrive on this port is something the node minds.
+    public func toleratesAbsentValue(onInputPort name: String) -> Bool {
+        inputPortsToleratingAbsentValue.contains(name)
     }
 
     /// Whether the graph has anything to hand this node.

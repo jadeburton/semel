@@ -115,15 +115,19 @@ questions about settled decisions, recorded so they are argued rather than re-di
   "Why did this rebuild?" is the first question anyone asks a build system whose promise
   is *never twice*, and nothing in the design answers it.
 
-- **A missing file is a state nobody is told about (B-92).** A `StaticFile` nobody pushed
-  publishes `noValue(.initializing)` — no value has ever been produced there, and with no
-  inputs, nothing ever will. That is not a failure, so no report names it: the nodes below
-  it publish `inputNotProduced` and are passed over too, `ConfigFilter` and `ConfigMerger`
-  skip such wires deliberately, and what a reader gets is `[missing]` in `ls` and one
-  `Error` beside the product. The tutorial's `push clang.cfg` step exists because `build`
-  pushes one folder and the formula reaches outside it with `<../clang.cfg>`; forget it and
-  every tool names a missing setting while nothing names the missing file. B-71 was this
-  problem, fixed for one file; B-92 is the report line that names it for all of them.
+- **A missing file is a state nobody is told about (B-92, fixed).** A `StaticFile` nobody
+  pushed publishes `noValue(.initializing)` — no value has ever been produced there, and
+  with no inputs, nothing ever will. That is not a failure, so no report named it: the nodes
+  below it publish `inputNotProduced` and were passed over too, and what a reader got was
+  `[missing]` in `ls` and one `Error` beside the product. The tutorial's `push clang.cfg`
+  step exists because `build` pushes one folder and the formula reaches outside it with
+  `<../clang.cfg>`; forget it and every tool named a missing setting while nothing named the
+  missing file. B-71 was this problem, fixed for one file; B-92 is the report line for all
+  of them — `clang.cfg has not been pushed`, with the chain below it counted. What decides
+  the one exception is the port, not the node's type: `ConfigMerger.override` declares that
+  it reads an absent value as nothing to add, because an override file nobody wrote is the
+  expected state. Every other port, the merger's own `base` and the filter's `input`
+  included, is a port whose file the formula says must exist.
 
 - **`reset` threw away the valuable state (B-93, fixed).** The graph is rebuildable from
   the input plus the cache, and the cache is content-addressed — but `reset` also deleted

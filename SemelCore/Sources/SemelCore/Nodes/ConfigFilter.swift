@@ -37,6 +37,10 @@ public struct ConfigFilter: Node {
         self.thisNode = thisNode
     }
 
+    /// The input needs its file. A config file nobody has written selects to nothing here
+    /// rather than failing every tool below it, which is a decision about whose output
+    /// carries the error — not a claim that the absence is fine. The file is named where the
+    /// reader can act on it, so the port is left out of `inputPortsToleratingAbsentValue`.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(inputPort)],
         outputPorts: [outputPort]
@@ -50,7 +54,9 @@ public struct ConfigFilter: Node {
         // nothing, rather than failing every tool downstream over a config file nobody wrote
         // yet. The tool that actually needs a setting is what can say which one is missing
         // and where to write it; an errored selector output could only ever say "something
-        // upstream is wrong," which helps nobody.
+        // upstream is wrong," which helps nobody. Which node carries the error is all this
+        // decides: a file nobody pushed is named by the report, from the state its own port
+        // holds, whatever this node makes of the wire.
         let wires = input.inputValues[Self.inputPort] ?? [:]
         var merged: [String: String] = [:]
         for wireKey in wires.keys.sorted() {

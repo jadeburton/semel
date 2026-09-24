@@ -389,35 +389,36 @@ public final class BuildEngine {
     @discardableResult
     func reportIdleTimeErrors() -> Int {
         // A report, so best effort: a failure here delays the error listing to the next idle.
-        guard let errorPorts = FatalErrors.attempt({ try database.outputPort.selectAllErrors() }) else {
+        guard let errorPorts = FatalErrors.attempt({ try ErrorReport.portsToReport(database: database) }) else {
             return 0
         }
+
+        // Which files nobody has pushed, worked out once for the three passes below: it is
+        // the one reading here that asks the graph anything beyond the ports in hand.
+        let unpushed = ErrorReport.unpushedFiles(amongPorts: errorPorts, database: database)
 
         // What the `errors` verb would answer if it were asked at this moment: the same
         // fold, over everything the graph carries rather than over what is newly appearing.
         // Through `entries` rather than by counting ports, because a carrier folded onto
         // its cause is not an error the verb lists, and a count that included one would say
         // more than the report beside it shows.
-        let errorCount = ErrorReport.entries(forErrorPorts: errorPorts, database: database) { _, messages in messages }
+        let errorCount = ErrorReport.entries(forErrorPorts: errorPorts, database: database,
+                                             unpushedFiles: unpushed) { _, messages in messages }
             .flatMap { $0.entry.items }
             .reduce(0) { $0 + $1.ports.count }
 
-        // The "current" error map. `ErrorReport.reportableMessage` is the one place that
-        // decides what a port's message is and which placeholder is not one.
-        let byNode = Dictionary(grouping: errorPorts, by: \.nodeID)
-
-        var current: [ObjectID: Set<String>] = [:]
-        for (nodeID, ports) in byNode {
-            let messages = Set(ports.compactMap(ErrorReport.reportableMessage))
-            if !messages.isEmpty { current[nodeID] = messages }
-        }
+        // The "current" error map. `ErrorReport` is the one place that decides what a port's
+        // message is and which placeholder is not one.
+        let current = ErrorReport.messagesByNode(forPorts: errorPorts, database: database,
+                                                 unpushedFiles: unpushed)
 
         // Only the causes, and of those only the ones with a newly-appearing message.
         // Reporting an error that has already been reported on every settle is how a report
         // stops being read. `ErrorReport` decides the rest — which nodes are causes, how the
         // cascade under each is counted, and the order — so that this event and the `errors`
         // verb's reply list the same failures alike.
-        let entries = ErrorReport.entries(forErrorPorts: errorPorts, database: database) { nodeID, messages in
+        let entries = ErrorReport.entries(forErrorPorts: errorPorts, database: database,
+                                          unpushedFiles: unpushed) { nodeID, messages in
             messages.subtracting(lastReportedErrors[nodeID] ?? [])
         }
 
