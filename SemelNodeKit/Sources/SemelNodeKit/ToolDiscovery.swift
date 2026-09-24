@@ -49,11 +49,12 @@ public enum ToolDiscovery {
     /// binary that will really run. A tool that is not installed, or reports no version,
     /// is left out.
     ///
-    /// The descriptor also carries a fingerprint of that binary
-    /// (`toolBinaryFingerprint(ofFileAt:)`), which is what tells two binaries reporting
-    /// one version apart in a cache key. It is taken here rather than declared anywhere:
-    /// a config file names a tool by the four identity fields, and which binary answers
-    /// to them is a fact about this machine.
+    /// The descriptor also carries a fingerprint of that binary — a hash of its bytes,
+    /// `toolBinaryFingerprint(ofFileAt:)` — which is what tells two binaries reporting one
+    /// version apart in a cache key. It is taken here rather than declared anywhere: a
+    /// config file names a tool by the four identity fields, and which binary answers to
+    /// them is a fact about this machine. Reading every installed tool costs a fraction of
+    /// a second, once per process, beside the subprocesses this loop already runs.
     ///
     /// Nothing is warned about here. Installing a newer toolchain is not by itself a
     /// problem, and a node that does not use the changed tool is unaffected — so there is

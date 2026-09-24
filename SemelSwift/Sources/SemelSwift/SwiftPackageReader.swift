@@ -30,14 +30,6 @@ struct SwiftPackageReaderConfiguration {
         try required.check()
     }
 
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name":          toolDescriptor.name,
-         "toolDescriptor.version":       toolDescriptor.version,
-         "toolDescriptor.platform":      toolDescriptor.platform,
-         "toolDescriptor.architecture":  toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
-    }
-
     /// Where this node's settings live in a config file: `swift.packageReader.<key>`.
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReader")
 }

@@ -4,8 +4,9 @@
 //
 //  B-17. Every node here runs a binary discovery found, and a configuration can only name
 //  that binary's version. Each declares the fingerprint of the binary as cache-key
-//  material, so two clangs calling themselves one version do not share an entry — and a
-//  node type added without that declaration is what this notices.
+//  material, so two clangs calling themselves one version do not share an entry. These pin
+//  what that declaration produces for each of the three; that every node which runs a tool
+//  makes one at all is a source scan's job, in SemelCore's `ToolNodeCacheKeyTests`.
 //
 
 @testable import SemelClang

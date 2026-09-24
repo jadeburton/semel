@@ -43,28 +43,31 @@ final class ToolBinaryFingerprintTests: XCTestCase {
     func test_oneBinaryFingerprintsTheSameEveryTimeItIsAsked() throws {
         let path = try writeBinary(named: "tool", contents: "binary", modified: Date(timeIntervalSince1970: 1_000))
 
-        XCTAssertEqual(toolBinaryFingerprint(ofFileAt: path), toolBinaryFingerprint(ofFileAt: path))
+        XCTAssertEqual(toolBinaryContentFingerprint(ofFileAt: path),
+                       toolBinaryContentFingerprint(ofFileAt: path))
     }
 
     /// The common shape of the problem: a toolchain reinstalled over itself, reporting the
     /// version it always did.
     func test_aBinaryReplacedInPlaceFingerprintsDifferently() throws {
         let path = try writeBinary(named: "tool", contents: "binary", modified: Date(timeIntervalSince1970: 1_000))
-        let before = toolBinaryFingerprint(ofFileAt: path)
+        let before = toolBinaryContentFingerprint(ofFileAt: path)
 
         try writeBinary(named: "tool", contents: "a patched binary", modified: Date(timeIntervalSince1970: 2_000))
 
-        XCTAssertNotEqual(before, toolBinaryFingerprint(ofFileAt: path))
+        XCTAssertNotEqual(before, toolBinaryContentFingerprint(ofFileAt: path))
     }
 
-    /// Same size, same path: the modification time is what is left to notice a rebuild by.
-    func test_aRebuiltBinaryOfTheSameSizeFingerprintsDifferently() throws {
-        let path = try writeBinary(named: "tool", contents: "binary", modified: Date(timeIntervalSince1970: 1_000))
-        let before = toolBinaryFingerprint(ofFileAt: path)
+    /// The case size and modification time cannot see: a patched binary of the same length
+    /// restored over the original with its timestamp preserved. Only the bytes say so.
+    func test_aBinaryOfTheSameSizeAndTimeFingerprintsByItsBytes() throws {
+        let sameTime = Date(timeIntervalSince1970: 1_000)
+        let path = try writeBinary(named: "tool", contents: "binary", modified: sameTime)
+        let before = toolBinaryContentFingerprint(ofFileAt: path)
 
-        try writeBinary(named: "tool", contents: "binexe", modified: Date(timeIntervalSince1970: 3_000))
+        try writeBinary(named: "tool", contents: "binexe", modified: sameTime)
 
-        XCTAssertNotEqual(before, toolBinaryFingerprint(ofFileAt: path))
+        XCTAssertNotEqual(before, toolBinaryContentFingerprint(ofFileAt: path))
     }
 
     /// `swiftc` in an Apple toolchain is a symlink to `swift-frontend`, which is the binary
@@ -75,22 +78,49 @@ final class ToolBinaryFingerprintTests: XCTestCase {
         let link = folder.appendingPathComponent("swiftc")
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "swift-frontend")
 
-        XCTAssertEqual(toolBinaryFingerprint(ofFileAt: link.path), toolBinaryFingerprint(ofFileAt: target))
+        XCTAssertEqual(toolBinaryContentFingerprint(ofFileAt: link.path),
+                       toolBinaryContentFingerprint(ofFileAt: target))
     }
 
-    /// The path is part of the answer, so two toolchains holding identical files — one
-    /// Xcode beside another — are still two different binaries.
-    func test_identicalBinariesAtTwoPathsFingerprintDifferently() throws {
-        let modified = Date(timeIntervalSince1970: 1_000)
-        let one      = try writeBinary(named: "toolA", contents: "binary", modified: modified)
-        let another  = try writeBinary(named: "toolB", contents: "binary", modified: modified)
+    /// Nothing but the bytes: one toolchain installed at two places — `/Applications/Xcode.app`
+    /// on one machine and `/Applications/Xcode_26_6.app` on another — fingerprints alike, which
+    /// is what lets two machines share a cache entry.
+    func test_identicalBinariesAtTwoPathsFingerprintAlike() throws {
+        let one     = try writeBinary(named: "toolA", contents: "binary",
+                                      modified: Date(timeIntervalSince1970: 1_000))
+        let another = try writeBinary(named: "toolB", contents: "binary",
+                                      modified: Date(timeIntervalSince1970: 2_000))
 
-        XCTAssertNotEqual(toolBinaryFingerprint(ofFileAt: one), toolBinaryFingerprint(ofFileAt: another))
+        XCTAssertEqual(toolBinaryContentFingerprint(ofFileAt: one),
+                       toolBinaryContentFingerprint(ofFileAt: another))
     }
 
     func test_thereIsNoFingerprintOfWhatIsNotAFile() throws {
-        XCTAssertNil(toolBinaryFingerprint(ofFileAt: folder.appendingPathComponent("absent").path))
-        XCTAssertNil(toolBinaryFingerprint(ofFileAt: folder.path), "a folder is not a binary")
+        XCTAssertNil(toolBinaryContentFingerprint(ofFileAt: folder.appendingPathComponent("absent").path))
+        XCTAssertNil(toolBinaryContentFingerprint(ofFileAt: folder.path), "a folder is not a binary")
+    }
+
+    /// Hashing hundreds of megabytes is worth doing once. Two names for one binary — the
+    /// Apple toolchain's `swiftc` and `swift` both point at `swift-frontend` — ask once
+    /// between them, and the answer a process gives is the one it first read.
+    func test_theFingerprintIsReadOncePerBinaryPerProcess() throws {
+        let target = try writeBinary(named: "memoised-frontend", contents: "frontend",
+                                     modified: Date(timeIntervalSince1970: 1_000))
+        let link = folder.appendingPathComponent("memoised-driver")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "memoised-frontend")
+
+        let first = toolBinaryFingerprint(ofFileAt: target)
+        XCTAssertNotNil(first)
+        XCTAssertEqual(toolBinaryFingerprint(ofFileAt: link.path), first,
+                       "two names for one binary are one question")
+
+        try writeBinary(named: "memoised-frontend", contents: "a different frontend",
+                        modified: Date(timeIntervalSince1970: 2_000))
+
+        XCTAssertEqual(toolBinaryFingerprint(ofFileAt: target), first,
+                       "the snapshot a process took is the one it keeps")
+        XCTAssertNotEqual(toolBinaryContentFingerprint(ofFileAt: target), first,
+                          "and the bytes on disk have moved on")
     }
 
     // MARK: - What selects a tool

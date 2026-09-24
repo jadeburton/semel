@@ -98,29 +98,31 @@ var sdkFingerprintProvider: (String) -> String? = { SDKFingerprints.shared.finge
 /// the fingerprint of what is behind it. Shared by the compiler and the linker, the two
 /// nodes that pass `-sdk`. The name is part of the material so two SDKs never share an
 /// entry even if their trees happened to fingerprint alike.
-func sdkCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
-    let sdk = try configuredSDKName(input: input, configurationPort: configurationPort)
+func sdkCacheKeyMaterial(configuration properties: [String: String]) -> String? {
+    let sdk = properties["sdk"] ?? defaultSDKName
     return sdkFingerprintProvider(sdk).map { "sdk=\(sdk):\($0)" }
 }
 
-/// The `sdk` setting out of the configuration on the wire, or the default. Read from the
-/// raw text rather than through the tool's configuration type, which requires every other
-/// setting to be present — and the key has to be computable before that is known.
-private func configuredSDKName(input: ProcessInput, configurationPort: String) throws -> String {
+/// The configuration on the wire as properties, empty when nothing is wired there. Read
+/// from the raw text rather than through the tool's configuration type, which requires
+/// every other setting to be present — and the key has to be computable before that is
+/// known. Read once per key: resolving the value reads the blob from the object store and
+/// verifies its hash, and both halves of the material want the same dictionary.
+private func configurationProperties(input: ProcessInput, configurationPort: String) throws -> [String: String] {
     guard let value = input.inputValues[configurationPort]?.values.first,
           case .value(let hash) = value else {
-        return defaultSDKName
+        return [:]
     }
-    let properties = [String: String](plainText: try hash.resolveAsString())
-    return properties["sdk"] ?? defaultSDKName
+    return [String: String](plainText: try hash.resolveAsString())
 }
 
 /// Everything a Swift tool reads outside its inputs: the SDK behind `-sdk`, and the binary
 /// behind the tool version its configuration names (B-17). Each line stands on its own, so
 /// a tool that finds only one of the two still declares it.
 func swiftToolCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
-    let lines = [try sdkCacheKeyMaterial(input: input, configurationPort: configurationPort),
-                 try toolBinaryCacheKeyMaterial(input: input, configurationPort: configurationPort)].compactMap { $0 }
+    let properties = try configurationProperties(input: input, configurationPort: configurationPort)
+    let lines = [sdkCacheKeyMaterial(configuration: properties),
+                 toolBinaryCacheKeyMaterial(configuration: properties)].compactMap { $0 }
     return lines.isEmpty ? nil : lines.joined(separator: "\n")
 }
 

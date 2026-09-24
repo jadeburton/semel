@@ -344,7 +344,13 @@ final class CacheTests: SemelCoreTestCase {
         installTool(fingerprint: nil)
         let withAToolThatHasNoFingerprint = try tool.buildCacheKeyFromAllInputs(input: input)
 
+        installTool(fingerprint: "fingerprint-of-one-binary")
+        let withAFingerprintedTool = try tool.buildCacheKeyFromAllInputs(input: input)
+
         XCTAssertEqual(withoutTheTool, withAToolThatHasNoFingerprint)
+        XCTAssertNotEqual(withoutTheTool, withAFingerprintedTool,
+                          "a fingerprint that is there is in the key — without this the test "
+                          + "would pass with the whole mechanism removed")
     }
 
     // MARK: - Round trip
