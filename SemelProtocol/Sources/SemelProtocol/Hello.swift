@@ -28,7 +28,8 @@ public enum ProtocolVersion {
     /// say so instead. Nothing enforces it: the test that pins the number only fires when
     /// someone changes the number.
     ///
-    /// Version 6 adds the `settled` event, which carries one settle's totals. Version 5's
+    /// Version 7 adds `check`, whose findings travel in the reply's body. Version 6 adds
+    /// the `settled` event, which carries one settle's totals. Version 5's
     /// `reset` carries a flag for whether the cache goes too, and answers with the path its
     /// copy of the graph was written to; every earlier version's took no argument and
     /// answered `ok`. Version 4's `ErrorRecord` carries the size of the cascade under a
@@ -37,7 +38,7 @@ public enum ProtocolVersion {
     /// carries `debug`'s text in the frame body; version 1 carried it in the reply's JSON. A
     /// peer speaking an older one decodes such a reply as an empty answer and prints
     /// nothing, which is why the mismatch is worth a rejection naming both.
-    public static let current = 6
+    public static let current = 7
 }
 
 public struct Hello: Codable, Equatable, Sendable {

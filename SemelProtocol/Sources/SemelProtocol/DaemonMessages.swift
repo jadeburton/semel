@@ -80,6 +80,36 @@ public struct ErrorRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// One invariant of the graph that does not hold. `check` answers a list of these; nothing
+/// repairs anything.
+///
+/// The sentence is written for a person and the kind is what a reader classifies by, so a
+/// client never has to read the text to decide what it is looking at.
+public struct CheckFinding: Codable, Equatable, Sendable {
+
+    public enum Kind: String, Codable, Equatable, Sendable {
+        case danglingWire
+        case unreadableGraphSpec
+        case unlinkedNodeType
+        case productWithNoProducer
+        case missingManifestChild
+        case errorWithoutMessage
+        case unreadableCacheKey
+        case graphCouldNotBeRead
+    }
+
+    public let kind:     Kind
+    /// The node or the wire the finding concerns, named so it can be found again.
+    public let subject:  String
+    public let sentence: String
+
+    public init(kind: Kind, subject: String, sentence: String) {
+        self.kind     = kind
+        self.subject  = subject
+        self.sentence = sentence
+    }
+}
+
 public struct ToolDescriptorRecord: Codable, Equatable, Sendable {
     public let name:            String
     public let version:         String
@@ -123,6 +153,15 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     case remove(pattern: String)
     case fetch(fileSystem: FileSystemKind, path: String)
     case errors
+    /// Walks the graph and answers every invariant that does not hold. Repairs nothing:
+    /// `reset` is the repair, and this is how one learns whether it is needed.
+    ///
+    /// Meant for a settled graph, and `wait` is what settles one. The walk happens inside
+    /// a single read, so it cannot see half of a change — but a node whose wires the engine
+    /// is still building has no wires yet, and looks exactly like a node whose wires are
+    /// missing. The reply carries how many nodes were scheduled so a client can say which
+    /// graph it asked; the server neither waits nor refuses.
+    case check
     case tools
     /// Discards the derived graph and rebuilds it from what was pushed. `clearCache` also
     /// discards the cached builds, which the rebuild would otherwise be served from: the
@@ -151,6 +190,19 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// The file's bytes travel in the frame body.
     case fetch(mode: UInt16)
     case errors(records: [ErrorRecord])
+    /// The findings travel in the frame body, as a JSON array of `CheckFinding`, for the
+    /// reason `debug`'s text does: one broken invariant per node is the shape a badly
+    /// broken graph has, and a reply over the JSON section's megabyte is refused outright —
+    /// which would leave the one command meant for a graph in that state unable to answer
+    /// about it. The body's limit is three orders of magnitude higher. Records rather than
+    /// rendered lines, so the client still does the formatting and still classifies by
+    /// `kind` rather than by what a sentence happens to say.
+    ///
+    /// `scheduledNodes` is how many nodes the walk found still scheduled, counted from the
+    /// same read as the findings. It stays here in the JSON rather than joining them in
+    /// the body: it is one integer, and it is what tells a reader whether a finding about
+    /// wiring describes a defect or work in flight.
+    case check(scheduledNodes: Int)
     case tools(namespaces: [ToolNamespaceRecord])
     /// Where the graph the reset discarded was copied to, so the state that made the reset
     /// necessary can still be read. Absent when there was nothing to discard, and when the

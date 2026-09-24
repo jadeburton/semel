@@ -272,6 +272,17 @@ taught us".
 
 ## Design, correctness and code quality
 
+**B-105** `open` — **Two loose ends `check` left behind.**
+`GraphCheck.danglingWires` asks the two ends of a wire different questions: the source port
+by *row* and the destination port against the node's *descriptor*, so an output port dropped
+from a type but still present as a row passes silently — check the from-port against the
+source node's descriptor too, when its type is linked. Separately, a node is named two ways
+in one product: `Type #id 'path'` in a check finding, `Type  'path'` (two spaces, id as a
+last resort) in `ErrorReport.label`. The finding's form is the one to keep — a finding is
+filed as a bug and the row is what the next person opens — but `ErrorReport`'s output is
+pinned on both sides of the wire, so converging them is its own change with its own test
+updates.
+
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
 A node's outputs are supposed to be a function of its inputs. Three types are not, and none
@@ -318,22 +329,6 @@ arguably more correct, since a push *is* an event that should run the node. But
 `descriptor.hasInputs` is now the single answer to "does the graph process this node"
 (`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
-
-**B-103** `open` — **Nothing checks the graph's invariants short of failing on them.**
-The week's silent corruptions — a wire dropped because two shared a key, a folder manifest
-rebuilt per child, an error whose message was empty — were each found by a test written
-after the symptom, not by anything the running system could say about itself. A `check`
-verb walks the graph and reports every invariant that does not hold: a wire whose endpoint
-node or port is gone, a node whose `graphSpec` no longer parses or names a type the server
-does not link (B-83), a product with no producer, a folder manifest naming a child that
-does not exist, an error port with no message, a cache entry whose key no longer parses.
-"A product with no producer" is the one the prompt cannot report on its own: an `OutputFile`
-whose required input has no wire holds `initializing`, which is a state and not a failure,
-and the engine's "inconsistent input" catch in `Node.tryComputeOutput` is a not-ready signal
-rather than an error, so nothing says anything until `check` does. It
-reports and repairs nothing; `reset` is the repair, and `check` is how one learns whether it
-is needed and what to file when it is. Run by the end-to-end harness after every build so
-the fixtures prove the invariants, and offered to a user before `reset` is suggested.
 
 **B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
 Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFilter`,

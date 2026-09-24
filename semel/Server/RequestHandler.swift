@@ -111,6 +111,10 @@ public final class RequestHandler {
                 return (.daemon(response), bytes)
             case .errors:
                 return (.daemon(.errors(records: try errorRecords())), nil)
+            case .check:
+                let report = GraphCheck.run(database: database)
+                return (.daemon(.check(scheduledNodes: report.scheduledNodeCount)),
+                        try MessageCoder.encode(report.findings.map(CheckFinding.init)))
             case .tools:
                 return (.daemon(.tools(namespaces: toolNamespaces())), nil)
             case .reset(let clearCache):
@@ -236,5 +240,31 @@ extension ErrorRecord {
         self.init(label:   entry.label,
                   entries: entry.items.map { ErrorEntry(ports: $0.ports, message: $0.message) },
                   downstreamCarrierCount: entry.downstreamCarrierCount)
+    }
+}
+
+extension CheckFinding {
+
+    /// The wire form of one of the engine's findings, mirrored for the same reason.
+    init(_ finding: GraphCheck.Finding) {
+        self.init(kind: Kind(finding.kind), subject: finding.subject, sentence: finding.sentence)
+    }
+}
+
+extension CheckFinding.Kind {
+
+    /// Case by case, so an invariant added to `GraphCheck` does not compile until the wire
+    /// has a name for it.
+    init(_ kind: GraphCheck.Kind) {
+        switch kind {
+        case .danglingWire:          self = .danglingWire
+        case .unreadableGraphSpec:   self = .unreadableGraphSpec
+        case .unlinkedNodeType:      self = .unlinkedNodeType
+        case .productWithNoProducer: self = .productWithNoProducer
+        case .missingManifestChild:  self = .missingManifestChild
+        case .errorWithoutMessage:   self = .errorWithoutMessage
+        case .unreadableCacheKey:    self = .unreadableCacheKey
+        case .graphCouldNotBeRead:   self = .graphCouldNotBeRead
+        }
     }
 }

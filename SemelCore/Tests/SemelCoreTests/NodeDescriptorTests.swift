@@ -53,6 +53,45 @@ final class NodeDescriptorTests: SemelCoreTestCase {
         XCTAssertEqual(desc.staticInputPorts, ["a", "b", "c"])
     }
 
+    // MARK: - requiredInputPorts
+
+    func test_requiredPort_appearsInRequiredInputPorts() {
+        let desc = NodeDescriptor(inputPorts: [.required("input")], outputPorts: [])
+        XCTAssertEqual(desc.requiredInputPorts, ["input"])
+    }
+
+    func test_optionalPort_absentFromRequiredInputPorts() {
+        let desc = NodeDescriptor(inputPorts: [.optional("config")], outputPorts: [])
+        XCTAssertTrue(desc.requiredInputPorts.isEmpty)
+    }
+
+    /// A dynamic port is wired by the node itself while it runs, so it is not something
+    /// the graph owes it at creation.
+    func test_dynamicPort_absentFromRequiredInputPorts() {
+        let desc = NodeDescriptor(inputPorts: [.dynamic("files")], outputPorts: [])
+        XCTAssertTrue(desc.requiredInputPorts.isEmpty)
+    }
+
+    func test_requiredInputPorts_preservesDeclarationOrder() {
+        let desc = NodeDescriptor(
+            inputPorts: [.required("a"), .optional("c"), .dynamic("files"), .required("b")],
+            outputPorts: []
+        )
+        XCTAssertEqual(desc.requiredInputPorts, ["a", "b"])
+    }
+
+    /// The three views agree: the required ports are exactly the static ones the optional
+    /// list does not claim. `GraphCheck` reads the first, the applier the second and the
+    /// engine's readiness gate the third, and all three must mean one set.
+    func test_requiredInputPorts_areTheStaticPortsThatAreNotOptional() {
+        let desc = NodeDescriptor(
+            inputPorts: [.required("input"), .optional("config"), .dynamic("files"), .required("metadata")],
+            outputPorts: ["output"]
+        )
+        XCTAssertEqual(desc.requiredInputPorts,
+                       desc.staticInputPorts.filter { !desc.optionalStaticInputPorts.contains($0) })
+    }
+
     // MARK: - optionalStaticInputPorts
 
     func test_requiredPort_absentFromOptionalStaticInputPorts() {

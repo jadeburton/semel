@@ -12,6 +12,35 @@
 import Foundation
 import GRDB
 
+/// A `SQLITE_READONLY` raised inside a `withReadSnapshot`, which has two causes and cannot
+/// tell them apart from the code alone.
+///
+/// The first is the caller's: something inside the snapshot tried to write, and the read
+/// connection refused it. The second is the machine's, and is easy to miss — in WAL mode a
+/// *reader* writes too, to the `-shm` and `-wal` siblings, when it is the first to open
+/// them after they grow or when it has to recover them after a crash. A volume that cannot
+/// take that bookkeeping refuses a plain read with the same code.
+///
+/// Deliberately not an `UnrecoverableError`. The first cause is a bug in this process and
+/// the second is a fact about the disk, and blaming the disk by stopping would be wrong
+/// half the time — so this fails the operation and leaves the process running to say both.
+public struct WriteInsideReadSnapshotError: Error, CustomStringConvertible {
+    public let underlying: GRDB.DatabaseError
+
+    public init(underlying: GRDB.DatabaseError) {
+        self.underlying = underlying
+    }
+
+    public var description: String {
+        "a read snapshot was refused as read-only (\(underlying.extendedResultCode)): "
+            + "\(underlying.message ?? "no message"). "
+            + "Look first for a write inside the snapshot — that is the cause this process "
+            + "can fix, and `withTransaction` is where work that writes belongs. If nothing "
+            + "in it writes, the volume holding the database cannot take the write-ahead "
+            + "log's own bookkeeping, which a reader does too."
+    }
+}
+
 /// The database's volume is out of room or out of reach, or the file is damaged. Raised by
 /// `DatabaseLayer` in place of the GRDB error it translates; the original is kept.
 public struct DatabaseVolumeError: UnrecoverableError {

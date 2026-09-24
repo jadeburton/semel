@@ -134,6 +134,69 @@ public final class DatabaseLayer {
         }
     }
 
+    /// Execute `work` against one read of the database, so every query it makes — directly
+    /// or through a data accessor — sees one state of the graph.
+    ///
+    /// `withTransaction` is the write tool and takes the writer queue with it, which is
+    /// the wrong price for a caller that only wants to look. This is the reader's twin:
+    /// `DatabaseQueue` serialises every access, so the block holds the queue and no writer
+    /// can interleave with it.
+    ///
+    /// Two separate `selectAll`s are *not* one state. A caller that reads the nodes and
+    /// then the wires can be handed a wire whose endpoint node was created between the
+    /// two reads, and conclude the graph is broken when it is merely busy. Inside one of
+    /// these that cannot happen.
+    ///
+    /// A write reached from inside takes this same read connection, and SQLite refuses it
+    /// with `SQLITE_READONLY` — so the read-only intent is enforced rather than merely
+    /// stated. Outside a snapshot that code means the *volume* is read-only, and the
+    /// boundary translates it into an unrecoverable `DatabaseVolumeError` that stops the
+    /// process and sends the reader to check permissions on their disk. Inside one it is
+    /// ambiguous: a WAL reader writes too — to the `-shm` and `-wal` siblings, when it is
+    /// first to open them after they grow or has to recover them after a crash — so a
+    /// volume that cannot take that bookkeeping refuses a plain read with the same code.
+    /// Stopping would be the wrong answer to the caller's bug and only one of the two
+    /// possible answers to the disk's, so the code is re-read here as
+    /// `WriteInsideReadSnapshotError`, an ordinary error that names both causes and fails
+    /// the operation instead of the machine.
+    ///
+    /// Nesting works both ways round, and only one of them is useful.
+    /// `withReadSnapshot` inside `withTransaction` participates in that write transaction,
+    /// as every other nesting here does. `withTransaction` inside a snapshot is the
+    /// reverse: the inner call finds a connection already published, so it opens no
+    /// transaction of its own and takes the read connection — every write in it is
+    /// refused, and there is no rollback scope, because there is nothing to roll back.
+    /// Reach for this only where nothing writes.
+    public func withReadSnapshot<T>(_ work: () throws -> T) throws -> T {
+        if DatabaseLayer.currentDB != nil {
+            return try work()
+        }
+
+        return try translatingVolumeFailures {
+            try dbQueue.read { db in
+                try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
+                    do {
+                        return try work()
+                    } catch {
+                        throw Self.namingAWriteInsideASnapshot(error)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Re-reads a `SQLITE_READONLY` raised inside a snapshot as the ambiguous thing it is,
+    /// rather than as the volume's state alone. The inner boundary has already translated
+    /// it, so the GRDB error is unwrapped from that translation before it is judged;
+    /// anything else passes through as it was.
+    private static func namingAWriteInsideASnapshot(_ error: Error) -> Error {
+        let databaseError = (error as? DatabaseVolumeError)?.underlying ?? (error as? GRDB.DatabaseError)
+        guard let databaseError, databaseError.resultCode == .SQLITE_READONLY else {
+            return error
+        }
+        return WriteInsideReadSnapshotError(underlying: databaseError)
+    }
+
     // ── Initialisers ─────────────────────────────────────────────────────────
 
     public init(filePath: String) throws {

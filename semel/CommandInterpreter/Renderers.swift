@@ -18,11 +18,13 @@ import SemelProtocol
 /// whether it is a warning. Anything else prints unmarked until there is a reason it
 /// cannot.
 enum Mark {
-    /// A node that failed. `ErrorRecordRenderer` opens every record with it, and a settle
-    /// summary carrying a non-zero error count opens with it too.
+    /// Something is wrong: a node that failed, or an invariant of the graph that does not
+    /// hold. `ErrorRecordRenderer` opens every record with it, a settle summary carrying a
+    /// non-zero error count opens with it too, and `check` opens every finding with it.
     static let failure = "❌"
 
-    /// A settle that left the graph with no errors in it.
+    /// Nothing is wrong: a settle that left the graph with no errors in it, or a `check`
+    /// that found nothing to report.
     static let settled = "✅"
 }
 
@@ -86,6 +88,36 @@ enum ErrorRecordRenderer {
 
         result.append("")
         return result
+    }
+}
+
+enum CheckFindingRenderer {
+
+    /// One line per finding: what it is about, then what is wrong with it. Marked as a
+    /// failure, because an invariant that does not hold is one — the mark says good or bad
+    /// and nothing else, and `check` has exactly those two things to say.
+    static func line(for finding: CheckFinding) -> String {
+        "\(Mark.failure) \(finding.subject): \(finding.sentence)"
+    }
+
+    /// What a graph with nothing wrong with it reads as. Said rather than left silent: a
+    /// command that prints nothing is indistinguishable from one that did not run.
+    static let nothingFound = "\(Mark.settled) no findings"
+
+    /// What the findings have to be read against when the engine still has work to do, or
+    /// nothing when it does not.
+    ///
+    /// Unmarked: it is neither good news nor bad, and the two marks say only that. It
+    /// warns rather than gates — `check` is most wanted for a graph that is stuck, which
+    /// is a graph whose nodes stay scheduled, so refusing to answer one would be refusing
+    /// the case the command exists for. `wait` is what settles a graph first.
+    static func inFlightCaveat(scheduledNodes: Int) -> String? {
+        guard scheduledNodes > 0 else {
+            return nil
+        }
+        let nodes = scheduledNodes == 1 ? "node was" : "nodes were"
+        return "\(scheduledNodes) \(nodes) still scheduled; a finding about wiring may be work in flight — "
+             + "run `wait` first."
     }
 }
 

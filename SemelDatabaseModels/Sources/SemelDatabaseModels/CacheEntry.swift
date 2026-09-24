@@ -39,6 +39,12 @@ public struct CacheEntryDataAccess: DataAccessType {
         return try read { db in try CacheEntry.fetchAll(db) }
     }
 
+    /// Every entry's key, without its content. A caller inspecting the keys would
+    /// otherwise pull every cached build through memory to read a column of hex.
+    public func selectAllHashes() throws -> [String] {
+        try read { db in try String.fetchAll(db, sql: "SELECT hash FROM CacheEntry ORDER BY hash") }
+    }
+
     public func select(hash: String) throws -> CacheEntry? {
         try read { db in
             try CacheEntry.filter(Column("hash") == hash).fetchOne(db)

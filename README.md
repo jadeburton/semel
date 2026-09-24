@@ -93,6 +93,7 @@ rm build/**
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
 | `build <folder> [--into <dir>]` | `push <folder>`, `wait`, `errors` in one word; given a destination, `export` too, unless the build reported errors |
 | `e` / `errors` | Show all current build errors |
+| `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `t` / `tools [prefix]` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste; a prefix narrows it to namespaces starting with it (`tools clang`) |
 | `reset [--cache]` | Discard everything derived and rebuild it from the input file system, copying the discarded graph aside first; the cached builds are kept, so the rebuild is a pass of cache lookups, and `--cache` discards those too |
 

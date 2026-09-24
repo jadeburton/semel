@@ -1,20 +1,21 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, reset, t / tools, wait
+// Handles: d / debug, n / nudge, e / errors, check, reset, t / tools, wait
 
 import Foundation
 import SemelProtocol
 
 final class EnginePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "reset", "t", "tools", "wait"]
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "reset", "t", "tools", "wait"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
         case "d", "debug":  try handleDebug(context: context)
         case "n", "nudge":  _ = try context.request(.nudge)
         case "e", "errors": try handleErrors(context: context)
+        case "check":       try handleCheck(context: context)
         case "reset":       try handleReset(tokens: tokens, context: context)
         case "t", "tools":  try handleTools(tokens: tokens, context: context)
         case "wait":        try handleWait(context: context)
@@ -78,6 +79,44 @@ final class EnginePlugin: CommandPlugin {
         context.outputMessage(ToolNamespaceRenderer.text(for: matching))
     }
 
+    // MARK: - check
+
+    /// Every invariant of the graph that does not hold, one line each. Nothing is repaired:
+    /// `reset` is the repair, and this is what says whether it is needed and what to file.
+    ///
+    /// The findings arrive as the reply's body rather than inside its JSON, for the reason
+    /// `debug`'s text does: a badly broken graph has a finding per node, and the JSON
+    /// section is capped.
+    ///
+    /// Each finding is reported through `outputError`, so a scripted run whose graph broke
+    /// an invariant exits non-zero — which is what makes `check` a build step in the
+    /// harness. Not through `countErrorRecords`: that one deduplicates a report against the
+    /// settle event that already named the same failures, and no event ever carries these.
+    private func handleCheck(context: any CommandContext) throws {
+        let (response, body) = try context.request(.check)
+        guard case .check(let scheduledNodes) = response else {
+            return
+        }
+        // A reply with no body is a peer that sent none, not a graph with a finding this
+        // end cannot read — so it reads as the empty list it is, rather than as a decode
+        // failure standing in for a report.
+        let findings = try body.map { try MessageCoder.decode([CheckFinding].self, from: $0) } ?? []
+
+        // First, so it is read before the findings it qualifies. Said rather than acted
+        // on: a graph with work in flight is exactly the graph that may be stuck, and a
+        // command that waited or refused would have nothing to say about it.
+        if let caveat = CheckFindingRenderer.inFlightCaveat(scheduledNodes: scheduledNodes) {
+            context.outputMessage(caveat)
+        }
+
+        guard !findings.isEmpty else {
+            context.outputMessage(CheckFindingRenderer.nothingFound)
+            return
+        }
+
+        findings.forEach { context.outputError(CheckFindingRenderer.line(for: $0)) }
+    }
+
     // MARK: - reset
 
     /// `reset [--cache]`: discard the derived graph and rebuild it from what was pushed.
@@ -100,6 +139,11 @@ final class EnginePlugin: CommandPlugin {
             context.outputMessage("Graph copied to \(archivedGraphPath) — yours to delete.")
         }
         context.outputMessage(clearCache ? "Cache discarded. Rebuild started." : "Rebuild started.")
+        // A reset destroys the state that made it necessary, and `check` is the only thing
+        // that can name what was wrong with it — so the offer belongs beside the repair,
+        // where the next reader of this reply is standing.
+        context.outputMessage("Run `check` before the next reset: it names the invariants a graph is "
+                            + "breaking — the evidence a reset discards.")
     }
 
     // MARK: - errors
