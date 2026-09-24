@@ -186,6 +186,19 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
+## Performance
+
+**B-106** `open` — **`connectWire` scans every wire at the target once per connection.**
+`WireManagement.connectWire` guards a new wire twice: the exact-duplicate check is an indexed
+lookup, but `wireExistsWithSameName` selects every wire already going to the target port and
+scans the result, so wiring an N-wide fan into one port costs O(N²) row reads. Found while
+building `CascadeReportScaleTests`: a 400-wide fan through `connectWire` cost about five
+times the rest of the test, so that fixture inserts its rows directly. A node with many
+consumers of one port pays this during graph construction on every conversion. Fix: an
+indexed lookup by `(toNodeID, toSymbolID, name)`, which the wire key (B-23's primary key)
+already supports, and a scale test that counts wire reads per connection the way
+`CascadeReportScaleTests` counts them per walk.
+
 ## Server
 
 **B-30** `open` — **`semelserv` with three roles.**
