@@ -2,32 +2,31 @@ name: End-to-end
 
 # Real projects pinned by commit, through both binaries, twice each. Nightly on main and
 # on demand; too slow and too network-bound for every pull request, which runs the
-# fixtures instead (swift.yml). The clone cache is keyed on the roster file, so a pin
-# change refetches (and so does any other edit to it).
+# fixtures instead (swift.yml). Runs on the self-hosted macOS runner (docs/ci.md), where
+# the clone cache under ~/Library/Caches/semel/end-to-end persists between runs on its
+# own: the harness keys a clone on the roster's pinned commit, so a pin change refetches.
 on:
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   external-projects:
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Toolchain
         run: |
-          ls /Applications | grep -i xcode
-          sudo xcode-select -s /Applications/Xcode_26.2.app
-          xcrun simctl list runtimes | grep -i ios
-
-      - name: Restore the clone cache
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/semel/end-to-end
-          key: semel-e2e-clones-${{ hashFiles('EndToEnd/Tests/Projects.swift') }}
+          xcodebuild -version
+          swift --version
+          xcrun simctl list runtimes | grep -i ios || true
 
       - name: Build
         run: swift build
@@ -45,3 +44,9 @@ jobs:
           name: semel-e2e-roots
           path: /tmp/semel-tests
           if-no-files-found: ignore
+
+      # The kept roots are gigabytes each; on a machine that is also a workstation they
+      # do not accumulate. The artifact above is the copy that survives.
+      - name: Remove the run roots
+        if: always()
+        run: rm -rf /tmp/semel-tests

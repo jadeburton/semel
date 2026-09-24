@@ -1,31 +1,45 @@
 name: Swift
 
+# Runs on a self-hosted macOS runner (docs/ci.md): the machine's own Xcode, simulator
+# runtimes and SwiftLint, and no billed minutes. A change that touches only documentation
+# or the backlog runs nothing. A newer push to the same branch cancels the run in flight.
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      # What this machine builds with, so a failure can be read against it.
+      - name: Toolchain
         run: |
-          ls /Applications | grep -i xcode
-          sudo xcode-select -s /Applications/Xcode_26.2.app
-          xcrun simctl list runtimes | grep -i ios
+          xcodebuild -version
+          swift --version
+          xcrun simctl list runtimes | grep -i ios || true
 
       - name: Build
         run: swift build -c release
 
       # Every package is tested. The engine lives in its own package and the toolchains in
-      # theirs, so a green run of any one of them covers well under half the suite — before
-      # this, CI ran only the engine's tests and would not have noticed a broken toolchain
-      # at all.
+      # theirs, so a green run of any one of them covers well under half the suite.
       - name: Test SemelNodeKit
         run: swift test --package-path SemelNodeKit
 
@@ -56,15 +70,18 @@ jobs:
   # A separate job so a lint finding and a test failure show up as two red marks, not one.
   # `--strict` because the rule set in .swiftlint.yml is small and curated: every finding is
   # a real defect of the kind that has cost this codebase before, so it fails the build
-  # rather than filing a report nobody reads. Formatting is out of scope here.
+  # rather than filing a report nobody reads. Formatting is out of scope here. SwiftLint is
+  # installed on the runner (docs/ci.md); the runner's service PATH may not include
+  # Homebrew, hence the explicit path.
   lint:
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SwiftLint
-        run: brew install swiftlint
-
       - name: Lint
-        run: swiftlint --strict
+        run: |
+          SWIFTLINT="$(command -v swiftlint || echo /opt/homebrew/bin/swiftlint)"
+          "$SWIFTLINT" version
+          "$SWIFTLINT" --strict
