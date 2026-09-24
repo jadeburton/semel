@@ -61,6 +61,19 @@ final class SwiftPackageReaderTests: SemelSwiftTestCase {
                      "TMPDIR must stay the sandbox the executor chose, got \(environment)")
     }
 
+    /// B-17. Which binary answers to `test-swift` on a machine is a thing the graph cannot
+    /// see either, so the reader declares the fingerprint discovery took of it.
+    func test_declaresTheBinaryBehindItsToolVersion() throws {
+        ToolRunnerRegistry.instance.registerTool(
+            descriptor: .init(name: descriptor.name, version: descriptor.version,
+                              platform: descriptor.platform, architecture: descriptor.architecture,
+                              recursiveHash: "fingerprint-of-the-driver"),
+            toolExecutor: executor)
+
+        XCTAssertEqual(try makeTool().cacheKeyMaterial(input: try makeInput()),
+                       "tool=swift:fingerprint-of-the-driver")
+    }
+
     func test_asksForTheManifestDump() throws {
         _ = try makeTool().process(input: try makeInput())
 

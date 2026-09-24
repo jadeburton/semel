@@ -23,13 +23,6 @@ version of how the SDK bug was found; belongs in the test suite, run once per no
 Its home is `EndToEndRun`: an extra cold build with a perturbed environment, and the same
 `TreeDiff` against the first.
 
-**B-17** `open` — **`ToolDescriptor.recursiveHash` is designed but never populated.**
-The slot exists on every tool descriptor and is read from
-`properties["toolDescriptor.recursiveHash"]`, but nothing ever sets it, so it is always nil.
-It is the intended place for a hash of the tool binary itself, which would close the last
-gap in the cache-key audit: two different binaries reporting the same version string
-currently share a cache key. Narrow, and B-03 subsumes it.
-
 **B-49** `open` — **Tool outputs must not depend on where the inputs are mounted — residuals.**
 Done 2026-09-20: parts 1 and 2 — the sandbox contract is `ToolSandbox` (inputs at their
 wire keys below a fresh root that is the working directory; every argument relative to it;

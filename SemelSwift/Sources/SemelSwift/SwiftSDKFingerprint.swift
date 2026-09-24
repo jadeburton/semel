@@ -10,10 +10,11 @@
 // their artifacts were not. This fingerprints what is actually there and puts it in the
 // key through `Node.cacheKeyMaterial`.
 //
-// Why a key part and not `toolDescriptor.recursiveHash`: the registry matches a config's
-// whole descriptor against the installed tool's, so a registered hash would force every
-// config file to declare it by hand — the thing B-47 rejected. A key part costs the user
-// nothing to declare.
+// Why a key part rather than a setting: a config file names the SDK, not what is inside
+// it, and a fingerprint a user had to write by hand is one more thing to get wrong — what
+// B-47 rejected. A key part costs the user nothing to declare. The tool binary's
+// fingerprint reaches the key the same way (`toolBinaryCacheKeyMaterial`), from the
+// descriptor discovery registers it on.
 //
 // What it does and does not close. A cache key can only stop a wrong reuse. An SDK edited
 // in place under an already-built graph is still not rebuilt, because an unscheduled node
@@ -114,14 +115,23 @@ private func configuredSDKName(input: ProcessInput, configurationPort: String) t
     return properties["sdk"] ?? defaultSDKName
 }
 
+/// Everything a Swift tool reads outside its inputs: the SDK behind `-sdk`, and the binary
+/// behind the tool version its configuration names (B-17). Each line stands on its own, so
+/// a tool that finds only one of the two still declares it.
+func swiftToolCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
+    let lines = [try sdkCacheKeyMaterial(input: input, configurationPort: configurationPort),
+                 try toolBinaryCacheKeyMaterial(input: input, configurationPort: configurationPort)].compactMap { $0 }
+    return lines.isEmpty ? nil : lines.joined(separator: "\n")
+}
+
 extension SwiftCompiler {
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try sdkCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        try swiftToolCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 }
 
 extension SwiftLinker {
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try sdkCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        try swiftToolCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 }

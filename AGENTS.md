@@ -267,7 +267,9 @@ wrong fails at the first real formula with "port does not exist", not in any uni
 
 **The cache key must cover everything that can change a node's output.** Including input
 *identity*, not just input content — the wire key is the file's path and the tools embed
-it. If you add anything that influences output, it belongs in the key.
+it. If you add anything that influences output, it belongs in the key. A tool node's key
+also carries a fingerprint of the tool binary itself (`toolBinaryCacheKeyMaterial`, filled
+in by `ToolDiscovery`), so two binaries reporting one version string do not share an entry.
 
 **Never iterate a `Dictionary` into a command line.** Swift's iteration order is seeded per
 process, so the same build would produce a different invocation each run. Sort first.

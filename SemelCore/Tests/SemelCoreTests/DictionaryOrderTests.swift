@@ -156,7 +156,7 @@ final class DictionaryOrderTests: XCTestCase {
             "a TreeManifest sorts its entries by path when it is built",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: specs.keys":
             "the missing paths are counted and reported sorted",
-        "SemelNodeKit/Sources/SemelNodeKit/ToolRunner.swift: toolsByDescriptor.keys":
+        "SemelNodeKit/Sources/SemelNodeKit/ToolRunner.swift: toolsByIdentity.values":
             "every reader imposes an order: the error text sorts, and both the tools reply and the written config sort by version",
         "SemelApple/Sources/SemelApple/XcodeBuildSettings.swift: values.values":
             "collects the names still referenced into a set, returned sorted",

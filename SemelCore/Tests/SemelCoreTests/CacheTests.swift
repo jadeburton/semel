@@ -292,6 +292,61 @@ final class CacheTests: SemelCoreTestCase {
         XCTAssertEqual(withOne, withOneAgain, "the same material gives the same key")
     }
 
+    // MARK: - The tool binary behind a descriptor
+
+    /// Installs a registry holding one tool of the version `configuration()` names, under
+    /// the fingerprint discovery would have taken of the binary behind it.
+    private func installTool(fingerprint: String?) {
+        let registry = ToolRunnerRegistry()
+        registry.registerTool(descriptor: .init(name: "sample",
+                                                version: "sample tool version 1",
+                                                platform: "macOS",
+                                                architecture: "arm64",
+                                                recursiveHash: fingerprint),
+                              toolExecutor: RecordingToolRunner())
+        ToolRunnerRegistry.instance = registry
+    }
+
+    /// B-17. A version string is what a binary says about itself, and two binaries say the
+    /// same thing: a locally built compiler and the release it calls itself, the same
+    /// toolchain version reinstalled with a patch. The configuration cannot tell them
+    /// apart — it names a version — so the fingerprint of the binary that will run is in
+    /// the key, and a node built by one does not come back for the other.
+    func test_twoBinariesOfOneToolVersionDoNotShareACacheKey() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+
+        installTool(fingerprint: "fingerprint-of-one-binary")
+        let withOne = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: "fingerprint-of-another-binary")
+        let withAnother = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: "fingerprint-of-one-binary")
+        let withOneAgain = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        XCTAssertNotEqual(withOne, withAnother,
+                          "two binaries reporting one version must not share an entry")
+        XCTAssertEqual(withOne, withOneAgain,
+                       "one binary, one key: the fingerprint is the only thing that moved")
+    }
+
+    /// The identity in the configuration still decides *which* tool a node runs, so a node
+    /// naming a tool the machine does not have takes no fingerprint into its key — it
+    /// fails when it is processed, with a message naming what is installed.
+    func test_aToolThatIsNotInstalledContributesNoFingerprint() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
+        let withoutTheTool = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: nil)
+        let withAToolThatHasNoFingerprint = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        XCTAssertEqual(withoutTheTool, withAToolThatHasNoFingerprint)
+    }
+
     // MARK: - Round trip
 
     func test_savedOutputsComeBackForTheSameKey() throws {

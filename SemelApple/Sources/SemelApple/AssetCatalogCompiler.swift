@@ -78,6 +78,13 @@ public struct AssetCatalogCompiler: Node {
 
     // MARK: Processing
 
+    /// The binary behind the tool version the configuration names: two builds of one
+    /// version compile a catalog differently, and only a fingerprint of the binary tells
+    /// them apart (B-17).
+    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
+        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let configurationText = try input.inputValues[Self.configuration]!.values.first!.expectValue().resolveAsString()
         let configuration = try AssetCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))

@@ -49,6 +49,12 @@ public enum ToolDiscovery {
     /// binary that will really run. A tool that is not installed, or reports no version,
     /// is left out.
     ///
+    /// The descriptor also carries a fingerprint of that binary
+    /// (`toolBinaryFingerprint(ofFileAt:)`), which is what tells two binaries reporting
+    /// one version apart in a cache key. It is taken here rather than declared anywhere:
+    /// a config file names a tool by the four identity fields, and which binary answers
+    /// to them is a fact about this machine.
+    ///
     /// Nothing is warned about here. Installing a newer toolchain is not by itself a
     /// problem, and a node that does not use the changed tool is unaffected — so there is
     /// nothing to say at launch. A node whose configuration names a version that is no
@@ -69,7 +75,7 @@ public enum ToolDiscovery {
                                   version: version,
                                   platform: MachineQuery.hostPlatform,
                                   architecture: MachineQuery.hostArchitecture,
-                                  recursiveHash: nil),
+                                  recursiveHash: toolBinaryFingerprint(ofFileAt: path)),
                 toolExecutor: try LocalFileSystemTool(localPath: path))
         }
     }
