@@ -188,23 +188,10 @@ entirely in-process.
 
 ## Performance
 
-**B-74** `open` — **`[missing]` is one word for two states.**
-`ls` prints `[missing]` for anything that exists and is not pinned
-(`InternalFileSystemLister.swift:38`). That covers a file on its way out of the input file
-system, and it also covers an artifact under `output:` whose build failed, because an
-`OutputFile` reads pinned from its *input* port and an input in error is not pinned. One
-word for both tells the reader nothing: the first state settles by itself, the second is a
-failure to act on. Split the state and give each its own word. The port now says which is
-which by case — B-104 gave a removed source `NoValueReason.deleted` and a folder nobody
-pushed into `initializing`, where a failed build leaves `error` or `inputInError` — so what
-is left is the lister, which asks `isPinned` and throws the reason away, and
-`RequestHandler+Files`, which folds every one of them onto `.error`. `FolderRemovalScaleTests`
-and `FolderRemovalAfterBuildTests` hold the removal side — the folder and its products are
-gone once the collector has run, with nothing listed `[missing]` behind them — so what the
-split is owed is a case that leaves a product's input in error and reads the listing.
-Unmeasured alongside it: the idle report's upstream walk costs one indexed wire query per
-carrying node per idle pass — tens of milliseconds at the 500-node cascade B-74 was opened
-by — and no scale test holds that number.
+**B-74** `open` — **The idle report's upstream walk is unmeasured.**
+It costs one indexed wire query per carrying node per idle pass — tens of milliseconds at
+the 500-node cascade this entry was opened by — and no scale test holds that number. Measure
+it against a cascade of that size before deciding whether the walk needs to change.
 
 **B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
 Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
@@ -281,7 +268,10 @@ updates. A third: `NodeRecord.readFromOutputPort` fabricates `error("No value ev
 existed")` when a port row is absent, which `writePendingToAllOutputsOfNode` makes
 impossible — so it is a node holding fewer port rows than its descriptor declares, a
 finding `check` should name, and the read should throw rather than invent a sentence
-nobody can act on.
+nobody can act on. A fourth, one surface over: `OutputFile.describeValue` folds five
+`NoValueReason` cases onto the single word `Error`, so a product the build announces as
+`output:/x: Error` is the one `ls` calls `[not produced]` — the same word-for-several-states
+problem B-74 settled for the listing, still in the build's own notices.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**

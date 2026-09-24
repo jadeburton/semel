@@ -23,11 +23,11 @@ final class FileWildcardMatcherTests: XCTestCase {
     }
 
     private func file(_ name: String) -> FileWildcardEntry {
-        FileWildcardEntry(path: Path(name), kind: .file, isMissing: false, isUnreferenced: false)
+        FileWildcardEntry(path: Path(name), kind: .file, state: .present, isUnreferenced: false)
     }
 
     private func folder(_ name: String) -> FileWildcardEntry {
-        FileWildcardEntry(path: Path(name), kind: .folder, isMissing: false, isUnreferenced: false)
+        FileWildcardEntry(path: Path(name), kind: .folder, state: .present, isUnreferenced: false)
     }
 
     private func matcher(

@@ -8,16 +8,59 @@ public enum FileWildcardEntryKind {
     case folder
 }
 
+/// What the graph says about the name an entry stands for: whether the node behind it is
+/// carrying a value, and when it is not, which of the port's reasons stands there.
+///
+/// One case per state a reader can act on differently. A source that was taken away
+/// settles by itself once the collector reaches it; a product whose input failed is a
+/// failure to act on; a name nothing has produced anything for is neither, and a graph
+/// full of fresh nodes is not a graph full of failures. Folding them onto one word tells
+/// the reader nothing.
+public enum FileWildcardEntryState: Equatable, Sendable {
+    /// The node carries a value: a pushed source, or a product that built.
+    case present
+    /// A value is on its way, and a reader may wait for it.
+    case pending
+    /// Nothing has ever produced a value here: a source nobody pushed, a folder nobody
+    /// pushed into, or a product whose input is in one of those states.
+    case notProduced
+    /// A source that was pushed and then removed. The node stands while something still
+    /// names it, and goes when the collector reaches it.
+    case deleted
+    /// The node failed, or something it reads did.
+    case failed
+}
+
+extension FileWildcardEntryState {
+    /// Read by case, never by message text: a reason carrying a sentence is the node's own
+    /// failure, and every other reason is its own case precisely so that a reader deciding
+    /// what to say asks which case it is.
+    public init(_ value: NodeValue) {
+        switch value {
+        case .value:
+            self = .present
+        case .noValue(let reason):
+            switch reason {
+            case .pending:                         self = .pending
+            case .initializing, .inputNotProduced: self = .notProduced
+            case .deleted:                         self = .deleted
+            case .inputInError, .error:            self = .failed
+            }
+        }
+    }
+}
+
 public struct FileWildcardEntry {
     public let path: Path                // logical path relative to the file-system root
     public let kind: FileWildcardEntryKind
-    public let isMissing: Bool
+    /// What the graph says about this name, or `nil` from a lister with no graph behind it.
+    public let state: FileWildcardEntryState?
     public let isUnreferenced: Bool
 
-    public init(path: Path, kind: FileWildcardEntryKind, isMissing: Bool, isUnreferenced: Bool) {
+    public init(path: Path, kind: FileWildcardEntryKind, state: FileWildcardEntryState?, isUnreferenced: Bool) {
         self.path = path
         self.kind = kind
-        self.isMissing = isMissing
+        self.state = state
         self.isUnreferenced = isUnreferenced
     }
 }
@@ -109,7 +152,7 @@ public final class FileWildcardMatcher {
 
             if isLastSegment {
                 results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind,
-                                                 isMissing: child.isMissing,
+                                                 state: child.state,
                                                  isUnreferenced: child.isUnreferenced))
             } else if child.kind == .folder {
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path.string)
@@ -154,9 +197,11 @@ public final class ExternalFileSystemLister: FileWildcardMatcherInput {
                     return nil
                 }
             }
+            // A directory entry on disk is the whole story: there is no port behind it to
+            // ask, so this lister has no state to report and says so.
             return FileWildcardEntry(path: Path(name),
                                      kind: isDir.boolValue ? .folder : .file,
-                                     isMissing: false, isUnreferenced: false)
+                                     state: nil, isUnreferenced: false)
         }.sorted { $0.path.string < $1.path.string }
     }
 

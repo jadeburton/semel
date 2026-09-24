@@ -22,17 +22,34 @@ extension RequestHandler {
         return .list(entries: try matches.map { try listEntry(for: $0, in: root) })
     }
 
+    /// The word for one state, by case. The states are not interchangeable — one settles by
+    /// itself, one is a failure to act on, one is neither — so each keeps its own word all
+    /// the way to the client.
+    ///
+    /// Which of them a name can show depends on which file system it is in. A source under
+    /// `input:` has no inputs and is never scheduled, so it is there, `deleted` once the
+    /// user removes it, or waiting for a push that may never come. An artifact under
+    /// `output:` is pinned by its *input* port and shows what the node that builds it says:
+    /// the built value, `pending` mid-build, `failed` from anything that stopped it — a
+    /// removed source included — or nothing produced when a source the formula names was
+    /// never pushed. `deleted` belongs to `input:`, where the user's own hand put it.
+    private func status(for state: FileWildcardEntryState) -> EntryStatus {
+        switch state {
+        case .present:     return .none
+        case .pending:     return .pending
+        case .notProduced: return .notProduced
+        case .deleted:     return .deleted
+        case .failed:      return .failed
+        }
+    }
+
     /// What `ls` shows for one match. A file's size and mode come from its value; a file
-    /// with no value keeps the default mode and says why it has none, unless the match
-    /// already says it is missing or unreferenced, which is the more useful word.
+    /// with no value keeps the default mode and says which state it is in, which is the
+    /// more useful word than the one for a name nothing reads.
     private func listEntry(for match: FileWildcardEntry, in root: NodeRecord) throws -> ListEntry {
-        var status = EntryStatus.none
-        if match.isMissing {
-            status = .missing
-        } else {
-            if match.isUnreferenced {
-                status = .unreferenced
-            }
+        var status = match.state.map(status(for:)) ?? .none
+        if status == .none, match.isUnreferenced {
+            status = .unreferenced
         }
 
         guard case .file = match.kind else {
@@ -57,18 +74,10 @@ extension RequestHandler {
                     mode = FileMetadata.defaultMode
                 }
 
-            case .noValue(let reason):
+            case .noValue:
+                // Why it has no value is the match's state: the lister read it from this
+                // same port, so there is one answer and the word is already chosen.
                 mode = FileMetadata.defaultMode
-                if status == .none {
-                    switch reason {
-                    case .pending:
-                        status = .pending
-                    case .initializing, .inputNotProduced, .inputInError, .deleted, .error:
-                        // One word for five states, which is the half of B-74 that waits on
-                        // `[missing]` being split into the states it stands for.
-                        status = .error
-                    }
-                }
             }
         }
 

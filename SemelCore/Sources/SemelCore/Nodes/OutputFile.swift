@@ -97,13 +97,31 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
         outputPorts: [statusOutputPort]
     )
 
-    var isPinned: Bool {
+    /// An artifact is pinned by the port it reads its bytes from, which is its *input* — so
+    /// what a listing says about a product is what the node that builds it says.
+    var pinnedValue: NodeValue? {
         get throws {
-            guard let nodeValue = try read() else {
-                return false
-            }
+            try read()
+        }
+    }
 
-            return !nodeValue.isNoValue
+    /// A product has no state of its own: it is not pushed, not removed and never runs, so
+    /// every state here is one it reads from its input.
+    ///
+    /// Which makes `deleted` a state a product cannot be in. A user who removes a source
+    /// has not removed the artifact — and whether the removal reaches the product as its
+    /// own `deleted` or as the `inputInError` a builder publishes on meeting one is a
+    /// question of what stands between them, not of what happened. One user action reads as
+    /// one word: a product the removal stopped is a product that failed to be made.
+    var listedState: FileWildcardEntryState {
+        get throws {
+            let inputState = try pinnedValue.map(FileWildcardEntryState.init) ?? .notProduced
+            switch inputState {
+            case .deleted:
+                return .failed
+            case .present, .pending, .notProduced, .failed:
+                return inputState
+            }
         }
     }
 

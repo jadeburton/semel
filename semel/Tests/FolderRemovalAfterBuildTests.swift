@@ -117,18 +117,18 @@ final class FolderRemovalAfterBuildTests: XCTestCase {
                      "the folder node goes with its files, not just its listing")
     }
 
-    /// `[missing]` means "exists and not pinned", which is what a folder says between the
-    /// removal and the collector reaching it. Once the graph has settled there is nothing
-    /// left to say it about — and an artifact whose input errored must not say it either,
-    /// which is the half of B-74 that waits on `[missing]` being split into its states.
-    func test_nothingIsLeftListedAsMissing() throws {
+    /// A note beside a name is a state the graph is in about it, and between the removal and
+    /// the collector reaching it a folder is in one. Once the graph has settled there is
+    /// nothing left to say any of them about: not `[deleted]`, not `[failed]`, not
+    /// `[not produced]` — the names are gone, not standing there with a word beside them.
+    func test_nothingIsLeftListedWithANoteBesideIt() throws {
         build()
 
         interpreter.handleCommand("rm src")
         interpreter.handleCommand("wait")
 
         let listed = try listing(.input) + listing(.output)
-        XCTAssertFalse(listed.map(\.status).contains(.missing), "listed: \(listed)")
+        XCTAssertTrue(listed.allSatisfy { $0.status == .none }, "listed: \(listed)")
     }
 
     /// The wall of errors B-74 was opened by. A removal collects what it breaks, so once the

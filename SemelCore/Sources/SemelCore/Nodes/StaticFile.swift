@@ -8,7 +8,33 @@
 import SemelNodeKit
 
 public protocol Pinnable {
-    var isPinned: Bool { get throws }
+    /// The port value the pin is read from: a node is pinned when that port carries a
+    /// value, and when it does not, the reason is what a listing has to say about it.
+    var pinnedValue: NodeValue? { get throws }
+
+    /// What a listing says about this node. A requirement rather than a convenience, so
+    /// that a type whose port says something on another node's behalf can answer for
+    /// itself — which is what an artifact, pinned by an input, has to do.
+    var listedState: FileWildcardEntryState { get throws }
+}
+
+extension Pinnable {
+    public var isPinned: Bool {
+        get throws {
+            guard let pinnedValue = try pinnedValue else {
+                return false
+            }
+            return !pinnedValue.isNoValue
+        }
+    }
+
+    /// A node's own port is its own state: a name with no port behind it at all has had
+    /// nothing produced for it.
+    public var listedState: FileWildcardEntryState {
+        get throws {
+            try pinnedValue.map(FileWildcardEntryState.init) ?? .notProduced
+        }
+    }
 }
 
 public protocol UserDeletable {
@@ -21,13 +47,13 @@ public protocol UserDeletable {
 public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 3
 
-    public var isPinned: Bool {
+    /// A source's own port, which is also the one it is pinned by. Having no inputs, it is
+    /// never scheduled and nothing above it can fail, so a source shows three states and no
+    /// others: the value the user pushed, `deleted` once they take it away, and the state of
+    /// a value nobody has produced while the graph names a file nobody pushed.
+    public var pinnedValue: NodeValue? {
         get throws {
-            guard let nodeValue = try read() else {
-                return false
-            }
-
-            return !nodeValue.isNoValue
+            try read()
         }
     }
 
@@ -90,7 +116,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
         // than deleting immediately.  This matters when the engine hasn't yet wired this
         // file to its consumers (ClangCompiler etc.) — in that window hasNoOutputWires()
         // would be true even though the file IS referenced, causing the node to be destroyed
-        // instead of remaining as a [missing] ghost.  connectWire() automatically clears
+        // instead of remaining as a [deleted] ghost.  connectWire() automatically clears
         // the pendingDeletion flag if a wire is later connected, rescuing the node.
         if try hasNoOutputWires() {
             try database.node.updatePendingDeletion(nodeID: (try requireID()), pendingDeletion: true)

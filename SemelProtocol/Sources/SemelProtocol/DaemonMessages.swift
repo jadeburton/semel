@@ -23,15 +23,28 @@ public enum EntryKind: String, Codable, Equatable, Sendable {
     case folder
 }
 
-/// What `ls` prints beside a name. `missing` and `unreferenced` are the engine's
-/// "ghost" entries — referenced but deleted, or the reverse — and hiding them would be a
-/// behavior change.
+/// What `ls` prints beside a name: one case per state the graph can be in about it, so
+/// that a reader can tell the ones apart that call for different things.
+///
+/// `deleted` and `unreferenced` are the engine's "ghost" entries — referenced but taken
+/// away, or the reverse — and hiding them would be a behavior change.
 public enum EntryStatus: String, Codable, Equatable, Sendable {
+    /// The name stands for something that is there.
     case none
-    case missing
+    /// Nothing in the graph reads this node, and nothing it holds keeps it: a name the
+    /// collector will take away.
     case unreferenced
+    /// A value is on its way.
     case pending
-    case error
+    /// Nothing has produced a value here: a source nobody pushed, or a product whose input
+    /// has none. Not a failure — a fresh graph is full of this — and nothing to wait on.
+    case notProduced
+    /// A source the user removed. It stands until the collector reaches it, and it settles
+    /// by itself.
+    case deleted
+    /// A product whose build failed, or whose input carries a failure from above it. The
+    /// one of these states that is a failure to act on.
+    case failed
 }
 
 public struct ListEntry: Codable, Equatable, Sendable {

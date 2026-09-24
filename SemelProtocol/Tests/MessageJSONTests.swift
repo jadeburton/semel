@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsSeven() {
-        XCTAssertEqual(ProtocolVersion.current, 7)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 7, "a hello sent with no version named speaks the current one")
+    func test_currentProtocolVersionIsEight() {
+        XCTAssertEqual(ProtocolVersion.current, 8)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 8, "a hello sent with no version named speaks the current one")
     }
 
     func test_encodesSettledEvent() throws {
@@ -121,9 +121,28 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_omitsAbsentSizeAndModeFromListEntry() throws {
-        let entry = ListEntry(path: "src", kind: .folder, size: nil, mode: nil, status: .missing)
+        let entry = ListEntry(path: "src", kind: .folder, size: nil, mode: nil, status: .deleted)
 
-        XCTAssertEqual(try json(entry), #"{"kind":"folder","path":"src","status":"missing"}"#)
+        XCTAssertEqual(try json(entry), #"{"kind":"folder","path":"src","status":"deleted"}"#)
+    }
+
+    /// The whole status vocabulary, as the words a peer decodes. A state added to or taken
+    /// from this set is a change to the message set, and so to `ProtocolVersion.current`.
+    func test_encodesEveryEntryStatusByItsOwnName() throws {
+        let statuses: [EntryStatus] = [.none, .unreferenced, .pending, .notProduced, .deleted, .failed]
+
+        let encoded = try statuses.map {
+            try json(ListEntry(path: "a", kind: .file, size: nil, mode: nil, status: $0))
+        }
+
+        XCTAssertEqual(encoded, [
+            #"{"kind":"file","path":"a","status":"none"}"#,
+            #"{"kind":"file","path":"a","status":"unreferenced"}"#,
+            #"{"kind":"file","path":"a","status":"pending"}"#,
+            #"{"kind":"file","path":"a","status":"notProduced"}"#,
+            #"{"kind":"file","path":"a","status":"deleted"}"#,
+            #"{"kind":"file","path":"a","status":"failed"}"#,
+        ])
     }
 
     func test_roundTripsEveryDaemonResponse() throws {
