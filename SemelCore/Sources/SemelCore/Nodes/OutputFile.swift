@@ -97,13 +97,15 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
         outputPorts: [statusOutputPort]
     )
 
-    var isPinned: Bool {
+    /// An artifact is pinned by the port it reads its bytes from, which is its *input* — so
+    /// what a listing says about a product is what the node that builds it says. That is the
+    /// whole range: the built value, `pending` while the build runs, `failed` when the
+    /// builder or something above it failed, the state of a value nobody has produced when
+    /// a source the formula names was never pushed, and `deleted` when a source wired
+    /// straight to it was taken away.
+    var pinnedValue: NodeValue? {
         get throws {
-            guard let nodeValue = try read() else {
-                return false
-            }
-
-            return !nodeValue.isNoValue
+            try read()
         }
     }
 

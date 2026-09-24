@@ -118,10 +118,11 @@ final class NavigationPlugin: CommandPlugin {
             var statusNote = ""
             switch entry.status {
             case .none:         break
-            case .missing:      statusNote = "  [missing]"
             case .unreferenced: statusNote = "  [unreferenced]"
             case .pending:      statusNote = "  [pending]"
-            case .error:        statusNote = "  [error]"
+            case .notProduced:  statusNote = "  [not produced]"
+            case .deleted:      statusNote = "  [deleted]"
+            case .failed:       statusNote = "  [failed]"
             }
 
             if entry.kind == .folder {

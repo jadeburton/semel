@@ -83,12 +83,13 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
         }
         XCTAssertEqual(removed.sorted(), ["a.c", "b.c"])
         XCTAssertEqual(removedFolders, [], "a pattern with a dot matches no folder here")
-        // A removed file lingers as a ghost with no content, which `list` reports as missing.
+        // A removed file lingers as a ghost with no content until the collector reaches it,
+        // which `list` reports as the state a removal leaves and not as a failure.
         let (listed, _) = try daemon(.list(fileSystem: .input, pattern: "*.c"))
         guard case .list(let entries) = listed else {
             return XCTFail("expected list, got \(listed)")
         }
-        XCTAssertTrue(entries.allSatisfy { $0.status == .missing || $0.status == .error }, "\(entries)")
+        XCTAssertTrue(entries.allSatisfy { $0.status == .deleted }, "\(entries)")
     }
 
     /// The two lists are what the client reports from, so a removed folder has to arrive

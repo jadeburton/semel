@@ -8,7 +8,30 @@
 import SemelNodeKit
 
 public protocol Pinnable {
-    var isPinned: Bool { get throws }
+    /// The port value the pin is read from: a node is pinned when that port carries a
+    /// value, and when it does not, the reason is what a listing has to say about it.
+    var pinnedValue: NodeValue? { get throws }
+}
+
+extension Pinnable {
+    public var isPinned: Bool {
+        get throws {
+            guard let pinnedValue = try pinnedValue else {
+                return false
+            }
+            return !pinnedValue.isNoValue
+        }
+    }
+
+    /// What a listing says about this node, from the same port the pin is read from.
+    public var listedState: FileWildcardEntryState {
+        get throws {
+            guard let pinnedValue = try pinnedValue else {
+                return .notProduced
+            }
+            return FileWildcardEntryState(pinnedValue)
+        }
+    }
 }
 
 public protocol UserDeletable {
@@ -21,13 +44,13 @@ public protocol UserDeletable {
 public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
     public static let kind: UInt = 3
 
-    public var isPinned: Bool {
+    /// A source's own port, which is also the one it is pinned by. Having no inputs, it is
+    /// never scheduled and nothing above it can fail, so a source shows three states and no
+    /// others: the value the user pushed, `deleted` once they take it away, and the state of
+    /// a value nobody has produced while the graph names a file nobody pushed.
+    public var pinnedValue: NodeValue? {
         get throws {
-            guard let nodeValue = try read() else {
-                return false
-            }
-
-            return !nodeValue.isNoValue
+            try read()
         }
     }
 

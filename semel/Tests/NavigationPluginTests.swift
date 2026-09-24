@@ -63,6 +63,31 @@ final class NavigationPluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["-rw-r--r--         1  a.c  [pending]"])
     }
 
+    /// Every word `ls` prints beside a name, pinned. The states are not interchangeable —
+    /// one settles by itself, one is a failure to act on, one is neither — and these words
+    /// are the whole of what tells a reader which is which.
+    func test_lsPrintsItsOwnWordForEachState() throws {
+        connection.reply(.list(entries: [
+            ListEntry(path: "built.o",    kind: .file, size: 4,   mode: 0o644, status: .none),
+            ListEntry(path: "nobodys.o",  kind: .file, size: nil, mode: 0o644, status: .unreferenced),
+            ListEntry(path: "waiting.o",  kind: .file, size: nil, mode: 0o644, status: .pending),
+            ListEntry(path: "unpushed.o", kind: .file, size: nil, mode: 0o644, status: .notProduced),
+            ListEntry(path: "removed.o",  kind: .file, size: nil, mode: 0o644, status: .deleted),
+            ListEntry(path: "broken.o",   kind: .file, size: nil, mode: 0o644, status: .failed),
+        ]))
+
+        try run("ls")
+
+        XCTAssertEqual(context.messages, [
+            "-rw-r--r--         -  broken.o  [failed]",
+            "-rw-r--r--         4  built.o",
+            "-rw-r--r--         -  nobodys.o  [unreferenced]",
+            "-rw-r--r--         -  removed.o  [deleted]",
+            "-rw-r--r--         -  unpushed.o  [not produced]",
+            "-rw-r--r--         -  waiting.o  [pending]",
+        ])
+    }
+
     func test_lsWithAnExplicitFileSystemIsRootRelative() throws {
         context.currentDirectoryPath = Path("src")
         connection.reply(.list(entries: []))

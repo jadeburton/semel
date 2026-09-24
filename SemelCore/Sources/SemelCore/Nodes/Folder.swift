@@ -266,9 +266,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             && hasNoInputWires()
     }
 
-    public var isPinned: Bool {
+    /// A folder is a source too, and its `pinned` port holds the same three states a file's
+    /// does: a value once the user pushed it, the state of a value nobody has produced while
+    /// nothing has been pushed into it, and `deleted` once the user takes it back out. A
+    /// folder that cannot be pinned carries a value from its creation and so has nothing
+    /// else to show.
+    public var pinnedValue: NodeValue? {
         get throws {
-            try !thisNode.readFromOutputPort(Self.pinnedOutputPort).isNoValue
+            try thisNode.readFromOutputPort(Self.pinnedOutputPort)
         }
     }
 

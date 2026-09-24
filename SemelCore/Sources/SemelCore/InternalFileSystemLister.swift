@@ -17,6 +17,9 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
         self.folder = folder
     }
 
+    /// Every child of a directory, each carrying what the port it is pinned by says, read
+    /// by case: a listing built from these can tell a product whose build failed from a
+    /// source on its way out of the input file system.
     public func allFiles(inDirectoryPath: String) throws -> [FileWildcardEntry] {
         guard let start = try folder.childNode(path: inDirectoryPath) else {
             throw NodeError.other(message: "No such directory: \(inDirectoryPath)")
@@ -30,12 +33,14 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
+                // A folder under `output:` cannot be pinned: it is made by a build rather
+                // than pushed, so the pin is not a state anyone can read anything from.
                 let isOutputFileSystem = try folder.thisNode
                     .buildFullPathName(baseNodeID: nil)
                     .firstComponent == Folder.outputFileSystemName
                 return FileWildcardEntry(path: Path(nodeRecord.name!),
                                          kind: .folder,
-                                         isMissing: isOutputFileSystem ? false : try !folder.isPinned,
+                                         state: isOutputFileSystem ? .present : try folder.listedState,
                                          isUnreferenced: try folder.hasNoOutputWires() && nodeRecord.allChildren.isEmpty)
 
             default:
@@ -46,7 +51,7 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                 }
                 return FileWildcardEntry(path: Path(nodeRecord.name!),
                                          kind: .file,
-                                         isMissing: try !pinnable.isPinned,
+                                         state: try pinnable.listedState,
                                          isUnreferenced: try node.hasNoOutputWires())
             }
         }
