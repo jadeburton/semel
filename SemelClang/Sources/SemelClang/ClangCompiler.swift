@@ -97,6 +97,10 @@ public struct ClangCompiler: Node {
         let language = ClangPreprocessor.language(for: inputs.inputSourceFile.filePath)
 
         var arguments = [String]()
+        // The arguments built from settings, collected as they are appended so a clang
+        // diagnostic about one of them can name the key behind it (B-98).
+        var settings = [SettingArgument]()
+
         arguments.append("-x");      arguments.append(language)
         arguments.append("-c")
 
@@ -112,6 +116,9 @@ public struct ClangCompiler: Node {
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o");      arguments.append(outputFilename)
         arguments.append("-target"); arguments.append(inputs.configuration.target)
+        settings.append(.clangTarget(key: "\(ClangCompilerConfiguration.settingNamespace).target",
+                                     value: inputs.configuration.target))
+
         arguments.append(contentsOf: inputs.configuration.arguments)
 
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
@@ -122,7 +129,7 @@ public struct ClangCompiler: Node {
             inputFiles: [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)],
             expectedOutputFileNames: [outputFilename])
 
-        return .init(output: try result.asOutputNodeValue(),
+        return .init(output: try result.asOutputNodeValue(tool: "clang", settings: settings),
                      errorLog: .value(try result.errorOutput.intern()),
                      infoLog: .value(try result.infoOutput.intern()))
     }

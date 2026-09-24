@@ -58,6 +58,9 @@ final class RecordingToolRunner: ToolRunner {
     /// Trees the fake tool "produces": folder -> relative path -> bytes.
     var producedTrees: [String: [String: [UInt8]]] = [:]
     var exitCode: Int32 = 0
+    /// What the fake tool writes to its error stream, for a test about what a node makes
+    /// of a tool's own diagnostics.
+    var errorOutput: String = ""
 
     var lastArguments: [String] { invocations.last?.arguments ?? [] }
 
@@ -73,6 +76,10 @@ final class RecordingToolRunner: ToolRunner {
                                  inputFileNames: inputFiles.map(\.filePath),
                                  expectedOutputFileNames: expectedOutputFileNames,
                                  expectedOutputFolders: expectedOutputFolders))
+
+        if !errorOutput.isEmpty {
+            output.logError(errorOutput)
+        }
 
         for name in expectedOutputFileNames {
             output.write(name, producedFiles[name] ?? [])

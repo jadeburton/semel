@@ -38,6 +38,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
     /// which is enough for the preprocessor to proceed without waiting on header wires.
     private func makeInput(sourcePath: String = "src/hello.c",
                            target: String = "arm64-apple-macos14.0",
+                           sdkPath: String? = nil,
                            cStandard: String? = "c17",
                            cxxStandard: String? = nil) throws -> ProcessInput {
         var configuration = """
@@ -47,6 +48,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
             toolDescriptor.architecture=\(descriptor.architecture)
             target=\(target)
             """
+        if let sdkPath     { configuration += "\nsdkPath=\(sdkPath)" }
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         return ProcessInput(inputValues: [
@@ -106,6 +108,61 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         _ = try makeTool().process(input: try makeInput(sourcePath: "src/hello.c", cStandard: "c17", cxxStandard: "c++20"))
         XCTAssertTrue(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
         XCTAssertFalse(executor.lastArguments.contains("-std=c++20"), "got \(executor.lastArguments)")
+    }
+
+    // MARK: - What a rejected argument says (B-98)
+
+    // clang's complaint names the argument it rejected and never the setting that produced
+    // it, so the reader is left holding a triple they did not type. The failed output
+    // carries clang's line and then the key and value behind it.
+
+    private func failureMessage(_ output: ProcessOutput, port: String) throws -> String {
+        guard case .noValue(.error(let hash)) = output.outputValues[port] else {
+            XCTFail("expected an error on \(port), got \(String(describing: output.outputValues[port]))")
+            return ""
+        }
+        return try hash.resolveAsString()
+    }
+
+    func test_aTripleClangRejectsIsReportedWithTheSettingItCameFrom() throws {
+        executor.exitCode = 1
+        executor.errorOutput = "error: unknown target triple 'nonsense-triple'"
+
+        let output = try makeTool().process(input: try makeInput(target: "nonsense-triple"))
+
+        let message = try failureMessage(output, port: ClangPreprocessor.output)
+        XCTAssertTrue(message.contains("error: unknown target triple 'nonsense-triple'"), "got \(message)")
+        XCTAssertTrue(message.contains("`clang.preprocessor.target` is `nonsense-triple`"), "got \(message)")
+        XCTAssertTrue(message.contains("clang -print-target-triple"), "got \(message)")
+    }
+
+    func test_anSDKPathClangCannotFindIsReportedWithTheSettingItCameFrom() throws {
+        executor.exitCode = 1
+        executor.errorOutput = """
+            clang: warning: no such sysroot directory: '/no/such/sdk' [-Wmissing-sysroot]
+            src/hello.c:1:10: fatal error: 'stdio.h' file not found
+            """
+
+        let output = try makeTool().process(input: try makeInput(sdkPath: "/no/such/sdk"))
+
+        let message = try failureMessage(output, port: ClangPreprocessor.output)
+        XCTAssertTrue(message.contains("`clang.preprocessor.sdkPath` is `/no/such/sdk`"), "got \(message)")
+        XCTAssertTrue(message.contains("xcrun --sdk <name> --show-sdk-path"), "got \(message)")
+    }
+
+    /// An ordinary compile error is about the source, not the command line, and gains
+    /// nothing: a sentence about the target under every broken file would be noise.
+    func test_anErrorInTheSourceNamesNoSetting() throws {
+        executor.exitCode = 1
+        executor.errorOutput = "src/hello.c:1:1: error: unknown type name 'itn'"
+
+        let output = try makeTool().process(input: try makeInput())
+
+        let message = try failureMessage(output, port: ClangPreprocessor.output)
+        XCTAssertEqual(message, """
+            clang exited with status 1:
+            src/hello.c:1:1: error: unknown type name 'itn'
+            """)
     }
 
     // MARK: - Which language a file is

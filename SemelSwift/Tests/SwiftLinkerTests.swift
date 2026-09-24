@@ -334,4 +334,65 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
 
         XCTAssertNil(executor.invocations.last?.environment["ZERO_AR_DATE"])
     }
+
+    // MARK: - What a rejected argument says (B-98)
+
+    private func failureMessage(_ output: ProcessOutput) throws -> String {
+        guard case .noValue(.error(let hash)) = output.outputValues[SwiftLinker.output] else {
+            XCTFail("a failed link carries an error: \(String(describing: output.outputValues))")
+            return ""
+        }
+        return try hash.resolveAsString()
+    }
+
+    func test_aTripleSwiftcRejectsIsReportedWithTheSettingItCameFrom() throws {
+        executor.exitCode = 1
+        executor.errorOutput = "error: unknown target 'nonsense'"
+
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                                 extraConfiguration: ["target=nonsense"]))
+
+        let message = try failureMessage(output)
+        XCTAssertTrue(message.contains("`swift.linker.target` is `nonsense`"), "got \(message)")
+        XCTAssertTrue(message.contains("swiftc -print-target-info -target nonsense"), "got \(message)")
+    }
+
+    /// The link names the SDK by the key that chose it, not by the path xcrun resolved.
+    func test_anSDKSwiftcCannotLoadIsReportedWithTheSettingThatNamesIt() throws {
+        executor.exitCode = 1
+        executor.errorOutput = """
+            <unknown>:0: warning: using sysroot for 'MacOSX' but targeting 'iPhone'
+            <unknown>:0: error: unable to load standard library for target 'arm64-apple-ios17.0'
+            """
+
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"]))
+
+        let message = try failureMessage(output)
+        XCTAssertTrue(message.contains("`swift.linker.sdk` is `macosx`"), "got \(message)")
+        XCTAssertTrue(message.contains("xcrun --sdk macosx --show-sdk-path"), "got \(message)")
+    }
+
+    /// An error in what was linked is not about the command line.
+    func test_anErrorInTheObjectsNamesNoSetting() throws {
+        executor.exitCode = 1
+        executor.errorOutput = """
+            Undefined symbols for architecture arm64:
+              "_missing", referenced from:
+                  _main in a.o
+            ld: symbol(s) not found for architecture arm64
+            clang: error: linker command failed with exit code 1 (use -v to see invocation)
+            """
+
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                                 extraConfiguration: ["target=arm64-apple-macos14.0"]))
+
+        XCTAssertEqual(try failureMessage(output), """
+            swiftc exited with status 1:
+            Undefined symbols for architecture arm64:
+              "_missing", referenced from:
+                  _main in a.o
+            ld: symbol(s) not found for architecture arm64
+            clang: error: linker command failed with exit code 1 (use -v to see invocation)
+            """)
+    }
 }

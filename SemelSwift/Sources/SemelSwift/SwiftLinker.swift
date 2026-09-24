@@ -203,6 +203,10 @@ struct SwiftLinker: Node {
         let outputName = inputs.configuration.outputName
 
         var arguments = [String]()
+        // The arguments built from settings, collected as they are appended so a swiftc
+        // diagnostic about one of them can name the key behind it (B-98).
+        var settings = [SettingArgument]()
+        let namespace = SwiftLinkerConfiguration.settingNamespace
 
         switch inputs.configuration.linkage {
         case .executable:     break
@@ -228,10 +232,12 @@ struct SwiftLinker: Node {
         }
         arguments.append("-sdk")
         arguments.append(sdkPath)
+        settings.append(.swiftSDK(key: "\(namespace).sdk", value: sdk))
 
         if let target = inputs.configuration.target {
             arguments.append("-target")
             arguments.append(target)
+            settings.append(.swiftTarget(key: "\(namespace).target", value: target))
         }
 
         for objectFile in inputs.objectFiles {
@@ -261,7 +267,7 @@ struct SwiftLinker: Node {
         let mode: UInt16 = inputs.configuration.linkage == .executable ? FileMetadata.executableMode : FileMetadata.defaultMode
         let metadataJSON = (try? FileMetadata(mode: mode).jsonString()) ?? "{}"
 
-        return .init(output: try result.asOutputNodeValue(),
+        return .init(output: try result.asOutputNodeValue(tool: "swiftc", settings: settings),
                      infoLog: .value(try result.infoOutput.intern()),
                      fileMetadata: .value(try metadataJSON.intern()),
                      librariesSpecs: librariesSpecs)

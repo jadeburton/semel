@@ -34,6 +34,31 @@ final class ToolFailureMessageTests: XCTestCase {
             """)
     }
 
+    func test_aSettingTheToolComplainedAboutIsNamedAfterItsOutput() {
+        let failed = result(exitCode: 1, stderr: "error: unknown target triple 'nonsense-triple'")
+
+        XCTAssertEqual(failed.failureMessage(tool: "clang",
+                                             settings: [.clangTarget(key: "clang.preprocessor.target",
+                                                                     value: "nonsense-triple")]),
+                       """
+                       clang exited with status 1:
+                       error: unknown target triple 'nonsense-triple'
+                       `clang.preprocessor.target` is `nonsense-triple`; `clang -print-target-triple` prints the triple this toolchain builds for when none is given.
+                       """)
+    }
+
+    func test_aSettingTheToolSaidNothingAboutAddsNothing() {
+        let failed = result(exitCode: 1, stderr: "bad.c:1:1: error: unknown type name 'itn'")
+
+        XCTAssertEqual(failed.failureMessage(tool: "clang",
+                                             settings: [.clangTarget(key: "clang.preprocessor.target",
+                                                                     value: "arm64-apple-macos14.0")]),
+                       """
+                       clang exited with status 1:
+                       bad.c:1:1: error: unknown type name 'itn'
+                       """)
+    }
+
     func test_theTreeAndOutputValuesCarryTheSameMessage() throws {
         let failed = result(exitCode: 2, stdout: "error: it broke")
 

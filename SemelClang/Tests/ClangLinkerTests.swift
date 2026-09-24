@@ -169,4 +169,81 @@ final class ClangLinkerTests: SemelClangTestCase {
         let value = try XCTUnwrap(output.outputValues[ClangLinker.output])
         XCTAssertTrue(value.isNoValue, "a failed link must not publish a binary")
     }
+
+    // MARK: - What a rejected argument says (B-98)
+
+    private func failureMessage(_ output: ProcessOutput) throws -> String {
+        guard case .noValue(.error(let hash)) = output.outputValues[ClangLinker.output] else {
+            XCTFail("a failed link carries an error: \(String(describing: output.outputValues))")
+            return ""
+        }
+        return try hash.resolveAsString()
+    }
+
+    func test_aTripleClangRejectsIsReportedWithTheSettingItCameFrom() throws {
+        executor.exitCode = 1
+        executor.errorOutput = "error: unknown target triple 'nonsense-triple'"
+
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                                 extraConfiguration: ["target": "nonsense-triple"]))
+
+        let message = try failureMessage(output)
+        XCTAssertTrue(message.contains("`clang.linker.target` is `nonsense-triple`"), "got \(message)")
+        XCTAssertTrue(message.contains("clang -print-target-triple"), "got \(message)")
+    }
+
+    /// The SDK path reaches the linker as a search path, and the search path is what the
+    /// linker echoes: the one setting whose own value identifies the complaint about it.
+    ///
+    /// A missing search path does not fail the link on its own — the driver hands `ld` a
+    /// `-syslibroot` for the machine's default SDK, so `-lSystem` resolves from there and
+    /// the run only warns. So the sentence appears where a reader needs it: on a link that
+    /// failed for another reason while the declared SDK was quietly doing nothing. This is
+    /// what `clang -target arm64-apple-macos14.0 -L . -L /no/such/sdk/usr/lib -lSystem
+    /// -nostdlib -Xlinker -oso_prefix -Xlinker . und.o -o output.dylib` prints — this
+    /// node's own argument shape, against an object with an undefined symbol.
+    func test_aSearchPathTheLinkerCannotFindIsReportedWithTheSDKSetting() throws {
+        executor.exitCode = 1
+        executor.errorOutput = """
+            ld: warning: search path '/no/such/sdk/usr/lib' not found
+            Undefined symbols for architecture arm64:
+              "_missing", referenced from:
+                  _main in und.o
+            ld: symbol(s) not found for architecture arm64
+            clang: error: linker command failed with exit code 1 (use -v to see invocation)
+            """
+
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                                 extraConfiguration: ["sdkPath": "/no/such/sdk"]))
+
+        let message = try failureMessage(output)
+        XCTAssertTrue(message.contains("`clang.linker.sdkPath` is `/no/such/sdk`"), "got \(message)")
+        XCTAssertTrue(message.contains("xcrun --sdk <name> --show-sdk-path"), "got \(message)")
+    }
+
+    /// An error in what was linked is not about the command line. The same failure as
+    /// above with the same declared SDK, minus the warning that the SDK's search path was
+    /// missing: without the linker's own word about it, the SDK is not named.
+    func test_anErrorInTheObjectsNamesNoSetting() throws {
+        executor.exitCode = 1
+        executor.errorOutput = """
+            Undefined symbols for architecture arm64:
+              "_missing", referenced from:
+                  _main in a.o
+            ld: symbol(s) not found for architecture arm64
+            clang: error: linker command failed with exit code 1 (use -v to see invocation)
+            """
+
+        let output = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                                 extraConfiguration: ["sdkPath": "/no/such/sdk"]))
+
+        XCTAssertEqual(try failureMessage(output), """
+            clang exited with status 1:
+            Undefined symbols for architecture arm64:
+              "_missing", referenced from:
+                  _main in a.o
+            ld: symbol(s) not found for architecture arm64
+            clang: error: linker command failed with exit code 1 (use -v to see invocation)
+            """)
+    }
 }
