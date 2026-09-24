@@ -220,7 +220,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         XCTAssertFalse(stillExists(nodeID), "an unreferenced deleted file should be collected")
     }
 
-    /// A file that is still wired to a consumer stays in the graph as a `[missing]` ghost:
+    /// A file that is still wired to a consumer stays in the graph as a `[deleted]` ghost:
     /// the build still refers to it, so removing the node would break the graph.
     func test_removingAReferencedFileLeavesAGhostRatherThanCollectingIt() throws {
         let file = try pushFile("src/hello.c")

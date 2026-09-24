@@ -89,6 +89,7 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
         guard case .list(let entries) = listed else {
             return XCTFail("expected list, got \(listed)")
         }
+        XCTAssertFalse(entries.isEmpty, "the ghosts are what is being checked")
         XCTAssertTrue(entries.allSatisfy { $0.status == .deleted }, "\(entries)")
     }
 

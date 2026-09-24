@@ -11,6 +11,11 @@ public protocol Pinnable {
     /// The port value the pin is read from: a node is pinned when that port carries a
     /// value, and when it does not, the reason is what a listing has to say about it.
     var pinnedValue: NodeValue? { get throws }
+
+    /// What a listing says about this node. A requirement rather than a convenience, so
+    /// that a type whose port says something on another node's behalf can answer for
+    /// itself — which is what an artifact, pinned by an input, has to do.
+    var listedState: FileWildcardEntryState { get throws }
 }
 
 extension Pinnable {
@@ -23,13 +28,11 @@ extension Pinnable {
         }
     }
 
-    /// What a listing says about this node, from the same port the pin is read from.
+    /// A node's own port is its own state: a name with no port behind it at all has had
+    /// nothing produced for it.
     public var listedState: FileWildcardEntryState {
         get throws {
-            guard let pinnedValue = try pinnedValue else {
-                return .notProduced
-            }
-            return FileWildcardEntryState(pinnedValue)
+            try pinnedValue.map(FileWildcardEntryState.init) ?? .notProduced
         }
     }
 }
@@ -113,7 +116,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
         // than deleting immediately.  This matters when the engine hasn't yet wired this
         // file to its consumers (ClangCompiler etc.) — in that window hasNoOutputWires()
         // would be true even though the file IS referenced, causing the node to be destroyed
-        // instead of remaining as a [missing] ghost.  connectWire() automatically clears
+        // instead of remaining as a [deleted] ghost.  connectWire() automatically clears
         // the pendingDeletion flag if a wire is later connected, rescuing the node.
         if try hasNoOutputWires() {
             try database.node.updatePendingDeletion(nodeID: (try requireID()), pendingDeletion: true)

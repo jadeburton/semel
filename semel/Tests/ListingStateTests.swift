@@ -78,39 +78,27 @@ final class ListingStateTests: XCTestCase {
         return context.messages
     }
 
-    /// A product whose input carries a message of its own, wired the way a builder wires
-    /// one: the source stands in for whatever failed to produce the bytes.
-    private func wireFailedProduct(_ name: String) throws {
-        let (source, _)  = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')")
-            .findOrCreateMatchingNode()
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/made/\(name)')")
-            .findOrCreateMatchingNode()
+    private func connect(_ from: NodeRecord, _ fromPort: String,
+                         to: NodeRecord, _ toPort: String, named name: String) throws {
         try Wire.connectWire(database: engine.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
-        // Written after the wiring, which puts every output of its target back to pending.
-        try source.writeToOutputPort(StaticFile.outputPort,
-                                     value: .noValue(reason: .error(messageDataObjectHash: try "the tool failed".intern())))
-        engine.waitUntilIdleBlocking()
+                             fromNodeID: try from.requireID(),
+                             fromSymbolID: fromPort.asSymbolID(),
+                             toNodeID: try to.requireID(),
+                             toSymbolID: toPort.asSymbolID(),
+                             name: name.asSymbolID())
     }
 
-    /// A product nothing has produced: the source the formula names was never pushed, so
-    /// its port holds the state of a value nobody has made and the product reads that.
-    private func wireUnproducedProduct(_ name: String) throws {
+    /// A product under `output:/made` reading one source, and the source it reads. Left as a
+    /// source nobody has pushed, which is the state a formula naming a file leaves behind.
+    @discardableResult
+    private func wireProduct(_ name: String) throws -> NodeRecord {
         let (source, _)  = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')")
             .findOrCreateMatchingNode()
         let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/made/\(name)')")
             .findOrCreateMatchingNode()
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
+        try connect(source, StaticFile.outputPort, to: product, OutputFile.inputPort, named: "product")
         engine.waitUntilIdleBlocking()
+        return source
     }
 
     // MARK: - The states
@@ -129,8 +117,11 @@ final class ListingStateTests: XCTestCase {
     }
 
     /// A source the user removed while something still names it stands until the collector
-    /// reaches it. The word says it is going, not that it failed.
-    func test_aRemovedSourceIsListedAsDeleted() throws {
+    /// reaches it. The word says it is going, not that it failed — and the product that
+    /// cannot be made without it says the other thing, because what the user removed is a
+    /// source and not an artifact. Here the product is wired straight to the source, so its
+    /// input carries the removal itself.
+    func test_aRemovedSourceIsListedAsDeletedAndItsProductAsFailed() throws {
         interpreter.handleCommand("build src")
 
         interpreter.handleCommand("rm src/main.c")
@@ -140,11 +131,41 @@ final class ListingStateTests: XCTestCase {
             "-rw-r--r--         -  main.c  [deleted]",
             "-rw-r--r--        47  semel.fmla",
         ])
+        XCTAssertEqual(try lines(.output, "src"), [
+            "-rw-r--r--         -  main.txt  [failed]",
+        ])
+    }
+
+    /// The shape every real build has: something stands between the source and the product.
+    /// A node that demands its input is stopped by a removed source the way a compiler is,
+    /// and publishes a failure of its own — so the product reads the same word it reads when
+    /// it is wired straight to the source. One user action, one word, whatever the distance.
+    func test_aProductBehindABuilderWhoseSourceWasRemovedIsListedAsFailed() throws {
+        interpreter.handleCommand("push src")
+        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/src/main.c')")
+            .findOrCreateMatchingNode()
+        let (builder, _) = try GraphSpecNode.parse("TreeBuilder()").findOrCreateMatchingNode()
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/made/bundle.tree')")
+            .findOrCreateMatchingNode()
+        try connect(source, StaticFile.outputPort, to: builder, TreeBuilder.inputPort, named: "main.c")
+        try connect(builder, TreeBuilder.outputPort, to: product, OutputFile.inputPort, named: "product")
+        engine.waitUntilIdleBlocking()
+
+        interpreter.handleCommand("rm src/main.c")
+        interpreter.handleCommand("wait")
+
+        XCTAssertEqual(try lines(.output, "made"), [
+            "-rw-r--r--         -  bundle.tree  [failed]",
+        ])
     }
 
     /// A product whose input is in error is a failure to act on, and says so.
     func test_aProductWhoseInputFailedIsListedAsFailed() throws {
-        try wireFailedProduct("broken.a")
+        let source = try wireProduct("broken.a")
+        // Written after the wiring, which puts every output of its target back to pending.
+        try source.writeToOutputPort(StaticFile.outputPort,
+                                     value: .noValue(reason: .error(messageDataObjectHash: try "the tool failed".intern())))
+        engine.waitUntilIdleBlocking()
 
         XCTAssertEqual(try lines(.output, "made"), [
             "-rw-r--r--         -  broken.a  [failed]",
@@ -153,7 +174,7 @@ final class ListingStateTests: XCTestCase {
 
     /// A product whose input has never had a value is neither failing nor going away.
     func test_aProductWhoseInputWasNeverProducedIsListedAsNotProduced() throws {
-        try wireUnproducedProduct("unpushed.a")
+        try wireProduct("unpushed.a")
 
         XCTAssertEqual(try lines(.output, "made"), [
             "-rw-r--r--         -  unpushed.a  [not produced]",

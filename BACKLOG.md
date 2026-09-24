@@ -276,7 +276,10 @@ updates. A third: `NodeRecord.readFromOutputPort` fabricates `error("No value ev
 existed")` when a port row is absent, which `writePendingToAllOutputsOfNode` makes
 impossible — so it is a node holding fewer port rows than its descriptor declares, a
 finding `check` should name, and the read should throw rather than invent a sentence
-nobody can act on.
+nobody can act on. A fourth, one surface over: `OutputFile.describeValue` folds five
+`NoValueReason` cases onto the single word `Error`, so a product the build announces as
+`output:/x: Error` is the one `ls` calls `[not produced]` — the same word-for-several-states
+problem B-74 settled for the listing, still in the build's own notices.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**

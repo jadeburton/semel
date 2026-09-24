@@ -33,8 +33,12 @@ public final class InternalFileSystemLister: FileWildcardMatcherInput {
                     assert(false)
                     throw NodeError.other(message: "Unexpected object kind")
                 }
-                // A folder under `output:` cannot be pinned: it is made by a build rather
-                // than pushed, so the pin is not a state anyone can read anything from.
+                // A folder under `output:` is made by a build rather than pushed, so its pin
+                // is not a state anyone can read anything from. `didCreate` gives such a
+                // folder a value on that port, but the version migration restates a
+                // preserved node's ports from its kind and port name alone, without asking
+                // `canBePinned()` — so a graph carried across an upgrade can hold one
+                // sitting on `initializing`, and this is what keeps that out of a listing.
                 let isOutputFileSystem = try folder.thisNode
                     .buildFullPathName(baseNodeID: nil)
                     .firstComponent == Folder.outputFileSystemName

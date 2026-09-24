@@ -29,10 +29,10 @@ extension RequestHandler {
     /// Which of them a name can show depends on which file system it is in. A source under
     /// `input:` has no inputs and is never scheduled, so it is there, `deleted` once the
     /// user removes it, or waiting for a push that may never come. An artifact under
-    /// `output:` is pinned by its *input* port, so it shows whatever the node that builds it
-    /// says: the built value, `pending` mid-build, `failed` from a failure at or above the
-    /// builder, nothing produced when a source the formula names was never pushed, and
-    /// `deleted` when a source wired straight to it was taken away.
+    /// `output:` is pinned by its *input* port and shows what the node that builds it says:
+    /// the built value, `pending` mid-build, `failed` from anything that stopped it — a
+    /// removed source included — or nothing produced when a source the formula names was
+    /// never pushed. `deleted` belongs to `input:`, where the user's own hand put it.
     private func status(for state: FileWildcardEntryState) -> EntryStatus {
         switch state {
         case .present:     return .none
