@@ -9,8 +9,14 @@
 // a reader is handed the enum's debug form — `other(message: "…\n…")`, one line, quoted,
 // with every newline escaped — instead of the words the node wrote.
 
+import SemelDatabaseModels
+
 public enum NodeError: Error, CustomStringConvertible {
     case nodeNotFound
+    /// A node holding no row for an output port its type declares. Every node is given one
+    /// per declared port when it is created, so this is a graph something damaged — not a
+    /// port that has yet to be written, which holds a state of its own.
+    case outputPortMissing(nodeID: ObjectID, port: String)
     case onlyOneWireShouldBeConnectedToInput
     /// Thrown by `expectValue()` when the value asked for is not there to be had. These
     /// three are control flow rather than messages: the engine turns each into the
@@ -43,6 +49,7 @@ public enum NodeError: Error, CustomStringConvertible {
         case .inputValueInError:     return .inputInError
 
         case .nodeNotFound,
+             .outputPortMissing,
              .onlyOneWireShouldBeConnectedToInput,
              .other,
              .processNotSupported,
@@ -58,6 +65,9 @@ public enum NodeError: Error, CustomStringConvertible {
         switch self {
         case .nodeNotFound:
             return "there is no such node"
+        case .outputPortMissing(let nodeID, let port):
+            return "node #\(nodeID) holds no row for its output port '\(port)', which its type declares, so the "
+                 + "graph is damaged; `check` names every such port and `reset` rebuilds the graph"
         case .onlyOneWireShouldBeConnectedToInput:
             return "an input port takes one wire, and more than one is connected"
         case .inputValueInError:

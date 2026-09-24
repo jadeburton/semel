@@ -33,6 +33,10 @@ public struct GraphCheck {
     public enum Kind: String, Equatable, Sendable {
         /// A wire whose endpoint node, or whose port on one of them, is gone.
         case danglingWire
+        /// A node holding no row for an output port its type declares. Every node is given
+        /// one per declared port when it is created, so a missing row is a node something
+        /// has damaged, and a read of that port has nothing true to answer.
+        case missingOutputPort
         /// A node whose `graphSpec` cannot be read back, or which has none at all.
         case unreadableGraphSpec
         /// A node whose `graphSpec` names a type this server does not link.
@@ -124,6 +128,7 @@ public struct GraphCheck {
 
         var findings: [Finding] = []
         if context.canRun(.nodes, .wires)    { findings += danglingWires(context) }
+        if context.canRun(.nodes)            { findings += missingOutputPorts(context) }
         if context.canRun(.nodes)            { findings += graphSpecs(context) }
         if context.canRun(.nodes, .wires)    { findings += productsWithNoProducer(context) }
         if context.canRun(.nodes, .metadata) { findings += folderManifests(context) }
@@ -163,7 +168,8 @@ public struct GraphCheck {
         /// checks by.
         var checksItCarries: [String] {
             switch self {
-            case .nodes:    return ["wires", "graph specs", "products", "folder manifests", "error ports"]
+            case .nodes:    return ["wires", "output ports", "graph specs", "products", "folder manifests",
+                                    "error ports"]
             case .wires:    return ["wires", "products"]
             case .metadata: return ["folder manifests"]
             }
@@ -332,13 +338,20 @@ public struct GraphCheck {
                 continue
             }
 
+            // The from-port is asked both questions: whether its row is there, and whether
+            // the type declares it. A port dropped from a type leaves its row behind, and
+            // the row alone would pass a wire that nothing will ever write to again.
+            let fromPortName = context.name(ofSymbol: wire.fromSymbolID)
             let fromPort = context.read("the output-port table") {
                 try context.database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
             } ?? nil
             if fromPort == nil {
                 findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
-                                        sentence: "\(Self.subject(fromNode)) has no output port "
-                                                + "'\(context.name(ofSymbol: wire.fromSymbolID))'"))
+                                        sentence: "\(Self.subject(fromNode)) has no output port '\(fromPortName)'"))
+            } else if let descriptor = descriptor(ofKind: fromNode.kind),
+                      !descriptor.outputPorts.contains(fromPortName) {
+                findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
+                                        sentence: "\(Self.subject(fromNode)) declares no output port '\(fromPortName)'"))
             }
 
             // Only when the type is linked: a node whose type is gone declares no ports at
@@ -348,6 +361,39 @@ public struct GraphCheck {
                !descriptor.inputPorts.contains(where: { $0.name == toPortName }) {
                 findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
                                         sentence: "\(Self.subject(toNode)) declares no input port '\(toPortName)'"))
+            }
+        }
+
+        return findings
+    }
+
+    // MARK: - A port its type declares and the node holds no row for
+
+    /// Every output port a linked type declares, against the rows its node holds. A node
+    /// is given one row per declared port when it is created, and only its own deletion
+    /// takes them away — so a declared port with no row is a node something damaged, and
+    /// a read of that port has no value, no state and no message to answer with.
+    ///
+    /// Only when the type is linked, for the reason `danglingWires` gives: a node whose
+    /// type is gone declares no ports, and `unlinkedNodeType` is the finding that says so.
+    private static func missingOutputPorts(_ context: Context) -> [Finding] {
+        var findings: [Finding] = []
+
+        for node in context.nodes {
+            guard let nodeID = node.id, let descriptor = descriptor(ofKind: node.kind),
+                  let rows = (context.read("the output-port table") {
+                      try context.database.outputPort.selectAll(nodeID: nodeID)
+                  }) else {
+                continue
+            }
+            let heldSymbolIDs = Set(rows.map(\.nameSymbolID))
+            for portName in descriptor.outputPorts {
+                if let symbolID = context.symbolID(ofName: portName), heldSymbolIDs.contains(symbolID) {
+                    continue
+                }
+                findings.append(Finding(kind: .missingOutputPort, subject: subject(node),
+                                        sentence: "its type declares the output port '\(portName)', "
+                                                + "and it holds no row for it"))
             }
         }
 

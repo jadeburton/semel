@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsEight() {
-        XCTAssertEqual(ProtocolVersion.current, 8)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 8, "a hello sent with no version named speaks the current one")
+    func test_currentProtocolVersionIsNine() {
+        XCTAssertEqual(ProtocolVersion.current, 9)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 9, "a hello sent with no version named speaks the current one")
     }
 
     func test_encodesSettledEvent() throws {
@@ -189,7 +189,7 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_roundTripsEveryCheckFindingKind() throws {
-        let kinds: [CheckFinding.Kind] = [.danglingWire, .unreadableGraphSpec, .unlinkedNodeType,
+        let kinds: [CheckFinding.Kind] = [.danglingWire, .missingOutputPort, .unreadableGraphSpec, .unlinkedNodeType,
                                           .productWithNoProducer, .missingManifestChild,
                                           .errorWithoutMessage, .unreadableCacheKey,
                                           .graphCouldNotBeRead]
