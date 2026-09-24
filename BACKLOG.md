@@ -16,21 +16,6 @@ the toolchain, SDK and system libraries, reset between builds. The container dig
 input?" stops being a question only an audit can answer. Also the natural home for the
 Remote Runner role (B-30).
 
-**B-100** `open` — **What the dictionary-order scan does not see.**
-`DictionaryOrderTests` gates every `for … in <dictionary>`, `keys`/`values` walk and
-two-binding closure over a dictionary in the scanned sources against an allowlist with a
-reason per site. Outside its sight: `Array(someSet)` and any other set-to-sequence
-conversion, which has the same per-process seed problem; a subject sorted two or more
-lines away from its walk (the scan consults the adjacent line only), and the converse, an
-adjacent `.sorted` that sorts some other receiver, which the scan takes as covering the
-walk; and a dictionary passed to a function that walks it elsewhere. Also found by the audit and left alone:
-`ClangIncludeFinder` appends each source's include list to its output with no separator,
-so two sources on one port would run their last and first paths together — unreachable
-through the generated spec, which gives every finder one source, but a hand-written
-formula could reach it. To do: extend the scan to set conversions, or decide they are
-covered by the two-process end-to-end diff and say so here; put a separator (or a
-per-source structure) in the finder's output and a test with two sources on one port.
-
 **B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
 Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,
 hostname, wall-clock. Any output difference means the key is under-specified. The systematic
