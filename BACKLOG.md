@@ -225,23 +225,6 @@ cache, 0 errors`) instead of printing them through `Debug.log`. `docs/tutorial/f
 Part 2 reads the server's debug log for exactly this reason and should be rewritten around
 the summary once it exists.
 
-**B-93** `open` — **`reset` deletes the cache, which is the only reason it is expensive.**
-`BuildEngine+Reset.swift` keeps the input file system, the output root and `ProjectFinder`,
-deletes every other node, and then `cacheEntry.deleteAll()`. The graph is rebuildable from
-the input plus the cache, and the cache is content-addressed and keyed on nothing the
-graph's node IDs know about — so dropping it buys nothing except a cold build of every
-project in the home. Keep the cache: a `reset` then costs one pass of cache lookups, which
-makes it the cheap answer to a graph holding a node type the server no longer links (B-83)
-and to whatever else leaves a graph in a state nobody wants to debug. The one thing a cache
-wipe is for — an entry believed wrong — is a different command (`reset --cache`, or the
-integrity check `FUTURE.md` wants). Reopens the question B-40 dropped: with a cheap
-home-wide reset, per-project scoping may not be needed at all; with an expensive one, it is.
-`docs/tutorial/first-node.md` "Cleaning up" is the text this shortens. A reset is also
-the moment evidence is destroyed: move the graph aside (`graph.sqlite.broken-<date>`) instead
-of deleting it, and have the schema gate say the same, so the bug that made a reset
-necessary can still be read afterwards. Reset stays a repair command, not an everyday one;
-B-102 and B-103 are what keeps the everyday path from reaching it.
-
 ## Performance
 
 **B-74** `open` — **`[missing]` is one word for two states.**

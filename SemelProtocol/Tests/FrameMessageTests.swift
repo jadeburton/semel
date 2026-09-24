@@ -50,11 +50,11 @@ final class FrameMessageTests: XCTestCase {
     }
 
     func test_bodyDefaultsToEmpty() throws {
-        XCTAssertEqual(try Frame.request(.daemon(.reset), correlationID: 1).body, Data())
+        XCTAssertEqual(try Frame.request(.daemon(.reset(clearCache: false)), correlationID: 1).body, Data())
     }
 
     func test_readingTheWrongKindIsAnError() throws {
-        let frame = try Frame.request(.daemon(.reset), correlationID: 1)
+        let frame = try Frame.request(.daemon(.reset(clearCache: false)), correlationID: 1)
 
         XCTAssertThrowsError(try frame.response()) { error in
             XCTAssertEqual(error as? MessageError, .wrongKind(expected: .response, actual: .request))

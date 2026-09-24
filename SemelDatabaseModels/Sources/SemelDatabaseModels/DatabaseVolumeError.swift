@@ -58,8 +58,12 @@ public struct DatabaseVolumeError: UnrecoverableError {
 
                 \(underlying.message ?? "")
 
-                Nothing can repair this from inside the build. Delete the file and push your
-                sources again.
+                Nothing can repair this from inside the build. Move the file aside, with its
+                `-wal` and `-shm` siblings, and push your sources again:
+
+                    mv "\(location)"* <another directory>/
+
+                Those files are the only record of how the graph came to be damaged.
                 """
         }
         return """

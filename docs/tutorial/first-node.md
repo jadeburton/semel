@@ -581,11 +581,25 @@ says so:
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
 build again. That clears the error, though the server may keep printing a bare
 `The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` while a
-stale row survives. `reset` clears that, but it is not scoped to this tutorial. What you
-pushed is kept; everything built from it is discarded — every product and intermediate of
-every project in this home, and the whole cache — and then rebuilt from the pushed files. In
-the home you use day to day that is a cold build of everything, not only of `hello`; after
-it the stray line is gone for good.
+stale row survives. `reset` clears that. It is not scoped to this tutorial — what you
+pushed is kept, and everything built from it is discarded and rebuilt: every product and
+intermediate of every project in this home, not only of `hello`. The cached builds are
+kept, so that rebuild is a pass of cache lookups rather than a cold build. The graph it
+discards is copied aside first, and the reply says where:
+
+```
+reset
+```
+
+```
+Graph copied to /Users/you/Library/Application Support/semel/graph.sqlite.broken-2026-09-23T101500Z — yours to delete.
+Rebuild started.
+```
+
+That copy is the only record of the graph the reset threw away, and nothing removes it for
+you: delete it once you are sure you do not need it. `reset --cache` discards the cached builds as well, which is the
+answer to a cached result you believe is wrong and costs a cold build of everything in the
+home.
 
 ## Where next
 

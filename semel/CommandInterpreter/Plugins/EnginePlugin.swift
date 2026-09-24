@@ -15,7 +15,7 @@ final class EnginePlugin: CommandPlugin {
         case "d", "debug":  try handleDebug(context: context)
         case "n", "nudge":  _ = try context.request(.nudge)
         case "e", "errors": try handleErrors(context: context)
-        case "reset":       try handleReset(context: context)
+        case "reset":       try handleReset(tokens: tokens, context: context)
         case "t", "tools":  try handleTools(tokens: tokens, context: context)
         case "wait":        try handleWait(context: context)
         default:            break
@@ -80,9 +80,26 @@ final class EnginePlugin: CommandPlugin {
 
     // MARK: - reset
 
-    private func handleReset(context: any CommandContext) throws {
-        _ = try context.request(.reset)
-        context.outputMessage("Rebuild started.")
+    /// `reset [--cache]`: discard the derived graph and rebuild it from what was pushed.
+    /// The cached builds are kept, so the rebuild is a pass of cache lookups; `--cache`
+    /// discards those too, which is the answer to an entry believed wrong and costs a cold
+    /// build of every project in this home.
+    private func handleReset(tokens: [String], context: any CommandContext) throws {
+        var clearCache = false
+        for token in tokens {
+            guard token == "--cache" else {
+                throw CommandParserError.unknownOption(command: "reset", option: token)
+            }
+            clearCache = true
+        }
+
+        let response = try context.request(.reset(clearCache: clearCache)).0
+        if case .reset(let archivedGraphPath) = response, let archivedGraphPath {
+            // Said with what to do about it: nothing prunes these copies, and a file in
+            // someone's home that nobody claims is a file nobody dares remove.
+            context.outputMessage("Graph copied to \(archivedGraphPath) — yours to delete.")
+        }
+        context.outputMessage(clearCache ? "Cache discarded. Rebuild started." : "Rebuild started.")
     }
 
     // MARK: - errors

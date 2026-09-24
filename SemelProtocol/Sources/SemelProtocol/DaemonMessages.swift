@@ -124,7 +124,11 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     case fetch(fileSystem: FileSystemKind, path: String)
     case errors
     case tools
-    case reset
+    /// Discards the derived graph and rebuilds it from what was pushed. `clearCache` also
+    /// discards the cached builds, which the rebuild would otherwise be served from: the
+    /// cache is keyed on the inputs and not on the graph, so keeping it makes a reset a
+    /// pass of lookups rather than a cold build of every project in the home.
+    case reset(clearCache: Bool)
     case nudge
     /// Blocks until the graph has settled: every scheduled node processed and nothing
     /// asking for another pass. The reply is `.ok`. What a script needs between a push
@@ -148,6 +152,10 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case fetch(mode: UInt16)
     case errors(records: [ErrorRecord])
     case tools(namespaces: [ToolNamespaceRecord])
+    /// Where the graph the reset discarded was copied to, so the state that made the reset
+    /// necessary can still be read. Absent when there was nothing to discard, and when the
+    /// server holds its graph in memory and has no file to copy.
+    case reset(archivedGraphPath: String?)
     /// The description of the graph travels in the frame body, as UTF-8. A few hundred
     /// nodes describe themselves in more than the megabyte the JSON section allows, and
     /// that cap is not a number to raise: a declared JSON length is checked before the

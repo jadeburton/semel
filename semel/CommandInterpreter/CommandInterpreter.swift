@@ -274,6 +274,7 @@ enum CommandParserError: Error, LocalizedError {
     case unknownCommand(String)
     case missingArgument(command: String, expected: String)
     case tooManyArguments(command: String)
+    case unknownOption(command: String, option: String)
 
     var errorDescription: String? {
         switch self {
@@ -283,6 +284,17 @@ enum CommandParserError: Error, LocalizedError {
             return "\(cmd): missing argument (\(expected))"
         case .tooManyArguments(let cmd):
             return "\(cmd): too many arguments"
+        case .unknownOption(let cmd, let option):
+            return "\(cmd): unknown option '\(option)'"
         }
     }
+}
+
+/// The interpreter prints `"\(error)"`, which reaches `description` and never
+/// `errorDescription`, so the sentences above are said through this.
+extension CommandParserError: CustomStringConvertible {
+    // Not `"\(self)"` as the fallback: interpolating a `CustomStringConvertible` calls
+    // `description`, so that would recurse. Every case answers a sentence, so it is a
+    // fallback no case reaches.
+    var description: String { errorDescription ?? "the command could not be parsed" }
 }

@@ -63,7 +63,7 @@ final class SocketConnectionTests: XCTestCase {
         }
         let connection = try SocketConnection.connect(to: socketPath)
 
-        let (response, body) = try connection.send(.daemon(.reset), body: nil)
+        let (response, body) = try connection.send(.daemon(.reset(clearCache: false)), body: nil)
 
         XCTAssertEqual(response, .daemon(.ok))
         XCTAssertNil(body)
@@ -159,10 +159,10 @@ final class SocketConnectionTests: XCTestCase {
         }
         let connection = try SocketConnection.connect(to: socketPath)
 
-        XCTAssertThrowsError(try connection.send(.daemon(.reset), body: nil)) { error in
+        XCTAssertThrowsError(try connection.send(.daemon(.reset(clearCache: false)), body: nil)) { error in
             XCTAssertEqual(error as? ConnectionError, .closed)
         }
-        XCTAssertThrowsError(try connection.send(.daemon(.reset), body: nil)) { error in
+        XCTAssertThrowsError(try connection.send(.daemon(.reset(clearCache: false)), body: nil)) { error in
             XCTAssertEqual(error as? ConnectionError, .closed)
         }
     }

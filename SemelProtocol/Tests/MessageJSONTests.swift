@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsFour() {
-        XCTAssertEqual(ProtocolVersion.current, 4)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 4, "a hello sent with no version named speaks the current one")
+    func test_currentProtocolVersionIsFive() {
+        XCTAssertEqual(ProtocolVersion.current, 5)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 5, "a hello sent with no version named speaks the current one")
     }
 
     // MARK: - Daemon requests
@@ -62,7 +62,12 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_encodesAPayloadFreeRequestAsAnEmptyObject() throws {
-        XCTAssertEqual(try json(Request.daemon(.reset)), #"{"daemon":{"reset":{}}}"#)
+        XCTAssertEqual(try json(Request.daemon(.nudge)), #"{"daemon":{"nudge":{}}}"#)
+    }
+
+    func test_encodesTheResetFlagUnderItsLabel() throws {
+        XCTAssertEqual(try json(Request.daemon(.reset(clearCache: true))),
+                       #"{"daemon":{"reset":{"clearCache":true}}}"#)
     }
 
     func test_encodesHelloRequestBesideTheRoles() throws {
@@ -82,7 +87,8 @@ final class MessageJSONTests: XCTestCase {
             .fetch(fileSystem: .output, path: "bin/app"),
             .errors,
             .tools,
-            .reset,
+            .reset(clearCache: false),
+            .reset(clearCache: true),
             .nudge,
             .wait,
             .debug,
@@ -122,6 +128,8 @@ final class MessageJSONTests: XCTestCase {
             .errors(records: [record]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),
+            .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
+            .reset(archivedGraphPath: nil),
             .debug,
         ]
         for response in responses {
@@ -218,7 +226,7 @@ final class MessageJSONTests: XCTestCase {
     /// A known role beside an unknown one must not decode silently as the known role; both
     /// keys belong in the error, sorted so the message is stable.
     func test_decodingAKnownRoleBesideAnUnknownOneNamesBoth() {
-        let data = Data(#"{"daemon":{"reset":{}},"cache":{}}"#.utf8)
+        let data = Data(#"{"daemon":{"nudge":{}},"cache":{}}"#.utf8)
 
         XCTAssertThrowsError(try MessageCoder.decode(Request.self, from: data)) { error in
             let message = Self.decodingMessage(of: error)

@@ -5,6 +5,7 @@
 //  Created by Jade Burton on 06.02.26.
 //
 
+import Foundation
 @preconcurrency import GRDB
 
 public protocol DataAccessType {
@@ -87,11 +88,16 @@ public final class DatabaseLayer {
         }
     }
 
-    private func translatingVolumeFailures<T>(_ work: () throws -> T) throws -> T {
+    /// `reporting` is the file the translated error names. It defaults to this database's
+    /// own, which is the file every read and write is against; a caller writing somewhere
+    /// else — a copy taken aside — passes that destination, so the message names the file
+    /// the failure was about.
+    private func translatingVolumeFailures<T>(reporting pathToReport: String? = nil,
+                                              _ work: () throws -> T) throws -> T {
         do {
             return try work()
         } catch {
-            throw DatabaseVolumeError.translating(error, filePath: filePath)
+            throw DatabaseVolumeError.translating(error, filePath: pathToReport ?? filePath)
         }
     }
 
@@ -170,6 +176,56 @@ public final class DatabaseLayer {
         try Symbol.createTable(dbQueue: dbQueue)
         try OutputPort.createTable(dbQueue: dbQueue)
         try Metadata.createTable(dbQueue: dbQueue)
+    }
+
+    // ── Copying the file aside ───────────────────────────────────────────────
+
+    /// Where a copy of this database taken with `suffix` goes: beside the original, under
+    /// the same name with `suffix` appended, and with `-2`, `-3` … appended again while a
+    /// file of that name is already there. A copy taken earlier is evidence, and evidence
+    /// is never overwritten — two copies taken inside the same second are two files. Nil
+    /// for an in-memory database, which has no file and no state worth keeping past the
+    /// process.
+    public func pathForCopyAside(suffix: String) -> String? {
+        guard let filePath else {
+            return nil
+        }
+        let preferredPath = filePath + suffix
+        guard FileManager.default.fileExists(atPath: preferredPath) else {
+            return preferredPath
+        }
+        var discriminator = 2
+        while FileManager.default.fileExists(atPath: "\(preferredPath)-\(discriminator)") {
+            discriminator += 1
+        }
+        return "\(preferredPath)-\(discriminator)"
+    }
+
+    /// Writes a self-contained copy of this database to `destinationPath`, which
+    /// `pathForCopyAside(suffix:)` answers.
+    ///
+    /// Through SQLite's own backup rather than a file copy: the database runs in WAL mode,
+    /// so committed rows live in `graph.sqlite-wal` until a checkpoint moves them, and
+    /// copying the one file alone would leave them out. The copy is written without WAL,
+    /// so it is one file that opens anywhere.
+    ///
+    /// Inside the same boundary every other access goes through, so a full or read-only
+    /// volume is reported as the machine's failure and not as a bare SQLite code — naming
+    /// the copy, since that is the file being written. What a failed copy wrote is removed:
+    /// half a database looks like evidence and is not.
+    public func copyAside(to destinationPath: String) throws {
+        try translatingVolumeFailures(reporting: destinationPath) {
+            do {
+                let destination = try DatabaseQueue(path: destinationPath)
+                try dbQueue.backup(to: destination)
+            } catch {
+                for path in [destinationPath, destinationPath + "-wal",
+                             destinationPath + "-shm", destinationPath + "-journal"] {
+                    try? FileManager.default.removeItem(atPath: path)
+                }
+                throw error
+            }
+        }
     }
 
     // ── Schema fingerprint ───────────────────────────────────────────────────

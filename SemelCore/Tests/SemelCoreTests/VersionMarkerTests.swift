@@ -158,6 +158,42 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try port.dataObjectHash?.resolveAsString(), "target=arm64")
     }
 
+    /// A plain `reset` keeps the cache, because the key covers the inputs. It says nothing
+    /// about which Semel computed the entry, so the rebuild a version change asks for has
+    /// to discard the entries too — otherwise it republishes the very artifacts the marker
+    /// exists to replace.
+    func test_aVersionChangeDiscardsTheCachedBuildsToo() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        try engine.database.cacheEntry.insert(.init(hash: "an-entry-built-by-the-older-semel",
+                                                    content: [UInt8]("{}".utf8),
+                                                    cost: 100,
+                                                    timestamp: Date()))
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.0-older")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertEqual(try engine.database.cacheEntry.count(), 0,
+                       "a new Semel may compute different outputs from the same inputs")
+    }
+
+    /// Nobody typed this reset, so nobody is watching a reply for the copy it leaves in the
+    /// home. It is said on the server's own channel instead — `Debug.log` is compiled out of
+    /// a release build, which would leave the file there unexplained.
+    func test_aVersionChangeSaysWhereTheGraphItDiscardedWent() throws {
+        let path   = try makeTemporaryDatabasePath()
+        let engine = try makeEngine(try DatabaseLayer(filePath: path))
+        let saidLines = LineRecorder()
+        engine.noticeReporter = { line in saidLines.record(line) }
+        _ = try makeDerivedNode()
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.0-older")
+
+        try engine.reconcileVersionMarkers()
+
+        let line = try XCTUnwrap(saidLines.lines.first, "the copy has to be announced")
+        XCTAssertTrue(line.contains(path + ".broken-"), "it names the copy, got: \(line)")
+        XCTAssertTrue(line.contains("yours to delete"), "it says whose the file is, got: \(line)")
+    }
+
     func test_theInputFileSystemSurvivesAVersionChange() throws {
         let engine = try makeEngine(try DatabaseLayer())
         let source = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
@@ -176,6 +212,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
             .appendingPathComponent("semel-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
         return folder.appendingPathComponent("graph.sqlite").path
     }
 
@@ -244,4 +281,29 @@ final class VersionMarkerTests: SemelCoreTestCase {
                           "the user has to know which file to delete, got: \(schemaError.unrecoverableDescription)")
         }
     }
+
+    /// The graph a reset discards is copied aside rather than dropped, and the file this
+    /// gate stops on is the same evidence. What it asks the user to do has to agree.
+    func test_aChangedSchemaAsksForTheFileToBeMovedAsideRatherThanDeleted() {
+        let error = DatabaseSchemaChangedError(filePath: "/tmp/semel-home/graph.sqlite")
+
+        XCTAssertTrue(error.unrecoverableDescription.contains("Move that file aside"),
+                      error.unrecoverableDescription)
+        XCTAssertFalse(error.unrecoverableDescription.lowercased().contains("delete"),
+                       "deleting the file destroys the only record of the broken graph")
+        // Committed rows live in the write-ahead log until a checkpoint, so a move that
+        // leaves the siblings behind loses the newest evidence and hands a stale log to
+        // the database SQLite creates next at the same path.
+        XCTAssertTrue(error.unrecoverableDescription.contains("-wal"),
+                      "the siblings move with it: \(error.unrecoverableDescription)")
+        XCTAssertTrue(error.unrecoverableDescription.contains("-shm"),
+                      error.unrecoverableDescription)
+    }
+}
+
+/// Collects what was said on a channel a test swapped out, as a reference so the closure
+/// that records has something to write into.
+final class LineRecorder {
+    private(set) var lines: [String] = []
+    func record(_ line: String) { lines.append(line) }
 }

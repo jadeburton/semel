@@ -76,9 +76,14 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
     // MARK: - Engine verbs
 
-    func test_resetAndNudgeAnswerOk() throws {
-        XCTAssertEqual(try daemon(.reset).0, .ok)
+    func test_nudgeAnswersOk() throws {
         XCTAssertEqual(try daemon(.nudge).0, .ok)
+    }
+
+    /// The reply names the copy of the graph the reset left behind. The fixture's graph is
+    /// in memory and has no file, so there is no path to name.
+    func test_resetAnswersWithWhereTheDiscardedGraphWent() throws {
+        XCTAssertEqual(try daemon(.reset(clearCache: false)).0, .reset(archivedGraphPath: nil))
     }
 
     /// The fixture engine has no processing loop, so there is nothing to settle and the
