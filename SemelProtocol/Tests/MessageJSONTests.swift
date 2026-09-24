@@ -143,18 +143,21 @@ final class MessageJSONTests: XCTestCase {
             .reset(archivedGraphPath: "/tmp/semel-home/graph.sqlite.broken-2026-09-23T101500Z"),
             .reset(archivedGraphPath: nil),
             .debug,
-            .check,
+            .check(scheduledNodes: 0),
+            .check(scheduledNodes: 12),
         ]
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
         }
     }
 
-    /// The findings are the reply's *body*, so the reply itself carries nothing — a graph
-    /// with a broken invariant per node would otherwise put the reply over the cap on a
-    /// frame's JSON, in the one command that exists for a graph in that state.
+    /// The findings are the reply's *body*, so the reply itself carries only the count of
+    /// scheduled nodes — a graph with a broken invariant per node would otherwise put the
+    /// reply over the cap on a frame's JSON, in the one command that exists for a graph in
+    /// that state.
     func test_encodesTheCheckReplyWithoutItsFindings() throws {
-        XCTAssertEqual(try json(Response.daemon(.check)), #"{"daemon":{"check":{}}}"#)
+        XCTAssertEqual(try json(Response.daemon(.check(scheduledNodes: 12))),
+                       #"{"daemon":{"check":{"scheduledNodes":12}}}"#)
     }
 
     func test_encodesACheckFindingAsKindSubjectAndSentence() throws {

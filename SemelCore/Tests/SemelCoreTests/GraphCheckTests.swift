@@ -78,7 +78,58 @@ final class GraphCheckTests: SemelCoreTestCase {
     func test_aHealthyGraphYieldsNoFindings() throws {
         try makeHealthyGraph()
 
-        XCTAssertEqual(GraphCheck.run(database: database), [])
+        XCTAssertEqual(GraphCheck.run(database: database).findings, [])
+    }
+
+    // MARK: - Which graph the findings are about
+
+    /// Counted from the same read as the findings, because it is what decides how to read
+    /// them: a node the engine has not finished wiring looks exactly like a node whose
+    /// wiring is missing, and only this number tells the two apart.
+    func test_theReportCountsTheNodesThatWereStillScheduled() throws {
+        let node = try makeConfiguration(role: "source")
+
+        let scheduled = GraphCheck.run(database: database).scheduledNodeCount
+        XCTAssertGreaterThan(scheduled, 0, "a node that declares inputs is scheduled when it is created")
+
+        try database.node.updateScheduled(nodeID: try node.requireID(), scheduled: false)
+
+        XCTAssertEqual(GraphCheck.run(database: database).scheduledNodeCount, scheduled - 1)
+    }
+
+    // MARK: - One read for the whole walk
+
+    /// The walk happens inside `withReadSnapshot`, so the nodes and the wires are one
+    /// state. Outside one they are two, and a node created between the two scans leaves a
+    /// wire that appears to point at nothing — a `danglingWire` finding against a graph
+    /// that is perfectly sound, in a command the harness runs after every build.
+    ///
+    /// What makes it a snapshot is that `DatabaseQueue` is serial: the block holds the
+    /// queue, so a writer cannot land inside it. That is what this asserts — and the last
+    /// line is what keeps it from passing vacuously, by proving the writer really did run
+    /// and really was held off until the block ended.
+    func test_aReadSnapshotHoldsOffAWriterForItsWholeBlock() throws {
+        let startWriter = DispatchSemaphore(value: 0)
+        let writerDone  = DispatchSemaphore(value: 0)
+
+        DispatchQueue.global().async { [database] in
+            startWriter.wait()
+            _ = try? database.node.insert(NodeRecord(kind: Configuration.kind))
+            writerDone.signal()
+        }
+
+        var counts: [Int] = []
+        try database.withReadSnapshot {
+            counts.append(try database.node.select(kind: Configuration.kind).count)
+            startWriter.signal()
+            Thread.sleep(forTimeInterval: 0.1)
+            counts.append(try database.node.select(kind: Configuration.kind).count)
+        }
+
+        XCTAssertEqual(writerDone.wait(timeout: .now() + 5), .success)
+        XCTAssertEqual(counts.first, counts.last, "a writer cannot land between two reads of one snapshot")
+        XCTAssertEqual(try database.node.select(kind: Configuration.kind).count, (counts.first ?? 0) + 1,
+                       "and it lands as soon as the snapshot ends")
     }
 
     // MARK: - A wire whose endpoint node is gone
@@ -93,7 +144,7 @@ final class GraphCheckTests: SemelCoreTestCase {
                                           toSymbolID:   Configuration.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .danglingWire)
@@ -112,7 +163,7 @@ final class GraphCheckTests: SemelCoreTestCase {
                                           toSymbolID:   Configuration.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .danglingWire)
@@ -126,7 +177,7 @@ final class GraphCheckTests: SemelCoreTestCase {
         node.graphSpec = "NoSuchType(role: 'source')"
         try database.node.update(node)
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .unlinkedNodeType)
@@ -134,12 +185,27 @@ final class GraphCheckTests: SemelCoreTestCase {
                        "its graph spec names the type 'NoSuchType', which this server does not link")
     }
 
+    /// The column is nullable only because a row exists for a moment before its spec is
+    /// patched in. A NULL that survives is a node the matcher can never reach again, which
+    /// is the same defect as a spec that will not parse.
+    func test_findsANodeWithNoGraphSpecAtAll() throws {
+        var node = try makeConfiguration(role: "source")
+        node.graphSpec = nil
+        try database.node.update(node)
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings.count, 1, "\(findings)")
+        XCTAssertEqual(findings.first?.kind, .unreadableGraphSpec)
+        XCTAssertEqual(findings.first?.sentence, "it has no graph spec, so nothing can match it again")
+    }
+
     func test_findsAGraphSpecThatCannotBeReadBack() throws {
         var node = try makeConfiguration(role: "source")
         node.graphSpec = "Configuration(role: 'source'"
         try database.node.update(node)
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .unreadableGraphSpec)
@@ -155,7 +221,7 @@ final class GraphCheckTests: SemelCoreTestCase {
         let (node, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
         try Folder.flushDirtyManifests()
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .productWithNoProducer)
@@ -164,7 +230,7 @@ final class GraphCheckTests: SemelCoreTestCase {
                        "nothing is wired to its required input port 'input', so it can never be produced")
     }
 
-    // MARK: - A folder manifest naming a child that does not exist
+    // MARK: - A folder manifest disagreeing with the folder
 
     func test_findsAManifestNamingAChildThatIsNotThere() throws {
         try push("src/hello.c", contents: "int hello(void) { return 0; }")
@@ -180,14 +246,38 @@ final class GraphCheckTests: SemelCoreTestCase {
                        valueKind:      .value,
                        dataObjectHash: try manifest.toJSON().intern()))
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .missingManifestChild)
         XCTAssertEqual(findings.first?.sentence, "its manifest names the child 'ghost.c', which does not exist")
     }
 
-    // MARK: - An error port with no message
+    /// The other direction, which is the one a manifest left stale produces: the child is
+    /// there and the manifest does not mention it, so everything downstream of the folder
+    /// builds as though the file had never been pushed.
+    func test_findsAChildTheManifestDoesNotName() throws {
+        try push("src/hello.c", contents: "int hello(void) { return 0; }")
+        try push("src/main.c", contents: "int main(void) { return hello(); }")
+        try Folder.flushDirtyManifests()
+
+        let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: "src"))
+        let manifest = FolderManifest(baseFolderPath: "input:/src",
+                                      entries: [FolderManifestEntry(name: "hello.c", isFolder: false, isPinned: true)])
+        try database.outputPort.insertOrUpdate(
+            OutputPort(nodeID:         try folder.requireID(),
+                       nameSymbolID:   Folder.folderManifestOutputPort.asSymbolID(),
+                       valueKind:      .value,
+                       dataObjectHash: try manifest.toJSON().intern()))
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings.count, 1, "\(findings)")
+        XCTAssertEqual(findings.first?.kind, .missingManifestChild)
+        XCTAssertEqual(findings.first?.sentence, "the child 'main.c' exists, and its manifest does not name it")
+    }
+
+    // MARK: - An error port with no message, or none that can be read
 
     func test_findsAnErrorPortCarryingNoMessage() throws {
         let node = try makeConfiguration(role: "source")
@@ -198,12 +288,32 @@ final class GraphCheckTests: SemelCoreTestCase {
                        valueKind:      .error,
                        dataObjectHash: nil))
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .errorWithoutMessage)
         XCTAssertEqual(findings.first?.sentence,
                        "its port 'output' is in error with no message, so nothing says what failed")
+    }
+
+    /// A message the port names and the object store cannot produce is a different and
+    /// worse defect than one that was never written, so it is said differently.
+    func test_findsAnErrorPortWhoseMessageCannotBeRead() throws {
+        let node = try makeConfiguration(role: "source")
+
+        try database.outputPort.insertOrUpdate(
+            OutputPort(nodeID:         try node.requireID(),
+                       nameSymbolID:   Configuration.outputPort.asSymbolID(),
+                       valueKind:      .error,
+                       dataObjectHash: String(repeating: "ab", count: 32)))
+
+        let findings = GraphCheck.run(database: database).findings
+
+        XCTAssertEqual(findings.count, 1, "\(findings)")
+        XCTAssertEqual(findings.first?.kind, .errorWithoutMessage)
+        XCTAssertEqual(findings.first?.sentence,
+                       "its port 'output' is in error and its message cannot be read back from the "
+                     + "object store, so what failed is lost")
     }
 
     // MARK: - A cache entry whose key is not the shape a key has
@@ -213,7 +323,7 @@ final class GraphCheckTests: SemelCoreTestCase {
         try database.cacheEntry.insert(CacheEntry(hash: Sha256.hash(Array("well formed".utf8)),
                                                   content: [4, 5, 6], cost: 20, timestamp: Date()))
 
-        let findings = GraphCheck.run(database: database)
+        let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .unreadableCacheKey)

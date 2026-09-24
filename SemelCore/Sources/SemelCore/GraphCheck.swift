@@ -15,6 +15,12 @@
 // no `asSymbolID()`, which interns, and no `makeNode()`, which places a node in the file
 // system and force-unwraps properties a broken row may not have. A check run over a graph
 // that is already wrong must not be a second way for it to go wrong.
+//
+// It is meant for a settled graph. The whole walk happens inside one read, so it can never
+// see half of one change; what it cannot see is a change the engine has yet to make, and a
+// node whose wires are still being built looks, for that moment, exactly like a node whose
+// wires are missing. The report carries the count of scheduled nodes so a reader is told
+// when that is the case, rather than being made to wait for a graph that may be stuck.
 
 import SemelDatabaseModels
 import SemelNodeKit
@@ -27,16 +33,16 @@ public struct GraphCheck {
     public enum Kind: String, Equatable, Sendable {
         /// A wire whose endpoint node, or whose port on one of them, is gone.
         case danglingWire
-        /// A node whose `graphSpec` cannot be read back.
+        /// A node whose `graphSpec` cannot be read back, or which has none at all.
         case unreadableGraphSpec
         /// A node whose `graphSpec` names a type this server does not link.
         case unlinkedNodeType
         /// A required input port with no wire: nothing will ever produce what it asks for.
         case productWithNoProducer
-        /// A folder manifest naming a child that does not exist.
+        /// A folder manifest and the folder's children disagreeing, either way round.
         case missingManifestChild
-        /// A port in error carrying no message, which is the one failure a reader cannot
-        /// diagnose.
+        /// A port in error carrying no message, or one whose message cannot be read —
+        /// between them, the failures a reader cannot diagnose.
         case errorWithoutMessage
         /// A cache entry whose key is not of the shape a key is written in.
         case unreadableCacheKey
@@ -57,13 +63,45 @@ public struct GraphCheck {
         }
     }
 
+    /// What one walk of the graph came to.
+    ///
+    /// `scheduledNodeCount` travels with the findings because it is what decides how to
+    /// read them: on a settled graph a finding is a defect, and on a graph with work still
+    /// in flight a finding about wiring may be describing a node the engine has not
+    /// finished building. Counted from the same snapshot as the findings, so the two
+    /// cannot disagree, and carried rather than acted on — nothing here gates or waits.
+    public struct Report: Equatable, Sendable {
+        public let findings:           [Finding]
+        public let scheduledNodeCount: Int
+
+        public init(findings: [Finding], scheduledNodeCount: Int) {
+            self.findings           = findings
+            self.scheduledNodeCount = scheduledNodeCount
+        }
+    }
+
     /// Walks the graph and answers everything that does not hold, in a fixed order so two
     /// runs over one graph read the same.
+    ///
+    /// **Ask this of a settled graph.** Every query runs inside one read, so the walk sees
+    /// one state and cannot manufacture a finding out of two; but a node the engine is
+    /// still wiring is a node whose wires are genuinely absent at the moment it is looked
+    /// at, and `productWithNoProducer` and `danglingWire` are the two that say so. The
+    /// report's `scheduledNodeCount` is how a caller tells the reader which graph it was.
     ///
     /// Does not throw. A check is asked for when something is already wrong, so a table it
     /// cannot read costs its own findings and not the report: the machine's own failures
     /// still reach the fatal handler through `FatalErrors.attempt`.
-    public static func run(database: DatabaseLayer) -> [Finding] {
+    public static func run(database: DatabaseLayer) -> Report {
+        // One read for the whole walk. Outside one, the nodes and the wires are two states:
+        // a node created between the two scans leaves a wire that appears to point at
+        // nothing, which is a finding against a graph that is perfectly sound. A failure of
+        // the read itself is the machine's, and reaches the fatal handler on the way here.
+        FatalErrors.attempt { try database.withReadSnapshot { walk(database: database) } }
+            ?? Report(findings: [], scheduledNodeCount: 0)
+    }
+
+    private static func walk(database: DatabaseLayer) -> Report {
         let context = Context(database: database)
 
         var findings: [Finding] = []
@@ -74,19 +112,27 @@ public struct GraphCheck {
         findings += errorPortsWithoutMessages(context)
         findings += cacheKeys(context)
 
-        return findings.sorted { ($0.kind.rawValue, $0.subject, $0.sentence)
-                               < ($1.kind.rawValue, $1.subject, $1.sentence) }
+        return Report(findings: findings.sorted { ($0.kind.rawValue, $0.subject, $0.sentence)
+                                                < ($1.kind.rawValue, $1.subject, $1.sentence) },
+                      scheduledNodeCount: context.nodes.filter(\.scheduled).count)
     }
 
     // MARK: - What every check reads
 
-    /// The rows every check works from, read once. Six passes over a graph of any size
-    /// would otherwise be six full scans each.
-    private struct Context {
+    /// The rows every check works from, read once, and the name lookups they share.
+    ///
+    /// A class rather than a struct because it memoises: a port name resolved for one wire
+    /// is the same name for the next thousand, and the check was otherwise three symbol
+    /// queries per wire. Single-threaded by construction — one `run`, one instance, never
+    /// escaping the walk — so the caches need no lock.
+    private final class Context {
         let database:  DatabaseLayer
         let nodes:     [NodeRecord]
         let nodesByID: [ObjectID: NodeRecord]
         let wires:     [Wire]
+
+        private var namesBySymbolID: [ObjectID: String] = [:]
+        private var symbolIDsByName: [String: ObjectID?] = [:]
 
         init(database: DatabaseLayer) {
             self.database = database
@@ -94,6 +140,31 @@ public struct GraphCheck {
             wires = FatalErrors.attempt { try database.wire.selectAll() } ?? []
             nodesByID = Dictionary(nodes.compactMap { node in node.id.map { ($0, node) } },
                                    uniquingKeysWith: { first, _ in first })
+        }
+
+        /// A symbol's text, through the table rather than through `resolveSymbol()`: an id
+        /// with no row is one of the states this is here to find, and resolving it would
+        /// stop the process instead of reporting it.
+        func name(ofSymbol symbolID: ObjectID) -> String {
+            if let known = namesBySymbolID[symbolID] {
+                return known
+            }
+            let symbol = FatalErrors.attempt { try database.symbol.select(symbolID: symbolID) } ?? nil
+            let name = symbol?.name ?? "#\(symbolID)"
+            namesBySymbolID[symbolID] = name
+            return name
+        }
+
+        /// A name's symbol id, or nil when the table does not hold it. Through the table
+        /// rather than `asSymbolID()`, which interns — and a name the table does not hold
+        /// is a name no wire can be carrying either, so nil is an answer and not a gap.
+        func symbolID(ofName name: String) -> ObjectID? {
+            if let known = symbolIDsByName[name] {
+                return known
+            }
+            let id = FatalErrors.attempt { try database.symbol.selectID(name: name) } ?? nil
+            symbolIDsByName[name] = id
+            return id
         }
     }
 
@@ -118,9 +189,9 @@ public struct GraphCheck {
     }
 
     private static func subject(_ wire: Wire, in context: Context) -> String {
-        "wire '\(name(ofSymbol: wire.name, in: context))' "
-            + "from #\(wire.fromNodeID).\(name(ofSymbol: wire.fromSymbolID, in: context)) "
-            + "to #\(wire.toNodeID).\(name(ofSymbol: wire.toSymbolID, in: context))"
+        "wire '\(context.name(ofSymbol: wire.name))' "
+            + "from #\(wire.fromNodeID).\(context.name(ofSymbol: wire.fromSymbolID)) "
+            + "to #\(wire.toNodeID).\(context.name(ofSymbol: wire.toSymbolID))"
     }
 
     /// The Swift type a kind stands for, or the number when this server links no such type.
@@ -129,16 +200,6 @@ public struct GraphCheck {
             return "kind \(kind)"
         }
         return String(describing: type)
-    }
-
-    /// A symbol's text, through the table rather than through `resolveSymbol()`: an id with
-    /// no row is one of the states this is here to find, and resolving it would stop the
-    /// process instead of reporting it.
-    private static func name(ofSymbol symbolID: ObjectID, in context: Context) -> String {
-        guard let symbol = FatalErrors.attempt({ try context.database.symbol.select(symbolID: symbolID) }) ?? nil else {
-            return "#\(symbolID)"
-        }
-        return symbol.name
     }
 
     /// The ports a kind declares, or nil when this server links no such type — which is
@@ -150,15 +211,6 @@ public struct GraphCheck {
         return nodeType.descriptor
     }
 
-    /// The text a port in error is carrying, empty when it carries none or when the object
-    /// it names cannot be read — both of which leave a reader with nothing.
-    private static func message(of port: OutputPort) -> String {
-        guard let hash = port.dataObjectHash else {
-            return ""
-        }
-        return (try? hash.resolveAsString()) ?? ""
-    }
-
     // MARK: - A wire whose endpoint node or port is gone
 
     /// Both ends of every wire, and both ports. A wire is the graph's only structure, so a
@@ -168,15 +220,13 @@ public struct GraphCheck {
         var findings: [Finding] = []
 
         for wire in context.wires {
-            let subject = subject(wire, in: context)
-
             guard let fromNode = context.nodesByID[wire.fromNodeID] else {
-                findings.append(Finding(kind: .danglingWire, subject: subject,
+                findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
                                         sentence: "the node it comes from, #\(wire.fromNodeID), does not exist"))
                 continue
             }
             guard let toNode = context.nodesByID[wire.toNodeID] else {
-                findings.append(Finding(kind: .danglingWire, subject: subject,
+                findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
                                         sentence: "the node it goes to, #\(wire.toNodeID), does not exist"))
                 continue
             }
@@ -185,17 +235,17 @@ public struct GraphCheck {
                 try context.database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID)
             } ?? nil
             if fromPort == nil {
-                findings.append(Finding(kind: .danglingWire, subject: subject,
+                findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
                                         sentence: "\(Self.subject(fromNode)) has no output port "
-                                                + "'\(name(ofSymbol: wire.fromSymbolID, in: context))'"))
+                                                + "'\(context.name(ofSymbol: wire.fromSymbolID))'"))
             }
 
             // Only when the type is linked: a node whose type is gone declares no ports at
             // all, and reporting every wire into it would bury the one finding that says so.
-            let toPortName = name(ofSymbol: wire.toSymbolID, in: context)
+            let toPortName = context.name(ofSymbol: wire.toSymbolID)
             if let descriptor = descriptor(ofKind: toNode.kind),
                !descriptor.inputPorts.contains(where: { $0.name == toPortName }) {
-                findings.append(Finding(kind: .danglingWire, subject: subject,
+                findings.append(Finding(kind: .danglingWire, subject: subject(wire, in: context),
                                         sentence: "\(Self.subject(toNode)) declares no input port '\(toPortName)'"))
             }
         }
@@ -208,11 +258,18 @@ public struct GraphCheck {
     /// A node's `graphSpec` is its identity: it is what `findOrCreateMatchingNode` matches
     /// against, so a spec that cannot be read back is a node nothing will ever find again,
     /// and one naming an absent type is a node nothing can rebuild.
+    ///
+    /// A node with no spec at all is the same defect in its plainest form. The column is
+    /// nullable only because a row exists for a moment before its spec is patched in, and
+    /// `createNode` asserts one is there by the time it returns — so a NULL that survives
+    /// is a node the matcher can never reach.
     private static func graphSpecs(_ context: Context) -> [Finding] {
         var findings: [Finding] = []
 
         for node in context.nodes {
             guard let graphSpec = node.graphSpec else {
+                findings.append(Finding(kind: .unreadableGraphSpec, subject: subject(node),
+                                        sentence: "it has no graph spec, so nothing can match it again"))
                 continue
             }
             let spec: GraphSpecNode
@@ -239,6 +296,10 @@ public struct GraphCheck {
     /// on its own: the port holds `initializing`, which is a state and not a failure, and
     /// the engine's inconsistent-input catch is a not-ready signal rather than an error, so
     /// an `OutputFile` nothing produces waits forever and says nothing.
+    ///
+    /// The applier validates only the ports a spec names, so a required port the spec never
+    /// mentions is checked nowhere else. It is also the finding most worth reading beside
+    /// the scheduled count: a node the engine is still wiring has no wire on it yet either.
     private static func productsWithNoProducer(_ context: Context) -> [Finding] {
         let wiredPorts = Set(context.wires.map { WiredPort(nodeID: $0.toNodeID, symbolID: $0.toSymbolID) })
 
@@ -249,10 +310,8 @@ public struct GraphCheck {
                 continue
             }
             for portName in descriptor.requiredInputPorts {
-                // Through the table rather than `asSymbolID()`, which would intern: a name
-                // the table does not hold is a name no wire can be carrying either.
-                let symbolID = FatalErrors.attempt { try context.database.symbol.selectID(name: portName) } ?? nil
-                if let symbolID, wiredPorts.contains(WiredPort(nodeID: nodeID, symbolID: symbolID)) {
+                if let symbolID = context.symbolID(ofName: portName),
+                   wiredPorts.contains(WiredPort(nodeID: nodeID, symbolID: symbolID)) {
                     continue
                 }
                 findings.append(Finding(kind: .productWithNoProducer, subject: subject(node),
@@ -271,11 +330,13 @@ public struct GraphCheck {
         let symbolID: ObjectID
     }
 
-    // MARK: - A folder manifest naming a child that does not exist
+    // MARK: - A folder manifest disagreeing with the folder
 
-    /// Every name a folder advertises is a node under it. The manifest is what the nodes
-    /// downstream of a folder read, so a name in it that no child answers to is a build
-    /// asking for a file that is not there.
+    /// A folder's manifest and its children say the same thing, both ways round.
+    /// `buildManifest` emits exactly one entry per child row, so a name in the manifest
+    /// that no child answers to and a child the manifest does not name are the same
+    /// invariant seen from its two ends — and the second is the one a manifest left stale
+    /// produces, which is the defect this check was written for.
     ///
     /// A folder marked dirty is passed over: its manifest is waiting to be rebuilt, which
     /// is the engine working as designed and not an invariant that does not hold. The
@@ -295,18 +356,27 @@ public struct GraphCheck {
             childNames[parentNodeID, default: []].insert(name)
         }
 
+        // One lookup for every folder, rather than one per folder: the port's name is the
+        // same string each time round.
+        let manifestSymbolID = context.symbolID(ofName: Folder.folderManifestOutputPort)
+
         var findings: [Finding] = []
 
         for node in context.nodes where node.kind == Folder.kind {
-            guard let nodeID = node.id, !dirtyIDs.contains(nodeID),
-                  let manifest = readManifest(ofFolder: nodeID, in: context) else {
+            guard let nodeID = node.id, !dirtyIDs.contains(nodeID), let manifestSymbolID,
+                  let manifest = readManifest(ofFolder: nodeID, nameSymbolID: manifestSymbolID, in: context) else {
                 continue
             }
-            let names = childNames[nodeID] ?? []
-            for entry in manifest.entries where !names.contains(entry.name) {
+            let children = childNames[nodeID] ?? []
+            let named    = Set(manifest.entries.map(\.name))
+
+            for name in named.subtracting(children).sorted() {
                 findings.append(Finding(kind: .missingManifestChild, subject: subject(node),
-                                        sentence: "its manifest names the child '\(entry.name)', "
-                                                + "which does not exist"))
+                                        sentence: "its manifest names the child '\(name)', which does not exist"))
+            }
+            for name in children.subtracting(named).sorted() {
+                findings.append(Finding(kind: .missingManifestChild, subject: subject(node),
+                                        sentence: "the child '\(name)' exists, and its manifest does not name it"))
             }
         }
 
@@ -315,12 +385,11 @@ public struct GraphCheck {
 
     /// The manifest a folder is publishing, or nil when it is not publishing one — a
     /// folder whose port holds a state rather than a value has nothing to disagree with.
-    private static func readManifest(ofFolder nodeID: ObjectID, in context: Context) -> FolderManifest? {
-        guard let symbolID = (FatalErrors.attempt {
-                  try context.database.symbol.selectID(name: Folder.folderManifestOutputPort)
-              } ?? nil),
-              let port = (FatalErrors.attempt {
-                  try context.database.outputPort.select(nodeID: nodeID, nameSymbolID: symbolID)
+    private static func readManifest(ofFolder nodeID: ObjectID,
+                                     nameSymbolID: ObjectID,
+                                     in context: Context) -> FolderManifest? {
+        guard let port = (FatalErrors.attempt {
+                  try context.database.outputPort.select(nodeID: nodeID, nameSymbolID: nameSymbolID)
               } ?? nil),
               port.valueKind == .value,
               let json = try? port.dataObjectHash?.resolveAsString() else {
@@ -329,31 +398,68 @@ public struct GraphCheck {
         return try? TypeRegistry.decodeAndCast(encodedJSON: json)
     }
 
-    // MARK: - An error port with no message
+    // MARK: - An error port with no message, or none that can be read
 
     /// An error carrying nothing is the one failure a reader cannot act on: the report
     /// prints "an error with no message" and there is nowhere further to go. The node that
     /// wrote it is the bug, and this is what names it.
+    ///
+    /// An error whose message is *stored* but cannot be read is a different and worse
+    /// defect — the object store has lost the bytes — so it is said differently. Both are
+    /// decided by the port's state and by whether an object resolves, never by what a
+    /// message says.
     private static func errorPortsWithoutMessages(_ context: Context) -> [Finding] {
         let errorPorts = FatalErrors.attempt { try context.database.outputPort.selectAllErrors() } ?? []
 
         // By case, not by text: a port carrying an input's failure has no message of its
         // own and is not supposed to have one.
-        return errorPorts
-            .filter { $0.valueKind == .error && message(of: $0).isEmpty }
-            .map { port in
-                Finding(kind: .errorWithoutMessage,
-                        subject: subject(nodeID: port.nodeID, in: context),
-                        sentence: "its port '\(name(ofSymbol: port.nameSymbolID, in: context))' is in error "
-                                + "with no message, so nothing says what failed")
+        return errorPorts.filter { $0.valueKind == .error }.compactMap { port in
+            let portName = context.name(ofSymbol: port.nameSymbolID)
+            switch message(of: port) {
+            case .text:
+                return nil
+            case .absent:
+                return Finding(kind: .errorWithoutMessage,
+                               subject: subject(nodeID: port.nodeID, in: context),
+                               sentence: "its port '\(portName)' is in error with no message, "
+                                       + "so nothing says what failed")
+            case .unreadable:
+                return Finding(kind: .errorWithoutMessage,
+                               subject: subject(nodeID: port.nodeID, in: context),
+                               sentence: "its port '\(portName)' is in error and its message cannot be "
+                                       + "read back from the object store, so what failed is lost")
             }
+        }
+    }
+
+    /// What a port in error has to say for itself: words, nothing at all, or an object it
+    /// names that will not come back.
+    private enum PortMessage {
+        case text
+        case absent
+        case unreadable
+    }
+
+    private static func message(of port: OutputPort) -> PortMessage {
+        guard let hash = port.dataObjectHash, !hash.isEmpty else {
+            return .absent
+        }
+        guard let text = try? hash.resolveAsString() else {
+            return .unreadable
+        }
+        return text.isEmpty ? .absent : .text
     }
 
     // MARK: - A cache entry whose key is not the shape a key has
 
-    /// A cache key is the hex of a hash and has no other shape. One that is not says the
-    /// row was written by something other than `Cache.buildCacheKeyFromAllInputs`, and a
-    /// key that cannot be recomputed is an entry nothing will ever hit again.
+    /// A cache key is the hex of a hash and has no other shape, so there is nothing to
+    /// parse beyond that. One that is not says the row was written by something other than
+    /// `Cache.buildCacheKeyFromAllInputs`, and a key that cannot be recomputed is an entry
+    /// nothing will ever hit again.
+    ///
+    /// What this cannot see is a well-formed key whose *content* is stale — an entry
+    /// computed by a Semel that would compute a different one from the same inputs. That is
+    /// B-102's ground: the key would have to carry the code's version to catch it.
     private static func cacheKeys(_ context: Context) -> [Finding] {
         let hashes = FatalErrors.attempt { try context.database.cacheEntry.selectAllHashes() } ?? []
 

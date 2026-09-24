@@ -110,7 +110,9 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
         let (response, body) = try daemon(.check)
 
-        XCTAssertEqual(response, .check)
+        guard case .check = response else {
+            return XCTFail("expected check, got \(response)")
+        }
         let findings = try MessageCoder.decode([CheckFinding].self, from: try XCTUnwrap(body))
         XCTAssertEqual(findings, [
             CheckFinding(kind: .productWithNoProducer,
@@ -122,8 +124,21 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     func test_checkOverAGraphWithNothingWrongWithItAnswersNoFindings() throws {
         let (response, body) = try daemon(.check)
 
-        XCTAssertEqual(response, .check)
+        XCTAssertEqual(response, .check(scheduledNodes: 0))
         XCTAssertEqual(try MessageCoder.decode([CheckFinding].self, from: try XCTUnwrap(body)), [])
+    }
+
+    /// The count comes from the same read as the findings, and is what lets a client say
+    /// whether a finding about wiring describes a defect or work the engine has not
+    /// finished. The reply carries it; nothing on this side waits or refuses.
+    func test_checkReportsHowManyNodesWereStillScheduled() throws {
+        let (node, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
+
+        XCTAssertEqual(try daemon(.check).0, .check(scheduledNodes: 1))
+
+        try database.node.updateScheduled(nodeID: try node.requireID(), scheduled: false)
+
+        XCTAssertEqual(try daemon(.check).0, .check(scheduledNodes: 0))
     }
 
     func test_toolsListsEveryNamespaceEvenWhenNoToolIsInstalled() throws {

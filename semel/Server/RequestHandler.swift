@@ -112,8 +112,9 @@ public final class RequestHandler {
             case .errors:
                 return (.daemon(.errors(records: try errorRecords())), nil)
             case .check:
-                let findings = GraphCheck.run(database: database).map(CheckFinding.init)
-                return (.daemon(.check), try MessageCoder.encode(findings))
+                let report = GraphCheck.run(database: database)
+                return (.daemon(.check(scheduledNodes: report.scheduledNodeCount)),
+                        try MessageCoder.encode(report.findings.map(CheckFinding.init)))
             case .tools:
                 return (.daemon(.tools(namespaces: toolNamespaces())), nil)
             case .reset(let clearCache):

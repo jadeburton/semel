@@ -134,6 +134,37 @@ public final class DatabaseLayer {
         }
     }
 
+    /// Execute `work` against one read of the database, so every query it makes — directly
+    /// or through a data accessor — sees one state of the graph.
+    ///
+    /// `withTransaction` is the write tool and takes the writer queue with it, which is
+    /// the wrong price for a caller that only wants to look. This is the reader's twin:
+    /// `DatabaseQueue` serialises every access, so the block holds the queue and no writer
+    /// can interleave with it.
+    ///
+    /// Two separate `selectAll`s are *not* one state. A caller that reads the nodes and
+    /// then the wires can be handed a wire whose endpoint node was created between the
+    /// two reads, and conclude the graph is broken when it is merely busy. Inside one of
+    /// these that cannot happen.
+    ///
+    /// A write reached from inside takes this same read connection and SQLite refuses it,
+    /// so the read-only intent is enforced rather than merely stated. Nesting inside
+    /// `withTransaction` participates in that write transaction, as every other nesting
+    /// here does.
+    public func withReadSnapshot<T>(_ work: () throws -> T) throws -> T {
+        if DatabaseLayer.currentDB != nil {
+            return try work()
+        }
+
+        return try translatingVolumeFailures {
+            try dbQueue.read { db in
+                try DatabaseLayer.$currentDB.withValue(TaskLocalDatabase(db: db)) {
+                    try work()
+                }
+            }
+        }
+    }
+
     // ── Initialisers ─────────────────────────────────────────────────────────
 
     public init(filePath: String) throws {

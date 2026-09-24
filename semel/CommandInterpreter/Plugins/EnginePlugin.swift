@@ -94,10 +94,20 @@ final class EnginePlugin: CommandPlugin {
     /// settle event that already named the same failures, and no event ever carries these.
     private func handleCheck(context: any CommandContext) throws {
         let (response, body) = try context.request(.check)
-        guard case .check = response else {
+        guard case .check(let scheduledNodes) = response else {
             return
         }
-        let findings = try MessageCoder.decode([CheckFinding].self, from: body ?? Data())
+        // A reply with no body is a peer that sent none, not a graph with a finding this
+        // end cannot read — so it reads as the empty list it is, rather than as a decode
+        // failure standing in for a report.
+        let findings = try body.map { try MessageCoder.decode([CheckFinding].self, from: $0) } ?? []
+
+        // First, so it is read before the findings it qualifies. Said rather than acted
+        // on: a graph with work in flight is exactly the graph that may be stuck, and a
+        // command that waited or refused would have nothing to say about it.
+        if let caveat = CheckFindingRenderer.inFlightCaveat(scheduledNodes: scheduledNodes) {
+            context.outputMessage(caveat)
+        }
 
         guard !findings.isEmpty else {
             context.outputMessage(CheckFindingRenderer.nothingFound)
@@ -132,8 +142,8 @@ final class EnginePlugin: CommandPlugin {
         // A reset destroys the state that made it necessary, and `check` is the only thing
         // that can name what was wrong with it — so the offer belongs beside the repair,
         // where the next reader of this reply is standing.
-        context.outputMessage("Run `check` before the next reset: it names the invariants a graph is breaking, "
-                            + "which this one has just discarded.")
+        context.outputMessage("Run `check` before the next reset: it names the invariants a graph is "
+                            + "breaking — the evidence a reset discards.")
     }
 
     // MARK: - errors

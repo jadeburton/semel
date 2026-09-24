@@ -28,8 +28,8 @@ final class EnginePluginTests: XCTestCase {
     /// The sentence every reset ends with: the repair points at the command that says what
     /// was wrong before the next one destroys the evidence.
     private static let checkOffer =
-        "Run `check` before the next reset: it names the invariants a graph is breaking, "
-      + "which this one has just discarded."
+        "Run `check` before the next reset: it names the invariants a graph is breaking — "
+      + "the evidence a reset discards."
 
     func test_errorsWithNoneSaysSo() throws {
         connection.reply(.errors(records: []))
@@ -145,7 +145,7 @@ final class EnginePluginTests: XCTestCase {
     // MARK: - check
 
     func test_checkWithNoFindingsSaysSo() throws {
-        connection.reply(.check, body: try MessageCoder.encode([CheckFinding]()))
+        connection.reply(.check(scheduledNodes: 0), body: try MessageCoder.encode([CheckFinding]()))
 
         try run("check")
 
@@ -163,7 +163,7 @@ final class EnginePluginTests: XCTestCase {
             CheckFinding(kind: .errorWithoutMessage, subject: "ClangLinker #40",
                          sentence: "its port 'output' is in error with no message, so nothing says what failed"),
         ]
-        connection.reply(.check, body: try MessageCoder.encode(findings))
+        connection.reply(.check(scheduledNodes: 0), body: try MessageCoder.encode(findings))
 
         try run("check")
 
@@ -172,6 +172,46 @@ final class EnginePluginTests: XCTestCase {
           + "so it can never be produced",
             "❌ ClangLinker #40: its port 'output' is in error with no message, so nothing says what failed",
         ])
+        XCTAssertEqual(context.messages, [], "a settled graph needs no caveat")
+    }
+
+    /// A graph the engine is still working on is one where a node it has not finished
+    /// wiring looks exactly like a node whose wiring is missing. Said before the findings,
+    /// because it is how they are to be read — and said rather than acted on: a graph that
+    /// is stuck is a graph whose nodes stay scheduled, and that is the case `check` exists
+    /// for.
+    func test_checkSaysWhenNodesWereStillScheduled() throws {
+        let finding = CheckFinding(kind: .productWithNoProducer, subject: "OutputFile #12 'output:/app'",
+                                   sentence: "nothing is wired to its required input port 'input'")
+        connection.reply(.check(scheduledNodes: 3), body: try MessageCoder.encode([finding]))
+
+        try run("check")
+
+        XCTAssertEqual(context.messages, [
+            "3 nodes were still scheduled; a finding about wiring may be work in flight — run `wait` first.",
+        ])
+        XCTAssertEqual(context.errors.count, 1, "the caveat does not replace the findings")
+    }
+
+    func test_checkSaysOneScheduledNodeInTheSingular() throws {
+        connection.reply(.check(scheduledNodes: 1), body: try MessageCoder.encode([CheckFinding]()))
+
+        try run("check")
+
+        XCTAssertEqual(context.messages, [
+            "1 node was still scheduled; a finding about wiring may be work in flight — run `wait` first.",
+            "✅ no findings",
+        ])
+    }
+
+    /// A reply with no body at all is a peer that sent none, which reads as the empty list
+    /// it is rather than as a decode failure standing in for a report.
+    func test_checkWithNoBodyReadsAsNoFindings() throws {
+        connection.reply(.check(scheduledNodes: 0))
+
+        try run("check")
+
+        XCTAssertEqual(context.messages, ["✅ no findings"])
     }
 
     // MARK: - reset
