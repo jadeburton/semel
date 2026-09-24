@@ -55,14 +55,16 @@ enum ErrorRecordRenderer {
     /// A heading, then one line per distinct message naming the ports that carry it, or
     /// an indented block when a message spans lines. Ends with a blank line.
     ///
-    /// A record with one entry is written without the port names, the same rule
+    /// One entry carrying one port is written without the port's name, the same rule
     /// `ErrorReport.lines` follows on the engine's side: the names are there to tell one
     /// entry from another and to say which of a node's ports a message came from, and a
-    /// record with nothing to tell apart names every port the engine had for that node, so
-    /// `output:` on a file and `pinned:` on a folder repeat the heading and carry nothing.
+    /// lone port does neither, so `output:` on a file and `pinned:` on a folder repeat the
+    /// heading and carry nothing. Anywhere the record accounts for more than one thing the
+    /// names stay, which is what keeps these lines agreeing with the count above them —
+    /// that count is a sum of ports.
     static func lines(for record: ErrorRecord) -> [String] {
         var result = ["\(Mark.failure) \(record.label)"]
-        let namesPorts = record.entries.count > 1
+        let namesPorts = !(record.entries.count == 1 && record.entries[0].ports.count == 1)
 
         for entry in record.entries {
             let portNames = entry.ports.joined(separator: ", ")

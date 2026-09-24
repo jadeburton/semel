@@ -285,7 +285,11 @@ in one product: `Type #id 'path'` in a check finding, `Type  'path'` (two spaces
 last resort) in `ErrorReport.label`. The finding's form is the one to keep — a finding is
 filed as a bug and the row is what the next person opens — but `ErrorReport`'s output is
 pinned on both sides of the wire, so converging them is its own change with its own test
-updates.
+updates. A third: `NodeRecord.readFromOutputPort` fabricates `error("No value ever
+existed")` when a port row is absent, which `writePendingToAllOutputsOfNode` makes
+impossible — so it is a node holding fewer port rows than its descriptor declares, a
+finding `check` should name, and the read should throw rather than invent a sentence
+nobody can act on.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**

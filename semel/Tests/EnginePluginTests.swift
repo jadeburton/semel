@@ -48,11 +48,12 @@ final class EnginePluginTests: XCTestCase {
         try run("errors")
 
         // The count goes through `countErrorRecords`, not `outputError`, so the same
-        // settle report the idle-time event already counted is not counted twice.
+        // settle report the idle-time event already counted is not counted twice. It is a
+        // sum of ports, which is why the line keeps their names: two errors, two ports.
         XCTAssertEqual(context.messages, [
             "2 errors across 1 node:\n",
             "❌ StaticFile  'input:/a.c'",
-            "   · boom",
+            "   · errorLog, output: boom",
             "",
         ])
         XCTAssertEqual(context.countedErrorRecords, [[

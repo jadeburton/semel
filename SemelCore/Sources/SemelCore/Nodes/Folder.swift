@@ -272,8 +272,13 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         }
     }
 
+    /// Both directions are refused on a folder that cannot be pinned, not only the pin.
+    /// Such a folder holds a value on this port from its creation and is outside the input
+    /// file system, so there is nothing for the user to have taken away: unpinning one
+    /// would leave it saying it was deleted, in a report line naming a path the reader
+    /// never pushed.
     func setPinned(_ pinned: Bool) throws {
-        if !canBePinned() && pinned {
+        guard canBePinned() else {
             return
         }
         // Unpinning is the user taking the folder back out of the input file system, which

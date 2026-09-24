@@ -103,6 +103,17 @@ final class ErrorRecordRendererMarkTests: XCTestCase {
                        ["❌ Folder  'input:/src'", "   · src/ has not been pushed", ""])
     }
 
+    /// One message across several ports keeps their names, as it does on the engine's
+    /// side. The count printed above these lines is a sum of ports, so a heading saying
+    /// two errors sits above a line naming two ports.
+    func test_onePortIsTheConditionRatherThanOneEntry() {
+        let record = ErrorRecord(label: "StaticFile  'input:/a.c'",
+                                 entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")])
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ StaticFile  'input:/a.c'", "   · errorLog, output: boom", ""])
+    }
+
     /// The names come back as soon as there is more than one entry: that is what they are
     /// for, and a record with two messages has something to tell apart.
     func test_theirPortsAreNamedAsSoonAsThereIsMoreThanOneEntry() {

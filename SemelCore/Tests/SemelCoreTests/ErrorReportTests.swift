@@ -63,13 +63,12 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     // MARK: - The port prefix
 
-    /// B-104. The port names tell one item from another, and an entry with one item has
-    /// nothing to tell apart: the item names every port the report has for that node, so
-    /// the prefix repeats the heading in the engine's own vocabulary and is left out.
-    func test_theOnlyItemOnAnEntryIsWrittenWithoutItsPorts() throws {
+    /// B-104. The port names tell one item from another and say which of a node's ports a
+    /// message came from. A lone port on a lone item does neither, so the prefix repeats
+    /// the heading in the engine's own vocabulary and is left out.
+    func test_oneItemCarryingOnePortIsWrittenWithoutIt() throws {
         let nodeID = try makeNode(kind: Configuration.kind)
-        let ports = [try port(nodeID, "output", "boom"),
-                     try port(nodeID, "errorLog", "boom")]
+        let ports = [try port(nodeID, "output", "boom")]
 
         let lines = ErrorReport.lines(forNodeID: nodeID, ports: ports,
                                       messages: ["boom"], database: database)
@@ -88,6 +87,20 @@ final class ErrorReportTests: SemelCoreTestCase {
 
         XCTAssertEqual(lines.filter { $0.contains("·") },
                        ["   · errorLog: bang", "   · output: boom"])
+    }
+
+    /// One message across several ports keeps their names too. The counts printed beside a
+    /// report are sums of ports, so a heading saying two errors sits above a line naming
+    /// two ports; dropping the names there would leave the number unaccounted for.
+    func test_onePortIsTheConditionRatherThanOneItem() throws {
+        let nodeID = try makeNode(kind: Configuration.kind)
+        let ports = [try port(nodeID, "output", "boom"),
+                     try port(nodeID, "errorLog", "boom")]
+
+        let lines = ErrorReport.lines(forNodeID: nodeID, ports: ports,
+                                      messages: ["boom"], database: database)
+
+        XCTAssertEqual(lines.filter { $0.contains("·") }, ["   · errorLog, output: boom"])
     }
 
     func test_distinctMessagesGetTheirOwnLines() throws {

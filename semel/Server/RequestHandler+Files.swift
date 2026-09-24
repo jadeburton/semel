@@ -64,7 +64,7 @@ extension RequestHandler {
                     case .pending:
                         status = .pending
                     case .initializing, .inputNotProduced, .inputInError, .deleted, .error:
-                        // One word for three states, which is the half of B-74 that waits on
+                        // One word for five states, which is the half of B-74 that waits on
                         // `[missing]` being split into the states it stands for.
                         status = .error
                     }

@@ -98,7 +98,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
                                       items: [ErrorReport.Item(ports: ["errorLog", "output"], message: "boom")])
 
         XCTAssertEqual(ErrorReport.lines(for: entry),
-                       ["❌ StaticFile  'input:/a.c'", "   · boom", ""])
+                       ["❌ StaticFile  'input:/a.c'", "   · errorLog, output: boom", ""])
     }
 
     func test_aNoticeReachesTheNoticeReporter() {
