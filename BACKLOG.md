@@ -414,17 +414,18 @@ dirty, and that command's inputs come from `BuildPlan.inputs`, which iterates
 source file in one of them is an input to nothing and `.build/debug.yaml` keeps the file
 set it was written with — "cannot find 'X' in scope" for an added file, "missing inputs:
 …/X.swift" for a removed one. `--disable-build-manifest-caching` plans every invocation for
-under a tenth of a second on this package; `scripts/build.sh` passes it and CI and
-`AGENTS.md` call the script.
+about 0.15 s on this package, inside the noise of process start-up; `scripts/build.sh`
+passes it and CI and `AGENTS.md` call the script.
 
 The stale *value* is fixed for `Hello`. A default argument is not a call: the compiler
 emits a default-argument generator with the constant folded in, as a coalesced copy in
 every caller's object file (`mov w8, #0x9` inside
 `SemelCLI.build/CommandInterpreter.swift.o`). `Hello.init(role:)` is an overload calling
 `init(protocolVersion: ProtocolVersion.current, role:)`, so the read happens in
-`SemelProtocol`; `test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber` fails if a
-copy comes back. "A constant that crosses a module boundary is not a default argument" is
-an invariant in `AGENTS.md`.
+`SemelProtocol`; `test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber` catches the
+stale copy, not the reintroduction — reinstate the default argument and build clean and both
+sides of it fold to the same number. "A constant that crosses a module boundary is not a
+default argument" is an invariant in `AGENTS.md`, and that is what guards the reintroduction.
 
 What remains is the SwiftPM defect underneath the second half, which the overload avoids
 rather than cures: an incremental build can leave a dependent module's objects unrebuilt

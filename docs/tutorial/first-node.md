@@ -20,7 +20,9 @@ swift build
 ```
 
 A debug build, not `-c release`: two steps in Part 3 read the running commentary
-`semelserv` prints, and that is compiled out of a release build.
+`semelserv` prints, and that is compiled out of a release build. Plain `swift build` is
+right for this one, because a first build plans from scratch; Part 3 swaps to
+`scripts/build.sh` at the point where that stops being true, and says why.
 
 You will want three terminals open, and the document says which one each step is in:
 

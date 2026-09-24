@@ -35,10 +35,12 @@ jobs:
           swift --version
           xcrun simctl list runtimes | grep -i ios || true
 
-      # scripts/build.sh is swift build/test with --disable-build-manifest-caching. The
-      # runner is self-hosted, so .build survives between runs, and SwiftPM's cached plan
-      # takes its inputs from the root package alone: a file added to or removed from any
-      # of the path-dependency packages would be invisible to the build that follows it.
+      # scripts/build.sh is swift build/test with --disable-build-manifest-caching, which
+      # makes SwiftPM plan every invocation instead of reusing a plan whose inputs come from
+      # the root package alone (AGENTS.md, "Why the wrapper"). Each run here starts from a
+      # clean checkout and plans anyway (docs/ci.md), so the flag changes nothing about what
+      # CI does and costs it nothing. It is here so that there is one build command: CI runs
+      # what the documentation tells a contributor to run, and a step cannot drift from it.
       - name: Build
         run: scripts/build.sh -c release
 

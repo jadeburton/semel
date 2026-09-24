@@ -35,6 +35,11 @@ swift build -c release
 The build places three executables under `.build/release`: `semelserv`, the engine;
 `semel`, the prompt; and `semel-swift`, the Swift conversion tool.
 
+Plain `swift build` is right for a clone, and for every `swift` line in this file: a cold
+build plans from scratch. Once you are editing the tree, build with `scripts/build.sh`
+instead — SwiftPM reuses a stale plan across the path-dependency packages, and
+[`AGENTS.md`](AGENTS.md) explains what that costs.
+
 ## Usage
 
 New here, and want to change Semel rather than only run it? Start with

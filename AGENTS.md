@@ -19,14 +19,18 @@ SEMEL_E2E_EXTERNAL=1 scripts/build.sh test --filter SemelEndToEndTests   # plus 
 ```
 
 `scripts/build.sh` is `swift build` — or `swift test`, `swift run` if you name the verb —
-with `--disable-build-manifest-caching`. CI calls it for every build and test step. Plain
-`swift build` works and is the same thing otherwise; what the flag buys is below.
+with `--disable-build-manifest-caching`. **The rule: a cold build can be plain `swift`; an
+incremental build in a tree you are editing wants the script.** A cold build plans from
+scratch whatever you type, which is why `README.md` and the tutorial's first build say
+`swift build`; it is the second build onwards, after a file has appeared or gone in one of
+the path dependencies, that reuses a plan it should not. CI calls the script for every
+build and test step so that there is one command to keep true, not because a CI run needs
+it. What the flag buys is below.
 
-The root package now links `SemelProtocol` through `SemelCLI` and `SemelServer`, so
-`swift build` covers it; its own `swift test --package-path SemelProtocol` line is still
-the only thing that runs its tests.
+The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, so the root
+build covers it; its own line above is still the only thing that runs its tests.
 
-`swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
+A root test run covers **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
@@ -43,9 +47,10 @@ Every other package here is a path dependency, so its source tree is an input to
 `.build/debug.yaml` keeps the file set it was written with. Adding a file fails with
 `cannot find 'X' in scope`, naming the use rather than the missing plan entry; removing one
 fails with `missing inputs: …/X.swift` while the previous binary stays linked with the type
-it dropped. `--disable-build-manifest-caching` plans every invocation, which costs under a
-tenth of a second on this package, and `scripts/build.sh` passes it (B-84). `touch
-Package.swift` at the repo root is the same fix by hand; `rm .build/debug.yaml` also works.
+it dropped. `--disable-build-manifest-caching` plans every invocation, which costs about
+0.15 s of planning on this package — inside the noise of process start-up — and
+`scripts/build.sh` passes it (B-84). `touch Package.swift` at the repo root is the same fix
+by hand; `rm .build/debug.yaml` also works.
 
 The wrapper fixes the *plan*, not the incremental decisions under it. SwiftPM can still
 leave a dependent module's objects unrebuilt after a path dependency changes — an undefined
@@ -297,8 +302,10 @@ caller whose object is not recompiled keeps the old value, while the linker pick
 copy it meets first — which is how `semel` and `semelserv` came to disagree about
 `ProtocolVersion.current` inside one test binary. Write the overload instead:
 `Hello.init(role:)` calls `Hello.init(protocolVersion: ProtocolVersion.current, role:)`, so
-the read happens inside `SemelProtocol` where the constant lives. Defaults that are
-literals — `false`, `0`, `nil` — are fine; a default that names something is not.
+the read happens inside `SemelProtocol` where the constant lives. The line is around what
+can be folded: a literal default — `false`, `0`, `nil` — is fine, and so is a default that
+names something read per call, such as `CommandInterpreter.init`'s `baseDirectory: String =
+FileManager.default.currentDirectoryPath`. A default that names a *constant* is not.
 
 **Force unwraps are being phased out.** `try!` is at zero; keep it there. Use
 `node.requireID()` rather than `node.id!`. A force unwrap is only acceptable where failure
