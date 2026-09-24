@@ -186,15 +186,6 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
-## Performance
-
-**B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
-Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
-stops at the first objection, so leaf children cost no instantiation at all. What remains is
-the recursion — each unpinned subfolder is built as a `Folder` to descend into it, so a deep
-tree still pays one node per level. Small next to what it replaced; possibly not worth
-fixing. Verify against a deep tree before spending anything here.
-
 ## Server
 
 **B-30** `open` — **`semelserv` with three roles.**
