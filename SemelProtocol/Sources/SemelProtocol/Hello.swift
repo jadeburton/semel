@@ -49,9 +49,23 @@ public struct Hello: Codable, Equatable, Sendable {
     public let protocolVersion: Int
     public let role:            Role
 
-    public init(protocolVersion: Int = ProtocolVersion.current, role: Role) {
+    public init(protocolVersion: Int, role: Role) {
         self.protocolVersion = protocolVersion
         self.role            = role
+    }
+
+    /// A hello that speaks whatever version this module holds.
+    ///
+    /// This is an overload rather than `protocolVersion: Int = ProtocolVersion.current`,
+    /// because a default argument is not a call: the compiler emits a default-argument
+    /// generator with the number folded into it as a coalesced copy in *every* caller's
+    /// object file. A caller whose object outlives a change to `ProtocolVersion.current`
+    /// therefore carries the old number, the linker picks whichever copy it meets first, and
+    /// two halves of one binary disagree about the version they speak. An ordinary
+    /// initializer body stays in this module, so every caller reads the constant at the
+    /// moment it asks for it (B-84).
+    public init(role: Role) {
+        self.init(protocolVersion: ProtocolVersion.current, role: role)
     }
 }
 
