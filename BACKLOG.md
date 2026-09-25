@@ -188,17 +188,16 @@ entirely in-process.
 
 ## Performance
 
-**B-74** `open` — **The idle report's upstream walk is unmeasured.**
-It costs one indexed wire query per carrying node per idle pass — tens of milliseconds at
-the 500-node cascade this entry was opened by — and no scale test holds that number. Measure
-it against a cascade of that size before deciding whether the walk needs to change.
-
-**B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
-Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
-stops at the first objection, so leaf children cost no instantiation at all. What remains is
-the recursion — each unpinned subfolder is built as a `Folder` to descend into it, so a deep
-tree still pays one node per level. Small next to what it replaced; possibly not worth
-fixing. Verify against a deep tree before spending anything here.
+**B-106** `open` — **`connectWire` scans every wire at the target once per connection.**
+`WireManagement.connectWire` guards a new wire twice: the exact-duplicate check is an indexed
+lookup, but `wireExistsWithSameName` selects every wire already going to the target port and
+scans the result, so wiring an N-wide fan into one port costs O(N²) row reads. Found while
+building `CascadeReportScaleTests`: a 400-wide fan through `connectWire` cost about five
+times the rest of the test, so that fixture inserts its rows directly. A node with many
+consumers of one port pays this during graph construction on every conversion. Fix: an
+indexed lookup by `(toNodeID, toSymbolID, name)`, which the wire key (B-23's primary key)
+already supports, and a scale test that counts wire reads per connection the way
+`CascadeReportScaleTests` counts them per walk.
 
 ## Server
 
@@ -262,7 +261,7 @@ finding is filed as a bug and the row is what the next person opens — so `Erro
 should converge on it. Its output is pinned by tests on both sides of the wire, so the
 change carries those test updates with it.
 
-One surface over, the same word-for-several-states problem B-74 settled for the listing:
+One surface over, the same word-for-several-states problem the listing settled:
 `OutputFile.describeValue` folds five `NoValueReason` cases onto the single word `Error`,
 so a product the build announces as `output:/x: Error` is the one `ls` calls
 `[not produced]`. The build's own notices should use the listing's words.

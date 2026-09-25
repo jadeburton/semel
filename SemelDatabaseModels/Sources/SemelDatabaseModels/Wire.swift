@@ -48,34 +48,60 @@ public struct WireDataAccess: DataAccessType {
         self.databaseLayer = databaseLayer
     }
 
+    /// How many wire selects this process has issued.
+    ///
+    /// A test observable, of a piece with `Folder.manifestRebuildCount` and
+    /// `BuildEngine.loopSignalsSent`: a cost whose shape is a count of round trips, which
+    /// a stopwatch cannot pin — a timing assertion needs a band wide enough to survive a
+    /// loaded machine, and such a band stops telling linear growth from quadratic long
+    /// before the defect stops mattering. Every `select` below counts one, whatever it
+    /// returns. Not read by the engine; `CascadeReportScaleTests` reads it around the
+    /// error report's upstream walk.
+    static var selectCount = 0
+
+    /// Counts one query against `selectCount` and runs it, so that a select added here
+    /// cannot quietly escape the measurement.
+    private func counted<T>(_ query: () throws -> T) rethrows -> T {
+        Self.selectCount += 1
+        return try query()
+    }
+
     public func selectAll() throws -> [Wire] {
         Debug.warn("expensive selectAllWires call")
-        return try read { db in try Wire.fetchAll(db) }
+        return try counted { try read { db in try Wire.fetchAll(db) } }
     }
 
     public func select(goingToNodeID: ObjectID) throws -> [Wire] {
-        try read { db in
-            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
+        try counted {
+            try read { db in
+                try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
+            }
         }
     }
 
     public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
-        try read { db in
-            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
+        try counted {
+            try read { db in
+                try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
+                                Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
+            }
         }
     }
 
     public func select(comingFromNodeID: ObjectID) throws -> [Wire] {
-        try read { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
+        try counted {
+            try read { db in
+                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
+            }
         }
     }
 
     public func select(comingFromNodeID: ObjectID, fromSymbolID: ObjectID) throws -> [Wire] {
-        try read { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
+        try counted {
+            try read { db in
+                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                                Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
+            }
         }
     }
 
@@ -86,12 +112,14 @@ public struct WireDataAccess: DataAccessType {
                        goingToNodeID: ObjectID,
                        toSymbolID: ObjectID,
                        name: ObjectID) throws -> Wire? {
-        try read { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromSymbolID == fromSymbolID &&
-                            Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID &&
-                            Wire.Columns.name == name).fetchOne(db)
+        try counted {
+            try read { db in
+                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                                Wire.Columns.fromSymbolID == fromSymbolID &&
+                                Wire.Columns.toNodeID == goingToNodeID &&
+                                Wire.Columns.toSymbolID == toSymbolID &&
+                                Wire.Columns.name == name).fetchOne(db)
+            }
         }
     }
 
