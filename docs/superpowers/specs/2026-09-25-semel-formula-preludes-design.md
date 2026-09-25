@@ -67,19 +67,21 @@ set of node functions, so this document says *node package* — `SemelClang`, `S
 
 ### `include '<name>'`
 
-A string include names a registered prelude. It is an extension of today's `include`,
-whose expression must evaluate to a node (`FormulaParser.swift:884`): a string is currently
-a type error, so the new form takes a spelling nothing accepts today.
+A string include names a *virtual file*: text no file in the input file system holds, which
+a node package provides on request (see Registration). It is an extension of today's
+`include`, whose expression must evaluate to a node (`FormulaParser.swift:884`): a string is
+currently a type error, so the new form takes a spelling nothing accepts today.
 
-- The prelude's funcs enter scope **namespaced by the include name**: `include 'clang'`
-  makes `clang.executable(…)` callable and nothing else. A bare `executable` stays free for
-  the formula's own use, and two preludes may both define `library`.
-- An unknown name is a parse error that lists the registered names.
+- The prelude's funcs enter scope **namespaced**: `include 'clang'` makes
+  `clang.executable(…)` callable and nothing else. A bare `executable` stays free for the
+  formula's own use, and two preludes may both define `library`. The provider states the
+  namespace, since a name such as `'clang/c++'` is not an identifier.
+- A name no provider answers is an error naming the include line.
 - A prelude may include another prelude (`apple` includes `swift`); the inner funcs are
   reachable inside the outer prelude by their own namespace, and in the formula only if
   the formula includes that prelude itself.
-- A prelude holds funcs only. A `product` in prelude text is an error at registration — a
-  product there would be published in every project that includes it.
+- A prelude holds funcs only. A `product` in provided text is an error — a product there
+  would be published in every project that includes it.
 
 ### Dotted calls
 
@@ -113,16 +115,45 @@ name the pattern.
 
 ## Registration
 
-A registry in `SemelNodeKit`, shaped like `ToolNamespaceRegistry`: idempotent, keyed by
-name, sorted when listed. A node package depends on `SemelNodeKit` alone, so this
-keeps the rule that no toolchain package imports the engine.
+Node packages **intercept include names**. Each registers a provider in `SemelNodeKit`,
+called from its `register()` beside `TypeRegistry.register(types:)`; a node package depends
+on `SemelNodeKit` alone, so this keeps the rule that no toolchain package imports the engine.
 
 ```swift
-FormulaPreludeRegistry.register(name: "clang", text: clangPrelude)
+public protocol FormulaIncludeProvider {
+    /// The prelude for `name`, or nil when this package does not answer to it.
+    func prelude(named name: String) -> FormulaPrelude?
+}
+
+public struct FormulaPrelude {
+    public let namespace: String   // what `name.func(…)` calls are spelled with
+    public let text:      String   // funcs only
+}
+
+FormulaIncludeProviders.register(SemelClang.includeProvider)
 ```
 
-called from `SemelClang.register()` beside `TypeRegistry.register(types:)`. The text lives
-in the package as a `.fmla` resource, so it reads, lints and diffs as a formula.
+A package whose prelude is fixed answers one exact name with a `.fmla` resource, so it
+reads, lints and diffs as a formula; `FormulaPrelude.fixed(name:namespace:resource:)` is that
+provider in one line. Interception is what a package needs beyond that: a family of names
+(`'clang/c'`, `'clang/c++'` with the language standard's patterns and flags differing), or
+text generated from what the package knows at start-up — the tools `ToolDiscovery` found,
+the SDKs installed.
+
+Three rules keep that flexibility inside the model:
+
+1. **A provider is a pure function of the name and of what the server knew when it
+   started.** It must not read the input file system or anything else that changes while
+   the server runs: text computed from a project's files is a converter node's job, and
+   `include SwiftFormulaConverter(path: <.>).formula` stays how a `Package.swift` is
+   included. What a provider returns is asked once per name per start, and is what the
+   `FormulaPrelude` node below publishes.
+2. **Two providers answering one name is an error**, naming both packages — the rule
+   `TypeRegistry` applies to two types claiming one `kind`. Not first-wins: registration
+   order would then decide what a formula means, silently.
+3. **A provider answers the same name the same way within one start.** The engine asks
+   once and keeps the answer, so a provider that did otherwise would disagree with itself
+   only across restarts, which is what a changed prelude already means.
 
 ### How prelude text reaches a formula
 
@@ -135,14 +166,17 @@ So a prelude is a source node, filled by the runtime rather than by a wire — t
 B-43 proposes for `StaticFile`'s pushed content:
 
 - A core node type `FormulaPrelude(name:)` with one output port, `formula`, and no inputs.
-- When the engine starts, it writes each registered prelude's text to its node's port
-  where the text differs from what is stored, exactly as a push writes a `StaticFile`.
 - `ProjectBuilder` resolves `include 'clang'` by wiring `FormulaPrelude(name: 'clang').formula`
-  on its `includes` port, the same path a converter's `.formula` takes today. A changed
-  prelude wakes that wire, the builder re-runs, and every node whose spec moved is a new
-  node; the rest keep their identity and their cache.
-- A formula that includes a name no package registered gets a `FormulaPrelude` whose port
-  says so, and the error report names the include line.
+  on its `includes` port, the same path a converter's `.formula` takes today.
+- Names cannot be enumerated in advance once packages intercept them, so the node is filled
+  **when it is created** — the engine asks the providers for its name and writes the answer
+  to its port — and **when the engine starts**, for every `FormulaPrelude` already resident,
+  writing only where the answer differs from what is stored, exactly as a push writes a
+  `StaticFile`. A changed prelude wakes the wire, the builder re-runs, and every node whose
+  spec moved is a new node; the rest keep their identity and their cache.
+- A name no provider answers publishes an error on the port, and the report names the
+  include line. The node stays resident while a formula includes it, so installing a package
+  that answers the name and restarting fills it.
 
 ## The preludes
 
@@ -242,10 +276,13 @@ the file once per call rather than once per tool.
 3. Formula parser tests: namespaced resolution; an unknown include name; a formula func
    with the same bare name as a prelude func, both callable; lexical scope (a prelude's
    `%%f%%` does not see the caller's `f`); an unbound parameter; a parameter in a template;
-   a product in prelude text refused at registration.
-4. Changing a registered prelude's text and restarting the server re-runs the builders that
+   a product in provided text refused.
+4. Provider tests: two packages answering one name is an error naming both; a name nobody
+   answers is reported against the include line, and a restart with a package that answers
+   it fills the resident node.
+5. Changing a provided prelude's text and restarting the server re-runs the builders that
    include it and no others.
-5. The tutorial's Part 3 formula is written with `clang.` calls first, and the hand-written
+6. The tutorial's Part 3 formula is written with `clang.` calls first, and the hand-written
    chain is shown afterwards as what the call expands to.
 
 ## Open questions
