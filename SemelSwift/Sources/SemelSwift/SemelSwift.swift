@@ -43,6 +43,9 @@ public enum SemelSwift {
                                              toolName: "swiftc", machineSettings: sdk))
         ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                              toolName: "swift"))
+
+        // `include 'swift'`: a target outside a package, from a folder of sources (B-108).
+        FormulaIncludeProviders.register(includeProvider)
     }
 
     // MARK: - What a converted package reads

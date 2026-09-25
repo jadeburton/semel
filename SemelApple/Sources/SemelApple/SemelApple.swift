@@ -30,5 +30,8 @@ public enum SemelApple {
                                              toolName: "actool"))
         ToolNamespaceRegistry.register(.init(namespace: StringCatalogCompilerConfiguration.settingNamespace,
                                              toolName: "xcstringstool"))
+
+        // `include 'apple'`: an app bundle's resources and Info.plist (B-108).
+        FormulaIncludeProviders.register(includeProvider)
     }
 }

@@ -241,6 +241,16 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(GeneratedFiles.namespaces(selectedIn: formula), ["clang.linker", "swift.compiler"])
     }
 
+    /// B-108. A formula that includes a prelude names no prefix itself; the prelude does.
+    func test_aFormulaSelectsWhatTheIncludedPreludesSelect() throws {
+        try SemelSwift.register()
+        try SemelApple.register()
+        let formula = "include 'swift'\ninclude 'apple'\nproduct 'x' = swift.executable(sources: <S>, name: 'X', settings: <c>)"
+
+        XCTAssertEqual(GeneratedFiles.namespaces(selectedIn: formula),
+                       ["apple.assetCatalogCompiler", "apple.stringCatalogCompiler", "swift.compiler", "swift.linker"])
+    }
+
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {
         let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
                                                 facts: facts(), namespaces: everyNamespace))
