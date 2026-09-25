@@ -143,10 +143,10 @@ Push file: hello/src/hello.c
 Push file: hello/src/hello.h
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c
-output:/hello/config.txt: OK
-output:/hello/hello.dylib: OK
-output:/hello/hello: OK
 ✅ 23 nodes scheduled, 23 computed, 0 from cache, 0 errors
+   appeared: output:/hello/config.txt
+   appeared: output:/hello/hello
+   appeared: output:/hello/hello.dylib
 Settled.
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
@@ -159,6 +159,13 @@ never been built. Part 2 is about that column. The counts are from one walk-thro
 yours will differ a little; the two right-hand numbers usually add up to the first, and
 fall short of it when a node is woken, found to be waiting on something, and never gets as
 far as producing anything before the graph settles.
+
+The indented lines under it are the *artifact diff*: what this settle did to the products,
+as the difference between this settle and the last. Three verbs and no others — `appeared`,
+`changed`, `disappeared`. A product that failed is not among them; that is what the error
+report is for, and saying it twice in two vocabularies is what these lines were designed to
+avoid. Nothing is said about the steps in between: a product republished with the bytes it
+already had says nothing at all, which is what the next section is about.
 
 `--into` expands the `~` the same way `base` does, and the products land beside your
 sources rather than in the checkout. In the **shell** terminal:
@@ -260,7 +267,7 @@ No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
-Every push says `[no change]`, no `output:` line appears, and there is no summary either.
+Every push says `[no change]`, no artifact line appears, and there is no summary either.
 A settle that woke nothing says nothing: no wire changed, so no node was scheduled, so
 there is nothing to report. (`Exported 3 files` is the export copying what is already
 there; it is not a rebuild.)
@@ -277,9 +284,9 @@ Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
-output:/hello/hello: OK
-output:/hello/hello.dylib: OK
 ✅ 9 nodes scheduled, 8 computed, 1 from cache, 0 errors
+   changed: output:/hello/hello
+   changed: output:/hello/hello.dylib
 Settled.
 No errors.
 ```
@@ -322,13 +329,13 @@ build hello --into ~/semel-playground/out
 ```
 Push file: clang.cfg
 Push folder: hello
-output:/hello/config.txt: OK
 Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
-output:/hello/hello: OK
-output:/hello/hello.dylib: OK
 ✅ 18 nodes scheduled, 11 computed, 7 from cache, 0 errors
+   changed: output:/hello/config.txt
+   changed: output:/hello/hello
+   changed: output:/hello/hello.dylib
 Settled.
 No errors.
 ```
@@ -486,7 +493,6 @@ Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
-output:/hello/lines.txt: OK
 Settled.
 No errors.
 Exported 4 files into /Users/you/semel-playground/out

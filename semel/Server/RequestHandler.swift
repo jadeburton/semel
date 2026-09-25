@@ -206,6 +206,13 @@ public final class RequestHandler {
                                                       fromCache: summary.fromCache,
                                                       errors:    summary.errors)))
         }
+        // Last in that same order: what the settle produced is read under the summary of
+        // what the settle did.
+        engine.artifactReporter = { [weak self] changes in
+            self?.eventSink?.deliver(.daemon(.artifacts(appeared:    changes.appeared,
+                                                        changed:     changes.changed,
+                                                        disappeared: changes.disappeared)))
+        }
     }
 
     // MARK: - Shared helpers for the file verbs

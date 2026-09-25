@@ -20,6 +20,53 @@ final class MarkTests: XCTestCase {
     }
 }
 
+/// B-50. What one settle did to the products, under the line that says what it did.
+final class ArtifactChangeRendererTests: XCTestCase {
+
+    private func lines(appeared: [String] = [], changed: [String] = [],
+                       disappeared: [String] = []) -> [String] {
+        ArtifactChangeRenderer.lines(appeared: appeared, changed: changed, disappeared: disappeared)
+    }
+
+    /// Unmarked: a mark says good or bad, and an artifact that changed is neither.
+    func test_eachKindNamesItsPathsInOrder() {
+        XCTAssertEqual(lines(appeared: ["output:/app"],
+                             changed: ["output:/lib.a"],
+                             disappeared: ["output:/old"]),
+                       ["   appeared: output:/app",
+                        "   changed: output:/lib.a",
+                        "   disappeared: output:/old"])
+    }
+
+    func test_aSettleThatMovedNoProductSaysNothing() {
+        XCTAssertEqual(lines(), [])
+    }
+
+    /// The cap: twenty paths, then how many were left out.
+    func test_aKindOverTheCapNamesTwentyAndCountsTheRest() {
+        let appeared = (1...25).map { "output:/p\(String(format: "%02d", $0))" }
+
+        let rendered = lines(appeared: appeared)
+
+        XCTAssertEqual(rendered.count, 21)
+        XCTAssertEqual(rendered.first, "   appeared: output:/p01")
+        XCTAssertEqual(rendered[19], "   appeared: output:/p20")
+        XCTAssertEqual(rendered.last, "   and 5 more appeared")
+    }
+
+    /// The cap is per kind, not over the three together: a settle that publishes a
+    /// thousand products and removes one has to show the removal, and a combined cap
+    /// would spend itself on the appearances before reaching it.
+    func test_aRemovalIsNamedThoughTheAppearancesFilledTheCap() {
+        let appeared = (1...100).map { "output:/p\($0)" }
+
+        let rendered = lines(appeared: appeared, disappeared: ["output:/gone"])
+
+        XCTAssertEqual(rendered.last, "   disappeared: output:/gone")
+        XCTAssertEqual(rendered[20], "   and 80 more appeared")
+    }
+}
+
 final class SettleSummaryRendererTests: XCTestCase {
 
     private func line(scheduled: Int, computed: Int, fromCache: Int, errors: Int) -> String? {

@@ -194,6 +194,29 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertNil(port.dataObjectHash)
     }
 
+    /// B-50. A database created before the artifact snapshot table is not a graph that
+    /// means something else, so it is not a version change: `createTables` is
+    /// `IF NOT EXISTS` and runs when the file is opened, before the fingerprint is taken,
+    /// so the schema gate sees a matching schema and the marker sees a matching version.
+    /// The graph is kept whole, and the empty table is what the first settle reconciles.
+    func test_aDatabaseFromBeforeTheArtifactSnapshotsOpensWithoutARebuild() throws {
+        let path = try makeTemporaryDatabasePath()
+        let older = try makeEngine(try DatabaseLayer(filePath: path))
+        try older.reconcileVersionMarkers()
+        let derived = try makeDerivedNode()
+        // The one thing that database lacks.
+        try older.database.dbQueue.write { db in try db.execute(sql: "DROP TABLE ArtifactSnapshot") }
+
+        let engine = try makeEngine(try DatabaseLayer(filePath: path))
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertNotNil(try engine.database.node.select(nodeID: derived),
+                        "a derived table is no reason to discard what the graph derived")
+        XCTAssertTrue(try engine.database.artifactSnapshot.selectAll().isEmpty,
+                      "the table is there, and empty, for the first settle to reconcile")
+        XCTAssertEqual(try storedVersion(engine), Semel.version)
+    }
+
     // MARK: - The content-root port, added to `Folder` after graphs existed
 
     /// A node is given one row per declared output port when it is created, so a preserved

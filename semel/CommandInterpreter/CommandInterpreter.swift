@@ -138,6 +138,9 @@ public final class CommandInterpreter: CommandContext {
                 return
             }
             outputMessage(line)
+        case .daemon(.artifacts(let appeared, let changed, let disappeared)):
+            ArtifactChangeRenderer.lines(appeared: appeared, changed: changed, disappeared: disappeared)
+                .forEach { outputMessage($0) }
         }
     }
 

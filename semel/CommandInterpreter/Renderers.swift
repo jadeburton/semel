@@ -28,6 +28,16 @@ enum Mark {
     static let settled = "✅"
 }
 
+/// How many paths any one of the prompt's reports names, one per line, before it reports
+/// a count instead.
+///
+/// One number rather than one per report, because it is one reading: "too many paths to
+/// read". A push or an `rm` of a whole project runs to thousands, a cold build publishes
+/// as many products, and a wall of paths buries whatever else was said either way.
+enum PathList {
+    static let namedIndividually = 20
+}
+
 enum SettleSummaryRenderer {
 
     /// One line for one settle, or nothing when the settle had nothing to do.
@@ -47,6 +57,37 @@ enum SettleSummaryRenderer {
 
         return "\(mark) \(scheduled) \(nodes) scheduled, \(computed) computed, "
              + "\(fromCache) from cache, \(errors) \(errorWord)"
+    }
+}
+
+enum ArtifactChangeRenderer {
+
+    /// The lines that go under the settle summary: one per artifact, in the order
+    /// appeared, changed, disappeared, each group in path order.
+    ///
+    /// Unmarked and indented, because they belong to the line above them. A mark says
+    /// good or bad and nothing else, and an artifact that changed is neither — a product
+    /// that failed is in the error report, under the mark that means it.
+    ///
+    /// **The cap is per kind, not over the three together.** A settle that publishes ten
+    /// thousand products and removes one has to show the removal: capping the combined
+    /// list in order would spend the whole budget on appearances and drop the one line
+    /// worth reading. So each kind names up to `PathList.namedIndividually` paths and
+    /// then says how many it left out.
+    static func lines(appeared: [String], changed: [String], disappeared: [String]) -> [String] {
+        linesForKind(appeared, "appeared")
+            + linesForKind(changed, "changed")
+            + linesForKind(disappeared, "disappeared")
+    }
+
+    private static func linesForKind(_ paths: [String], _ verb: String) -> [String] {
+        var lines = paths.prefix(PathList.namedIndividually).map { "   \(verb): \($0)" }
+
+        let rest = paths.count - lines.count
+        if rest > 0 {
+            lines.append("   and \(rest) more \(verb)")
+        }
+        return lines
     }
 }
 

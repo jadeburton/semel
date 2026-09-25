@@ -319,6 +319,15 @@ extension NodeRecord {
     }
 
     func writePendingToAllOutputsOfNode() throws {
+        // Every way a node's inputs come to mean something else passes through here — a
+        // port write cascading to its consumers, a wire connected, a wire disconnected —
+        // which makes it the one place an artifact can be noticed as a candidate for the
+        // settle diff (B-50). Touched, not changed: the comparison against the reported
+        // hash is what tells those apart.
+        if kind == OutputFile.kind, let path = properties["path"], let nodeID = id {
+            BuildEngine.shared?.noteArtifactTouched(path: path, nodeID: nodeID)
+        }
+
         for outputPort in try makeNode().descriptor.outputPorts {
             try writeToOutputPort(outputPort, value: .noValue(reason: .pending))
         }

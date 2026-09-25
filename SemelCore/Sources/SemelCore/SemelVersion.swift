@@ -46,5 +46,12 @@ public enum Semel {
     /// a state `GraphCheck` reports as damage, a read of the port throws on, and the fold
     /// above such a folder would read as an empty subtree. The rebuild folds every preserved
     /// folder, which is what makes the rows.
+    ///
+    /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
+    /// a schema change usually stops the launch — but this one is derived state that
+    /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
+    /// gains it before the fingerprint is taken. The first settle of a launch reconciles
+    /// it against the graph, which is what a rebuild would have achieved at the price of
+    /// discarding every derived node. Nothing a stored graph holds means anything else.
     public static let version = "0.1.6"
 }
