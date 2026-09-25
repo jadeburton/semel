@@ -10,10 +10,11 @@
 // their artifacts were not. This fingerprints what is actually there and puts it in the
 // key through `Node.cacheKeyMaterial`.
 //
-// Why a key part and not `toolDescriptor.recursiveHash`: the registry matches a config's
-// whole descriptor against the installed tool's, so a registered hash would force every
-// config file to declare it by hand — the thing B-47 rejected. A key part costs the user
-// nothing to declare.
+// Why a key part rather than a setting: a config file names the SDK, not what is inside
+// it, and a fingerprint a user had to write by hand is one more thing to get wrong — what
+// B-47 rejected. A key part costs the user nothing to declare. The tool binary's
+// fingerprint reaches the key the same way (`toolBinaryCacheKeyMaterial`), from the
+// descriptor discovery registers it on.
 //
 // What it does and does not close. A cache key can only stop a wrong reuse. An SDK edited
 // in place under an already-built graph is still not rebuilt, because an unscheduled node
@@ -97,31 +98,42 @@ var sdkFingerprintProvider: (String) -> String? = { SDKFingerprints.shared.finge
 /// the fingerprint of what is behind it. Shared by the compiler and the linker, the two
 /// nodes that pass `-sdk`. The name is part of the material so two SDKs never share an
 /// entry even if their trees happened to fingerprint alike.
-func sdkCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
-    let sdk = try configuredSDKName(input: input, configurationPort: configurationPort)
+func sdkCacheKeyMaterial(configuration properties: [String: String]) -> String? {
+    let sdk = properties["sdk"] ?? defaultSDKName
     return sdkFingerprintProvider(sdk).map { "sdk=\(sdk):\($0)" }
 }
 
-/// The `sdk` setting out of the configuration on the wire, or the default. Read from the
-/// raw text rather than through the tool's configuration type, which requires every other
-/// setting to be present — and the key has to be computable before that is known.
-private func configuredSDKName(input: ProcessInput, configurationPort: String) throws -> String {
+/// The configuration on the wire as properties, empty when nothing is wired there. Read
+/// from the raw text rather than through the tool's configuration type, which requires
+/// every other setting to be present — and the key has to be computable before that is
+/// known. Read once per key: resolving the value reads the blob from the object store and
+/// verifies its hash, and both halves of the material want the same dictionary.
+private func configurationProperties(input: ProcessInput, configurationPort: String) throws -> [String: String] {
     guard let value = input.inputValues[configurationPort]?.values.first,
           case .value(let hash) = value else {
-        return defaultSDKName
+        return [:]
     }
-    let properties = [String: String](plainText: try hash.resolveAsString())
-    return properties["sdk"] ?? defaultSDKName
+    return [String: String](plainText: try hash.resolveAsString())
+}
+
+/// Everything a Swift tool reads outside its inputs: the SDK behind `-sdk`, and the binary
+/// behind the tool version its configuration names (B-17). Each line stands on its own, so
+/// a tool that finds only one of the two still declares it.
+func swiftToolCacheKeyMaterial(input: ProcessInput, configurationPort: String) throws -> String? {
+    let properties = try configurationProperties(input: input, configurationPort: configurationPort)
+    let lines = [sdkCacheKeyMaterial(configuration: properties),
+                 toolBinaryCacheKeyMaterial(configuration: properties)].compactMap { $0 }
+    return lines.isEmpty ? nil : lines.joined(separator: "\n")
 }
 
 extension SwiftCompiler {
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try sdkCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        try swiftToolCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 }
 
 extension SwiftLinker {
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        try sdkCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+        try swiftToolCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 }

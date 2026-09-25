@@ -117,6 +117,41 @@ final class SDKFingerprintTests: SemelSwiftTestCase {
                        "sdk=iphonesimulator:fp-iphonesimulator")
     }
 
+    /// B-17. The two things a Swift tool reads outside its inputs reach the key together,
+    /// each on its own line: the SDK behind `-sdk`, and the binary behind the tool version
+    /// the configuration names.
+    func test_theSDKAndTheToolBinaryBothReachTheKey() throws {
+        sdkFingerprintProvider = { _ in "0123abcd" }
+        ToolRunnerRegistry.instance.registerTool(
+            descriptor: .init(name: "swiftc", version: "1.0", platform: "macOS", architecture: "arm64",
+                              recursiveHash: "fingerprint-of-the-frontend"),
+            toolExecutor: RecordingToolRunner())
+
+        let compiler = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
+        let configuration = ["toolDescriptor.architecture=arm64",
+                             "toolDescriptor.name=swiftc",
+                             "toolDescriptor.platform=macOS",
+                             "toolDescriptor.version=1.0"].joined(separator: "\n")
+
+        XCTAssertEqual(try compiler.cacheKeyMaterial(input: try input(configuration: configuration)),
+                       "sdk=macosx:0123abcd\ntool=swiftc:fingerprint-of-the-frontend")
+    }
+
+    /// A configuration naming a version this machine does not have contributes no
+    /// fingerprint: the node fails when it is processed, naming what is installed.
+    func test_aToolVersionThatIsNotInstalledContributesNothing() throws {
+        sdkFingerprintProvider = { _ in "0123abcd" }
+
+        let compiler = try SwiftCompiler(thisNode: NodeRecord(id: 1, kind: SwiftCompiler.kind))
+        let configuration = ["toolDescriptor.architecture=arm64",
+                             "toolDescriptor.name=swiftc",
+                             "toolDescriptor.platform=macOS",
+                             "toolDescriptor.version=1.0"].joined(separator: "\n")
+
+        XCTAssertEqual(try compiler.cacheKeyMaterial(input: try input(configuration: configuration)),
+                       "sdk=macosx:0123abcd")
+    }
+
     /// With no SDK on the machine there is nothing to fingerprint and nothing to add; the
     /// compile fails on its own for want of an SDK.
     func test_noSDKMeansNoMaterial() throws {

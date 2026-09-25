@@ -86,6 +86,13 @@ public struct ClangCompiler: Node {
         }
     }
 
+    /// The binary behind the tool version the configuration names: two builds of one
+    /// version compile differently, and only a fingerprint of the binary tells them apart
+    /// (B-17).
+    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
+        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+    }
+
     public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
