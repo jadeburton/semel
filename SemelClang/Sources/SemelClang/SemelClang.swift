@@ -33,5 +33,8 @@ public enum SemelClang {
                           ClangPreprocessorConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang"))
         }
+
+        // `include 'clang'`: executables and dylibs from a folder of sources (B-108).
+        FormulaIncludeProviders.register(includeProvider)
     }
 }
