@@ -1,4 +1,4 @@
-# Formula preludes: built-in functions a node package registers (B-108)
+# Formula preludes: built-in functions a plugin provides (B-108)
 
 ## The problem
 
@@ -42,25 +42,26 @@ product "hello"       = clang.executable(sources: <src>, settings: <../clang.cfg
 
 ## Decisions
 
-*Vocabulary.* `AGENTS.md` reserves **toolchain** (tool discovery and versioning, "not a set of
-node functions") and **plugin** (a `CommandPlugin` or `ProjectBuilderPlugin`). A prelude is a
-set of node functions, so this document says *node package* — `SemelClang`, `SemelSwift`,
-`SemelApple` — for what registers one.
+*Vocabulary.* A **plugin** is a component that extends the agnostic core by registering with
+it (`AGENTS.md`): `SemelClang`, `SemelSwift`, `SemelApple`. Linked into `semelserv` today;
+meant to be loadable as a dylib from outside this repository one day, which the design must
+not rule out (see "Toward loadable plugins"). **Toolchain** stays reserved for tool discovery
+and versioning — a prelude is not one.
 
-- **A formula names no node package until it includes one.** The formula language and the
-  engine are agnostic of every package of node types; a formula that uses a package's
-  functions says so with an explicit `include` line. Nothing is in scope by default.
-- **Each node package registers its own prelude.** A prelude is formula text — `func`
-  definitions only — that a package such as `SemelClang` registers under a name when the
-  server starts, the way it registers its node types and tool finders today. All packages
-  ship one: `clang`, `swift`, `apple`.
+- **A formula names no plugin until it includes one.** The formula language and the engine
+  are agnostic of every plugin; a formula that uses a plugin's functions says so with an
+  explicit `include` line. Nothing is in scope by default.
+- **Each plugin provides its own prelude.** A prelude is formula text — `func` definitions
+  only — that a plugin such as `SemelClang` provides for an include name, registered when the
+  server starts the way it registers its node types and tool finders today. All three
+  plugins ship one: `clang`, `swift`, `apple`.
 - **Sources are named explicitly, as a folder.** `sources: <src>`. The prelude decides
   which files in it a tool takes (`*.c`, `*.cpp`, …); the formula decides where they are.
   A default source folder would be an input nobody can see in the formula.
 - **A built-in expands to ordinary nodes.** A prelude call produces the same kind of graph
   a hand-written formula does — the per-file preprocessor and compiler nodes stay visible
   to `ls`, `errors`, `check` and the cache. No composite node types, and no engine knowledge
-  of any package's nodes. When a built-in does not fit, the reader copies its body out of the
+  of any plugin's nodes. When a built-in does not fit, the reader copies its body out of the
   prelude and edits it.
 
 ## Language
@@ -68,7 +69,7 @@ set of node functions, so this document says *node package* — `SemelClang`, `S
 ### `include '<name>'`
 
 A string include names a *virtual file*: text no file in the input file system holds, which
-a node package provides on request (see Registration). It is an extension of today's
+a plugin provides on request (see Registration). It is an extension of today's
 `include`, whose expression must evaluate to a node (`FormulaParser.swift:884`): a string is
 currently a type error, so the new form takes a spelling nothing accepts today.
 
@@ -115,13 +116,13 @@ name the pattern.
 
 ## Registration
 
-Node packages **intercept include names**. Each registers a provider in `SemelNodeKit`,
-called from its `register()` beside `TypeRegistry.register(types:)`; a node package depends
-on `SemelNodeKit` alone, so this keeps the rule that no toolchain package imports the engine.
+Plugins **intercept include names**. Each registers a provider in `SemelNodeKit`, called
+from its `register()` beside `TypeRegistry.register(types:)`; a plugin depends on
+`SemelNodeKit` alone, so the core never names it and it never imports the engine.
 
 ```swift
 public protocol FormulaIncludeProvider {
-    /// The prelude for `name`, or nil when this package does not answer to it.
+    /// The prelude for `name`, or nil when this plugin does not answer to it.
     func prelude(named name: String) -> FormulaPrelude?
 }
 
@@ -133,11 +134,11 @@ public struct FormulaPrelude {
 FormulaIncludeProviders.register(SemelClang.includeProvider)
 ```
 
-A package whose prelude is fixed answers one exact name with a `.fmla` resource, so it
+A plugin whose prelude is fixed answers one exact name with a `.fmla` resource, so it
 reads, lints and diffs as a formula; `FormulaPrelude.fixed(name:namespace:resource:)` is that
-provider in one line. Interception is what a package needs beyond that: a family of names
+provider in one line. Interception is what a plugin needs beyond that: a family of names
 (`'clang/c'`, `'clang/c++'` with the language standard's patterns and flags differing), or
-text generated from what the package knows at start-up — the tools `ToolDiscovery` found,
+text generated from what the plugin knows at start-up — the tools `ToolDiscovery` found,
 the SDKs installed.
 
 Three rules keep that flexibility inside the model:
@@ -148,7 +149,7 @@ Three rules keep that flexibility inside the model:
    `include SwiftFormulaConverter(path: <.>).formula` stays how a `Package.swift` is
    included. What a provider returns is asked once per name per start, and is what the
    `FormulaPrelude` node below publishes.
-2. **Two providers answering one name is an error**, naming both packages — the rule
+2. **Two providers answering one name is an error**, naming both plugins — the rule
    `TypeRegistry` applies to two types claiming one `kind`. Not first-wins: registration
    order would then decide what a formula means, silently.
 3. **A provider answers the same name the same way within one start.** The engine asks
@@ -168,20 +169,20 @@ B-43 proposes for `StaticFile`'s pushed content:
 - A core node type `FormulaPrelude(name:)` with one output port, `formula`, and no inputs.
 - `ProjectBuilder` resolves `include 'clang'` by wiring `FormulaPrelude(name: 'clang').formula`
   on its `includes` port, the same path a converter's `.formula` takes today.
-- Names cannot be enumerated in advance once packages intercept them, so the node is filled
+- Names cannot be enumerated in advance once plugins intercept them, so the node is filled
   **when it is created** — the engine asks the providers for its name and writes the answer
   to its port — and **when the engine starts**, for every `FormulaPrelude` already resident,
   writing only where the answer differs from what is stored, exactly as a push writes a
   `StaticFile`. A changed prelude wakes the wire, the builder re-runs, and every node whose
   spec moved is a new node; the rest keep their identity and their cache.
 - A name no provider answers publishes an error on the port, and the report names the
-  include line. The node stays resident while a formula includes it, so installing a package
+  include line. The node stays resident while a formula includes it, so installing a plugin
   that answers the name and restarting fills it.
 
 ## The preludes
 
 The first cut of each, as the acceptance surface. The bodies are ordinary formula text over
-the node types each package already has.
+the node types each plugin already has.
 
 ### `clang`
 
@@ -277,13 +278,44 @@ the file once per call rather than once per tool.
    with the same bare name as a prelude func, both callable; lexical scope (a prelude's
    `%%f%%` does not see the caller's `f`); an unbound parameter; a parameter in a template;
    a product in provided text refused.
-4. Provider tests: two packages answering one name is an error naming both; a name nobody
-   answers is reported against the include line, and a restart with a package that answers
+4. Provider tests: two plugins answering one name is an error naming both; a name nobody
+   answers is reported against the include line, and a restart with a plugin that answers
    it fills the resident node.
 5. Changing a provided prelude's text and restarting the server re-runs the builders that
    include it and no others.
 6. The tutorial's Part 3 formula is written with `clang.` calls first, and the hand-written
    chain is shown afterwards as what the call expands to.
+
+## Toward loadable plugins
+
+Plugins are linked into `semelserv` today. The aim is for the server to find plugin dylibs
+and load them without their being part of this repository, and nothing here may depend on
+a plugin being compiled in. What this design already gives a loaded plugin:
+
+- **The core never names a plugin.** A provider is registered through `SemelNodeKit`, the
+  same way from a dylib's entry point as from `SemelClang.register()`.
+- **Two plugins claiming one include name fail loudly**, which matters most when the two
+  were written by people who never met.
+- **A replaced plugin's prelude reaches the graph.** Resident `FormulaPrelude` nodes are
+  re-asked at every start, so a new dylib's text wakes exactly the builders that include it.
+- **An absent plugin is a state, not a dead end.** A formula including a name nobody
+  answers reports it against the include line and fills in when the plugin is installed.
+
+What loading needs elsewhere, outside B-108:
+
+1. **`kind` numbers.** One hand-assigned number space across every package works inside one
+   repository and not across strangers' dylibs. A kind has to be qualified by its plugin,
+   or replaced by the type name `TypeRegistry` already looks types up by (`FUTURE.md`
+   already asks whether `kind` earns its place).
+2. **A plugin's code in its cache keys.** `implementationVersion` is bumped by hand; a
+   rebuilt dylib whose author forgot would hit entries its old code wrote. A fingerprint of
+   the dylib in each of its types' keys closes that, as the tool binary's fingerprint does
+   for tools (B-17).
+3. **An ABI boundary.** Swift types cross a dylib boundary safely only from a module built
+   with library evolution. Either `SemelNodeKit` is built that way, or a plugin exports one
+   C entry point (`@_cdecl`) that calls its `register()` inside the dylib.
+4. **Rows of an unloaded plugin's types.** Uninstalling a plugin leaves nodes of kinds
+   nothing registers — today a dead end (B-83) — and loading makes that ordinary.
 
 ## Open questions
 

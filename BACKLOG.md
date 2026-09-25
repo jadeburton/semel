@@ -269,20 +269,19 @@ taught us".
 
 ## Formula language
 
-**B-108** `open` — **Formula preludes: built-in functions a node package registers.**
+**B-108** `open` — **Formula preludes: built-in functions a plugin provides.**
 A straightforward project should have a straightforward formula. Today a C dylib takes a
 settings selector per tool, a preprocessor → compiler → linker chain, a for-each over the
 files and a name for every wire — fifteen lines copied across all three C fixtures, with
 the `%%f%%`/`%%f.0%%` trap in the middle. Design:
-`docs/superpowers/specs/2026-09-25-semel-formula-preludes-design.md`. Node packages
-(`SemelClang`, `SemelSwift`, `SemelApple`) intercept include names and provide formula text
-of `func`s for them; a formula names no package until it says `include 'clang'`, and then
-calls `clang.executable(sources: <src>, settings: <clang.cfg>)`. The text reaches
+`docs/superpowers/specs/2026-09-25-semel-formula-preludes-design.md`. Plugins (`SemelClang`,
+`SemelSwift`, `SemelApple`) intercept include names and provide formula text of `func`s for
+them; a formula names no plugin until it says `include 'clang'`, and then calls
+`clang.executable(sources: <src>, settings: <clang.cfg>)`. The text reaches
 `ProjectBuilder` on a wire from a `FormulaPrelude` source node the engine fills when it is
 created and again at each start, so a changed prelude re-runs exactly the builders that
-include it. Needs, in the language: string
-includes, dotted calls, lexical scope for func bodies, every parameter bound, and
-parameters usable in templates.
+include it. Needs, in the language: string includes, dotted calls, lexical scope for func
+bodies, every parameter bound, and parameters usable in templates.
 
 ## Design, correctness and code quality
 

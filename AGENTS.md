@@ -104,10 +104,16 @@ is named `semel` and the CLI's sources live in `semel/`. Renaming those
 changes the repository's layout and the C1 fixtures that reference those paths, so it is a
 wider job than a module rename.
 
-Two words are taken and must not be reused for anything else. **Plugin** means a
-`CommandPlugin` (a CLI verb) or a `ProjectBuilderPlugin` (project discovery). **Toolchain**
-means tool discovery and versioning — `ToolDiscovery`, `ToolDescriptor`, and each package's
-own `…ToolDiscovery` finders — not a set of node functions.
+Two words are taken and must not be reused for anything else. **Plugin** means a component
+that extends the agnostic core by registering with it — dependency inversion: the core
+defines the extension point and never names the plugin. `SemelClang`, `SemelSwift`,
+`SemelApple` and `SemelExamples` are plugins; `TypeRegistry`, `ToolDiscovery`,
+`ToolNamespaceRegistry`, `ProjectBuilderPlugin` and `CommandPlugin` are extension points
+they register with. Plugins are linked into `semelserv` today, and the aim is to load them
+as dylibs from outside this repository, so a plugin reaches the core only through what it
+registers in `SemelNodeKit` — never through a static reference the core makes to it.
+**Toolchain** means tool discovery and versioning — `ToolDiscovery`, `ToolDescriptor`, and
+each package's own `…ToolDiscovery` finders — not a set of node functions.
 
 ## Formatting
 
