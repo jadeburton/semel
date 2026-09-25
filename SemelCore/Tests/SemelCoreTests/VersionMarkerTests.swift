@@ -217,6 +217,60 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertEqual(try storedVersion(engine), Semel.version)
     }
 
+    // MARK: - The content-root port, added to `Folder` after graphs existed
+
+    /// A node is given one row per declared output port when it is created, so a preserved
+    /// folder holds exactly the ports of the release that made it. Without the rebuild
+    /// folding it, every stored folder is a node `GraphCheck` reports as damaged and a read
+    /// of the port throws on.
+    func test_aPreservedFolderIsGivenItsContentRootRowByTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        // A graph written before the port existed: the row is taken away to make one.
+        _ = try engine.database.outputPort.delete(nodeID: try folder.requireID(),
+                                                  nameSymbolID: Folder.contentRootOutputPort.asSymbolID())
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.4")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(
+            nodeID: try folder.requireID(), nameSymbolID: Folder.contentRootOutputPort.asSymbolID()))
+        XCTAssertEqual(port.valueKind, .value, "the row carries the fold, not an empty state")
+        XCTAssertFalse(GraphCheck.run(database: engine.database)
+                        .findings.contains { $0.kind == .missingOutputPort },
+                       "and the graph reports no node missing a port row")
+    }
+
+    /// An empty row would not be the answer for a content root, which is derived from the
+    /// folder's children: a folder read as having produced nothing folds into its parent as
+    /// an empty subtree. So the rebuild marks every preserved folder and drains the marks
+    /// before it returns — a graph from before the port comes up with its tree already
+    /// folded, without waiting for a push.
+    func test_aGraphFromBeforeTheContentRootPortComesUpWithItsTreeFolded() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        let fullPath = Path(Folder.inputFileSystemName) / Path("src/a.c")
+        let (fileNode, _) = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')").findOrCreateMatchingNode()
+        _ = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile).replaceContent(try "int a;".intern())
+        // Settled first, so nothing is left marked: the graph this stands in for was written
+        // by a release that had no such port and so had nothing to mark.
+        try Folder.flushDirtyManifests()
+        for node in [try engine.inputFileSystem, folder] {
+            _ = try engine.database.outputPort.delete(nodeID: try node.requireID(),
+                                                      nameSymbolID: Folder.contentRootOutputPort.asSymbolID())
+        }
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.4")
+
+        try engine.reconcileVersionMarkers()
+
+        let folded = try folder.readFromOutputPort(Folder.contentRootOutputPort).expectValue().resolveAsString()
+        XCTAssertTrue(folded.contains("file\thash \(try "int a;".intern())\t3\ta.c\n"), folded)
+        // The folder above it carries the folder's own root, not an empty subtree.
+        let above = try engine.inputFileSystem.readFromOutputPort(Folder.contentRootOutputPort)
+            .expectValue().resolveAsString()
+        XCTAssertTrue(above.contains("folder\thash \(try folded.intern())\t3\tsrc\n"), above)
+    }
+
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
     /// the restating above cannot cost a cache hit or a re-push.
     func test_aPushedFilesContentSurvivesTheRebuild() throws {
@@ -242,7 +296,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
     /// pins is the engine's half of it: an upgrade discards nothing by itself.
     func test_aVersionChangeKeepsTheCachedBuilds() throws {
         let engine = try makeEngine(try DatabaseLayer())
-        try engine.database.cacheEntry.insert(.init(hash: "an-entry-built-by-the-older-semel",
+        try engine.database.cacheEntry.save(.init(hash: "an-entry-built-by-the-older-semel",
                                                     content: [UInt8]("{}".utf8),
                                                     cost: 100,
                                                     timestamp: Date()))
@@ -339,6 +393,42 @@ final class VersionMarkerTests: SemelCoreTestCase {
             }
             XCTAssertTrue(schemaError.unrecoverableDescription.contains(path),
                           "the user has to know which file to delete, got: \(schemaError.unrecoverableDescription)")
+        }
+    }
+
+    /// B-106. The wires arriving at an input port are indexed by the name they arrive under,
+    /// which is what makes the duplicate-name guard a lookup instead of a walk of the fan.
+    /// An index changes what a lookup costs and not what a row means, so a database that
+    /// holds the wires without it is one to index rather than one to refuse: opening it
+    /// creates the index, the fingerprint it then presents is a fresh one's, the launch goes
+    /// on, and the guard is a lookup from the first wire connected. Dropping the index is
+    /// the whole difference between such a file and this one.
+    func test_aDatabaseWithoutTheIndexOnAPortsWireNamesGainsItWhenItIsOpened() throws {
+        let path = try makeTemporaryDatabasePath()
+        try DatabaseLayer(filePath: path).dbQueue.write { db in
+            try db.drop(index: "index_Wire_on_toNodeID_toSymbolID_name")
+        }
+
+        let database = try DatabaseLayer(filePath: path)
+
+        XCTAssertEqual(try database.schemaFingerprint(), try DatabaseLayer.expectedSchemaFingerprint(),
+                       "an indexed file and a fresh one are the same schema")
+        XCTAssertNoThrow(try makeEngine(database).reconcileVersionMarkers(),
+                         "so nothing stops the launch and no graph is discarded")
+        let plan = try planForTheWireNameGuard(database)
+        XCTAssertTrue(plan.contains("index_Wire_on_toNodeID_toSymbolID_name"),
+                      "and the guard is a lookup, got: \(plan)")
+    }
+
+    /// How SQLite says it would answer the question `wireExistsWithSameName` asks.
+    private func planForTheWireNameGuard(_ database: DatabaseLayer) throws -> String {
+        try database.dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                EXPLAIN QUERY PLAN
+                SELECT * FROM "Wire" WHERE "toNodeID" = ? AND "toSymbolID" = ? AND "name" = ?
+                """, arguments: [1, 2, 3])
+                .map { $0["detail"] as String? ?? "" }
+                .joined(separator: "\n")
         }
     }
 

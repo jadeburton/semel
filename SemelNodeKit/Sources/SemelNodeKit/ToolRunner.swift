@@ -12,6 +12,11 @@ public struct ToolDescriptor: Hashable, Codable {
     public let version: String
     public let platform: String
     public let architecture: String
+    /// A fingerprint of the binary behind the four fields above, filled in by
+    /// `ToolDiscovery` from the tool it located. Nil in a descriptor a configuration
+    /// spells out, which names a tool but cannot know which binary answers to that name
+    /// on this machine. It keys the cache — `toolBinaryCacheKeyMaterial` — and never
+    /// decides which tool a node runs.
     public let recursiveHash: String?
 
     public init(name: String,
@@ -24,6 +29,41 @@ public struct ToolDescriptor: Hashable, Codable {
         self.platform = platform
         self.architecture = architecture
         self.recursiveHash = recursiveHash
+    }
+
+    /// What a configuration names when it asks for a tool, and what the registry matches
+    /// on. The fingerprint is deliberately outside it: it is discovered rather than
+    /// declared, so a config file — hand-written or written by `semel-swift prepare` —
+    /// selects a tool by these four fields alone.
+    public struct Identity: Hashable {
+        public let name: String
+        public let version: String
+        public let platform: String
+        public let architecture: String
+
+        public init(name: String, version: String, platform: String, architecture: String) {
+            self.name         = name
+            self.version      = version
+            self.platform     = platform
+            self.architecture = architecture
+        }
+
+        /// The identity a node's configuration names, or nil when it does not name all
+        /// four — a missing key is reported against the node's namespace by
+        /// `RequiredSettings`, which says which one is missing.
+        public init?(properties: [String: String]) {
+            guard let name         = properties["toolDescriptor.name"],
+                  let version      = properties["toolDescriptor.version"],
+                  let platform     = properties["toolDescriptor.platform"],
+                  let architecture = properties["toolDescriptor.architecture"] else {
+                return nil
+            }
+            self.init(name: name, version: version, platform: platform, architecture: architecture)
+        }
+    }
+
+    public var identity: Identity {
+        .init(name: name, version: version, platform: platform, architecture: architecture)
     }
 }
 
@@ -140,17 +180,27 @@ public class ToolRunnerRegistry {
     /// threading a registry through every node.
     public static var instance = ToolRunnerRegistry()
 
-    private var toolsByDescriptor: [ToolDescriptor: ToolRunner] = [:]
+    /// Keyed on the identity, not the whole descriptor: the binary's fingerprint is
+    /// discovered and a configuration cannot state it, so matching on it would leave every
+    /// node asking for a tool the registry holds and cannot hand over.
+    private var toolsByIdentity: [ToolDescriptor.Identity: (descriptor: ToolDescriptor, runner: ToolRunner)] = [:]
 
     /// Every tool currently available to build with.  This is what a formula has to name.
-    public var registeredDescriptors: [ToolDescriptor] { Array(toolsByDescriptor.keys) }
+    public var registeredDescriptors: [ToolDescriptor] { toolsByIdentity.values.map(\.descriptor) }
 
     public func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolRunner) {
-        toolsByDescriptor[descriptor] = toolExecutor
+        toolsByIdentity[descriptor.identity] = (descriptor, toolExecutor)
+    }
+
+    /// The registered descriptor for an identity a configuration names — the whole one,
+    /// fingerprint included, which is how a node's cache key learns which binary answers
+    /// to the version it asked for.
+    public func registeredDescriptor(matching identity: ToolDescriptor.Identity) -> ToolDescriptor? {
+        toolsByIdentity[identity]?.descriptor
     }
 
     public func tool(descriptor: ToolDescriptor) throws -> ToolRunner {
-        guard let tool = toolsByDescriptor[descriptor] else {
+        guard let tool = toolsByIdentity[descriptor.identity]?.runner else {
             throw ToolError.noMatchingToolFound(requested: descriptor,
                                                 available: registeredDescriptors)
         }

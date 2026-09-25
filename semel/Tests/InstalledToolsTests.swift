@@ -38,6 +38,33 @@ final class InstalledToolsTests: XCTestCase {
                        ["clang", "swiftc", "swift", "actool", "xcstringstool"])
     }
 
+    /// B-17. Every tool found here is registered under a fingerprint of the binary behind
+    /// it, so a node's cache key can tell two builds of one version apart. `swiftc` and
+    /// `swift` are two names for one binary in an Apple toolchain and fingerprint alike;
+    /// the tool's name is in the key material beside the fingerprint, which is what keeps
+    /// their nodes apart.
+    func test_everyInstalledToolIsRegisteredUnderAFingerprintOfItsBinary() {
+        XCTAssertEqual(registry.registeredDescriptors.filter { $0.recursiveHash == nil }.map(\.name), [],
+                       "a tool the finder located has a binary to fingerprint")
+        XCTAssertNotEqual(registry.registeredDescriptors.first { $0.name == "clang" }?.recursiveHash,
+                          registry.registeredDescriptors.first { $0.name == "actool" }?.recursiveHash,
+                          "two different binaries, two different fingerprints")
+    }
+
+    /// The identity a `semel.config` spells out is still the whole of what selects a tool:
+    /// a config file written before the fingerprint existed names four fields and must go
+    /// on finding the tool it always found.
+    func test_aConfigurationThatNamesNoFingerprintStillSelectsItsTool() throws {
+        let installed = try XCTUnwrap(registry.registeredDescriptors.first { $0.name == "swiftc" })
+        let asAConfigFileSpellsIt = ToolDescriptor(name: installed.name,
+                                                   version: installed.version,
+                                                   platform: installed.platform,
+                                                   architecture: installed.architecture,
+                                                   recursiveHash: nil)
+
+        XCTAssertNoThrow(try registry.tool(descriptor: asAConfigFileSpellsIt))
+    }
+
     /// Each version names a build, since the descriptor keys the cache and two builds of
     /// one marketing version are different binaries.
     func test_everyToolIsRegisteredUnderAVersionThatNamesABuild() throws {

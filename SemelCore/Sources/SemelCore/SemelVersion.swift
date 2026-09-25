@@ -36,11 +36,22 @@ public enum Semel {
     /// pushed and removed, and a folder nobody has pushed into. Stored graphs hold those as
     /// errors carrying a word, so the rebuild restates the ports it preserves again.
     ///
+    /// 0.1.5: stamped by an unreleased build of the change below, whose graph shape was a
+    /// different one. Skipped, so that a home carrying that stamp is rebuilt rather than
+    /// matched.
+    ///
+    /// 0.1.6: a `Folder` publishes a second derived value, the Merkle root of everything
+    /// under it, on a new `contentRoot` port (B-26). A node is given one row per declared
+    /// port when it is created, so every folder in a stored graph holds none for this one —
+    /// a state `GraphCheck` reports as damage, a read of the port throws on, and the fold
+    /// above such a folder would read as an empty subtree. The rebuild folds every preserved
+    /// folder, which is what makes the rows.
+    ///
     /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
     /// a schema change usually stops the launch — but this one is derived state that
     /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.4"
+    public static let version = "0.1.6"
 }

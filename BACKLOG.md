@@ -117,7 +117,14 @@ whether this is the library that was meant in the first place — a lock preserv
 first-time mistake forever — and whether a published advisory applies. Degrades gracefully:
 absent → warn once, present and mismatched → fail.
 
-Depends on B-26.
+The recursive content hash is there (B-26): a folder's `contentRoot` port carries a Merkle
+root over everything under it, so `input:/repo/GRDB.swift`'s root is one port read — and it
+is not qualified by the folder's path, so a lock survives the dependency being moved. What
+remains for B-06 is recording that hash in a lock file and comparing it. Two notes for
+whoever does: the fold is a stated text format with a version tag on its first line
+(`FolderContentRoot`), so a recorded root that stops matching can be told from one the
+format moved under; and a `contentRoot` wire is a real dependency, so the node that checks
+the lock re-runs whenever anything under the vendored folder changes, which is the point.
 
 **B-10** `open` — **Packages are named by a formula, not discovered — two residuals.**
 Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says
@@ -153,11 +160,37 @@ nested folders are not compiled (the glob is one level); a `publicHeadersPath` o
 need a `clang.linker` block, which the archive case never reads.
 
 **B-26** `open` — **Recursive content hash for a folder tree.**
-`FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
-manifest changes when names change but not when contents do. A Merkle root needs a derived
-hash over the sorted `(name, contentHash)` pairs, folded up the tree. Wanted by B-06 for
-locking a vendored dependency, and by the client/server design for making reconciliation
-O(changed) rather than O(tree) — the same piece of work, worth building once.
+Done 2026-09-25: a `Folder` publishes a Merkle root on a `contentRoot` port of its own —
+the hash of a document with one line per child carrying its kind, what it holds and its name:
+a file's line carries its content hash and a subfolder's carries that subfolder's root,
+ordered by name as UTF-8 bytes then by kind, and framed by each name's length. A change anywhere below moves every root above it, carried by the B-25
+dirty mark, so an edit costs one fold per ancestor and not one per folder. Not on the
+manifest, and this is the load-bearing part: the manifest is what a folder's children are
+called, `ProjectFinder` and the converters are wired to it, and folding content in would
+re-run all of them on every keystroke. The root is path-independent where the manifest is
+not, so two copies of one tree are comparable wherever they stand. What remains:
+
+1. **`output:` is opaque to the fold.** Every product's line says `notFolded`, so an
+   `output:` folder's root identifies its names and not its content. The blocker is not the
+   extra query — a product's bytes are one more join away, on its input wire — but
+   invalidation: nothing notifies a folder when a product below it changes, so a folded
+   product hash would go stale without the folder ever being rebuilt. Fixing it means giving
+   `OutputFile` the notification `StaticFile` has. Wanted the day anyone syncs *products* to
+   a peer, or checks an `output:` tree for consistency (B-63); neither B-06 nor the
+   client/server reconciliation, both of which read `input:`, needs it.
+2. **`notFolded` for a kind that is not a product.** The fold reads `Folder` and
+   `StaticFile` and answers `notFolded` for every other kind under a folder. Today that is
+   only `OutputFile`; a new kind of child would want its own answer rather than this one.
+3. **The fold makes the object store grow on the per-edit path.** Each fold interns its
+   document, so one edit writes a fresh document per ancestor — and for a folder of 3,000
+   children that document is a couple of hundred kilobytes. The object store is
+   append-only: nothing prunes, so a day of editing leaves a few thousand documents nobody
+   will read again. A manifest is interned too, but a manifest moves only when a name does.
+   Wanted alongside whatever collects the store; until then the growth is proportional to
+   edits × depth rather than to the tree. Related: during a flush a folder can publish an
+   intermediate root and then the settled one, so once B-06 wires a `contentRoot` consumer
+   that consumer is woken twice for one edit — correct, because the flush drains before the
+   pass selects, but twice.
 
 ## Cache
 
@@ -172,11 +205,12 @@ cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost ×
 rather than uniformly. On a shared cache, have each client ignore a small percentage of hits
 and recompute: coverage is sampling-rate × fleet-size.
 
-**B-13** `open` — **Store key material alongside each entry.**
-Today a mismatch says two builds disagreed and nothing about why. Recording node type,
-`codeVersion`, properties, input wire keys and hashes, and `cacheKeyEnvironment` makes a
-mismatch diffable and lets keys be recomputed offline. (Update: `codeVersion` was deleted, 
-as this is not a reliable enough mechanism.)
+**B-107** `open` — **A cache entry's content is stored as a JSON array of integers.**
+`CacheEntry.content` is `[UInt8]`, which GRDB encodes as `[104,101,…]`, so every byte of
+entry JSON costs about 3.5 bytes on disk — roughly 0.75 MB at the 500-entry limit against
+about 0.2 MB as bytes. Making the column a real blob changes the schema fingerprint, which
+is a stopped launch and a re-push of every source, so it rides with the next unavoidable
+schema change rather than on its own.
 
 **B-14** `open` — **No blob GC.**
 Unreferenced objects accumulate in the object store with no collector. Not urgent.
@@ -188,17 +222,16 @@ entirely in-process.
 
 ## Performance
 
-**B-74** `open` — **The idle report's upstream walk is unmeasured.**
-It costs one indexed wire query per carrying node per idle pass — tens of milliseconds at
-the 500-node cascade this entry was opened by — and no scale test holds that number. Measure
-it against a cascade of that size before deciding whether the walk needs to change.
-
-**B-24** `open` — **`Folder.canBeDeleted` still instantiates one node per subfolder level.**
-Mostly addressed: `everyChildCanBeDeleted` now reads pinned state per kind in one query and
-stops at the first objection, so leaf children cost no instantiation at all. What remains is
-the recursion — each unpinned subfolder is built as a `Folder` to descend into it, so a deep
-tree still pays one node per level. Small next to what it replaced; possibly not worth
-fixing. Verify against a deep tree before spending anything here.
+**B-106** `open` — **`connectWire` scans every wire at the target once per connection.**
+`WireManagement.connectWire` guards a new wire twice: the exact-duplicate check is an indexed
+lookup, but `wireExistsWithSameName` selects every wire already going to the target port and
+scans the result, so wiring an N-wide fan into one port costs O(N²) row reads. Found while
+building `CascadeReportScaleTests`: a 400-wide fan through `connectWire` cost about five
+times the rest of the test, so that fixture inserts its rows directly. A node with many
+consumers of one port pays this during graph construction on every conversion. Fix: an
+indexed lookup by `(toNodeID, toSymbolID, name)`, which the wire key (B-23's primary key)
+already supports, and a scale test that counts wire reads per connection the way
+`CascadeReportScaleTests` counts them per walk.
 
 ## Server
 
@@ -365,22 +398,41 @@ the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
 
-**B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
-changes.**
-Adding or removing a source file in any of the path-dependency packages (`SemelNodeKit`,
-`SemelSwift`, `SemelCore`, …) is invisible to a root `swift build` until `.build/debug.yaml`
-is deleted:
-SwiftPM does not re-plan, so adding a file gives "cannot find X in scope" against the
-registration rather than the plan, and removing one gives "couldn't build … because of
-missing inputs: <the file just deleted>" while leaving the previous binary linked with the
-type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
-(`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
-can do better than a documented workaround. A second instance, found while bumping
-`ProtocolVersion.current` (B-94): a `public static let` used as a default argument is emitted
-into every caller's object file, so modules compiled before the change keep the old value and
-the linker picks whichever copy it finds — `semel` and `semelserv` disagreed about the
-protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
-`rm .build/debug.yaml` does not touch it.
+**B-84** `open` — **SwiftPM leaves a dependent module's objects stale after a path
+dependency changes.**
+Both halves of the original item are answered, and what is left is upstream.
+
+The stale *plan* is fixed. SwiftPM re-plans when llbuild's `PackageStructure` command is
+dirty, and that command's inputs come from `BuildPlan.inputs`, which iterates
+`graph.rootPackages`: the root package's target directories, its `Package.swift` and its
+`Package.resolved`. Every other package here is a path dependency, so adding or removing a
+source file in one of them is an input to nothing and `.build/debug.yaml` keeps the file
+set it was written with — "cannot find 'X' in scope" for an added file, "missing inputs:
+…/X.swift" for a removed one. `--disable-build-manifest-caching` plans every invocation for
+about 0.15 s on this package, inside the noise of process start-up; `scripts/build.sh`
+passes it and CI and `AGENTS.md` call the script.
+
+The stale *value* is fixed for `Hello`. A default argument is not a call: the compiler
+emits a default-argument generator with the constant folded in, as a coalesced copy in
+every caller's object file (`mov w8, #0x9` inside
+`SemelCLI.build/CommandInterpreter.swift.o`). `Hello.init(role:)` is an overload calling
+`init(protocolVersion: ProtocolVersion.current, role:)`, so the read happens in
+`SemelProtocol`; `test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber` catches the
+stale copy, not the reintroduction — reinstate the default argument and build clean and both
+sides of it fold to the same number. "A constant that crosses a module boundary is not a
+default argument" is an invariant in `AGENTS.md`, and that is what guards the reintroduction.
+
+What remains is the SwiftPM defect underneath the second half, which the overload avoids
+rather than cures: an incremental build can leave a dependent module's objects unrebuilt
+after a change in a package it depends on — an undefined symbol at link time
+([swiftlang/swift-package-manager#7715](https://github.com/swiftlang/swift-package-manager/issues/7715),
+open since 2024-06) or a struct read at the wrong offsets
+([#10502](https://github.com/swiftlang/swift-package-manager/issues/10502), open since
+2026-09). The measurement on Swift 6.3.3 that produced the overload: with the default
+argument in place, bumping `ProtocolVersion.current` from 9 to 10 and running one root
+`swift build` linked `semel` at 9 and `semelserv` at 10. `rm -rf .build/arm64-apple-macosx`
+is the only local answer to the general case. The plan-input bug has no tracker entry
+of its own; filing one against `BuildPlan.inputs` is the other thing worth doing.
 
 
 ## App bundles

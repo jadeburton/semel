@@ -65,6 +65,9 @@ extension BuildEngine {
             // nobody bumped republishes what the older code computed.
             let archivedGraphPath = try reset()
             try restateThePortsOfPreservedNodes()
+            // After the restating, which changes what a source's port says and so what the
+            // fold reads.
+            try foldTheContentRootOfEveryPreservedFolder()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
             // in the home unexplained. This runs from `BuildEngine.start()`, before a
             // server installs its reporter and before any client can be listening, so the
@@ -130,5 +133,38 @@ extension BuildEngine {
                 try database.outputPort.insertOrUpdate(restated)
             }
         }
+    }
+
+    /// Folds the content root of every `Folder` the rebuild preserved.
+    ///
+    /// `Folder.contentRoot` (B-26) is a port a release added to a type that already had
+    /// stored nodes. A node is given one row per declared port when it is created and only
+    /// its own deletion takes them away, so every preserved folder holds none for this one,
+    /// and folding is what makes the row: `writeToOutputPort` inserts what is not there, so
+    /// the row arrives carrying a real value and never an empty state that `check` would
+    /// pass over.
+    ///
+    /// An absent row is worse than a gap in a report. `contentStates` reads a child folder
+    /// without one as `notProduced`, so an ancestor folded before the row exists says that
+    /// whole subtree is empty — and the only thing that would ever mark that subtree again
+    /// is a push into it. A root that lies is what the fold refuses when it declines to
+    /// reach a product, and it is refused here for the same reason: every folder is marked,
+    /// and the marks are drained before the engine serves anything.
+    ///
+    /// Marking all of them at once means the flush's rounds can refold an ancestor once per
+    /// level, so the first launch after the upgrade costs O(folders × depth) folds. Bounded,
+    /// paid once, and the most expensive moment this release has.
+    ///
+    /// Folders only. A port added to a type whose nodes are never scheduled — `StaticFile`
+    /// declares no inputs — has no such route, and giving it an empty row would suppress the
+    /// one finding that says so. Whoever adds that port writes the pass that fills it.
+    private func foldTheContentRootOfEveryPreservedFolder() throws {
+        for node in try database.node.selectAll() where node.kind == Folder.kind {
+            guard let nodeID = node.id else {
+                continue
+            }
+            try Folder.markContentRootDirty(nodeID: nodeID)
+        }
+        try Folder.flushDirtyManifests()
     }
 }

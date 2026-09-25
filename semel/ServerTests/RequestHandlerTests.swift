@@ -36,6 +36,17 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .hello(.rejected(reason: .roleNotOffered(role: .cache))))
     }
 
+    /// The version a role-only `Hello` carries is read from `SemelProtocol`, not copied into
+    /// this module. A default argument would be copied: the compiler emits the
+    /// default-argument generator into every caller's object file with the number folded in,
+    /// so a caller whose object survives a change to `ProtocolVersion.current` disagrees with
+    /// one that is recompiled, and the linker picks either copy. `ProtocolVersion.current` on
+    /// the right-hand side is the point of the test — it is a load from the protocol module at
+    /// run time, so a stale copy on the left fails it (B-84).
+    func test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber() {
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, ProtocolVersion.current)
+    }
+
     // MARK: - Batches and subscription
 
     func test_batchesAreCountedOnTheSession() throws {
@@ -96,11 +107,45 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     /// The description is the reply's body, not a field in its JSON: it runs to megabytes
     /// on a real graph, and the JSON section of a frame is capped at one.
     func test_debugReturnsTheGraphDescriptionAsTheReplyBody() throws {
-        let (response, body) = try daemon(.debug)
+        let (response, body) = try daemon(.debug(cacheKey: nil))
 
         XCTAssertEqual(response, .debug)
         let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
         XCTAssertTrue(text.hasPrefix("BUILD GRAPH STATE ("), text)
+    }
+
+    /// B-13. The same verb with a key answers that entry's key material, so a mismatch
+    /// between two machines is a diff of two texts rather than two hashes.
+    func test_debugWithAKeyReturnsThatEntrysKeyMaterial() throws {
+        let key = try storeOneCacheEntry()
+
+        let (response, body) = try daemon(.debug(cacheKey: key))
+
+        XCTAssertEqual(response, .debug)
+        let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
+        XCTAssertTrue(text.contains("cache entry \(key)"), text)
+        XCTAssertTrue(text.contains("node Configuration@1"), text)
+        XCTAssertTrue(text.contains(#"property {"key":"role","value":"sample"}"#), text)
+        XCTAssertTrue(text.contains(#"input {"port":"inherit","#), text)
+    }
+
+    func test_debugWithAKeyNothingIsStoredUnderSaysSo() throws {
+        let (_, body) = try daemon(.debug(cacheKey: String(repeating: "f", count: 64)))
+
+        XCTAssertTrue(String(decoding: try XCTUnwrap(body), as: UTF8.self).contains("no cache entry"))
+    }
+
+    /// One entry, stored the way a build stores one: the material is taken of a real
+    /// node's real input and the key is taken of the material.
+    private func storeOneCacheEntry() throws -> String {
+        let (record, _) = try GraphSpecNode.parse("Configuration(role: 'sample')").findOrCreateMatchingNode()
+        let node  = try record.makeNode()
+        let input = ProcessInput(inputValues: ["inherit": ["wire0": .value(try "sample=1".intern())]])
+        let material = try node.buildCacheKeyMaterial(input: input)
+        try node.saveCacheForAllInputsAndOutputs(
+            keyMaterial: material, processingDuration: 0.1,
+            output: ProcessOutput(outputValues: ["output": .value(try "sample=1".intern())], inputWireSpecs: [:]))
+        return try material.cacheKey()
     }
 
     /// The findings are the reply's body for the reason the graph description is: a badly

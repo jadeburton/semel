@@ -675,7 +675,7 @@ public final class BuildEngine {
     private struct BatchComputeResult {
         let nodeRecord: NodeRecord
         let output: ProcessOutput
-        let cacheKey: String?
+        let keyMaterial: CacheKeyMaterial?
         let computeStart: Date
         let fromCache: Bool
     }
@@ -722,7 +722,7 @@ public final class BuildEngine {
 
                     return BatchComputeResult(nodeRecord: nodeRecord,
                                               output: result.output,
-                                              cacheKey: result.cacheKey,
+                                              keyMaterial: result.keyMaterial,
                                               computeStart: result.computeStart,
                                               fromCache: result.fromCache)
                 }
@@ -794,7 +794,7 @@ public final class BuildEngine {
                         // failure is the machine's, which no later node will survive either.
                         do {
                             try node.saveCacheForAllInputsAndOutputs(
-                                cacheKey: result.cacheKey,
+                                keyMaterial: result.keyMaterial,
                                 processingDuration: Date.now.timeIntervalSince(result.computeStart),
                                 output: result.output
                             )

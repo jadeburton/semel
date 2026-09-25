@@ -86,6 +86,18 @@ let package = Package(
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],
             path: "semel",
+            // `sources:` already limits the target to one file; `exclude:` is what stops
+            // SwiftPM reporting the sibling directories — every one of which is another
+            // target's `path:` — as fifty-one unhandled files on every plan.
+            exclude: [
+                "CommandInterpreter",
+                "Server",
+                "ServerTests",
+                "TestSupport",
+                "Tests",
+                "Transport",
+                "TransportTests",
+            ],
             sources: ["main.swift"]
         ),
         // The server: the engine behind a Unix-domain socket. The composition root for the
@@ -126,6 +138,7 @@ let package = Package(
             name: "semel-swift",
             dependencies: ["SemelSwiftTool"],
             path: "semel-swift",
+            exclude: ["Library"],
             sources: ["main.swift"]
         ),
         .testTarget(

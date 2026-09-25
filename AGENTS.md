@@ -6,23 +6,31 @@ about how to change it.
 ## Build and test
 
 ```sh
-swift build                                  # builds everything the root package links, from the repo root
-swift test --package-path SemelNodeKit       # the node-authoring API (~124)
-swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages) (~44)
-swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
-swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
-swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
-swift test --package-path SemelExamples      # the tutorial's reference node (~4)
-swift test --package-path SemelCore    # the engine tests (~350)
-swift test                                   # the CLI, transport, server and end-to-end fixture tests (~191)
-SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
+scripts/build.sh                                    # builds everything the root package links, from the repo root
+scripts/build.sh test --package-path SemelNodeKit   # the node-authoring API (~151)
+scripts/build.sh test --package-path SemelProtocol  # the wire protocol (frame codec + messages) (~52)
+scripts/build.sh test --package-path SemelSwift     # the Swift toolchain nodes (~163)
+scripts/build.sh test --package-path SemelClang     # the C/C++ toolchain nodes (~61)
+scripts/build.sh test --package-path SemelApple     # the Apple platform nodes: asset and string catalogs, Info.plist (~64)
+scripts/build.sh test --package-path SemelExamples  # the tutorial's reference node (~4)
+scripts/build.sh test --package-path SemelCore      # the engine tests (~497)
+scripts/build.sh test                               # the CLI, transport, server and end-to-end fixture tests (~272)
+SEMEL_E2E_EXTERNAL=1 scripts/build.sh test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
 ```
 
-The root package now links `SemelProtocol` through `SemelCLI` and `SemelServer`, so
-`swift build` covers it; its own `swift test --package-path SemelProtocol` line is still
-the only thing that runs its tests.
+`scripts/build.sh` is `swift build` — or `swift test`, `swift run` if you name the verb —
+with `--disable-build-manifest-caching`. **The rule: a cold build can be plain `swift`; an
+incremental build in a tree you are editing wants the script.** A cold build plans from
+scratch whatever you type, which is why `README.md` and the tutorial's first build say
+`swift build`; it is the second build onwards, after a file has appeared or gone in one of
+the path dependencies, that reuses a plan it should not. CI calls the script for every
+build and test step so that there is one command to keep true, not because a CI run needs
+it. What the flag buys is below.
 
-`swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
+The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, so the root
+build covers it; its own line above is still the only thing that runs its tests.
+
+A root test run covers **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
@@ -30,19 +38,27 @@ all eight.
 `SemelDatabaseModels` has no line here and none in CI: it has no `Tests` directory, so
 there is nothing to run.
 
-A root `swift build` does not re-plan when a source file is added to or removed from any of
-the path-dependency packages (`SemelNodeKit`, `SemelSwift`, `SemelCore`, …):
-`.build/debug.yaml` is stale until it is deleted. Adding a file fails with `cannot find 'X'
-in scope`, naming the registration rather than the missing plan entry; removing one fails
-with `missing inputs: …/X.swift` while the previous binary stays linked with the type it no
-longer has. `rm .build/debug.yaml` before the next `swift build` fixes both (B-84).
+**Why the wrapper.** A plain `swift build` does not re-plan when a source file is added to
+or removed from any of the path-dependency packages (`SemelNodeKit`, `SemelSwift`,
+`SemelCore`, …). SwiftPM re-plans when llbuild's `PackageStructure` command is dirty, and
+that command's inputs are the *root* package's target directories, its `Package.swift` and
+its `Package.resolved` — `BuildPlan.inputs` iterates `graph.rootPackages` and nothing else.
+Every other package here is a path dependency, so its source tree is an input to nothing:
+`.build/debug.yaml` keeps the file set it was written with. Adding a file fails with
+`cannot find 'X' in scope`, naming the use rather than the missing plan entry; removing one
+fails with `missing inputs: …/X.swift` while the previous binary stays linked with the type
+it dropped. `--disable-build-manifest-caching` plans every invocation, which costs about
+0.15 s of planning on this package — inside the noise of process start-up — and
+`scripts/build.sh` passes it (B-84). `touch Package.swift` at the repo root is the same fix
+by hand; `rm .build/debug.yaml` also works.
 
-A second staleness, with a bigger hammer: a `public static let` used as a *default argument*
-(`ProtocolVersion.current` in `Hello.init`) is compiled into every caller's object file, so
-after changing one, modules built earlier keep the old value and the linker may pick either —
-which surfaced as `semel` and `semelserv` disagreeing about the protocol version inside one
-test binary. `rm .build/debug.yaml` does not clear it; `rm -rf .build/arm64-apple-macosx` does
-(B-84).
+The wrapper fixes the *plan*, not the incremental decisions under it. SwiftPM can still
+leave a dependent module's objects unrebuilt after a path dependency changes — an undefined
+symbol at link time, or a struct read at the wrong offsets
+([swiftlang/swift-package-manager#7715](https://github.com/swiftlang/swift-package-manager/issues/7715),
+[#10502](https://github.com/swiftlang/swift-package-manager/issues/10502), both open).
+When a build fails in a way the sources do not explain, `rm -rf .build/arm64-apple-macosx`
+and build again; if that fixes it, the plan was not the problem.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
@@ -51,8 +67,9 @@ belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`
 names and the configuration text format ended up there. A toolchain node never puts an
 absolute sandbox path on a command line: `ToolSandbox` in `SemelNodeKit` is the contract,
 and `/semel` is the name a tool is told when it insists on recording its directory. The
-harness's cold builds — each in its own sandbox, the third from a copy at a second mount —
-are what catch a node that breaks it.
+harness's cold builds — each in its own sandbox, the third from a copy at a second mount,
+the fourth under a perturbed `TMPDIR`, working directory, locale and time zone — are what
+catch a node that breaks it.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on
@@ -62,7 +79,9 @@ with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
 `EndToEnd/Tests` is the one place the three executables are run together, as a user
 runs them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel` and
-`semel-swift` against it, and builds each project twice to compare the bytes.
+`semel-swift` against it, and builds each project up to four times to compare the bytes:
+twice over one copy, once from a copy at a second mount, once under a perturbed
+environment.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
@@ -190,7 +209,9 @@ at its default, as though the Semel that wrote the entry had meant that value.
 Not a bump: anything the node's output does not show — a refactor, or a faster route to the
 same bytes. A new input property or input port needs none either, because both are in the
 key and move it on their own. A new or renamed *output* port does need one: an entry
-written before it holds nothing for that port. When in doubt, bump — a needless bump costs
+written before it holds nothing for that port — except on a type that never processes, and
+so has no entries for the rule to protect (`Folder` gaining `contentRoot`, B-26). When in
+doubt, bump — a needless bump costs
 one rebuild of one node type, and a missed one publishes what the older code computed.
 
 ## Glossary
@@ -208,6 +229,8 @@ the nearest standard equivalent and how Semel's differs.
 | graphSpec (column) | — | The node's rendered `GraphSpec`, stored for matching; the same string a spec on an input port demands. Type names are embedded in it, so renaming a node type invalidates every stored one (bump `Semel.version`, B-29). |
 | formula (`.fmla`) | BUILD file, Makefile | Declares products as expressions of nodes, functionally — no ordering, no commands. Also what a `Package.swift` is converted into. |
 | product | Bazel target output | A published artifact: a formula product becomes an `OutputFile` in `output:`. Intermediates are not products (B-10). A product named with a trailing `/` is a *tree product*: every entry of the tree on its expression's port becomes an `OutputFile` under that folder (B-63). |
+| folder manifest (`FolderManifest`) | a directory listing | What a `Folder` publishes on its `manifest` port: its immediate children only, with each child's name, whether it is a folder and whether it is pinned. Names and states, never content — nearly everything downstream of a folder is wired to this to learn its file set, and a manifest that moved when a file was edited would re-run all of them. Carries `baseFolderPath`, so it is qualified by where the folder is. |
+| content root (`FolderContentRoot`) | Git tree object, a Merkle root | What a `Folder` publishes on its `contentRoot` port: the hash of a stated text document with one line per child — its kind (`file`/`folder`/`other`), what it holds, and its name. A file's line carries its content hash and a subfolder's carries that subfolder's own root, so one hash identifies a whole subtree and a change anywhere below moves every root above it (B-26). The kind is on the line because one content-addressed store names both, so without it a file whose bytes are an empty folder's document would fold as that folder. Lines are ordered by name as UTF-8 bytes and then by kind, a total order, and the name is length-framed, so the hash follows the folder's contents and nothing else — including *not* the folder's path, so the same tree at two paths has one root. A child with no content carries its state by case; a product carries `notFolded`, because nothing invalidates a folder when a product below it changes and a folded product hash would go stale unseen. |
 | tree (`TreeManifest`) | Bazel TreeArtifact, a directory output | N files on one port: a manifest of relative paths with content hashes and modes, interned like any value. A tool that decides its own file set (`actool`) fills one through `expectedOutputFolders`; `TreeFile(name:, tree:)` puts one entry back on a port of its own; `TreeMerger` makes several trees one, a collision being an error. |
 | pinned | GC root | "Held alive by user intent rather than by references": a pushed file or folder. Unpinned nodes exist only while something depends on them. Not memory pinning. |
 | `Folder`, `StaticFile`, `OutputFile`, `Configuration` | source file, output file | Nodes that *are* rather than convert (the "-er" exception). `StaticFile` and `Folder` are filled by the push path, not by wires (B-43). |
@@ -267,7 +290,9 @@ wrong fails at the first real formula with "port does not exist", not in any uni
 
 **The cache key must cover everything that can change a node's output.** Including input
 *identity*, not just input content — the wire key is the file's path and the tools embed
-it. If you add anything that influences output, it belongs in the key.
+it. If you add anything that influences output, it belongs in the key. A tool node's key
+also carries a hash of the tool binary's own bytes (`toolBinaryCacheKeyMaterial`, filled in
+by `ToolDiscovery`), so two binaries reporting one version string do not share an entry.
 
 **Never iterate a `Dictionary` into a command line.** Swift's iteration order is seeded per
 process, so the same build would produce a different invocation each run. Sort first.
@@ -278,6 +303,18 @@ accumulate into dictionaries; anything ordered must be sorted.
 node. A store that cannot be written belongs to the machine — conform it to
 `UnrecoverableError` and it stops the build instead of being filed against whichever node
 happened to hit it first.
+
+**A constant that crosses a module boundary is not a default argument.** A default argument
+is not a call: the compiler emits a default-argument generator with the value folded into
+it, as a coalesced copy in *every* caller's object file. Change the constant and each
+caller whose object is not recompiled keeps the old value, while the linker picks whichever
+copy it meets first — which is how `semel` and `semelserv` came to disagree about
+`ProtocolVersion.current` inside one test binary. Write the overload instead:
+`Hello.init(role:)` calls `Hello.init(protocolVersion: ProtocolVersion.current, role:)`, so
+the read happens inside `SemelProtocol` where the constant lives. The line is around what
+can be folded: a literal default — `false`, `0`, `nil` — is fine, and so is a default that
+names something read per call, such as `CommandInterpreter.init`'s `baseDirectory: String =
+FileManager.default.currentDirectoryPath`. A default that names a *constant* is not.
 
 **Force unwraps are being phased out.** `try!` is at zero; keep it there. Use
 `node.requireID()` rather than `node.id!`. A force unwrap is only acceptable where failure

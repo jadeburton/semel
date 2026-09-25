@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsTen() {
-        XCTAssertEqual(ProtocolVersion.current, 10)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 10,
+    func test_currentProtocolVersionIsEleven() {
+        XCTAssertEqual(ProtocolVersion.current, 11)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 11,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -119,7 +119,8 @@ final class MessageJSONTests: XCTestCase {
             .reset(clearCache: true),
             .nudge,
             .wait,
-            .debug,
+            .debug(cacheKey: nil),
+            .debug(cacheKey: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419"),
             .subscribe,
         ]
         for request in requests {

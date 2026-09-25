@@ -133,8 +133,9 @@ public extension ToolDescriptor {
     /// `clang.compiler.toolDescriptor.name`, `swift.linker.toolDescriptor.name` -- rather
     /// than one shared prefix that belongs to nobody.
     ///
-    /// `recursiveHash` is read directly: it identifies a toolchain by content and is absent
-    /// from every hand-written config file, so it is optional rather than required.
+    /// `recursiveHash` is read directly: it identifies a binary by content, is absent from
+    /// every config file — discovery is what fills it in, on the descriptor it registers —
+    /// and selects no tool, so it is optional rather than required.
     init(required: inout RequiredSettings, properties: [String: String]) {
         self.init(name:          required.value("toolDescriptor.name"),
                   version:       required.value("toolDescriptor.version"),

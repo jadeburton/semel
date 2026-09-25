@@ -28,11 +28,13 @@ public enum ProtocolVersion {
     /// say so instead. Nothing enforces it: the test that pins the number only fires when
     /// someone changes the number.
     ///
-    /// Version 10 adds the `artifacts` event, one settle's diff over the products:
-    /// appeared, changed, disappeared. Version 9 adds the `missingOutputPort` kind to
-    /// `check`'s findings, for a node holding no row for a port its type declares.
-    /// Version 8 gives `ls` a status per state the graph can be in about a name —
-    /// `notProduced`, `deleted` and `failed` where version 7 had `missing` and `error`.
+    /// Version 11 adds the `artifacts` event, one settle's diff over the products:
+    /// appeared, changed, disappeared. Version 10 gives `debug` a cache key to ask about,
+    /// answering that entry's key material where the bare request answers the graph.
+    /// Version 9 adds the `missingOutputPort` kind to `check`'s findings, for a node
+    /// holding no row for a port its type declares. Version 8 gives `ls` a status per
+    /// state the graph can be in about a name — `notProduced`, `deleted` and `failed`
+    /// where version 7 had `missing` and `error`.
     /// Version 7 adds `check`, whose findings travel in the reply's body. Version 6 adds
     /// the `settled` event, which carries one settle's totals. Version 5's
     /// `reset` carries a flag for whether the cache goes too, and answers with the path its
@@ -43,16 +45,30 @@ public enum ProtocolVersion {
     /// carries `debug`'s text in the frame body; version 1 carried it in the reply's JSON. A
     /// peer speaking an older one decodes such a reply as an empty answer and prints
     /// nothing, which is why the mismatch is worth a rejection naming both.
-    public static let current = 10
+    public static let current = 11
 }
 
 public struct Hello: Codable, Equatable, Sendable {
     public let protocolVersion: Int
     public let role:            Role
 
-    public init(protocolVersion: Int = ProtocolVersion.current, role: Role) {
+    public init(protocolVersion: Int, role: Role) {
         self.protocolVersion = protocolVersion
         self.role            = role
+    }
+
+    /// A hello that speaks whatever version this module holds.
+    ///
+    /// This is an overload rather than `protocolVersion: Int = ProtocolVersion.current`,
+    /// because a default argument is not a call: the compiler emits a default-argument
+    /// generator with the number folded into it as a coalesced copy in *every* caller's
+    /// object file. A caller whose object outlives a change to `ProtocolVersion.current`
+    /// therefore carries the old number, the linker picks whichever copy it meets first, and
+    /// two halves of one binary disagree about the version they speak. An ordinary
+    /// initializer body stays in this module, so every caller reads the constant at the
+    /// moment it asks for it (B-84).
+    public init(role: Role) {
+        self.init(protocolVersion: ProtocolVersion.current, role: role)
     }
 }
 

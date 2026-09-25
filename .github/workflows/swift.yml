@@ -35,37 +35,43 @@ jobs:
           swift --version
           xcrun simctl list runtimes | grep -i ios || true
 
+      # scripts/build.sh is swift build/test with --disable-build-manifest-caching, which
+      # makes SwiftPM plan every invocation instead of reusing a plan whose inputs come from
+      # the root package alone (AGENTS.md, "Why the wrapper"). Each run here starts from a
+      # clean checkout and plans anyway (docs/ci.md), so the flag changes nothing about what
+      # CI does and costs it nothing. It is here so that there is one build command: CI runs
+      # what the documentation tells a contributor to run, and a step cannot drift from it.
       - name: Build
-        run: swift build -c release
+        run: scripts/build.sh -c release
 
       # Every package is tested. The engine lives in its own package and the toolchains in
       # theirs, so a green run of any one of them covers well under half the suite.
       - name: Test SemelNodeKit
-        run: swift test --package-path SemelNodeKit
+        run: scripts/build.sh test --package-path SemelNodeKit
 
       - name: Test SemelProtocol
-        run: swift test --package-path SemelProtocol
+        run: scripts/build.sh test --package-path SemelProtocol
 
       - name: Test SemelSwift
-        run: swift test --package-path SemelSwift
+        run: scripts/build.sh test --package-path SemelSwift
 
       - name: Test SemelClang
-        run: swift test --package-path SemelClang
+        run: scripts/build.sh test --package-path SemelClang
 
       - name: Test SemelApple
-        run: swift test --package-path SemelApple
+        run: scripts/build.sh test --package-path SemelApple
 
       - name: Test SemelExamples
-        run: swift test --package-path SemelExamples
+        run: scripts/build.sh test --package-path SemelExamples
 
       - name: Test SemelCore
-        run: swift test --package-path SemelCore
+        run: scripts/build.sh test --package-path SemelCore
 
       # The root package's tests include SemelEndToEndTests, which builds the C, C++
       # and Swift fixtures under EndToEnd/Fixtures through semelserv, semel and
       # semel-swift, twice each. External projects are not run here; see end-to-end.yml.
       - name: Test the CLI, the server and the end-to-end fixtures
-        run: swift test
+        run: scripts/build.sh test
 
   # A separate job so a lint finding and a test failure show up as two red marks, not one.
   # `--strict` because the rule set in .swiftlint.yml is small and curated: every finding is

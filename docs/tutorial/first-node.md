@@ -20,7 +20,9 @@ swift build
 ```
 
 A debug build, not `-c release`: two steps in Part 3 read the running commentary
-`semelserv` prints, and that is compiled out of a release build.
+`semelserv` prints, and that is compiled out of a release build. Plain `swift build` is
+right for this one, because a first build plans from scratch; Part 3 swaps to
+`scripts/build.sh` at the point where that stops being true, and says why.
 
 You will want three terminals open, and the document says which one each step is in:
 
@@ -453,15 +455,16 @@ Register it, in `SemelExamples.swift`:
 ```
 
 Node types are linked into the server — there is no loading at run time — so rebuild and
-restart it: stop `semelserv` in the **server** terminal, `swift build` in the **shell**,
-then start `semelserv` again. The prompt can stay open. The graph is in the database; it is
-still there when the server comes back, and nothing is rescheduled by the restart.
+restart it: stop `semelserv` in the **server** terminal, `scripts/build.sh` in the
+**shell**, then start `semelserv` again. The prompt can stay open. The graph is in the
+database; it is still there when the server comes back, and nothing is rescheduled by the
+restart.
 
-One snag on the way. `swift build` from the repository root may not notice a file you have
-just **added** to a package it depends on by path: the build plan under `.build` is cached,
-and the stale one still lists only the files that were there before. If the compiler says
-`cannot find 'MyLineCounter' in scope` about the file you are looking at, `rm
-.build/debug.yaml` and build again.
+Build with `scripts/build.sh` rather than `swift build`, which is why: a plain `swift build`
+from the repository root does not notice a file you have just **added** to a package it
+depends on by path. Its cached build plan lists the files that were there before, and the
+compiler says `cannot find 'MyLineCounter' in scope` about the file you are looking at. The
+script is `swift build --disable-build-manifest-caching`, which plans afresh every time.
 
 ## Part 4 — Use it
 
@@ -553,13 +556,12 @@ Three files, not four: the node is unwired and gone from the graph. Only then, i
 ```sh
 rm SemelExamples/Sources/SemelExamples/MyLineCounter.swift
 git checkout -- SemelExamples/Sources/SemelExamples/SemelExamples.swift
-rm .build/debug.yaml
-swift build
+scripts/build.sh
 ```
 
-The stale build plan is the Part 3 snag again, from the other side: leave it in place and
-the build stops with `missing inputs: …/MyLineCounter.swift`, naming the file you meant to
-delete, and `semelserv` keeps the type it was linked with.
+The stale build plan is the Part 3 snag again, from the other side: run a plain `swift
+build` here and it stops with `missing inputs: …/MyLineCounter.swift`, naming the file you
+meant to delete, while `semelserv` keeps the type it was linked with.
 
 Restart `semelserv` in the **server** terminal. In the **shell**, `git status` is clean.
 
