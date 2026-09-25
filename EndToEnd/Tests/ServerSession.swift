@@ -4,7 +4,8 @@
 //
 //  One `semelserv` over one home: started with SEMEL_HOME and SEMEL_SOCKET pointing
 //  into it, its socket waited for, and stopped with SIGTERM, which must exit zero and
-//  leave no socket file — the same three facts SemelservExecutableTests pins.
+//  leave no socket file — the same three facts SemelservExecutableTests pins. A session
+//  given a `Perturbation` also carries what it varies and starts where it says.
 //
 
 import Foundation
@@ -14,20 +15,30 @@ final class ServerSession {
 
     let home: URL
     let socketPath: String
+    /// Applied to the server and, through `environment`, to the client that talks to it.
+    let perturbation: Perturbation?
     private var process: ManagedProcess?
 
-    init(home: URL) {
+    init(home: URL, perturbation: Perturbation? = nil) {
         self.home = home
+        self.perturbation = perturbation
         socketPath = home.appendingPathComponent("semelserv.sock").path
     }
 
-    var environment: [String: String] { ["SEMEL_HOME": home.path, "SEMEL_SOCKET": socketPath] }
+    /// The two variables, plus whatever a perturbation varies. The caller passes this to
+    /// `semel` as well, so client and server agree on the home and see the same
+    /// surroundings.
+    var environment: [String: String] {
+        ["SEMEL_HOME": home.path, "SEMEL_SOCKET": socketPath]
+            .merging(perturbation?.variables ?? [:]) { _, perturbed in perturbed }
+    }
 
     var logTail: String { process?.outputTail() ?? "" }
 
     func start() throws {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let process = ManagedProcess(executable: EndToEndRun.binary("semelserv"), arguments: [], environment: environment)
+        let process = ManagedProcess(executable: EndToEndRun.binary("semelserv"), arguments: [],
+                                     environment: environment, currentDirectory: perturbation?.workingDirectory)
         try process.start()
         self.process = process
         guard SocketWait.wait(forSocketAt: socketPath, timeout: 30) else {

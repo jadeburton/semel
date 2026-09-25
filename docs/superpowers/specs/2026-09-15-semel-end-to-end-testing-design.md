@@ -10,8 +10,11 @@ for what differed from this text.
 - `prepare` writes the namespaces a kept formula selects.
 - `TreeDiff` resolves the root through `realpath` because `/tmp` is a symlink on macOS.
 - `Project.mayDiffer` is empty for every roster entry except `icecubes-app`: `SwiftLinker`
-  makes `.staticArchive` output deterministic (B-72), so the two export trees match byte for
-  byte with no exemptions elsewhere. `icecubes-app` names what the Apple toolchain itself
+  makes `.staticArchive` output deterministic (B-72), so every export tree a project builds
+  — the second run, the second mount and the perturbed environment alike — matches the
+  first byte for byte with no exemptions elsewhere. The exemptions apply to all three
+  comparisons: a file the toolchain does not reproduce between two runs does not reproduce
+  across a mount or a perturbation either. `icecubes-app` names what the Apple toolchain itself
   does not reproduce byte for byte — every bundle's `Assets.car` (B-89: `actool`'s `.icon`
   renditions and, independent of a `.icon` input, its appearance table's entry order) and
   four executables carrying a duplicate `_objc_msgSend` GOT entry (B-90) — until one of
@@ -157,6 +160,21 @@ or a failure whose message carries the evidence.
    modes, byte-identical contents. The failure names the first differing paths and how
    they differ (missing, mode, size, first differing offset), so a timestamp or an embedded
    path is recognisable from the message. This closes B-04(b).
+6b. **A second mount.** Where `Project.twoMounts` says so, the prepared copy is copied
+   again under a folder whose name has a different length, built cold in `home3` into
+   `out3`, and `out3` must match `out1` the way `out2` did. A path a tool embedded shows
+   up even as a size difference. `prepare` does not run again: the copy carries what it
+   wrote, so the only change is where the inputs sit.
+6c. **A perturbed environment.** Where `Project.perturbed` says so, a fourth cold build in
+   `home4` into `out4` runs with `TMPDIR` and the working directory pointed at fresh
+   directories under the run root, `LANG` and `LC_ALL` set to another installed UTF-8
+   locale (`de_DE.UTF-8`, or `C.UTF-8` where that is not installed) and `TZ` set to
+   `Pacific/Kiritimati`, for both `semelserv` and `semel`. None of it is in a cache key,
+   so `out4` must match `out1`, and the failure names the perturbation. A host name and
+   the wall clock need privileges to vary and are left to the separate homes, which build
+   at different seconds. This closes B-05.
+   Both flags are true for every fixture and false for `icecubes` and `icecubes-app`,
+   where a cold build costs minutes; the fixtures cover the same toolchains in seconds.
 7. **Clean up.** The root is removed. With `SEMEL_E2E_KEEP=1` it is kept and its path
    printed.
 
@@ -196,14 +214,14 @@ machine that runs them, the runner's Xcode and a developer's both work without e
 - AGENTS.md: the build-and-test block gains the target with its opt-in line, and the
   composition-root paragraph names the harness as the way both binaries are run together.
 - README: a short "Testing against real projects" paragraph.
-- BACKLOG: B-04(b) closed by Section 4 step 6; B-05 points at the harness as its home.
+- BACKLOG: B-04(b) closed by Section 4 step 6; B-05 by step 6c.
 
 ## 7. Later, not now
 
 - A warm third build in `home1`, to show the second run is cache hits. Needs a way to
   observe hits from the client; B-11 territory.
-- B-05 perturbations: extra builds with a different `TMPDIR`, cwd or locale and the same
-  diff.
+- Perturbations that privileges rule out: a different host name, and a wall clock moved rather
+  than merely allowed to advance between the builds.
 - More external projects, one per shape: a macOS command-line package, an `.xcodeproj`
   once B-65 lands. Each is one roster value.
 - Retiring fixtures as real projects cover their shape.

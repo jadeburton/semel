@@ -23,6 +23,16 @@ final class RosterTests: XCTestCase {
         }
     }
 
+    /// The fixtures are the cheap tier and are what proves the hermeticity checks: each
+    /// one builds again at a second mount and again under a perturbed environment. Only
+    /// an external project, where a build costs minutes, turns either off.
+    func test_everyFixtureRunsBothHermeticityBuilds() {
+        for project in Projects.fixtures {
+            XCTAssertTrue(project.twoMounts, "\(project.name): a fixture builds at a second mount")
+            XCTAssertTrue(project.perturbed, "\(project.name): a fixture builds under a perturbed environment")
+        }
+    }
+
     func test_everyFixtureFolderAndItsFormulaAreInTheRepository() {
         for project in Projects.fixtures {
             let folder = EndToEndEnvironment.fixtures.appendingPathComponent(project.buildFolder, isDirectory: true)
