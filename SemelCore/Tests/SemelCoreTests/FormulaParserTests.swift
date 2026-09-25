@@ -223,6 +223,57 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(result["X"]?.properties.first?.value, "local/path")
     }
 
+    // MARK: - What a func body sees (B-108)
+
+    /// A func may be written by someone other than the formula calling it, so a `%%f%%` in
+    /// its body is its own text, not the caller's loop variable.
+    func test_aFuncBodyDoesNotSeeTheCallersForEachVariable() throws {
+        let result = try parse("""
+            func tag() = Tool(name: '%%f%%').output
+            product "X" = Linker(input: [{f: 'a', 'b'} "%%f%%": tag()]).output
+            """)
+        let wires = try XCTUnwrap(result["X"]?.inputs.first?.wires)
+        XCTAssertEqual(wires.map(\.name), ["a", "b"])
+        XCTAssertEqual(wires.map { $0.node.properties.first?.value }, ["%%f%%", "%%f%%"])
+    }
+
+    func test_aFuncBodyDoesNotSeeTheCallersParameters() throws {
+        XCTAssertThrowsError(try parse("""
+            func inner() = StaticFile(path: path).output
+            func outer(path) = inner()
+            product "X" = outer('src/a.c')
+            """)) { error in
+            XCTAssertEqual("\(error)", "Undefined identifier 'path'")
+        }
+    }
+
+    /// Whether or not the body happens to read it.
+    func test_aParameterLeftOutOfACallIsAnError() throws {
+        XCTAssertThrowsError(try parse("""
+            func file(path, mode) = StaticFile(path: path).output
+            product "X" = file(path: 'src/a.c')
+            """)) { error in
+            XCTAssertEqual("\(error)", "'file' is called without its parameter 'mode'")
+        }
+    }
+
+    /// The formula names the folder; the func names the pattern.
+    func test_aParameterIsATemplateVariableInTheBody() throws {
+        var patterns: [String] = []
+        let result = try FormulaFile.parse("""
+            func objects(sources) = Linker(input: [{file: '%%sources%%/*.c'} "%%file.0%%.o": StaticFile(path: file)]).output
+            product "X" = objects(sources: 'input:/hello/src')
+            """, basePath: Path("."), wildcardExpander: { pattern in
+                patterns.append(pattern)
+                return ["input:/hello/src/main.c", "input:/hello/src/util.c"]
+            })
+
+        XCTAssertEqual(patterns, ["input:/hello/src/*.c"])
+        let wires = try XCTUnwrap(result["X"]?.inputs.first?.wires)
+        XCTAssertEqual(wires.map(\.name), ["main.o", "util.o"])
+        XCTAssertEqual(wires.first?.node.properties.first?.value, "input:/hello/src/main.c")
+    }
+
     // MARK: - Comments
 
     func test_lineComment_isIgnored() throws {

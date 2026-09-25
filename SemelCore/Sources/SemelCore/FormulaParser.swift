@@ -214,6 +214,7 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
     case pathEscapesRoot(path: String)
     case forEachRequiresAtLeastOneItem
     case duplicateDefinition(kind: String, name: String)
+    case unboundParameter(function: String, parameter: String)
 
     var description: String {
         switch self {
@@ -241,6 +242,8 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
             return "for-each '{...}' requires at least one item"
         case .duplicateDefinition(let kind, let name):
             return "\(kind) '\(name)' is defined both by the formula and by a formula it includes"
+        case .unboundParameter(let function, let parameter):
+            return "'\(function)' is called without its parameter '\(parameter)'"
         }
     }
 
@@ -950,14 +953,24 @@ private struct FormulaResolver {
         }
     }
 
-    // User-defined function call: bind args to params then evaluate body.
+    /// A user-defined function call: the arguments are evaluated where the call is, and the
+    /// body where the function is.
+    ///
+    /// The body sees its parameters and nothing of the caller's — neither its parameters
+    /// nor its for-each bindings. A func may be written by someone other than the formula
+    /// that calls it (a plugin's prelude, B-108), so a `%%f%%` in its body must not expand
+    /// to whatever `f` the caller happens to be iterating, and a parameter the caller left
+    /// out must not be filled by a caller's variable of the same name.
+    ///
+    /// A string argument is also a template variable in the body: `'%%sources%%/*.c'` is how
+    /// a func turns the folder it was given into the pattern it matches.
     func evalFuncCall(
         _ funcDef: FuncDef,
         args: [FormulaCallArg],
         env: [String: FormulaValue],
         templateEnv: [String: ForEachBinding]
     ) throws -> FormulaValue {
-        var newEnv = env
+        var newEnv: [String: FormulaValue] = [:]
         var positionalIdx = 0
 
         for arg in args {
@@ -984,7 +997,17 @@ private struct FormulaResolver {
             }
         }
 
-        return try eval(funcDef.body, env: newEnv, templateEnv: templateEnv)
+        var bodyTemplateEnv: [String: ForEachBinding] = [:]
+        for parameter in funcDef.params {
+            guard let value = newEnv[parameter] else {
+                throw FormulaParseError.unboundParameter(function: funcDef.name, parameter: parameter)
+            }
+            if case .string(let text) = value {
+                bodyTemplateEnv[parameter] = ForEachBinding(variable: parameter, full: text, groups: [])
+            }
+        }
+
+        return try eval(funcDef.body, env: newEnv, templateEnv: bodyTemplateEnv)
     }
 
     // import(path: <file>) — reads an external .graph file and returns its root node.
