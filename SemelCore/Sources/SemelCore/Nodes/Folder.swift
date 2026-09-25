@@ -20,9 +20,20 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {
+        Self.instantiationCount += 1
         self.thisNode = thisNode
         try placeInFileSystem()
     }
+
+    /// How many `Folder` values this process has built.
+    ///
+    /// A test observable, of a piece with `manifestRebuildCount`. `everyChildCanBeDeleted`
+    /// answers for a folder's leaf children out of one query per kind, but descends into an
+    /// unpinned subfolder by fetching its row and building a `Folder` around it — so the
+    /// deletability of a tree costs a node per subfolder in it, and whether that count
+    /// follows a tree's depth or something worse is what `FolderDeletabilityScaleTests`
+    /// reads this for. Not read by the engine.
+    static var instantiationCount = 0
 
     var inputFileSystem: NodeRecord {
         get throws {
