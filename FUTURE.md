@@ -97,6 +97,16 @@
   pushes. With local engines the bookkeeping is per machine anyway, so there is nothing
   left for it to buy.
 
+- The core is agnostic and plugins extend it by registering — dependency inversion, not a
+  list the core keeps (`AGENTS.md`, "Plugin"). Plugins are linked into `semelserv` today;
+  the aim is a server that finds plugin dylibs and loads them without their living in this
+  repository. Until then, nothing a plugin does may rely on being compiled in: it reaches
+  the core only through what it registers in `SemelNodeKit`. What loading itself needs —
+  plugin-qualified `kind`s, a dylib fingerprint in its types' cache keys, an ABI boundary,
+  and a state for rows of an unloaded plugin's types — is listed in the formula preludes
+  design (B-108), whose include providers are the first extension point written with it in
+  mind.
+
 ## What the tutorial taught us
 
 `docs/tutorial/first-node.md` (2026-09-21) was written by walking every step through
