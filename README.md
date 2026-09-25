@@ -298,7 +298,6 @@ SemelCore/       The engine
     OutputFile         Publishes a built artifact
     ProjectFinder      Discovers project files
     ProjectBuilder     Orchestrates a full project build
-    ProductPresence    Which products exist, and what changed since the last pass
     Configuration      Build configuration node
     ConfigFilter       Selects one node's settings out of a config file
     ConfigMerger       Lays one config file over another
