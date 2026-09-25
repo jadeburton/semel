@@ -269,18 +269,6 @@ taught us".
 
 ## Design, correctness and code quality
 
-**B-105** `open` — **A node is named two ways in one product.**
-A `check` finding names a node `Type #id 'path'`; `ErrorReport.label` names it `Type  'path'`
-(two spaces, the id only as a last resort). The finding's form is the one to keep — a
-finding is filed as a bug and the row is what the next person opens — so `ErrorReport.label`
-should converge on it. Its output is pinned by tests on both sides of the wire, so the
-change carries those test updates with it.
-
-One surface over, the same word-for-several-states problem B-74 settled for the listing
-does not arise for artifacts: an artifact's states reach the user through the settle diff,
-which says appeared, changed or disappeared, and through the error report, which says the
-rest. What a product that is not there reads as is the `ls` and `errors` vocabulary alone.
-
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
 A node's outputs are supposed to be a function of its inputs. Three types are not, and none

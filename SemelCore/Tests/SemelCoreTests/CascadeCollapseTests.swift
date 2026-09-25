@@ -125,27 +125,27 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// entry each would be hundreds of lines saying "an input is in error" and naming no fix.
     /// The report names the one node that can be fixed.
     func test_aCascadeIsReportedAsItsCauseAlone() throws {
-        try makeCascade(consumers: 20)
+        let source = try makeCascade(consumers: 20)
         XCTAssertEqual(Set(try ErrorReport.portsToReport(database: database).map(\.nodeID)).count, 22,
                        "the cause and every node downstream of it are in error")
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
-        XCTAssertEqual(captured[0].map(\.label), ["StaticFile  'input:/shared.h'"])
+        XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(source) 'input:/shared.h'"])
     }
 
     /// The nodes that vanish from the report are still counted, so the size of the damage
     /// is on the page even though the list of it is not.
     func test_theCauseSaysHowMuchIsDownstreamOfIt() throws {
-        try makeCascade(consumers: 20)
+        let source = try makeCascade(consumers: 20)
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 21,
                        "twenty consumers and the sink they feed")
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile  'input:/shared.h'",
+                       ["❌ StaticFile #\(source) 'input:/shared.h'",
                         "   · the file is gone",
                         "   · and 21 nodes downstream carry it",
                         ""])
@@ -175,7 +175,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured[0].map(\.label), ["StaticFile  'input:/shared.h'", "TreeMerger"])
+        XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(source) 'input:/shared.h'", "TreeMerger #\(consumer)"])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [0, 0])
     }
 
@@ -213,7 +213,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured[0].map(\.label),
-                       ["StaticFile  'input:/first.h'", "StaticFile  'input:/second.h'"])
+                       ["StaticFile #\(first) 'input:/first.h'", "StaticFile #\(second) 'input:/second.h'"])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [1, 1])
     }
 
@@ -246,7 +246,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 2)
-        XCTAssertEqual(captured[1].map(\.label), ["TreeMerger"])
+        XCTAssertEqual(captured[1].map(\.label), ["TreeMerger #\(consumer)"])
     }
 
     // MARK: - The states a live graph writes
@@ -270,7 +270,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/clang.cfg'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(try file.requireID()) 'input:/clang.cfg'"]])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [1])
     }
 
@@ -307,7 +307,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/main.c'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(try file.requireID()) 'input:/main.c'"]])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [3],
                        "the compiler, the linker and the product below them")
     }
@@ -334,7 +334,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
-        XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool"])
+        XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool #\(compiler)"])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [2])
         XCTAssertEqual(captured[0][0].items,
                        [ErrorReport.Item(ports: ["output"], message: "undefined symbol 'main'")])
@@ -363,7 +363,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
-        XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool"])
+        XCTAssertEqual(captured[0].map(\.label), ["DemandingSampleTool #\(tool)"])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [2])
     }
 

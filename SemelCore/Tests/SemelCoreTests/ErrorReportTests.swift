@@ -171,13 +171,26 @@ final class ErrorReportTests: SemelCoreTestCase {
         let nodeID = try makeNode(kind: StaticFile.kind, properties: ["path": "input:/a/b.c"])
 
         XCTAssertEqual(ErrorReport.label(forNodeID: nodeID, database: database),
-                       "StaticFile  'input:/a/b.c'")
+                       "StaticFile #\(nodeID) 'input:/a/b.c'")
     }
 
-    /// The internal id is a surrogate integer and means nothing to the reader, so it appears
-    /// only when nothing better can be found.
-    func test_anUnreadableNodeFallsBackToItsID() throws {
-        XCTAssertEqual(ErrorReport.label(forNodeID: 99999, database: database), "Node 99999")
+    /// The form a `check` finding names a node by, so that a node reads the same in both.
+    func test_aLabelNamesANodeTheWayCheckDoes() throws {
+        let nodeID = try makeNode(kind: StaticFile.kind, properties: ["path": "input:/a/b.c"])
+        let node   = try XCTUnwrap(try database.node.find(nodeID: nodeID))
+
+        XCTAssertEqual(ErrorReport.label(forNodeID: nodeID, database: database),
+                       GraphCheck.subject(node, path: "input:/a/b.c"))
+    }
+
+    func test_aNodeWithNoPathIsNamedByItsTypeAndID() throws {
+        let nodeID = try makeNode(kind: SampleTool.kind)
+
+        XCTAssertEqual(ErrorReport.label(forNodeID: nodeID, database: database), "SampleTool #\(nodeID)")
+    }
+
+    func test_aNodeWithNoRowIsNamedByItsID() throws {
+        XCTAssertEqual(ErrorReport.label(forNodeID: 99999, database: database), "node #99999")
     }
 
     // MARK: - Remedy text for a stale kind

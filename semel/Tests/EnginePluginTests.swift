@@ -42,7 +42,7 @@ final class EnginePluginTests: XCTestCase {
 
     func test_errorsRendersRecordsUnderACount() throws {
         connection.reply(.errors(records: [
-            ErrorRecord(label: "StaticFile  'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
+            ErrorRecord(label: "StaticFile #12 'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
         ]))
 
         try run("errors")
@@ -52,12 +52,12 @@ final class EnginePluginTests: XCTestCase {
         // sum of ports, which is why the line keeps their names: two errors, two ports.
         XCTAssertEqual(context.messages, [
             "2 errors across 1 node:\n",
-            "❌ StaticFile  'input:/a.c'",
+            "❌ StaticFile #12 'input:/a.c'",
             "   · errorLog, output: boom",
             "",
         ])
         XCTAssertEqual(context.countedErrorRecords, [[
-            ErrorRecord(label: "StaticFile  'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
+            ErrorRecord(label: "StaticFile #12 'input:/a.c'", entries: [ErrorEntry(ports: ["errorLog", "output"], message: "boom")]),
         ]])
     }
 
@@ -72,7 +72,7 @@ final class EnginePluginTests: XCTestCase {
             clang.linker.target=…
             """
         connection.reply(.errors(records: [
-            ErrorRecord(label: "ClangLinker  'input:/semel.fmla'",
+            ErrorRecord(label: "ClangLinker #12 'input:/semel.fmla'",
                         entries: [ErrorEntry(ports: ["output"], message: message)]),
         ]))
 
@@ -80,7 +80,7 @@ final class EnginePluginTests: XCTestCase {
 
         XCTAssertEqual(context.messages, [
             "1 error across 1 node:\n",
-            "❌ ClangLinker  'input:/semel.fmla'",
+            "❌ ClangLinker #12 'input:/semel.fmla'",
             "   · Missing configuration. Add these to a semel.config in the input file system:",
             "     clang.linker.target=…",
             "",
@@ -93,7 +93,7 @@ final class EnginePluginTests: XCTestCase {
     /// side, and prints the same line.
     func test_errorsPrintsTheCascadeUnderACauseAsOneLine() throws {
         connection.reply(.errors(records: [
-            ErrorRecord(label: "StaticFile  'input:/shared.h'",
+            ErrorRecord(label: "StaticFile #12 'input:/shared.h'",
                         entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
                         downstreamCarrierCount: 20),
         ]))
@@ -102,7 +102,7 @@ final class EnginePluginTests: XCTestCase {
 
         XCTAssertEqual(context.messages, [
             "1 error across 1 node:\n",
-            "❌ StaticFile  'input:/shared.h'",
+            "❌ StaticFile #12 'input:/shared.h'",
             "   · the file is gone",
             "   · and 20 nodes downstream carry it",
             "",
@@ -111,7 +111,7 @@ final class EnginePluginTests: XCTestCase {
 
     func test_oneNodeDownstreamPrintsAsOne() throws {
         connection.reply(.errors(records: [
-            ErrorRecord(label: "StaticFile  'input:/shared.h'",
+            ErrorRecord(label: "StaticFile #12 'input:/shared.h'",
                         entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
                         downstreamCarrierCount: 1),
         ]))

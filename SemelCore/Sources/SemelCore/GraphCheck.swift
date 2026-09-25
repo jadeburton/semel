@@ -279,18 +279,28 @@ public struct GraphCheck {
 
     /// What to call a node: its type, its id, and its path when it has one. The id is in
     /// every subject rather than kept as a last resort — a finding is filed as a bug, and
-    /// the row is what the next person has to look at.
-    private static func subject(_ node: NodeRecord) -> String {
+    /// the row is what the next person has to look at. `ErrorReport.label` names a node
+    /// this way too, passing the path it found when the node has none of its own.
+    static func subject(_ node: NodeRecord, path: String?) -> String {
         var name = "\(typeName(ofKind: node.kind)) #\(node.id ?? -1)"
-        if let path = node.properties["path"] {
+        if let path {
             name += " '\(path)'"
         }
         return name
     }
 
+    /// What to call a node that has no row.
+    static func subject(missingNodeID nodeID: ObjectID) -> String {
+        "node #\(nodeID)"
+    }
+
+    private static func subject(_ node: NodeRecord) -> String {
+        subject(node, path: node.properties["path"])
+    }
+
     private static func subject(nodeID: ObjectID, in context: Context) -> String {
         guard let node = context.nodesByID[nodeID] else {
-            return "node #\(nodeID)"
+            return subject(missingNodeID: nodeID)
         }
         return subject(node)
     }

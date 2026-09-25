@@ -569,9 +569,12 @@ Do it the other way round — remove the type first — and the next build that 
 says so:
 
 ```
-❌ ProjectBuilder  'input:/hello/hello.fmla'
+❌ ProjectBuilder #3 'input:/hello/hello.fmla'
    · products, status: no type is registered for kind 37
 ```
+
+The number after `#` is the node's row in the graph, the same one `check` names it by;
+yours depends on what the home held before, so it may differ.
 
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
 build again. That clears the error, though the server may keep printing a bare

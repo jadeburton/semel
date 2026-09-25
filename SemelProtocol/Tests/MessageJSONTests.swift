@@ -163,7 +163,7 @@ final class MessageJSONTests: XCTestCase {
     }
 
     func test_roundTripsEveryDaemonResponse() throws {
-        let record = ErrorRecord(label: "SwiftCompiler  'input:/a.swift'",
+        let record = ErrorRecord(label: "SwiftCompiler #12 'input:/a.swift'",
                                  entries: [ErrorEntry(ports: ["output", "errorLog"], message: "boom")])
         let descriptor = ToolDescriptorRecord(name: "swiftc", version: "6.0", platform: "macos",
                                               architecture: "arm64", machineSettings: ["sdk": "/x"])

@@ -48,33 +48,26 @@ public enum ErrorReport {
         }
     }
 
-    /// What to call a node in a report.
-    ///
-    /// The internal id is a surrogate integer and means nothing to the person reading, so it
-    /// is the last resort rather than the first: a path if the node has one, the project file
-    /// if it is a builder, the type name otherwise.
+    /// What to call a node in a report: `Type #id 'path'`, the form a `check` finding names
+    /// it by, so that one node reads the same wherever the user meets it. The id stays even
+    /// beside a path — a line in a report is what someone pastes into a bug, and the row is
+    /// what the next person opens. A builder has no path of its own and is named by its
+    /// project file.
     public static func label(forNodeID nodeID: ObjectID, database: DatabaseLayer) -> String {
         // A label for a report is best effort — the report must never fail — but a machine
         // failure on the way to it still reaches the fatal handler.
-        guard let nodeRecord = FatalErrors.attempt({ try database.node.find(nodeID: nodeID) }) ?? nil,
-              let node = try? nodeRecord.nodeAsAny() else {
-            return "Node \(nodeID)"
+        guard let nodeRecord = FatalErrors.attempt({ try database.node.find(nodeID: nodeID) }) ?? nil else {
+            return GraphCheck.subject(missingNodeID: nodeID)
         }
-
-        let typeName = String(describing: type(of: node))
 
         if let path = nodeRecord.properties["path"] {
-            return "\(typeName)  '\(path)'"
+            return GraphCheck.subject(nodeRecord, path: path)
         }
 
-        if let wires = FatalErrors.attempt({
-               try database.wire.select(goingToNodeID: nodeID, toSymbolID: "projectFile".asSymbolID())
-           }),
-           let wireName = wires.first?.name {
-            return "\(typeName)  '\(wireName.resolveSymbol())'"
-        }
-
-        return typeName
+        let projectFile = FatalErrors.attempt({
+            try database.wire.select(goingToNodeID: nodeID, toSymbolID: "projectFile".asSymbolID())
+        })?.first?.name.resolveSymbol()
+        return GraphCheck.subject(nodeRecord, path: projectFile)
     }
 
     /// The lines for one node's errors: a heading, then one entry per distinct message.
@@ -508,8 +501,11 @@ public enum ErrorReport {
     ///
     /// Sorted by label and then by node, so a report reads the same from run to run: the
     /// error map is a dictionary, whose order is seeded per process, and two nodes can carry
-    /// one label — two of a type with no path do. A sort by label alone leaves those two in
-    /// the order the walk found them, `sort` being no more stable than the key it is given.
+    /// one label apart from the id — two of a type with no path do. A sort by label alone
+    /// leaves those two in the order the walk found them, `sort` being no more stable than the
+    /// key it is given. The id is left out of the label the sort reads and kept as the tie
+    /// break: compared as text it puts `#10` before `#9`, and it would order a folder's files
+    /// by when their nodes were made rather than by their paths.
     ///
     /// `sourceMessages` is a parameter for the same reason it is one on `messagesByNode`: the
     /// engine makes three passes over one idle pass's ports and works the sources out once.
@@ -540,6 +536,9 @@ public enum ErrorReport {
                                            sourceMessages: sourced)))
         }
 
-        return reported.sorted { ($0.entry.label, $0.nodeID) < ($1.entry.label, $1.nodeID) }
+        func sortLabel(_ report: (nodeID: ObjectID, entry: Entry)) -> String {
+            report.entry.label.replacingOccurrences(of: " #\(report.nodeID)", with: "")
+        }
+        return reported.sorted { (sortLabel($0), $0.nodeID) < (sortLabel($1), $1.nodeID) }
     }
 }
