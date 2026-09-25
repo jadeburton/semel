@@ -67,8 +67,9 @@ belongs in `SemelNodeKit` instead — that is how `FolderManifest`, the `input:`
 names and the configuration text format ended up there. A toolchain node never puts an
 absolute sandbox path on a command line: `ToolSandbox` in `SemelNodeKit` is the contract,
 and `/semel` is the name a tool is told when it insists on recording its directory. The
-harness's cold builds — each in its own sandbox, the third from a copy at a second mount —
-are what catch a node that breaks it.
+harness's cold builds — each in its own sandbox, the third from a copy at a second mount,
+the fourth under a perturbed `TMPDIR`, working directory, locale and time zone — are what
+catch a node that breaks it.
 
 Nothing registers a toolchain automatically. `semel-server/main.swift` is the composition
 root: it registers the toolchains, starts the engine and listens on
@@ -78,7 +79,9 @@ with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
 `EndToEnd/Tests` is the one place the three executables are run together, as a user
 runs them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel` and
-`semel-swift` against it, and builds each project twice to compare the bytes.
+`semel-swift` against it, and builds each project up to four times to compare the bytes:
+twice over one copy, once from a copy at a second mount, once under a perturbed
+environment.
 
 A test that needs a node type but does not care which should use `SampleTool` from
 `SampleNodes.swift` rather than reaching for a real toolchain node — that habit is what
@@ -206,7 +209,9 @@ at its default, as though the Semel that wrote the entry had meant that value.
 Not a bump: anything the node's output does not show — a refactor, or a faster route to the
 same bytes. A new input property or input port needs none either, because both are in the
 key and move it on their own. A new or renamed *output* port does need one: an entry
-written before it holds nothing for that port. When in doubt, bump — a needless bump costs
+written before it holds nothing for that port — except on a type that never processes, and
+so has no entries for the rule to protect (`Folder` gaining `contentRoot`, B-26). When in
+doubt, bump — a needless bump costs
 one rebuild of one node type, and a missed one publishes what the older code computed.
 
 ## Glossary
@@ -224,6 +229,8 @@ the nearest standard equivalent and how Semel's differs.
 | graphSpec (column) | — | The node's rendered `GraphSpec`, stored for matching; the same string a spec on an input port demands. Type names are embedded in it, so renaming a node type invalidates every stored one (bump `Semel.version`, B-29). |
 | formula (`.fmla`) | BUILD file, Makefile | Declares products as expressions of nodes, functionally — no ordering, no commands. Also what a `Package.swift` is converted into. |
 | product | Bazel target output | A published artifact: a formula product becomes an `OutputFile` in `output:`. Intermediates are not products (B-10). A product named with a trailing `/` is a *tree product*: every entry of the tree on its expression's port becomes an `OutputFile` under that folder (B-63). |
+| folder manifest (`FolderManifest`) | a directory listing | What a `Folder` publishes on its `manifest` port: its immediate children only, with each child's name, whether it is a folder and whether it is pinned. Names and states, never content — nearly everything downstream of a folder is wired to this to learn its file set, and a manifest that moved when a file was edited would re-run all of them. Carries `baseFolderPath`, so it is qualified by where the folder is. |
+| content root (`FolderContentRoot`) | Git tree object, a Merkle root | What a `Folder` publishes on its `contentRoot` port: the hash of a stated text document with one line per child — its kind (`file`/`folder`/`other`), what it holds, and its name. A file's line carries its content hash and a subfolder's carries that subfolder's own root, so one hash identifies a whole subtree and a change anywhere below moves every root above it (B-26). The kind is on the line because one content-addressed store names both, so without it a file whose bytes are an empty folder's document would fold as that folder. Lines are ordered by name as UTF-8 bytes and then by kind, a total order, and the name is length-framed, so the hash follows the folder's contents and nothing else — including *not* the folder's path, so the same tree at two paths has one root. A child with no content carries its state by case; a product carries `notFolded`, because nothing invalidates a folder when a product below it changes and a folded product hash would go stale unseen. |
 | tree (`TreeManifest`) | Bazel TreeArtifact, a directory output | N files on one port: a manifest of relative paths with content hashes and modes, interned like any value. A tool that decides its own file set (`actool`) fills one through `expectedOutputFolders`; `TreeFile(name:, tree:)` puts one entry back on a port of its own; `TreeMerger` makes several trees one, a collision being an error. |
 | pinned | GC root | "Held alive by user intent rather than by references": a pushed file or folder. Unpinned nodes exist only while something depends on them. Not memory pinning. |
 | `Folder`, `StaticFile`, `OutputFile`, `Configuration` | source file, output file | Nodes that *are* rather than convert (the "-er" exception). `StaticFile` and `Folder` are filled by the push path, not by wires (B-43). |
@@ -283,7 +290,9 @@ wrong fails at the first real formula with "port does not exist", not in any uni
 
 **The cache key must cover everything that can change a node's output.** Including input
 *identity*, not just input content — the wire key is the file's path and the tools embed
-it. If you add anything that influences output, it belongs in the key.
+it. If you add anything that influences output, it belongs in the key. A tool node's key
+also carries a hash of the tool binary's own bytes (`toolBinaryCacheKeyMaterial`, filled in
+by `ToolDiscovery`), so two binaries reporting one version string do not share an entry.
 
 **Never iterate a `Dictionary` into a command line.** Swift's iteration order is seeded per
 process, so the same build would produce a different invocation each run. Sort first.

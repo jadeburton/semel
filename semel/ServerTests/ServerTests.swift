@@ -93,7 +93,7 @@ final class ServerTests: RequestHandlerTestCase {
         try describeSomethingLargerThanTheJSONCap(marker: marker)
         let client = try connect()
 
-        let (response, body) = try daemon(client, .debug)
+        let (response, body) = try daemon(client, .debug(cacheKey: nil))
 
         XCTAssertEqual(response, .debug)
         let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)

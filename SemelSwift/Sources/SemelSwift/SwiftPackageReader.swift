@@ -30,14 +30,6 @@ struct SwiftPackageReaderConfiguration {
         try required.check()
     }
 
-    func asDictionary() -> [String: String] {
-        ["toolDescriptor.name":          toolDescriptor.name,
-         "toolDescriptor.version":       toolDescriptor.version,
-         "toolDescriptor.platform":      toolDescriptor.platform,
-         "toolDescriptor.architecture":  toolDescriptor.architecture,
-         "toolDescriptor.recursiveHash": toolDescriptor.recursiveHash ?? ""]
-    }
-
     /// Where this node's settings live in a config file: `swift.packageReader.<key>`.
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftPackageReader")
 }
@@ -102,6 +94,13 @@ struct SwiftPackageReader: Node {
     }
 
     // MARK: - Processing
+
+    /// The binary behind the tool version the configuration names: two builds of one
+    /// version can dump a manifest differently, and only a fingerprint of the binary tells
+    /// them apart (B-17).
+    public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
+        try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
+    }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         try process(inputs: try .init(input: input)).asProcessOutput()

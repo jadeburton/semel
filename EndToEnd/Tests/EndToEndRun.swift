@@ -3,8 +3,9 @@
 //  SemelEndToEndTests
 //
 //  The harness: one project, materialised under a short root, configured the way a
-//  user would, built cold twice in two fresh homes, its products checked and the two
-//  export trees compared. A test calls `run()` and gets a pass, or a failure whose
+//  user would, built cold in a fresh home two to four times — a second run, a copy at a
+//  second mount, a perturbed environment — its products checked and every export tree
+//  compared with the first. A test calls `run()` and gets a pass, or a failure whose
 //  message carries the evidence.
 //
 
@@ -103,15 +104,18 @@ final class EndToEndRun {
         }
     }
 
-    // MARK: - 3 and 5. A cold build
+    // MARK: - 3, 5, 6b and 6c. A cold build
 
     /// A fresh home named `home`, a server over it, one `semel` session that pushes the
     /// extra folders, builds the build folder and exports into `<root>/<out>`; then the
     /// server stopped cleanly. `base` is the copy to build, the run's own unless a caller
-    /// materialised another. Returns the export directory.
-    func coldBuild(base buildBase: URL? = nil, home homeName: String, out outName: String) throws -> URL {
+    /// materialised another; a `perturbation` varies what both processes are told about
+    /// their surroundings. Returns the export directory.
+    func coldBuild(base buildBase: URL? = nil, home homeName: String, out outName: String,
+                   perturbation: Perturbation? = nil) throws -> URL {
         let buildBase = buildBase ?? base
-        let server = ServerSession(home: root.appendingPathComponent(homeName, isDirectory: true))
+        let server = ServerSession(home: root.appendingPathComponent(homeName, isDirectory: true),
+                                   perturbation: perturbation)
         let out = root.appendingPathComponent(outName, isDirectory: true)
         try server.start()
         do {
@@ -125,6 +129,7 @@ final class EndToEndRun {
             // session non-zero and the failure below carries the findings in its tail.
             commands.append("check")
             try Self.run("semel", arguments: commands, environment: server.environment,
+                         currentDirectory: perturbation?.workingDirectory,
                          timeout: project.buildTimeout, step: "build and check (\(homeName))",
                          serverLog: { server.logTail })
         } catch {
@@ -172,16 +177,32 @@ final class EndToEndRun {
         let exempt = differences.filter { Self.exempt($0, by: project.mayDiffer) }
         let notExempt = differences.filter { !Self.exempt($0, by: project.mayDiffer) }
         if !exempt.isEmpty {
-            let listed = exempt.prefix(20).map(\.description).joined(separator: "\n  ")
-            let more = exempt.count > 20 ? "\n  … and \(exempt.count - 20) more" : ""
-            print("\(project.name): \(exempt.count) difference(s) between the two builds, exempt by the roster:\n  \(listed)\(more)")
+            print("\(project.name): \(exempt.count) difference(s) between the two builds, exempt by the roster:\n  \(Self.listed(exempt))")
         }
         guard !notExempt.isEmpty else {
             return
         }
-        let listed = notExempt.prefix(20).map(\.description).joined(separator: "\n  ")
-        let more = notExempt.count > 20 ? "\n  … and \(notExempt.count - 20) more" : ""
-        throw EndToEndFailure(step: "determinism", message: "\(notExempt.count) difference(s) between out1 and out2:\n  \(listed)\(more)")
+        throw EndToEndFailure(step: "determinism",
+                              message: "\(notExempt.count) difference(s) between out1 and out2:\n  \(Self.listed(notExempt))")
+    }
+
+    /// Two export trees that must match, except where `mayDiffer` exempts a path: what a
+    /// second mount and a perturbed environment both ask for. `step` names the check and
+    /// `subject` says which trees and what was varied between them.
+    private func requireMatch(_ out: URL, _ other: URL, step: String, subject: String) throws {
+        let notExempt = try TreeDiff.compare(out, other).filter { !Self.exempt($0, by: project.mayDiffer) }
+        guard !notExempt.isEmpty else {
+            return
+        }
+        throw EndToEndFailure(step: step,
+                              message: "\(notExempt.count) difference(s) \(subject):\n  \(Self.listed(notExempt))")
+    }
+
+    /// The differences a failure message carries: the first twenty, then a count of the
+    /// rest, so a tree that differs everywhere stays readable.
+    private static func listed(_ differences: [TreeDiff.Difference]) -> String {
+        let shown = differences.prefix(20).map(\.description).joined(separator: "\n  ")
+        return differences.count > 20 ? shown + "\n  … and \(differences.count - 20) more" : shown
     }
 
     /// Whether `mayDiffer` names `difference.path`, exactly or as a trailing path: a
@@ -209,19 +230,27 @@ final class EndToEndRun {
     /// Build three must match build one the way build two did. The roster's exemptions
     /// apply here too: an archive's timestamp is no more a mount than it is a run.
     func checkMountIndependence(_ out1: URL, _ out3: URL) throws {
-        let differences = try TreeDiff.compare(out1, out3)
-        let notExempt = differences.filter { !Self.exempt($0, by: project.mayDiffer) }
-        guard !notExempt.isEmpty else {
-            return
-        }
-        let listed = notExempt.prefix(20).map(\.description).joined(separator: "\n  ")
-        let more = notExempt.count > 20 ? "\n  … and \(notExempt.count - 20) more" : ""
-        throw EndToEndFailure(step: "two mounts", message: "\(notExempt.count) difference(s) between out1 and out3 (the second mount):\n  \(listed)\(more)")
+        try requireMatch(out1, out3, step: "two mounts", subject: "between out1 and out3 (the second mount)")
+    }
+
+    // MARK: - 6c. A perturbed environment
+
+    /// Build four must match build one although it was told a different temporary
+    /// directory, locale, time zone and working directory — B-05. None of that is in a
+    /// cache key, so a difference is a build that read its surroundings: a sandbox path
+    /// in an output, a locale-sorted list, a rendered date. The roster's exemptions apply,
+    /// because a file that is not reproducible between two runs is not reproducible here
+    /// either; the failure names the perturbation, so the message says what to vary by
+    /// hand to see it again.
+    func checkPerturbationIndependence(_ out1: URL, _ out4: URL, _ perturbation: Perturbation) throws {
+        try requireMatch(out1, out4, step: "perturbed environment",
+                         subject: "between out1 and out4, built with \(perturbation.description)")
     }
 
     // MARK: - The whole run
 
-    /// Steps 1 to 7, with the second mount between the determinism check and clean-up.
+    /// Steps 1 to 7, with the second mount and the perturbed build between the
+    /// determinism check and clean-up.
     func run() throws {
         defer { cleanUp() }
         try materialise()
@@ -236,6 +265,12 @@ final class EndToEndRun {
             let out3 = try coldBuild(base: second, home: "home3", out: "out3")
             try checkProducts(in: out3)
             try checkMountIndependence(out1, out3)
+        }
+        if project.perturbed {
+            let perturbation = try Perturbation.under(root: root)
+            let out4 = try coldBuild(home: "home4", out: "out4", perturbation: perturbation)
+            try checkProducts(in: out4)
+            try checkPerturbationIndependence(out1, out4, perturbation)
         }
     }
 

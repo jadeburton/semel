@@ -52,6 +52,17 @@ final class ToolDiscoveryTests: SemelCoreTestCase {
         XCTAssertNil(descriptor(named: "mutetool", in: registry))
     }
 
+    /// B-17. Which binary answers to a version on this machine is discovered, never
+    /// declared: the descriptor a finder produces carries a fingerprint of the file it
+    /// located, and that is what keys the cache apart for two builds of one version.
+    func test_theDescriptorFingerprintsTheBinaryTheFinderLocated() throws {
+        let registry = try discover([finder("fingerprintedtool", located: "/usr/bin/true")])
+
+        let tool = try XCTUnwrap(descriptor(named: "fingerprintedtool", in: registry))
+        XCTAssertEqual(tool.recursiveHash, toolBinaryFingerprint(ofFileAt: "/usr/bin/true"))
+        XCTAssertNotNil(tool.recursiveHash)
+    }
+
     func test_theDescriptorNamesTheHost() throws {
         let registry = try discover([finder("hosttool")])
 

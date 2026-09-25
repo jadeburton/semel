@@ -55,12 +55,19 @@ public struct SampleTool: Node {
                      inputWireSpecs: [:])
     }
 
-    /// What this tool claims to read from outside its inputs. Nil, as for most nodes,
-    /// unless a test sets it — CacheTests uses it to pin how the hook reaches the key.
+    /// What this tool claims to read from outside its inputs beyond its tool binary. Nil,
+    /// as for most nodes, unless a test sets it — CacheTests uses it to pin how the hook
+    /// reaches the key.
     static var cacheKeyMaterialForTests: String?
 
+    /// A stand-in for a real tool node, which declares the binary behind the tool its
+    /// configuration names. A test's own material takes the place of the whole thing, so
+    /// what reaches the key stays exactly what that test put there.
     public func cacheKeyMaterial(input: ProcessInput) throws -> String? {
-        Self.cacheKeyMaterialForTests
+        if let material = Self.cacheKeyMaterialForTests {
+            return material
+        }
+        return try toolBinaryCacheKeyMaterial(input: input, configurationPort: Self.configuration)
     }
 
     /// Which implementation of this node type a test is standing in for. A shipped node

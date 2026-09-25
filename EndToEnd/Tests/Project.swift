@@ -44,4 +44,8 @@ struct Project {
     /// different length, and requires that export to match the first. False only for a
     /// project whose build is too long to run three times.
     var twoMounts: Bool = true
+    /// Whether the run builds once more with the environment and the working directory
+    /// perturbed (`Perturbation`), and requires that export to match the first. False
+    /// only for a project whose build is too long to run again.
+    var perturbed: Bool = true
 }

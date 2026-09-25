@@ -28,7 +28,9 @@ public enum ProtocolVersion {
     /// say so instead. Nothing enforces it: the test that pins the number only fires when
     /// someone changes the number.
     ///
-    /// Version 9 adds the `missingOutputPort` kind to `check`'s findings, for a node
+    /// Version 10 gives `debug` a cache key to ask about, answering that entry's key
+    /// material where the bare request answers the graph. Version 9 adds the
+    /// `missingOutputPort` kind to `check`'s findings, for a node
     /// holding no row for a port its type declares. Version 8 gives `ls` a status per
     /// state the graph can be in about a name — `notProduced`, `deleted` and `failed`
     /// where version 7 had `missing` and `error`.
@@ -42,7 +44,7 @@ public enum ProtocolVersion {
     /// carries `debug`'s text in the frame body; version 1 carried it in the reply's JSON. A
     /// peer speaking an older one decodes such a reply as an empty answer and prints
     /// nothing, which is why the mismatch is worth a rejection naming both.
-    public static let current = 9
+    public static let current = 10
 }
 
 public struct Hello: Codable, Equatable, Sendable {

@@ -5,6 +5,11 @@
 //
 /// One immediate child of a folder. A manifest is deliberately non-recursive,
 /// as this will not scale to massive file system trees.
+///
+/// Names and pinned state, and no content: a consumer wired to a manifest is asking which
+/// children a folder has, and a manifest that moved when a child's bytes moved would
+/// re-run every one of them on every edit. What a folder's content hashes to is a separate
+/// question and is answered on a separate port — see `FolderContentRoot`.
 public struct FolderManifestEntry: Codable {
     public let name: String
     public let isFolder: Bool

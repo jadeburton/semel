@@ -187,23 +187,34 @@ public struct NodeDataAccess: DataAccessType {
         }
     }
 
-    /// The value kind of one port, for every child of `parentNodeID`.
+    /// One port, for every child of `parentNodeID` that has it.
     ///
     /// Joins rather than binding the children's ids as an `IN` list: a folder with 200
     /// children meant 200 bound parameters per rebuild, which cost more than the query.
-    public func selectChildPortKinds(parentNodeID: ObjectID,
-                                     nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort.ValueKind] {
+    ///
+    /// The whole port rather than its kind, because a folder's manifest asks two questions
+    /// of the same row — whether the child is pinned, and what its content hashes to — and
+    /// the hash comes back in the row the kind was already read from.
+    public func selectChildPorts(parentNodeID: ObjectID,
+                                 nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort] {
         try read { db in
-            var result: [ObjectID: OutputPort.ValueKind] = [:]
+            var result: [ObjectID: OutputPort] = [:]
             let rows = try Row.fetchAll(db, sql: """
-                SELECT p.nodeID AS nodeID, p.valueKind AS valueKind
+                SELECT p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
                 FROM OutputPort p
                 JOIN Node n ON n.id = p.nodeID
                 WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
                 """, arguments: [parentNodeID, nameSymbolID])
             for row in rows {
                 let raw: UInt8 = row["valueKind"]
-                result[row["nodeID"]] = OutputPort.ValueKind(rawValue: raw)
+                guard let valueKind = OutputPort.ValueKind(rawValue: raw) else {
+                    continue
+                }
+                let nodeID: ObjectID = row["nodeID"]
+                result[nodeID] = OutputPort(nodeID: nodeID,
+                                            nameSymbolID: nameSymbolID,
+                                            valueKind: valueKind,
+                                            dataObjectHash: row["dataObjectHash"])
             }
             return result
         }

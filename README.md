@@ -93,7 +93,7 @@ rm build/**
 
 | Command | Description |
 |---------|-------------|
-| `d` / `debug` | Dump the full graph state |
+| `d` / `debug [<cache key>]` | Dump the full graph state; given a cache entry's key, dump instead the key material that entry was keyed on — the text whose sha256 is that key, so two machines that disagreed about a build diff two texts rather than two hashes |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
 | `build <folder> [--into <dir>]` | `push <folder>`, `wait`, `errors` in one word; given a destination, `export` too, unless the build reported errors |
@@ -265,9 +265,11 @@ tool, and another toolchain gets one of its own if it needs one.
 
 `swift test` builds the fixtures under `EndToEnd/Fixtures` — a C program, a C++ one,
 the tutorial's project, a Swift package with a path dependency and a SwiftUI app for the
-simulator — through `semelserv`, `semel` and `semel-swift` together, each twice in two
-fresh homes, and requires the two export trees to match byte for byte, static archives
-included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
+simulator — through `semelserv`, `semel` and `semel-swift` together, each four times in
+four fresh homes: twice over the same copy, once from a copy at another mount, and once
+with the environment perturbed — a different `TMPDIR`, working directory, locale and time
+zone, none of which is in a cache key. All four export trees must match byte for byte,
+static archives included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
 projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, and the
 app itself from its Xcode project — fetched once into `~/Library/Caches/semel/end-to-end`
 (`SEMEL_E2E_CACHE` moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's
