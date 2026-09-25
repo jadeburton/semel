@@ -81,10 +81,18 @@ final class CacheTests: SemelCoreTestCase {
     /// Re-recorded a second time for `implementationVersion` (B-102): the version of the
     /// node type's implementation joined the key, which is one deliberate discard of every
     /// entry in exchange for every later upgrade discarding only what it touched.
+    ///
+    /// Re-recorded a third time for the key material (B-13). The key is the hash of the
+    /// material's canonical text, which is one line per thing the key covers rather than
+    /// one blob per port; each input line carries the port it arrived on as well as the
+    /// wire and the value, and a value is its hash rather than the two wrappers a
+    /// two-case enum encodes into, the value being the field a reader of a diff scans. A
+    /// stored entry keyed the other way does not decode against the material it has to
+    /// carry, so the discard costs nothing beyond what that already costs.
     func test_theKeyFormatHasNotDrifted() throws {
         let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
 
-        XCTAssertEqual(key, "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419")
+        XCTAssertEqual(key, "1445768a2073611d49cfbe9dc6e25f0d6b9442a4e4163629621a87876ee5b8cf")
     }
 
     // MARK: - What the key covers
@@ -193,11 +201,12 @@ final class CacheTests: SemelCoreTestCase {
         let (otherRecord, _) = try GraphSpecNode.parse("OtherSampleTool()").findOrCreateMatchingNode()
         let other = try OtherSampleTool(thisNode: otherRecord)
 
-        let toolKey  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
-        let otherKey = try XCTUnwrap(other.buildCacheKeyFromAllInputs(input: input))
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: toolKey, processingDuration: 0.1,
+        let toolMaterial  = try tool.buildCacheKeyMaterial(input: input)
+        let otherMaterial = try other.buildCacheKeyMaterial(input: input)
+        let otherKey      = try otherMaterial.cacheKey()
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: toolMaterial, processingDuration: 0.1,
                                                  output: builtOutput())
-        try other.saveCacheForAllInputsAndOutputs(cacheKey: otherKey, processingDuration: 0.1,
+        try other.saveCacheForAllInputsAndOutputs(keyMaterial: otherMaterial, processingDuration: 0.1,
                                                   output: builtOutput())
 
         SampleTool.implementationVersionForTests = 2
@@ -225,12 +234,13 @@ final class CacheTests: SemelCoreTestCase {
     /// on a type nothing can build. The node's own `implementationVersion` cannot cover
     /// this — the type that went is somebody else's.
     func test_anEntryDemandingATypeThisSemelDoesNotLinkIsAMiss() throws {
-        let tool = try makeCompilerNode()
-        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": "RetiredSampleTool(path: 'input:/x.c').output"]])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key),
                      "a spec naming a type this Semel cannot make is not an entry to hand back")
@@ -239,25 +249,27 @@ final class CacheTests: SemelCoreTestCase {
     /// The retired type can sit anywhere in the demanded subgraph, so the whole spec tree
     /// is read and not only the node at its root.
     func test_anEntryDemandingARetiredTypeDeeperInASpecIsAMissToo() throws {
-        let tool = try makeCompilerNode()
-        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let key      = try material.cacheKey()
         let spec = "Configuration(role: 'x', input: [\"a\": RetiredSampleTool().output]).output"
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": spec]])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
     }
 
     /// The common entry, which every spec of it names a linked type: it comes back.
     func test_anEntryWhoseSpecsNameLinkedTypesIsAHit() throws {
-        let tool = try makeCompilerNode()
-        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": "StaticFile(path: 'input:/x.c').output"]])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
         XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"],
@@ -292,19 +304,81 @@ final class CacheTests: SemelCoreTestCase {
         XCTAssertEqual(withOne, withOneAgain, "the same material gives the same key")
     }
 
+    // MARK: - The tool binary behind a descriptor
+
+    /// Installs a registry holding one tool of the version `configuration()` names, under
+    /// the fingerprint discovery would have taken of the binary behind it.
+    private func installTool(fingerprint: String?) {
+        let registry = ToolRunnerRegistry()
+        registry.registerTool(descriptor: .init(name: "sample",
+                                                version: "sample tool version 1",
+                                                platform: "macOS",
+                                                architecture: "arm64",
+                                                recursiveHash: fingerprint),
+                              toolExecutor: RecordingToolRunner())
+        ToolRunnerRegistry.instance = registry
+    }
+
+    /// B-17. A version string is what a binary says about itself, and two binaries say the
+    /// same thing: a locally built compiler and the release it calls itself, the same
+    /// toolchain version reinstalled with a patch. The configuration cannot tell them
+    /// apart — it names a version — so the fingerprint of the binary that will run is in
+    /// the key, and a node built by one does not come back for the other.
+    func test_twoBinariesOfOneToolVersionDoNotShareACacheKey() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+
+        installTool(fingerprint: "fingerprint-of-one-binary")
+        let withOne = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: "fingerprint-of-another-binary")
+        let withAnother = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: "fingerprint-of-one-binary")
+        let withOneAgain = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        XCTAssertNotEqual(withOne, withAnother,
+                          "two binaries reporting one version must not share an entry")
+        XCTAssertEqual(withOne, withOneAgain,
+                       "one binary, one key: the fingerprint is the only thing that moved")
+    }
+
+    /// The identity in the configuration still decides *which* tool a node runs, so a node
+    /// naming a tool the machine does not have takes no fingerprint into its key — it
+    /// fails when it is processed, with a message naming what is installed.
+    func test_aToolThatIsNotInstalledContributesNoFingerprint() throws {
+        let tool  = try makeCompilerNode()
+        let input = try makeInput()
+
+        ToolRunnerRegistry.instance = ToolRunnerRegistry()
+        let withoutTheTool = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: nil)
+        let withAToolThatHasNoFingerprint = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        installTool(fingerprint: "fingerprint-of-one-binary")
+        let withAFingerprintedTool = try tool.buildCacheKeyFromAllInputs(input: input)
+
+        XCTAssertEqual(withoutTheTool, withAToolThatHasNoFingerprint)
+        XCTAssertNotEqual(withoutTheTool, withAFingerprintedTool,
+                          "a fingerprint that is there is in the key — without this the test "
+                          + "would pass with the whole mechanism removed")
+    }
+
     // MARK: - Round trip
 
     func test_savedOutputsComeBackForTheSameKey() throws {
         let tool = try makeCompilerNode()
         let input = try makeInput()
-        let key = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
+        let material = try tool.buildCacheKeyMaterial(input: input)
+        let key      = try material.cacheKey()
 
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
         XCTAssertEqual(try loaded.outputValues[SampleTool.output]?.expectValue().resolveAsString(),
@@ -312,15 +386,15 @@ final class CacheTests: SemelCoreTestCase {
     }
 
     func test_aDifferentKeyIsAMiss() throws {
-        let tool = try makeCompilerNode()
-        let key = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
 
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let otherKey = try XCTUnwrap(
             tool.buildCacheKeyFromAllInputs(input: try makeInput(contents: "different source")))

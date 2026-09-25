@@ -123,6 +123,50 @@ extension BuildEngine {
         }
     }
 
+    // MARK: cacheEntryDescription
+
+    /// One cache entry's key material: the text its key is the hash of, printed whole so
+    /// that two machines that disagreed about a build compare two of these instead of two
+    /// hashes, and so that `shasum -a 256` over the printed block answers the key above it.
+    ///
+    /// Beside `graphDescription` because it answers the same verb and obeys the same rule:
+    /// diagnostic output never throws, so an entry that cannot be read is described rather
+    /// than raised.
+    public func cacheEntryDescription(key: String) -> String {
+        guard let cacheEntry = (FatalErrors.attempt { try database.cacheEntry.select(hash: key) }) ?? nil else {
+            return "There is no cache entry under the key \(key)."
+        }
+
+        let text = TextBuffer()
+        appendSectionHeader("cache entry \(key)", to: text)
+        text.append("cost: \(cacheEntry.cost) ms")
+        text.append("last used: \(ISO8601DateFormatter().string(from: cacheEntry.timestamp))")
+        text.append()
+
+        guard let decoded = try? ProcessCacheEntry.fromJSON(String(decoding: cacheEntry.content, as: UTF8.self)),
+              let material = try? decoded.keyMaterial.canonicalText() else {
+            text.append("Its content is not of a shape this Semel reads, so the material its key was "
+                      + "taken of cannot be shown. The entry is a miss and the next build of that node "
+                      + "replaces it.")
+            return text.text
+        }
+
+        // Said only when it does not hold: the material is what the key was taken of, so a
+        // disagreement is a damaged row and worth a line of its own.
+        if let recomputed = try? decoded.keyMaterial.cacheKey(), recomputed != key {
+            text.append("The material below hashes to \(recomputed), which is not the key this entry "
+                      + "is filed under. The entry is damaged.")
+            text.append()
+        }
+
+        text.append("key material — its sha256 is the key above:")
+        // Without the text's own final newline, which the printing of this description puts
+        // back: what a reader pipes into `shasum -a 256` is then the bytes that were hashed,
+        // to the byte, and the claim on the line above holds outside this process.
+        text.append(material.hasSuffix("\n") ? String(material.dropLast()) : material)
+        return text.text
+    }
+
     // MARK: graphDescription
 
     public func graphDescription() throws -> String {

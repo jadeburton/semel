@@ -83,12 +83,30 @@ public struct WireDataAccess: DataAccessType {
     /// beside it under a name of its own.
     public static var rowsRead = 0
 
-    /// Fetches rows and counts them into `rowsRead`. Every read of the table that can hand
-    /// back more than one row goes through here.
+    /// Fetches rows, counting the select into `selectCount` and the rows into `rowsRead`.
+    /// Every read of the table that can hand back more than one row goes through here.
     private func read(countingRows fetch: (Database) throws -> [Wire]) throws -> [Wire] {
-        let rows = try read(fetch)
+        let rows = try counted { try read(fetch) }
         Self.rowsRead += rows.count
         return rows
+    }
+
+    /// How many wire selects this process has issued.
+    ///
+    /// A test observable, of a piece with `Folder.manifestRebuildCount` and
+    /// `BuildEngine.loopSignalsSent`: a cost whose shape is a count of round trips, which
+    /// a stopwatch cannot pin — a timing assertion needs a band wide enough to survive a
+    /// loaded machine, and such a band stops telling linear growth from quadratic long
+    /// before the defect stops mattering. Every `select` below counts one, whatever it
+    /// returns. Not read by the engine; `CascadeReportScaleTests` reads it around the
+    /// error report's upstream walk.
+    static var selectCount = 0
+
+    /// Counts one query against `selectCount` and runs it, so that a select added here
+    /// cannot quietly escape the measurement.
+    private func counted<T>(_ query: () throws -> T) rethrows -> T {
+        Self.selectCount += 1
+        return try query()
     }
 
     public func selectAll() throws -> [Wire] {
@@ -142,12 +160,14 @@ public struct WireDataAccess: DataAccessType {
                        goingToNodeID: ObjectID,
                        toSymbolID: ObjectID,
                        name: ObjectID) throws -> Wire? {
-        let wire = try read { db in
-            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                            Wire.Columns.fromSymbolID == fromSymbolID &&
-                            Wire.Columns.toNodeID == goingToNodeID &&
-                            Wire.Columns.toSymbolID == toSymbolID &&
-                            Wire.Columns.name == name).fetchOne(db)
+        let wire = try counted {
+            try read { db in
+                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                                Wire.Columns.fromSymbolID == fromSymbolID &&
+                                Wire.Columns.toNodeID == goingToNodeID &&
+                                Wire.Columns.toSymbolID == toSymbolID &&
+                                Wire.Columns.name == name).fetchOne(db)
+            }
         }
         Self.rowsRead += wire == nil ? 0 : 1
         return wire

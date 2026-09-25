@@ -35,5 +35,16 @@ public enum Semel {
     /// 0.1.4: the last two reasons spelled as sentences are states — a source that was
     /// pushed and removed, and a folder nobody has pushed into. Stored graphs hold those as
     /// errors carrying a word, so the rebuild restates the ports it preserves again.
-    public static let version = "0.1.4"
+    ///
+    /// 0.1.5: stamped by an unreleased build of the change below, whose graph shape was a
+    /// different one. Skipped, so that a home carrying that stamp is rebuilt rather than
+    /// matched.
+    ///
+    /// 0.1.6: a `Folder` publishes a second derived value, the Merkle root of everything
+    /// under it, on a new `contentRoot` port (B-26). A node is given one row per declared
+    /// port when it is created, so every folder in a stored graph holds none for this one —
+    /// a state `GraphCheck` reports as damage, a read of the port throws on, and the fold
+    /// above such a folder would read as an empty subtree. The rebuild folds every preserved
+    /// folder, which is what makes the rows.
+    public static let version = "0.1.6"
 }

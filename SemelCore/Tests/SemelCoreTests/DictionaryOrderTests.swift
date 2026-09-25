@@ -108,6 +108,8 @@ final class DictionaryOrderTests: XCTestCase {
             "a literal array of the two files to write",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.pinnedOutputPort),":
             "a literal array of the two kinds a child can be",
+        "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.contentRootOutputPort),":
+            "a literal array of the two kinds a child can be, each with the port its content is on",
 
         // ── accumulated into a dictionary or a set: the result is order-free ─────
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: headerInputFiles":
@@ -156,7 +158,7 @@ final class DictionaryOrderTests: XCTestCase {
             "a TreeManifest sorts its entries by path when it is built",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: specs.keys":
             "the missing paths are counted and reported sorted",
-        "SemelNodeKit/Sources/SemelNodeKit/ToolRunner.swift: toolsByDescriptor.keys":
+        "SemelNodeKit/Sources/SemelNodeKit/ToolRunner.swift: toolsByIdentity.values":
             "every reader imposes an order: the error text sorts, and both the tools reply and the written config sort by version",
         "SemelApple/Sources/SemelApple/XcodeBuildSettings.swift: values.values":
             "collects the names still referenced into a set, returned sorted",
