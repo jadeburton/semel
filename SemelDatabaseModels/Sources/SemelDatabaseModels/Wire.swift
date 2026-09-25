@@ -37,6 +37,27 @@ public struct Wire: Codable, FetchableRecord, PersistableRecord {
                 t.column("name", .integer).notNull()
                 t.primaryKey(["fromNodeID", "fromSymbolID", "toNodeID", "toSymbolID", "name"])
             }
+
+            // A wire's name is unique per input port, and a port takes a fan of wires as
+            // wide as the graph demands, so asking whether a name is taken has to be a
+            // lookup rather than a walk of the fan. The primary key leads with the source
+            // and cannot serve that question; the index on `toNodeID` alone answers it with
+            // every wire arriving at the node. These are the three columns the question is
+            // asked in (B-106).
+            //
+            // Outside the table's own `ifNotExists`, and so created whether the table was
+            // just made or was already there. An index changes what a lookup costs and not
+            // what a row means, so a database holding wires without it is a database to
+            // index rather than one to refuse: `createTables` runs on every open and the
+            // schema fingerprint is taken after it, so such a file gains the index and then
+            // presents the fingerprint a fresh one does.
+            //
+            // Not unique: the key that says a name belongs to one source is enforced where
+            // the rule lives, in `connectWire`, which refuses the second source with a
+            // sentence. A constraint here would answer it with an SQLite error instead.
+            try db.create(indexOn: "Wire",
+                          columns: ["toNodeID", "toSymbolID", "name"],
+                          options: .ifNotExists)
         }
     }
 }
@@ -46,6 +67,28 @@ public struct WireDataAccess: DataAccessType {
 
     public init(databaseLayer: DatabaseLayer) {
         self.databaseLayer = databaseLayer
+    }
+
+    /// A test observable: how many wire rows have been read out of the database in this
+    /// process. Scale tests state the cost of a wiring in rows rather than in seconds, the
+    /// way `Folder.manifestRebuildCount` states the cost of a push in rebuilds — a count
+    /// separates a lookup from a scan by the size of the graph, where a stopwatch has to be
+    /// given a band wide enough to survive a loaded machine.
+    ///
+    /// Rows returned, not statements run: a guard that reads a whole fan to answer one
+    /// question is one statement and as many rows as the fan holds, and it is the rows that
+    /// say so. Nor is it what SQLite touched answering the query — a lookup the planner has
+    /// no index for reads the table and returns one row, and it takes `EXPLAIN QUERY PLAN`
+    /// to tell those apart. Named for what it counts, so a counter of statements can sit
+    /// beside it under a name of its own.
+    public static var rowsRead = 0
+
+    /// Fetches rows, counting the select into `selectCount` and the rows into `rowsRead`.
+    /// Every read of the table that can hand back more than one row goes through here.
+    private func read(countingRows fetch: (Database) throws -> [Wire]) throws -> [Wire] {
+        let rows = try counted { try read(fetch) }
+        Self.rowsRead += rows.count
+        return rows
     }
 
     /// How many wire selects this process has issued.
@@ -68,41 +111,46 @@ public struct WireDataAccess: DataAccessType {
 
     public func selectAll() throws -> [Wire] {
         Debug.warn("expensive selectAllWires call")
-        return try counted { try read { db in try Wire.fetchAll(db) } }
+        return try read(countingRows: { db in try Wire.fetchAll(db) })
     }
 
     public func select(goingToNodeID: ObjectID) throws -> [Wire] {
-        try counted {
-            try read { db in
-                try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
-            }
-        }
+        try read(countingRows: { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID).fetchAll(db)
+        })
     }
 
     public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID) throws -> [Wire] {
-        try counted {
-            try read { db in
-                try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
-                                Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
-            }
-        }
+        try read(countingRows: { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID).fetchAll(db)
+        })
+    }
+
+    /// Every wire arriving at `(goingToNodeID, toSymbolID)` under `name` — an indexed
+    /// lookup, so it costs the same whatever else arrives at that port. Rows rather than one
+    /// row: the schema permits two sources to reach a port under one name, `connectWire` is
+    /// what refuses it, and what a graph damaged past that rule holds is the caller's to
+    /// judge rather than this method's to hide.
+    public func select(goingToNodeID: ObjectID, toSymbolID: ObjectID, name: ObjectID) throws -> [Wire] {
+        try read(countingRows: { db in
+            try Wire.filter(Wire.Columns.toNodeID == goingToNodeID &&
+                            Wire.Columns.toSymbolID == toSymbolID &&
+                            Wire.Columns.name == name).fetchAll(db)
+        })
     }
 
     public func select(comingFromNodeID: ObjectID) throws -> [Wire] {
-        try counted {
-            try read { db in
-                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
-            }
-        }
+        try read(countingRows: { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID).fetchAll(db)
+        })
     }
 
     public func select(comingFromNodeID: ObjectID, fromSymbolID: ObjectID) throws -> [Wire] {
-        try counted {
-            try read { db in
-                try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
-                                Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
-            }
-        }
+        try read(countingRows: { db in
+            try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
+                            Wire.Columns.fromSymbolID == fromSymbolID).fetchAll(db)
+        })
     }
 
     /// The one wire with this exact identity, or `nil`. A port pair holds as many wires as
@@ -112,7 +160,7 @@ public struct WireDataAccess: DataAccessType {
                        goingToNodeID: ObjectID,
                        toSymbolID: ObjectID,
                        name: ObjectID) throws -> Wire? {
-        try counted {
+        let wire = try counted {
             try read { db in
                 try Wire.filter(Wire.Columns.fromNodeID == comingFromNodeID &&
                                 Wire.Columns.fromSymbolID == fromSymbolID &&
@@ -121,6 +169,8 @@ public struct WireDataAccess: DataAccessType {
                                 Wire.Columns.name == name).fetchOne(db)
             }
         }
+        Self.rowsRead += wire == nil ? 0 : 1
+        return wire
     }
 
     public func insert(_ wire: Wire) throws -> ObjectID {
