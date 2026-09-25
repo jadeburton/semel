@@ -30,10 +30,9 @@ public enum ProtocolVersion {
     ///
     /// Version 10 adds the `artifacts` event, one settle's diff over the products:
     /// appeared, changed, disappeared. Version 9 adds the `missingOutputPort` kind to
-    /// `check`'s findings, for a node
-    /// holding no row for a port its type declares. Version 8 gives `ls` a status per
-    /// state the graph can be in about a name — `notProduced`, `deleted` and `failed`
-    /// where version 7 had `missing` and `error`.
+    /// `check`'s findings, for a node holding no row for a port its type declares.
+    /// Version 8 gives `ls` a status per state the graph can be in about a name —
+    /// `notProduced`, `deleted` and `failed` where version 7 had `missing` and `error`.
     /// Version 7 adds `check`, whose findings travel in the reply's body. Version 6 adds
     /// the `settled` event, which carries one settle's totals. Version 5's
     /// `reset` carries a flag for whether the cache goes too, and answers with the path its

@@ -28,6 +28,16 @@ enum Mark {
     static let settled = "✅"
 }
 
+/// How many paths any one of the prompt's reports names, one per line, before it reports
+/// a count instead.
+///
+/// One number rather than one per report, because it is one reading: "too many paths to
+/// read". A push or an `rm` of a whole project runs to thousands, a cold build publishes
+/// as many products, and a wall of paths buries whatever else was said either way.
+enum PathList {
+    static let namedIndividually = 20
+}
+
 enum SettleSummaryRenderer {
 
     /// One line for one settle, or nothing when the settle had nothing to do.
@@ -52,12 +62,6 @@ enum SettleSummaryRenderer {
 
 enum ArtifactChangeRenderer {
 
-    /// How many paths one kind names before it reports a count instead — the number
-    /// `rm` and `push` cap their lists at, for the same reason: a cold build of a large
-    /// project produces thousands of appearances, and a wall of paths buries the settle
-    /// summary above it.
-    static let pathsNamedIndividually = 20
-
     /// The lines that go under the settle summary: one per artifact, in the order
     /// appeared, changed, disappeared, each group in path order.
     ///
@@ -68,8 +72,8 @@ enum ArtifactChangeRenderer {
     /// **The cap is per kind, not over the three together.** A settle that publishes ten
     /// thousand products and removes one has to show the removal: capping the combined
     /// list in order would spend the whole budget on appearances and drop the one line
-    /// worth reading. So each kind names up to `pathsNamedIndividually` paths and then
-    /// says how many it left out.
+    /// worth reading. So each kind names up to `PathList.namedIndividually` paths and
+    /// then says how many it left out.
     static func lines(appeared: [String], changed: [String], disappeared: [String]) -> [String] {
         linesForKind(appeared, "appeared")
             + linesForKind(changed, "changed")
@@ -77,7 +81,7 @@ enum ArtifactChangeRenderer {
     }
 
     private static func linesForKind(_ paths: [String], _ verb: String) -> [String] {
-        var lines = paths.prefix(pathsNamedIndividually).map { "   \(verb): \($0)" }
+        var lines = paths.prefix(PathList.namedIndividually).map { "   \(verb): \($0)" }
 
         let rest = paths.count - lines.count
         if rest > 0 {

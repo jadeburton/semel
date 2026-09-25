@@ -194,22 +194,26 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertNil(port.dataObjectHash)
     }
 
-    /// B-50. The artifact snapshot table arrived with 0.1.5, so a database from before it
-    /// opens with the table there and empty — `createTables` is `IF NOT EXISTS`, which
-    /// creates what is missing, so the schema check has nothing to object to. The version
-    /// marker is what reacts: the graph is rebuilt, and the first settle of that launch
-    /// reconciles an empty table against it rather than reporting nothing ever again.
-    func test_aGraphFromBeforeTheArtifactSnapshotsIsRebuiltAgainstAnEmptyTable() throws {
-        let engine = try makeEngine(try DatabaseLayer(filePath: try makeTemporaryDatabasePath()))
+    /// B-50. A database created before the artifact snapshot table is not a graph that
+    /// means something else, so it is not a version change: `createTables` is
+    /// `IF NOT EXISTS` and runs when the file is opened, before the fingerprint is taken,
+    /// so the schema gate sees a matching schema and the marker sees a matching version.
+    /// The graph is kept whole, and the empty table is what the first settle reconciles.
+    func test_aDatabaseFromBeforeTheArtifactSnapshotsOpensWithoutARebuild() throws {
+        let path = try makeTemporaryDatabasePath()
+        let older = try makeEngine(try DatabaseLayer(filePath: path))
+        try older.reconcileVersionMarkers()
         let derived = try makeDerivedNode()
-        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.4")
+        // The one thing that database lacks.
+        try older.database.dbQueue.write { db in try db.execute(sql: "DROP TABLE ArtifactSnapshot") }
 
+        let engine = try makeEngine(try DatabaseLayer(filePath: path))
         try engine.reconcileVersionMarkers()
 
-        XCTAssertThrowsError(try engine.database.node.select(nodeID: derived),
-                             "a graph built before the snapshots must be rebuilt")
+        XCTAssertNotNil(try engine.database.node.select(nodeID: derived),
+                        "a derived table is no reason to discard what the graph derived")
         XCTAssertTrue(try engine.database.artifactSnapshot.selectAll().isEmpty,
-                      "derived state, so an empty table is a correct starting point")
+                      "the table is there, and empty, for the first settle to reconcile")
         XCTAssertEqual(try storedVersion(engine), Semel.version)
     }
 

@@ -21,9 +21,9 @@ public struct ArtifactSnapshot: Codable, FetchableRecord, PersistableRecord, Equ
     }
 
     public var path: String
-    public var contentHash: String
+    public var contentHash: DataObjectHash
 
-    public init(path: String, contentHash: String) {
+    public init(path: String, contentHash: DataObjectHash) {
         self.path        = path
         self.contentHash = contentHash
     }
@@ -62,7 +62,7 @@ public struct ArtifactSnapshotDataAccess: DataAccessType {
         }
     }
 
-    public func upsert(path: String, contentHash: String) throws {
+    public func upsert(path: String, contentHash: DataObjectHash) throws {
         try write { db in
             try ArtifactSnapshot(path: path, contentHash: contentHash).save(db)
         }

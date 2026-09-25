@@ -90,7 +90,7 @@ final class FilePlugin: CommandPlugin {
 
         // A push of a whole project runs to thousands of files: name each one while the
         // list is short enough to read, and count them when it is not.
-        let nameEachPath = work.count <= Self.pathsNamedIndividually
+        let nameEachPath = work.count <= PathList.namedIndividually
         var files     = 0
         var folders   = 0
         var unchanged = 0
@@ -231,16 +231,11 @@ final class FilePlugin: CommandPlugin {
 
     // MARK: - Reporting what a verb touched
 
-    /// How many paths a verb names one per line before it reports a count instead. A push
-    /// or an rm of a whole project runs to thousands, and a wall of paths buries whatever
-    /// else the command said.
-    private static let pathsNamedIndividually = 20
-
     /// What `rm` says when it succeeds: a line per path while the list is short enough to
     /// read, and a count once it is not — the folders first, since a folder is the shape of
     /// what happened and the files are what fill the screen.
     private func reportRemoval(files: [String], folders: [String], context: any CommandContext) {
-        guard files.count + folders.count > Self.pathsNamedIndividually else {
+        guard files.count + folders.count > PathList.namedIndividually else {
             folders.forEach { context.outputMessage("Removed folder: \($0)") }
             files.forEach { context.outputMessage("Removed file: \($0)") }
             return
@@ -273,7 +268,7 @@ final class FilePlugin: CommandPlugin {
     /// out: a wildcard can match folders by the hundred, and a line naming all of them is
     /// the wall of text the count exists to replace.
     private static func named(_ paths: [String]) -> String {
-        let named = paths.prefix(pathsNamedIndividually)
+        let named = paths.prefix(PathList.namedIndividually)
         let rest  = paths.count - named.count
         return named.joined(separator: ", ") + (rest > 0 ? ", and \(rest) more" : "")
     }

@@ -490,7 +490,6 @@ Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
-   appeared: output:/hello/lines.txt
 Settled.
 No errors.
 Exported 4 files into /Users/you/semel-playground/out

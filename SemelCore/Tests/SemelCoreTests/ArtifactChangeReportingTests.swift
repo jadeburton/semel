@@ -56,6 +56,20 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
         return (source, product)
     }
 
+    /// The same, at a path of the caller's choosing rather than under `output:/src`.
+    private func publishProductAt(_ path: String, from sourceName: String, contents: String) throws {
+        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(sourceName)')")
+            .findOrCreateMatchingNode()
+        _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
+        let (product, _) = try GraphSpecNode.parse("OutputFile(path: '\(path)')").findOrCreateMatchingNode()
+        try Wire.connectWire(database: engine.database,
+                             fromNodeID: try source.requireID(),
+                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
+                             toNodeID: try product.requireID(),
+                             toSymbolID: OutputFile.inputPort.asSymbolID(),
+                             name: "product".asSymbolID())
+    }
+
     private func rewrite(_ source: NodeRecord, to contents: String) throws {
         _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
     }
@@ -236,28 +250,66 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
         XCTAssertEqual(afterRestart, [ArtifactChanges(changed: ["output:/src/lib.a"])])
     }
 
-    // MARK: - The path prefix
+    // MARK: - The whole diff, once
 
-    /// A subtree report stays possible: the prefix decides what is *said*, never what is
-    /// recorded, so a report of one worktree does not leave the rest of the table stale.
-    func test_aPathPrefixNarrowsWhatIsReportedAndNotWhatIsRecorded() throws {
+    /// One settle, one diff, over every artifact: narrowing it is the subscriber's, at
+    /// delivery. Pinned because the candidates are consumed as they are read, so a
+    /// report that filtered here would swallow everything outside its subtree.
+    func test_oneSettlesDiffCoversEveryArtifactWhereverItIs() throws {
         try publishProduct("lib.a", contents: "archive")
-        let (otherSource, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/other')")
-            .findOrCreateMatchingNode()
-        _ = try XCTUnwrap(otherSource.nodeAsAny() as? StaticFile).replaceContent(try "other".intern())
-        let (otherProduct, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/elsewhere/other')")
+        try publishProductAt("output:/elsewhere/other", from: "other", contents: "other")
+
+        engine.reportArtifactChanges()
+
+        XCTAssertEqual(try onlyReport(),
+                       ArtifactChanges(appeared: ["output:/elsewhere/other", "output:/src/lib.a"]))
+    }
+
+    // MARK: - A delete that did not happen
+
+    /// The collection is recorded before the node is deleted, so a delete that fails must
+    /// not be announced: a live product the reader believes is gone would stay that way,
+    /// because nothing will wake that node again.
+    func test_aProductWhoseDeleteFailedIsNotReportedAsDisappeared() throws {
+        let published = try publishProduct("lib.a", contents: "archive")
+        engine.reportArtifactChanges()
+        captured = []
+
+        // What `processPendingDeletions` records on its way to a delete, without the
+        // delete: the node is still there.
+        engine.noteArtifactCollected(path: "output:/src/lib.a", nodeID: try published.product.requireID())
+        engine.reportArtifactChanges()
+
+        XCTAssertTrue(captured.isEmpty, "the node is still there, got \(captured)")
+        XCTAssertNotNil(try engine.database.artifactSnapshot.select(path: "output:/src/lib.a"),
+                        "and the row it was last told about stays")
+    }
+
+    /// A product collected and rebuilt inside one settle has not disappeared, even while
+    /// the rebuilt node has no value yet: there is an `OutputFile` at that path, and the
+    /// flapping pair of lines is what the diff exists to remove.
+    func test_aProductCollectedAndRebuiltInOneSettleDoesNotFlap() throws {
+        let published = try publishProduct("lib.a", contents: "archive")
+        engine.reportArtifactChanges()
+        captured = []
+
+        try engine.database.node.updatePendingDeletion(nodeID: try published.product.requireID(),
+                                                       pendingDeletion: true)
+        try engine.processPendingDeletions()
+        // Rebuilt, and not yet fed: exactly the window the flap lived in.
+        let (rebuilt, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/lib.a')")
             .findOrCreateMatchingNode()
         try Wire.connectWire(database: engine.database,
-                             fromNodeID: try otherSource.requireID(),
+                             fromNodeID: try published.source.requireID(),
                              fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try otherProduct.requireID(),
+                             toNodeID: try rebuilt.requireID(),
                              toSymbolID: OutputFile.inputPort.asSymbolID(),
                              name: "product".asSymbolID())
+        try published.source.writeToOutputPort(StaticFile.outputPort, value: .noValue(reason: .pending))
 
-        engine.reportArtifactChanges(underPathPrefix: "output:/src")
+        engine.reportArtifactChanges()
 
-        XCTAssertEqual(try onlyReport(), ArtifactChanges(appeared: ["output:/src/lib.a"]))
-        XCTAssertNotNil(try engine.database.artifactSnapshot.select(path: "output:/elsewhere/other"),
-                        "the artifact outside the prefix is still accounted for")
+        XCTAssertTrue(captured.isEmpty, "the product is being rebuilt, not gone, got \(captured)")
+        XCTAssertNotNil(try engine.database.artifactSnapshot.select(path: "output:/src/lib.a"))
     }
 }

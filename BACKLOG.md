@@ -218,9 +218,13 @@ One binary, three modes, sharing a wire protocol:
    for multiple users: that is the shared-build-server model the cache server superseded,
    and it is where the path authorisation and sync machinery came from. The artifact events
    CLIs subscribe to exist: the `artifacts` event carries one settle's diff — appeared,
-   changed, disappeared — against the `ArtifactSnapshot` table, and what a daemon serving
-   several worktrees adds to it is a subscription per path prefix, a retention window and a
-   full resync from that table for a client beyond it. What remains of B-30 is roles 1 and 2.
+   changed, disappeared — computed once per settle against the `ArtifactSnapshot` table,
+   over the whole graph. Narrowing it to one worktree is this role's work and belongs at
+   delivery, not in the engine: the engine's candidates are consumed as they are read, so a
+   second, narrower diff of the same settle would find nothing left. A subscription is
+   therefore a path prefix applied to the one diff, plus a retention window and a full
+   resync from the snapshot table for a client beyond it. What remains of B-30 is roles 1
+   and 2.
 
 ## Command line
 
@@ -301,7 +305,11 @@ declares it, so it reads as a node reaching out to write itself.
 *`OutputFile` — dissolved.* It read its own previous output port to decide whether to print
 a status change. Change-notification moved to the engine, which reports one settle's
 artifact diff against a snapshot table, and the self-read went with the printing. Nothing
-is left of this case.
+is left of this case. `ProjectBuilder` held the same shape one surface over — a `products`
+output port it wrote and read back, carrying the set of product paths between passes so it
+could print a line when one went away — and it went the same way, port and all: a durable
+table the engine compares at settle answers that question for the whole graph, where a
+builder could answer it only for one project and only while the process lived.
 
 *A correction to our own comment.* `Folder.pinnedOutputPort` is marked HACK for storing state
 in a "fake" output. That is too harsh. Putting the state in an output port is what keeps it

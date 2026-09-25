@@ -36,10 +36,11 @@ public enum Semel {
     /// pushed and removed, and a folder nobody has pushed into. Stored graphs hold those as
     /// errors carrying a word, so the rebuild restates the ports it preserves again.
     ///
-    /// 0.1.5: the graph's database holds an `ArtifactSnapshot` table — what the user was
-    /// last told about each product — beside the graph, so the settle diff and the state
-    /// it describes commit together (B-50). The table is derived state and starts empty,
-    /// which a database created before it does too: the first settle of the first launch
-    /// reconciles it against the graph.
-    public static let version = "0.1.5"
+    /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
+    /// a schema change usually stops the launch — but this one is derived state that
+    /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
+    /// gains it before the fingerprint is taken. The first settle of a launch reconciles
+    /// it against the graph, which is what a rebuild would have achieved at the price of
+    /// discarding every derived node. Nothing a stored graph holds means anything else.
+    public static let version = "0.1.4"
 }

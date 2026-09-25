@@ -334,9 +334,10 @@ public final class BuildEngine {
     /// artifacts).
     var touchedArtifacts: [String: ObjectID] = [:]
 
-    /// Artifacts whose node was collected since the last report. Captured as an event
-    /// because nothing survives to be compared.
-    var collectedArtifactPaths: Set<String> = []
+    /// Artifacts whose node the collector was about to delete since the last report, and
+    /// the node it was deleting. Captured as an event because nothing survives to be
+    /// compared; the id is what lets the report check that the delete actually happened.
+    var collectedArtifacts: [String: ObjectID] = [:]
 
     /// Whether the whole table has been reconciled against the graph since this engine
     /// was constructed. A restart loses the candidate sets, so the first report of a
@@ -351,9 +352,9 @@ public final class BuildEngine {
         artifactCandidateLock.withLock { touchedArtifacts[path] = nodeID }
     }
 
-    /// Records that an artifact's node was collected.
-    func noteArtifactCollected(path: String) {
-        artifactCandidateLock.withLock { _ = collectedArtifactPaths.insert(path) }
+    /// Records that the collector is deleting an artifact's node.
+    func noteArtifactCollected(path: String, nodeID: ObjectID) {
+        artifactCandidateLock.withLock { collectedArtifacts[path] = nodeID }
     }
 
     /// Finds every config file feeding a `ConfigFilter` and prints its unclaimed keys, but
@@ -896,8 +897,10 @@ extension BuildEngine {
                 // Where an artifact disappears. The one event-shaped case of the settle
                 // diff: once the node is gone there is no value left to compare against
                 // the hash the reader was told, so the collection itself is the record.
+                // Said before the delete, because after it there is no record to read the
+                // path from; the report checks that the node did go before it says so.
                 if nodeRecord.kind == OutputFile.kind, let path = nodeRecord.properties["path"] {
-                    noteArtifactCollected(path: path)
+                    noteArtifactCollected(path: path, nodeID: nodeID)
                 }
                 try node.delete()
                 deletedCount += 1

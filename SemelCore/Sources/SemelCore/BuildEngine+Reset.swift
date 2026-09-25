@@ -105,6 +105,16 @@ extension BuildEngine {
                     _ = try database.node.delete(nodeID: nodeID)
                 }
 
+                // Artifact snapshots are left alone too, and this is the one place that
+                // removes `OutputFile` nodes without the collector noticing. The rebuild
+                // republishes the same products from the same sources, so the rows still
+                // describe what the reader was told and they are told nothing — which is
+                // the truth. A product the rebuild does not recreate leaves a row behind
+                // saying it is there; the reconciliation at the next launch is what takes
+                // it away. Clearing the table here would be worse: the rebuild takes as
+                // many settles as it takes, and the first would report every product gone
+                // and the next report it back.
+                //
                 // Pending-deletion marks on preserved nodes are deliberately left alone.
                 // A mark means the user ran `rm` and the idle-time GC has not collected
                 // the node yet; clearing it here would silently undo the delete, and

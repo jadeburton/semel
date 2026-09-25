@@ -11,9 +11,6 @@ public struct ProjectBuilder: Node {
     static let projectFileInputPort   = "projectFile"
     static let productInputPort       = "input"
     static let statusOutputPort       = "status"
-    /// The set of product paths that currently exist, carried between passes so
-    /// ProductPresence can say what appeared or disappeared. See ProductPresence.
-    static let productsOutputPort     = "products"
     static let foldersInputPort       = "folders"
     static let graphImportsInputPort  = "graphImports"
     /// The formula text each `include <expr>` statement's node produces, keyed by the
@@ -45,7 +42,7 @@ public struct ProjectBuilder: Node {
             .dynamic(graphImportsInputPort),
             .dynamic(includesInputPort),
         ],
-        outputPorts: [statusOutputPort, productsOutputPort]
+        outputPorts: [statusOutputPort]
     )
 
     public var thisNode: NodeRecord
@@ -226,24 +223,13 @@ public struct ProjectBuilder: Node {
             includeSpecs[spec] = spec
         }
 
-        // Which products exist, and what that means happened. The decision lives in
-        // ProductPresence; all this does is hand it the previous set and the statuses
-        // arriving on the product port, and report what comes back.
-        let (productEvents, existingProducts) = ProductPresence.reconcile(
-            existingBefore: ProductPresence.decode(try thisNode.readFromOutputPort(Self.productsOutputPort)),
-            statuses: (input.inputValues[Self.productInputPort] ?? [:]))
-
-        for event in productEvents {
-            // Only deletions are printed. A creation is already announced by OutputFile's
-            // own status line, and saying it twice would be worse than not saying it.
-            if case .deleted(let path) = event {
-                BuildEngine.notice("\(path): Deleted")
-            }
-        }
-
+        // Nothing here says what happened to the products. Which of them exist, and how
+        // that differs from what the user was last told, is the engine's settle diff
+        // against the artifact snapshot table (B-50) — answered once per settle, over the
+        // whole graph, and durable across a restart, none of which a builder holding one
+        // project's statuses can do.
         return .init(
-            outputValues: [Self.statusOutputPort:   .value(try "OK".intern()),
-                           Self.productsOutputPort: .value(try ProductPresence.encode(existingProducts).intern())],
+            outputValues: [Self.statusOutputPort: .value(try "OK".intern())],
             inputWireSpecs: [
                 Self.productInputPort:         productSpecs,
                 Self.foldersInputPort:         folderSpecs,

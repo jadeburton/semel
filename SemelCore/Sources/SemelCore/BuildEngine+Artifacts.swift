@@ -14,10 +14,13 @@ extension BuildEngine {
 
     /// Hands one settle's artifact diff to whoever is reading, and records what it said.
     ///
-    /// `pathPrefix` decides what is *reported*, never what is recorded: a report narrowed
-    /// to one worktree must not leave the rest of the table describing a state nobody was
-    /// told about, or the next full report would announce changes that happened settles
-    /// ago. The empty prefix, which the settle passes, is every artifact.
+    /// The whole diff, once per settle, over every artifact in the graph. Narrowing it to
+    /// a subtree is a *delivery* decision and belongs to whoever is subscribed: the diff
+    /// is computed from candidates that are consumed as they are read, so a second,
+    /// narrower report of the same settle would find nothing left and every path outside
+    /// the first one's subtree would be swallowed. A daemon serving several worktrees
+    /// therefore filters this one diff per subscriber (B-30 role 3); the snapshot table
+    /// stays the record of what has been told, unfiltered, whoever is listening.
     ///
     /// A settle in which nothing moved says nothing, the way a settle that scheduled
     /// nothing prints no summary.
@@ -26,8 +29,8 @@ extension BuildEngine {
     /// settle rather than losing it. The table is written in the same transaction as the
     /// comparison, so a failed report has recorded nothing, and its candidates go back
     /// into the sets to be compared again.
-    func reportArtifactChanges(underPathPrefix pathPrefix: String = "") {
-        guard let changes = FatalErrors.attempt({ try recordArtifactChanges(underPathPrefix: pathPrefix) }),
+    func reportArtifactChanges() {
+        guard let changes = FatalErrors.attempt({ try recordArtifactChanges() }),
               !changes.isEmpty else {
             return
         }
@@ -37,9 +40,17 @@ extension BuildEngine {
     /// The diff, and the table updated to match it, in one transaction: a client told an
     /// artifact appeared must find the artifact, so what is said and the state that says
     /// it was said commit together.
-    private func recordArtifactChanges(underPathPrefix pathPrefix: String) throws -> ArtifactChanges {
+    private func recordArtifactChanges() throws -> ArtifactChanges {
         let (touched, collected) = takeArtifactCandidates()
         let firstReportOfThisLaunch = !artifactsHaveBeenReconciled
+
+        // Nothing was woken and nothing was collected, so there is nothing to compare —
+        // and the loop passes through idle on every signal that turns out to have no work
+        // behind it. Before the transaction, which would otherwise take the serialised
+        // writer queue once per pass to do nothing with it.
+        guard firstReportOfThisLaunch || !touched.isEmpty || !collected.isEmpty else {
+            return ArtifactChanges()
+        }
 
         do {
             let changes = try database.withTransaction {
@@ -49,7 +60,7 @@ extension BuildEngine {
             // After the commit: a reconciliation that did not finish has not happened, and
             // the launch still owes one.
             artifactsHaveBeenReconciled = true
-            return changes.sorted().underPathPrefix(pathPrefix)
+            return changes.sorted()
         } catch {
             returnArtifactCandidates(touched: touched, collected: collected)
             throw error
@@ -57,49 +68,57 @@ extension BuildEngine {
     }
 
     /// Empties both candidate sets and answers what was in them.
-    private func takeArtifactCandidates() -> (touched: [String: ObjectID], collected: Set<String>) {
+    private func takeArtifactCandidates() -> (touched: [String: ObjectID], collected: [String: ObjectID]) {
         artifactCandidateLock.withLock {
             defer {
                 touchedArtifacts = [:]
-                collectedArtifactPaths = []
+                collectedArtifacts = [:]
             }
-            return (touchedArtifacts, collectedArtifactPaths)
+            return (touchedArtifacts, collectedArtifacts)
         }
     }
 
     /// Puts candidates a failed report consumed back, without displacing anything the
     /// write path recorded while that report was running: a later entry for the same path
     /// names the node as it is.
-    private func returnArtifactCandidates(touched: [String: ObjectID], collected: Set<String>) {
+    private func returnArtifactCandidates(touched: [String: ObjectID], collected: [String: ObjectID]) {
         artifactCandidateLock.withLock {
             touchedArtifacts.merge(touched) { current, _ in current }
-            collectedArtifactPaths.formUnion(collected)
+            collectedArtifacts.merge(collected) { current, _ in current }
         }
     }
 
     /// The steady path: one lookup by primary key per artifact the write path woke.
     private func compareCandidates(touched: [String: ObjectID],
-                                   collected: Set<String>) throws -> ArtifactChanges {
+                                   collected: [String: ObjectID]) throws -> ArtifactChanges {
         var changes = ArtifactChanges()
 
-        // Paths a candidate node still publishes. A path that was collected and then
-        // rebuilt within one settle is here, and its collection is not news: what the
-        // reader has is an artifact, and the report says how it differs from the one they
-        // were told about.
-        var republished: Set<String> = []
+        // Paths a node still stands at. A path collected and rebuilt inside one settle is
+        // here, and its collection is not news: the reader has an artifact at that path,
+        // and what it is worth saying about it is how it differs from the one they were
+        // told about — including nothing at all, while the rebuilt node has no value yet.
+        var stillInTheGraph: Set<String> = []
 
         for (path, nodeID) in touched.sorted(by: { $0.key < $1.key }) {
             guard let nodeRecord = try database.node.find(nodeID: nodeID),
-                  nodeRecord.kind == OutputFile.kind,
-                  let hash = try publishedHash(ofArtifact: nodeRecord) else {
+                  nodeRecord.kind == OutputFile.kind else {
                 continue
             }
-            republished.insert(path)
+            stillInTheGraph.insert(path)
+
+            guard let hash = try publishedHash(ofArtifact: nodeRecord) else {
+                continue
+            }
             try note(path: path, publishing: hash, into: &changes)
         }
 
-        for path in collected.sorted() where !republished.contains(path) {
-            guard try database.artifactSnapshot.select(path: path) != nil else {
+        for (path, nodeID) in collected.sorted(by: { $0.key < $1.key })
+        where !stillInTheGraph.contains(path) {
+            // The collection is recorded before the delete, and a delete can fail: the row
+            // goes only once the node is really gone, or a live product would be announced
+            // as disappeared and nothing would ever correct it.
+            guard try database.node.find(nodeID: nodeID) == nil,
+                  try database.artifactSnapshot.select(path: path) != nil else {
                 continue
             }
             try database.artifactSnapshot.delete(path: path)
@@ -178,14 +197,5 @@ private extension ArtifactChanges {
     func sorted() -> ArtifactChanges {
         ArtifactChanges(appeared: appeared.sorted(), changed: changed.sorted(),
                         disappeared: disappeared.sorted())
-    }
-
-    func underPathPrefix(_ pathPrefix: String) -> ArtifactChanges {
-        guard !pathPrefix.isEmpty else {
-            return self
-        }
-        return ArtifactChanges(appeared:    appeared.filter    { $0.hasPrefix(pathPrefix) },
-                               changed:     changed.filter     { $0.hasPrefix(pathPrefix) },
-                               disappeared: disappeared.filter { $0.hasPrefix(pathPrefix) })
     }
 }
