@@ -194,6 +194,60 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertNil(port.dataObjectHash)
     }
 
+    // MARK: - The content-root port, added to `Folder` after graphs existed
+
+    /// A node is given one row per declared output port when it is created, so a preserved
+    /// folder holds exactly the ports of the release that made it. Without the rebuild
+    /// folding it, every stored folder is a node `GraphCheck` reports as damaged and a read
+    /// of the port throws on.
+    func test_aPreservedFolderIsGivenItsContentRootRowByTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        // A graph written before the port existed: the row is taken away to make one.
+        _ = try engine.database.outputPort.delete(nodeID: try folder.requireID(),
+                                                  nameSymbolID: Folder.contentRootOutputPort.asSymbolID())
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.4")
+
+        try engine.reconcileVersionMarkers()
+
+        let port = try XCTUnwrap(engine.database.outputPort.select(
+            nodeID: try folder.requireID(), nameSymbolID: Folder.contentRootOutputPort.asSymbolID()))
+        XCTAssertEqual(port.valueKind, .value, "the row carries the fold, not an empty state")
+        XCTAssertFalse(GraphCheck.run(database: engine.database)
+                        .findings.contains { $0.kind == .missingOutputPort },
+                       "and the graph reports no node missing a port row")
+    }
+
+    /// An empty row would not be the answer for a content root, which is derived from the
+    /// folder's children: a folder read as having produced nothing folds into its parent as
+    /// an empty subtree. So the rebuild marks every preserved folder and drains the marks
+    /// before it returns — a graph from before the port comes up with its tree already
+    /// folded, without waiting for a push.
+    func test_aGraphFromBeforeTheContentRootPortComesUpWithItsTreeFolded() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        let fullPath = Path(Folder.inputFileSystemName) / Path("src/a.c")
+        let (fileNode, _) = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')").findOrCreateMatchingNode()
+        _ = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile).replaceContent(try "int a;".intern())
+        // Settled first, so nothing is left marked: the graph this stands in for was written
+        // by a release that had no such port and so had nothing to mark.
+        try Folder.flushDirtyManifests()
+        for node in [try engine.inputFileSystem, folder] {
+            _ = try engine.database.outputPort.delete(nodeID: try node.requireID(),
+                                                      nameSymbolID: Folder.contentRootOutputPort.asSymbolID())
+        }
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.4")
+
+        try engine.reconcileVersionMarkers()
+
+        let folded = try folder.readFromOutputPort(Folder.contentRootOutputPort).expectValue().resolveAsString()
+        XCTAssertTrue(folded.contains("file\thash \(try "int a;".intern())\t3\ta.c\n"), folded)
+        // The folder above it carries the folder's own root, not an empty subtree.
+        let above = try engine.inputFileSystem.readFromOutputPort(Folder.contentRootOutputPort)
+            .expectValue().resolveAsString()
+        XCTAssertTrue(above.contains("folder\thash \(try folded.intern())\t3\tsrc\n"), above)
+    }
+
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
     /// the restating above cannot cost a cache hit or a re-push.
     func test_aPushedFilesContentSurvivesTheRebuild() throws {

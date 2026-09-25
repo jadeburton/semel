@@ -193,7 +193,9 @@ at its default, as though the Semel that wrote the entry had meant that value.
 Not a bump: anything the node's output does not show — a refactor, or a faster route to the
 same bytes. A new input property or input port needs none either, because both are in the
 key and move it on their own. A new or renamed *output* port does need one: an entry
-written before it holds nothing for that port. When in doubt, bump — a needless bump costs
+written before it holds nothing for that port — except on a type that never processes, and
+so has no entries for the rule to protect (`Folder` gaining `contentRoot`, B-26). When in
+doubt, bump — a needless bump costs
 one rebuild of one node type, and a missed one publishes what the older code computed.
 
 ## Glossary
@@ -211,6 +213,8 @@ the nearest standard equivalent and how Semel's differs.
 | graphSpec (column) | — | The node's rendered `GraphSpec`, stored for matching; the same string a spec on an input port demands. Type names are embedded in it, so renaming a node type invalidates every stored one (bump `Semel.version`, B-29). |
 | formula (`.fmla`) | BUILD file, Makefile | Declares products as expressions of nodes, functionally — no ordering, no commands. Also what a `Package.swift` is converted into. |
 | product | Bazel target output | A published artifact: a formula product becomes an `OutputFile` in `output:`. Intermediates are not products (B-10). A product named with a trailing `/` is a *tree product*: every entry of the tree on its expression's port becomes an `OutputFile` under that folder (B-63). |
+| folder manifest (`FolderManifest`) | a directory listing | What a `Folder` publishes on its `manifest` port: its immediate children only, with each child's name, whether it is a folder and whether it is pinned. Names and states, never content — nearly everything downstream of a folder is wired to this to learn its file set, and a manifest that moved when a file was edited would re-run all of them. Carries `baseFolderPath`, so it is qualified by where the folder is. |
+| content root (`FolderContentRoot`) | Git tree object, a Merkle root | What a `Folder` publishes on its `contentRoot` port: the hash of a stated text document with one line per child — its kind (`file`/`folder`/`other`), what it holds, and its name. A file's line carries its content hash and a subfolder's carries that subfolder's own root, so one hash identifies a whole subtree and a change anywhere below moves every root above it (B-26). The kind is on the line because one content-addressed store names both, so without it a file whose bytes are an empty folder's document would fold as that folder. Lines are ordered by name as UTF-8 bytes and then by kind, a total order, and the name is length-framed, so the hash follows the folder's contents and nothing else — including *not* the folder's path, so the same tree at two paths has one root. A child with no content carries its state by case; a product carries `notFolded`, because nothing invalidates a folder when a product below it changes and a folded product hash would go stale unseen. |
 | tree (`TreeManifest`) | Bazel TreeArtifact, a directory output | N files on one port: a manifest of relative paths with content hashes and modes, interned like any value. A tool that decides its own file set (`actool`) fills one through `expectedOutputFolders`; `TreeFile(name:, tree:)` puts one entry back on a port of its own; `TreeMerger` makes several trees one, a collision being an error. |
 | pinned | GC root | "Held alive by user intent rather than by references": a pushed file or folder. Unpinned nodes exist only while something depends on them. Not memory pinning. |
 | `Folder`, `StaticFile`, `OutputFile`, `Configuration` | source file, output file | Nodes that *are* rather than convert (the "-er" exception). `StaticFile` and `Folder` are filled by the push path, not by wires (B-43). |
