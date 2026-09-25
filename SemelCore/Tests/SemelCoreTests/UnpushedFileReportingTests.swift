@@ -102,7 +102,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
-        XCTAssertEqual(captured[0].map(\.label), ["StaticFile  'input:/clang.cfg'"])
+        XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
         XCTAssertEqual(captured[0][0].items,
                        [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 2,
@@ -120,7 +120,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile  'input:/main.c'",
+                       ["❌ StaticFile #\(file) 'input:/main.c'",
                         "   · main.c has not been pushed",
                         "   · and 1 node downstream carries it",
                         ""])
@@ -160,7 +160,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
                                           database: database,
                                           select: { _, messages in messages })
 
-        XCTAssertEqual(entries.map(\.entry.label), ["StaticFile  'input:/clang.cfg'"])
+        XCTAssertEqual(entries.map(\.entry.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
         XCTAssertEqual(entries[0].entry.items,
                        [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
         XCTAssertEqual(entries[0].entry.downstreamCarrierCount, 1)
@@ -231,7 +231,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/base.cfg'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(base) 'input:/base.cfg'"]])
     }
 
     /// With the base pushed, the override alone leaves nothing to say.
@@ -270,7 +270,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/clang.cfg'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(file) 'input:/clang.cfg'"]])
         XCTAssertEqual(captured[0][0].items,
                        [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 0,
@@ -295,7 +295,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile  'input:/override.cfg'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(file) 'input:/override.cfg'"]])
     }
 
     // MARK: - A file that was pushed and then removed
@@ -317,9 +317,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
-        XCTAssertEqual(captured[0].map(\.label), ["StaticFile  'input:/gone.c'"])
+        XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/gone.c'"])
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ StaticFile  'input:/gone.c'",
+                       ["❌ StaticFile #\(file) 'input:/gone.c'",
                         "   · gone.c was deleted",
                         "   · and 1 node downstream carries it",
                         ""])
@@ -344,9 +344,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder  'input:/src'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder #\(folder) 'input:/src'"]])
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ Folder  'input:/src'",
+                       ["❌ Folder #\(folder) 'input:/src'",
                         "   · src/ has not been pushed",
                         ""])
     }
@@ -373,9 +373,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder  'input:/src'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder #\(try folderRecord.requireID()) 'input:/src'"]])
         XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
-                       ["❌ Folder  'input:/src'",
+                       ["❌ Folder #\(try folderRecord.requireID()) 'input:/src'",
                         "   · src/ was deleted",
                         ""])
     }

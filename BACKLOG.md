@@ -16,20 +16,6 @@ the toolchain, SDK and system libraries, reset between builds. The container dig
 input?" stops being a question only an audit can answer. Also the natural home for the
 Remote Runner role (B-30).
 
-**B-05** `open` — **Environment-perturbation fuzzing for cache keys.**
-Run a node twice varying something deliberately *not* in the key — `TMPDIR`, cwd, locale,
-hostname, wall-clock. Any output difference means the key is under-specified. The systematic
-version of how the SDK bug was found; belongs in the test suite, run once per node type.
-Its home is `EndToEndRun`: an extra cold build with a perturbed environment, and the same
-`TreeDiff` against the first.
-
-**B-17** `open` — **`ToolDescriptor.recursiveHash` is designed but never populated.**
-The slot exists on every tool descriptor and is read from
-`properties["toolDescriptor.recursiveHash"]`, but nothing ever sets it, so it is always nil.
-It is the intended place for a hash of the tool binary itself, which would close the last
-gap in the cache-key audit: two different binaries reporting the same version string
-currently share a cache key. Narrow, and B-03 subsumes it.
-
 **B-49** `open` — **Tool outputs must not depend on where the inputs are mounted — residuals.**
 Done 2026-09-20: parts 1 and 2 — the sandbox contract is `ToolSandbox` (inputs at their
 wire keys below a fresh root that is the working directory; every argument relative to it;
@@ -220,19 +206,6 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
-## Performance
-
-**B-106** `open` — **`connectWire` scans every wire at the target once per connection.**
-`WireManagement.connectWire` guards a new wire twice: the exact-duplicate check is an indexed
-lookup, but `wireExistsWithSameName` selects every wire already going to the target port and
-scans the result, so wiring an N-wide fan into one port costs O(N²) row reads. Found while
-building `CascadeReportScaleTests`: a 400-wide fan through `connectWire` cost about five
-times the rest of the test, so that fixture inserts its rows directly. A node with many
-consumers of one port pays this during graph construction on every conversion. Fix: an
-indexed lookup by `(toNodeID, toSymbolID, name)`, which the wire key (B-23's primary key)
-already supports, and a scale test that counts wire reads per connection the way
-`CascadeReportScaleTests` counts them per walk.
-
 ## Server
 
 **B-30** `open` — **`semelserv` with three roles.**
@@ -295,18 +268,6 @@ of ten nodes ran; only the record says which four. See FUTURE.md, "What the tuto
 taught us".
 
 ## Design, correctness and code quality
-
-**B-105** `open` — **A node is named two ways in one product.**
-A `check` finding names a node `Type #id 'path'`; `ErrorReport.label` names it `Type  'path'`
-(two spaces, the id only as a last resort). The finding's form is the one to keep — a
-finding is filed as a bug and the row is what the next person opens — so `ErrorReport.label`
-should converge on it. Its output is pinned by tests on both sides of the wire, so the
-change carries those test updates with it.
-
-One surface over, the same word-for-several-states problem B-74 settled for the listing
-does not arise for artifacts: an artifact's states reach the user through the settle diff,
-which says appeared, changed or disappeared, and through the error report, which says the
-rest. What a product that is not there reads as is the `ls` and `errors` vocabulary alone.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**

@@ -30,22 +30,24 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         super.tearDown()
     }
 
-    private func makeFailingFile(path: String, message: String) throws {
+    @discardableResult
+    private func makeFailingFile(path: String, message: String) throws -> ObjectID {
         let nodeRecord = try NodeRecord.createNode(database: engine.database,
                                                    kind: StaticFile.kind,
                                                    properties: ["path": path],
                                                    graphSpec: nil)
         try nodeRecord.writeToOutputPort("output",
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+        return try nodeRecord.requireID()
     }
 
     func test_aNewErrorReachesTheReporterAsAnEntry() throws {
-        try makeFailingFile(path: "input:/a.c", message: "boom")
+        let file = try makeFailingFile(path: "input:/a.c", message: "boom")
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(captured.count, 1)
-        XCTAssertEqual(captured[0].map(\.label), ["StaticFile  'input:/a.c'"])
+        XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/a.c'"])
         XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["output"], message: "boom")])
     }
 
@@ -94,11 +96,11 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
     /// The lines the default reporter prints are the same lines `ErrorReport` has always
     /// produced, so an engine run without a server reads as before.
     func test_renderingAnEntryMatchesTheReportFormat() throws {
-        let entry = ErrorReport.Entry(label: "StaticFile  'input:/a.c'",
+        let entry = ErrorReport.Entry(label: "StaticFile #7 'input:/a.c'",
                                       items: [ErrorReport.Item(ports: ["errorLog", "output"], message: "boom")])
 
         XCTAssertEqual(ErrorReport.lines(for: entry),
-                       ["❌ StaticFile  'input:/a.c'", "   · errorLog, output: boom", ""])
+                       ["❌ StaticFile #7 'input:/a.c'", "   · errorLog, output: boom", ""])
     }
 
     func test_aNoticeReachesTheNoticeReporter() {

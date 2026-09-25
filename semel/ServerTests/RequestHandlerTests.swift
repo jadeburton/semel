@@ -198,23 +198,27 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(namespaces.allSatisfy { $0.descriptors.isEmpty })
     }
 
+    /// By path, not by id: `b.c`'s node is made first and so has the lower id.
     func test_errorsReturnsOneRecordPerFailingNodeSortedByLabel() throws {
-        try makeFailingFile(path: "input:/b.c", message: "second")
-        try makeFailingFile(path: "input:/a.c", message: "first")
+        let second = try makeFailingFile(path: "input:/b.c", message: "second")
+        let first  = try makeFailingFile(path: "input:/a.c", message: "first")
 
         let (response, _) = try daemon(.errors)
 
         XCTAssertEqual(response, .errors(records: [
-            ErrorRecord(label: "StaticFile  'input:/a.c'", entries: [ErrorEntry(ports: ["output"], message: "first")]),
-            ErrorRecord(label: "StaticFile  'input:/b.c'", entries: [ErrorEntry(ports: ["output"], message: "second")]),
+            ErrorRecord(label: "StaticFile #\(first) 'input:/a.c'",
+                        entries: [ErrorEntry(ports: ["output"], message: "first")]),
+            ErrorRecord(label: "StaticFile #\(second) 'input:/b.c'",
+                        entries: [ErrorEntry(ports: ["output"], message: "second")]),
         ]))
     }
 
-    /// Six nodes of one type, so every label ties: the reply orders them by node, and the
-    /// idle-time event lists them identically, which is what the two orderings promise
-    /// each other.
+    /// Twelve nodes of one type, whose labels differ only by id: the reply orders them by
+    /// node, and the idle-time event lists them identically, which is what the two orderings
+    /// promise each other. Twelve rather than a handful so that ids compared as text — `#10`
+    /// before `#2` — would show.
     func test_errorsWithTiedLabelsAreOrderedByNodeInBothTheReplyAndTheEvent() throws {
-        let messages = (1...6).map { "boom \($0)" }
+        let messages = (1...12).map { "boom \($0)" }
         for message in messages {
             try makeFailingMerger(message: message)
         }
@@ -261,7 +265,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(response, .errors(records: [
-            ErrorRecord(label: "StaticFile  'input:/shared.h'",
+            ErrorRecord(label: "StaticFile #\(try source.requireID()) 'input:/shared.h'",
                         entries: [ErrorEntry(ports: ["output"], message: "the file is gone")],
                         downstreamCarrierCount: 20),
         ]))
@@ -278,12 +282,12 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     // MARK: - Events
 
     func test_engineErrorReportsReachTheSinkAsRecords() throws {
-        try makeFailingFile(path: "input:/a.c", message: "boom")
+        let file = try makeFailingFile(path: "input:/a.c", message: "boom")
 
         engine.reportIdleTimeErrors()
 
         XCTAssertEqual(sink.events, [
-            .daemon(.errors(records: [ErrorRecord(label: "StaticFile  'input:/a.c'",
+            .daemon(.errors(records: [ErrorRecord(label: "StaticFile #\(file) 'input:/a.c'",
                                                   entries: [ErrorEntry(ports: ["output"], message: "boom")])])),
         ])
     }
@@ -318,15 +322,17 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
     // MARK: - Helpers
 
-    private func makeFailingFile(path: String, message: String) throws {
+    @discardableResult
+    private func makeFailingFile(path: String, message: String) throws -> ObjectID {
         let nodeRecord = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
                                                    properties: ["path": path], graphSpec: nil)
         try nodeRecord.writeToOutputPort("output",
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+        return try nodeRecord.requireID()
     }
 
-    /// A node with no path is labelled by its type alone, so several of one type share a
-    /// label. Ordering them by label alone leaves them in the order the error map was
+    /// A node with no path is labelled by its type and id, so several of one type share a
+    /// label apart from the id, which the sort leaves out. Ordering them by that alone leaves them in the order the error map was
     /// walked in, and that order is seeded per process — the reply would list them one way
     /// on Monday and another on Tuesday, and the event could disagree with the reply in
     /// the same run. The node breaks the tie, in both places.
