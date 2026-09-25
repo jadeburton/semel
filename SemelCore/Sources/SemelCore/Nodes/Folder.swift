@@ -46,8 +46,13 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// nobody pushed into is — the same state a file nobody pushed holds, so a report
     /// names the two alike. A folder outside the input file system cannot be pinned at all
     /// and holds a value instead, so it is never mistaken for one waiting to be pushed.
+    ///
+    /// `contentRoot` carries the fold over a folder with nothing in it, which is a value
+    /// like any other: an empty tree has a content hash, and it is the same hash wherever
+    /// an empty tree stands.
     public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
+                             Self.contentRootOutputPort: .value(try buildContentRootDocument().intern()),
                              Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .initializing) : .value("")], // HACK
               inputWireSpecs: [:])
     }
@@ -130,12 +135,27 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     // The manifest is a non-recursive list of immediate children
     static let folderManifestOutputPort = "manifest"
 
+    /// The Merkle root of everything under this folder (B-26): the hash of the document
+    /// `FolderContentRoot` folds from each child's own content, a subfolder's line carrying
+    /// that subfolder's root.
+    ///
+    /// A port of its own rather than a field of the manifest. The manifest is what a folder's
+    /// children are called, and nearly everything downstream of a folder — `ProjectFinder`
+    /// on `input:`, a converter on a target folder — is wired to it to learn the file set.
+    /// Folding content into that value would move it on every edit to every file below, and
+    /// re-run all of them for a question whose answer did not change. A consumer that wants
+    /// the content asks for the content.
+    static let contentRootOutputPort = "contentRoot"
+
     // Nodes are not normally allowed to store state. A Folder in the input file system, however, needs to know if the user deleted it
     // (or never pushed it) but it has references from the graph -- called a ghost or "not pinned". StaticFiles represent this ghost
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
     static let pinnedOutputPort = "pinned"
 
-    public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [folderManifestOutputPort, pinnedOutputPort])
+    public static let descriptor = NodeDescriptor(inputPorts: [],
+                                                  outputPorts: [folderManifestOutputPort,
+                                                                contentRootOutputPort,
+                                                                pinnedOutputPort])
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled,
     /// so nothing asks it to process. An ordinary error rather than a trap — a node is not
@@ -161,57 +181,112 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     // for correctness under a concurrent push: every mutation marks *after* it has
     // mutated, and the flush clears the mark *before* it rebuilds, so a mark the flush
     // removes always belongs to a change the rebuild can see.
+    //
+    // A folder carries two marks, because it publishes two values a child change can move
+    // and they travel different distances (B-26).
+    //
+    // The manifest is names and pinned state, so only this folder's own children can move
+    // it; a mark for it goes no further than the folder whose child changed, exactly as it
+    // did before. The content root folds in each child's content, so a change anywhere
+    // below moves every root above it: a recompute that moves the root marks the folder
+    // above, and the flush's rounds walk the change to the top. That is why the two are on
+    // separate ports — a consumer wired to a manifest is asking what a folder holds, and is
+    // not woken by an edit to what is in it.
+    //
+    // What a direct read of one port guarantees is therefore that folder's own children.
+    // The asymmetry is in where the rebuild happens: a read flushes *this* folder
+    // (`flushManifestIfDirty` / `flushContentRootIfDirty`), while the mark an ancestor
+    // needs is only written once this folder has been recomputed. An ancestor is current
+    // once the flush has drained, which every processing pass does before it selects
+    // anything, so no consumer is ever handed a root the change had not reached.
 
-    static let manifestDirtyKeyPrefix = "manifestDirty/"
+    static let manifestDirtyKeyPrefix    = "manifestDirty/"
+    static let contentRootDirtyKeyPrefix = "contentRootDirty/"
 
     private static func manifestDirtyKey(_ nodeID: ObjectID) -> String {
         "\(manifestDirtyKeyPrefix)\(nodeID)"
     }
 
+    private static func contentRootDirtyKey(_ nodeID: ObjectID) -> String {
+        "\(contentRootDirtyKeyPrefix)\(nodeID)"
+    }
+
+    /// Both marks: a change to one of this folder's children can move either value.
     private func markManifestDirty() throws {
-        try database.metadata.upsert(key: Self.manifestDirtyKey(try thisNode.requireID()), value: "1")
-        // The rebuild that used to happen here wrote the manifest port, which scheduled
+        let nodeID = try thisNode.requireID()
+        try database.metadata.upsert(key: Self.manifestDirtyKey(nodeID), value: "1")
+        try database.metadata.upsert(key: Self.contentRootDirtyKey(nodeID), value: "1")
+        // The rebuild a child change once did here wrote the manifest port, which scheduled
         // the folder's consumers and so woke the processing loop. The mark defers the
         // rebuild to the loop's next pass — which therefore has to be asked for, or a push
         // into a sleeping engine leaves every manifest dirty and nothing ever scheduled.
         BuildEngine.shared?.signalWorkAvailable()
     }
 
-    /// Rebuilds the manifest of every folder marked dirty, and collects the folders that
-    /// their last child took with it. Returns how many manifests it rebuilt, so a caller
-    /// can tell whether anything downstream may now be scheduled.
+    /// The root alone, for a folder whose *descendant* moved. Taken by node id rather than
+    /// by node, because the caller is a folder recomputing its own root and has its
+    /// parent's id in hand: building the parent to mark it would read a row and construct a
+    /// node per level of every walk up the tree.
+    static func markContentRootDirty(nodeID: ObjectID) throws {
+        try DatabaseLayer.shared!.metadata.upsert(key: contentRootDirtyKey(nodeID), value: "1")
+        BuildEngine.shared?.signalWorkAvailable()
+    }
+
+    /// Rebuilds the manifest of every folder marked dirty, recomputes the content root of
+    /// every folder marked for that, and collects the folders that their last child took
+    /// with it. Returns how many *manifests* it rebuilt, so a caller can tell whether
+    /// anything wired to one may now be scheduled.
     ///
-    /// A collected folder marks *its* parent dirty, so the marks are drained in rounds
-    /// until none is left; the rounds walk up the tree and there are at most as many as it
-    /// is deep.
+    /// A collected folder marks its parent, and a root that moved marks the folder above,
+    /// so the marks are drained in rounds until none is left; the rounds walk up the tree
+    /// and there are at most as many as it is deep.
     @discardableResult
     static func flushDirtyManifests() throws -> Int {
         let database = DatabaseLayer.shared!
         var flushed = 0
         while true {
-            let keys = try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix)
-            guard !keys.isEmpty else {
+            let manifestKeys    = try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix)
+            let contentRootKeys = try database.metadata.selectKeys(withPrefix: contentRootDirtyKeyPrefix)
+            guard !manifestKeys.isEmpty || !contentRootKeys.isEmpty else {
                 return flushed
             }
-            for key in keys {
-                guard let nodeID = ObjectID(key.dropFirst(manifestDirtyKeyPrefix.count)) else {
-                    continue
-                }
-                try database.metadata.delete(key: key)
-                // The folder may have been collected since it was marked; then there is
-                // nothing to rebuild and the row was all that was left of it.
-                guard let nodeRecord = try? database.node.select(nodeID: nodeID),
-                      let folder = try nodeRecord.makeNode() as? Folder else {
+
+            for key in manifestKeys {
+                guard let nodeID = ObjectID(key.dropFirst(manifestDirtyKeyPrefix.count)),
+                      let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
                     continue
                 }
                 guard try !folder.isAbandoned() else {
                     try folder.delete()
                     continue
                 }
-                try folder.refreshOutputs()
+                try folder.refreshManifest()
                 flushed += 1
             }
+
+            // After the manifests, so that a folder its last child took with it is gone by
+            // the time its root would have been recomputed.
+            for key in contentRootKeys {
+                guard let nodeID = ObjectID(key.dropFirst(contentRootDirtyKeyPrefix.count)),
+                      let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
+                    continue
+                }
+                try folder.refreshContentRoot()
+            }
         }
+    }
+
+    /// The folder a mark names, with the mark cleared first — before the rebuild, so that a
+    /// mark the flush removes always belongs to a change the rebuild can see. Nil where the
+    /// folder has been collected since it was marked: then there is nothing to rebuild and
+    /// the row was all that was left of it.
+    private static func markedFolder(nodeID: ObjectID, clearing key: String) throws -> Folder? {
+        let database = DatabaseLayer.shared!
+        try database.metadata.delete(key: key)
+        guard let nodeRecord = try database.node.find(nodeID: nodeID) else {
+            return nil
+        }
+        return try nodeRecord.makeNode() as? Folder
     }
 
     /// Rebuilds one folder's manifest if it is marked dirty. Called on the way into a
@@ -230,10 +305,26 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
             return
         }
-        try folder.refreshOutputs()
+        try folder.refreshManifest()
         if try folder.isAbandoned() {
             try folder.markManifestDirty()
         }
+    }
+
+    /// Recomputes one folder's content root if it is marked, on the way into a direct read
+    /// of that port. The folder's own children, not the tree below it: a read that walked
+    /// down would be O(tree), which is the cost the marks exist to avoid.
+    static func flushContentRootIfDirty(nodeID: ObjectID) throws {
+        let database = DatabaseLayer.shared!
+        let key = contentRootDirtyKey(nodeID)
+        guard try database.metadata.select(key: key) != nil else {
+            return
+        }
+        try database.metadata.delete(key: key)
+        guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
+            return
+        }
+        try folder.refreshContentRoot()
     }
 
     public func onChildAdded(nodeID: ObjectID) throws {
@@ -299,6 +390,12 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// reliably.
     static var manifestRebuildCount = 0
 
+    /// How many content roots have been folded in this process, the same measurement for
+    /// the other value a folder publishes. Separate, because the two are rebuilt for
+    /// different reasons and a test pins each against what moves it: a manifest against
+    /// this folder's children, a root against the depth of the tree below the change.
+    static var contentRootRebuildCount = 0
+
     private func buildManifest() throws -> FolderManifest {
         Self.manifestRebuildCount += 1
         // Summaries rather than whole nodes: a manifest entry is a name and two flags, and
@@ -316,6 +413,60 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         return .init(baseFolderPath: path.string, entries: folderManifestEntries)
     }
 
+    /// The document this folder's content root is the hash of: one line per child, carrying
+    /// what that child's content is. A subfolder contributes its own root, which is how one
+    /// hash comes to stand for a whole tree. `FolderContentRoot` states the format and the
+    /// order; this supplies the lines.
+    private func buildContentRootDocument() throws -> String {
+        Self.contentRootRebuildCount += 1
+        let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
+        let content  = try contentStates(of: children)
+
+        var lines = [(name: String, kind: FolderChildKind, content: FolderChildContent)]()
+        for child in children {
+            switch child.kind {
+            // A child of a kind the fold reads, with no row for the port its content is on,
+            // has had nothing produced on it — the same reading `asNodeValue` gives.
+            case StaticFile.kind:
+                lines.append((child.name!, .file, content[child.id] ?? .notProduced))
+
+            case Folder.kind:
+                lines.append((child.name!, .folder, content[child.id] ?? .notProduced))
+
+            default:
+                // Every other kind under a folder is a product, whose content the fold does
+                // not reach. `FolderChildContent.notFolded` says why, and saying it here by
+                // `kind` rather than by absence from a dictionary means a node kind that
+                // becomes a folder's child cannot acquire the answer by accident.
+                lines.append((child.name!, .other, .notFolded))
+            }
+        }
+
+        return FolderContentRoot.document(of: lines)
+    }
+
+    /// The content of every child that carries it on a port of its own, in one query per
+    /// kind — the shape `pinnedStates` uses and for the same reason.
+    ///
+    /// A file's bytes are on its output port, and a folder's content root is on its. The
+    /// subfolder's root was folded the same way, so putting it in a line is what makes this
+    /// folder's root identify its whole subtree rather than only what is directly in it.
+    private func contentStates(of children: [NodeChildSummary]) throws -> [ObjectID: FolderChildContent] {
+        var result: [ObjectID: FolderChildContent] = [:]
+        let parentNodeID = try thisNode.requireID()
+
+        for (kind, portName) in [(Folder.kind,     Folder.contentRootOutputPort),
+                                 (StaticFile.kind, StaticFile.outputPort)] {
+            let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID,
+                                                           nameSymbolID: portName.asSymbolID())
+            for child in children where child.kind == kind {
+                result[child.id] = try ports[child.id].map { .init(try $0.asNodeValue()) } ?? .notProduced
+            }
+        }
+
+        return result
+    }
+
     /// Pinned state for every child, in one query per kind that has one.
     ///
     /// This used to ask each child individually, through its `Pinnable` conformance. Since
@@ -330,12 +481,12 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
         for (kind, portName) in [(Folder.kind,     Folder.pinnedOutputPort),
                                  (StaticFile.kind, StaticFile.outputPort)] {
-            let kinds = try database.node.selectChildPortKinds(parentNodeID: parentNodeID,
-                                                               nameSymbolID: portName.asSymbolID())
+            let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID,
+                                                           nameSymbolID: portName.asSymbolID())
             for child in children where child.kind == kind {
                 // Absent or non-value both mean not pinned — the same reading `isPinned`
                 // gives, where a missing port becomes a noValue.
-                result[child.id] = kinds[child.id] == .value
+                result[child.id] = ports[child.id]?.valueKind == .value
             }
         }
 
@@ -344,8 +495,33 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
     // Folder works outside the cache system and therefore cannot use "process". It is a node with outputs, however.
     func refreshOutputs() throws {
+        try refreshManifest()
+        try refreshContentRoot()
+    }
+
+    /// The names and pinned state of this folder's children. Nothing is marked above:
+    /// what a folder is called and what it holds are this folder's own business, and a
+    /// change to them reaches its parent as an ordinary child change if it reaches it at
+    /// all.
+    func refreshManifest() throws {
         try thisNode.writeToOutputPort(Self.folderManifestOutputPort,
                                        value: .value(try buildManifest().toJSON().intern()))
+    }
+
+    /// The fold over this folder's children, published as a hash.
+    ///
+    /// A root that moved is a change to this folder's content as the folder above it sees
+    /// it, so it marks that one. Marking rather than recomputing keeps the walk to one
+    /// level per round of the flush, and the rounds are bounded by the depth of the tree:
+    /// an edit costs one fold per ancestor, never one per folder.
+    func refreshContentRoot() throws {
+        let changed = try thisNode.writeToOutputPort(
+            Self.contentRootOutputPort,
+            value: .value(try buildContentRootDocument().intern()))
+
+        if changed, let parentNodeID = thisNode.parentNodeID {
+            try Folder.markContentRootDirty(nodeID: parentNodeID)
+        }
     }
 
     public func deleteInInputFileSystem() throws {

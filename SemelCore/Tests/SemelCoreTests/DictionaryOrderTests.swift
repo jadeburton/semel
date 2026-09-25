@@ -108,6 +108,8 @@ final class DictionaryOrderTests: XCTestCase {
             "a literal array of the two files to write",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.pinnedOutputPort),":
             "a literal array of the two kinds a child can be",
+        "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.contentRootOutputPort),":
+            "a literal array of the two kinds a child can be, each with the port its content is on",
 
         // ── accumulated into a dictionary or a set: the result is order-free ─────
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: headerInputFiles":

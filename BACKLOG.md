@@ -117,7 +117,14 @@ whether this is the library that was meant in the first place — a lock preserv
 first-time mistake forever — and whether a published advisory applies. Degrades gracefully:
 absent → warn once, present and mismatched → fail.
 
-Depends on B-26.
+The recursive content hash is there (B-26): a folder's `contentRoot` port carries a Merkle
+root over everything under it, so `input:/repo/GRDB.swift`'s root is one port read — and it
+is not qualified by the folder's path, so a lock survives the dependency being moved. What
+remains for B-06 is recording that hash in a lock file and comparing it. Two notes for
+whoever does: the fold is a stated text format with a version tag on its first line
+(`FolderContentRoot`), so a recorded root that stops matching can be told from one the
+format moved under; and a `contentRoot` wire is a real dependency, so the node that checks
+the lock re-runs whenever anything under the vendored folder changes, which is the point.
 
 **B-10** `open` — **Packages are named by a formula, not discovered — two residuals.**
 Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says
@@ -153,11 +160,37 @@ nested folders are not compiled (the glob is one level); a `publicHeadersPath` o
 need a `clang.linker` block, which the archive case never reads.
 
 **B-26** `open` — **Recursive content hash for a folder tree.**
-`FolderManifestEntry` is `name`/`isFolder`/`isPinned` with no content hash, so a folder
-manifest changes when names change but not when contents do. A Merkle root needs a derived
-hash over the sorted `(name, contentHash)` pairs, folded up the tree. Wanted by B-06 for
-locking a vendored dependency, and by the client/server design for making reconciliation
-O(changed) rather than O(tree) — the same piece of work, worth building once.
+Done 2026-09-25: a `Folder` publishes a Merkle root on a `contentRoot` port of its own —
+the hash of a document with one line per child carrying its kind, what it holds and its name:
+a file's line carries its content hash and a subfolder's carries that subfolder's root,
+ordered by name as UTF-8 bytes then by kind, and framed by each name's length. A change anywhere below moves every root above it, carried by the B-25
+dirty mark, so an edit costs one fold per ancestor and not one per folder. Not on the
+manifest, and this is the load-bearing part: the manifest is what a folder's children are
+called, `ProjectFinder` and the converters are wired to it, and folding content in would
+re-run all of them on every keystroke. The root is path-independent where the manifest is
+not, so two copies of one tree are comparable wherever they stand. What remains:
+
+1. **`output:` is opaque to the fold.** Every product's line says `notFolded`, so an
+   `output:` folder's root identifies its names and not its content. The blocker is not the
+   extra query — a product's bytes are one more join away, on its input wire — but
+   invalidation: nothing notifies a folder when a product below it changes, so a folded
+   product hash would go stale without the folder ever being rebuilt. Fixing it means giving
+   `OutputFile` the notification `StaticFile` has. Wanted the day anyone syncs *products* to
+   a peer, or checks an `output:` tree for consistency (B-63); neither B-06 nor the
+   client/server reconciliation, both of which read `input:`, needs it.
+2. **`notFolded` for a kind that is not a product.** The fold reads `Folder` and
+   `StaticFile` and answers `notFolded` for every other kind under a folder. Today that is
+   only `OutputFile`; a new kind of child would want its own answer rather than this one.
+3. **The fold makes the object store grow on the per-edit path.** Each fold interns its
+   document, so one edit writes a fresh document per ancestor — and for a folder of 3,000
+   children that document is a couple of hundred kilobytes. The object store is
+   append-only: nothing prunes, so a day of editing leaves a few thousand documents nobody
+   will read again. A manifest is interned too, but a manifest moves only when a name does.
+   Wanted alongside whatever collects the store; until then the growth is proportional to
+   edits × depth rather than to the tree. Related: during a flush a folder can publish an
+   intermediate root and then the settled one, so once B-06 wires a `contentRoot` consumer
+   that consumer is woken twice for one edit — correct, because the flush drains before the
+   pass selects, but twice.
 
 ## Cache
 

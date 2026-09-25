@@ -281,9 +281,14 @@ extension NodeRecord {
     }
 
     func readFromOutputPort(_ outputPort: String) throws -> NodeValue {
-        // A folder's manifest is rebuilt on demand (B-25): reading it is what makes it current.
-        if kind == Folder.kind && outputPort == Folder.folderManifestOutputPort {
-            try Folder.flushManifestIfDirty(nodeID: try requireID())
+        // A folder's two derived values are rebuilt on demand (B-25, B-26): reading one is
+        // what makes it current.
+        if kind == Folder.kind {
+            switch outputPort {
+            case Folder.folderManifestOutputPort: try Folder.flushManifestIfDirty(nodeID: try requireID())
+            case Folder.contentRootOutputPort:    try Folder.flushContentRootIfDirty(nodeID: try requireID())
+            default: break
+            }
         }
 
         let outputSymbolID = outputPort.asSymbolID()
