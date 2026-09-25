@@ -34,6 +34,7 @@ enum TestGlobals {
     static func isolate() throws {
         DataObjectStore.shared        = DataObjectStore(storeRoot: makeTemporaryStoreRoot())
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
+        FormulaIncludeProviders.removeAll()
         BuildEngine.shared            = nil
 
         // Formula parsing resolves a node's default output port through the TypeRegistry
