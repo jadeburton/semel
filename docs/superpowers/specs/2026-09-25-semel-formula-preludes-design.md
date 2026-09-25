@@ -122,17 +122,27 @@ from its `register()` beside `TypeRegistry.register(types:)`; a plugin depends o
 
 ```swift
 public protocol FormulaIncludeProvider {
-    /// The prelude for `name`, or nil when this plugin does not answer to it.
-    func prelude(named name: String) -> FormulaPrelude?
+    /// What this plugin says about `name`: nil when the name is not this plugin's.
+    func answer(forIncludeNamed name: String) -> FormulaIncludeAnswer?
 }
 
-public struct FormulaPrelude {
-    public let namespace: String   // what `name.func(…)` calls are spelled with
-    public let text:      String   // funcs only
+public enum FormulaIncludeAnswer {
+    /// The prelude: `namespace` is what `name.func(…)` calls are spelled with; `text` holds
+    /// funcs only.
+    case prelude(namespace: String, text: String)
+    /// The name is this plugin's, and it cannot be provided here — the sentence the user
+    /// reads: "no installed clang supports C++26 (found 17.0.0)".
+    case refused(reason: String)
 }
 
 FormulaIncludeProviders.register(SemelClang.includeProvider)
 ```
+
+A refusal is how a plugin tells the user *why* their include failed, where nil would leave
+only "no plugin answers 'clang/c++26'". It claims the name as a prelude does, so it counts
+under rule 2 below, and it is published on the node's port like any answer, so installing
+the missing tool and restarting replaces it. When no plugin answers at all, the report lists
+the registered providers' plugins, so the user sees what is installed.
 
 A plugin whose prelude is fixed answers one exact name with a `.fmla` resource, so it
 reads, lints and diffs as a formula; `FormulaPrelude.fixed(name:namespace:resource:)` is that
@@ -175,8 +185,9 @@ B-43 proposes for `StaticFile`'s pushed content:
   writing only where the answer differs from what is stored, exactly as a push writes a
   `StaticFile`. A changed prelude wakes the wire, the builder re-runs, and every node whose
   spec moved is a new node; the rest keep their identity and their cache.
-- A name no provider answers publishes an error on the port, and the report names the
-  include line. The node stays resident while a formula includes it, so installing a plugin
+- A refused name publishes the plugin's reason as an error on the port, and a name nobody
+  answers publishes "no plugin answers" with the installed plugins listed; the report names
+  the include line either way. The node stays resident while a formula includes it, so installing a plugin
   that answers the name and restarting fills it.
 
 ## The preludes
@@ -278,8 +289,9 @@ the file once per call rather than once per tool.
    with the same bare name as a prelude func, both callable; lexical scope (a prelude's
    `%%f%%` does not see the caller's `f`); an unbound parameter; a parameter in a template;
    a product in provided text refused.
-4. Provider tests: two plugins answering one name is an error naming both; a name nobody
-   answers is reported against the include line, and a restart with a plugin that answers
+4. Provider tests: two plugins answering one name is an error naming both, whether each
+   provides or refuses; a refusal's reason is what the report says against the include
+   line; a name nobody answers is reported with the installed plugins listed, and a restart with a plugin that answers
    it fills the resident node.
 5. Changing a provided prelude's text and restarting the server re-runs the builders that
    include it and no others.
