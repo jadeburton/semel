@@ -436,22 +436,41 @@ the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
 `waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
 from a cooperative-pool thread.
 
-**B-84** `open` — **A root `swift build` keeps a stale plan across path-dependency source
-changes.**
-Adding or removing a source file in any of the path-dependency packages (`SemelNodeKit`,
-`SemelSwift`, `SemelCore`, …) is invisible to a root `swift build` until `.build/debug.yaml`
-is deleted:
-SwiftPM does not re-plan, so adding a file gives "cannot find X in scope" against the
-registration rather than the plan, and removing one gives "couldn't build … because of
-missing inputs: <the file just deleted>" while leaving the previous binary linked with the
-type it no longer has. `AGENTS.md`'s "Build and test" now carries the symptom and the fix
-(`rm .build/debug.yaml`); this item is about whether SwiftPM or Semel's own build wrapping
-can do better than a documented workaround. A second instance, found while bumping
-`ProtocolVersion.current` (B-94): a `public static let` used as a default argument is emitted
-into every caller's object file, so modules compiled before the change keep the old value and
-the linker picks whichever copy it finds — `semel` and `semelserv` disagreed about the
-protocol version inside one test binary. That one needs `rm -rf .build/arm64-apple-macosx`;
-`rm .build/debug.yaml` does not touch it.
+**B-84** `open` — **SwiftPM leaves a dependent module's objects stale after a path
+dependency changes.**
+Both halves of the original item are answered, and what is left is upstream.
+
+The stale *plan* is fixed. SwiftPM re-plans when llbuild's `PackageStructure` command is
+dirty, and that command's inputs come from `BuildPlan.inputs`, which iterates
+`graph.rootPackages`: the root package's target directories, its `Package.swift` and its
+`Package.resolved`. Every other package here is a path dependency, so adding or removing a
+source file in one of them is an input to nothing and `.build/debug.yaml` keeps the file
+set it was written with — "cannot find 'X' in scope" for an added file, "missing inputs:
+…/X.swift" for a removed one. `--disable-build-manifest-caching` plans every invocation for
+about 0.15 s on this package, inside the noise of process start-up; `scripts/build.sh`
+passes it and CI and `AGENTS.md` call the script.
+
+The stale *value* is fixed for `Hello`. A default argument is not a call: the compiler
+emits a default-argument generator with the constant folded in, as a coalesced copy in
+every caller's object file (`mov w8, #0x9` inside
+`SemelCLI.build/CommandInterpreter.swift.o`). `Hello.init(role:)` is an overload calling
+`init(protocolVersion: ProtocolVersion.current, role:)`, so the read happens in
+`SemelProtocol`; `test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber` catches the
+stale copy, not the reintroduction — reinstate the default argument and build clean and both
+sides of it fold to the same number. "A constant that crosses a module boundary is not a
+default argument" is an invariant in `AGENTS.md`, and that is what guards the reintroduction.
+
+What remains is the SwiftPM defect underneath the second half, which the overload avoids
+rather than cures: an incremental build can leave a dependent module's objects unrebuilt
+after a change in a package it depends on — an undefined symbol at link time
+([swiftlang/swift-package-manager#7715](https://github.com/swiftlang/swift-package-manager/issues/7715),
+open since 2024-06) or a struct read at the wrong offsets
+([#10502](https://github.com/swiftlang/swift-package-manager/issues/10502), open since
+2026-09). The measurement on Swift 6.3.3 that produced the overload: with the default
+argument in place, bumping `ProtocolVersion.current` from 9 to 10 and running one root
+`swift build` linked `semel` at 9 and `semelserv` at 10. `rm -rf .build/arm64-apple-macosx`
+is the only local answer to the general case. The plan-input bug has no tracker entry
+of its own; filing one against `BuildPlan.inputs` is the other thing worth doing.
 
 
 ## App bundles

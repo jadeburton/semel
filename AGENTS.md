@@ -6,23 +6,31 @@ about how to change it.
 ## Build and test
 
 ```sh
-swift build                                  # builds everything the root package links, from the repo root
-swift test --package-path SemelNodeKit       # the node-authoring API (~124)
-swift test --package-path SemelProtocol      # the wire protocol (frame codec + messages) (~44)
-swift test --package-path SemelSwift         # the Swift toolchain nodes (~135)
-swift test --package-path SemelClang         # the C/C++ toolchain nodes (~44)
-swift test --package-path SemelApple         # the Apple platform nodes: asset and string catalogs, Info.plist (~13)
-swift test --package-path SemelExamples      # the tutorial's reference node (~4)
-swift test --package-path SemelCore    # the engine tests (~350)
-swift test                                   # the CLI, transport, server and end-to-end fixture tests (~276)
-SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
+scripts/build.sh                                    # builds everything the root package links, from the repo root
+scripts/build.sh test --package-path SemelNodeKit   # the node-authoring API (~151)
+scripts/build.sh test --package-path SemelProtocol  # the wire protocol (frame codec + messages) (~52)
+scripts/build.sh test --package-path SemelSwift     # the Swift toolchain nodes (~163)
+scripts/build.sh test --package-path SemelClang     # the C/C++ toolchain nodes (~61)
+scripts/build.sh test --package-path SemelApple     # the Apple platform nodes: asset and string catalogs, Info.plist (~64)
+scripts/build.sh test --package-path SemelExamples  # the tutorial's reference node (~4)
+scripts/build.sh test --package-path SemelCore      # the engine tests (~497)
+scripts/build.sh test                               # the CLI, transport, server and end-to-end fixture tests (~272)
+SEMEL_E2E_EXTERNAL=1 scripts/build.sh test --filter SemelEndToEndTests   # plus the pinned external projects (minutes; needs the network)
 ```
 
-The root package now links `SemelProtocol` through `SemelCLI` and `SemelServer`, so
-`swift build` covers it; its own `swift test --package-path SemelProtocol` line is still
-the only thing that runs its tests.
+`scripts/build.sh` is `swift build` — or `swift test`, `swift run` if you name the verb —
+with `--disable-build-manifest-caching`. **The rule: a cold build can be plain `swift`; an
+incremental build in a tree you are editing wants the script.** A cold build plans from
+scratch whatever you type, which is why `README.md` and the tutorial's first build say
+`swift build`; it is the second build onwards, after a file has appeared or gone in one of
+the path dependencies, that reuses a plan it should not. CI calls the script for every
+build and test step so that there is one command to keep true, not because a CI run needs
+it. What the flag buys is below.
 
-`swift test` at the root runs **only** the root package's test targets: `SemelCLITests`,
+The root package links `SemelProtocol` through `SemelCLI` and `SemelServer`, so the root
+build covers it; its own line above is still the only thing that runs its tests.
+
+A root test run covers **only** the root package's test targets: `SemelCLITests`,
 `SemelTransportTests`, `SemelServerTests` and `SemelEndToEndTests`. The engine and the
 toolchains live in separate packages, so a green root-level run means almost nothing. Run
 all eight.
@@ -30,19 +38,27 @@ all eight.
 `SemelDatabaseModels` has no line here and none in CI: it has no `Tests` directory, so
 there is nothing to run.
 
-A root `swift build` does not re-plan when a source file is added to or removed from any of
-the path-dependency packages (`SemelNodeKit`, `SemelSwift`, `SemelCore`, …):
-`.build/debug.yaml` is stale until it is deleted. Adding a file fails with `cannot find 'X'
-in scope`, naming the registration rather than the missing plan entry; removing one fails
-with `missing inputs: …/X.swift` while the previous binary stays linked with the type it no
-longer has. `rm .build/debug.yaml` before the next `swift build` fixes both (B-84).
+**Why the wrapper.** A plain `swift build` does not re-plan when a source file is added to
+or removed from any of the path-dependency packages (`SemelNodeKit`, `SemelSwift`,
+`SemelCore`, …). SwiftPM re-plans when llbuild's `PackageStructure` command is dirty, and
+that command's inputs are the *root* package's target directories, its `Package.swift` and
+its `Package.resolved` — `BuildPlan.inputs` iterates `graph.rootPackages` and nothing else.
+Every other package here is a path dependency, so its source tree is an input to nothing:
+`.build/debug.yaml` keeps the file set it was written with. Adding a file fails with
+`cannot find 'X' in scope`, naming the use rather than the missing plan entry; removing one
+fails with `missing inputs: …/X.swift` while the previous binary stays linked with the type
+it dropped. `--disable-build-manifest-caching` plans every invocation, which costs about
+0.15 s of planning on this package — inside the noise of process start-up — and
+`scripts/build.sh` passes it (B-84). `touch Package.swift` at the repo root is the same fix
+by hand; `rm .build/debug.yaml` also works.
 
-A second staleness, with a bigger hammer: a `public static let` used as a *default argument*
-(`ProtocolVersion.current` in `Hello.init`) is compiled into every caller's object file, so
-after changing one, modules built earlier keep the old value and the linker may pick either —
-which surfaced as `semel` and `semelserv` disagreeing about the protocol version inside one
-test binary. `rm .build/debug.yaml` does not clear it; `rm -rf .build/arm64-apple-macosx` does
-(B-84).
+The wrapper fixes the *plan*, not the incremental decisions under it. SwiftPM can still
+leave a dependent module's objects unrebuilt after a path dependency changes — an undefined
+symbol at link time, or a struct read at the wrong offsets
+([swiftlang/swift-package-manager#7715](https://github.com/swiftlang/swift-package-manager/issues/7715),
+[#10502](https://github.com/swiftlang/swift-package-manager/issues/10502), both open).
+When a build fails in a way the sources do not explain, `rm -rf .build/arm64-apple-macosx`
+and build again; if that fixes it, the plan was not the problem.
 
 **A toolchain package must not depend on the engine.** `SemelSwift` sees only
 `SemelNodeKit`, which is what stops the engine acquiring knowledge of Swift by accident. If
@@ -287,6 +303,18 @@ accumulate into dictionaries; anything ordered must be sorted.
 node. A store that cannot be written belongs to the machine — conform it to
 `UnrecoverableError` and it stops the build instead of being filed against whichever node
 happened to hit it first.
+
+**A constant that crosses a module boundary is not a default argument.** A default argument
+is not a call: the compiler emits a default-argument generator with the value folded into
+it, as a coalesced copy in *every* caller's object file. Change the constant and each
+caller whose object is not recompiled keeps the old value, while the linker picks whichever
+copy it meets first — which is how `semel` and `semelserv` came to disagree about
+`ProtocolVersion.current` inside one test binary. Write the overload instead:
+`Hello.init(role:)` calls `Hello.init(protocolVersion: ProtocolVersion.current, role:)`, so
+the read happens inside `SemelProtocol` where the constant lives. The line is around what
+can be folded: a literal default — `false`, `0`, `nil` — is fine, and so is a default that
+names something read per call, such as `CommandInterpreter.init`'s `baseDirectory: String =
+FileManager.default.currentDirectoryPath`. A default that names a *constant* is not.
 
 **Force unwraps are being phased out.** `try!` is at zero; keep it there. Use
 `node.requireID()` rather than `node.id!`. A force unwrap is only acceptable where failure

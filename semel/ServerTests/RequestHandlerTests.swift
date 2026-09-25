@@ -36,6 +36,17 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .hello(.rejected(reason: .roleNotOffered(role: .cache))))
     }
 
+    /// The version a role-only `Hello` carries is read from `SemelProtocol`, not copied into
+    /// this module. A default argument would be copied: the compiler emits the
+    /// default-argument generator into every caller's object file with the number folded in,
+    /// so a caller whose object survives a change to `ProtocolVersion.current` disagrees with
+    /// one that is recompiled, and the linker picks either copy. `ProtocolVersion.current` on
+    /// the right-hand side is the point of the test — it is a load from the protocol module at
+    /// run time, so a stale copy on the left fails it (B-84).
+    func test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber() {
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, ProtocolVersion.current)
+    }
+
     // MARK: - Batches and subscription
 
     func test_batchesAreCountedOnTheSession() throws {
