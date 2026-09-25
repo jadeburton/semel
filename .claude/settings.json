@@ -9,7 +9,15 @@
       "Bash(swift package dump-package)",
       "Bash(cd /Users/jadeburton/Semel/build_system && swift test *)",
       "Bash(git add -A)",
-      "Bash(git commit -F *)"
+      "Bash(git commit -F *)",
+      "Bash(swiftlint)",
+      "Bash(swiftlint --strict)",
+      "Bash(swiftlint lint)",
+      "Bash(swiftlint lint --strict)",
+      "Bash(swiftlint --strict --quiet)",
+      "Bash(scripts/build.sh)",
+      "Bash(scripts/build.sh test)",
+      "Bash(scripts/build.sh test *)"
     ]
   }
 }
