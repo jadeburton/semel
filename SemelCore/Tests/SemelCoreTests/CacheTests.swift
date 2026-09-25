@@ -81,10 +81,18 @@ final class CacheTests: SemelCoreTestCase {
     /// Re-recorded a second time for `implementationVersion` (B-102): the version of the
     /// node type's implementation joined the key, which is one deliberate discard of every
     /// entry in exchange for every later upgrade discarding only what it touched.
+    ///
+    /// Re-recorded a third time for the key material (B-13). The key is the hash of the
+    /// material's canonical text, which is one line per thing the key covers rather than
+    /// one blob per port; each input line carries the port it arrived on as well as the
+    /// wire and the value, and a value is its hash rather than the two wrappers a
+    /// two-case enum encodes into, the value being the field a reader of a diff scans. A
+    /// stored entry keyed the other way does not decode against the material it has to
+    /// carry, so the discard costs nothing beyond what that already costs.
     func test_theKeyFormatHasNotDrifted() throws {
         let key = try makeCompilerNode().buildCacheKeyFromAllInputs(input: try makeInput())
 
-        XCTAssertEqual(key, "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419")
+        XCTAssertEqual(key, "1445768a2073611d49cfbe9dc6e25f0d6b9442a4e4163629621a87876ee5b8cf")
     }
 
     // MARK: - What the key covers
@@ -193,11 +201,12 @@ final class CacheTests: SemelCoreTestCase {
         let (otherRecord, _) = try GraphSpecNode.parse("OtherSampleTool()").findOrCreateMatchingNode()
         let other = try OtherSampleTool(thisNode: otherRecord)
 
-        let toolKey  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
-        let otherKey = try XCTUnwrap(other.buildCacheKeyFromAllInputs(input: input))
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: toolKey, processingDuration: 0.1,
+        let toolMaterial  = try tool.buildCacheKeyMaterial(input: input)
+        let otherMaterial = try other.buildCacheKeyMaterial(input: input)
+        let otherKey      = try otherMaterial.cacheKey()
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: toolMaterial, processingDuration: 0.1,
                                                  output: builtOutput())
-        try other.saveCacheForAllInputsAndOutputs(cacheKey: otherKey, processingDuration: 0.1,
+        try other.saveCacheForAllInputsAndOutputs(keyMaterial: otherMaterial, processingDuration: 0.1,
                                                   output: builtOutput())
 
         SampleTool.implementationVersionForTests = 2
@@ -225,12 +234,13 @@ final class CacheTests: SemelCoreTestCase {
     /// on a type nothing can build. The node's own `implementationVersion` cannot cover
     /// this — the type that went is somebody else's.
     func test_anEntryDemandingATypeThisSemelDoesNotLinkIsAMiss() throws {
-        let tool = try makeCompilerNode()
-        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": "RetiredSampleTool(path: 'input:/x.c').output"]])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key),
                      "a spec naming a type this Semel cannot make is not an entry to hand back")
@@ -239,25 +249,27 @@ final class CacheTests: SemelCoreTestCase {
     /// The retired type can sit anywhere in the demanded subgraph, so the whole spec tree
     /// is read and not only the node at its root.
     func test_anEntryDemandingARetiredTypeDeeperInASpecIsAMissToo() throws {
-        let tool = try makeCompilerNode()
-        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let key      = try material.cacheKey()
         let spec = "Configuration(role: 'x', input: [\"a\": RetiredSampleTool().output]).output"
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": spec]])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
     }
 
     /// The common entry, which every spec of it names a linked type: it comes back.
     func test_anEntryWhoseSpecsNameLinkedTypesIsAHit() throws {
-        let tool = try makeCompilerNode()
-        let key  = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": "StaticFile(path: 'input:/x.c').output"]])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
         XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"],
@@ -358,14 +370,15 @@ final class CacheTests: SemelCoreTestCase {
     func test_savedOutputsComeBackForTheSameKey() throws {
         let tool = try makeCompilerNode()
         let input = try makeInput()
-        let key = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
+        let material = try tool.buildCacheKeyMaterial(input: input)
+        let key      = try material.cacheKey()
 
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
         XCTAssertEqual(try loaded.outputValues[SampleTool.output]?.expectValue().resolveAsString(),
@@ -373,15 +386,15 @@ final class CacheTests: SemelCoreTestCase {
     }
 
     func test_aDifferentKeyIsAMiss() throws {
-        let tool = try makeCompilerNode()
-        let key = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: try makeInput()))
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
 
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let otherKey = try XCTUnwrap(
             tool.buildCacheKeyFromAllInputs(input: try makeInput(contents: "different source")))

@@ -54,13 +54,14 @@ final class BuildEngineResetTests: SemelCoreTestCase {
     private func cacheOneBuiltOutput() throws -> String {
         let tool   = try makeSampleTool()
         let input  = try sampleInput()
-        let key    = try XCTUnwrap(tool.buildCacheKeyFromAllInputs(input: input))
+        let material = try tool.buildCacheKeyMaterial(input: input)
+        let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern()),
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(cacheKey: key, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
         XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key), "precondition: the build is cached")
         return key
     }

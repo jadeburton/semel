@@ -277,7 +277,26 @@ final class EnginePluginTests: XCTestCase {
 
         try run("debug")
 
+        XCTAssertEqual(connection.daemonRequests, [.debug(cacheKey: nil)])
         XCTAssertEqual(context.messages, ["BUILD GRAPH STATE (0 nodes)"])
+    }
+
+    /// B-13. A key given to `debug` asks about that cache entry rather than the graph, and
+    /// the same body carries the answer.
+    func test_debugWithAKeyAsksAboutThatCacheEntry() throws {
+        connection.reply(.debug, body: Data("cache entry abc\nnode SampleTool@1".utf8))
+
+        try run("debug", ["abc"])
+
+        XCTAssertEqual(connection.daemonRequests, [.debug(cacheKey: "abc")])
+        XCTAssertEqual(context.messages, ["cache entry abc\nnode SampleTool@1"])
+    }
+
+    func test_debugWithMoreThanOneArgumentSaysWhatItTakes() throws {
+        try run("debug", ["abc", "def"])
+
+        XCTAssertEqual(connection.daemonRequests, [])
+        XCTAssertEqual(context.errors, ["debug: takes at most one argument, the key of a cache entry"])
     }
 
     func test_toolsRendersEachNamespaceAsConfigText() throws {

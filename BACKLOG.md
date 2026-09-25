@@ -205,11 +205,12 @@ cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost ×
 rather than uniformly. On a shared cache, have each client ignore a small percentage of hits
 and recompute: coverage is sampling-rate × fleet-size.
 
-**B-13** `open` — **Store key material alongside each entry.**
-Today a mismatch says two builds disagreed and nothing about why. Recording node type,
-`codeVersion`, properties, input wire keys and hashes, and `cacheKeyEnvironment` makes a
-mismatch diffable and lets keys be recomputed offline. (Update: `codeVersion` was deleted, 
-as this is not a reliable enough mechanism.)
+**B-107** `open` — **A cache entry's content is stored as a JSON array of integers.**
+`CacheEntry.content` is `[UInt8]`, which GRDB encodes as `[104,101,…]`, so every byte of
+entry JSON costs about 3.5 bytes on disk — roughly 0.75 MB at the 500-entry limit against
+about 0.2 MB as bytes. Making the column a real blob changes the schema fingerprint, which
+is a stopped launch and a re-push of every source, so it rides with the next unavoidable
+schema change rather than on its own.
 
 **B-14** `open` — **No blob GC.**
 Unreferenced objects accumulate in the object store with no collector. Not urgent.

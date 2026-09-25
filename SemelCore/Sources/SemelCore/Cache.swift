@@ -38,7 +38,7 @@ extension Node {
         return String(wire.dropFirst(prefix.count))
     }
 
-    func buildCacheKeyPartFromOneInput(inputPort: String, input: ProcessInput) throws -> String {
+    func buildCacheKeyEntriesFromOneInput(inputPort: String, input: ProcessInput) throws -> [CacheKeyEntry] {
         // Keying on a partial input set would produce a key that collides with a
         // different set of inputs — the one failure mode a cache must never have.
         guard let oneInput = input.inputValues[inputPort] else {
@@ -54,42 +54,44 @@ extension Node {
         // project-relative key is sound only once the sandbox materialises inputs at the
         // project-relative path and the command lines carry that path, which is what
         // `projectRelative(wire:)` is for and what B-49's remaining part owes.
-        return try oneInput
+        return oneInput
             .sorted { $0.key < $1.key }
-            .map { CacheKeyEntry(wire: $0.key, value: $0.value) }
-            .toJSON()
+            .map { CacheKeyEntry(port: inputPort, wire: $0.key, value: $0.value) }
     }
 
-    /// The node's own contribution: its type and the implementation of that type, its
-    /// properties less the excluded ones, and whatever it declares it reads from outside
-    /// its inputs (`cacheKeyMaterial`). The implementation version is what makes an entry
-    /// say which code produced it: a type that changes what it emits for equal inputs bumps
-    /// it and stops hitting what it wrote before, while every other type keeps its entries.
-    private func nodeCacheKey(input: ProcessInput) throws -> String {
+    /// Everything this node's key is taken of, in the order it is hashed: the node's type
+    /// and the implementation of that type, its properties less the excluded ones,
+    /// whatever it declares it reads from outside its inputs (`cacheKeyMaterial`), and
+    /// every wired input with the value it carried.
+    ///
+    /// The implementation version is what makes an entry say which code produced it: a
+    /// type that changes what it emits for equal inputs bumps it and stops hitting what it
+    /// wrote before, while every other type keeps its entries.
+    ///
+    /// The key is the hash of this structure's canonical text and is computed nowhere
+    /// else, so the material stored with an entry is the material that keyed it rather
+    /// than a description of it that can drift.
+    func buildCacheKeyMaterial(input: ProcessInput) throws -> CacheKeyMaterial {
         let excluded = Self.cacheKeyExcludedProperties
-        let properties = thisNode.properties.filter { !excluded.contains($0.key) }
-        var key = "\(String(describing: type(of: self)))@\(Self.implementationVersion)\n\(properties.asPlainText())"
-        if let material = try cacheKeyMaterial(input: input) {
-            key.append("\n\(material)")
+        let properties = thisNode.properties
+            .filter { !excluded.contains($0.key) }
+            .sorted { $0.key < $1.key }
+            .map { CacheKeyProperty(key: $0.key, value: $0.value) }
+
+        var inputs: [CacheKeyEntry] = []
+        for inputPort in descriptor.staticInputPorts.sorted() + descriptor.dynamicInputPorts.sorted() {
+            inputs += try buildCacheKeyEntriesFromOneInput(inputPort: inputPort, input: input)
         }
-        return key
+
+        return CacheKeyMaterial(nodeType: String(describing: type(of: self)),
+                                implementationVersion: Self.implementationVersion,
+                                properties: properties,
+                                fingerprint: try cacheKeyMaterial(input: input),
+                                inputs: inputs)
     }
 
     func buildCacheKeyFromAllInputs(input: ProcessInput) throws -> String? {
-
-        var aggregated = try nodeCacheKey(input: input)
-
-        for inputPort in descriptor.staticInputPorts.sorted() {
-            aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort, input: input))
-            aggregated.append("\n")
-        }
-
-        for inputPort in descriptor.dynamicInputPorts.sorted() {
-            aggregated.append(try buildCacheKeyPartFromOneInput(inputPort: inputPort, input: input))
-            aggregated.append("\n")
-        }
-
-        return Sha256.hash(Array(aggregated.utf8))
+        try buildCacheKeyMaterial(input: input).cacheKey()
     }
 
     func loadCachedOutputs(cacheKey: String?) throws -> ProcessOutput? {
@@ -108,11 +110,6 @@ extension Node {
 
         guard let cacheEntry = try database.cacheEntry.select(hash: cacheKey) else {
             return nil
-        }
-        // Refresh the timestamp so this entry is treated as recently used by the LRU eviction
-        // policy. Best effort: a stale timestamp only makes the entry evictable sooner.
-        FatalErrors.attempt {
-            try database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
         }
 
         guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
@@ -133,16 +130,34 @@ extension Node {
             return nil
         }
 
+        // Below every reason this lookup can answer nothing, so only a row that was used
+        // counts as recently used. Eviction is by timestamp, so refreshing a row before
+        // reading it makes the rejected ones the hardest to evict — an entry this Semel
+        // cannot decode, or one demanding a type it does not link, would hold its slot in
+        // the cache against the entries that do get used.
+        //
+        // Best effort: a stale timestamp only makes the entry evictable sooner.
+        FatalErrors.attempt {
+            try database.cacheEntry.updateTimestampAndCost(hash: cacheKey, cost: cacheEntry.cost, timestamp: Date())
+        }
+
         Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
 
         return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
                              inputWireSpecs: decodedCacheEntry.inputWireSpecs)
     }
 
-    func saveCacheForAllInputsAndOutputs(cacheKey: String?, processingDuration: TimeInterval, output: ProcessOutput) throws {
-        guard let cacheKey else {
+    /// Stores one build under the key its material takes, and the material with it. The
+    /// material rather than the key is what is passed in: an entry whose key nothing can
+    /// account for is the state B-13 exists to remove, and taking the key here is what
+    /// makes that impossible to reach.
+    func saveCacheForAllInputsAndOutputs(keyMaterial: CacheKeyMaterial?,
+                                         processingDuration: TimeInterval,
+                                         output: ProcessOutput) throws {
+        guard let keyMaterial else {
             return
         }
+        let cacheKey = try keyMaterial.cacheKey()
 
         //Debug.log("Cache cost: \(Int(processingDuration * 1000.0)) ms")
 
@@ -156,34 +171,159 @@ extension Node {
 
         let thresholdDuration = 0.015 // 15ms
 
-        if processingDuration < thresholdDuration {
+        // The floor is about new work: a build cheaper than storing and fetching it back is
+        // not worth a row. It is not about a row already standing under this key whose
+        // content this Semel cannot read — that row is a slot nothing can use, and this
+        // build is the only thing that can put a usable entry in it. Left alone it would
+        // wait for the whole cache to turn over under it. So the floor is asked second, and
+        // a build of any cost replaces such a row.
+        if processingDuration < thresholdDuration && !holdsAnUnreadableEntry(cacheKey: cacheKey) {
             return
         }
 
         //Debug.log("Saving cache entry..")
 
-        let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues, inputWireSpecs: output.inputWireSpecs)
+        let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
+                                           inputWireSpecs: output.inputWireSpecs,
+                                           keyMaterial: keyMaterial)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
 
-        try database.cacheEntry.insert(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
-                                             cost: Int(processingDuration * 1000.0),
-                                             timestamp: Date()))
+        // Replaces rather than refuses: a key whose row this Semel could not read is a key
+        // it just missed on, and the build that missed is the one thing that can put a
+        // readable entry there.
+        try database.cacheEntry.save(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
+                                           cost: Int(processingDuration * 1000.0),
+                                           timestamp: Date()))
         // Best effort: an untrimmed cache is over its limit until the next save trims it.
         FatalErrors.attempt { try database.cacheEntry.trimToLimit(cacheEntryLimit) }
     }
+
+    /// Whether a row stands under this key that this Semel cannot decode — the entries an
+    /// older or newer shape of `ProcessCacheEntry` left behind. One lookup by primary key,
+    /// asked only of a build under the storage floor, which is the one case where the
+    /// answer decides anything.
+    private func holdsAnUnreadableEntry(cacheKey: String) -> Bool {
+        guard let row = (FatalErrors.attempt { try database.cacheEntry.select(hash: cacheKey) }) ?? nil else {
+            return false
+        }
+        return (try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(row.content))) == nil
+    }
 }
 
-/// One wired input as it contributes to a cache key: which wire it arrived on, and what
-/// it carried. Both are part of the build's identity.
+/// One line of a key's material: the word that says what the line is about, and the thing
+/// itself as JSON. Keys sorted so the text is the same on two machines, slashes left alone
+/// so a wire's path reads as the path it is, and JSON rather than plain text so a value
+/// holding a newline stays on its line and cannot forge another.
+private func cacheKeyLine(_ keyword: String, _ item: some Encodable) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return "\(keyword) \(String(decoding: try encoder.encode(item), as: UTF8.self))"
+}
+
+/// One wired input as it contributes to a cache key: which port and which wire it arrived
+/// on, and what it carried. All three are part of the build's identity.
+///
+/// Coded by hand so that a line reads `"value":"<hash>"` rather than the two wrappers the
+/// synthesized encoding of a two-case enum over a string gives — the field a reader of a
+/// diff scans is the one worth keeping short. A wire carrying no value keeps its reason
+/// whole under a key of its own: which case it is *and* what that case carries, because
+/// two failures with different messages are two different builds and must not hash alike.
 struct CacheKeyEntry: Codable {
+    let port: String
     let wire: String
     let value: NodeValue
+
+    init(port: String, wire: String, value: NodeValue) {
+        self.port  = port
+        self.wire  = wire
+        self.value = value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case port
+        case wire
+        case value
+        case noValue
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(port, forKey: .port)
+        try container.encode(wire, forKey: .wire)
+        switch value {
+        case .value(let hash):
+            try container.encode(hash, forKey: .value)
+        case .noValue(let reason):
+            try container.encode(reason, forKey: .noValue)
+        }
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        port = try container.decode(String.self, forKey: .port)
+        wire = try container.decode(String.self, forKey: .wire)
+        if let hash = try container.decodeIfPresent(DataObjectHash.self, forKey: .value) {
+            value = .value(hash)
+        } else {
+            value = .noValue(reason: try container.decode(NoValueReason.self, forKey: .noValue))
+        }
+    }
 }
 
-/// A cached ProcessOutput as stored. Lives with the cache rather than with the node
-/// protocol. A field added here is non-optional, so an entry written before it fails to
-/// decode and misses, rather than decoding short with a default and hitting wrongly.
+/// One of the node's own properties as it contributes to a cache key.
+struct CacheKeyProperty: Codable {
+    let key: String
+    let value: String
+}
+
+/// What a node reads from outside its inputs, as the node itself describes it — an SDK's
+/// fingerprint and the like. A struct rather than a bare string so the text is JSON on one
+/// line of the material, whatever the node put in it.
+struct CacheKeyFingerprint: Codable {
+    let fingerprint: String
+}
+
+/// Everything a cache key is taken of, as structure. Stored with the entry the key names,
+/// so a mismatch between two builds is a diff of two of these and a key can be recomputed
+/// where neither graph is.
+///
+/// The order of `inputs` is part of the key and is the order `buildCacheKeyMaterial`
+/// builds them in — static ports sorted, then dynamic ports sorted, wires sorted within
+/// each port. An array, not a dictionary, so what is stored is the order that was hashed.
+struct CacheKeyMaterial: Codable {
+    let nodeType: String
+    let implementationVersion: Int
+    let properties: [CacheKeyProperty]
+    /// What `Node.cacheKeyMaterial(input:)` declared, or nil where a node reads nothing
+    /// outside its inputs — which is most of them.
+    let fingerprint: String?
+    let inputs: [CacheKeyEntry]
+
+    /// The text the key is the hash of: one line per thing the key covers, each named by
+    /// the word it starts with and each carrying JSON, so a value holding a newline cannot
+    /// forge a line and two materials differing in one input differ in one line.
+    func canonicalText() throws -> String {
+        var lines = ["node \(nodeType)@\(implementationVersion)"]
+        lines += try properties.map { try cacheKeyLine("property", $0) }
+        if let fingerprint {
+            lines.append(try cacheKeyLine("fingerprint", CacheKeyFingerprint(fingerprint: fingerprint)))
+        }
+        lines += try inputs.map { try cacheKeyLine("input", $0) }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The cache key itself. The one place a key is computed.
+    func cacheKey() throws -> String {
+        Sha256.hash(Array(try canonicalText().utf8))
+    }
+}
+
+/// A cached ProcessOutput as stored, with the material its key was taken of. Lives with
+/// the cache rather than with the node protocol. A field added here is non-optional, so an
+/// entry written before it fails to decode and misses, rather than decoding short with a
+/// default and hitting wrongly.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
     let inputWireSpecs: [String: [String: String]]
+    let keyMaterial: CacheKeyMaterial
 }
