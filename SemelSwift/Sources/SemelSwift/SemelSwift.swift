@@ -56,6 +56,25 @@ public enum SemelSwift {
         SwiftFormulaConverter.configNamespaces
     }
 
+    /// The namespaces the converter's formula for a tree selects from: the Swift ones, and
+    /// the clang ones only when a target is compiled through clang (B-110).
+    public static func converterConfigNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {
+        SwiftFormulaConverter.swiftConfigNamespaces + (hasCFamilyTargets ? SwiftFormulaConverter.clangConfigNamespaces : [])
+    }
+
+    /// Whether a target folder holding these file names is one the converter compiles
+    /// through clang: C-family sources and no top-level `.swift`, the converter's own rule.
+    public static func isCFamilyTargetFolder(holding fileNames: [String]) -> Bool {
+        let extensions = Set(fileNames.compactMap { name -> String? in
+            guard let dot = name.lastIndex(of: "."), dot != name.startIndex else {
+                return nil
+            }
+            return name[name.index(after: dot)...].lowercased()
+        })
+        return !extensions.contains("swift")
+            && !extensions.isDisjoint(with: SwiftFormulaConverter.ClangTargetInfo.cFamilyExtensions)
+    }
+
     // MARK: - SDK facts
 
     /// The path of the named SDK on this machine, or nil if xcrun knows no such SDK. For a

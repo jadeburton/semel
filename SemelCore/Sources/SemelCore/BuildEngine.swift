@@ -477,8 +477,7 @@ public final class BuildEngine {
         // more than the report beside it shows.
         let errorCount = ErrorReport.entries(forErrorPorts: errorPorts, database: database,
                                              sourceMessages: sourced) { _, messages in messages }
-            .flatMap { $0.entry.items }
-            .reduce(0) { $0 + $1.ports.count }
+            .reduce(0) { $0 + $1.entry.items.reduce(0) { $0 + $1.ports.count } * $1.entry.nodeCount }
 
         // The "current" error map. `ErrorReport` is the one place that decides what a port's
         // message is and which placeholder is not one.
@@ -503,7 +502,9 @@ public final class BuildEngine {
             reported[nodeID] = messages.intersection(lastReportedErrors[nodeID] ?? [])
         }
         for entry in entries {
-            reported[entry.nodeID] = current[entry.nodeID]
+            for nodeID in entry.nodeIDs {
+                reported[nodeID] = current[nodeID]
+            }
         }
         lastReportedErrors = reported
 

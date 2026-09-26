@@ -20,6 +20,11 @@ protocol CommandContext: AnyObject {
     /// blocking on a signal the open batch is holding back.
     var openBatchDepth: Int { get set }
 
+    /// Paths under `base`, relative to it, that `push` never sends: where `build` exports
+    /// its products. Yesterday's products must not arrive as today's sources when the
+    /// tree above them is pushed (B-110).
+    var pushExclusions: Set<String> { get set }
+
     func outputMessage(_ message: String)
     func outputError(_ message: String)
 

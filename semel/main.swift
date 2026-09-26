@@ -12,11 +12,27 @@ import SemelProtocol
 
 func main() throws {
     // The client half only. The engine, the graph and the toolchains live in semelserv;
-    // this process opens a socket to it and hands the connection to the interpreter.
+    // this process opens a socket to it and hands the connection to the interpreter —
+    // starting a semelserv first when none answers (B-110).
     let socketPath = SemelPaths.serverSocket.path
+    let scripted = Array(CommandLine.arguments.dropFirst())
+
+    // `semel stop` is the one command that wants no server: it ends the one there is.
+    if scripted == ["stop"] {
+        ServerLauncher.stop(socketPath: socketPath) { print($0) }
+        exit(0)
+    }
+
     let connection: SocketConnection
     do {
         connection = try SocketConnection.connect(to: socketPath)
+    } catch ConnectionError.unavailable {
+        do {
+            connection = try ServerLauncher.start(socketPath: socketPath) { print($0) }
+        } catch {
+            FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
+            exit(1)
+        }
     } catch {
         FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
         exit(1)
@@ -36,7 +52,6 @@ func main() throws {
     // Non-interactive: each argument is one command line, run in order, then exit —
     // non-zero if any command reported an error. `semel 'build Packages'` is a build step;
     // `semel 'base /repo' 'push src' wait errors` is the same thing spelled out.
-    let scripted = Array(CommandLine.arguments.dropFirst())
     if !scripted.isEmpty {
         for command in scripted where interpreter.handleCommand(command) == .quit {
             break

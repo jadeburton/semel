@@ -234,6 +234,25 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
     }
 
+    /// B-110. Three nodes of one type carrying one message are one record naming all
+    /// three, in the reply and in the event alike, and the record says how many it is.
+    func test_nodesOfOneTypeWithOneMessageAreOneRecordInBothTheReplyAndTheEvent() throws {
+        for tag in ["a", "b", "c"] {
+            try makeFailingMerger(message: "boom", tag: tag)
+        }
+
+        let (response, _) = try daemon(.errors)
+        engine.reportIdleTimeErrors()
+
+        guard case .errors(let records) = response else {
+            return XCTFail("expected errors, got \(response)")
+        }
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].nodeCount, 3)
+        XCTAssertTrue(records[0].label.hasPrefix("TreeMerger ×3 (#"), records[0].label)
+        XCTAssertEqual(sink.events, [.daemon(.errors(records: records))])
+    }
+
     /// B-74. Twenty nodes reading one deleted file all say "an input is in error" and none
     /// of them can be fixed; the reply names the file once and counts the rest. The event
     /// says the same, because both are built by `ErrorReport`.
@@ -336,12 +355,12 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     /// walked in, and that order is seeded per process — the reply would list them one way
     /// on Monday and another on Tuesday, and the event could disagree with the reply in
     /// the same run. The node breaks the tie, in both places.
-    private func makeFailingMerger(message: String) throws {
+    private func makeFailingMerger(message: String, tag: String? = nil) throws {
         // A property of its own, because two nodes of one type with the same properties are
         // one node to the graph; `path` is deliberately not it, since that is what a label
         // would be made of.
         let nodeRecord = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                                   properties: ["tag": message], graphSpec: nil)
+                                                   properties: ["tag": tag ?? message], graphSpec: nil)
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
     }

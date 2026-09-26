@@ -104,7 +104,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         XCTAssertEqual(captured.count, 1)
         XCTAssertEqual(captured[0].map(\.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
         XCTAssertEqual(captured[0][0].items,
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
+                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 2,
                        "the compiler and the linker below it")
     }
@@ -162,7 +162,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         XCTAssertEqual(entries.map(\.entry.label), ["StaticFile #\(file) 'input:/clang.cfg'"])
         XCTAssertEqual(entries[0].entry.items,
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
+                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
         XCTAssertEqual(entries[0].entry.downstreamCarrierCount, 1)
     }
 
@@ -272,7 +272,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
         XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(file) 'input:/clang.cfg'"]])
         XCTAssertEqual(captured[0][0].items,
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed")])
+                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
         XCTAssertEqual(captured[0][0].downstreamCarrierCount, 0,
                        "the filter produced a value, so nothing carries the absence")
     }
@@ -323,6 +323,47 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
                         "   · gone.c was deleted",
                         "   · and 1 node downstream carries it",
                         ""])
+    }
+
+    // MARK: - B-110: the source travels typed
+
+    /// A client that pushes what a formula needs acts on the path, not the sentence.
+    func test_anUnpushedFileNamesItselfAsThePathToPush() throws {
+        let file     = try makeUnpushedFile(path: "input:/clang.cfg")
+        let compiler = try makeDemanding(tag: "compiler")
+        try connect(file, to: compiler, name: "config")
+        try run(compiler)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0][0].items.map(\.missingSource), ["clang.cfg"])
+    }
+
+    /// A folder is pushed with a trailing slash, the way the sentence spells it.
+    func test_anUnpushedFolderNamesItselfWithATrailingSlash() throws {
+        let folder   = try makeUnpushedFolder(path: "src")
+        let compiler = try makeDemanding(tag: "compiler")
+        try connect(folder, to: compiler, name: "sources", fromPort: Folder.folderManifestOutputPort)
+        try run(compiler)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0][0].items.map(\.missingSource), ["src/"])
+    }
+
+    /// A removed source went because someone took it away; a build that pushed it back
+    /// would undo that unasked, so it is not offered as one to push.
+    func test_aDeletedFileIsNotOfferedAsAPathToPush() throws {
+        let file     = try makeUnpushedFile(path: "input:/gone.c")
+        let compiler = try makeDemanding(tag: "compiler")
+        try connect(file, to: compiler, name: "source")
+        _ = try staticFile(file).replaceContent(try "int main(){}".intern())
+        _ = try staticFile(file).replaceContent(nil)
+        try run(compiler)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0][0].items.map(\.missingSource), [nil])
     }
 
     // MARK: - B-104: a folder is a source too

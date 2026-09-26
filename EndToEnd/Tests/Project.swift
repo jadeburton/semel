@@ -27,9 +27,6 @@ struct Project {
     let source: Source
     /// The argument to `build`, relative to the base.
     let buildFolder: String
-    /// Folders pushed before the build, relative to the base: a path dependency that
-    /// lives beside the build folder rather than under it.
-    var alsoPush: [String] = []
     /// For `semel-swift prepare --platform`; nil means no prepare.
     let platform: String?
     /// Relative to the export directory; every one must exist and be non-empty.

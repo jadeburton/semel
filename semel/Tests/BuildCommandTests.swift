@@ -114,6 +114,91 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
 
+    // MARK: - Following the formula's inputs (B-110)
+
+    /// The graph a formula in `hello/` leaves when it names `<../clang.cfg>`: a source
+    /// nobody pushed, and a node that needs it. No loop runs, so the shape is laid by hand.
+    private func nameConfigBesideTheBuildFolder() throws {
+        try FileManager.default.createDirectory(at: externalRoot.appendingPathComponent("hello"),
+                                                withIntermediateDirectories: true)
+        try "include 'clang'".write(to: externalRoot.appendingPathComponent("hello/hello.fmla"),
+                                    atomically: true, encoding: .utf8)
+        try "clang.compiler.target=x".write(to: externalRoot.appendingPathComponent("clang.cfg"),
+                                            atomically: true, encoding: .utf8)
+        let (config, _)   = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')").findOrCreateMatchingNode()
+        let (selector, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'clang.compiler')").findOrCreateMatchingNode()
+        try Wire.connectWire(database: BuildEngine.shared.database,
+                             fromNodeID: try config.requireID(),
+                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
+                             toNodeID: try selector.requireID(),
+                             toSymbolID: ConfigFilter.inputPort.asSymbolID(),
+                             name: "config".asSymbolID())
+    }
+
+    private func configIsPushed() throws -> Bool {
+        let node = try XCTUnwrap(try BuildEngine.shared.inputFileSystem.childNode(path: "clang.cfg"))
+        return try XCTUnwrap(node.nodeAsAny() as? StaticFile).isPinned
+    }
+
+    /// The settle reports `clang.cfg` as not pushed; it is beside the build folder, under
+    /// the base, so `build` pushes it and waits again.
+    func test_buildPushesASourceTheFormulaNeedsFromTheTree() throws {
+        try nameConfigBesideTheBuildFolder()
+
+        interpreter.handleCommand("build hello")
+
+        XCTAssertTrue(try configIsPushed())
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
+    func test_noFollowPushesTheNamedFolderAlone() throws {
+        try nameConfigBesideTheBuildFolder()
+
+        interpreter.handleCommand("build hello --no-follow")
+
+        XCTAssertFalse(try configIsPushed())
+        XCTAssertEqual(interpreter.errorsReported, 1, "the unpushed config is the report")
+    }
+
+    /// A source the report names that is not on disk stays the error it is.
+    func test_aSourceMissingFromDiskIsNotPushedAndStaysReported() throws {
+        try nameConfigBesideTheBuildFolder()
+        try FileManager.default.removeItem(at: externalRoot.appendingPathComponent("clang.cfg"))
+
+        interpreter.handleCommand("build hello")
+
+        XCTAssertFalse(try configIsPushed())
+        XCTAssertEqual(interpreter.errorsReported, 1)
+    }
+
+    /// The line says where the source is from the formula's point of view, which is how
+    /// the formula spelled it.
+    func test_theSourceIsNamedRelativeToTheFormulasFolder() {
+        XCTAssertEqual(CommandInterpreter.relativePath(to: "clang.cfg", from: "hello"), "../clang.cfg")
+        XCTAssertEqual(CommandInterpreter.relativePath(to: "swift/MyLibrary", from: "swift/MyApp"), "../MyLibrary")
+        XCTAssertEqual(CommandInterpreter.relativePath(to: "hello/extra.h", from: "hello"), "extra.h")
+    }
+
+    // MARK: - The one command to run next (B-110)
+
+    /// A Swift tree with no configuration fails on missing settings; the report is where
+    /// the reader looks, so it names `prepare`, the command that writes them.
+    func test_aFailedBuildOfAPackageWithNoConfigNamesPrepare() throws {
+        try FileManager.default.createDirectory(at: externalRoot.appendingPathComponent("pkg"),
+                                                withIntermediateDirectories: true)
+        try "// swift-tools-version:6.0".write(to: externalRoot.appendingPathComponent("pkg/Package.swift"),
+                                               atomically: true, encoding: .utf8)
+        try publishFailedProduct("broken.a", message: "the source is gone")
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("build pkg")
+
+        XCTAssertTrue(lines.contains("pkg holds a Package.swift and no semel.config: "
+                                     + "`semel-swift prepare pkg --platform macos` writes one; then build again."),
+                      lines.joined(separator: "\n"))
+    }
+
     // MARK: - --into
 
     /// The destination is the opt-in: with one, a clean build ends with its products on
@@ -128,13 +213,41 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 0)
     }
 
-    func test_withoutADestinationNothingIsExported() throws {
+    /// Without a destination the products still land somewhere known: `semel-out/<folder>`
+    /// under the base (B-110).
+    func test_withoutADestinationProductsGoToSemelOutUnderTheBase() throws {
         try publishProduct("lib.a", contents: "archive")
 
         interpreter.handleCommand("build src")
 
         XCTAssertEqual(interpreter.errorsReported, 0)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: FileManager.default.currentDirectoryPath + "/lib.a"))
+        XCTAssertEqual(try String(contentsOf: externalRoot.appendingPathComponent("semel-out/src/lib.a"),
+                                  encoding: .utf8), "archive")
+    }
+
+    /// Yesterday's products are not today's sources: a push of the tree leaves the export
+    /// folder out, and a push of the folder itself says why nothing happened.
+    func test_aLaterPushDoesNotSendTheExportFolderBackIn() throws {
+        try publishProduct("lib.a", contents: "archive")
+        interpreter.handleCommand("build src")
+
+        interpreter.handleCommand("push .")
+        XCTAssertNil(try BuildEngine.shared.inputFileSystem.childNode(path: "semel-out"))
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
+
+        XCTAssertEqual(interpreter.handleCommand("push semel-out"), .failed)
+        XCTAssertNil(try BuildEngine.shared.inputFileSystem.childNode(path: "semel-out"))
+    }
+
+    /// A destination inside the tree is left out of later pushes too.
+    func test_aDestinationInsideTheTreeIsLeftOutOfLaterPushes() throws {
+        try publishProduct("lib.a", contents: "archive")
+        interpreter.handleCommand("build src --into \(externalRoot.path)/out")
+
+        interpreter.handleCommand("push .")
+
+        XCTAssertNil(try BuildEngine.shared.inputFileSystem.childNode(path: "out"))
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
     }
 
     /// A partial product set beside a non-zero exit would only mislead.

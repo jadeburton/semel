@@ -223,3 +223,31 @@ one when the edit distance is small: `Unknown command: buidl — did you mean bu
   Swift route one command. Against: `prepare` vendors dependencies and writes files into
   the checkout, which is more than a build should do unasked. Left as a named command, for
   now.
+
+## As built (2026-09-26)
+
+Where the implementation departs from the design above, and why:
+
+- **`semel stop` removes the socket file** rather than sending a request: that is the
+  orderly stop the server already watches for (B-73), and it needs no protocol change. A
+  stop with no server running says so and exits zero.
+- **The interim settle's summary line still prints.** Error records are held back for the
+  length of a build and printed once by `errors`; the one-line `settled` event is not, so a
+  build that follows a source shows `❌ …, 25 errors`, then the push, then `✅ …`. True,
+  and residual 4 of B-110.
+- **A build's verdict is its last settle.** The report of a settle the loop answers is
+  discounted from the exit-status accounting when the round pushes something; a push that
+  fails in that round still counts.
+- **What the loop follows is what the graph reported by name.** For a package dependency
+  that is the manifest the converter wired, then the target folders — three rounds, not
+  one — because the converter's own "waiting for a package" error carries no typed path
+  (residual 2).
+- **Attribution is client-side:** the one `.fmla` in the built folder, or the folder when
+  it holds none or several; the engine does not record which formula created a source.
+- **The `prepare` hint is client-side too**, decided from the disk: a built folder holding
+  a `Package.swift` or an `.xcodeproj` and no `semel.config`, after a failed build.
+- **The default export is used only when there is something to export**; a build that
+  published no products says so, where a named `--into` with nothing to put in it stays
+  `export`'s error.
+- **A typo is one edit away for a word of up to three letters, two beyond**; a one-letter
+  alias is never offered as the guess.

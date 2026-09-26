@@ -20,14 +20,26 @@ public enum ErrorReport {
     /// The ports travel with every item, whether or not a renderer writes them out: they
     /// are how a caller counts the failures behind a report, and `lines` is where the
     /// question of writing them is answered.
-    public struct Item: Equatable {
+    public struct Item: Hashable {
         public let ports:   [String]
         public let message: String
+        /// When the message says a source has not been pushed: that source, as `push`
+        /// takes it — relative to the input file system, a folder ending in `/`. Typed so
+        /// a client acts on the path rather than on the sentence (B-110).
+        public let missingSource: String?
 
-        public init(ports: [String], message: String) {
-            self.ports   = ports
-            self.message = message
+        public init(ports: [String], message: String, missingSource: String? = nil) {
+            self.ports         = ports
+            self.message       = message
+            self.missingSource = missingSource
         }
+    }
+
+    /// What a source's state reads as, with the source itself when the state is that
+    /// nobody has pushed it.
+    public struct SourceMessage: Equatable {
+        public let text:          String
+        public let missingSource: String?
     }
 
     /// One node's errors, gathered but not yet rendered. The engine hands these to its
@@ -40,11 +52,15 @@ public enum ErrorReport {
         /// folded into a count instead of a line each: one deleted header stops every node
         /// that reads it, and the reader can act on the header alone.
         public let downstreamCarrierCount: Int
+        /// How many nodes this entry stands for: one, or the several of one type that carry
+        /// one report and are named together (B-110).
+        public let nodeCount: Int
 
-        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0) {
+        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0, nodeCount: Int = 1) {
             self.label                  = label
             self.items                  = items
             self.downstreamCarrierCount = downstreamCarrierCount
+            self.nodeCount              = nodeCount
         }
     }
 
@@ -85,7 +101,7 @@ public enum ErrorReport {
                              messages: Set<String>,
                              database: DatabaseLayer,
                              downstreamCarrierCount: Int = 0,
-                             sourceMessages: [ObjectID: String] = [:]) -> Entry {
+                             sourceMessages: [ObjectID: SourceMessage] = [:]) -> Entry {
         let items = messages.sorted().map { message -> Item in
             // Matched by what each port reports rather than by the text it stores, so that a
             // port whose state is its whole message is named alongside the rest.
@@ -93,7 +109,8 @@ public enum ErrorReport {
                 .filter { self.message(of: $0, sourceMessages: sourceMessages) == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
-            return Item(ports: portNames, message: message)
+            let source = sourceMessages[nodeID].flatMap { $0.text == message ? $0.missingSource : nil }
+            return Item(ports: portNames, message: message, missingSource: source)
         }
         return Entry(label: label(forNodeID: nodeID, database: database),
                      items: items,
@@ -270,10 +287,10 @@ public enum ErrorReport {
     /// formula nobody has finished, while one that was there and went is a change to the
     /// graph's inputs, and it is the same line a reader needed when a removal broke a build.
     static func sourceMessages(amongPorts ports: [OutputPort],
-                               database: DatabaseLayer) -> [ObjectID: String] {
+                               database: DatabaseLayer) -> [ObjectID: SourceMessage] {
 
         var descriptors: [UInt: NodeDescriptor] = [:]
-        var result: [ObjectID: String] = [:]
+        var result: [ObjectID: SourceMessage] = [:]
 
         /// The descriptor for a node id, kept by kind: one graph holds thousands of nodes
         /// of a handful of types.
@@ -315,10 +332,14 @@ public enum ErrorReport {
             }
             let isTree = record.kind == Folder.kind
 
+            // A removed source carries no `missingSource`: it went because someone took it
+            // away, and a build that pushed it back would undo that unasked.
             if port.valueKind == .deleted {
-                result[port.nodeID] = deletedSourceMessage(path: path, isTree: isTree)
+                result[port.nodeID] = SourceMessage(text: deletedSourceMessage(path: path, isTree: isTree),
+                                                    missingSource: nil)
             } else if anythingNeeds(port.nodeID) {
-                result[port.nodeID] = unpushedFileMessage(path: path, isTree: isTree)
+                result[port.nodeID] = SourceMessage(text: unpushedFileMessage(path: path, isTree: isTree),
+                                                    missingSource: sourcePath(path, isTree: isTree))
             }
         }
 
@@ -326,16 +347,16 @@ public enum ErrorReport {
     }
 
     /// The message a port carries, with what the sources say already worked out.
-    static func message(of port: OutputPort, sourceMessages: [ObjectID: String]) -> String? {
+    static func message(of port: OutputPort, sourceMessages: [ObjectID: SourceMessage]) -> String? {
         // A port that has never been processed says nothing by itself, so it has a line
         // only when the reading above gave it one.
         if port.valueKind == .initializing {
-            return sourceMessages[port.nodeID]
+            return sourceMessages[port.nodeID]?.text
         }
         // A removed source always has a line; naming its path is better than its state, and
         // the state is what is left when the node has no path.
         if port.valueKind == .deleted {
-            return sourceMessages[port.nodeID] ?? reportableMessage(of: port)
+            return sourceMessages[port.nodeID]?.text ?? reportableMessage(of: port)
         }
         return reportableMessage(of: port)
     }
@@ -346,7 +367,7 @@ public enum ErrorReport {
     /// of ports works the sources out once; leaving it out asks for them here.
     public static func messagesByNode(forPorts ports: [OutputPort],
                                       database: DatabaseLayer,
-                                      sourceMessages: [ObjectID: String]? = nil) -> [ObjectID: Set<String>] {
+                                      sourceMessages: [ObjectID: SourceMessage]? = nil) -> [ObjectID: Set<String>] {
         let sourced = sourceMessages ?? Self.sourceMessages(amongPorts: ports, database: database)
 
         var result: [ObjectID: Set<String>] = [:]
@@ -407,7 +428,7 @@ public enum ErrorReport {
 
     static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                        database: DatabaseLayer,
-                       sourceMessages: [ObjectID: String]) -> [ObjectID: Int] {
+                       sourceMessages: [ObjectID: SourceMessage]) -> [ObjectID: Int] {
 
         var reporting: [ObjectID: [OutputPort]] = [:]
         for (nodeID, ports) in byNode {
@@ -511,9 +532,9 @@ public enum ErrorReport {
     /// engine makes three passes over one idle pass's ports and works the sources out once.
     public static func entries(forErrorPorts errorPorts: [OutputPort],
                                database: DatabaseLayer,
-                               sourceMessages: [ObjectID: String]? = nil,
+                               sourceMessages: [ObjectID: SourceMessage]? = nil,
                                select: (ObjectID, Set<String>) -> Set<String>)
-                               -> [(nodeID: ObjectID, entry: Entry)] {
+                               -> [(nodeIDs: [ObjectID], entry: Entry)] {
 
         let byNode   = Dictionary(grouping: errorPorts, by: \.nodeID)
         let sourced = sourceMessages ?? Self.sourceMessages(amongPorts: errorPorts, database: database)
@@ -536,9 +557,55 @@ public enum ErrorReport {
                                            sourceMessages: sourced)))
         }
 
-        func sortLabel(_ report: (nodeID: ObjectID, entry: Entry)) -> String {
-            report.entry.label.replacingOccurrences(of: " #\(report.nodeID)", with: "")
+        return fold(reported)
+    }
+
+    /// Nodes of one type carrying one report are one entry, named together: eight
+    /// compilers each missing the same four settings are one paragraph that says which
+    /// eight, not eight paragraphs (B-110). Only a node named by type and id alone folds —
+    /// a node with a path is one the reader acts on by that path, and two of them never
+    /// carry one report anyway, since the report names the path.
+    ///
+    /// Sorted by label and then by node, so a report reads the same from run to run: the
+    /// error map is a dictionary, whose order is seeded per process. The id is left out of
+    /// the label the sort reads and kept as the tie break: compared as text it puts `#10`
+    /// before `#9`, and it would order a folder's files by when their nodes were made
+    /// rather than by their paths.
+    static func fold(_ reported: [(nodeID: ObjectID, entry: Entry)]) -> [(nodeIDs: [ObjectID], entry: Entry)] {
+        struct Key: Hashable {
+            let type:  String
+            let items: [Item]
         }
-        return reported.sorted { (sortLabel($0), $0.nodeID) < (sortLabel($1), $1.nodeID) }
+        var singles: [(sortKey: String, nodeIDs: [ObjectID], entry: Entry)] = []
+        var groups:  [Key: [(nodeID: ObjectID, entry: Entry)]] = [:]
+
+        for report in reported {
+            let label = report.entry.label
+            guard !label.contains(" '"), let typeEnd = label.range(of: " #") else {
+                singles.append((label.replacingOccurrences(of: " #\(report.nodeID)", with: ""),
+                                [report.nodeID], report.entry))
+                continue
+            }
+            groups[Key(type: String(label[..<typeEnd.lowerBound]), items: report.entry.items), default: []].append(report)
+        }
+
+        // Every group holds the report it was made for, so its first member is there.
+        for (key, members) in groups.sorted(by: { $0.value[0].nodeID < $1.value[0].nodeID }) {
+            let ordered = members.sorted { $0.nodeID < $1.nodeID }
+            guard ordered.count > 1 else {
+                singles.append((key.type, [ordered[0].nodeID], ordered[0].entry))
+                continue
+            }
+            let ids = ordered.map { "#\($0.nodeID)" }.joined(separator: ", ")
+            singles.append((key.type, ordered.map(\.nodeID),
+                            Entry(label: "\(key.type) ×\(ordered.count) (\(ids))",
+                                  items: key.items,
+                                  downstreamCarrierCount: ordered.reduce(0) { $0 + $1.entry.downstreamCarrierCount },
+                                  nodeCount: ordered.count)))
+        }
+
+        return singles
+            .sorted { ($0.sortKey, $0.nodeIDs[0]) < ($1.sortKey, $1.nodeIDs[0]) }
+            .map { ($0.nodeIDs, $0.entry) }
     }
 }

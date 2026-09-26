@@ -115,9 +115,18 @@ public enum GeneratedFiles {
     }
 
     /// The config namespaces the formula for a tree of packages selects from: what
-    /// `SwiftFormulaConverter` emits reads.
-    public static var packageTreeNamespaces: [String] {
-        SemelSwift.converterConfigNamespaces
+    /// `SwiftFormulaConverter` emits reads — the clang ones only when a target is a
+    /// C-family one, since a block nothing reads is reported as unused on every build.
+    public static func packageTreeNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {
+        SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
+    }
+
+    /// Whether any of a tree's targets is compiled through clang, read from the target
+    /// folders on disk by the converter's own rule.
+    public static func hasCFamilyTargets(in summaries: [PackageSummary]) -> Bool {
+        summaries.flatMap(\.targetFolders).contains { folder in
+            SemelSwift.isCFamilyTargetFolder(holding: (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+        }
     }
 
     /// The config namespaces the formula for a project selects from: what the project

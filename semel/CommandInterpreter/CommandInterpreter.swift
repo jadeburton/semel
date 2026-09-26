@@ -30,14 +30,39 @@ public final class CommandInterpreter: CommandContext {
 
     let connection: any SemelConnection
     var baseDirectory: String
+
+    /// Where `build` puts its products when `--into` is not given: `<base>/semel-out/<folder>`.
+    public static let defaultExportFolder = "semel-out"
+
+    var pushExclusions: Set<String> = [defaultExportFolder]
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
     var openBatchDepth = 0
 
-    func outputMessage(_ message: String) { print(message) }
+    /// Where lines go: the terminal, unless a test wants to read them.
+    public var output: (String) -> Void = { print($0) }
+
+    func outputMessage(_ message: String) { output(message) }
     func outputError(_ errorMessage: String) {
         errorsLock.withLock { errorsReportedStorage += 1 }
-        print(errorMessage)
+        output(errorMessage)
+    }
+
+    /// Whether the idle-time error report is printed as it arrives. Off for the length of
+    /// a `build`, which prints the report once at its end: a settle the follow loop
+    /// answers by pushing what it named is not printed at all, and one that stands is
+    /// printed by `errors` rather than twice (B-110). Counted either way, so the exit
+    /// status is what it was. Under `errorsLock`: events arrive on the connection's thread.
+    private var printsErrorEventsStorage = true
+    private var printsErrorEvents: Bool {
+        get { errorsLock.withLock { printsErrorEventsStorage } }
+        set { errorsLock.withLock { printsErrorEventsStorage = newValue } }
+    }
+
+    /// Forgets what was counted since `count`: a settle report the follow loop answers by
+    /// pushing what it named is not this build's verdict, the settle after it is.
+    private func resetErrorsReported(to count: Int) {
+        errorsLock.withLock { errorsReportedStorage = count }
     }
 
     /// Guards `errorsReportedStorage` and `hasCountedErrorRecordsSinceReset`. The exit
@@ -126,7 +151,9 @@ public final class CommandInterpreter: CommandContext {
     private func printEvent(_ event: Event) {
         switch event {
         case .daemon(.errors(let records)):
-            records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+            if printsErrorEvents {
+                records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+            }
             countErrorRecords(records)
         case .daemon(.notice(let line)):
             outputMessage(line)
@@ -195,12 +222,18 @@ public final class CommandInterpreter: CommandContext {
         }
         let remaining = Array(tokens.dropFirst())
 
-        // `build <folder> [--into <dir>]` is the whole loop in one word: push the tree,
-        // wait for the graph to settle, report, and — given a destination — export the
-        // products. A macro over the commands rather than a plugin, so each keeps its own
-        // meaning and its own tests. The destination is the opt-in; there is nothing to
-        // default. No export after a build that reported errors: the exit status already
-        // says it failed, and a partial product set beside it would only mislead.
+        if verb == "help" {
+            printHelp(about: remaining.first)
+            return
+        }
+
+        // `build <folder> [--into <dir>] [--no-follow]` is the whole loop in one word: push
+        // the tree, wait for the graph to settle, push what the formula turned out to need
+        // from the rest of the tree, report, and export the products — to `--into`, or to
+        // `semel-out/<folder>` under the base. A macro over the commands rather than a
+        // plugin, so each keeps its own meaning and its own tests. No export after a build
+        // that reported errors: the exit status already says it failed, and a partial
+        // product set beside it would only mislead.
         if verb == "build" {
             var arguments = remaining
             var destination: String?
@@ -212,23 +245,50 @@ public final class CommandInterpreter: CommandContext {
                 destination = arguments[flag + 1]
                 arguments.removeSubrange(flag...(flag + 1))
             }
+            let follows = !arguments.contains("--no-follow")
+            arguments.removeAll { $0 == "--no-follow" }
             guard arguments.count == 1 else {
                 outputError("build: expected one folder to build")
                 return
             }
+            let folder = arguments[0]
             let errorsBefore = errorsReported
-            try run("push \(arguments[0])")
+            printsErrorEvents = false
+            defer { printsErrorEvents = true }
+            try run("push \(folder)")
+            let errorsBeforeSettle = errorsReported
             try run("wait")
+            if follows {
+                try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
+            }
             try run("errors")
-            if let destination, errorsReported == errorsBefore {
-                try run("export \(arguments[0]) --into \(destination)")
+            let exportFolder = destination
+                ?? (baseDirectory as NSString).appendingPathComponent("\(Self.defaultExportFolder)/\(folder)")
+            // A destination inside the tree is a folder a later push must leave alone, as
+            // the default one is.
+            if let inTree = Self.relativePath(of: exportFolder, under: baseDirectory) {
+                pushExclusions.insert(inTree)
+            }
+            guard errorsReported == errorsBefore else {
+                if let hint = prepareHint(for: folder) {
+                    outputMessage(hint)
+                }
+                return
+            }
+            // A named destination with nothing to put in it is `export`'s error to report;
+            // the default one is only used when there is something to put in it.
+            if try destination != nil || hasProducts(folder) {
+                try run("export \(folder) --into \(exportFolder)")
+            } else {
+                outputMessage("Nothing to export: the build published no products.")
             }
             return
         }
 
         do {
             guard let plugin = verbMap[verb] else {
-                throw CommandParserError.unknownCommand(verb)
+                let known = Set(verbMap.keys).union(["build", "help"])
+                throw CommandParserError.unknownCommand(verb, suggestion: Self.nearestVerb(to: verb, among: known))
             }
             try plugin.handle(verb: verb, tokens: remaining, context: self)
         } catch CommandInterpreterError.quit {
@@ -238,6 +298,220 @@ public final class CommandInterpreter: CommandContext {
         } catch {
             outputError(Self.userFacingMessage(for: error))
         }
+    }
+
+    // MARK: - help
+
+    /// One entry per command: the verbs it answers to, how it is spelled, what it does.
+    struct HelpEntry {
+        let verbs:       [String]
+        let usage:       String
+        let description: String
+    }
+
+    /// Every command, grouped as the README groups them. `help <verb>` is the entries
+    /// that answer to that verb.
+    static let help: [(group: String, entries: [HelpEntry])] = [
+        ("Build", [
+            HelpEntry(verbs: ["build"], usage: "build <folder> [--into <dir>] [--no-follow]",
+                      description: "push the folder, wait, report; push what its formula needs from the tree; "
+                                 + "export the products, to semel-out/<folder> under the base unless --into says where"),
+            HelpEntry(verbs: ["wait"], usage: "wait", description: "block until the build has settled"),
+            HelpEntry(verbs: ["errors", "e"], usage: "errors", description: "the current build errors, one entry per cause"),
+            HelpEntry(verbs: ["check"], usage: "check",
+                      description: "report every graph invariant that does not hold; ask it of a settled graph"),
+            HelpEntry(verbs: ["tools", "t"], usage: "tools [<prefix>]",
+                      description: "the installed tools as semel.config settings, ready to paste"),
+            HelpEntry(verbs: ["debug", "d"], usage: "debug [<cache key>]",
+                      description: "dump the graph, or one cache entry's key material"),
+            HelpEntry(verbs: ["nudge", "n"], usage: "nudge", description: "reschedule every node"),
+            HelpEntry(verbs: ["reset"], usage: "reset [--cache]",
+                      description: "discard everything derived and rebuild it; --cache discards the cached builds too"),
+        ]),
+        ("Files", [
+            HelpEntry(verbs: ["push"], usage: "push <path>",
+                      description: "send a file or folder under the base into the input file system"),
+            HelpEntry(verbs: ["rm", "remove"], usage: "rm <path>", description: "remove a pushed file or folder"),
+            HelpEntry(verbs: ["cp", "copy"], usage: "cp <path> [<destination>]",
+                      description: "copy a file out of the input or output file system"),
+            HelpEntry(verbs: ["export"], usage: "export <folder> --into <dir>", description: "copy a build's products out"),
+        ]),
+        ("Navigation", [
+            HelpEntry(verbs: ["ls", "list"], usage: "ls [<pattern>]", description: "list a folder, with each entry's state"),
+            HelpEntry(verbs: ["cd"], usage: "cd <folder>", description: "move about the input or output file system"),
+            HelpEntry(verbs: ["pwd"], usage: "pwd", description: "where you are"),
+        ]),
+        ("Session", [
+            HelpEntry(verbs: ["base"], usage: "base [<path>]",
+                      description: "show or set the tree pushes are read from; the current directory unless set"),
+            HelpEntry(verbs: ["begin", "commit"], usage: "begin … commit",
+                      description: "hold the engine across several pushes, so it settles once"),
+            HelpEntry(verbs: ["quit", "q", "exit"], usage: "quit", description: "leave the prompt"),
+            HelpEntry(verbs: ["stop"], usage: "semel stop",
+                      description: "end the engine semel started; the next semel starts one"),
+        ]),
+    ]
+
+    private func printHelp(about verb: String?) {
+        var found = false
+        for (group, entries) in Self.help {
+            let matching = verb.map { needle in entries.filter { $0.verbs.contains(needle) } } ?? entries
+            guard !matching.isEmpty else {
+                continue
+            }
+            found = true
+            outputMessage("\(group):")
+            let width = matching.map(\.usage.count).max() ?? 0
+            for entry in matching {
+                outputMessage("  \(entry.usage.padding(toLength: width, withPad: " ", startingAt: 0))   \(entry.description)")
+            }
+        }
+        if let verb, !found {
+            outputError("help: no command named \(verb)")
+        }
+    }
+
+    /// The verb `typed` is nearest to, when one is near enough to be what was meant: one
+    /// edit for a word of up to three letters, two beyond that — a swapped pair is two.
+    /// A one-letter alias is never offered as a guess.
+    static func nearestVerb(to typed: String, among verbs: Set<String>) -> String? {
+        let candidates = verbs.filter { $0.count > 1 }.map { (verb: $0, distance: editDistance(typed, $0)) }
+        guard let best = candidates.min(by: { ($0.distance, $0.verb) < ($1.distance, $1.verb) }),
+              best.distance <= (typed.count <= 3 ? 1 : 2) else {
+            return nil
+        }
+        return best.verb
+    }
+
+    private static func editDistance(_ left: String, _ right: String) -> Int {
+        let leftChars  = Array(left)
+        let rightChars = Array(right)
+        var previous = Array(0...rightChars.count)
+        for (leftIndex, leftChar) in leftChars.enumerated() {
+            var current = [leftIndex + 1]
+            for (rightIndex, rightChar) in rightChars.enumerated() {
+                let substitution = previous[rightIndex] + (leftChar == rightChar ? 0 : 1)
+                current.append(min(previous[rightIndex + 1] + 1, current[rightIndex] + 1, substitution))
+            }
+            previous = current
+        }
+        return previous[rightChars.count]
+    }
+
+    // MARK: - Following the formula's inputs (B-110)
+
+    /// `build` follows the formula's inputs within the tree. A settle that reports a source
+    /// nobody has pushed names it as `push` takes it; when that path exists under `base`,
+    /// this pushes it — saying which formula asked — and waits again, until a round finds
+    /// nothing new to push.
+    ///
+    /// Never outside `base`: a path in the input file system is a path under `base` by
+    /// construction, so the fence needs no check here. Never unasked: only what a node
+    /// reported absent by name, so an unrelated folder beside the project stays where it
+    /// is. Only what exists: a path missing on disk stays the error it is. Bounded: a path
+    /// is pushed once, so a round that finds only paths already tried is the last.
+    private func followSources(neededBy folder: String, errorsBeforeSettle: Int) throws {
+        var pushed: Set<String> = []
+        var errorsBeforeSettle = errorsBeforeSettle
+        while true {
+            guard case .errors(let records) = try request(.errors).0 else {
+                return
+            }
+            let missing = records
+                .flatMap { $0.entries.compactMap(\.missingSource) }
+                .map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+            let onDisk = missing.filter { path in
+                !pushed.contains(path)
+                    && FileManager.default.fileExists(atPath: (baseDirectory as NSString).appendingPathComponent(path))
+            }
+            guard !onDisk.isEmpty else {
+                return
+            }
+
+            // The settle just reported what this round supplies, so its report is not the
+            // build's verdict; a push that fails below still counts.
+            resetErrorsReported(to: errorsBeforeSettle)
+
+            // The report names paths from the root of the input file system, and `push`
+            // reads its argument from the session's current directory; for these pushes
+            // the two are made the same.
+            let currentDirectoryBefore = currentDirectoryPath
+            currentDirectoryPath = .empty
+            defer { currentDirectoryPath = currentDirectoryBefore }
+
+            let formula = formulaName(in: folder)
+            for path in Set(onDisk).sorted() {
+                outputMessage("\(formula) needs \(Self.relativePath(to: path, from: folder))")
+                try run("push \(path)")
+                pushed.insert(path)
+            }
+            errorsBeforeSettle = errorsReported
+            try run("wait")
+        }
+    }
+
+    /// The one command a failed build of a Swift tree with no configuration needs next.
+    /// `prepare` is that tree's command — it vendors the dependencies and writes the
+    /// formula and the config — and the report is where a reader looks for what to do.
+    /// Decided from the disk, which the client can read and the report cannot.
+    private func prepareHint(for folder: String) -> String? {
+        let folderPath = (baseDirectory as NSString).appendingPathComponent(folder)
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: folderPath)) ?? []
+        guard !contents.contains("semel.config") else {
+            return nil
+        }
+        if contents.contains { $0.hasSuffix(".xcodeproj") } {
+            return "\(folder) holds an Xcode project and no semel.config: "
+                 + "`semel-swift prepare \(folder) --platform ios-simulator` writes one; then build again."
+        }
+        if contents.contains("Package.swift") {
+            return "\(folder) holds a Package.swift and no semel.config: "
+                 + "`semel-swift prepare \(folder) --platform macos` writes one; then build again."
+        }
+        return nil
+    }
+
+    /// Whether the output file system holds a folder for what was built: the products
+    /// `export` would copy.
+    private func hasProducts(_ folder: String) throws -> Bool {
+        let outputFolder = resolve(folder, relativeTo: .empty).string
+        guard case .list(let matches) = try request(.list(fileSystem: .output, pattern: outputFolder)).0 else {
+            return false
+        }
+        return matches.contains { $0.kind == .folder }
+    }
+
+    /// What asked for a source: the one formula file in the folder being built, or the
+    /// folder when it holds none or several.
+    private func formulaName(in folder: String) -> String {
+        let folderPath = (baseDirectory as NSString).appendingPathComponent(folder)
+        let formulas = ((try? FileManager.default.contentsOfDirectory(atPath: folderPath)) ?? [])
+            .filter { $0.hasSuffix(".fmla") }
+        guard formulas.count == 1, let formula = formulas.first else {
+            return folder
+        }
+        return (folder as NSString).appendingPathComponent(formula)
+    }
+
+    /// `path` relative to `base` when it lies under it, else nil. Both are taken as the file
+    /// system spells them, so `out/../out` and `./out` are one folder.
+    static func relativePath(of path: String, under base: String) -> String? {
+        let target = URL(fileURLWithPath: path).standardizedFileURL.path
+        let root   = URL(fileURLWithPath: base).standardizedFileURL.path
+        guard target != root, target.hasPrefix(root + "/") else {
+            return nil
+        }
+        return String(target.dropFirst(root.count + 1))
+    }
+
+    /// `path` as seen from `folder`, both relative to `base`: `clang.cfg` from `hello` is
+    /// `../clang.cfg`, which is how the formula spelled it.
+    static func relativePath(to path: String, from folder: String) -> String {
+        let target = Path(path).segments
+        let origin = Path(folder).segments
+        let shared = zip(target, origin).prefix { $0 == $1 }.count
+        let up = Array(repeating: "..", count: origin.count - shared)
+        return (up + target.dropFirst(shared)).joined(separator: "/")
     }
 
     // MARK: - Tokenizer
@@ -283,15 +557,15 @@ enum FileSystemForCommand {
 }
 
 enum CommandParserError: Error, LocalizedError {
-    case unknownCommand(String)
+    case unknownCommand(String, suggestion: String?)
     case missingArgument(command: String, expected: String)
     case tooManyArguments(command: String)
     case unknownOption(command: String, option: String)
 
     var errorDescription: String? {
         switch self {
-        case .unknownCommand(let cmd):
-            return "Unknown command: \(cmd)"
+        case .unknownCommand(let cmd, let suggestion):
+            return "Unknown command: \(cmd)" + (suggestion.map { " — did you mean \($0)? `help` lists them all" } ?? "; `help` lists them")
         case .missingArgument(let cmd, let expected):
             return "\(cmd): missing argument (\(expected))"
         case .tooManyArguments(let cmd):

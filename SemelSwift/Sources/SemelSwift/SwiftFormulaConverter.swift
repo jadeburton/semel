@@ -47,13 +47,18 @@ struct SwiftFormulaConverter: Node {
     /// writes a block for each of these and no other, because a block nothing reads is
     /// reported as unused keys on every build. A package's objects go into an archive
     /// or the Swift linker's product, so `clang.linker` is not among them.
-    static let configNamespaces: [String] = [
+    static let configNamespaces: [String] = swiftConfigNamespaces + clangConfigNamespaces
+
+    /// What every package's formula selects from.
+    static let swiftConfigNamespaces: [String] = [
         SwiftPackageReaderConfiguration.settingNamespace,
         SwiftCompilerConfiguration.settingNamespace,
         SwiftLinkerConfiguration.settingNamespace,
-        clangPreprocessorNamespace,
-        clangCompilerNamespace,
     ]
+
+    /// What a formula selects from only when the tree has a C-family target (B-110): a
+    /// block for a tool nothing runs is reported as unused keys on every build.
+    static let clangConfigNamespaces: [String] = [clangPreprocessorNamespace, clangCompilerNamespace]
 
     public var thisNode: NodeRecord
 
@@ -317,7 +322,7 @@ struct SwiftFormulaConverter: Node {
              + lines.joined(separator: "\n")
              + "\nThis build system never fetches anything: a dependency must be present in "
              + "the input file system at the path above, pushed like any other source. "
-             + "`semel-swift <package-root>` resolves and copies every git dependency into "
+             + "`semel-swift prepare <folder>` resolves and copies every git dependency into "
              + "the root's Dependencies folder."
     }
 

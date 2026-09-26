@@ -56,6 +56,7 @@ final class TestCommandContext: CommandContext {
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
     var openBatchDepth = 0
+    var pushExclusions: Set<String> = [CommandInterpreter.defaultExportFolder]
 
     private(set) var messages: [String] = []
     private(set) var errors: [String] = []

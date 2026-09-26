@@ -76,6 +76,19 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
     }
 
+    /// B-110. The idle-time event and the `errors` verb `build` runs at its end name the
+    /// same failure; a build prints it once, through the verb, and still counts it.
+    func test_aBuildPrintsTheReportOnce() throws {
+        try writeBrokenFormula()
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("build src")
+
+        XCTAssertEqual(lines.filter { $0.hasPrefix("❌ ProjectBuilder") }.count, 1, lines.joined(separator: "\n"))
+        XCTAssertGreaterThan(interpreter.errorsReported, 0)
+    }
+
     /// `build --into` is what ships a product: an error surfacing only at settle must
     /// still fail the build and withhold the export.
     func test_buildWithASettleTimeErrorExportsNothingAndReportsFailure() throws {

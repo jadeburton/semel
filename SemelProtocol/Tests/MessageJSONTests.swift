@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsEleven() {
-        XCTAssertEqual(ProtocolVersion.current, 11)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 11,
+    func test_currentProtocolVersionIsTwelve() {
+        XCTAssertEqual(ProtocolVersion.current, 12)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 12,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -160,6 +160,19 @@ final class MessageJSONTests: XCTestCase {
             #"{"kind":"file","path":"a","status":"deleted"}"#,
             #"{"kind":"file","path":"a","status":"failed"}"#,
         ])
+    }
+
+    /// B-110. The path a report says nobody pushed travels typed, and an entry with no
+    /// such path — every other error — carries nothing for it.
+    func test_anErrorEntryCarriesTheMissingSourceWhenThereIsOne() throws {
+        let missing = ErrorEntry(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")
+        let other   = ErrorEntry(ports: ["output"], message: "boom")
+
+        let encoded = try JSONEncoder().encode([missing, other])
+        let decoded = try JSONDecoder().decode([ErrorEntry].self, from: encoded)
+
+        XCTAssertEqual(decoded, [missing, other])
+        XCTAssertEqual(decoded.map(\.missingSource), ["clang.cfg", nil])
     }
 
     func test_roundTripsEveryDaemonResponse() throws {
