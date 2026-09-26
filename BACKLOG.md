@@ -254,30 +254,31 @@ What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C 
 (2026-09-23); the engine-side report these lean on is the settle-time artifact diff, which
 the `artifacts` event carries.
 
-**B-110** `open` — **Clone and build: `semel build` is one command.**
-Both routes were walked by hand on 2026-09-26 as a stranger would. A C project: two
-terminals, then twenty-five errors across nine nodes printed twice — one paragraph per
-compiler node, eight times — with the root cause, `clang.cfg has not been pushed`, last;
-then three `tools` runs, a hand-written file and a separate `push`. A Swift package: the
-report names `tools` where the answer is `semel-swift prepare`, the path dependency beside
-the package is not pushed and the hint lacks its verb, and every build warns about unused
-`clang.*` keys `prepare` wrote for a package with no C targets. `help` is "Unknown
-command". Design: `docs/superpowers/specs/2026-09-26-semel-clone-and-build-design.md`.
-The target is `git clone … && semel build`, which builds or names one command to run next:
+**B-110** `open` — **Clone and build: `semel build` is one command — residuals.**
+Done 2026-09-26 (design and "As built":
+`docs/superpowers/specs/2026-09-26-semel-clone-and-build-design.md`): `semel` starts the
+engine it finds missing and `semel stop` ends it; `build` follows the formula's inputs
+within `base` — a source the settle reports as not pushed travels typed as
+`ErrorEntry.missingSource`, is pushed with `hello/hello.fmla needs ../clang.cfg`, and the
+build waits again; `--no-follow` — and the roster's `alsoPush` is gone; products go to
+`<base>/semel-out/<folder>` and `push` never sends an export folder back in; nodes of one
+type carrying one report are one entry, printed once; a failed build of a package tree
+with no config names `semel-swift prepare`; `prepare` writes `clang.*` only for a tree with
+a C-family target; `help`, and a typo names its nearest verb. What remains:
 
-1. **The engine starts itself** when no server is at the socket, and stays; `semel stop`.
-2. **`build` follows the formula's inputs within `base`:** a source the settle reports as
-   not pushed, existing under `base`, is pushed with a line naming the formula that asked
-   (`hello/hello.fmla needs ../clang.cfg`), and the build waits again; never outside
-   `base`, never unasked, bounded; `--no-follow` for today's behaviour. `ErrorEntry` gains
-   a typed `missingSource` so the client acts on a field, and `alsoPush` leaves the roster.
-3. **Products go to `<base>/semel-out/<folder>`** without `--into`, and `push` never sends
-   the export destination.
-4. **One error per cause:** nodes of one type with one message fold to one entry, in
-   `ErrorReport`; `build` prints the report once.
-5. **The report names the one command:** `tools --write` (B-109), or `semel-swift prepare`
-   for a package tree; `prepare` writes only the namespaces the tree reads.
-6. **`help`**, and a typo names its nearest verb.
+1. **The missing-settings report names `tools`;** it names `tools --write` once B-109
+   builds it.
+2. **A package dependency takes three rounds.** The converter's "waiting for a package"
+   error carries no typed path, so `build` follows what the converter *wired* — the
+   manifest, then the target folders — one settle each. A `missingSource` on that error,
+   naming the package folder, would make it one round.
+3. **A changed source outside the built folder is not re-pushed.** `build` follows what is
+   reported missing; a `clang.cfg` beside the folder that the user edits is theirs to
+   `push`, as the tutorial's Part 2 says. Following the inputs the graph already holds
+   outside the folder would close it.
+4. **The first settle's summary line prints before the follow answers it:**
+   `❌ 18 nodes scheduled, …, 25 errors` and then the push that fixes it. True, and noise;
+   holding the summary of a settle the loop answers is the fix.
 
 **B-95** `open` — **Nothing shows a build's progress before it settles.**
 The end of a build is told: the settle summary prints when the graph settles, and the

@@ -37,8 +37,10 @@ and nothing else, so copying a file or running the program you just built happen
 third terminal. You can leave the prompt running the whole time; `quit` ends it.
 
 Two executables matter. `semelserv` is the engine: it holds the graph and does the work.
-`semel` is the prompt you type at. In the **server** terminal, start it and leave it
-running:
+`semel` is the prompt you type at. Day to day you never start the engine: `semel` starts
+one when none is running and leaves it running (`semel stop` ends it). This tutorial reads
+what the engine prints in Part 3, so here you start it yourself. In the **server**
+terminal, start it and leave it running:
 
 ```sh
 .build/debug/semelserv
@@ -130,12 +132,10 @@ Everything after the first `=` is the value, quotes included — so no quotes.
 ### The build
 
 ```
-push clang.cfg
 build hello --into ~/semel-playground/out
 ```
 
 ```
-Push file: clang.cfg
 Push folder: hello
 Push file: hello/hello.fmla
 Push file: hello/src/common.h
@@ -143,6 +143,10 @@ Push file: hello/src/hello.c
 Push file: hello/src/hello.h
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c
+❌ 18 nodes scheduled, 18 computed, 0 from cache, 25 errors
+Settled.
+hello/hello.fmla needs ../clang.cfg
+Push file: clang.cfg
 ✅ 23 nodes scheduled, 23 computed, 0 from cache, 0 errors
    appeared: output:/hello/config.txt
    appeared: output:/hello/hello
@@ -151,6 +155,15 @@ Settled.
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
+
+Two settles, and the first one failed. `build` pushed `hello/`, and the formula's
+`<../clang.cfg>` is outside it, so every tool woke without its settings. The engine's
+report named the one source the formula needs that nobody has pushed — `clang.cfg`, beside
+the folder, under your base — so `build` pushed it, saying which formula asked, and waited
+again. The second settle is the build. That is the whole rule: *build follows the
+formula's inputs within your tree*. It never pushes anything the formula did not name, and
+never anything outside the base directory, which is where you ran `semel` unless `base`
+says otherwise. `--no-follow` turns it off.
 
 The line with the tick is the *settle summary*: one line per settle, saying what the engine
 did. Every number counts nodes, each one once, however many times the engine came back to
@@ -331,6 +344,9 @@ file restored to what it was asks the same question as before and gets the store
 ```
 clang.linker.exampleSettingNobodyReads=1
 ```
+
+By hand this time: `build` follows what the formula needs and is not there yet, and
+`clang.cfg` is there. A file outside `hello/` that you edit is yours to push.
 
 ```
 push clang.cfg

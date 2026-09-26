@@ -45,18 +45,18 @@ instead — SwiftPM reuses a stale plan across the path-dependency packages, and
 New here, and want to change Semel rather than only run it? Start with
 [the tutorial](docs/tutorial/first-node.md): build something, watch the cache, write a node.
 
-Start the engine — `semelserv` holds the graph and does the work — then the prompt:
-
 ```sh
-.build/release/semelserv   # in one terminal
-.build/release/semel       # in another
+.build/release/semel
 ```
 
-`semel` opens an interactive prompt against the running server. Everything the server
-persists — the graph database and the object store — lives under
-`~/Library/Application Support/semel`, whatever directory it was launched from; the banner
-prints the database path. `SEMEL_HOME` moves that root and `SEMEL_SOCKET` the daemon's
-socket, which is how the tests give each server a home of its own. Available commands:
+`semel` opens an interactive prompt against the engine, `semelserv`, which holds the graph
+and does the work. When no engine is running, `semel` starts one — the `semelserv` beside
+its own executable — and leaves it running for the next `semel`; `semel stop` ends it. Its
+log is `semelserv.log` beside the graph. Everything the engine persists — the graph
+database and the object store — lives under `~/Library/Application Support/semel`,
+whatever directory it was launched from; the banner prints the database path.
+`SEMEL_HOME` moves that root and `SEMEL_SOCKET` the daemon's socket, which is how the
+tests give each server a home of its own. `help` lists the commands at the prompt:
 
 ### Navigation
 
@@ -96,7 +96,7 @@ rm build/**
 | `d` / `debug [<cache key>]` | Dump the full graph state; given a cache entry's key, dump instead the key material that entry was keyed on — the text whose sha256 is that key, so two machines that disagreed about a build diff two texts rather than two hashes |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
-| `build <folder> [--into <dir>]` | `push <folder>`, `wait`, `errors` in one word; given a destination, `export` too, unless the build reported errors |
+| `build <folder> [--into <dir>] [--no-follow]` | `push <folder>`, `wait`, `errors` in one word, then `export` — to `--into`, or to `semel-out/<folder>` under the base — unless the build reported errors. Follows the formula's inputs within your tree: a source the settle reports as not pushed, such as a shared `clang.cfg` beside the folder or a path dependency beside a package, is pushed with a line saying which formula asked, and the build waits again; `--no-follow` pushes the folder alone. Errors are reported once, one entry per cause |
 | `e` / `errors` | Show all current build errors |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `t` / `tools [prefix]` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste; a prefix narrows it to namespaces starting with it (`tools clang`) |
@@ -232,7 +232,7 @@ them there and writes what the build needs:
 
 ```sh
 .build/release/semel-swift prepare path/to/Packages --platform ios-simulator
-.build/release/semel 'base path/to' 'build Packages --into ./out'
+cd path/to && semel 'build Packages'        # products land in path/to/semel-out/Packages
 ```
 
 `prepare` finds every `Package.swift` under the folder, takes as roots the packages no
