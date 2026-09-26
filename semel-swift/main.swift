@@ -12,6 +12,7 @@
 //  changing a dependency — the copies are replaced, the files are kept.
 
 import Foundation
+import SemelNodeKit
 import SemelSwiftTool
 
 func usage() -> Never {

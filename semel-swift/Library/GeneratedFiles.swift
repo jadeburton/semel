@@ -12,46 +12,6 @@ import SemelApple
 import SemelClang
 import SemelNodeKit
 import SemelSwift
-
-/// What the generated config builds for.
-public enum Platform: String, CaseIterable {
-    case macos = "macos"
-    case iosSimulator = "ios-simulator"
-
-    /// The SDK name `xcrun --sdk` and the Swift tools' `sdk` setting take.
-    public var sdkName: String {
-        switch self {
-        case .macos:        return "macosx"
-        case .iosSimulator: return "iphonesimulator"
-        }
-    }
-
-    /// The name a manifest's `platforms` uses for it.
-    public var manifestPlatformName: String {
-        switch self {
-        case .macos:        return "macos"
-        case .iosSimulator: return "ios"
-        }
-    }
-
-    /// The devices `actool --target-device` compiles for, comma-joined as the setting is
-    /// written.
-    public var targetDevices: String {
-        switch self {
-        case .macos:        return "mac"
-        case .iosSimulator: return "iphone,ipad"
-        }
-    }
-
-    /// The target triple at a deployment version.
-    public func target(deploymentVersion: String) -> String {
-        switch self {
-        case .macos:        return "arm64-apple-macosx\(deploymentVersion)"
-        case .iosSimulator: return "arm64-apple-ios\(deploymentVersion)-simulator"
-        }
-    }
-}
-
 /// What the machine has, as `prepare` reads it. A value type with closures so a test can
 /// hand in a machine of its own.
 public struct ToolchainFacts {

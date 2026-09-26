@@ -10,6 +10,7 @@
 
 import Foundation
 import SemelApple
+import SemelNodeKit
 
 public struct PrepareReport: Equatable {
     /// The `.xcodeproj` the folder holds, when it is a project rather than packages.

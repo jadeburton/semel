@@ -189,7 +189,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     func test_toolsListsEveryNamespaceEvenWhenNoToolIsInstalled() throws {
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
 
-        let (response, _) = try daemon(.tools)
+        let (response, _) = try daemon(.tools(platform: "macos"))
 
         guard case .tools(let namespaces) = response else {
             return XCTFail("expected tools, got \(response)")

@@ -185,7 +185,9 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// missing. The reply carries how many nodes were scheduled so a client can say which
     /// graph it asked; the server neither waits nor refuses.
     case check
-    case tools
+    /// The installed tools with their machine settings for `platform` (a `Platform`'s raw
+    /// value): the SDK is one per platform (B-109).
+    case tools(platform: String)
     /// Discards the derived graph and rebuilds it from what was pushed. `clearCache` also
     /// discards the cached builds, which the rebuild would otherwise be served from: the
     /// cache is keyed on the inputs and not on the graph, so keeping it makes a reset a

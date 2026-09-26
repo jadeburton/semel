@@ -67,7 +67,7 @@ final class InProcessConnectionTests: RequestHandlerTestCase {
             DispatchQueue.global().async {
                 defer { group.leave() }
                 for _ in 0..<50 {
-                    let request: Request = kind == 0 ? .daemon(.tools) : .daemon(.debug(cacheKey: nil))
+                    let request: Request = kind == 0 ? .daemon(.tools(platform: "macos")) : .daemon(.debug(cacheKey: nil))
                     guard let (response, _) = try? self.connection.send(request, body: nil) else {
                         lock.withLock { mismatches += 1 }
                         continue

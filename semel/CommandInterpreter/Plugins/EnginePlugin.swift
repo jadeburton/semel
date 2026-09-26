@@ -4,6 +4,7 @@
 // Handles: d / debug, n / nudge, e / errors, check, reset, t / tools, wait
 
 import Foundation
+import SemelNodeKit
 import SemelProtocol
 
 final class EnginePlugin: CommandPlugin {
@@ -75,7 +76,19 @@ final class EnginePlugin: CommandPlugin {
     /// a `clang.cfg` needs, instead of all eight. Filtered on the client: the records
     /// already carry the namespace, so the server has nothing to add.
     private func handleTools(tokens: [String], context: any CommandContext) throws {
-        guard case .tools(let namespaces) = try context.request(.tools).0 else {
+        var tokens = tokens
+        var platform = Platform.macos
+        if let flag = tokens.firstIndex(of: "--platform") {
+            guard flag + 1 < tokens.count, let named = Platform(rawValue: tokens[flag + 1]) else {
+                let known = Platform.allCases.map { $0.rawValue }.joined(separator: ", ")
+                context.outputError("tools: --platform takes one of \(known)")
+                return
+            }
+            platform = named
+            tokens.removeSubrange(flag...(flag + 1))
+        }
+
+        guard case .tools(let namespaces) = try context.request(.tools(platform: platform.rawValue)).0 else {
             return
         }
         guard !namespaces.isEmpty else {

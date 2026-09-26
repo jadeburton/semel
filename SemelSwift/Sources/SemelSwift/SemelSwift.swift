@@ -29,18 +29,19 @@ public enum SemelSwift {
         // located when the engine starts.
         SwiftToolDiscovery.finders.forEach(ToolDiscovery.register)
 
-        // What `tools` prints under each namespace. The compiler and linker check the
-        // declared SDK against the machine, so the default SDK's name and the machine's
-        // identity for it are printed with them, as a pair to paste; another SDK
-        // (`iphonesimulator`) is a choice, so its identity is not guessed at here. The
-        // package reader declares no SDK.
-        let sdk: () -> [String: String] = {
-            resolveSDKVersion(sdk: defaultSDKName).map { ["sdk": defaultSDKName, "sdkVersion": $0] } ?? [:]
+        // What `tools` prints and `tools --write` writes under each namespace. The compiler
+        // and linker check the declared SDK against the machine, so the SDK's name and the
+        // machine's identity for it are the two machine settings they declare, for whichever
+        // platform is asked. The package reader declares no SDK.
+        let sdk: (Platform) -> [String: String] = { platform in
+            resolveSDKVersion(sdk: platform.sdkName).map { ["sdk": platform.sdkName, "sdkVersion": $0] } ?? [:]
         }
         ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerConfiguration.settingNamespace,
-                                             toolName: "swiftc", machineSettings: sdk))
+                                             toolName: "swiftc",
+                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk))
         ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerConfiguration.settingNamespace,
-                                             toolName: "swiftc", machineSettings: sdk))
+                                             toolName: "swiftc",
+                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk))
         ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
                                              toolName: "swift"))
 

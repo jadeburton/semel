@@ -115,8 +115,11 @@ public final class RequestHandler {
                 let report = GraphCheck.run(database: database)
                 return (.daemon(.check(scheduledNodes: report.scheduledNodeCount)),
                         try MessageCoder.encode(report.findings.map(CheckFinding.init)))
-            case .tools:
-                return (.daemon(.tools(namespaces: toolNamespaces())), nil)
+            case .tools(let platformName):
+                // A name this server does not know answers as macOS rather than failing:
+                // the reply says what is installed either way, and the client validated it.
+                let platform = Platform(rawValue: platformName) ?? .macos
+                return (.daemon(.tools(namespaces: toolNamespaces(platform: platform))), nil)
             case .reset(let clearCache):
                 let archivedGraphPath = try engine.reset(clearCache: clearCache)
                 return (.daemon(.reset(archivedGraphPath: archivedGraphPath)), nil)
@@ -168,11 +171,11 @@ public final class RequestHandler {
     /// The installed tools per namespace, unrendered; the client prints them as config
     /// text. A namespace whose tool is missing has no descriptors, which the client
     /// prints as a comment. Both sources are dictionaries, so the order is imposed here.
-    private func toolNamespaces() -> [ToolNamespaceRecord] {
+    private func toolNamespaces(platform: Platform) -> [ToolNamespaceRecord] {
         let installed = ToolRunnerRegistry.instance.registeredDescriptors
 
         return ToolNamespaceRegistry.all.map { entry in
-            let machineSettings = entry.machineSettings()
+            let machineSettings = entry.machineSettings(platform)
             let descriptors = installed
                 .filter { $0.name == entry.toolName }
                 .sorted { ($0.version, $0.platform, $0.architecture) < ($1.version, $1.platform, $1.architecture) }
