@@ -53,7 +53,7 @@
 
 - Make github repo public
 
-- Remote execution of tools. Ideally in docker containers running wherever.
+- Remote execution of tools. Ideally in docker containers running wherever. (Note: if the runners are inside docker containers then we'd have to cross-copmpile for Ubuntu and every other supported platform, which is probably too much. Maybe better to run a docker container with args.)
 
 - Periodic cache integrity check: randomly compare the cache with computed output and if they differ, reset the entire cache.
 
