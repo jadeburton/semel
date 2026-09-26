@@ -63,6 +63,60 @@ The formula preludes design
 reaches only the preludes it includes; a prelude pulled in by another prelude's `include`
 is callable from the formula too. Split from B-108, whose other residuals are features.
 
+## Performance
+
+Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen
+packages, 26 Swift targets): a cold build of 321 s into an empty home, 2,627 nodes; a
+rebuild with nothing changed took 18.7 s and a one-file add 35.5 s for six scheduled nodes,
+neither broken down yet.
+
+**B-112** `open` — **A Swift compiler runs `swiftc` once per level of its source tree.**
+`SwiftCompiler` finds a target's source folders one level per run, wiring the subfolders it
+has seen so it runs again with their manifests — and every run also compiles the `.swift`
+files found so far. A target nested three folders deep compiles three partial source sets
+before the whole one, and each partial module it publishes re-runs every target that
+imports it. In the measured cold build the 26 compilers ran 82 times, two to five each.
+The fix is to compile only once the walk has stopped: a run whose source or subfolder specs
+differ from what is wired returns the new specs and no object. `ProjectBuilder` (13 runs),
+`ProjectFinder` (15) and the converters (7 to 8) walk the same way; they are cheap, and
+their re-runs are the price of discovering the graph at all.
+
+**B-113** `open` `For Fable Only` — **A batch of nodes waits for its slowest member.**
+`BuildEngine.processSomeNodes` computes every scheduled node concurrently and writes none
+of the results until all have finished; writing a result is what schedules its consumers.
+So one long compile holds back every node its batch-mates made ready, and the cost
+compounds along the critical path. Separately, `selectAllScheduled(limit:)` ignores its
+`limit`, so `processingBatchSize` (16) bounds nothing and a batch is every scheduled node.
+Wanted: each result written as it arrives, and a node started as soon as it is scheduled,
+while the graph writes stay on one sequence — the invariant the two phases exist for.
+
+**B-114** `open` `For Fable Only` — **A running tool holds a Swift concurrency thread.**
+`LocalFileSystemTool` waits for its process with `waitUntilExit()` inside a task of the
+engine's task group. The cooperative pool is as wide as the machine has cores, so the
+number of tools running at once is capped by accident rather than by a setting, and any
+other work on that pool waits behind the compilers — whether the server's request handling
+is among it has not been checked. Wanted: a declared limit on concurrent tools, and a
+process wait that does not block a pool thread.
+
+**B-115** `open` `For Fable Only` — **A node's `graphSpec` spells out its whole upstream graph.**
+Each spec is its node's inputs rendered recursively, so a node shared by two consumers is
+written out twice in everything below them, and the text grows with the graph. Measured:
+8.9 MB of spec text over 2,627 nodes; each archive's `OutputFile` about 1.4 MB, each linker
+about 690 KB; the column carries a UNIQUE index, so that is stored twice — some 18 MB of a
+33 MB database. `Node.applySpecs` rebuilds a product's spec from the database and parses
+the demanded one on every `ProjectBuilder` pass (13 in the cold build), walking shared
+subgraphs once per product. Naming each input by its node's spec hash would make a spec one
+level deep; identity by spec, and every reader of the column, would have to follow.
+
+**B-116** `open` `For Fable Only` — **Every object passes through memory whole, and every read re-hashes it.**
+A tool's output file is read into a `Data`, copied into a `[UInt8]`, hashed and written to
+the store as a second file (`LocalFileSystemTool`, `Interning.intern`); every
+`DataObjectStore.read` re-hashes the whole object to catch a corrupted store. For
+IceCubes's 57 MB executable and 40 MB archives that is several full passes per file per
+build. Streaming the hash and cloning the sandbox file into the store would remove the
+copies; how often a read must be verified is the decision, since verification was added on
+purpose.
+
 ## Design, correctness and code quality
 
 **B-47** `open` `For Fable Only` — **The SDK is declared but not a graph input.**
