@@ -9,9 +9,15 @@ Status is `open`, `doing` or `dropped`. Finished items are removed rather than m
 the commit that closed one carries its reasoning, and `git log --grep=B-07` finds it. An
 item that turns out to be a feature moves to `FUTURE.md` and keeps its ID.
 
+An item tagged `For Fable Only` is one where choosing the approach is most of the work — an
+architectural boundary, an invariant, a semantics decision, a design with more than one
+defensible answer — so it is done by the most capable model available and not delegated.
+An untagged item is mechanical, specified by a design already written, or found by
+experiment, and any model can take it.
+
 ## Cache
 
-**B-14** `open` — **No blob GC.**
+**B-14** `open` `For Fable Only` — **No blob GC.**
 Unreferenced objects accumulate in the object store with no collector: `DataObjectStore` has
 no delete, and the collectors that exist — cache-entry trimming, unreferenced nodes — remove
 rows and leave their objects. Less "not urgent" than it was: since B-26, every edit interns
@@ -59,7 +65,7 @@ is callable from the formula too. Split from B-108, whose other residuals are fe
 
 ## Design, correctness and code quality
 
-**B-47** `open` — **The SDK is declared but not a graph input.**
+**B-47** `open` `For Fable Only` — **The SDK is declared but not a graph input.**
 Closed so far (2026-09-12): the declared identity is version *and* build, `26.5 (25F70)`,
 checked against the machine; and the Swift compiler and linker put a fingerprint of the SDK
 tree — every file's path, size and mtime; 1.2 s cold, 0.4 s warm, once per process — into
