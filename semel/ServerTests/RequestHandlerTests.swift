@@ -198,6 +198,23 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(namespaces.allSatisfy { $0.descriptors.isEmpty })
     }
 
+    /// B-109. A namespace is selected when a ConfigFilter with its prefix is resident —
+    /// what `tools --write` writes a block for — whether or not the settings file exists.
+    func test_toolsSaysWhichNamespacesTheGraphSelects() throws {
+        ToolNamespaceRegistry.register(.init(namespace: "clang.compiler", toolName: "clang"))
+        ToolNamespaceRegistry.register(.init(namespace: "swift.linker", toolName: "swiftc"))
+        _ = try GraphSpecNode.parse("ConfigFilter(prefix: 'clang.compiler')").findOrCreateMatchingNode()
+
+        let (response, _) = try daemon(.tools(platform: "macos"))
+
+        guard case .tools(let namespaces) = response else {
+            return XCTFail("expected tools, got \(response)")
+        }
+        let selected = Dictionary(uniqueKeysWithValues: namespaces.map { ($0.namespace, $0.selected) })
+        XCTAssertEqual(selected["clang.compiler"], true)
+        XCTAssertEqual(selected["swift.linker"], false)
+    }
+
     /// By path, not by id: `b.c`'s node is made first and so has the lower id.
     func test_errorsReturnsOneRecordPerFailingNodeSortedByLabel() throws {
         let second = try makeFailingFile(path: "input:/b.c", message: "second")

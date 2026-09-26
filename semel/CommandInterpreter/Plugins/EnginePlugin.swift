@@ -87,12 +87,29 @@ final class EnginePlugin: CommandPlugin {
             platform = named
             tokens.removeSubrange(flag...(flag + 1))
         }
+        var destination: String?
+        if let flag = tokens.firstIndex(of: "--write") {
+            guard flag + 1 < tokens.count else {
+                context.outputError("tools: --write needs a file to write")
+                return
+            }
+            destination = tokens[flag + 1]
+            tokens.removeSubrange(flag...(flag + 1))
+        }
+        let writesAll = tokens.contains("--all")
+        tokens.removeAll { $0 == "--all" }
 
         guard case .tools(let namespaces) = try context.request(.tools(platform: platform.rawValue)).0 else {
             return
         }
         guard !namespaces.isEmpty else {
             context.outputMessage("No toolchains are registered.")
+            return
+        }
+
+        if let destination {
+            try writeMachineFile(to: destination, platform: platform, namespaces: namespaces,
+                                 all: writesAll, context: context)
             return
         }
 
@@ -109,6 +126,38 @@ final class EnginePlugin: CommandPlugin {
         }
 
         context.outputMessage(ToolNamespaceRenderer.text(for: matching))
+    }
+
+    /// `tools --write <file>`: the machine's half of the configuration (B-109). The tool
+    /// descriptors and machine settings for the namespaces the graph selects — the
+    /// `ConfigFilter`s that exist once a build has been attempted, whether or not the file
+    /// did — so a file holds what this tree reads and nothing the unused-key report would
+    /// flag. `--all` writes every installed namespace instead, for a master file.
+    private func writeMachineFile(to destination: String, platform: Platform, namespaces: [ToolNamespaceRecord],
+                                  all: Bool, context: any CommandContext) throws {
+        let chosen = all ? namespaces : namespaces.filter(\.selected)
+        guard !chosen.isEmpty else {
+            context.outputError("tools: the graph selects no settings yet — build once, so the formula's "
+                              + "selectors exist, then write again; or --all writes every installed namespace")
+            return
+        }
+
+        let header = """
+            // Written by `semel tools --write` for --platform \(platform.rawValue): the tools and SDK
+            // this machine has, for the namespaces the graph reads. Not for editing — run it
+            // again after installing a toolchain — and not for checking in: the project's own
+            // choices go in semel.config beside it.
+
+            """
+        let path = ExternalPathSanitizer.expandPartialPath(destination)
+        try (header + ToolNamespaceRenderer.text(for: chosen) + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+
+        let names = chosen.map(\.namespace).joined(separator: ", ")
+        let missing = chosen.filter(\.descriptors.isEmpty).map(\.toolName)
+        context.outputMessage("Wrote \(chosen.count) namespace\(chosen.count == 1 ? "" : "s") to \(path): \(names)")
+        if !missing.isEmpty {
+            context.outputMessage("No tool is installed for: \(missing.joined(separator: ", ")); those blocks are comments.")
+        }
     }
 
     // MARK: - check

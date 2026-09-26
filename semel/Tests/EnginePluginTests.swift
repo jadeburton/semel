@@ -299,6 +299,66 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(context.errors, ["debug: takes at most one argument, the key of a cache entry"])
     }
 
+    // MARK: - tools --write (B-109)
+
+    private func toolsReply(compilerSelected: Bool) -> DaemonResponse {
+        .tools(namespaces: [
+            ToolNamespaceRecord(namespace: "clang.compiler", toolName: "clang", descriptors: [
+                ToolDescriptorRecord(name: "clang", version: "21.0", platform: "macOS", architecture: "arm64",
+                                     machineSettings: [:]),
+            ], selected: compilerSelected),
+            ToolNamespaceRecord(namespace: "swift.linker", toolName: "swiftc", descriptors: [
+                ToolDescriptorRecord(name: "swiftc", version: "6.0", platform: "macOS", architecture: "arm64",
+                                     machineSettings: ["sdk": "macosx", "sdkVersion": "26.5 (25F70)"]),
+            ], selected: false),
+        ])
+    }
+
+    private func machineFile() -> String {
+        NSTemporaryDirectory() + "semel-tests-\(UUID().uuidString).machine.config"
+    }
+
+    /// Only the namespaces the graph selects: a block nothing reads would be flagged as
+    /// unused on every build.
+    func test_toolsWriteWritesTheSelectedNamespacesMachineSettings() throws {
+        connection.reply(toolsReply(compilerSelected: true))
+        let file = machineFile()
+
+        try run("tools", ["--write", file])
+
+        let written = try String(contentsOfFile: file, encoding: .utf8)
+        XCTAssertTrue(written.hasPrefix("// Written by `semel tools --write` for --platform macos"), written)
+        XCTAssertTrue(written.contains("clang.compiler.toolDescriptor.name=clang"), written)
+        XCTAssertFalse(written.contains("swift.linker"), "an unselected namespace is left out: \(written)")
+        XCTAssertEqual(context.messages, ["Wrote 1 namespace to \(file): clang.compiler"])
+        XCTAssertEqual(connection.daemonRequests, [.tools(platform: "macos")])
+    }
+
+    func test_toolsWriteWithNothingSelectedSaysToBuildFirst() throws {
+        connection.reply(toolsReply(compilerSelected: false))
+        let file = machineFile()
+
+        try run("tools", ["--write", file])
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file))
+        XCTAssertEqual(context.errors.count, 1)
+        XCTAssertTrue(context.errors[0].contains("build once"), context.errors[0])
+        XCTAssertTrue(context.errors[0].contains("--all"), context.errors[0])
+    }
+
+    func test_toolsWriteAllWritesEveryInstalledNamespace() throws {
+        connection.reply(toolsReply(compilerSelected: false))
+        let file = machineFile()
+
+        try run("tools", ["--write", file, "--all", "--platform", "ios-simulator"])
+
+        let written = try String(contentsOfFile: file, encoding: .utf8)
+        XCTAssertTrue(written.contains("for --platform ios-simulator"), written)
+        XCTAssertTrue(written.contains("clang.compiler.toolDescriptor.name=clang"), written)
+        XCTAssertTrue(written.contains("swift.linker.sdkVersion=26.5 (25F70)"), written)
+        XCTAssertEqual(connection.daemonRequests, [.tools(platform: "ios-simulator")])
+    }
+
     func test_toolsRendersEachNamespaceAsConfigText() throws {
         connection.reply(.tools(namespaces: [
             ToolNamespaceRecord(namespace: "c.compiler", toolName: "clang", descriptors: []),

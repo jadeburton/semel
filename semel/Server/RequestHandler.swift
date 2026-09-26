@@ -174,6 +174,11 @@ public final class RequestHandler {
     private func toolNamespaces(platform: Platform) -> [ToolNamespaceRecord] {
         let installed = ToolRunnerRegistry.instance.registeredDescriptors
 
+        // What the graph reads: the prefix of every resident ConfigFilter. A listing is
+        // best effort, so a database that cannot answer leaves nothing selected.
+        let selectedPrefixes = Set(((try? database.node.select(kind: ConfigFilter.kind)) ?? [])
+            .compactMap { $0.properties[ConfigFilter.prefixProperty] })
+
         return ToolNamespaceRegistry.all.map { entry in
             let machineSettings = entry.machineSettings(platform)
             let descriptors = installed
@@ -186,7 +191,8 @@ public final class RequestHandler {
                                          architecture:    descriptor.architecture,
                                          machineSettings: machineSettings)
                 }
-            return ToolNamespaceRecord(namespace: entry.namespace, toolName: entry.toolName, descriptors: descriptors)
+            return ToolNamespaceRecord(namespace: entry.namespace, toolName: entry.toolName, descriptors: descriptors,
+                                       selected: selectedPrefixes.contains(entry.namespace))
         }
     }
 

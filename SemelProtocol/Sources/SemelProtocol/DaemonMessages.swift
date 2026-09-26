@@ -155,11 +155,15 @@ public struct ToolNamespaceRecord: Codable, Equatable, Sendable {
     public let toolName:    String
     /// Empty when no such tool is installed; the client prints that as a comment.
     public let descriptors: [ToolDescriptorRecord]
+    /// Whether something in the graph selects this namespace's settings — a `ConfigFilter`
+    /// with this prefix exists — which is what `tools --write` writes a block for (B-109).
+    public let selected: Bool
 
-    public init(namespace: String, toolName: String, descriptors: [ToolDescriptorRecord]) {
+    public init(namespace: String, toolName: String, descriptors: [ToolDescriptorRecord], selected: Bool = false) {
         self.namespace   = namespace
         self.toolName    = toolName
         self.descriptors = descriptors
+        self.selected    = selected
     }
 }
 
