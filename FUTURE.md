@@ -203,19 +203,20 @@ questions about settled decisions, recorded so they are argued rather than re-di
 
 Concrete features, held back while the work is stabilising; `BACKLOG.md` holds the bugs.
 IDs come from the one sequence both files share, and status and removal when finished work
-as `BACKLOG.md` describes. `Not doing` keeps the decisions that would otherwise be raised
-again.
+as `BACKLOG.md` describes — as does the `For Fable Only` tag: an item where choosing the
+approach is most of the work, done by the most capable model and not delegated. `Not
+doing` keeps the decisions that would otherwise be raised again.
 
 ### Hermeticity and determinism
 
-**B-03** `open` — **Run tool execution in a container.**
+**B-03** `open` `For Fable Only` — **Run tool execution in a container.**
 `ToolRunner` runs inside a dedicated process wrapping a Docker container configured with
 the toolchain, SDK and system libraries, reset between builds. The container digest then
 *is* the environment: `sdk=26.5 (25F70)` becomes `image=sha256:…`, and "did we miss an
 input?" stops being a question only an audit can answer. Also the natural home for the
 Remote Runner role (B-30).
 
-**B-49** `open` — **Tool outputs must not depend on where the inputs are mounted — residuals.**
+**B-49** `open` `For Fable Only` — **Tool outputs must not depend on where the inputs are mounted — residuals.**
 Done 2026-09-20: parts 1 and 2 — the sandbox contract is `ToolSandbox` (inputs at their
 wire keys below a fresh root that is the working directory; every argument relative to it;
 the root's canonical name `/semel`); `ClangCompiler` and `SwiftCompiler` record `/semel` as
@@ -318,7 +319,7 @@ whoever does: the fold is a stated text format with a version tag on its first l
 format moved under; and a `contentRoot` wire is a real dependency, so the node that checks
 the lock re-runs whenever anything under the vendored folder changes, which is the point.
 
-**B-10** `open` — **Packages are named by a formula, not discovered — two residuals.**
+**B-10** `open` `For Fable Only` — **Packages are named by a formula, not discovered — two residuals.**
 Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says
 `include SwiftFormulaConverter(path: <.>).formula` — `include` merges the formula text any
 node produces, and knows nothing about packages; the converter wires its own reader from
@@ -352,7 +353,7 @@ nested folders are not compiled (the glob is one level); a `publicHeadersPath` o
 `include` is not honoured; and a package vending an *executable* with C targets would
 need a `clang.linker` block, which the archive case never reads.
 
-**B-26** `open` — **Recursive content hash for a folder tree.**
+**B-26** `open` `For Fable Only` — **Recursive content hash for a folder tree.**
 Done 2026-09-25: a `Folder` publishes a Merkle root on a `contentRoot` port of its own —
 the hash of a document with one line per child carrying its kind, what it holds and its name:
 a file's line carries its content hash and a subfolder's carries that subfolder's root,
@@ -388,25 +389,25 @@ not, so two copies of one tree are comparable wherever they stand. What remains:
 
 ### Cache
 
-**B-11** `open` — **Probe determinism at write.**
+**B-11** `open` `For Fable Only` — **Probe determinism at write.**
 Occasionally run a node twice before caching and compare. A node that is not reproducible is
 marked never-cacheable. Fixes the problem at source rather than detecting symptoms forever,
 and answers the question a shared cache most needs answered: which tools are safe to share.
 
-**B-12** `open` — **Sampled re-verification of cache entries.**
+**B-12** `open` `For Fable Only` — **Sampled re-verification of cache entries.**
 Re-run entries and compare against what is stored. Must run *twice*, because a single re-run
 cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost × reuse`
 rather than uniformly — `CacheEntry` keeps `cost` but no reuse count yet. On a shared cache, have each client ignore a small percentage of hits
 and recompute: coverage is sampling-rate × fleet-size.
 
-**B-15** `open` — **Cache abstraction behind a client interface.**
+**B-15** `open` `For Fable Only` — **Cache abstraction behind a client interface.**
 Make the engine talk to the cache as though it were a separate server, without a socket or a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
 ### Server
 
-**B-30** `open` — **`semelserv` with three roles.**
+**B-30** `open` `For Fable Only` — **`semelserv` with three roles.**
 One binary, three modes, sharing a wire protocol:
 1. **Cache Server** — see `docs/superpowers/specs/2026-08-15-semel-cache-server-design.md`.
    This is the multi-user story (FUTURE.md "Settled direction"): every developer's local
@@ -434,7 +435,7 @@ One binary, three modes, sharing a wire protocol:
 
 ### Command line
 
-**B-95** `open` — **Nothing shows a build's progress before it settles.**
+**B-95** `open` `For Fable Only` — **Nothing shows a build's progress before it settles.**
 The end of a build is told: the settle summary prints when the graph settles, and the
 artifact diff under it names what appeared, changed and disappeared. Everything before that
 is silent — after `push` or `build` the prompt returns at once, and `wait` blocks with no
@@ -450,7 +451,7 @@ the indicator is opt-in or opt-out, and how the user keeps typing commands while
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
 verb and left with a key).
 
-**B-91** `open` — **The engine says what a settle did, not why.**
+**B-91** `open` `For Fable Only` — **The engine says what a settle did, not why.**
 `DaemonMessages` carry what was published, what failed, one settle's totals — scheduled,
 computed, from cache, errors — and the artifact diff. What the engine knows about *why* —
 which wire changed, which nodes ran and which came from the cache, node by node — leaves
@@ -503,7 +504,7 @@ standard moves to the project file under a comment naming it a choice.
 
 ### Design, correctness and code quality
 
-**B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
+**B-43** `open` `For Fable Only` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
 A node's outputs are supposed to be a function of its inputs. Two types are not, and neither
 says so — they simply reach around the model, which makes the exception look like an
