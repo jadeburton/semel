@@ -248,7 +248,9 @@ extension ErrorRecord {
     /// protocol package must not import the engine.
     init(_ entry: ErrorReport.Entry) {
         self.init(label:   entry.label,
-                  entries: entry.items.map { ErrorEntry(ports: $0.ports, message: $0.message) },
+                  entries: entry.items.map {
+                      ErrorEntry(ports: $0.ports, message: $0.message, missingSource: $0.missingSource)
+                  },
                   downstreamCarrierCount: entry.downstreamCarrierCount)
     }
 }

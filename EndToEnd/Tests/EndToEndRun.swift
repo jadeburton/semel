@@ -120,7 +120,6 @@ final class EndToEndRun {
         try server.start()
         do {
             var commands = ["base \(buildBase.path)"]
-            commands += project.alsoPush.map { "push \($0)" }
             commands.append("build \(project.buildFolder) --into \(out.path)")
             // The graph's own invariants, asked of it after every build in the roster, so
             // that the fixtures are what proves them: a wire into a node that is gone, a

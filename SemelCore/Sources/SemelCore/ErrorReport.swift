@@ -23,11 +23,23 @@ public enum ErrorReport {
     public struct Item: Equatable {
         public let ports:   [String]
         public let message: String
+        /// When the message says a source has not been pushed: that source, as `push`
+        /// takes it — relative to the input file system, a folder ending in `/`. Typed so
+        /// a client acts on the path rather than on the sentence (B-110).
+        public let missingSource: String?
 
-        public init(ports: [String], message: String) {
-            self.ports   = ports
-            self.message = message
+        public init(ports: [String], message: String, missingSource: String? = nil) {
+            self.ports         = ports
+            self.message       = message
+            self.missingSource = missingSource
         }
+    }
+
+    /// What a source's state reads as, with the source itself when the state is that
+    /// nobody has pushed it.
+    public struct SourceMessage: Equatable {
+        public let text:          String
+        public let missingSource: String?
     }
 
     /// One node's errors, gathered but not yet rendered. The engine hands these to its
@@ -85,7 +97,7 @@ public enum ErrorReport {
                              messages: Set<String>,
                              database: DatabaseLayer,
                              downstreamCarrierCount: Int = 0,
-                             sourceMessages: [ObjectID: String] = [:]) -> Entry {
+                             sourceMessages: [ObjectID: SourceMessage] = [:]) -> Entry {
         let items = messages.sorted().map { message -> Item in
             // Matched by what each port reports rather than by the text it stores, so that a
             // port whose state is its whole message is named alongside the rest.
@@ -93,7 +105,8 @@ public enum ErrorReport {
                 .filter { self.message(of: $0, sourceMessages: sourceMessages) == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
-            return Item(ports: portNames, message: message)
+            let source = sourceMessages[nodeID].flatMap { $0.text == message ? $0.missingSource : nil }
+            return Item(ports: portNames, message: message, missingSource: source)
         }
         return Entry(label: label(forNodeID: nodeID, database: database),
                      items: items,
@@ -270,10 +283,10 @@ public enum ErrorReport {
     /// formula nobody has finished, while one that was there and went is a change to the
     /// graph's inputs, and it is the same line a reader needed when a removal broke a build.
     static func sourceMessages(amongPorts ports: [OutputPort],
-                               database: DatabaseLayer) -> [ObjectID: String] {
+                               database: DatabaseLayer) -> [ObjectID: SourceMessage] {
 
         var descriptors: [UInt: NodeDescriptor] = [:]
-        var result: [ObjectID: String] = [:]
+        var result: [ObjectID: SourceMessage] = [:]
 
         /// The descriptor for a node id, kept by kind: one graph holds thousands of nodes
         /// of a handful of types.
@@ -315,10 +328,14 @@ public enum ErrorReport {
             }
             let isTree = record.kind == Folder.kind
 
+            // A removed source carries no `missingSource`: it went because someone took it
+            // away, and a build that pushed it back would undo that unasked.
             if port.valueKind == .deleted {
-                result[port.nodeID] = deletedSourceMessage(path: path, isTree: isTree)
+                result[port.nodeID] = SourceMessage(text: deletedSourceMessage(path: path, isTree: isTree),
+                                                    missingSource: nil)
             } else if anythingNeeds(port.nodeID) {
-                result[port.nodeID] = unpushedFileMessage(path: path, isTree: isTree)
+                result[port.nodeID] = SourceMessage(text: unpushedFileMessage(path: path, isTree: isTree),
+                                                    missingSource: sourcePath(path, isTree: isTree))
             }
         }
 
@@ -326,16 +343,16 @@ public enum ErrorReport {
     }
 
     /// The message a port carries, with what the sources say already worked out.
-    static func message(of port: OutputPort, sourceMessages: [ObjectID: String]) -> String? {
+    static func message(of port: OutputPort, sourceMessages: [ObjectID: SourceMessage]) -> String? {
         // A port that has never been processed says nothing by itself, so it has a line
         // only when the reading above gave it one.
         if port.valueKind == .initializing {
-            return sourceMessages[port.nodeID]
+            return sourceMessages[port.nodeID]?.text
         }
         // A removed source always has a line; naming its path is better than its state, and
         // the state is what is left when the node has no path.
         if port.valueKind == .deleted {
-            return sourceMessages[port.nodeID] ?? reportableMessage(of: port)
+            return sourceMessages[port.nodeID]?.text ?? reportableMessage(of: port)
         }
         return reportableMessage(of: port)
     }
@@ -346,7 +363,7 @@ public enum ErrorReport {
     /// of ports works the sources out once; leaving it out asks for them here.
     public static func messagesByNode(forPorts ports: [OutputPort],
                                       database: DatabaseLayer,
-                                      sourceMessages: [ObjectID: String]? = nil) -> [ObjectID: Set<String>] {
+                                      sourceMessages: [ObjectID: SourceMessage]? = nil) -> [ObjectID: Set<String>] {
         let sourced = sourceMessages ?? Self.sourceMessages(amongPorts: ports, database: database)
 
         var result: [ObjectID: Set<String>] = [:]
@@ -407,7 +424,7 @@ public enum ErrorReport {
 
     static func causes(amongErrorPorts byNode: [ObjectID: [OutputPort]],
                        database: DatabaseLayer,
-                       sourceMessages: [ObjectID: String]) -> [ObjectID: Int] {
+                       sourceMessages: [ObjectID: SourceMessage]) -> [ObjectID: Int] {
 
         var reporting: [ObjectID: [OutputPort]] = [:]
         for (nodeID, ports) in byNode {
@@ -511,7 +528,7 @@ public enum ErrorReport {
     /// engine makes three passes over one idle pass's ports and works the sources out once.
     public static func entries(forErrorPorts errorPorts: [OutputPort],
                                database: DatabaseLayer,
-                               sourceMessages: [ObjectID: String]? = nil,
+                               sourceMessages: [ObjectID: SourceMessage]? = nil,
                                select: (ObjectID, Set<String>) -> Set<String>)
                                -> [(nodeID: ObjectID, entry: Entry)] {
 

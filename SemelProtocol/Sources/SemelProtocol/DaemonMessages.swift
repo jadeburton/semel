@@ -69,10 +69,15 @@ public struct ListEntry: Codable, Equatable, Sendable {
 public struct ErrorEntry: Codable, Equatable, Sendable {
     public let ports:   [String]
     public let message: String
+    /// When the message says a source has not been pushed: that source, as `push` takes
+    /// it — relative to the input file system, a folder ending in `/`. What lets a client
+    /// act on the path instead of recognising the sentence (B-110).
+    public let missingSource: String?
 
-    public init(ports: [String], message: String) {
-        self.ports   = ports
-        self.message = message
+    public init(ports: [String], message: String, missingSource: String? = nil) {
+        self.ports         = ports
+        self.message       = message
+        self.missingSource = missingSource
     }
 }
 

@@ -40,6 +40,12 @@ public final class CommandInterpreter: CommandContext {
         print(errorMessage)
     }
 
+    /// Forgets what was counted since `count`: a settle report the follow loop answers by
+    /// pushing what it named is not this build's verdict, the settle after it is.
+    private func resetErrorsReported(to count: Int) {
+        errorsLock.withLock { errorsReportedStorage = count }
+    }
+
     /// Guards `errorsReportedStorage` and `hasCountedErrorRecordsSinceReset`. The exit
     /// status a scripted run gets rests on the count, and it is written from two
     /// threads: the command thread, through `outputError`, and a connection's event
@@ -195,8 +201,9 @@ public final class CommandInterpreter: CommandContext {
         }
         let remaining = Array(tokens.dropFirst())
 
-        // `build <folder> [--into <dir>]` is the whole loop in one word: push the tree,
-        // wait for the graph to settle, report, and — given a destination — export the
+        // `build <folder> [--into <dir>] [--no-follow]` is the whole loop in one word: push
+        // the tree, wait for the graph to settle, push what the formula turned out to need
+        // from the rest of the tree, report, and — given a destination — export the
         // products. A macro over the commands rather than a plugin, so each keeps its own
         // meaning and its own tests. The destination is the opt-in; there is nothing to
         // default. No export after a build that reported errors: the exit status already
@@ -212,16 +219,23 @@ public final class CommandInterpreter: CommandContext {
                 destination = arguments[flag + 1]
                 arguments.removeSubrange(flag...(flag + 1))
             }
+            let follows = !arguments.contains("--no-follow")
+            arguments.removeAll { $0 == "--no-follow" }
             guard arguments.count == 1 else {
                 outputError("build: expected one folder to build")
                 return
             }
+            let folder = arguments[0]
             let errorsBefore = errorsReported
-            try run("push \(arguments[0])")
+            try run("push \(folder)")
+            let errorsBeforeSettle = errorsReported
             try run("wait")
+            if follows {
+                try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
+            }
             try run("errors")
             if let destination, errorsReported == errorsBefore {
-                try run("export \(arguments[0]) --into \(destination)")
+                try run("export \(folder) --into \(destination)")
             }
             return
         }
@@ -238,6 +252,80 @@ public final class CommandInterpreter: CommandContext {
         } catch {
             outputError(Self.userFacingMessage(for: error))
         }
+    }
+
+    // MARK: - Following the formula's inputs (B-110)
+
+    /// `build` follows the formula's inputs within the tree. A settle that reports a source
+    /// nobody has pushed names it as `push` takes it; when that path exists under `base`,
+    /// this pushes it — saying which formula asked — and waits again, until a round finds
+    /// nothing new to push.
+    ///
+    /// Never outside `base`: a path in the input file system is a path under `base` by
+    /// construction, so the fence needs no check here. Never unasked: only what a node
+    /// reported absent by name, so an unrelated folder beside the project stays where it
+    /// is. Only what exists: a path missing on disk stays the error it is. Bounded: a path
+    /// is pushed once, so a round that finds only paths already tried is the last.
+    private func followSources(neededBy folder: String, errorsBeforeSettle: Int) throws {
+        var pushed: Set<String> = []
+        var errorsBeforeSettle = errorsBeforeSettle
+        while true {
+            guard case .errors(let records) = try request(.errors).0 else {
+                return
+            }
+            let missing = records
+                .flatMap { $0.entries.compactMap(\.missingSource) }
+                .map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+            let onDisk = missing.filter { path in
+                !pushed.contains(path)
+                    && FileManager.default.fileExists(atPath: (baseDirectory as NSString).appendingPathComponent(path))
+            }
+            guard !onDisk.isEmpty else {
+                return
+            }
+
+            // The settle just reported what this round supplies, so its report is not the
+            // build's verdict; a push that fails below still counts.
+            resetErrorsReported(to: errorsBeforeSettle)
+
+            // The report names paths from the root of the input file system, and `push`
+            // reads its argument from the session's current directory; for these pushes
+            // the two are made the same.
+            let currentDirectoryBefore = currentDirectoryPath
+            currentDirectoryPath = .empty
+            defer { currentDirectoryPath = currentDirectoryBefore }
+
+            let formula = formulaName(in: folder)
+            for path in Set(onDisk).sorted() {
+                outputMessage("\(formula) needs \(Self.relativePath(to: path, from: folder))")
+                try run("push \(path)")
+                pushed.insert(path)
+            }
+            errorsBeforeSettle = errorsReported
+            try run("wait")
+        }
+    }
+
+    /// What asked for a source: the one formula file in the folder being built, or the
+    /// folder when it holds none or several.
+    private func formulaName(in folder: String) -> String {
+        let folderPath = (baseDirectory as NSString).appendingPathComponent(folder)
+        let formulas = ((try? FileManager.default.contentsOfDirectory(atPath: folderPath)) ?? [])
+            .filter { $0.hasSuffix(".fmla") }
+        guard formulas.count == 1, let formula = formulas.first else {
+            return folder
+        }
+        return (folder as NSString).appendingPathComponent(formula)
+    }
+
+    /// `path` as seen from `folder`, both relative to `base`: `clang.cfg` from `hello` is
+    /// `../clang.cfg`, which is how the formula spelled it.
+    static func relativePath(to path: String, from folder: String) -> String {
+        let target = Path(path).segments
+        let origin = Path(folder).segments
+        let shared = zip(target, origin).prefix { $0 == $1 }.count
+        let up = Array(repeating: "..", count: origin.count - shared)
+        return (up + target.dropFirst(shared)).joined(separator: "/")
     }
 
     // MARK: - Tokenizer

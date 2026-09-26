@@ -114,6 +114,71 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 1)
     }
 
+    // MARK: - Following the formula's inputs (B-110)
+
+    /// The graph a formula in `hello/` leaves when it names `<../clang.cfg>`: a source
+    /// nobody pushed, and a node that needs it. No loop runs, so the shape is laid by hand.
+    private func nameConfigBesideTheBuildFolder() throws {
+        try FileManager.default.createDirectory(at: externalRoot.appendingPathComponent("hello"),
+                                                withIntermediateDirectories: true)
+        try "include 'clang'".write(to: externalRoot.appendingPathComponent("hello/hello.fmla"),
+                                    atomically: true, encoding: .utf8)
+        try "clang.compiler.target=x".write(to: externalRoot.appendingPathComponent("clang.cfg"),
+                                            atomically: true, encoding: .utf8)
+        let (config, _)   = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')").findOrCreateMatchingNode()
+        let (selector, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'clang.compiler')").findOrCreateMatchingNode()
+        try Wire.connectWire(database: BuildEngine.shared.database,
+                             fromNodeID: try config.requireID(),
+                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
+                             toNodeID: try selector.requireID(),
+                             toSymbolID: ConfigFilter.inputPort.asSymbolID(),
+                             name: "config".asSymbolID())
+    }
+
+    private func configIsPushed() throws -> Bool {
+        let node = try XCTUnwrap(try BuildEngine.shared.inputFileSystem.childNode(path: "clang.cfg"))
+        return try XCTUnwrap(node.nodeAsAny() as? StaticFile).isPinned
+    }
+
+    /// The settle reports `clang.cfg` as not pushed; it is beside the build folder, under
+    /// the base, so `build` pushes it and waits again.
+    func test_buildPushesASourceTheFormulaNeedsFromTheTree() throws {
+        try nameConfigBesideTheBuildFolder()
+
+        interpreter.handleCommand("build hello")
+
+        XCTAssertTrue(try configIsPushed())
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
+    func test_noFollowPushesTheNamedFolderAlone() throws {
+        try nameConfigBesideTheBuildFolder()
+
+        interpreter.handleCommand("build hello --no-follow")
+
+        XCTAssertFalse(try configIsPushed())
+        XCTAssertEqual(interpreter.errorsReported, 1, "the unpushed config is the report")
+    }
+
+    /// A source the report names that is not on disk stays the error it is.
+    func test_aSourceMissingFromDiskIsNotPushedAndStaysReported() throws {
+        try nameConfigBesideTheBuildFolder()
+        try FileManager.default.removeItem(at: externalRoot.appendingPathComponent("clang.cfg"))
+
+        interpreter.handleCommand("build hello")
+
+        XCTAssertFalse(try configIsPushed())
+        XCTAssertEqual(interpreter.errorsReported, 1)
+    }
+
+    /// The line says where the source is from the formula's point of view, which is how
+    /// the formula spelled it.
+    func test_theSourceIsNamedRelativeToTheFormulasFolder() {
+        XCTAssertEqual(CommandInterpreter.relativePath(to: "clang.cfg", from: "hello"), "../clang.cfg")
+        XCTAssertEqual(CommandInterpreter.relativePath(to: "swift/MyLibrary", from: "swift/MyApp"), "../MyLibrary")
+        XCTAssertEqual(CommandInterpreter.relativePath(to: "hello/extra.h", from: "hello"), "extra.h")
+    }
+
     // MARK: - --into
 
     /// The destination is the opt-in: with one, a clean build ends with its products on

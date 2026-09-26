@@ -17,7 +17,6 @@ enum Projects {
         name: "c-hello",
         source: .fixture(folder: "."),
         buildFolder: "c",
-        alsoPush: ["clang.cfg"],
         platform: nil,
         expectedProducts: ["hello", "hello.dylib", "config.txt"],
         buildTimeout: fixtureTimeout)
@@ -29,7 +28,6 @@ enum Projects {
         name: "tutorial",
         source: .fixture(folder: "."),
         buildFolder: "tutorial",
-        alsoPush: ["clang.cfg"],
         platform: nil,
         expectedProducts: ["hello", "hello.dylib", "config.txt", "lines.txt"],
         buildTimeout: fixtureTimeout)
@@ -41,18 +39,16 @@ enum Projects {
         name: "cpp-emu6502",
         source: .fixture(folder: "."),
         buildFolder: "cpp",
-        alsoPush: ["clang.cfg"],
         platform: nil,
         expectedProducts: ["emu6502"],
         buildTimeout: fixtureTimeout)
 
-    /// MyLibrary is a path dependency beside MyApp, so it is pushed first: `build`
-    /// pushes only its own folder, and the converter waits for a folder nobody pushed.
+    /// MyLibrary is a path dependency beside MyApp: `build` pushes its own folder, the
+    /// converter reports the folder it needs, and `build` follows it (B-110).
     static let swiftMyApp = Project(
         name: "swift-my-app",
         source: .fixture(folder: "."),
         buildFolder: "swift/MyApp",
-        alsoPush: ["swift/MyLibrary"],
         platform: "macos",
         expectedProducts: ["MyApp"],
         buildTimeout: fixtureTimeout)
