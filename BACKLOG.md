@@ -269,19 +269,23 @@ taught us".
 
 ## Formula language
 
-**B-108** `open` — **Formula preludes: built-in functions a plugin provides.**
-A straightforward project should have a straightforward formula. Today a C dylib takes a
-settings selector per tool, a preprocessor → compiler → linker chain, a for-each over the
-files and a name for every wire — fifteen lines copied across all three C fixtures, with
-the `%%f%%`/`%%f.0%%` trap in the middle. Design:
-`docs/superpowers/specs/2026-09-25-semel-formula-preludes-design.md`. Plugins (`SemelClang`,
-`SemelSwift`, `SemelApple`) intercept include names and provide formula text of `func`s for
-them; a formula names no plugin until it says `include 'clang'`, and then calls
-`clang.executable(sources: <src>, settings: <clang.cfg>)`. The text reaches
-`ProjectBuilder` on a wire from a `FormulaPrelude` source node the engine fills when it is
-created and again at each start, so a changed prelude re-runs exactly the builders that
-include it. Needs, in the language: string includes, dotted calls, lexical scope for func
-bodies, every parameter bound, and parameters usable in templates.
+**B-108** `open` — **Formula preludes: built-in functions a plugin provides — residuals.**
+Done 2026-09-25 (design and "As built" notes:
+`docs/superpowers/specs/2026-09-25-semel-formula-preludes-design.md`): plugins intercept
+include names through `FormulaIncludeProviders`; `include 'clang'` wires a `FormulaPrelude`
+node the engine fills when it is created and at every start; func bodies are lexically
+scoped with every parameter bound and usable in templates; dotted calls reach a prelude's
+funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the `c`,
+`tutorial` and `HelloApp` fixtures use them. What remains:
+
+1. **A prelude another prelude includes is callable from the formula** without the formula
+   including it — the design says it should not be.
+2. **Nested source folders.** Folder patterns match one level, so `sources: <src>` finds
+   `src/*.c` and not `src/lib/*.c`; the fix is `**` in `ProjectBuilder`'s wildcard matcher.
+3. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
+   carrying each entry's mode would let `apple` build the whole bundle as one tree.
+4. **Merged settings.** `settings:` is one file; a project layering a local file over a
+   shared one (the `cpp` fixture's `ConfigMerger`) still wires by hand.
 
 ## Design, correctness and code quality
 

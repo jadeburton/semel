@@ -335,3 +335,29 @@ What loading needs elsewhere, outside B-108:
   preludes want the same name.
 - **A `semel expand <formula>` command** printing a formula with its prelude calls expanded
   would make the expansion inspectable without reading the prelude. Useful, not required.
+
+## As built (2026-09-25)
+
+Where the implementation departs from the design above, and why:
+
+- **Prelude text is a Swift string literal**, not a `.fmla` resource: a resource bundle has
+  to be found beside `semelserv` at run time, which is fragile; the text is still plain
+  formula, and the settings prefixes are interpolated from each node type's own constant.
+- **The app bundle stays a set of products.** `TreeBuilder` writes every entry with the
+  default mode, so an executable placed in the bundle's tree would lose the bit that lets
+  it launch. `apple` provides `assets`, `resources` (the asset catalog plus every
+  `*.xcstrings` in a folder) and `infoPlist`; the executable is `swift.executableUsing`.
+- **A target that imports a package is its own func** — `swift.moduleUsing`,
+  `swift.executableUsing` — since the language has no optional parameters.
+- **`infoPlist` takes the catalog folder**, not the compiled assets: a func cannot pick a
+  port off a value it was handed. Rebuilding the compiler from the same arguments names the
+  same node.
+- **`semel-swift prepare`** wrote settings for the prefixes a formula spells out; a formula
+  including a prelude spells none, so it reads each included prelude's text too.
+- **The `cpp` fixture stays hand-written.** It exercises `ConfigMerger`, which a single
+  `settings:` file cannot express.
+
+What the clang and swift preludes build is node for node what the hand-written fixtures
+built (`ClangPreludeTests`, `AppPreludeTests`), so a formula that moves to them keeps its
+graph and its cache. Not enforced: a prelude that another prelude includes is callable from
+the formula without the formula including it.

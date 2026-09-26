@@ -1,27 +1,12 @@
-// Each tool selects its own settings out of the shared config file by naming a prefix.
-// ConfigFilter strips that prefix, so the tool receives the plain keys it reads —
-// `target`, `sdkPath` — while the file keeps them apart by node.
-//
-// Selecting rather than wiring the whole file is what keeps an edit local: changing a
-// setting one tool does not read leaves the other selectors' output byte-identical, so
-// their nodes keep their cached results instead of rebuilding.
+// A C library and an executable from the same sources. `include 'clang'` brings the
+// funcs SemelClang provides: each takes the folder of sources and the settings file, and
+// wires the preprocessor, compiler and linker — each selecting its own settings out of the
+// file by the prefix its node type reads — so this formula does not.
 
-func rawConfig() = StaticFile(path: <../clang.cfg>)
+include 'clang'
 
-func config(prefix) = ConfigFilter(prefix: prefix, input: [rawConfig()])
-
-func preprocessor(path) = ClangPreprocessor(
-  configuration: [config(prefix: 'clang.preprocessor')],
-  input: [path: StaticFile(path: path)]
-)
-
-func make(glob, dynamicLibrary) = ClangLinker(
-  configuration: [Configuration(inherit: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
-  objectFiles: [{f: glob} "%%f%%.o": ClangCompiler(configuration: [config(prefix: 'clang.compiler')], input: ["%%f%%.p": preprocessor(path: f)])]
-)
-
-product "hello.dylib" = make(dynamicLibrary: 'true', glob: <src/*.c>)
-product "hello" = make(dynamicLibrary: 'false', glob: <src/*.c>)
+product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: <../clang.cfg>)
+product "hello" = clang.executable(sources: <src>, settings: <../clang.cfg>)
 
 // The whole file, not a subset — this product exists to show what was pushed.
-product "config.txt" = rawConfig()
+product "config.txt" = StaticFile(path: <../clang.cfg>)

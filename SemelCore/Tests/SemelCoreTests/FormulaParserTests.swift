@@ -223,6 +223,57 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(result["X"]?.properties.first?.value, "local/path")
     }
 
+    // MARK: - What a func body sees (B-108)
+
+    /// A func may be written by someone other than the formula calling it, so a `%%f%%` in
+    /// its body is its own text, not the caller's loop variable.
+    func test_aFuncBodyDoesNotSeeTheCallersForEachVariable() throws {
+        let result = try parse("""
+            func tag() = Tool(name: '%%f%%').output
+            product "X" = Linker(input: [{f: 'a', 'b'} "%%f%%": tag()]).output
+            """)
+        let wires = try XCTUnwrap(result["X"]?.inputs.first?.wires)
+        XCTAssertEqual(wires.map(\.name), ["a", "b"])
+        XCTAssertEqual(wires.map { $0.node.properties.first?.value }, ["%%f%%", "%%f%%"])
+    }
+
+    func test_aFuncBodyDoesNotSeeTheCallersParameters() throws {
+        XCTAssertThrowsError(try parse("""
+            func inner() = StaticFile(path: path).output
+            func outer(path) = inner()
+            product "X" = outer('src/a.c')
+            """)) { error in
+            XCTAssertEqual("\(error)", "Undefined identifier 'path'")
+        }
+    }
+
+    /// Whether or not the body happens to read it.
+    func test_aParameterLeftOutOfACallIsAnError() throws {
+        XCTAssertThrowsError(try parse("""
+            func file(path, mode) = StaticFile(path: path).output
+            product "X" = file(path: 'src/a.c')
+            """)) { error in
+            XCTAssertEqual("\(error)", "'file' is called without its parameter 'mode'")
+        }
+    }
+
+    /// The formula names the folder; the func names the pattern.
+    func test_aParameterIsATemplateVariableInTheBody() throws {
+        var patterns: [String] = []
+        let result = try FormulaFile.parse("""
+            func objects(sources) = Linker(input: [{file: '%%sources%%/*.c'} "%%file.0%%.o": StaticFile(path: file)]).output
+            product "X" = objects(sources: 'input:/hello/src')
+            """, basePath: Path("."), wildcardExpander: { pattern in
+                patterns.append(pattern)
+                return ["input:/hello/src/main.c", "input:/hello/src/util.c"]
+            })
+
+        XCTAssertEqual(patterns, ["input:/hello/src/*.c"])
+        let wires = try XCTUnwrap(result["X"]?.inputs.first?.wires)
+        XCTAssertEqual(wires.map(\.name), ["main.o", "util.o"])
+        XCTAssertEqual(wires.first?.node.properties.first?.value, "input:/hello/src/main.c")
+    }
+
     // MARK: - Comments
 
     func test_lineComment_isIgnored() throws {
@@ -533,9 +584,68 @@ final class FormulaParserTests: SemelCoreTestCase {
         }
     }
 
-    func test_anIncludeThatIsNotANodeIsRejected() {
-        XCTAssertThrowsError(try parse("include 'just a string'", included: [:])) { error in
-            XCTAssertTrue(String(describing: error).contains("include"), "got \(error)")
+    // MARK: - Preludes (B-108)
+
+    private let clangPrelude = "FormulaPrelude(name: 'clang').formula"
+
+    /// A string names a plugin's prelude, which the builder wires as a node like any other
+    /// included text.
+    func test_aStringIncludeNamesTheFormulaPreludeNodeForThatName() throws {
+        var asked: [String] = []
+        _ = try FormulaFile.parse("include 'clang'", basePath: Path("input:/repo"),
+                                  wildcardExpander: { _ in [] },
+                                  includeReader: { asked.append($0); return nil })
+
+        XCTAssertEqual(asked, [clangPrelude])
+    }
+
+    /// The prelude calls its sibling as `objects(…)`, as a formula would; merged, both are
+    /// under the namespace.
+    func test_aPreludesFuncsAreCalledThroughItsNamespace() throws {
+        let result = try parse("""
+            include 'clang'
+            product 'hello' = clang.executable(sources: <src>)
+            """, included: [
+            clangPrelude: """
+                namespace clang
+                func objects(sources) = Compiler(path: sources).output
+                func executable(sources) = Linker(input: ['objects': objects(sources: sources)]).output
+                """,
+        ])
+
+        let hello = try XCTUnwrap(result["hello"])
+        XCTAssertEqual(hello.typeName, "Linker")
+        XCTAssertEqual(hello.inputs.first?.wires.first?.node.typeName, "Compiler")
+        XCTAssertEqual(hello.inputs.first?.wires.first?.node.properties.first?.value, "input:/repo/src")
+    }
+
+    /// A namespace keeps the formula's own names free.
+    func test_aFormulaFuncMayShareABareNameWithAPreludeFunc() throws {
+        let result = try parse("""
+            include 'clang'
+            func executable() = Mine().output
+            product 'theirs' = clang.executable()
+            product 'mine' = executable()
+            """, included: [
+            clangPrelude: "namespace clang\nfunc executable() = Theirs().output",
+        ])
+
+        XCTAssertEqual(result["theirs"]?.typeName, "Theirs")
+        XCTAssertEqual(result["mine"]?.typeName, "Mine")
+    }
+
+    /// A product in a prelude would be published in every project that includes it.
+    func test_aPreludeDeclaringAProductIsRejected() {
+        XCTAssertThrowsError(try parse("include 'clang'", included: [
+            clangPrelude: "namespace clang\nproduct 'surprise' = StaticFile(path: 'input:/x').output",
+        ])) { error in
+            XCTAssertEqual("\(error)", "the prelude 'clang' declares the product 'surprise'; a prelude holds funcs only")
+        }
+    }
+
+    func test_aFormulaCannotDeclareANamespace() {
+        XCTAssertThrowsError(try parse("namespace clang\nfunc executable() = Theirs().output", included: [:])) { error in
+            XCTAssertEqual("\(error)", "'namespace clang' belongs to a plugin's prelude, not to a formula")
         }
     }
 }

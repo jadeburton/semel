@@ -191,23 +191,29 @@ Open `~/semel-playground/hello/hello.fmla`. It is a *formula*: it says what the 
 are, as expressions, and nothing about order or commands.
 
 ```
-func preprocessor(path) = ClangPreprocessor(
-  configuration: [config(prefix: 'clang.preprocessor')],
-  input: [path: StaticFile(path: path)]
+include 'clang'
+
+product "hello" = clang.executable(sources: <src>, settings: <../clang.cfg>)
+```
+
+A *product* is an expression whose value is published. Everything else is intermediate and
+stays inside. A formula names no toolchain until it includes one: `include 'clang'` brings
+the funcs the Clang plugin provides, and `clang.executable` is one of them — a folder of
+sources and a settings file in, a program out. A `func` is only a way not to write the same
+expression twice, and what `clang.executable` stands for is written in this same language.
+Its first step, for one source file:
+
+```
+func preprocessed(file, settings) = ClangPreprocessor(
+  configuration: [selected(settings: settings, prefix: 'clang.preprocessor')],
+  input: [file: StaticFile(path: file)]
 )
 ```
 
 `ClangPreprocessor(...)` and `StaticFile(...)` are *nodes*. The names before the colons —
 `configuration`, `input` — are the node's input *ports*, and each `name: expression` inside
 the brackets is a *wire*: a named connection carrying a value from one node's output to
-another's input. A `func` is only a way not to write the same expression twice.
-
-```
-product "hello" = make(dynamicLibrary: 'false', glob: <src/*.c>)
-```
-
-A *product* is an expression whose value is published. Everything else is intermediate and
-stays inside. `make` expands the glob into one compile chain per file:
+another's input. `executable` makes one compile chain per file in `src`:
 
 ```
  src/hello.c  ─ StaticFile ─ ClangPreprocessor ─ ClangCompiler ─┐
@@ -215,6 +221,11 @@ stays inside. `make` expands the glob into one compile chain per file:
  src/main.c   ─ StaticFile ─ ClangPreprocessor ─ ClangCompiler ─┘
  clang.cfg ─ StaticFile ─ ConfigFilter('clang.compiler') ─ … into every compiler
 ```
+
+The whole prelude is twenty lines, in
+[`ClangPrelude.swift`](../../SemelClang/Sources/SemelClang/ClangPrelude.swift). A formula
+that needs something it does not do writes those expressions itself, and gets the same
+nodes.
 
 The graph is not rebuilt from the formula each time. It lives in a database, and nodes
 react when a wire's value changes. Look at what it published:
@@ -292,7 +303,7 @@ No errors.
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Nine nodes woken out of the thirty-five in this graph, and eight of them
+`config.txt` not. Nine nodes woken out of the thirty-six in this graph, and eight of them
 ran: the project finder and the include finder, then one preprocessor and one compiler —
 `hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
 because both products take that object, then the two output files. The ninth is the node
@@ -357,7 +368,7 @@ this story in full, and the whole file is seventy-five lines — read it now; it
 of the node you are about to write.
 
 `errors` shows what is wrong when a build fails; after a good build it says `No errors.`
-`debug` dumps the whole graph — thirty-five nodes here, fourteen hundred lines. It is a
+`debug` dumps the whole graph — thirty-six nodes here, fourteen hundred lines. It is a
 lot, and worth seeing once.
 
 ## Part 3 — Write a node

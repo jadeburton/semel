@@ -7,14 +7,17 @@
 //
 // Grammar (informal):
 //
-//   formula     = topLevel*
-//   topLevel    = funcDef | productDef
+//   formula     = ('namespace' IDENT)? topLevel*          -- 'namespace' only in a prelude
+//   topLevel    = funcDef | productDef | include
 //   funcDef     = 'func' IDENT '(' paramList? ')' '=' expr
 //   productDef  = 'product' (STRING | PATH) '=' expr
+//   include     = 'include' expr                          -- a node's formula text, or a
+//                                                         -- STRING naming a plugin's prelude
 //   paramList   = IDENT (',' IDENT)*
 //   expr        = STRING | PATH
 //               | IDENT                                   -- parameter reference
 //               | IDENT '(' argList? ')' ('.' IDENT)?    -- call or node construct
+//               | IDENT '.' IDENT '(' argList? ')' ('.' IDENT)?   -- a prelude's func
 //   arg         = IDENT ':' '[' wireEntry* ']'            -- input-wire port (value is a wire dict)
 //               | IDENT ':' expr                          -- labeled / property
 //               | expr                                    -- positional
@@ -77,6 +80,9 @@ extension FormulaFile {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
         var file   = try parser.parseFile()
+        if let namespace = file.namespace {
+            throw FormulaParseError.namespaceOutsidePrelude(namespace: namespace)
+        }
 
         // An include expression may call the file's own funcs, so it is resolved against
         // them — before the included text is merged in, which is what keeps the direction
@@ -97,7 +103,7 @@ extension FormulaFile {
             }
             // Generated text names every path absolutely, so the base path is nominal.
             var includedParser = FormulaParser(try FormulaLexer.tokenize(includedFormula, basePath: basePath))
-            let includedFile = try includedParser.parseFile()
+            let includedFile = try includedParser.parseFile().namespaced()
             file = try file.merging(includedFile)
             pending += includedFile.includes
         }
@@ -117,6 +123,34 @@ struct FormulaFile {
     /// file's products and its funcs are callable. The language knows nothing about
     /// packages or toolchains here: it merges what the named node produces.
     let includes:  [FormulaExpr]
+    /// `namespace <name>`: set on a plugin's prelude (B-108), whose funcs a formula calls as
+    /// `name.func(…)`. `FormulaPrelude` writes the line; a formula of its own may not.
+    var namespace: String?
+
+    /// A prelude's funcs under its namespace: each `f` becomes `namespace.f`, and so does
+    /// every call the prelude makes to one of its own funcs. A plain file is returned as it
+    /// is.
+    ///
+    /// Renaming here rather than scoping in the resolver keeps resolution a lookup by name:
+    /// `clang.executable` is simply the name of a func. A prelude's calls to its siblings are
+    /// renamed with it, so its text reads as a formula would — `objects(…)`, not
+    /// `clang.objects(…)` — while a call into another prelude it includes keeps that
+    /// prelude's namespace.
+    func namespaced() throws -> FormulaFile {
+        guard let namespace else {
+            return self
+        }
+        if let product = products.first {
+            throw FormulaParseError.productInPrelude(namespace: namespace, product: product.name)
+        }
+        let ownNames = Set(functions.map(\.name))
+        let renamed = functions.map { function in
+            FuncDef(name:   "\(namespace).\(function.name)",
+                    params: function.params,
+                    body:   function.body.renamingCalls(to: ownNames, under: namespace))
+        }
+        return FormulaFile(functions: renamed, products: [], includes: includes)
+    }
 
     /// This file with `other`'s functions and products added.
     ///
@@ -178,6 +212,49 @@ enum FormulaCallArg: Equatable {
     case inputWire(portName: String, wires: [WireDictEntry])
 }
 
+// MARK: - Namespacing a prelude's calls
+
+extension FormulaExpr {
+    /// This expression with every call to one of `names` spelled `namespace.name`.
+    func renamingCalls(to names: Set<String>, under namespace: String) -> FormulaExpr {
+        guard case .call(let name, let args, let port) = self else {
+            return self
+        }
+        let callee = names.contains(name) ? "\(namespace).\(name)" : name
+        return .call(name: callee, args: args.map { $0.renamingCalls(to: names, under: namespace) }, port: port)
+    }
+}
+
+extension FormulaCallArg {
+    func renamingCalls(to names: Set<String>, under namespace: String) -> FormulaCallArg {
+        switch self {
+        case .positional(let expr):
+            return .positional(expr.renamingCalls(to: names, under: namespace))
+        case .labeled(let key, let expr):
+            return .labeled(key: key, value: expr.renamingCalls(to: names, under: namespace))
+        case .inputWire(let portName, let wires):
+            return .inputWire(portName: portName, wires: wires.map { $0.renamingCalls(to: names, under: namespace) })
+        }
+    }
+}
+
+extension WireDictEntry {
+    func renamingCalls(to names: Set<String>, under namespace: String) -> WireDictEntry {
+        switch self {
+        case .simple(let key, let value):
+            return .simple(key:   key.renamingCalls(to: names, under: namespace),
+                           value: value.renamingCalls(to: names, under: namespace))
+        case .unnamed(let value):
+            return .unnamed(value: value.renamingCalls(to: names, under: namespace))
+        case .forEach(let variable, let items, let key, let value):
+            return .forEach(variable: variable,
+                            items:    items.map { $0.renamingCalls(to: names, under: namespace) },
+                            key:      key,
+                            value:    value.renamingCalls(to: names, under: namespace))
+        }
+    }
+}
+
 /// A single entry in an input-wire dictionary.
 ///
 /// A `simple` entry contributes exactly one wire with an explicit key.
@@ -214,6 +291,9 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
     case pathEscapesRoot(path: String)
     case forEachRequiresAtLeastOneItem
     case duplicateDefinition(kind: String, name: String)
+    case unboundParameter(function: String, parameter: String)
+    case namespaceOutsidePrelude(namespace: String)
+    case productInPrelude(namespace: String, product: String)
 
     var description: String {
         switch self {
@@ -241,6 +321,12 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
             return "for-each '{...}' requires at least one item"
         case .duplicateDefinition(let kind, let name):
             return "\(kind) '\(name)' is defined both by the formula and by a formula it includes"
+        case .unboundParameter(let function, let parameter):
+            return "'\(function)' is called without its parameter '\(parameter)'"
+        case .namespaceOutsidePrelude(let namespace):
+            return "'namespace \(namespace)' belongs to a plugin's prelude, not to a formula"
+        case .productInPrelude(let namespace, let product):
+            return "the prelude '\(namespace)' declares the product '\(product)'; a prelude holds funcs only"
         }
     }
 
@@ -500,6 +586,7 @@ private struct FormulaParser {
 
     private var current: FormulaToken { tokens[pos].token }
     private var peek1:   FormulaToken { pos + 1 < tokens.count ? tokens[pos + 1].token : .eof }
+    private var peek2:   FormulaToken { pos + 2 < tokens.count ? tokens[pos + 2].token : .eof }
 
     private mutating func advance() { if pos < tokens.count - 1 { pos += 1 } }
 
@@ -522,6 +609,14 @@ private struct FormulaParser {
         var functions: [FuncDef]     = []
         var products:  [ProductDef]  = []
         var includes:  [FormulaExpr] = []
+        var namespace: String?
+
+        // `namespace <name>` opens a prelude's text. Not a keyword, so that nothing already
+        // spelled `namespace` — a property, a parameter — stops parsing.
+        if case .ident("namespace") = current, case .ident(let name) = peek1 {
+            advance(); advance()
+            namespace = name
+        }
 
         while current != .eof {
             switch current {
@@ -537,7 +632,7 @@ private struct FormulaParser {
             }
         }
 
-        return FormulaFile(functions: functions, products: products, includes: includes)
+        return FormulaFile(functions: functions, products: products, includes: includes, namespace: namespace)
     }
 
     // func name(p1, p2, ...) = expr
@@ -577,13 +672,20 @@ private struct FormulaParser {
     // expr = STRING
     //      | IDENT                               -- parameter reference
     //      | IDENT '(' argList? ')' ('.' IDENT)? -- call / node construct
+    //      | IDENT '.' IDENT '(' argList? ')' ('.' IDENT)?  -- call to a prelude's func
     private mutating func parseExpr() throws -> FormulaExpr {
         switch current {
         case .string(let s):
             advance()
             return .string(s)
-        case .ident(let name):
+        case .ident(var name):
             advance()
+            // `clang.executable(…)`: a dot between two names is a namespace only when a call
+            // follows, which is what keeps it apart from a port suffix — that follows ')'.
+            if current == .dot, case .ident(let member) = peek1, peek2 == .lparen {
+                advance(); advance()
+                name = "\(name).\(member)"
+            }
             guard current == .lparen else {
                 return .identifier(name)   // no parens → parameter reference
             }
@@ -881,14 +983,16 @@ private struct FormulaResolver {
     }
 
     /// The node an `include` statement names, resolved like a product body.
+    ///
+    /// A string names a plugin's prelude (B-108): `include 'clang'` is the `FormulaPrelude`
+    /// node for that name, whose output is the text the plugin provides.
     func resolve(include expr: FormulaExpr) throws -> GraphSpecNode {
-        let value = try eval(expr, env: [:], templateEnv: [:])
-        guard case .node(let node) = value else {
-            throw FormulaParseError.typeMismatch(
-                expected: "node", got: value.typeName,
-                context: "'include' must name a node whose output is formula text")
+        switch try eval(expr, env: [:], templateEnv: [:]) {
+        case .node(let node):
+            return node
+        case .string(let name):
+            return FormulaPrelude.spec(forIncludeNamed: name)
         }
-        return node
     }
 
     // MARK: Evaluation
@@ -950,14 +1054,24 @@ private struct FormulaResolver {
         }
     }
 
-    // User-defined function call: bind args to params then evaluate body.
+    /// A user-defined function call: the arguments are evaluated where the call is, and the
+    /// body where the function is.
+    ///
+    /// The body sees its parameters and nothing of the caller's — neither its parameters
+    /// nor its for-each bindings. A func may be written by someone other than the formula
+    /// that calls it (a plugin's prelude, B-108), so a `%%f%%` in its body must not expand
+    /// to whatever `f` the caller happens to be iterating, and a parameter the caller left
+    /// out must not be filled by a caller's variable of the same name.
+    ///
+    /// A string argument is also a template variable in the body: `'%%sources%%/*.c'` is how
+    /// a func turns the folder it was given into the pattern it matches.
     func evalFuncCall(
         _ funcDef: FuncDef,
         args: [FormulaCallArg],
         env: [String: FormulaValue],
         templateEnv: [String: ForEachBinding]
     ) throws -> FormulaValue {
-        var newEnv = env
+        var newEnv: [String: FormulaValue] = [:]
         var positionalIdx = 0
 
         for arg in args {
@@ -984,7 +1098,17 @@ private struct FormulaResolver {
             }
         }
 
-        return try eval(funcDef.body, env: newEnv, templateEnv: templateEnv)
+        var bodyTemplateEnv: [String: ForEachBinding] = [:]
+        for parameter in funcDef.params {
+            guard let value = newEnv[parameter] else {
+                throw FormulaParseError.unboundParameter(function: funcDef.name, parameter: parameter)
+            }
+            if case .string(let text) = value {
+                bodyTemplateEnv[parameter] = ForEachBinding(variable: parameter, full: text, groups: [])
+            }
+        }
+
+        return try eval(funcDef.body, env: newEnv, templateEnv: bodyTemplateEnv)
     }
 
     // import(path: <file>) — reads an external .graph file and returns its root node.

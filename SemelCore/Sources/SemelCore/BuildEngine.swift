@@ -29,6 +29,7 @@ public final class BuildEngine {
         shared = engine
         do {
             try engine.reconcileVersionMarkers()
+            try FormulaPrelude.refreshAll(database: engine.database)
         } catch {
             FatalErrors.check(error)
             throw error
@@ -68,6 +69,7 @@ public final class BuildEngine {
             Configuration.self,
             ConfigFilter.self,
             ConfigMerger.self,
+            FormulaPrelude.self,
         ])
         ProjectDiscovery.register(FormulaFilePlugin())
     }

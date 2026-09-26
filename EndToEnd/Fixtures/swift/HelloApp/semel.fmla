@@ -1,41 +1,26 @@
-// A SwiftUI app for the iOS simulator, hand-written: the bundle is a set of products
-// under one folder name. The executable is compiled and linked like any Swift target; the
-// resources are compiled by the Apple platform nodes, whose file sets are trees; the
-// Info.plist is built from the project's file and actool's partial one.
+// A SwiftUI app for the iOS simulator: the bundle is a set of products under one folder
+// name. The executable is a Swift target that imports a package; the resources and the
+// Info.plist come from `include 'apple'`, which compiles the asset and string catalogs and
+// merges actool's partial Info.plist into the project's.
 
-func settings(prefix) = ConfigFilter(prefix: prefix, input: ['config': StaticFile(path: <semel.config>).output]).output
+include 'swift'
+include 'apple'
 
 // A package the app imports: its converter's formula brings the funcs that carry the
 // product's modules and objects as trees, named after the product.
 include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
-func compiled() = SwiftCompiler(
-    configuration: ['config': Configuration(moduleName: 'Hello', inherit: ['settings': settings(prefix: 'swift.compiler')]).output],
-    inputFolder: ['folder0': Folder(path: <Sources>).manifest],
-    moduleTrees: ['HelloKit': modules_HelloKit().files]
+product 'Hello.app/Hello' = swift.executableUsing(
+    sources: <Sources>, name: 'Hello', settings: <semel.config>,
+    package: 'HelloKit', modules: modules_HelloKit().files, objects: objects_HelloKit().files
 )
 
-func assets() = AssetCatalogCompiler(
-    configuration: ['config': Configuration(appIcon: 'AppIcon', inherit: ['settings': settings(prefix: 'apple.assetCatalogCompiler')]).output],
-    catalogs: ['assets': Folder(path: <Assets.xcassets>).manifest]
+product 'Hello.app/Info.plist' = apple.infoPlist(
+    base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: <semel.config>
 )
-
-func strings() = StringCatalogCompiler(
-    configuration: ['config': Configuration(inherit: ['settings': settings(prefix: 'apple.stringCatalogCompiler')]).output],
-    catalog: ['Localizable.xcstrings': StaticFile(path: <Resources/Localizable.xcstrings>).output]
-)
-
-product 'Hello.app/Hello' = SwiftLinker(
-    configuration: ['config': Configuration(linkage: 'executable', outputName: 'Hello', inherit: ['settings': settings(prefix: 'swift.linker')]).output],
-    input: ['Hello.o': compiled().object],
-    objectTrees: ['HelloKit': objects_HelloKit().files]
-).output
-
-product 'Hello.app/Info.plist' = InfoPlistBuilder(
-    base: ['base': StaticFile(path: <Info.plist>).output],
-    partials: ['assets': assets().partialInfoPlist]
-).plist
 
 product 'Hello.app/PkgInfo' = StaticFile(path: <PkgInfo>).output
 
-product 'Hello.app/' = TreeMerger(input: ['assets': assets().files, 'strings': strings().files]).files
+product 'Hello.app/' = apple.resources(
+    catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: <semel.config>
+)
