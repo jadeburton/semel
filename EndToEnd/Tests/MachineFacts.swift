@@ -1,32 +1,20 @@
 //
-//  ClangConfigTemplate.swift
+//  MachineFacts.swift
 //  SemelEndToEndTests
 //
-//  The C fixtures' base config carries two facts about the machine: the clang version
-//  string the toolchain checks against, and the macOS SDK path. Rendered at run time,
-//  the way `prepare` derives the same facts for a Swift tree.
+//  Two facts about the machine the tests run on, read the way `semel tools` reads them,
+//  so a test can check the machine file the harness had written against the machine.
 //
 
 import Foundation
 import SemelTestSupport
 
-enum ClangConfigTemplate {
-
-    static func render(template: URL, to destination: URL) throws {
-        var text = try String(contentsOf: template, encoding: .utf8)
-        text = text.replacingOccurrences(of: "${CLANG_VERSION}", with: try clangVersion())
-        text = text.replacingOccurrences(of: "${MACOS_SDK_PATH}", with: try macOSSDKPath())
-        guard !text.contains("${") else {
-            throw EndToEndFailure(step: "configure", message: "unrendered placeholder left in \(destination.lastPathComponent)")
-        }
-        try text.write(to: destination, atomically: true, encoding: .utf8)
-    }
+enum MachineFacts {
 
     /// The first line of `xcrun clang --version`, the `Apple clang version …` string the
     /// tool descriptor carries.
     static func clangVersion() throws -> String {
-        let output = try firstLine(of: "/usr/bin/xcrun", arguments: ["clang", "--version"], step: "configure: clang --version")
-        return output
+        try firstLine(of: "/usr/bin/xcrun", arguments: ["clang", "--version"], step: "configure: clang --version")
     }
 
     static func macOSSDKPath() throws -> String {

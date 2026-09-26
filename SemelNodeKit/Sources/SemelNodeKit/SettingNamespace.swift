@@ -113,17 +113,20 @@ public struct RequiredSettings {
         }
         let choices    = sorted.filter { !machine.contains($0) }
 
-        var paragraphs = ["Missing configuration. Add these to a semel.config in the input file system:"]
+        // Each kind under its own heading, saying whose it is and what answers it (B-109):
+        // the project's keys are typed with a value, the machine's are written by a command.
+        var paragraphs: [String] = []
 
         if !choices.isEmpty {
+            paragraphs.append("Missing configuration. Add these to the project's semel.config, with your values:")
             paragraphs.append(choices.map { "\($0)=…" }.joined(separator: "\n"))
         }
 
         if !machine.isEmpty {
+            paragraphs.append("Missing machine settings. Run 'tools --write semel.machine.config': it writes the " +
+                              "tool descriptors and SDK facts of the tools installed here, for every namespace " +
+                              "this graph reads, these among them:")
             paragraphs.append(machine.joined(separator: "\n"))
-            paragraphs.append("Run 'tools --write semel.machine.config' for those: it writes the " +
-                              "toolDescriptor keys and the machine settings of the tools " +
-                              "installed here, for every namespace this graph reads.")
         }
 
         throw NodeError.other(message: paragraphs.joined(separator: "\n\n"))

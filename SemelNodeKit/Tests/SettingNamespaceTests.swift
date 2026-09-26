@@ -56,7 +56,7 @@ final class SettingNamespaceTests: XCTestCase {
         _ = settings.value("target")
 
         XCTAssertEqual(messageFrom(settings), """
-            Missing configuration. Add these to a semel.config in the input file system:
+            Missing configuration. Add these to the project's semel.config, with your values:
 
             clang.linker.target=…
             """)
@@ -69,15 +69,13 @@ final class SettingNamespaceTests: XCTestCase {
         _ = ToolDescriptor(required: &settings, properties: [:])
 
         XCTAssertEqual(messageFrom(settings), """
-            Missing configuration. Add these to a semel.config in the input file system:
+            Missing machine settings. Run 'tools --write semel.machine.config': it writes the tool descriptors \
+            and SDK facts of the tools installed here, for every namespace this graph reads, these among them:
 
             clang.linker.toolDescriptor.architecture
             clang.linker.toolDescriptor.name
             clang.linker.toolDescriptor.platform
             clang.linker.toolDescriptor.version
-
-            Run 'tools --write semel.machine.config' for those: it writes the toolDescriptor keys and the \
-            machine settings of the tools installed here, for every namespace this graph reads.
             """)
     }
 
@@ -92,7 +90,7 @@ final class SettingNamespaceTests: XCTestCase {
 
         let message = messageFrom(settings)
         XCTAssertTrue(message.contains("clang.linker.target=…"), message)
-        XCTAssertTrue(message.contains("\nclang.linker.sdkPath\n"), message)
+        XCTAssertTrue(message.contains("\nclang.linker.sdkPath"), message)
         XCTAssertFalse(message.contains("sdkPath=…"), message)
     }
 
@@ -105,7 +103,7 @@ final class SettingNamespaceTests: XCTestCase {
 
         let message = messageFrom(settings)
         XCTAssertTrue(message.contains("clang.linker.target=…"), message)
-        XCTAssertTrue(message.contains("\nclang.linker.toolDescriptor.name\n"), message)
+        XCTAssertTrue(message.contains("\nclang.linker.toolDescriptor.name"), message)
         XCTAssertFalse(message.contains("toolDescriptor.name=…"), message)
         XCTAssertTrue(message.contains("Run 'tools --write semel.machine.config'"), message)
     }

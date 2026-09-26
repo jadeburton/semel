@@ -276,3 +276,36 @@ holds it.
   that builds for the simulator and for macOS wants both blocks in one machine file.
   Whether the writer takes one platform, several, or writes every SDK the machine has for
   the namespaces selected, is a question for the first project that needs two.
+
+## As built (2026-09-27)
+
+Both open questions closed the simple way: the file is `semel.machine.config`, and
+`tools --write` takes one `--platform` (macOS unless said). What differs from the text
+above, and what it did not foresee:
+
+- **`ToolNamespace` declares its machine keys as well as answering them** —
+  `machineSettingKeys: Set<String>` beside `machineSettings: (Platform) -> [String: String]`
+  — because `RequiredSettings.check()` runs on a machine that may lack the SDK, where the
+  closure answers nothing and the report would have filed `sdkPath` under the project's
+  keys. Two headings, one per owner: the project's keys under *add these to semel.config,
+  with your values*, the machine's under *run `tools --write`*.
+- **The renderer moved to `SemelProtocol`** (`ToolNamespaceRenderer.machineFile`), the one
+  package both writers depend on; a file pins each namespace to the newest installed tool
+  where the listing shows every version. `prepare` builds the same records the daemon
+  builds for `tools`, in its own code — the type that could share it would have to know
+  both the registry and the protocol.
+- **`tools <prefix> --all --write`** writes every installed namespace under the prefix. The
+  harness uses it — `tools clang --all --write` — where it rendered the template, since no
+  graph exists in a run before its first build; the user's loop, build → write → build, is
+  `AutostartTests.test_theMissingSettingsLoopIsBuildWriteBuild`.
+- **The unused-key report walks both ways**: down from a file through `ConfigMerger` and
+  `Configuration` to the selectors, and up from each selector to the files, so the file
+  behind a prelude's merger is both found and read through.
+- **`prepare` rewrites the machine file every run** and keeps the project file and the
+  formula, as before; a namespace with nothing of the project's to say — the package
+  reader, xcstringstool — has no block in the project file.
+- **The C fixtures' machine file is shared**, `../semel.machine.config` beside the three
+  build folders, which keeps B-110's follow loop in the tutorial's first build; `HelloApp`
+  and prepared trees have theirs beside the formula. `cpp`'s own file is `semel.config`.
+- **Not done:** this repository's own `semel.config` still carries its machine facts
+  (residual 1 in FUTURE.md's B-109).

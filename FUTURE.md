@@ -479,28 +479,38 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
    `src/*.c` and not `src/lib/*.c`; the fix is `**` in `ProjectBuilder`'s wildcard matcher.
 3. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
-4. **Merged settings.** `settings:` is one file; a project layering a local file over a
-   shared one (the `cpp` fixture's `ConfigMerger`) still wires by hand. B-109 makes
-   `settings` a node, which answers this.
 
 ### Configuration
 
-**B-109** `open` — **Configuration: the machine's half and the project's half.**
-The configuration model is right — settings are wire values selected by prefix, nothing is
-inherited, nothing has a default — and the file a person writes is not: the C fixture's
-config is twenty lines for a three-line formula, fifteen of them facts about the machine
-(`toolDescriptor.*` per tool, `sdkPath`) repeated once per tool, which is why it cannot be
-checked in, why the fixtures carry a `.template`, and why the tutorial has its reader paste
-a block and type seven lines. Design:
-`docs/superpowers/specs/2026-09-26-semel-configuration-two-files-design.md`. Two files: a
-machine file written by `tools --write` from what each plugin declares as machine settings,
-for the namespaces the graph selects, ignored by version control; and a project file holding
-the project's choices, checked in. A prelude func takes `settings` as a node, and
-`clang.settings(project:machine:)` lays one over the other with `ConfigMerger` — which is
-also what lets a project compose its own settings for the cases the preludes do not cover.
-With it: `Configuration`'s `inherit` port becomes `base` (a `Semel.version` bump), the
-unused-key report follows a file through a merger to its filters, and `prepare`'s C
-standard moves to the project file under a comment naming it a choice.
+**B-109** `open` — **Configuration: the machine's half and the project's half — residuals.**
+Shipped: the configuration is two files. `semel.machine.config` holds the tool descriptors
+and the machine settings each plugin declares (`ToolNamespace.machineSettingKeys`, answered
+per `Platform`), written by `tools --write` for the namespaces the graph selects — `--all`
+for every installed one — and by `semel-swift prepare`, through one renderer in
+`SemelProtocol`; it is in `.gitignore`. `semel.config` holds the project's choices, typed
+once or written by prepare with the C standard under a comment naming it a choice, and
+checked in. Every prelude func takes `settings` as a node and provides
+`settings(project:machine:)`; `Configuration`'s port is `base` (`Semel.version` 0.1.7); the
+unused-key report follows a file through mergers to its filters; the C fixtures commit a
+project file each, the harness writes the machine file where it rendered the template, and
+the tutorial's config section is `build`, `tools --write`, `build`. Design:
+`docs/superpowers/specs/2026-09-26-semel-configuration-two-files-design.md`. What remains:
+
+1. **This repository's own `semel.config`** still carries its machine facts. Splitting it
+   means `tools --write semel.machine.config` at the root before a self-build, which the
+   README's Configuration section should then say; until it does, the project file's
+   machine keys pin the toolchain, which the design allows.
+2. **`target` split into its parts** (the spec's *Later*): a tool that took a platform and a
+   deployment version and composed the triple with its own architecture would let the
+   project file say nothing about the machine at all.
+3. **One machine file for several platforms.** `--platform` on `tools --write` is one
+   platform per write; a project building for the simulator and for macOS wants both
+   blocks, and the writer's answer — several flags, or every SDK the machine has — waits
+   for the first project that needs two.
+4. **The missing-source line when the file is not there.** A first build with no machine
+   file reports `semel.machine.config has not been pushed` under the tools' missing
+   settings; `build` could add the one line the loop needs — *run `tools --write`* — where
+   it reports the unpushed source, instead of leaving it to each tool's paragraph.
 
 ### Design, correctness and code quality
 
