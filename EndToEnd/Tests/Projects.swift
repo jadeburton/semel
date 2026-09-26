@@ -11,8 +11,8 @@ enum Projects {
 
     static let fixtureTimeout: TimeInterval = 120
 
-    /// `hello.fmla` reads the shared base config from `../clang.cfg`, a sibling of the
-    /// build folder rather than a file under it, so it needs its own push.
+    /// `hello.fmla` reads the machine's settings from `../semel.machine.config`, a sibling
+    /// of the build folder rather than a file under it, so it needs its own push.
     static let cHello = Project(
         name: "c-hello",
         source: .fixture(folder: "."),
@@ -23,7 +23,8 @@ enum Projects {
 
     /// The state docs/tutorial/first-node.md ends in: the C hello sources, and a formula
     /// that also counts their lines with `LineCounter` from SemelExamples. Reads the
-    /// shared base config from `../clang.cfg`, so that needs its own push, as for `cHello`.
+    /// machine's settings from `../semel.machine.config`, so that needs its own push, as
+    /// for `cHello`.
     static let tutorial = Project(
         name: "tutorial",
         source: .fixture(folder: "."),
@@ -32,9 +33,9 @@ enum Projects {
         expectedProducts: ["hello", "hello.dylib", "config.txt", "lines.txt"],
         buildTimeout: fixtureTimeout)
 
-    /// `6502emu.fmla` merges the shared base config from `../clang.cfg` with its own
-    /// `clang.cfg`; the shared file is a sibling of the build folder, so it needs its
-    /// own push.
+    /// `6502emu.fmla` lays its own `semel.config` over the machine's settings in
+    /// `../semel.machine.config`, by hand; the machine file is a sibling of the build
+    /// folder, so it needs its own push.
     static let cppEmu6502 = Project(
         name: "cpp-emu6502",
         source: .fixture(folder: "."),

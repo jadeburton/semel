@@ -80,54 +80,75 @@ Base directory set to /Users/you/semel-playground
 
 ### The config
 
-Semel has no defaults. Every tool a build runs is named in a config file, down to its
-version, because the version is part of what makes a cached result reusable. That makes the
-file the most tedious part of a first build, so do not write it — ask:
+Semel has no defaults. Every tool a build runs is named in configuration, down to its
+version, because the version is part of what makes a cached result reusable. The
+configuration is two files with two owners. The *project's* file holds what you decide —
+the target and the C standard, spelled out per node, because there is no inheritance. It
+came with the copy, as a project's would with its checkout: open
+`~/semel-playground/hello/semel.config`. Under a comment, five lines:
 
 ```
-tools
-```
-
-`tools` prints a block for every namespace this server knows, `apple.*` and `swift.*`
-included. The three you want are these:
-
-```
-clang.compiler.toolDescriptor.name=clang
-clang.compiler.toolDescriptor.version=Apple clang version 21.0.0 (clang-2100.1.1.101)
-clang.compiler.toolDescriptor.platform=macOS
-clang.compiler.toolDescriptor.architecture=arm64
-
-clang.linker.toolDescriptor.name=clang
-clang.linker.toolDescriptor.version=Apple clang version 21.0.0 (clang-2100.1.1.101)
-clang.linker.toolDescriptor.platform=macOS
-clang.linker.toolDescriptor.architecture=arm64
-
-clang.preprocessor.toolDescriptor.name=clang
-clang.preprocessor.toolDescriptor.version=Apple clang version 21.0.0 (clang-2100.1.1.101)
-clang.preprocessor.toolDescriptor.platform=macOS
-clang.preprocessor.toolDescriptor.architecture=arm64
-```
-
-Save those three blocks as `~/semel-playground/clang.cfg` — beside `hello/`, not inside it;
-the formula asks for `<../clang.cfg>`. What `tools` knows is which tools this machine has,
-and nothing about what you want built with them. Three more facts are yours to decide —
-the SDK, the target triple and the C standard — spelled out per node, because there is no
-inheritance. Add them, with your own SDK path from `xcrun --sdk macosx --show-sdk-path`:
-
-```
-clang.preprocessor.sdkPath=/path/printed/by/xcrun
 clang.preprocessor.target=arm64-apple-macos14.0
 clang.preprocessor.cStandard=c17
 clang.compiler.target=arm64-apple-macos14.0
 clang.compiler.cStandard=c17
-clang.linker.sdkPath=/path/printed/by/xcrun
 clang.linker.target=arm64-apple-macos14.0
 ```
 
-That is `arm64-apple-macos14.0` on Apple silicon, as shown; on an Intel Mac use
-`x86_64-apple-macos14.0`, matching the `architecture` line `tools` printed.
+That is `arm64-apple-macos14.0` on Apple silicon, as shown; on an Intel Mac change it to
+`x86_64-apple-macos14.0`. Everything after the first `=` is the value, quotes included —
+so no quotes. This file is yours, and it is what you would check in.
 
-Everything after the first `=` is the value, quotes included — so no quotes.
+The *machine's* file holds what is a fact about this Mac — which clang, which SDK — and
+you do not write it. Ask for the build first:
+
+```
+build hello --into ~/semel-playground/out
+```
+
+```
+Push folder: hello
+Push file: hello/hello.fmla
+Push file: hello/semel.config
+Push file: hello/src/common.h
+Push file: hello/src/hello.c
+Push file: hello/src/hello.h
+Push file: hello/src/hello2.c
+Push file: hello/src/main.c
+❌ 19 nodes scheduled, 19 computed, 0 from cache, 25 errors
+Settled.
+25 errors across 9 nodes:
+
+❌ ClangCompiler ×3 (#23, #27, #29)
+   · errorLog, infoLog, output:
+     Missing machine settings. Run 'tools --write semel.machine.config': it writes the tool descriptors and SDK facts of the tools installed here, for every namespace this graph reads, these among them:
+     clang.compiler.toolDescriptor.architecture
+     clang.compiler.toolDescriptor.name
+     clang.compiler.toolDescriptor.platform
+     clang.compiler.toolDescriptor.version
+…
+❌ StaticFile #17 'input:/semel.machine.config'
+   · semel.machine.config has not been pushed
+   · and 1 node downstream carries it
+```
+
+It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
+nothing is there, and every tool below it lacks the settings that file would hold — and
+each names the command that writes them. Run it:
+
+```
+tools --write semel.machine.config
+```
+
+```
+Wrote 3 namespaces to /Users/you/semel-playground/semel.machine.config: clang.compiler, clang.linker, clang.preprocessor
+```
+
+Three, not the eight this server knows: `tools --write` writes the namespaces the graph
+you just built actually selects, so nothing in the file goes unread. The path is relative
+to where you ran `semel`, which is beside `hello/`, where the formula looks. Open it if you
+like — the clang version string, the SDK path, once per tool — but do not edit it, and do
+not commit it: it is this machine's, and the next machine writes its own.
 
 ### The build
 
@@ -137,17 +158,17 @@ build hello --into ~/semel-playground/out
 
 ```
 Push folder: hello
-Push file: hello/hello.fmla
-Push file: hello/src/common.h
-Push file: hello/src/hello.c
-Push file: hello/src/hello.h
-Push file: hello/src/hello2.c
-Push file: hello/src/main.c
-❌ 18 nodes scheduled, 18 computed, 0 from cache, 25 errors
+Push file: hello/hello.fmla [no change]
+Push file: hello/semel.config [no change]
+Push file: hello/src/common.h [no change]
+Push file: hello/src/hello.c [no change]
+Push file: hello/src/hello.h [no change]
+Push file: hello/src/hello2.c [no change]
+Push file: hello/src/main.c [no change]
 Settled.
-hello/hello.fmla needs ../clang.cfg
-Push file: clang.cfg
-✅ 23 nodes scheduled, 23 computed, 0 from cache, 0 errors
+hello/hello.fmla needs ../semel.machine.config
+Push file: semel.machine.config
+✅ 24 nodes scheduled, 24 computed, 0 from cache, 0 errors
    appeared: output:/hello/config.txt
    appeared: output:/hello/hello
    appeared: output:/hello/hello.dylib
@@ -156,14 +177,14 @@ No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
 
-Two settles, and the first one failed. `build` pushed `hello/`, and the formula's
-`<../clang.cfg>` is outside it, so every tool woke without its settings. The engine's
-report named the one source the formula needs that nobody has pushed — `clang.cfg`, beside
-the folder, under your base — so `build` pushed it, saying which formula asked, and waited
-again. The second settle is the build. That is the whole rule: *build follows the
-formula's inputs within your tree*. It never pushes anything the formula did not name, and
-never anything outside the base directory, which is where you ran `semel` unless `base`
-says otherwise. `--no-follow` turns it off.
+Two settles. `build` pushed `hello/` again — nothing in it changed — and the formula's
+`<../semel.machine.config>` is outside it, so the first settle still lacked it. This time
+the file exists, so the engine's report named the one source the formula needs that nobody
+has pushed, and `build` pushed it, saying which formula asked, and waited again. The second
+settle is the build. That is the whole rule: *build follows the formula's inputs within your
+tree*. It never pushes anything the formula did not name, and never anything outside the
+base directory, which is where you ran `semel` unless `base` says otherwise. `--no-follow`
+turns it off.
 
 The line with the tick is the *settle summary*: one line per settle, saying what the engine
 did. Every number counts nodes, each one once, however many times the engine came back to
@@ -193,10 +214,10 @@ Hello, World 1!
 
 `push` copied your files into Semel's own input file system — the engine never reads your
 disk during a build, only what was pushed. `build` is `push`, wait until the graph settles,
-report errors, and copy the products out. `clang.cfg` needs its own `push` because `build`
-pushes the folder you name and that file is not in it. Forget it and the report names the
-file itself — `clang.cfg has not been pushed` — under the wall of missing-setting errors
-from the tools that then have nothing to read.
+report errors, and copy the products out. `semel.machine.config` needs its own `push`
+because `build` pushes the folder you name and that file is not in it — which is what you
+watched: the report named the file itself, `semel.machine.config has not been pushed`,
+under the missing-setting errors from the tools that then had nothing to read.
 
 ### What you just ran
 
@@ -206,15 +227,18 @@ are, as expressions, and nothing about order or commands.
 ```
 include 'clang'
 
-product "hello" = clang.executable(sources: <src>, settings: <../clang.cfg>)
+func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+product "hello" = clang.executable(sources: <src>, settings: settings())
 ```
 
 A *product* is an expression whose value is published. Everything else is intermediate and
 stays inside. A formula names no toolchain until it includes one: `include 'clang'` brings
 the funcs the Clang plugin provides, and `clang.executable` is one of them — a folder of
-sources and a settings file in, a program out. A `func` is only a way not to write the same
-expression twice, and what `clang.executable` stands for is written in this same language.
-Its first step, for one source file:
+sources and the settings in, a program out. `clang.settings` is another: your file laid
+over the machine's, which is the only place the formula says which is which. A `func` is
+only a way not to write the same expression twice, and what `clang.executable` stands for
+is written in this same language. Its first step, for one source file:
 
 ```
 func preprocessed(file, settings) = ClangPreprocessor(
@@ -232,7 +256,8 @@ another's input. `executable` makes one compile chain per file in `src`:
  src/hello.c  ─ StaticFile ─ ClangPreprocessor ─ ClangCompiler ─┐
  src/hello2.c ─ StaticFile ─ ClangPreprocessor ─ ClangCompiler ─┼─ ClangLinker ─ product "hello"
  src/main.c   ─ StaticFile ─ ClangPreprocessor ─ ClangCompiler ─┘
- clang.cfg ─ StaticFile ─ ConfigFilter('clang.compiler') ─ … into every compiler
+ semel.config ────────┐
+ semel.machine.config ┴ ConfigMerger ─ ConfigFilter('clang.compiler') ─ … into every compiler
 ```
 
 The whole prelude is twenty lines, in
@@ -248,7 +273,7 @@ ls -o hello
 ```
 
 ```
--rw-r--r--      1126  config.txt
+-rw-r--r--      1215  config.txt
 -rwxr-xr-x     33504  hello
 -rw-r--r--     33440  hello.dylib
 ```
@@ -281,6 +306,7 @@ build hello --into ~/semel-playground/out
 ```
 Push folder: hello
 Push file: hello/hello.fmla [no change]
+Push file: hello/semel.config [no change]
 Push file: hello/src/common.h [no change]
 Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
@@ -303,6 +329,7 @@ there; it is not a rebuild.)
 ```
 Push folder: hello
 Push file: hello/hello.fmla [no change]
+Push file: hello/semel.config [no change]
 Push file: hello/src/common.h [no change]
 Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
@@ -316,7 +343,7 @@ No errors.
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Nine nodes woken out of the thirty-six in this graph, and eight of them
+`config.txt` not. Nine nodes woken out of the thirty-eight in this graph, and eight of them
 ran: the project finder and the include finder, then one preprocessor and one compiler —
 `hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
 because both products take that object, then the two output files. The ninth is the node
@@ -339,39 +366,36 @@ file restored to what it was asks the same question as before and gets the store
 `scheduled` did not move and `computed` halved: that gap is the whole idea.
 
 **4. Change a setting only the linker reads.** Add a line to
-`~/semel-playground/clang.cfg`:
+`~/semel-playground/hello/semel.config`:
 
 ```
 clang.linker.exampleSettingNobodyReads=1
 ```
 
-By hand this time: `build` follows what the formula needs and is not there yet, and
-`clang.cfg` is there. A file outside `hello/` that you edit is yours to push.
-
 ```
-push clang.cfg
 build hello --into ~/semel-playground/out
 ```
 
 ```
-Push file: clang.cfg
 Push folder: hello
+Push file: hello/hello.fmla [no change]
+Push file: hello/semel.config
+Push file: hello/src/common.h [no change]
 Push file: hello/src/hello.c [no change]
+Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 ✅ 18 nodes scheduled, 11 computed, 7 from cache, 0 errors
-   changed: output:/hello/config.txt
-   changed: output:/hello/hello
-   changed: output:/hello/hello.dylib
 Settled.
 No errors.
 ```
 
 Not one C file changed, and both programs were relinked — the linkers' settings really did
-change. What did not happen is the interesting part. Eighteen nodes woken, against nine
-for a one-character edit to a source file: the config file feeds every tool in the build,
-so touching it wakes nearly the whole graph. Seven of those were answered from the cache,
-and those seven are all six preprocessors and compilers plus the formula reader.
+change, even if the linker reads no such key, and the same bytes came out, which is why no
+`changed:` line follows. What did not happen is the interesting part. Eighteen nodes woken,
+against nine for a one-character edit to a source file: the settings feed every tool in the
+build, so touching them wakes nearly the whole graph. Seven of those were answered from the
+cache, and those seven are all six preprocessors and compilers plus the formula reader.
 
 Each of the six reads its settings through a `ConfigFilter` that passes on only
 `clang.compiler.*` or `clang.preprocessor.*`, so what reached them was byte-identical and
@@ -384,8 +408,8 @@ this story in full, and the whole file is seventy-five lines — read it now; it
 of the node you are about to write.
 
 `errors` shows what is wrong when a build fails; after a good build it says `No errors.`
-`debug` dumps the whole graph — thirty-six nodes here, fourteen hundred lines. It is a
-lot, and worth seeing once.
+`debug` dumps the whole graph — thirty-eight nodes here, two thousand lines. It is a lot,
+and worth seeing once.
 
 ## Part 3 — Write a node
 

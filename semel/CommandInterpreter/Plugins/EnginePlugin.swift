@@ -4,6 +4,7 @@
 // Handles: d / debug, n / nudge, e / errors, check, reset, t / tools, wait
 
 import Foundation
+import SemelNodeKit
 import SemelProtocol
 
 final class EnginePlugin: CommandPlugin {
@@ -71,11 +72,34 @@ final class EnginePlugin: CommandPlugin {
     // MARK: - tools
 
     /// With no argument, every namespace. With a prefix, only the namespaces whose name
-    /// starts with it — `tools clang` gives the three `clang.*` blocks a newcomer copying
-    /// a `clang.cfg` needs, instead of all eight. Filtered on the client: the records
-    /// already carry the namespace, so the server has nothing to add.
+    /// starts with it — `tools clang` gives the three `clang.*` blocks instead of all
+    /// eight, and `tools clang --all --write <file>` writes those three. Filtered on the
+    /// client: the records already carry the namespace, so the server has nothing to add.
     private func handleTools(tokens: [String], context: any CommandContext) throws {
-        guard case .tools(let namespaces) = try context.request(.tools).0 else {
+        var tokens = tokens
+        var platform = Platform.macos
+        if let flag = tokens.firstIndex(of: "--platform") {
+            guard flag + 1 < tokens.count, let named = Platform(rawValue: tokens[flag + 1]) else {
+                let known = Platform.allCases.map { $0.rawValue }.joined(separator: ", ")
+                context.outputError("tools: --platform takes one of \(known)")
+                return
+            }
+            platform = named
+            tokens.removeSubrange(flag...(flag + 1))
+        }
+        var destination: String?
+        if let flag = tokens.firstIndex(of: "--write") {
+            guard flag + 1 < tokens.count else {
+                context.outputError("tools: --write needs a file to write")
+                return
+            }
+            destination = tokens[flag + 1]
+            tokens.removeSubrange(flag...(flag + 1))
+        }
+        let writesAll = tokens.contains("--all")
+        tokens.removeAll { $0 == "--all" }
+
+        guard case .tools(let namespaces) = try context.request(.tools(platform: platform.rawValue)).0 else {
             return
         }
         guard !namespaces.isEmpty else {
@@ -83,19 +107,51 @@ final class EnginePlugin: CommandPlugin {
             return
         }
 
-        guard let prefix = tokens.first else {
-            context.outputMessage(ToolNamespaceRenderer.text(for: namespaces))
-            return
+        var matching = namespaces
+        if let prefix = tokens.first {
+            matching = namespaces.filter { $0.namespace.hasPrefix(prefix) }
+            guard !matching.isEmpty else {
+                let known = namespaces.map(\.namespace).sorted().joined(separator: ", ")
+                context.outputMessage("No namespace starts with '\(prefix)'. Namespaces: \(known).")
+                return
+            }
         }
 
-        let matching = namespaces.filter { $0.namespace.hasPrefix(prefix) }
-        guard !matching.isEmpty else {
-            let known = namespaces.map(\.namespace).sorted().joined(separator: ", ")
-            context.outputMessage("No namespace starts with '\(prefix)'. Namespaces: \(known).")
+        if let destination {
+            try writeMachineFile(to: destination, platform: platform, namespaces: matching,
+                                 all: writesAll, context: context)
             return
         }
 
         context.outputMessage(ToolNamespaceRenderer.text(for: matching))
+    }
+
+    /// `tools --write <file>`: the machine's half of the configuration (B-109). The tool
+    /// descriptors and machine settings for the namespaces the graph selects — the
+    /// `ConfigFilter`s that exist once a build has been attempted, whether or not the file
+    /// did — so a file holds what this tree reads and nothing the unused-key report would
+    /// flag. `--all` writes every installed namespace instead — every one under the prefix,
+    /// given one — for a master file, or for a machine no graph has been built on yet.
+    private func writeMachineFile(to destination: String, platform: Platform, namespaces: [ToolNamespaceRecord],
+                                  all: Bool, context: any CommandContext) throws {
+        let chosen = all ? namespaces : namespaces.filter(\.selected)
+        guard !chosen.isEmpty else {
+            context.outputError("tools: the graph selects no settings yet — build once, so the formula's "
+                              + "selectors exist, then write again; or --all writes every installed namespace")
+            return
+        }
+
+        let path = ExternalPathSanitizer.expandPartialPath(destination)
+        let text = ToolNamespaceRenderer.machineFile(writtenBy: "`semel tools --write`", platformName: platform.rawValue,
+                                                     namespaces: chosen)
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+
+        let names = chosen.map(\.namespace).joined(separator: ", ")
+        let missing = chosen.filter(\.descriptors.isEmpty).map(\.toolName)
+        context.outputMessage("Wrote \(chosen.count) namespace\(chosen.count == 1 ? "" : "s") to \(path): \(names)")
+        if !missing.isEmpty {
+            context.outputMessage("No tool is installed for: \(missing.joined(separator: ", ")); those blocks are comments.")
+        }
     }
 
     // MARK: - check

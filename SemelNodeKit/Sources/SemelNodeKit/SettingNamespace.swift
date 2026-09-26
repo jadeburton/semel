@@ -95,32 +95,38 @@ public struct RequiredSettings {
 
     /// Reports every missing key, splitting them by who knows the answer.
     ///
-    /// A `toolDescriptor.*` key describes the toolchain installed on this machine, and
-    /// `tools <namespace>` prints all four with that toolchain's own values as a block to
-    /// paste, so writing `=…` beside them would invite the reader to invent a value that
-    /// only has one correct spelling. Every other key is the project's own choice, and
-    /// `=…` is where that choice goes.
+    /// A `toolDescriptor.*` key, and every key the node's namespace declares as a machine
+    /// setting, describes the machine the build runs on: `tools --write` writes them all
+    /// with the machine's own values, so writing `=…` beside them would invite the reader
+    /// to invent a value that has one correct spelling. Every other key is the project's
+    /// own choice, and `=…` is where that choice goes (B-109).
     public func check() throws {
         guard !missing.isEmpty else {
             return
         }
 
         let toolDescriptorPrefix = "\(namespace).toolDescriptor."
+        let declared   = ToolNamespaceRegistry.entry(forNamespace: namespace)?.machineSettingKeys ?? []
         let sorted     = missing.sorted()
-        let describing = sorted.filter { $0.hasPrefix(toolDescriptorPrefix) }
-        let choices    = sorted.filter { !$0.hasPrefix(toolDescriptorPrefix) }
+        let machine    = sorted.filter { key in
+            key.hasPrefix(toolDescriptorPrefix) || declared.contains(String(key.dropFirst(namespace.count + 1)))
+        }
+        let choices    = sorted.filter { !machine.contains($0) }
 
-        var paragraphs = ["Missing configuration. Add these to a semel.config in the input file system:"]
+        // Each kind under its own heading, saying whose it is and what answers it (B-109):
+        // the project's keys are typed with a value, the machine's are written by a command.
+        var paragraphs: [String] = []
 
         if !choices.isEmpty {
+            paragraphs.append("Missing configuration. Add these to the project's semel.config, with your values:")
             paragraphs.append(choices.map { "\($0)=…" }.joined(separator: "\n"))
         }
 
-        if !describing.isEmpty {
-            paragraphs.append(describing.joined(separator: "\n"))
-            paragraphs.append("Run 'tools \(namespace)' for those: it prints the " +
-                              "toolDescriptor keys and the machine settings of the tool " +
-                              "installed here, as a block to paste.")
+        if !machine.isEmpty {
+            paragraphs.append("Missing machine settings. Run 'tools --write semel.machine.config': it writes the " +
+                              "tool descriptors and SDK facts of the tools installed here, for every namespace " +
+                              "this graph reads, these among them:")
+            paragraphs.append(machine.joined(separator: "\n"))
         }
 
         throw NodeError.other(message: paragraphs.joined(separator: "\n\n"))

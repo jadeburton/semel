@@ -1,12 +1,18 @@
 // A C library and an executable from the same sources. `include 'clang'` brings the
-// funcs SemelClang provides: each takes the folder of sources and the settings file, and
-// wires the preprocessor, compiler and linker — each selecting its own settings out of the
-// file by the prefix its node type reads — so this formula does not.
+// funcs SemelClang provides: each takes the folder of sources and the settings as a node,
+// and wires the preprocessor, compiler and linker — each selecting its own settings out of
+// that node by the prefix its node type reads — so this formula does not.
+//
+// The settings are two files (B-109): this project's choices in `semel.config`, laid over
+// the machine's tools and SDK in `../semel.machine.config`, which `semel tools --write`
+// writes and nobody edits or commits.
 
 include 'clang'
 
-product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: <../clang.cfg>)
-product "hello" = clang.executable(sources: <src>, settings: <../clang.cfg>)
+func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
 
-// The whole file, not a subset — this product exists to show what was pushed.
-product "config.txt" = StaticFile(path: <../clang.cfg>)
+product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: settings())
+product "hello" = clang.executable(sources: <src>, settings: settings())
+
+// The whole machine file, not a subset — this product exists to show what was pushed.
+product "config.txt" = StaticFile(path: <../semel.machine.config>)

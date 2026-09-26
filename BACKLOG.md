@@ -41,17 +41,15 @@ type carrying one report are one entry, printed once; a failed build of a packag
 with no config names `semel-swift prepare`; `prepare` writes `clang.*` only for a tree with
 a C-family target; `help`, and a typo names its nearest verb. What remains:
 
-1. **The missing-settings report names `tools`;** it names `tools --write` once B-109
-   builds it.
-2. **A package dependency takes three rounds.** The converter's "waiting for a package"
+1. **A package dependency takes three rounds.** The converter's "waiting for a package"
    error carries no typed path, so `build` follows what the converter *wired* — the
    manifest, then the target folders — one settle each. A `missingSource` on that error,
    naming the package folder, would make it one round.
-3. **A changed source outside the built folder is not re-pushed.** `build` follows what is
-   reported missing; a `clang.cfg` beside the folder that the user edits is theirs to
-   `push`, as the tutorial's Part 2 says. Following the inputs the graph already holds
+2. **A changed source outside the built folder is not re-pushed.** `build` follows what is
+   reported missing; a `semel.machine.config` beside the folder that is rewritten after a
+   toolchain change is the user's to `push`. Following the inputs the graph already holds
    outside the folder would close it.
-4. **The first settle's summary line prints before the follow answers it:**
+3. **The first settle's summary line prints before the follow answers it:**
    `❌ 18 nodes scheduled, …, 25 errors` and then the push that fixes it. True, and noise;
    holding the summary of a settle the loop answers is the fix.
 

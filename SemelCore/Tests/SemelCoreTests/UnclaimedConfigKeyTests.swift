@@ -65,4 +65,21 @@ final class UnclaimedConfigKeyTests: SemelCoreTestCase {
 
         XCTAssertEqual(result, ["swift.compier.sdkVersion"])
     }
+
+    /// A file that reaches its selectors through a `ConfigMerger` — the shape every prelude
+    /// formula has, the project's file over the machine's (B-109) — is read through it:
+    /// the filter below the merger claims its prefix, and only the misspelt key is left.
+    func test_aFileIsFollowedThroughAMergerToItsSelectors() throws {
+        let project = "input:/semel.config"
+        let (fileNode, _) = try GraphSpecNode.parse("StaticFile(path: '\(project)')").findOrCreateMatchingNode()
+        let staticFile = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile)
+        _ = try staticFile.replaceContent(try "swift.compiler.sdkVersion=26.5\nswift.compier.target=arm64".intern())
+
+        let merged = "ConfigMerger(base: ['machine': StaticFile(path: 'input:/semel.machine.config').output], "
+                   + "override: ['project': StaticFile(path: '\(project)').output]).output"
+        _ = try GraphSpecNode.parse("ConfigFilter(prefix: 'swift.compiler', input: ['config': \(merged)]).output")
+            .findOrCreateMatchingNode()
+
+        XCTAssertEqual(try engine.unclaimedConfigKeys(inFileNodeID: fileNode.requireID()), ["swift.compier.target"])
+    }
 }

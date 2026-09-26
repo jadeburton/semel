@@ -47,11 +47,15 @@ public enum Semel {
     /// above such a folder would read as an empty subtree. The rebuild folds every preserved
     /// folder, which is what makes the rows.
     ///
+    /// 0.1.7: `Configuration`'s input port is `base`, where it was `inherit` (B-109). The
+    /// port name is in every `Configuration` node's spec, so the rename changes the
+    /// identity of each one and of everything wired below it.
+    ///
     /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
     /// a schema change usually stops the launch — but this one is derived state that
     /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.6"
+    public static let version = "0.1.7"
 }

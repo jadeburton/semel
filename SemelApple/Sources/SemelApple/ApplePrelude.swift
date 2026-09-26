@@ -22,17 +22,19 @@ extension SemelApple {
     /// pick a port off a value it was handed; building the compiler again from the same
     /// arguments names the same node, so nothing is compiled twice.
     static let prelude = """
-        func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: ['config': StaticFile(path: settings).output]).output
+        func settings(project, machine) = ConfigMerger(base: ['machine': StaticFile(path: machine).output], override: ['project': StaticFile(path: project).output]).output
+
+        func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: ['config': settings]).output
 
         func assets(catalog, appIcon, settings) = AssetCatalogCompiler(
-            configuration: ['config': Configuration(appIcon: appIcon, inherit: ['settings': selected(settings: settings, prefix: '\(AssetCatalogCompilerConfiguration.settingNamespace)')]).output],
+            configuration: ['config': Configuration(appIcon: appIcon, base: ['settings': selected(settings: settings, prefix: '\(AssetCatalogCompilerConfiguration.settingNamespace)')]).output],
             catalogs: ['assets': Folder(path: catalog).manifest]
         )
 
         func resources(catalog, appIcon, strings, settings) = TreeMerger(input: [
             'assets': assets(catalog: catalog, appIcon: appIcon, settings: settings).files,
             {file: '%%strings%%/*.xcstrings'} "%%file.0%%": StringCatalogCompiler(
-                configuration: ['config': Configuration(inherit: ['settings': selected(settings: settings, prefix: '\(StringCatalogCompilerConfiguration.settingNamespace)')]).output],
+                configuration: ['config': Configuration(base: ['settings': selected(settings: settings, prefix: '\(StringCatalogCompilerConfiguration.settingNamespace)')]).output],
                 catalog: ["%%file.0%%.xcstrings": StaticFile(path: file).output]
             ).files
         ]).files

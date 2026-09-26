@@ -5,11 +5,13 @@
 //  `semel-swift prepare <folder> --platform <name>`: everything between cloning a tree of
 //  Swift packages and `semel 'build <folder>'`. Finds the packages, takes as roots the
 //  ones nothing depends on by path, vendors their closure into one `Dependencies`, and
-//  writes the formula and config beside them. Never overwrites a file that is there: a
-//  project that ships its own formula or config has already decided.
+//  writes the formula and the two config files beside them. Never overwrites the formula
+//  or the project's config: a project that ships its own has already decided. The
+//  machine's config is rewritten every run: it is generated and nobody edits it.
 
 import Foundation
 import SemelApple
+import SemelNodeKit
 
 public struct PrepareReport: Equatable {
     /// The `.xcodeproj` the folder holds, when it is a project rather than packages.
@@ -118,11 +120,14 @@ public enum Preparation {
             namespaces = Array(Set(namespaces).union(GeneratedFiles.namespaces(selectedIn: kept))).sorted()
         }
 
-        guard let deploymentVersion = declaredVersion ?? sdkVersion else {
+        // No SDK for the platform is no build, whatever the manifests declare: said here,
+        // once, rather than by every tool's missing-settings report.
+        guard let sdkVersion else {
             throw Vendoring.Failure(description: "no \(platform.sdkName) SDK on this machine (xcrun --sdk \(platform.sdkName))")
         }
-        let config = try GeneratedFiles.config(platform: platform, deploymentVersion: deploymentVersion,
-                                               facts: facts, namespaces: namespaces)
+        let deploymentVersion = declaredVersion ?? sdkVersion
+        let config = GeneratedFiles.projectConfig(platform: platform, deploymentVersion: deploymentVersion,
+                                                  facts: facts, namespaces: namespaces)
 
         for (name, contents) in [(GeneratedFiles.formulaFileName, formula), (GeneratedFiles.configFileName, config)] {
             let file = folder.appendingPathComponent(name)
@@ -133,6 +138,13 @@ public enum Preparation {
                 report.written.append(file)
             }
         }
+
+        // The machine file is rewritten on every run: it is generated, never edited, and
+        // the platform named on this run is what it should say (B-109).
+        let machineFile = folder.appendingPathComponent(GeneratedFiles.machineConfigFileName)
+        try GeneratedFiles.machineConfig(platform: platform, facts: facts, namespaces: namespaces)
+            .write(to: machineFile, atomically: true, encoding: .utf8)
+        report.written.append(machineFile)
         return report
     }
 

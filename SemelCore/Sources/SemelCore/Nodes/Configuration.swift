@@ -14,7 +14,9 @@ public struct Configuration: Node {
     public var thisNode: NodeRecord
 
     static let outputPort = "output"
-    static let inputPort = "inherit"
+    /// The settings to start from, with this node's properties laid over them — the
+    /// relation `ConfigMerger` calls `base` and `override`, named the same here (B-109).
+    static let inputPort = "base"
 
     public init(thisNode: NodeRecord) throws {
         self.thisNode = thisNode

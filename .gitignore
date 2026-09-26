@@ -29,8 +29,12 @@ DerivedData/
 /SemelCore/.swiftpm/xcode/xcuserdata/jadeburton.xcuserdatad/xcschemes/xcschememanagement.plist
 /.swiftpm/xcode/xcuserdata/jadeburton.xcuserdatad/xcschemes/xcschememanagement.plist
 
-# End-to-end fixtures: what the harness renders or prepares in its /tmp copy, kept out
-# in case anyone runs prepare in the tree itself
-EndToEnd/Fixtures/clang.cfg
-EndToEnd/Fixtures/**/semel.config
+# End-to-end fixtures: what the harness prepares in its /tmp copy, kept out in case
+# anyone runs prepare in the tree itself. A fixture's own semel.config is committed, as
+# a project's is; MyApp's is prepare's to write.
+EndToEnd/Fixtures/swift/MyApp/semel.config
 EndToEnd/Fixtures/**/Dependencies/
+
+# The machine's half of any configuration (B-109): written by `semel tools --write` or
+# `semel-swift prepare`, one machine's facts, never committed
+semel.machine.config

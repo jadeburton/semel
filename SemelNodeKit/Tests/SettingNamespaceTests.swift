@@ -56,7 +56,7 @@ final class SettingNamespaceTests: XCTestCase {
         _ = settings.value("target")
 
         XCTAssertEqual(messageFrom(settings), """
-            Missing configuration. Add these to a semel.config in the input file system:
+            Missing configuration. Add these to the project's semel.config, with your values:
 
             clang.linker.target=…
             """)
@@ -69,16 +69,29 @@ final class SettingNamespaceTests: XCTestCase {
         _ = ToolDescriptor(required: &settings, properties: [:])
 
         XCTAssertEqual(messageFrom(settings), """
-            Missing configuration. Add these to a semel.config in the input file system:
+            Missing machine settings. Run 'tools --write semel.machine.config': it writes the tool descriptors \
+            and SDK facts of the tools installed here, for every namespace this graph reads, these among them:
 
             clang.linker.toolDescriptor.architecture
             clang.linker.toolDescriptor.name
             clang.linker.toolDescriptor.platform
             clang.linker.toolDescriptor.version
-
-            Run 'tools clang.linker' for those: it prints the toolDescriptor keys and the \
-            machine settings of the tool installed here, as a block to paste.
             """)
+    }
+
+    /// B-109. A key the namespace declares as a machine setting is the machine's to answer,
+    /// like the tool descriptor, and is listed with it rather than as a choice.
+    func test_aMissingDeclaredMachineSettingIsListedWithTheToolDescriptorKeys() {
+        ToolNamespaceRegistry.register(.init(namespace: "clang.linker", toolName: "clang",
+                                             machineSettingKeys: ["sdkPath"]))
+        var settings = RequiredSettings(properties: [:], namespace: "clang.linker")
+        _ = settings.value("sdkPath")
+        _ = settings.value("target")
+
+        let message = messageFrom(settings)
+        XCTAssertTrue(message.contains("clang.linker.target=…"), message)
+        XCTAssertTrue(message.contains("\nclang.linker.sdkPath"), message)
+        XCTAssertFalse(message.contains("sdkPath=…"), message)
     }
 
     /// Both kinds at once is the common case — a fresh config file has neither — and the
@@ -90,9 +103,9 @@ final class SettingNamespaceTests: XCTestCase {
 
         let message = messageFrom(settings)
         XCTAssertTrue(message.contains("clang.linker.target=…"), message)
-        XCTAssertTrue(message.contains("\nclang.linker.toolDescriptor.name\n"), message)
+        XCTAssertTrue(message.contains("\nclang.linker.toolDescriptor.name"), message)
         XCTAssertFalse(message.contains("toolDescriptor.name=…"), message)
-        XCTAssertTrue(message.contains("Run 'tools clang.linker'"), message)
+        XCTAssertTrue(message.contains("Run 'tools --write semel.machine.config'"), message)
     }
 
     /// The message reads as its own words rather than as the enum case wrapping it: that

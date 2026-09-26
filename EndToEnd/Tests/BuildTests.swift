@@ -30,6 +30,6 @@ final class BuildTests: XCTestCase {
         XCTAssertNoThrow(try run.checkProducts(in: out))
         XCTAssertFalse(FileManager.default.fileExists(atPath: run.root.appendingPathComponent("home1/semelserv.sock").path))
         let config = try String(contentsOf: out.appendingPathComponent("config.txt"), encoding: .utf8)
-        XCTAssertFalse(config.contains("${"), "config.txt is the rendered config, pushed whole")
+        XCTAssertTrue(config.contains("clang.linker.sdkPath="), "config.txt is the machine file, pushed whole: \(config)")
     }
 }

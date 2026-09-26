@@ -40,25 +40,26 @@ final class AppPreludeTests: XCTestCase {
                                      includeReader: { included[$0] })
     }
 
-    /// `EndToEnd/Fixtures/swift/HelloApp/semel.fmla` before B-108.
+    /// `EndToEnd/Fixtures/swift/HelloApp/semel.fmla` before B-108, over the two files B-109
+    /// gave it: the project's choices laid over the machine's facts.
     private let handWritten = """
-        func settings(prefix) = ConfigFilter(prefix: prefix, input: ['config': StaticFile(path: <semel.config>).output]).output
+        func settings(prefix) = ConfigFilter(prefix: prefix, input: ['config': ConfigMerger(base: ['machine': StaticFile(path: <semel.machine.config>).output], override: ['project': StaticFile(path: <semel.config>).output]).output]).output
 
         include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
         func compiled() = SwiftCompiler(
-            configuration: ['config': Configuration(moduleName: 'Hello', inherit: ['settings': settings(prefix: 'swift.compiler')]).output],
+            configuration: ['config': Configuration(moduleName: 'Hello', base: ['settings': settings(prefix: 'swift.compiler')]).output],
             inputFolder: ['folder0': Folder(path: <Sources>).manifest],
             moduleTrees: ['HelloKit': modules_HelloKit().files]
         )
 
         func assets() = AssetCatalogCompiler(
-            configuration: ['config': Configuration(appIcon: 'AppIcon', inherit: ['settings': settings(prefix: 'apple.assetCatalogCompiler')]).output],
+            configuration: ['config': Configuration(appIcon: 'AppIcon', base: ['settings': settings(prefix: 'apple.assetCatalogCompiler')]).output],
             catalogs: ['assets': Folder(path: <Assets.xcassets>).manifest]
         )
 
         product 'Hello.app/Hello' = SwiftLinker(
-            configuration: ['config': Configuration(linkage: 'executable', outputName: 'Hello', inherit: ['settings': settings(prefix: 'swift.linker')]).output],
+            configuration: ['config': Configuration(linkage: 'executable', outputName: 'Hello', base: ['settings': settings(prefix: 'swift.linker')]).output],
             input: ['Hello.o': compiled().object],
             objectTrees: ['HelloKit': objects_HelloKit().files]
         ).output

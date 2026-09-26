@@ -17,12 +17,16 @@ extension SemelClang {
                                                      namespace:  "clang",
                                                      text:       prelude)
 
-    /// Every func takes the settings file whole and selects each tool's slice by the
-    /// namespace its node type reads, which is the wiring every hand-written formula
-    /// repeated. `sources` is a folder: the prelude, not the formula, says which files in it
-    /// a compiler takes — `*.c`, `*.cpp` — one level deep, as folder patterns match.
+    /// Every func takes the settings as a node — `settings(project:machine:)` lays the
+    /// project's file over the machine's (B-109), and a formula with a stack of its own
+    /// builds that node itself — and selects each tool's slice by the namespace its node
+    /// type reads, which is the wiring every hand-written formula repeated. `sources` is a
+    /// folder: the prelude, not the formula, says which files in it a compiler takes —
+    /// `*.c`, `*.cpp` — one level deep, as folder patterns match.
     static let prelude = """
-        func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: [StaticFile(path: settings)])
+        func settings(project, machine) = ConfigMerger(base: [StaticFile(path: machine)], override: [StaticFile(path: project)])
+
+        func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: [settings])
 
         func preprocessed(file, settings) = ClangPreprocessor(
           configuration: [selected(settings: settings, prefix: '\(ClangPreprocessorConfiguration.settingNamespace)')],
@@ -30,7 +34,7 @@ extension SemelClang {
         )
 
         func linked(sources, settings, dynamicLibrary) = ClangLinker(
-          configuration: [Configuration(inherit: [selected(settings: settings, prefix: '\(ClangLinkerConfiguration.settingNamespace)')], dynamicLibrary: dynamicLibrary)],
+          configuration: [Configuration(base: [selected(settings: settings, prefix: '\(ClangLinkerConfiguration.settingNamespace)')], dynamicLibrary: dynamicLibrary)],
           objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": ClangCompiler(
             configuration: [selected(settings: settings, prefix: '\(ClangCompilerConfiguration.settingNamespace)')],
             input: ["%%file%%.p": preprocessed(file: file, settings: settings)]
