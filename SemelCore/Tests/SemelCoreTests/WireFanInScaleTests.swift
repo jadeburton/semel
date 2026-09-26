@@ -104,7 +104,7 @@ final class WireFanInScaleTests: SemelCoreTestCase {
         let fan = try fanOf(Self.widths.small)
 
         let wires = try database.wire.select(goingToNodeID: try fan.consumer.requireID(),
-                                             toSymbolID: "inherit".asSymbolID())
+                                             toSymbolID: "base".asSymbolID())
         XCTAssertEqual(wires.count, Self.widths.small)
         XCTAssertEqual(Set(wires.map { $0.fromNodeID }).count, Self.widths.small,
                        "each wire comes from a source of its own")
@@ -157,7 +157,7 @@ final class WireFanInScaleTests: SemelCoreTestCase {
                              fromNodeID: try source.requireID(),
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "inherit".asSymbolID(),
+                             toSymbolID: "base".asSymbolID(),
                              name: name.asSymbolID())
     }
 }

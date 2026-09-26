@@ -8,8 +8,10 @@
 //  packages and `semel 'build <folder>'`. It finds the packages, takes as roots the ones
 //  nothing there depends on by path, vendors the roots' dependencies into
 //  `<folder>/Dependencies`, and writes `semel.fmla` and `semel.config` beside them unless
-//  they are already there. The same command every time: after cloning, and again after
-//  changing a dependency — the copies are replaced, the files are kept.
+//  they are already there, and `semel.machine.config` — the machine's tools and SDK —
+//  every time. The same command every time: after cloning, and again after changing a
+//  dependency or a toolchain — the copies and the machine file are replaced, the formula
+//  and the project's config are kept.
 
 import Foundation
 import SemelNodeKit

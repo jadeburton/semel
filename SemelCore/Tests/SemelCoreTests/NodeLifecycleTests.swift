@@ -181,7 +181,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
                              fromNodeID: try source.requireID(),
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "inherit".asSymbolID(),
+                             toSymbolID: "base".asSymbolID(),
                              name: name.asSymbolID())
     }
 

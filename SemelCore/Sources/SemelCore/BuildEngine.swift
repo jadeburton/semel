@@ -265,19 +265,58 @@ public final class BuildEngine {
 
         let keys = [String: String](plainText: try hash.resolveAsString()).keys
 
+        // Down the wires to every selector the file's text reaches: directly, or through
+        // the `ConfigMerger`s and `Configuration`s that lay it under or over other settings
+        // (B-109). Every prelude formula wires a merger, so a walk that stopped at one
+        // would see no project's keys at all.
         var prefixes: [String] = []
+        var pending: [(producerID: ObjectID, port: String)] = [(fileNodeID, StaticFile.outputPort)]
+        var seen: Set<ObjectID> = [fileNodeID]
 
-        for wire in try database.wire.select(comingFromNodeID: fileNodeID,
-                                             fromSymbolID: StaticFile.outputPort.asSymbolID()) {
-            let consumer = try database.node.select(nodeID: wire.toNodeID)
-            guard consumer.kind == ConfigFilter.kind,
-                  let prefix = consumer.properties[ConfigFilter.prefixProperty] else {
-                continue
+        while let (producerID, port) = pending.popLast() {
+            for wire in try database.wire.select(comingFromNodeID: producerID, fromSymbolID: port.asSymbolID())
+            where seen.insert(wire.toNodeID).inserted {
+                let consumer = try database.node.select(nodeID: wire.toNodeID)
+                switch consumer.kind {
+                case ConfigFilter.kind:
+                    if let prefix = consumer.properties[ConfigFilter.prefixProperty] {
+                        prefixes.append(prefix + ".")
+                    }
+                case ConfigMerger.kind:
+                    pending.append((wire.toNodeID, ConfigMerger.outputPort))
+                case Configuration.kind:
+                    pending.append((wire.toNodeID, Configuration.outputPort))
+                default:
+                    continue
+                }
             }
-            prefixes.append(prefix + ".")
         }
 
         return keys.filter { key in !prefixes.contains { key.hasPrefix($0) } }.sorted()
+    }
+
+    /// The `StaticFile`s whose text reaches `nodeID` as settings: wired in directly, or
+    /// through the `ConfigMerger`s and `Configuration`s between (B-109). The upward half of
+    /// the walk `unclaimedConfigKeys` makes downward — a file behind a merger is as much a
+    /// config file as one wired straight in, and is the one the report names.
+    private func configFileNodeIDs(feeding nodeID: ObjectID) throws -> Set<ObjectID> {
+        var files: Set<ObjectID> = []
+        var pending = [nodeID]
+        var seen: Set<ObjectID> = [nodeID]
+
+        while let consumerID = pending.popLast() {
+            for wire in try database.wire.select(goingToNodeID: consumerID) where seen.insert(wire.fromNodeID).inserted {
+                switch try database.node.select(nodeID: wire.fromNodeID).kind {
+                case StaticFile.kind:
+                    files.insert(wire.fromNodeID)
+                case ConfigMerger.kind, Configuration.kind:
+                    pending.append(wire.fromNodeID)
+                default:
+                    continue
+                }
+            }
+        }
+        return files
     }
 
     /// Tracks the last-reported unclaimed-key set per config-file node so an unchanged
@@ -369,10 +408,12 @@ public final class BuildEngine {
     /// reason a variant is just a different file wired in, with no naming convention of its
     /// own. `ConfigFilter` nodes are also rare (one per prefix), where `StaticFile` is not —
     /// most nodes in a real project are source files, so filtering all of them by name would
-    /// cost about what `selectAll()` does. One consequence of starting here: a config file
-    /// with no `ConfigFilter` wired to it at all is invisible to this pass, and so is a
-    /// generated config file that is not a `StaticFile` — only `StaticFile.read()` is
-    /// understood as a source of config text.
+    /// cost about what `selectAll()` does. From each selector the walk goes up through the
+    /// `ConfigMerger`s and `Configuration`s that lay files over one another (B-109), so
+    /// the project file behind a prelude's merger is found and named. One consequence of
+    /// starting here: a config file with no `ConfigFilter` below it at all is invisible to
+    /// this pass, and so is a generated config file that is not a `StaticFile` — only
+    /// `StaticFile.read()` is understood as a source of config text.
     ///
     /// Internal rather than private so a test can call it directly and inspect
     /// `unclaimedConfigKeyReporter`'s captures — the same reasoning as
@@ -388,14 +429,11 @@ public final class BuildEngine {
         for subset in subsets {
 
             guard let subsetID = subset.id,
-                  let wires = FatalErrors.attempt({
-                      try database.wire.select(goingToNodeID: subsetID,
-                                               toSymbolID: ConfigFilter.inputPort.asSymbolID())
-                  }) else {
+                  let files = FatalErrors.attempt({ try configFileNodeIDs(feeding: subsetID) }) else {
                 continue
             }
 
-            fileNodeIDs.formUnion(wires.map(\.fromNodeID))
+            fileNodeIDs.formUnion(files)
         }
 
         // Which files have something to say, and what it is. The path each line names is

@@ -49,6 +49,24 @@ final class UnclaimedConfigKeyReportingTests: SemelCoreTestCase {
         }
     }
 
+    /// A file that reaches its selector through a `ConfigMerger` is a config file too
+    /// (B-109): found by walking up from the selector, and named by its own path.
+    func test_aFileBehindAMergerIsFoundAndNamed() throws {
+        let project = "input:/semel.config"
+        let (fileNode, _) = try GraphSpecNode.parse("StaticFile(path: '\(project)')").findOrCreateMatchingNode()
+        let staticFile = try XCTUnwrap(fileNode.nodeAsAny() as? StaticFile)
+        _ = try staticFile.replaceContent(try "swift.compier.sdkVersion=26.5".intern())
+        let merged = "ConfigMerger(base: ['machine': StaticFile(path: 'input:/semel.machine.config').output], "
+                   + "override: ['project': StaticFile(path: '\(project)').output]).output"
+        _ = try GraphSpecNode.parse("ConfigFilter(prefix: 'swift.compiler', input: ['config': \(merged)]).output")
+            .findOrCreateMatchingNode()
+
+        engine.reportUnclaimedConfigKeys()
+
+        XCTAssertEqual(captured.count, 1, "\(captured)")
+        XCTAssertTrue(captured.first?.contains(project) == true, "\(captured)")
+    }
+
     func test_aStandingBadPrefixPrintsOnceNotOnASecondCall() throws {
         try writeConfigFile(path: "input:/semel.config",
                             content: "swift.compier.sdkVersion=26.5",

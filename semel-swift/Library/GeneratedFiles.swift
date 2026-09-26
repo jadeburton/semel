@@ -2,34 +2,37 @@
 //  GeneratedFiles.swift
 //  SemelSwiftTool
 //
-//  The two files a tree of Swift packages needs before Semel can build it: a formula
-//  naming its roots, and a config stating the toolchain. Semel refuses anything unstated,
-//  so the config says everything — what this machine has, for the platform asked for —
-//  and the engineer edits it to pin something else.
+//  The files a tree of Swift packages needs before Semel can build it: a formula naming
+//  its roots, and its configuration as two files (B-109) — the machine's half, the tools
+//  and SDK this machine has, which nobody edits or commits; and the project's half, what
+//  the manifests declare and the choices prepare starts the project off with, which is
+//  checked in and edited from there. Semel refuses anything unstated, so between them the
+//  two say everything.
 
 import Foundation
 import SemelApple
 import SemelClang
 import SemelNodeKit
+import SemelProtocol
 import SemelSwift
 /// What the machine has, as `prepare` reads it. A value type with closures so a test can
 /// hand in a machine of its own.
 public struct ToolchainFacts {
     public var descriptors: [ToolDescriptor]
+    /// The namespaces the toolchains declare, each answering its own machine settings.
     public var namespaces: [ToolNamespace]
-    public var sdkPath: (String) -> String?
+    /// The SDK's identity, for the deployment version a tree that declares none falls
+    /// back to; what the tools need to know about the SDK, the namespaces answer.
     public var sdkIdentity: (String) -> String?
 
-    public init(descriptors: [ToolDescriptor], namespaces: [ToolNamespace],
-                sdkPath: @escaping (String) -> String?, sdkIdentity: @escaping (String) -> String?) {
+    public init(descriptors: [ToolDescriptor], namespaces: [ToolNamespace], sdkIdentity: @escaping (String) -> String?) {
         self.descriptors = descriptors
         self.namespaces  = namespaces
-        self.sdkPath     = sdkPath
         self.sdkIdentity = sdkIdentity
     }
 
-    /// The real machine: the tools the toolchains find on it, the namespaces they declare,
-    /// and the SDK facts the Swift nodes will check against.
+    /// The real machine: the tools the toolchains find on it and the namespaces they
+    /// declare.
     public static func fromMachine() throws -> ToolchainFacts {
         try SemelSwift.register()
         try SemelClang.register()
@@ -38,15 +41,15 @@ public struct ToolchainFacts {
         try ToolDiscovery.registerInstalledTools(into: registry)
         return ToolchainFacts(descriptors: registry.registeredDescriptors,
                               namespaces: ToolNamespaceRegistry.all,
-                              sdkPath: SemelSwift.sdkPath(sdk:),
                               sdkIdentity: SemelSwift.sdkIdentity(sdk:))
     }
 }
 
 public enum GeneratedFiles {
 
-    public static let formulaFileName = "semel.fmla"
-    public static let configFileName  = "semel.config"
+    public static let formulaFileName       = "semel.fmla"
+    public static let configFileName        = "semel.config"
+    public static let machineConfigFileName = ToolNamespaceRenderer.machineFileName
 
     /// One build root above the packages: each root is converted with the formula's folder
     /// as the root, so their common dependencies are vendored once and one config serves
@@ -147,73 +150,96 @@ public enum GeneratedFiles {
         a.compare(b, options: .numeric)
     }
 
-    /// The C standards the clang nodes require stated. SwiftPM's defaults for a target that
-    /// declares none — what the vendored C targets were written against.
+    /// The C standards prepare starts a project off with. SwiftPM's defaults for a target
+    /// that declares none — what the vendored C targets were written against — written
+    /// into the project file as the choice they are, not as clang's defaults.
     static let cStandard   = "gnu11"
     static let cxxStandard = "c++17"
 
-    /// One block per namespace in `namespaces`, in the shape `semel tools` prints, plus the
-    /// platform settings each tool needs. Only the namespaces the formula selects from,
-    /// because the engine reports a key no filter claims as unused on every build. A tool
-    /// installed in several versions is pinned to the newest; a tool not installed leaves
-    /// a comment saying so, so the file still says what is missing.
-    public static func config(platform: Platform, deploymentVersion: String, facts: ToolchainFacts,
-                              namespaces: [String]) throws -> String {
-        guard let sdkIdentity = facts.sdkIdentity(platform.sdkName),
-              let sdkPath = facts.sdkPath(platform.sdkName) else {
-            throw Vendoring.Failure(description: "no \(platform.sdkName) SDK on this machine (xcrun --sdk \(platform.sdkName))")
-        }
+    /// The machine's half: the tool descriptors and the machine settings each namespace
+    /// declares — the SDK's path or identity — for the namespaces the formula selects
+    /// from, and no other, because the engine reports a key no filter claims as unused on
+    /// every build. The same file `semel tools --write` writes, through the same renderer:
+    /// a tool installed in several versions is pinned to the newest, and a tool not
+    /// installed leaves a comment saying so.
+    ///
+    /// The records are built here as the daemon builds them for `tools`; the two cannot
+    /// share the code, because the one type that could hold it would have to know both
+    /// the registry's types and the protocol's.
+    public static func machineConfig(platform: Platform, facts: ToolchainFacts, namespaces: [String]) -> String {
+        let wanted = Set(namespaces)
+        let records = facts.namespaces
+            .filter { wanted.contains($0.namespace) }
+            .sorted { $0.namespace < $1.namespace }
+            .map { entry -> ToolNamespaceRecord in
+                let machineSettings = entry.machineSettings(platform)
+                let descriptors = facts.descriptors
+                    .filter { $0.name == entry.toolName }
+                    .sorted { ($0.version, $0.platform, $0.architecture) < ($1.version, $1.platform, $1.architecture) }
+                    .map { descriptor in
+                        ToolDescriptorRecord(name:            descriptor.name,
+                                             version:         descriptor.version,
+                                             platform:        descriptor.platform,
+                                             architecture:    descriptor.architecture,
+                                             machineSettings: machineSettings)
+                    }
+                return ToolNamespaceRecord(namespace: entry.namespace, toolName: entry.toolName,
+                                           descriptors: descriptors, selected: true)
+            }
+        return ToolNamespaceRenderer.machineFile(writtenBy: "semel-swift prepare", platformName: platform.rawValue,
+                                                 namespaces: records)
+    }
+
+    /// The project's half: what prepare derives from the manifests and the platform — the
+    /// target triple at the deployment version, and what actool needs to know about the
+    /// platform — plus, for the clang tools, a language standard to start from, under a
+    /// comment naming it the choice it is. A namespace with nothing of the project's to
+    /// say — the package reader, xcstringstool — has no block. Written once; the project
+    /// edits and checks it in from there.
+    public static func projectConfig(platform: Platform, deploymentVersion: String, facts: ToolchainFacts,
+                                     namespaces: [String]) -> String {
         let target = platform.target(deploymentVersion: deploymentVersion)
         let wanted = Set(namespaces)
 
         var blocks: [String] = [
             """
-            // Written by semel-swift prepare for --platform \(platform.rawValue): the tools and SDK
-            // this machine has, and the deployment version the packages declare, for the
-            // namespaces the formula reads. Edit to pin another toolchain; `semel tools`
-            // lists what is installed.
+            // Written by semel-swift prepare for --platform \(platform.rawValue): the project's choices —
+            // the target at the deployment version the manifests declare, and for the clang
+            // tools a language standard to start from. Yours to edit and check in. The machine's
+            // tools and SDK are in \(machineConfigFileName) beside this file, which prepare
+            // and `semel tools --write` rewrite.
             """,
         ]
         for entry in facts.namespaces.sorted(by: { $0.namespace < $1.namespace }) where wanted.contains(entry.namespace) {
-            let descriptors = facts.descriptors
-                .filter { $0.name == entry.toolName }
-                .sorted { ($0.version, $0.platform, $0.architecture) < ($1.version, $1.platform, $1.architecture) }
-            guard let descriptor = descriptors.last else {
-                blocks.append("// \(entry.namespace): no \(entry.toolName) is installed on this machine")
+            let lines = projectSettings(namespace: entry.namespace, toolName: entry.toolName, platform: platform,
+                                        target: target, deploymentVersion: deploymentVersion)
+            guard !lines.isEmpty else {
                 continue
-            }
-
-            var lines = [
-                "\(entry.namespace).toolDescriptor.name=\(descriptor.name)",
-                "\(entry.namespace).toolDescriptor.version=\(descriptor.version)",
-                "\(entry.namespace).toolDescriptor.platform=\(descriptor.platform)",
-                "\(entry.namespace).toolDescriptor.architecture=\(descriptor.architecture)",
-            ]
-            for (key, value) in platformSettings(toolName: entry.toolName, platform: platform,
-                                                 sdkIdentity: sdkIdentity, sdkPath: sdkPath, target: target,
-                                                 deploymentVersion: deploymentVersion) {
-                lines.append("\(entry.namespace).\(key)=\(value)")
             }
             blocks.append(lines.joined(separator: "\n"))
         }
         return blocks.joined(separator: "\n\n") + "\n"
     }
 
-    /// The settings a tool's nodes read besides the descriptor, by tool. The Swift
-    /// compiler and linker take the SDK by name and check its identity; clang takes it as
-    /// a path and needs the C standards stated; actool takes the platform by name with
-    /// the deployment version and devices that decide what it compiles. The package
-    /// reader and xcstringstool declare nothing.
-    private static func platformSettings(toolName: String, platform: Platform, sdkIdentity: String,
-                                         sdkPath: String, target: String, deploymentVersion: String) -> [(String, String)] {
+    /// The project file's lines for one namespace, by tool. The Swift compiler and linker
+    /// and the clang tools take the target triple; clang also wants the language standards
+    /// stated, which are the project's to choose; actool takes the platform by name with
+    /// the deployment version and devices that decide what it compiles. A comment is a
+    /// line of its own: everything after a value's `=` is the value.
+    private static func projectSettings(namespace: String, toolName: String, platform: Platform,
+                                        target: String, deploymentVersion: String) -> [String] {
         switch toolName {
         case "swiftc":
-            return [("sdk", platform.sdkName), ("sdkVersion", sdkIdentity), ("target", target)]
+            return ["\(namespace).target=\(target)"]
         case "clang":
-            return [("sdkPath", sdkPath), ("target", target), ("cStandard", cStandard), ("cxxStandard", cxxStandard)]
+            return ["\(namespace).target=\(target)",
+                    "// prepare's starting point, not clang's default: the project's choice of standard",
+                    "\(namespace).cStandard=\(cStandard)",
+                    "\(namespace).cxxStandard=\(cxxStandard)"]
         case "actool":
-            return [("platform", platform.sdkName), ("minimumDeploymentTarget", deploymentVersion),
-                    ("targetDevices", platform.targetDevices)]
+            return ["\(namespace).platform=\(platform.sdkName)",
+                    "\(namespace).minimumDeploymentTarget=\(deploymentVersion)",
+                    "\(namespace).targetDevices=\(platform.targetDevices)"]
         default:
             return []
         }

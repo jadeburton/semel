@@ -80,9 +80,12 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(
             at: Self.repositoryRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))
 
+        // The end-to-end fixtures are projects of their own, each with the project file
+        // its formula names (B-109); none is a package of this tree.
         for case let url as URL in enumerator
         where url.lastPathComponent == SwiftFormulaConverter.configFileName
-            && url.deletingLastPathComponent().path != Self.repositoryRoot.path {
+            && url.deletingLastPathComponent().path != Self.repositoryRoot.path
+            && !url.path.contains("/EndToEnd/Fixtures/") {
             XCTFail("\(url.path) is a config file nothing reads; the root's is the only one")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: Self.repositoryRoot.appendingPathComponent("semel.fmla").path),

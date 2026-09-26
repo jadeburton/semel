@@ -495,9 +495,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertTrue(result.contains(
-            "Configuration(moduleName: 'Helper', inherit: ['settings': "
+            "Configuration(moduleName: 'Helper', base: ['settings': "
             + "ConfigFilter(prefix: 'swift.compiler', "
-            + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
+            + "input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/pkg/semel.machine.config').output], "
+            + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output]).output"),
             "got:\n\(result)")
     }
 
@@ -537,9 +538,10 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertTrue(result.contains(
-            "Configuration(linkage: 'executable', outputName: 'semel', inherit: ['settings': "
+            "Configuration(linkage: 'executable', outputName: 'semel', base: ['settings': "
             + "ConfigFilter(prefix: 'swift.linker', "
-            + "input: ['config': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output"),
+            + "input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/pkg/semel.machine.config').output], "
+            + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output]).output"),
             "got:\n\(result)")
     }
 

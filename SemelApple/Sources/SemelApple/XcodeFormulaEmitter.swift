@@ -278,15 +278,18 @@ struct XcodeFormulaEmitter {
 
     // MARK: - Helpers
 
-    /// `Configuration(<literals>, inherit: ['settings': ConfigFilter(...)]).output`: the
-    /// namespace's block of `semel.config` beside the root, with the target's own values
-    /// laid over it — the same shape the Swift converter emits.
+    /// `Configuration(<literals>, base: ['settings': ConfigFilter(...)]).output`: the
+    /// namespace's block of the project's `semel.config` laid over the machine's
+    /// `semel.machine.config`, both beside the root (B-109), with the target's own values
+    /// laid over that — the same shape the Swift converter emits.
     func configuration(namespace: String, literals: [String: String]) -> String {
         let rendered = literals.sorted { $0.key < $1.key }
             .map { "\($0.key): \(Self.quoted($0.value))" }
             .joined(separator: ", ")
-        let selector = "ConfigFilter(prefix: '\(namespace)', input: ['config': StaticFile(path: '\(build.root)/semel.config').output]).output"
-        return "Configuration(\(rendered.isEmpty ? "" : rendered + ", ")inherit: ['settings': \(selector)]).output"
+        let settings = "ConfigMerger(base: ['machine': StaticFile(path: '\(build.root)/semel.machine.config').output], "
+                     + "override: ['project': StaticFile(path: '\(build.root)/semel.config').output]).output"
+        let selector = "ConfigFilter(prefix: '\(namespace)', input: ['config': \(settings)]).output"
+        return "Configuration(\(rendered.isEmpty ? "" : rendered + ", ")base: ['settings': \(selector)]).output"
     }
 
     /// A formula string literal is delimited by either quote and has no escapes, so a

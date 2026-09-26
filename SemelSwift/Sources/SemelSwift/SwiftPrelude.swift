@@ -21,14 +21,18 @@ extension SemelSwift {
     /// `modules_<P>().files`, `objects_<P>().files`.
     ///
     /// The settings wiring is the converter's own — a `ConfigFilter` per tool over the
-    /// file, merged under a `Configuration` carrying what the formula states — so a target
-    /// built here reads its settings as a package target does.
+    /// settings node, merged under a `Configuration` carrying what the formula states — so
+    /// a target built here reads its settings as a package target does. The node is what
+    /// `settings(project:machine:)` builds, the project's file over the machine's (B-109),
+    /// or a stack the formula lays itself.
     static let prelude = """
-        func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: ['config': StaticFile(path: settings).output]).output
+        func settings(project, machine) = ConfigMerger(base: ['machine': StaticFile(path: machine).output], override: ['project': StaticFile(path: project).output]).output
 
-        func compilerSettings(name, settings) = Configuration(moduleName: name, inherit: ['settings': selected(settings: settings, prefix: '\(SwiftCompilerConfiguration.settingNamespace)')]).output
+        func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: ['config': settings]).output
 
-        func linkerSettings(name, linkage, settings) = Configuration(linkage: linkage, outputName: name, inherit: ['settings': selected(settings: settings, prefix: '\(SwiftLinkerConfiguration.settingNamespace)')]).output
+        func compilerSettings(name, settings) = Configuration(moduleName: name, base: ['settings': selected(settings: settings, prefix: '\(SwiftCompilerConfiguration.settingNamespace)')]).output
+
+        func linkerSettings(name, linkage, settings) = Configuration(linkage: linkage, outputName: name, base: ['settings': selected(settings: settings, prefix: '\(SwiftLinkerConfiguration.settingNamespace)')]).output
 
         func module(sources, name, settings) = SwiftCompiler(
             configuration: ['config': compilerSettings(name: name, settings: settings)],

@@ -126,7 +126,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(text.contains("cache entry \(key)"), text)
         XCTAssertTrue(text.contains("node Configuration@1"), text)
         XCTAssertTrue(text.contains(#"property {"key":"role","value":"sample"}"#), text)
-        XCTAssertTrue(text.contains(#"input {"port":"inherit","#), text)
+        XCTAssertTrue(text.contains(#"input {"port":"base","#), text)
     }
 
     func test_debugWithAKeyNothingIsStoredUnderSaysSo() throws {
@@ -140,7 +140,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     private func storeOneCacheEntry() throws -> String {
         let (record, _) = try GraphSpecNode.parse("Configuration(role: 'sample')").findOrCreateMatchingNode()
         let node  = try record.makeNode()
-        let input = ProcessInput(inputValues: ["inherit": ["wire0": .value(try "sample=1".intern())]])
+        let input = ProcessInput(inputValues: ["base": ["wire0": .value(try "sample=1".intern())]])
         let material = try node.buildCacheKeyMaterial(input: input)
         try node.saveCacheForAllInputsAndOutputs(
             keyMaterial: material, processingDuration: 0.1,

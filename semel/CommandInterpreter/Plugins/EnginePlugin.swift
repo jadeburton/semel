@@ -72,9 +72,9 @@ final class EnginePlugin: CommandPlugin {
     // MARK: - tools
 
     /// With no argument, every namespace. With a prefix, only the namespaces whose name
-    /// starts with it — `tools clang` gives the three `clang.*` blocks a newcomer copying
-    /// a `clang.cfg` needs, instead of all eight. Filtered on the client: the records
-    /// already carry the namespace, so the server has nothing to add.
+    /// starts with it — `tools clang` gives the three `clang.*` blocks instead of all
+    /// eight, and `tools clang --all --write <file>` writes those three. Filtered on the
+    /// client: the records already carry the namespace, so the server has nothing to add.
     private func handleTools(tokens: [String], context: any CommandContext) throws {
         var tokens = tokens
         var platform = Platform.macos
@@ -107,21 +107,19 @@ final class EnginePlugin: CommandPlugin {
             return
         }
 
+        var matching = namespaces
+        if let prefix = tokens.first {
+            matching = namespaces.filter { $0.namespace.hasPrefix(prefix) }
+            guard !matching.isEmpty else {
+                let known = namespaces.map(\.namespace).sorted().joined(separator: ", ")
+                context.outputMessage("No namespace starts with '\(prefix)'. Namespaces: \(known).")
+                return
+            }
+        }
+
         if let destination {
-            try writeMachineFile(to: destination, platform: platform, namespaces: namespaces,
+            try writeMachineFile(to: destination, platform: platform, namespaces: matching,
                                  all: writesAll, context: context)
-            return
-        }
-
-        guard let prefix = tokens.first else {
-            context.outputMessage(ToolNamespaceRenderer.text(for: namespaces))
-            return
-        }
-
-        let matching = namespaces.filter { $0.namespace.hasPrefix(prefix) }
-        guard !matching.isEmpty else {
-            let known = namespaces.map(\.namespace).sorted().joined(separator: ", ")
-            context.outputMessage("No namespace starts with '\(prefix)'. Namespaces: \(known).")
             return
         }
 
@@ -132,7 +130,8 @@ final class EnginePlugin: CommandPlugin {
     /// descriptors and machine settings for the namespaces the graph selects — the
     /// `ConfigFilter`s that exist once a build has been attempted, whether or not the file
     /// did — so a file holds what this tree reads and nothing the unused-key report would
-    /// flag. `--all` writes every installed namespace instead, for a master file.
+    /// flag. `--all` writes every installed namespace instead — every one under the prefix,
+    /// given one — for a master file, or for a machine no graph has been built on yet.
     private func writeMachineFile(to destination: String, platform: Platform, namespaces: [ToolNamespaceRecord],
                                   all: Bool, context: any CommandContext) throws {
         let chosen = all ? namespaces : namespaces.filter(\.selected)
@@ -142,15 +141,10 @@ final class EnginePlugin: CommandPlugin {
             return
         }
 
-        let header = """
-            // Written by `semel tools --write` for --platform \(platform.rawValue): the tools and SDK
-            // this machine has, for the namespaces the graph reads. Not for editing — run it
-            // again after installing a toolchain — and not for checking in: the project's own
-            // choices go in semel.config beside it.
-
-            """
         let path = ExternalPathSanitizer.expandPartialPath(destination)
-        try (header + ToolNamespaceRenderer.text(for: chosen) + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        let text = ToolNamespaceRenderer.machineFile(writtenBy: "`semel tools --write`", platformName: platform.rawValue,
+                                                     namespaces: chosen)
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
 
         let names = chosen.map(\.namespace).joined(separator: ", ")
         let missing = chosen.filter(\.descriptors.isEmpty).map(\.toolName)

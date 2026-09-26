@@ -1,14 +1,17 @@
 // The formula docs/tutorial/first-node.md ends with. `include 'clang'` brings the funcs
 // SemelClang provides; each wires a preprocessor and a compiler per source file into a
-// linker, every tool selecting its own settings out of the shared config file.
+// linker, every tool selecting its own settings out of the settings node — this project's
+// `semel.config` laid over the machine's `../semel.machine.config`.
 
 include 'clang'
 
-product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: <../clang.cfg>)
-product "hello" = clang.executable(sources: <src>, settings: <../clang.cfg>)
+func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
 
-// The whole file, not a subset — this product exists to show what was pushed.
-product "config.txt" = StaticFile(path: <../clang.cfg>)
+product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: settings())
+product "hello" = clang.executable(sources: <src>, settings: settings())
+
+// The whole machine file, not a subset — this product exists to show what was pushed.
+product "config.txt" = StaticFile(path: <../semel.machine.config>)
 
 // One wire per source file, named by the formula: `%%f.0%%` is what the `*` matched and the
 // `.c` after it is literal, so the names are `hello.c`, not the path the tree happens to be

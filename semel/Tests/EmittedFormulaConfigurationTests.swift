@@ -176,6 +176,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         }
         XCTAssertGreaterThan(configFilesFound, 0, "nothing in the graph reads a config file")
 
+        try processEveryNode(ofKind: ConfigMerger.kind)
         try processEveryNode(ofKind: ConfigFilter.kind)
         try processEveryNode(ofKind: Configuration.kind)
     }
@@ -261,6 +262,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
         // The selectors and Configuration nodes still run; what they have to work with is a
         // config file nobody ever pushed.
+        try processEveryNode(ofKind: ConfigMerger.kind)
         try processEveryNode(ofKind: ConfigFilter.kind)
         try processEveryNode(ofKind: Configuration.kind)
 

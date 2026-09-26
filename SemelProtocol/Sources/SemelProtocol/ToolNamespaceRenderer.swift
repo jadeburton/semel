@@ -1,0 +1,67 @@
+// ToolNamespaceRenderer.swift
+// SemelProtocol
+//
+// The installed tools as config text. In the protocol package rather than the CLI because
+// two writers render it (B-109): `semel tools` renders what the daemon answers, and
+// `semel-swift prepare` renders the same facts read in-process — one shape, one place,
+// and both depend on nothing but the records.
+
+public enum ToolNamespaceRenderer {
+
+    /// The file the machine's half of the configuration is written to, beside the
+    /// project's `semel.config`. One name: `.gitignore`, prepare, the tutorial and the
+    /// fixtures all use it.
+    public static let machineFileName = "semel.machine.config"
+
+    /// The installed tools as the settings a config needs — one block per namespace that
+    /// names the tool, every installed version of it, so choosing a toolchain version is a
+    /// paste. A namespace whose tool is missing prints as a comment, so the whole output is
+    /// safe to paste and still says what is absent.
+    public static func text(for namespaces: [ToolNamespaceRecord]) -> String {
+        var blocks: [String] = []
+
+        for namespace in namespaces {
+            guard !namespace.descriptors.isEmpty else {
+                blocks.append("// \(namespace.namespace): no \(namespace.toolName) is installed on this machine")
+                continue
+            }
+
+            for descriptor in namespace.descriptors {
+                var lines = [
+                    "\(namespace.namespace).toolDescriptor.name=\(descriptor.name)",
+                    "\(namespace.namespace).toolDescriptor.version=\(descriptor.version)",
+                    "\(namespace.namespace).toolDescriptor.platform=\(descriptor.platform)",
+                    "\(namespace.namespace).toolDescriptor.architecture=\(descriptor.architecture)",
+                ]
+                for key in descriptor.machineSettings.keys.sorted() {
+                    lines.append("\(namespace.namespace).\(key)=\(descriptor.machineSettings[key]!)")
+                }
+                blocks.append(lines.joined(separator: "\n"))
+            }
+        }
+
+        return blocks.joined(separator: "\n\n")
+    }
+
+    /// The machine file: `text(for:)` with each namespace pinned to the newest installed
+    /// version of its tool — a listing shows every version, a file has to name one — under
+    /// a header saying who wrote it and that nobody edits or commits it. The descriptors
+    /// arrive sorted oldest first, so the newest is the last.
+    public static func machineFile(writtenBy writer: String, platformName: String,
+                                   namespaces: [ToolNamespaceRecord]) -> String {
+        let pinned = namespaces.map { namespace in
+            ToolNamespaceRecord(namespace:   namespace.namespace,
+                                toolName:    namespace.toolName,
+                                descriptors: Array(namespace.descriptors.suffix(1)),
+                                selected:    namespace.selected)
+        }
+        let header = """
+            // Written by \(writer) for --platform \(platformName): the tools and SDK this
+            // machine has, for the namespaces the graph reads. Not for editing — run it again
+            // after installing a toolchain — and not for checking in: the project's own choices
+            // go in semel.config beside it.
+
+            """
+        return header + text(for: pinned) + "\n"
+    }
+}
