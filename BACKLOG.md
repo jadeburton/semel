@@ -59,24 +59,27 @@ tested directly, and not applied to a cache key. What remains:
    is wired, so it must not be removed before item 1 lands. Once the key is
    project-relative, the same absolute path costs missed hits across developers — never a
    wrong hit — and the fix is not in the key: it is what `Folder` publishes, or a manifest
-   whose paths are root-relative, and every node that reads `baseFolderPath` — the clang
-   preprocessor's `-I`, the Swift compiler's walk — has to follow. `CacheKeyMountIndependenceTests`
+   whose paths are root-relative, and every node that reads `baseFolderPath` has to follow:
+   the clang preprocessor's `-I`, the Swift compiler's walk, `AssetCatalogCompiler` and
+   `FolderTreeBuilder`. `Folder`'s `contentRoot` (B-26) is already path-independent, which
+   is one shape "what `Folder` publishes" could take. `CacheKeyMountIndependenceTests`
    prove the wire-name half of the design; this value half is what remains for a real Swift
    graph.
 
 ## Swift package conversion
 
 **B-06** `open` — **Lock vendored dependencies by content hash.**
-`ISSUE:` at `SwiftFormulaConverter.swift:434`. A `sourceControl` dependency resolves to a
-vendored sibling directory with nothing checking that what is there is what was meant.
+`ISSUE:` in `SwiftFormulaConverter`'s dependency resolution. A `sourceControl` or registry
+dependency resolves to `<root>/Dependencies/<name>` with nothing checking that what is
+there is what was meant.
 
 Approach: a recursive content hash over the vendored package's own folder in the input file
-system — `input:/repo/GRDB.swift` — recorded and compared on every build. Guarantees the
-dependency has not changed, without claiming to guarantee which version it is.
+system — `input:/repo/Dependencies/GRDB.swift` — recorded and compared on every build.
+Guarantees the dependency has not changed, without claiming to guarantee which version it is.
 
 *What this does not need to fix.* Cache correctness is already guaranteed: a vendored
 package's files are ordinary `StaticFile` nodes whose content hashes are wire values, and
-`buildCacheKeyPartFromOneInput` puts every wire's key and value into the cache key. Adding
+`buildCacheKeyEntriesFromOneInput` puts every wire's key and value into the cache key. Adding
 or removing a file changes the `Folder` manifest, which is also an input. So an edit to
 vendored GRDB *already* changes the key of everything downstream. A lock adds nothing to
 detection.
@@ -90,10 +93,14 @@ same value `Package.resolved` and `yarn.lock` provide.
 counter-argument is that the value is entirely in the diff being reviewable — a hash in
 node configuration lives in the database, so it cannot be diffed in review, shared between
 developers, or inspected without the build system running. Recommendation is a checked-in
-file in the vendored folder, which still reaches the graph as an ordinary `StaticFile` and
-so participates in cache keys with no special path:
+file, which still reaches the graph as an ordinary `StaticFile` and so participates in cache
+keys with no special path — but **not inside the vendored folder**, for two reasons found
+since. A lock in the folder is a child the folder's `contentRoot` folds, so recording the
+root in the lock changes the root and it can never match; and `semel-swift prepare`
+replaces each `Dependencies/<name>` wholesale when it vendors, which would erase it. Beside
+the folder, one lock per dependency, or one file for all of them in `Dependencies/`:
 
-    GRDB.swift/.semel-lock
+    Dependencies/GRDB.swift.semel-lock
         content   sha256:abc…      enforced; a mismatch stops the build
         version   7.11.1           recorded only, never enforced
         origin    https://github.com/groue/GRDB.swift.git
@@ -104,7 +111,7 @@ first-time mistake forever — and whether a published advisory applies. Degrade
 absent → warn once, present and mismatched → fail.
 
 The recursive content hash is there (B-26): a folder's `contentRoot` port carries a Merkle
-root over everything under it, so `input:/repo/GRDB.swift`'s root is one port read — and it
+root over everything under it, so `input:/repo/Dependencies/GRDB.swift`'s root is one port read — and it
 is not qualified by the folder's path, so a lock survives the dependency being moved. What
 remains for B-06 is recording that hash in a lock file and comparing it. Two notes for
 whoever does: the fold is a stated text format with a version tag on its first line
@@ -118,8 +125,8 @@ Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says
 node produces, and knows nothing about packages; the converter wires its own reader from
 the path — only the formula's products are published and they land beside the formula,
 included names may not clash with the formula's own, and every node of the build reads its
-settings from the config beside the named package — so this tree keeps one `semel.config`,
-not six. What remains:
+settings from one config — beside the named package, or at the converter's `root:` when the
+formula gives one (B-56) — so this tree keeps one `semel.config`, not six. What remains:
 
 1. **Dependency overrides in the formula.** The converter resolves a git dependency to
    `<root>/Dependencies/<name>` (the `semel-swift` rule) and stalls when nothing is there;
@@ -127,7 +134,8 @@ not six. What remains:
    come from somewhere the rule does not reach.
 2. **Discoverability.** A pushed `Package.swift` that no formula names now builds nothing,
    silently. `ProjectFinder` sees every manifest and could report at idle the ones no
-   builder's `includes` port reaches.
+   builder's `includes` port reaches — as a `notice`, the channel the unused-config-key
+   warning already takes.
 
 Granularity is per package, not per product: a dependency that also vends an executable
 loses it. Acceptable until a real case shows up. The inferred-roots plan (converter
@@ -149,8 +157,9 @@ need a `clang.linker` block, which the archive case never reads.
 Done 2026-09-25: a `Folder` publishes a Merkle root on a `contentRoot` port of its own —
 the hash of a document with one line per child carrying its kind, what it holds and its name:
 a file's line carries its content hash and a subfolder's carries that subfolder's root,
-ordered by name as UTF-8 bytes then by kind, and framed by each name's length. A change anywhere below moves every root above it, carried by the B-25
-dirty mark, so an edit costs one fold per ancestor and not one per folder. Not on the
+ordered by name as UTF-8 bytes then by kind, and framed by each name's length. A change
+anywhere below moves every root above it, carried by the dirty mark folders already keep
+for their manifests, so an edit costs one fold per ancestor and not one per folder. Not on the
 manifest, and this is the load-bearing part: the manifest is what a folder's children are
 called, `ProjectFinder` and the converters are wired to it, and folding content in would
 re-run all of them on every keystroke. The root is path-independent where the manifest is
@@ -162,7 +171,7 @@ not, so two copies of one tree are comparable wherever they stand. What remains:
    invalidation: nothing notifies a folder when a product below it changes, so a folded
    product hash would go stale without the folder ever being rebuilt. Fixing it means giving
    `OutputFile` the notification `StaticFile` has. Wanted the day anyone syncs *products* to
-   a peer, or checks an `output:` tree for consistency (B-63); neither B-06 nor the
+   a peer, or checks an `output:` tree for consistency; neither B-06 nor the
    client/server reconciliation, both of which read `input:`, needs it.
 2. **`notFolded` for a kind that is not a product.** The fold reads `Folder` and
    `StaticFile` and answers `notFolded` for every other kind under a folder. Today that is
@@ -188,18 +197,23 @@ and answers the question a shared cache most needs answered: which tools are saf
 **B-12** `open` — **Sampled re-verification of cache entries.**
 Re-run entries and compare against what is stored. Must run *twice*, because a single re-run
 cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost × reuse`
-rather than uniformly. On a shared cache, have each client ignore a small percentage of hits
+rather than uniformly — `CacheEntry` keeps `cost` but no reuse count yet. On a shared cache, have each client ignore a small percentage of hits
 and recompute: coverage is sampling-rate × fleet-size.
 
 **B-107** `open` — **A cache entry's content is stored as a JSON array of integers.**
 `CacheEntry.content` is `[UInt8]`, which GRDB encodes as `[104,101,…]`, so every byte of
 entry JSON costs about 3.5 bytes on disk — roughly 0.75 MB at the 500-entry limit against
-about 0.2 MB as bytes. Making the column a real blob changes the schema fingerprint, which
-is a stopped launch and a re-push of every source, so it rides with the next unavoidable
-schema change rather than on its own.
+about 0.2 MB as bytes. Nothing waits on a schema change for this: the column is already
+declared `.blob`, and the schema fingerprint is the table's `CREATE` statement, so declaring
+the field `Data` moves no fingerprint. An entry written the old way then reads as the bytes
+of its JSON text, fails to decode as a `ProcessCacheEntry`, and is an ordinary miss that the
+next save overwrites.
 
 **B-14** `open` — **No blob GC.**
-Unreferenced objects accumulate in the object store with no collector. Not urgent.
+Unreferenced objects accumulate in the object store with no collector: `DataObjectStore` has
+no delete, and the collectors that exist — cache-entry trimming, unreferenced nodes — remove
+rows and leave their objects. Less "not urgent" than it was: since B-26, every edit interns
+a fresh content-root document per ancestor folder (B-26 residual 3).
 
 **B-15** `open` — **Cache abstraction behind a client interface.**
 Make the engine talk to the cache as though it were a separate server, without a socket or a
@@ -229,8 +243,10 @@ One binary, three modes, sharing a wire protocol:
    delivery, not in the engine: the engine's candidates are consumed as they are read, so a
    second, narrower diff of the same settle would find nothing left. A subscription is
    therefore a path prefix applied to the one diff, plus a retention window and a full
-   resync from the snapshot table for a client beyond it. What remains of B-30 is roles 1
-   and 2.
+   resync from the snapshot table for a client beyond it. None of that is built yet:
+   `subscribe` takes no argument, and `ConnectionRegistry` delivers every event to every
+   subscriber. What remains of B-30 is roles 1 and 2, the `.cache` and `.runner` roles a
+   hello is refused today, and role 3's per-subscriber narrowing.
 
 ## Command line
 
@@ -238,34 +254,32 @@ What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C 
 (2026-09-23); the engine-side report these lean on is the settle-time artifact diff, which
 the `artifacts` event carries.
 
-**B-95** `open` — **Nothing tells the user when the build is done and the artifacts are there.**
-After `push` or `build` the prompt returns at once and the graph settles in the background;
-the only way to know when to `cp` or `export` is to poll `errors` or `ls output:`, or to run
-`wait`, which blocks with no indication of progress. Wanted: a live indicator redrawn in
-place rather than scrolled, in two sizes. Minimal: one line with the number of pending
-nodes, which may rise while the cascade is still generating work, and a final line when the
-graph settles. Maximal: the active nodes listed, a dashboard. The final line exists as the
-settle summary, and what is missing is everything before it: the data is already counted —
-`BuildEngine.processSomeNodes` knows scheduled, computed and from-cache per batch and the
-summary accumulates them — so the work is a protocol message carrying the counts on each
-batch rather than only at idle, and a terminal renderer; B-30 role 3's subscription is the
-transport it grows into. Open, and to decide before building: whether
+**B-95** `open` — **Nothing shows a build's progress before it settles.**
+The end of a build is told: the settle summary prints when the graph settles, and the
+artifact diff under it names what appeared, changed and disappeared. Everything before that
+is silent — after `push` or `build` the prompt returns at once, and `wait` blocks with no
+indication of progress. Wanted: a live indicator redrawn in place rather than scrolled, in
+two sizes. Minimal: one line with the number of pending nodes, which may rise while the
+cascade is still generating work, replaced by the settle summary. Maximal: the active nodes
+listed, a dashboard. The transport exists — a subscribed connection already receives the
+`settled` and `artifacts` events — so the work is a progress event and a terminal renderer.
+The event should carry the running totals the settle keeps (`SettleTally`), not per-batch
+counts: the tally counts each node once across batches, and a sum of batches would count a
+node that ran twice. Open, and to decide before building: whether
 the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
 verb and left with a key).
 
-**B-91** `open` — **The engine has no channel for anything but products and errors.**
-`DaemonMessages` carry what was published, what failed, and one settle's totals; everything
-else the engine knows about *why* — which wire changed, which nodes were scheduled, which
-of them ran and which came from the cache, node by node — leaves through `Debug.log`, and
-a release build compiles that out. The settle summary is the first step and carries the
-three totals over the protocol; B-95's live indicator wants the same counts
-per batch, so the three share one transport. This item is the rest of the channel: an
-`explain <product>` (or `why`) command that walks upstream from a product to the wires
-whose values changed since the last settle and names them, and a per-node record of
-*ran* vs *from cache* that the summary and `explain` both read. The totals say that four
-of ten nodes ran; only the record says which four. See FUTURE.md, "What the tutorial
-taught us".
+**B-91** `open` — **The engine says what a settle did, not why.**
+`DaemonMessages` carry what was published, what failed, one settle's totals — scheduled,
+computed, from cache, errors — and the artifact diff. What the engine knows about *why* —
+which wire changed, which nodes ran and which came from the cache, node by node — leaves
+through `Debug.log`, and a release build compiles that out. The per-node record half
+exists: `SettleTally` keeps the ids of the nodes it computed and the ones it answered from
+the cache, and throws them away at every settle once the totals are taken. What remains is
+keeping that record and an `explain <product>` (or `why`) command that walks upstream from
+a product to the wires whose values changed since the last settle and names them, reading
+the same record. The totals say that four of ten nodes ran; only the record says which four.
 
 ## Formula language
 
@@ -287,22 +301,29 @@ bodies, every parameter bound, and parameters usable in templates.
 
 **B-43** `open` — **Formalise the nodes that break the dataflow rule, instead of leaving them
 as back doors.**
-A node's outputs are supposed to be a function of its inputs. Three types are not, and none
-of them says so — they simply reach around the model, which makes the exception look like an
-oversight rather than a part of the architecture.
+A node's outputs are supposed to be a function of its inputs. Two types are not, and neither
+says so — they simply reach around the model, which makes the exception look like an
+oversight rather than a part of the architecture. A third, `OutputFile`, was, and is not any
+more (below).
 
-They break *different* rules, and one concept will not cover all three.
+They break *different* rules, and one concept will not cover both.
 
 *`StaticFile` — genuinely external.* No input ports, yet its output value arrives: the push
 path writes its output port from outside. Same for user intent, "pinned" versus deleted.
-Candidate fix: a fourth port kind, `.external(name)`, filled by the runtime rather than by a
-wire. Purity then becomes universal — every node's output is a function of its declared input
-ports, and what varies is only who fills them. That is also what would make B-02 enforceable:
-"no node may read outside its declared inputs" cannot be stated while two types quietly do.
+B-108's `FormulaPrelude` is the same shape on purpose — a source the engine fills from what
+the plugins provide — and is the case to design against alongside `StaticFile`. Candidate
+fix: a fourth port kind, `.external(name)`, filled by the runtime rather than by a wire.
+Purity then becomes universal — every node's output is a function of its declared input
+ports, and what varies is only who fills them. `HermeticityTests` (B-02) enforce the part
+that can be scanned for — no node launches a process or reads the environment — but not the
+rule itself, which cannot be stated while these types' outputs arrive from outside by
+design. An external port kind is what would let it be.
 
-*`Folder.manifest` — not external at all.* It is a projection of the graph itself: the set of
-child nodes, plus each child's pinned state, both read straight from the database, recomputed
-by `onChildAdded`/`onChildContentChanged`/`onChildDeleted`. The dependency is the parent-child
+*`Folder.manifest` and `Folder.contentRoot` — not external at all.* Both are projections of
+the graph itself: the set of child nodes with each child's pinned state, and the fold of
+what they hold, read straight from the database. `onChildAdded`/`onChildContentChanged`/
+`onChildDeleted` mark the folder dirty, and `Folder.flushDirtyManifests()` rebuilds both at
+the start of each processing pass. The dependency is the parent-child
 edge, which the engine already has — represented as `parentNodeID` rather than N wire rows,
 because a folder of 10,000 files would otherwise mean 10,000 wires. (That edge is also what
 the missing index cost: 200 files, 3.39s to 0.63s.)
@@ -321,8 +342,8 @@ could print a line when one went away — and it went the same way, port and all
 table the engine compares at settle answers that question for the whole graph, where a
 builder could answer it only for one project and only while the process lived.
 
-*A correction to our own comment.* `Folder.pinnedOutputPort` is marked HACK for storing state
-in a "fake" output. That is too harsh. Putting the state in an output port is what keeps it
+*A correction to our own comment.* `Folder`'s pinned port is called a "fake" output, and the
+code that writes it is marked HACK, for storing state in an output. That is too harsh. Putting the state in an output port is what keeps it
 inside the dataflow model: it can be wired, downstream nodes can see it, and it lands in cache
 keys. A private state field would be invisible to all three. The fix is to declare what that
 output means, not to invent a state slot beside the ports.
@@ -331,7 +352,7 @@ output means, not to invent a state slot beside the ports.
 declared, `StaticFile` and `Folder` become nodes the engine schedules and processes — which is
 arguably more correct, since a push *is* an event that should run the node. But
 `descriptor.hasInputs` is now the single answer to "does the graph process this node"
-(`3a0d68e`), load-bearing at six sites and pinned by `SourceNodeSchedulingTests`. The
+(`3a0d68e`), load-bearing at eight sites and pinned by `SourceNodeSchedulingTests`. The
 distinction would have to become "wired inputs" rather than "inputs".
 
 **B-44** `open` — **Naming: what is left after the 2026-09-12 sweep.**
@@ -341,8 +362,9 @@ Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFi
 deleted). The glossary and the naming rule live in `AGENTS.md`; the rename cost data moved
 there too.
 
-*Still open.* The config vocabulary — `Configuration` (a node type), `ConfigurationText`,
-`semel.config`, `config namespace` — is four words circling one area. Not misleading, just
+*Still open.* The config vocabulary — `Configuration` (a node type), the configuration text
+format (`ConfigurationText.swift`), `semel.config`, and a config namespace spelled
+`settingNamespace` in the code — is several words circling one area. Not misleading, just
 crowded; rename opportunistically, when already in the file.
 
 *Decided, so it is not re-raised.* `isPinned` stays. *Pinned* means "cannot be moved" in
@@ -363,61 +385,35 @@ mtime does not change for a file edited deep inside.
 What remains: a cache key can only stop a wrong reuse. An SDK edited in place under an
 already-built graph is not rebuilt, because an unscheduled node never recomputes its key.
 Closing that needs the SDK to be a graph input — the gigabyte-of-headers problem — which is
-B-03's container digest. The invariant the original TODO stated (every node input exists
-inside the input file system or is derived from it) is still worth writing into `AGENTS.md`;
-nothing there says it.
+B-03's container digest. Also: only the Swift tools fingerprint the SDK. `ClangPreprocessor`
+and `ClangLinker` read the SDK at `sdkPath` too, and their keys carry the path and the tool
+binary's fingerprint but not what is behind the path.
 
-**B-61** `open` — **`wait` across connections.**
-Two things a socket server must settle before `wait` is offered to more than one client: a
-`wait` can block indefinitely while another session holds a batch open, since a batched
-work signal is counted but not sent until `endBatch` (fails safe, never a false settle;
-the limit is pinned by `test_waitBlocksWhileAnotherSessionHoldsABatchOpen`); and
-`waitUntilIdleBlocking` parks the caller's thread, so a listener must not call the handler
-from a cooperative-pool thread.
+The invariant the original TODO stated (every node input exists inside the input file
+system or is derived from it) is still worth writing into `AGENTS.md`, but not in those
+words: sources the runtime fills — `StaticFile` from a push, B-108's `FormulaPrelude` from
+the plugins — and the machine facts in a key (the SDK, the tool binary) are inputs from
+outside the input file system by design. It has to be stated as "or declared as coming from
+outside", which is B-43's external port.
 
-**B-84** `open` — **SwiftPM leaves a dependent module's objects stale after a path
-dependency changes.**
-Both halves of the original item are answered, and what is left is upstream.
-
-The stale *plan* is fixed. SwiftPM re-plans when llbuild's `PackageStructure` command is
-dirty, and that command's inputs come from `BuildPlan.inputs`, which iterates
-`graph.rootPackages`: the root package's target directories, its `Package.swift` and its
-`Package.resolved`. Every other package here is a path dependency, so adding or removing a
-source file in one of them is an input to nothing and `.build/debug.yaml` keeps the file
-set it was written with — "cannot find 'X' in scope" for an added file, "missing inputs:
-…/X.swift" for a removed one. `--disable-build-manifest-caching` plans every invocation for
-about 0.15 s on this package, inside the noise of process start-up; `scripts/build.sh`
-passes it and CI and `AGENTS.md` call the script.
-
-The stale *value* is fixed for `Hello`. A default argument is not a call: the compiler
-emits a default-argument generator with the constant folded in, as a coalesced copy in
-every caller's object file (`mov w8, #0x9` inside
-`SemelCLI.build/CommandInterpreter.swift.o`). `Hello.init(role:)` is an overload calling
-`init(protocolVersion: ProtocolVersion.current, role:)`, so the read happens in
-`SemelProtocol`; `test_helloWithNoVersionNamedCarriesTheProtocolModulesNumber` catches the
-stale copy, not the reintroduction — reinstate the default argument and build clean and both
-sides of it fold to the same number. "A constant that crosses a module boundary is not a
-default argument" is an invariant in `AGENTS.md`, and that is what guards the reintroduction.
-
-What remains is the SwiftPM defect underneath the second half, which the overload avoids
-rather than cures: an incremental build can leave a dependent module's objects unrebuilt
-after a change in a package it depends on — an undefined symbol at link time
-([swiftlang/swift-package-manager#7715](https://github.com/swiftlang/swift-package-manager/issues/7715),
-open since 2024-06) or a struct read at the wrong offsets
-([#10502](https://github.com/swiftlang/swift-package-manager/issues/10502), open since
-2026-09). The measurement on Swift 6.3.3 that produced the overload: with the default
-argument in place, bumping `ProtocolVersion.current` from 9 to 10 and running one root
-`swift build` linked `semel` at 9 and `semelserv` at 10. `rm -rf .build/arm64-apple-macosx`
-is the only local answer to the general case. The plan-input bug has no tracker entry
-of its own; filing one against `BuildPlan.inputs` is the other thing worth doing.
+**B-61** `open` — **The cross-session `wait` limit is documented and not pinned.**
+`wait` has been offered across socket connections since the socket server landed, and both
+conditions this item set are settled: each connection is served on its own queue, and a
+`wait` is answered off the serial request queue. One behaviour is accepted rather than
+fixed — a `wait` while another session holds a batch open blocks until that batch closes,
+because a batched work signal is counted but not sent until `endBatch` (fail-safe: never a
+false settle). Nothing pins it: `test_waitBlocksWhileAnotherSessionHoldsABatchOpen` runs
+over an engine with no processing loop, where a wait returns at once, and so asserts that
+it *returns*. A test over a live loop, asserting the block and its release at `endBatch`,
+is what is owed — and the test's name, until then.
 
 
 ## App bundles
 
 Building the app that consumes the packages, for the simulator first. Design:
 `docs/superpowers/specs/2026-09-14-semel-app-bundles-design.md`. A hand-written formula
-already builds and launches a SwiftUI app (`C1/swift/HelloApp`, 2026-09-14); what follows
-is what a tool-decided file set needs. Tree-valued ports and tree products (B-63) are
+builds and launches a SwiftUI app (`EndToEnd/Fixtures/swift/HelloApp`, the roster's
+`swift-hello-app`). Tree-valued ports and tree products (B-63) are
 built: `TreeManifest`, `expectedOutputFolders`, `TreeFile`, `TreeMerger`, and
 `product 'name/'`. The Apple resource nodes (B-64) are built: `SemelApple` with
 `AssetCatalogCompiler`, `StringCatalogCompiler` and `InfoPlistBuilder`; HelloApp builds
@@ -427,12 +423,14 @@ extensions it embeds from the project file, and `semel-swift prepare` on a folde
 an `.xcodeproj` resolves the project's packages through Xcode, vendors them and writes the
 formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
 two commands. Device signing is deliberately out — the simulator needs none beyond what
-`ld` does.
+`ld` does. What follows is what is left: one leak of products the app did not ask for, and
+two places Apple's tools are not byte-reproducible.
 
-**B-67** `open` — **A converted project publishes every package's archive beside the app.**
+**B-67** `open` — **An app publishes every package's archive beside itself.**
 Each included package formula publishes its `lib<P>.a` products beside the including
 formula, so the app's build root ends with twenty archives nobody asked for — 40 MB each
-for IceCubes. An include that brings only funcs, not products, or a package converter
+for IceCubes. A converted project and a hand-written one alike: HelloApp's formula
+publishes `libHelloKit.a` through its include of HelloKit. An include that brings only funcs, not products, or a package converter
 that emits archives only when it is the root, would drop them; the product statement is
 the only thing the app does not want.
 
@@ -456,8 +454,8 @@ fixes the rendition identifier or the appearance order, whether actool has a
 single-threaded mode that makes the appearance table's order stable, or whether
 `--output-format` or a newer Xcode's `.icon` handling avoids the first cause; failing that,
 the harness exempts `Assets.car` from `TreeDiff` for a project with a catalog carrying
-either an `.icon` input or more than one appearance, named per project. Evidence: the
-diagnosis's section 4. The roster exempts every `Assets.car` of `icecubes-app`; removing
+either an `.icon` input or more than one appearance, named per project. The roster exempts
+every `Assets.car` of `icecubes-app`; removing
 that exemption is this item's exit.
 
 **B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
@@ -468,8 +466,7 @@ does `LC_UUID`, while every symbol, address and fixup is identical. All inputs t
 are the same hash in both builds. To find: the linker option that makes GOT emission
 deterministic (`-no_deduplicate` is already passed by clang's driver in debug; check
 `-fixup_chains` and `-ld_classic` behaviour), or confirm the duplicate originates from a
-specific input. Evidence: the diagnosis's section 3. Further evidence, from `icecubes-app`'s
-two-build comparisons: carrying the duplicate pair is necessary but not sufficient — which
+specific input. Evidence, from `icecubes-app`'s two-build comparisons: carrying the duplicate pair is necessary but not sufficient — which
 of the executables carrying the pair flips varies — three of the four `.appex` executables
 in one run, the app's own executable in another — while `IceCubesActionExtension` links a
 single `_objc_msgSend` GOT entry (`dyld_info -fixups` shows one `_objc_msgSend$` line
@@ -483,8 +480,9 @@ exemption is this item's exit.
 
 Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for something IceCubes
 does not exercise. What is said about each project below is from memory of the project, not
-from a clone: pin a commit, run `semel-swift prepare`, and let the first failure list correct
-the entry. The gap list a project produces is worth more than its eventual pass.
+from a clone: pin a commit, run `semel-swift prepare` — or, for a C or C++ project, which
+has no converter, lay a formula over the clone (B-76) — and let the first failure list
+correct the entry. The gap list a project produces is worth more than its eventual pass.
 
 **B-76** `open` — **A roster source for a clone plus a hand-written formula.**
 `Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes
@@ -517,8 +515,11 @@ non-synchronized groups.
 
 **B-78** `open` — **More Swift packages.**
 
-1. *Semel itself* — `semel.fmla` exists; a macOS executable root rather than a static
-   library, GRDB with a system-library SQLite, and no clone. One roster entry.
+1. *Semel itself* — `semel.fmla` exists; several executables over a real package graph,
+   GRDB with a system-library SQLite. No clone either, which no `Project.source` can say
+   today: a fixture copies `EndToEnd/Fixtures` and a git source needs a URL, so this wants a
+   source for the repository's own checkout, as B-76 wants one for an overlay. (A macOS
+   executable root alone is no longer new: `swift-my-app` is one.)
 2. *swift-nio* — every residual of B-55 at once: `cSettings` `.define` values that matter,
    C sources in nested folders, header paths other than `include`, and executables
    (`NIOEchoServer` and the like) linking C targets, which need the `clang.linker` block.
@@ -531,8 +532,8 @@ non-synchronized groups.
    swift-collections at the same commits) — what cross-project cache hits look like, for
    the local-engines-plus-cache-server design.
 
-**B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world and a
-six-file emulator. Needs B-76. `c-hello` is subsumed by `tutorial` — identical sources, the
+**B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world (twice:
+`c` and `tutorial`) and an emulator of three `.cpp` files and eight headers. Needs B-76. `c-hello` is subsumed by `tutorial` — identical sources, the
 same products plus `lines.txt` — so when a real C project is pinned it is `c-hello` that
 goes, not the tutorial fixture. `RosterTests.test_theTutorialFixtureSourcesMatchTheCFixture`
 compares the two `src/` trees, though, so that test and the tutorial's "copy
