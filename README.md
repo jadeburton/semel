@@ -96,10 +96,10 @@ rm build/**
 | `d` / `debug [<cache key>]` | Dump the full graph state; given a cache entry's key, dump instead the key material that entry was keyed on — the text whose sha256 is that key, so two machines that disagreed about a build diff two texts rather than two hashes |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
-| `build <folder> [--into <dir>] [--no-follow]` | `push <folder>`, `wait`, `errors` in one word, then `export` — to `--into`, or to `semel-out/<folder>` under the base — unless the build reported errors. Follows the formula's inputs within your tree: a source the settle reports as not pushed, such as a shared `clang.cfg` beside the folder or a path dependency beside a package, is pushed with a line saying which formula asked, and the build waits again; `--no-follow` pushes the folder alone. Errors are reported once, one entry per cause |
+| `build <folder> [--into <dir>] [--no-follow]` | `push <folder>`, `wait`, `errors` in one word, then `export` — to `--into`, or to `semel-out/<folder>` under the base — unless the build reported errors. Follows the formula's inputs within your tree: a source the settle reports as not pushed, such as the `semel.machine.config` beside the folder or a path dependency beside a package, is pushed with a line saying which formula asked, and the build waits again; `--no-follow` pushes the folder alone. Errors are reported once, one entry per cause |
 | `e` / `errors` | Show all current build errors |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
-| `t` / `tools [prefix]` | List the installed tools as `semel.config` settings, one block per namespace, ready to paste; a prefix narrows it to namespaces starting with it (`tools clang`) |
+| `t` / `tools [prefix] [--write <file> [--all]] [--platform <p>]` | List the installed tools as config settings, one block per namespace; a prefix narrows it to namespaces starting with it (`tools clang`). `--write` writes the machine's half of the configuration — the tool descriptors and each tool's SDK facts — for the namespaces the graph selects, which exist once a build has been attempted; `--all` writes every installed namespace (under the prefix, given one) instead |
 | `reset [--cache]` | Discard everything derived and rebuild it from the input file system, copying the discarded graph aside first; the cached builds are kept, so the rebuild is a pass of cache lookups, and `--cache` discards those too |
 
 ### Session
@@ -124,16 +124,22 @@ against a graph already broken the same way prints nothing) — which makes it a
 
 ### Configuration
 
-Semel has no defaults. Every tool a build runs is declared in a config file in the input
-file system — `semel.config` beside a Swift package or Xcode project, `clang.cfg` or
-whatever a hand-written formula names — down to the tool's version string, because the
-version is part of what makes a cached result reusable. A tool given no setting fails and
-names the key it wants and the file to put it in; a key nothing reads is reported once
-the graph settles. Settings are keyed by namespace, `clang.compiler.target=…`, and each
-node selects its own slice, so a change to one tool's setting leaves every other tool's
-cache entries valid. `tools` prints the tool blocks for this machine ready to paste, and
-`semel-swift prepare` writes the whole file for a Swift tree. The design is in
-`docs/superpowers/specs/2026-08-30-semel-configuration-design.md`.
+Semel has no defaults. Every tool a build runs is declared in configuration in the input
+file system, down to the tool's version string, because the version is part of what makes
+a cached result reusable. The configuration is two files, with two owners:
+`semel.machine.config` holds what is a fact about the machine — each tool's descriptor
+and its SDK — and is written by `tools --write`, never edited and never committed;
+`semel.config` holds the project's choices — the target, the language standard — and is
+typed once and checked in. A formula names both: `clang.settings(project: <semel.config>,
+machine: <../semel.machine.config>)` lays the project's file over the machine's, and a
+project with more layers builds that node itself with `ConfigMerger`. A tool given no
+setting fails naming the key it wants and which of the two files it belongs in; a key
+nothing reads is reported once the graph settles. Settings are keyed by namespace,
+`clang.compiler.target=…`, and each node selects its own slice, so a change to one
+tool's setting leaves every other tool's cache entries valid. `semel-swift prepare`
+writes both files for a Swift tree. The designs are in
+`docs/superpowers/specs/2026-08-30-semel-configuration-design.md` and
+`docs/superpowers/specs/2026-09-26-semel-configuration-two-files-design.md`.
 
 ### Building a Swift package
 
@@ -151,7 +157,8 @@ formula text and merges that text into the file, so the included products are th
 products and the included funcs can be called from further `product` definitions. That
 the node is a Swift package converter is the toolchain's business, not the language's.
 The packages a package depends on are reached through it. Every node of the build,
-dependencies included, reads its settings from the `semel.config` beside the named package.
+dependencies included, reads its settings from the `semel.config` and
+`semel.machine.config` beside the root.
 
 A tree with several root packages puts one formula above them and names each with the
 formula's folder as the build root, so their common dependencies are vendored and compiled
@@ -243,10 +250,12 @@ every git dependency, transitively, into `<folder>/Dependencies/<name>` — one 
 one copy per package, named as SwiftPM names its checkouts (`Dependencies/GRDB.swift`).
 That folder is the only place the converter looks for a git or registry dependency,
 whichever package declared it; local path dependencies stay wherever the manifest says.
-Then it writes `semel.fmla` (one `include` per root, all under one build root) and
-`semel.config` for the platform — the namespaces the formula reads, the tools and
-SDK this machine has, and a target at the highest deployment version the packages declare
-(`macos` is the default platform).
+Then it writes `semel.fmla` (one `include` per root, all under one build root) and the
+two config files for the platform, for the namespaces the formula reads:
+`semel.machine.config` with the tools and SDK this machine has, rewritten every run, and
+`semel.config` with a target at the highest deployment version the packages declare and,
+for a C target, a language standard to start from — kept once written (`macos` is the
+default platform).
 
 A folder holding an `.xcodeproj` is a project: the project is the one root, its packages
 — the ones it declares and the ones its local packages reach — are resolved through
@@ -289,7 +298,7 @@ semel/           semel — the prompt; opens a connection to semelserv and nothi
   Server/              SemelServer: the engine behind one RequestHandler, sessions, events
   Transport/           SemelTransport: the Unix-socket listener and frame stream
 semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
-                 writes semel.fmla and semel.config (SemelSwiftTool)
+                 writes semel.fmla and the two config files (SemelSwiftTool)
 ```
 
 The packages they link:

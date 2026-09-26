@@ -65,12 +65,28 @@ final class PrepareTests: XCTestCase {
     private let xcstringstool = ToolDescriptor(name: "xcstringstool", version: "Xcode 26.6 (17F113)", platform: "macOS",
                                                architecture: "arm64", recursiveHash: nil)
 
-    /// A machine with one SDK of each kind and every tool installed.
-    private func facts(descriptors: [ToolDescriptor]? = nil) -> ToolchainFacts {
-        ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, xcstringstool],
-                       namespaces: ToolNamespaceRegistry.all,
-                       sdkPath: { "/SDKs/\($0).sdk" },
-                       sdkIdentity: { $0 == "iphonesimulator" ? "26.5 (23F81a)" : "26.5 (25F70)" })
+    /// A machine with one SDK of each kind and every tool installed. The namespaces are
+    /// the registry's, their machine settings answered from this machine rather than by
+    /// xcrun: each key a plugin declares, from the SDK the fake has.
+    private func facts(descriptors: [ToolDescriptor]? = nil, sdkIdentity: ((String) -> String?)? = nil) -> ToolchainFacts {
+        let identity: (String) -> String? = sdkIdentity ?? { $0 == "iphonesimulator" ? "26.5 (23F81a)" : "26.5 (25F70)" }
+        let namespaces = ToolNamespaceRegistry.all.map { entry in
+            ToolNamespace(namespace: entry.namespace, toolName: entry.toolName, machineSettingKeys: entry.machineSettingKeys,
+                          machineSettings: { platform in
+                              var settings: [String: String] = [:]
+                              for key in entry.machineSettingKeys.sorted() {
+                                  switch key {
+                                  case "sdk":        settings[key] = platform.sdkName
+                                  case "sdkVersion": settings[key] = identity(platform.sdkName)
+                                  case "sdkPath":    settings[key] = "/SDKs/\(platform.sdkName).sdk"
+                                  default:           settings[key] = "unanswered"
+                                  }
+                              }
+                              return settings
+                          })
+        }
+        return ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, xcstringstool],
+                              namespaces: namespaces, sdkIdentity: identity)
     }
 
     private func lines(_ text: String) -> [String] {
@@ -164,32 +180,55 @@ final class PrepareTests: XCTestCase {
 
     private var everyNamespace: [String] { ToolNamespaceRegistry.all.map(\.namespace) }
 
-    func test_theConfigStatesThePlatformSettingsEachToolNeeds() throws {
-        let config = lines(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0",
-                                                facts: facts(), namespaces: everyNamespace))
+    /// B-109. The machine file: every namespace's tool descriptor, and the machine settings
+    /// the plugin declares for it — the compiler's SDK by name and identity, clang's by
+    /// path where the preprocessor and linker read it — and nothing of the project's.
+    func test_theMachineConfigStatesTheToolsAndTheSDKFactsEachToolDeclares() throws {
+        let config = lines(GeneratedFiles.machineConfig(platform: .iosSimulator, facts: facts(), namespaces: everyNamespace))
 
+        XCTAssertTrue(config[0].hasPrefix("// Written by semel-swift prepare for --platform ios-simulator"), "got:\n\(config)")
         for namespace in ["swift.compiler", "swift.linker"] {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name=swiftc"), "got:\n\(config)")
             XCTAssertTrue(config.contains("\(namespace).sdk=iphonesimulator"), "got:\n\(config)")
             XCTAssertTrue(config.contains("\(namespace).sdkVersion=26.5 (23F81a)"), "got:\n\(config)")
-            XCTAssertTrue(config.contains("\(namespace).target=arm64-apple-ios18.0-simulator"), "got:\n\(config)")
         }
         XCTAssertTrue(config.contains("swift.packageReader.toolDescriptor.name=swift"), "got:\n\(config)")
         XCTAssertFalse(config.contains { $0.hasPrefix("swift.packageReader.sdk") }, "the reader declares no SDK")
-        for namespace in ["clang.compiler", "clang.linker", "clang.preprocessor"] {
+        for namespace in ["clang.linker", "clang.preprocessor"] {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name=clang"), "got:\n\(config)")
             XCTAssertTrue(config.contains("\(namespace).sdkPath=/SDKs/iphonesimulator.sdk"), "got:\n\(config)")
+        }
+        XCTAssertTrue(config.contains("clang.compiler.toolDescriptor.name=clang"), "got:\n\(config)")
+        XCTAssertFalse(config.contains { $0.hasPrefix("clang.compiler.sdkPath") }, "the compiler reads no SDK")
+        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.stringCatalogCompiler.toolDescriptor.name=xcstringstool"), "got:\n\(config)")
+        XCTAssertFalse(config.contains { $0.contains(".target=") || $0.contains("Standard=") },
+                       "the project's choices are not the machine's, got:\n\(config)")
+    }
+
+    /// B-109. The project file: the target per tool at the deployment version, actool's
+    /// platform facts, and the C standards under a comment naming them the choice they
+    /// are — and no tool descriptor, which is the machine's.
+    func test_theProjectConfigStatesTheTargetAndTheChoicesEachToolNeeds() throws {
+        let config = lines(GeneratedFiles.projectConfig(platform: .iosSimulator, deploymentVersion: "18.0",
+                                                        facts: facts(), namespaces: everyNamespace))
+
+        XCTAssertTrue(config[0].hasPrefix("// Written by semel-swift prepare for --platform ios-simulator"), "got:\n\(config)")
+        for namespace in ["swift.compiler", "swift.linker", "clang.compiler", "clang.linker", "clang.preprocessor"] {
             XCTAssertTrue(config.contains("\(namespace).target=arm64-apple-ios18.0-simulator"), "got:\n\(config)")
-            XCTAssertTrue(config.contains("\(namespace).cStandard=gnu11"), "got:\n\(config)")
+        }
+        for namespace in ["clang.compiler", "clang.linker", "clang.preprocessor"] {
+            let standard = try XCTUnwrap(config.firstIndex(of: "\(namespace).cStandard=gnu11"), "got:\n\(config)")
+            XCTAssertTrue(config[standard - 1].hasPrefix("// prepare's starting point, not clang's default"), "got:\n\(config)")
             XCTAssertTrue(config.contains("\(namespace).cxxStandard=c++17"), "got:\n\(config)")
         }
-        XCTAssertTrue(config.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "got:\n\(config)")
         XCTAssertTrue(config.contains("apple.assetCatalogCompiler.platform=iphonesimulator"), "got:\n\(config)")
         XCTAssertTrue(config.contains("apple.assetCatalogCompiler.minimumDeploymentTarget=18.0"), "got:\n\(config)")
         XCTAssertTrue(config.contains("apple.assetCatalogCompiler.targetDevices=iphone,ipad"), "got:\n\(config)")
-        XCTAssertTrue(config.contains("apple.stringCatalogCompiler.toolDescriptor.name=xcstringstool"), "got:\n\(config)")
-        XCTAssertFalse(config.contains { $0.hasPrefix("apple.stringCatalogCompiler.platform") },
-                       "xcstringstool compiles every language whatever the platform")
+        XCTAssertFalse(config.contains { $0.hasPrefix("apple.stringCatalogCompiler") || $0.hasPrefix("swift.packageReader") },
+                       "a tool with nothing of the project's to say has no block, got:\n\(config)")
+        XCTAssertFalse(config.contains { $0.contains("toolDescriptor") || $0.contains("sdk") },
+                       "the machine's facts are not the project's, got:\n\(config)")
     }
 
     /// B-68. A block nothing reads is reported as unused keys on every build, so the
@@ -203,14 +242,14 @@ final class PrepareTests: XCTestCase {
         try Preparation.run(folder: folder("Packages"), platform: .iosSimulator, steps: steps())
         try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
 
-        let packages = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
+        let packages = try String(contentsOf: folder("Packages").appendingPathComponent("semel.machine.config"), encoding: .utf8)
         for namespace in ["swift.packageReader", "swift.compiler", "swift.linker"] {
             XCTAssertTrue(packages.contains("\(namespace).toolDescriptor.name="), "got:\n\(packages)")
         }
         XCTAssertFalse(packages.contains("clang."), "a tree with no C target reads no clang settings (B-110), got:\n\(packages)")
         XCTAssertFalse(packages.contains("apple."), "got:\n\(packages)")
 
-        let project = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        let project = try String(contentsOf: folder("App").appendingPathComponent("semel.machine.config"), encoding: .utf8)
         for namespace in ["swift.packageReader", "swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler",
                           "apple.assetCatalogCompiler", "apple.stringCatalogCompiler"] {
             XCTAssertTrue(project.contains("\(namespace).toolDescriptor.name="), "got:\n\(project)")
@@ -227,7 +266,7 @@ final class PrepareTests: XCTestCase {
 
         try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
 
-        let config = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
+        let config = try String(contentsOf: folder("Packages").appendingPathComponent("semel.machine.config"), encoding: .utf8)
         for namespace in ["swift.compiler", "clang.preprocessor", "clang.compiler"] {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name="), "got:\n\(config)")
         }
@@ -259,7 +298,7 @@ final class PrepareTests: XCTestCase {
         let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
 
         XCTAssertEqual(report.kept.map(\.lastPathComponent), ["semel.fmla"])
-        let config = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        let config = try String(contentsOf: folder("App").appendingPathComponent("semel.machine.config"), encoding: .utf8)
         XCTAssertTrue(config.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "got:\n\(config)")
         XCTAssertTrue(config.contains("apple.stringCatalogCompiler.toolDescriptor.name=xcstringstool"), "got:\n\(config)")
         XCTAssertTrue(config.contains("swift.compiler.toolDescriptor.name=swiftc"), "the package set is still there, got:\n\(config)")
@@ -282,38 +321,42 @@ final class PrepareTests: XCTestCase {
     }
 
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {
-        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
-                                                facts: facts(), namespaces: everyNamespace))
+        let machine = lines(GeneratedFiles.machineConfig(platform: .macos, facts: facts(), namespaces: everyNamespace))
+        let project = lines(GeneratedFiles.projectConfig(platform: .macos, deploymentVersion: "14.0",
+                                                         facts: facts(), namespaces: everyNamespace))
 
-        XCTAssertTrue(config.contains("swift.compiler.sdk=macosx"), "got:\n\(config)")
-        XCTAssertTrue(config.contains("swift.compiler.sdkVersion=26.5 (25F70)"), "got:\n\(config)")
-        XCTAssertTrue(config.contains("swift.compiler.target=arm64-apple-macosx14.0"), "got:\n\(config)")
+        XCTAssertTrue(machine.contains("swift.compiler.sdk=macosx"), "got:\n\(machine)")
+        XCTAssertTrue(machine.contains("swift.compiler.sdkVersion=26.5 (25F70)"), "got:\n\(machine)")
+        XCTAssertTrue(project.contains("swift.compiler.target=arm64-apple-macosx14.0"), "got:\n\(project)")
     }
 
     /// A config names one version; of several installed, the newest.
     func test_aToolInstalledTwiceIsPinnedToTheNewest() throws {
-        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
-                                                facts: facts(descriptors: [olderSwiftc, swiftc, clang, swift]),
-                                                namespaces: everyNamespace))
+        let config = lines(GeneratedFiles.machineConfig(platform: .macos,
+                                                        facts: facts(descriptors: [olderSwiftc, swiftc, clang, swift]),
+                                                        namespaces: everyNamespace))
 
         XCTAssertTrue(config.contains("swift.compiler.toolDescriptor.version=Apple Swift version 6.3.3"), "got:\n\(config)")
         XCTAssertFalse(config.contains("swift.compiler.toolDescriptor.version=Apple Swift version 6.2.0"))
     }
 
     func test_aMissingToolLeavesACommentNotASetting() throws {
-        let config = lines(try GeneratedFiles.config(platform: .macos, deploymentVersion: "14.0",
-                                                facts: facts(descriptors: [swiftc, swift]), namespaces: everyNamespace))
+        let config = lines(GeneratedFiles.machineConfig(platform: .macos, facts: facts(descriptors: [swiftc, swift]),
+                                                        namespaces: everyNamespace))
 
         XCTAssertTrue(config.contains("// clang.compiler: no clang is installed on this machine"), "got:\n\(config)")
         XCTAssertFalse(config.contains { $0.hasPrefix("clang.compiler.toolDescriptor") })
     }
 
-    func test_aMissingSDKIsAnError() {
-        var machine = facts()
-        machine.sdkIdentity = { _ in nil }
+    /// Whatever the manifests declare: a machine without the platform's SDK cannot build
+    /// for it, and prepare says so once rather than leaving every tool to.
+    func test_aMissingSDKIsAnError() throws {
+        try write("Packages/Timeline/Package.swift")
 
-        XCTAssertThrowsError(try GeneratedFiles.config(platform: .iosSimulator, deploymentVersion: "18.0",
-                                                       facts: machine, namespaces: everyNamespace))
+        XCTAssertThrowsError(try Preparation.run(folder: folder("Packages"), platform: .iosSimulator,
+                                                 steps: steps(facts: facts(sdkIdentity: { _ in nil })))) { error in
+            XCTAssertTrue("\(error)".contains("no iphonesimulator SDK"), "\(error)")
+        }
     }
 
     // MARK: - Deployment version
@@ -335,7 +378,8 @@ final class PrepareTests: XCTestCase {
 
     // MARK: - Running it
 
-    private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] }) -> Preparation.Steps {
+    private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] },
+                       facts: ToolchainFacts? = nil) -> Preparation.Steps {
         Preparation.Steps(
             summarize: { folder in
                 let name = folder.lastPathComponent
@@ -351,7 +395,7 @@ final class PrepareTests: XCTestCase {
                 self.vendoredProject = (project, into)
                 return []
             },
-            facts: { self.facts() })
+            facts: { facts ?? self.facts() })
     }
 
     private var vendoredProject: (URL, URL)?
@@ -393,7 +437,7 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(report.roots.map(\.name), ["Timeline"])
         XCTAssertEqual(vendoredRoots, [folder("Packages/Timeline")])
         XCTAssertEqual(vendoredInto, folder("Packages/Dependencies"))
-        XCTAssertEqual(report.written.map(\.lastPathComponent), ["semel.fmla", "semel.config"])
+        XCTAssertEqual(report.written.map(\.lastPathComponent), ["semel.fmla", "semel.config", "semel.machine.config"])
         let formula = try String(contentsOf: folder("Packages").appendingPathComponent("semel.fmla"), encoding: .utf8)
         XCTAssertTrue(formula.contains("include package(p: <Timeline>)"), "got:\n\(formula)")
         let config = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
@@ -572,17 +616,21 @@ final class PrepareTests: XCTestCase {
     }
 
     /// A project that ships its own formula or config has already decided: neither is
-    /// replaced, and the run says so instead.
-    func test_neverReplacesAFormulaOrConfigThatIsThere() throws {
+    /// replaced, and the run says so instead. The machine file is nobody's decision, so
+    /// it is written every time (B-109).
+    func test_neverReplacesAFormulaOrConfigThatIsThereAndAlwaysRewritesTheMachineFile() throws {
         try write("Packages/Timeline/Package.swift")
         try write("Packages/semel.fmla", "// mine\n")
+        try write("Packages/semel.machine.config", "// stale\n")
 
         let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
 
         XCTAssertEqual(report.kept.map(\.lastPathComponent), ["semel.fmla"])
-        XCTAssertEqual(report.written.map(\.lastPathComponent), ["semel.config"])
+        XCTAssertEqual(report.written.map(\.lastPathComponent), ["semel.config", "semel.machine.config"])
         XCTAssertEqual(try String(contentsOf: folder("Packages").appendingPathComponent("semel.fmla"), encoding: .utf8),
                        "// mine\n")
+        let machine = try String(contentsOf: folder("Packages").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        XCTAssertTrue(machine.contains("swift.compiler.toolDescriptor.name=swiftc"), "got:\n\(machine)")
     }
 
     /// No manifest declares a macOS version, so the SDK's own version is the deployment

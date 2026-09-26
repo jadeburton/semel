@@ -131,6 +131,9 @@ let package = Package(
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
                 .product(name: "SemelApple", package: "SemelApple"),
+                // For the machine file's renderer: prepare writes the same file `semel
+                // tools --write` does (B-109).
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],
             path: "semel-swift/Library"
         ),

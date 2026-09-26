@@ -11,17 +11,22 @@ include 'apple'
 // the package's own archive out of the app's products.
 include funcs SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
+// This project's choices laid over the machine's tools and SDK (B-109): `semel-swift
+// prepare` writes both files, and `semel.machine.config` is the one nobody edits or
+// commits. One node, so every tool below selects from the same settings.
+func settings() = swift.settings(project: <semel.config>, machine: <semel.machine.config>)
+
 product 'Hello.app/Hello' = swift.executableUsing(
-    sources: <Sources>, name: 'Hello', settings: <semel.config>,
+    sources: <Sources>, name: 'Hello', settings: settings(),
     package: 'HelloKit', modules: modules_HelloKit().files, objects: objects_HelloKit().files
 )
 
 product 'Hello.app/Info.plist' = apple.infoPlist(
-    base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: <semel.config>
+    base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: settings()
 )
 
 product 'Hello.app/PkgInfo' = StaticFile(path: <PkgInfo>).output
 
 product 'Hello.app/' = apple.resources(
-    catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: <semel.config>
+    catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
 )

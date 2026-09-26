@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SemelTestSupport
 import XCTest
 
 final class AutostartTests: XCTestCase {
@@ -42,6 +43,47 @@ final class AutostartTests: XCTestCase {
 
         let second = try semel("ls", step: "second semel")
         XCTAssertFalse(second.contains("Started semelserv"), "the second client finds the first's daemon: \(second)")
+    }
+
+    /// B-109. The loop the missing-settings report describes, end to end: a build with no
+    /// machine file fails naming `tools --write`; the write names the namespaces the graph
+    /// selects — the three clang ones, not every tool installed — and the next build
+    /// follows the file in and succeeds.
+    func test_theMissingSettingsLoopIsBuildWriteBuild() throws {
+        let tree = home.appendingPathComponent("tree", isDirectory: true)
+        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: EndToEndEnvironment.fixtures.appendingPathComponent("c", isDirectory: true),
+                                         to: tree.appendingPathComponent("c", isDirectory: true))
+        let machineFile = tree.appendingPathComponent(EndToEndRun.machineFileName).path
+        let out = home.appendingPathComponent("out").path
+
+        // Nothing to follow yet: the file the formula names is not on disk, so the report
+        // names it as unpushed and every tool below it says what it lacks and what writes it.
+        let failed = try semelExpectingFailure("base \(tree.path)", "build c --into \(out)", step: "build without the machine file")
+        XCTAssertTrue(failed.contains("semel.machine.config has not been pushed"), failed)
+        XCTAssertTrue(failed.contains("Run 'tools --write semel.machine.config'"), failed)
+
+        let wrote = try semel("tools --write \(machineFile)", step: "tools --write")
+        XCTAssertTrue(wrote.contains("Wrote 3 namespaces to \(machineFile): clang.compiler, clang.linker, clang.preprocessor"), wrote)
+        XCTAssertFalse(wrote.contains("swift."), "only what the graph selects: \(wrote)")
+
+        let built = try semel("base \(tree.path)", "build c --into \(out)", step: "build with the machine file")
+        XCTAssertTrue(built.contains("Push file: semel.machine.config"), built)
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: "\(out)/hello"), built)
+    }
+
+    /// A run whose non-zero exit is the point: the output comes back either way, and the
+    /// status is asserted rather than thrown on.
+    private func semelExpectingFailure(_ arguments: String..., step: String) throws -> String {
+        let process = ManagedProcess(executable: EndToEndRun.binary("semel"), arguments: arguments, environment: environment)
+        try process.start()
+        guard let status = process.waitForExit(timeout: 60) else {
+            process.kill()
+            _ = process.waitForExit(timeout: 5)
+            throw EndToEndFailure(step: step, message: "timed out", commandLine: process.commandLine, outputTail: process.outputTail())
+        }
+        XCTAssertNotEqual(status, 0, "\(step): expected a failing build, got:\n\(process.output)")
+        return process.output
     }
 
     func test_stopEndsTheServerAndASecondStopFindsNothing() throws {

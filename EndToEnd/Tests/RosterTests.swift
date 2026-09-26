@@ -42,21 +42,21 @@ final class RosterTests: XCTestCase {
         }
     }
 
-    func test_noFixtureCommitsAConfig() throws {
+    /// The machine's half of a configuration is written in the harness's copy and holds
+    /// one machine's facts; the project's half is committed, being the project's (B-109).
+    func test_noFixtureCommitsAMachineFile() throws {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(atPath: EndToEndEnvironment.fixtures.path))
-        let configs = enumerator.compactMap { $0 as? String }.filter {
-            $0.hasSuffix("semel.config") || $0 == "clang.cfg"
-        }
-        XCTAssertEqual(configs, [], "machine values must not be committed")
+        let files = enumerator.compactMap { $0 as? String }.filter { $0.hasSuffix(EndToEndRun.machineFileName) }
+        XCTAssertEqual(files, [], "machine values must not be committed")
     }
 
-    func test_theCTemplateHasBothPlaceholdersAndNothingElseUnrendered() throws {
-        let template = try String(contentsOf: EndToEndEnvironment.fixtures.appendingPathComponent("clang.cfg.template"), encoding: .utf8)
-
-        XCTAssertTrue(template.contains("${CLANG_VERSION}"))
-        XCTAssertTrue(template.contains("${MACOS_SDK_PATH}"))
-        let placeholders = template.components(separatedBy: "${").dropFirst().map { $0.prefix { $0 != "}" } }
-        XCTAssertEqual(Set(placeholders.map(String.init)), ["CLANG_VERSION", "MACOS_SDK_PATH"])
+    /// Every C fixture's formula names its project file, and a formula that names a file
+    /// the repository does not hold builds only where somebody typed it.
+    func test_everyCFixtureCommitsItsProjectConfig() {
+        for folder in ["c", "tutorial", "cpp"] {
+            let config = EndToEndEnvironment.fixtures.appendingPathComponent("\(folder)/semel.config")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: config.path), "\(folder): no semel.config")
+        }
     }
 
     /// `docs/tutorial/first-node.md` copies `EndToEnd/Fixtures/c` to build its `hello/src`,

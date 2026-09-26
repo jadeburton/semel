@@ -174,36 +174,3 @@ enum CheckFindingRenderer {
              + "run `wait` first."
     }
 }
-
-enum ToolNamespaceRenderer {
-
-    /// The installed tools as the settings a `semel.config` needs — one block per
-    /// namespace that names the tool, so choosing a toolchain version is a paste. A
-    /// namespace whose tool is missing prints as a comment, so the whole output is safe
-    /// to paste and still says what is absent.
-    static func text(for namespaces: [ToolNamespaceRecord]) -> String {
-        var blocks: [String] = []
-
-        for namespace in namespaces {
-            guard !namespace.descriptors.isEmpty else {
-                blocks.append("// \(namespace.namespace): no \(namespace.toolName) is installed on this machine")
-                continue
-            }
-
-            for descriptor in namespace.descriptors {
-                var lines = [
-                    "\(namespace.namespace).toolDescriptor.name=\(descriptor.name)",
-                    "\(namespace.namespace).toolDescriptor.version=\(descriptor.version)",
-                    "\(namespace.namespace).toolDescriptor.platform=\(descriptor.platform)",
-                    "\(namespace.namespace).toolDescriptor.architecture=\(descriptor.architecture)",
-                ]
-                for key in descriptor.machineSettings.keys.sorted() {
-                    lines.append("\(namespace.namespace).\(key)=\(descriptor.machineSettings[key]!)")
-                }
-                blocks.append(lines.joined(separator: "\n"))
-            }
-        }
-
-        return blocks.joined(separator: "\n\n")
-    }
-}

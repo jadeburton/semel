@@ -30,9 +30,10 @@ final class ClangPreludeTests: XCTestCase {
                                      includeReader: { $0 == preludeSpec ? preludeText : nil })
     }
 
-    /// The chain `EndToEnd/Fixtures/c/hello.fmla` wires by hand.
+    /// The chain `EndToEnd/Fixtures/c/hello.fmla` wired by hand before B-108, over the two
+    /// files B-109 gave it: the project's choices laid over the machine's facts.
     private let handWritten = """
-        func rawConfig() = StaticFile(path: <../clang.cfg>)
+        func rawConfig() = ConfigMerger(base: [StaticFile(path: <../semel.machine.config>)], override: [StaticFile(path: <semel.config>)])
 
         func config(prefix) = ConfigFilter(prefix: prefix, input: [rawConfig()])
 
@@ -42,7 +43,7 @@ final class ClangPreludeTests: XCTestCase {
         )
 
         func make(glob, dynamicLibrary) = ClangLinker(
-          configuration: [Configuration(inherit: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
+          configuration: [Configuration(base: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
           objectFiles: [{f: glob} "%%f%%.o": ClangCompiler(configuration: [config(prefix: 'clang.compiler')], input: ["%%f%%.p": preprocessor(path: f)])]
         )
 
@@ -53,8 +54,10 @@ final class ClangPreludeTests: XCTestCase {
     private let withPrelude = """
         include 'clang'
 
-        product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: <../clang.cfg>)
-        product "hello" = clang.executable(sources: <src>, settings: <../clang.cfg>)
+        func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+        product "hello.dylib" = clang.dynamicLibrary(sources: <src>, settings: settings())
+        product "hello" = clang.executable(sources: <src>, settings: settings())
         """
 
     func test_thePreludeBuildsTheNodesTheHandWrittenChainBuilds() throws {

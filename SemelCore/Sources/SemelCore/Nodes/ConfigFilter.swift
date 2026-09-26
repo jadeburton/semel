@@ -29,7 +29,7 @@ public struct ConfigFilter: Node {
     static let outputPort = "output"
 
     /// The namespace this node takes, without a trailing dot: `swift.compiler`.
-    static let prefixProperty = "prefix"
+    public static let prefixProperty = "prefix"
 
     public var thisNode: NodeRecord
 

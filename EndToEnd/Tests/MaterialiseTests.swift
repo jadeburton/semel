@@ -30,17 +30,22 @@ final class MaterialiseTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: run.base.appendingPathComponent("swift/HelloApp/semel.fmla").path))
     }
 
-    func test_configureRendersTheCTemplateWithThisMachinesValues() throws {
+    /// B-109. The machine file beside the C fixtures says what this machine has — the
+    /// clang the descriptor names and the SDK where the linker reads it — for the clang
+    /// namespaces and no other.
+    func test_configureWritesTheMachineFileTheCFixturesRead() throws {
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
         let run = try EndToEndRun(project: Projects.cHello)
         self.run = run
         try run.materialise()
 
         try run.configure()
 
-        let rendered = try String(contentsOf: run.base.appendingPathComponent("clang.cfg"), encoding: .utf8)
-        XCTAssertFalse(rendered.contains("${"), rendered)
-        XCTAssertTrue(rendered.contains("clang.linker.toolDescriptor.version=" + (try ClangConfigTemplate.clangVersion())), rendered)
-        XCTAssertTrue(rendered.contains("clang.linker.sdkPath=" + (try ClangConfigTemplate.macOSSDKPath())), rendered)
+        let written = try String(contentsOf: run.base.appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        XCTAssertTrue(written.hasPrefix("// Written by `semel tools --write` for --platform macos"), written)
+        XCTAssertTrue(written.contains("clang.linker.toolDescriptor.version=" + (try MachineFacts.clangVersion())), written)
+        XCTAssertTrue(written.contains("clang.linker.sdkPath=" + (try MachineFacts.macOSSDKPath())), written)
+        XCTAssertFalse(written.contains("swift."), "the clang namespaces only: \(written)")
     }
 
     func test_configurePreparesAProjectWithAPlatform() throws {

@@ -90,18 +90,38 @@ final class EndToEndRun {
 
     // MARK: - 2. Configure
 
-    /// The C fixtures get their base config rendered; a project with a platform is
-    /// prepared. Once, before both builds, so the two builds see identical inputs.
+    /// The machine's half of the C fixtures' settings is written beside them (B-109); a
+    /// project with a platform is prepared, which writes its own. Once, before both
+    /// builds, so the two builds see identical inputs.
     func configure() throws {
-        let template = base.appendingPathComponent("clang.cfg.template")
-        if FileManager.default.fileExists(atPath: template.path) {
-            try ClangConfigTemplate.render(template: template, to: base.appendingPathComponent("clang.cfg"))
+        if case .fixture = project.source {
+            try writeMachineFile(to: base.appendingPathComponent(Self.machineFileName))
         }
         if let platform = project.platform {
             try Self.run("semel-swift",
                          arguments: ["prepare", base.appendingPathComponent(project.buildFolder).path, "--platform", platform],
                          timeout: project.buildTimeout, step: "prepare")
         }
+    }
+
+    static let machineFileName = "semel.machine.config"
+
+    /// The file the C fixtures read as `../semel.machine.config`, written the way a user
+    /// writes it: `tools --write` against a server of its own. `--all` for the `clang`
+    /// namespaces, because nothing has been built in this run yet, so no graph selects
+    /// anything; the loop a user goes through instead — build, write, build — is
+    /// `AutostartTests`' to prove.
+    private func writeMachineFile(to file: URL) throws {
+        let server = ServerSession(home: root.appendingPathComponent("configure", isDirectory: true))
+        try server.start()
+        do {
+            try Self.run("semel", arguments: ["tools clang --all --write \(file.path)"], environment: server.environment,
+                         timeout: 60, step: "tools --write", serverLog: { server.logTail })
+        } catch {
+            server.killIfRunning()
+            throw error
+        }
+        try server.stop()
     }
 
     // MARK: - 3, 5, 6b and 6c. A cold build

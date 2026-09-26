@@ -46,11 +46,11 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     }
 
     func test_creatingANodeAlsoCreatesAndWiresItsUpstream() throws {
-        let spec = "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'upstream').output]).output"
+        let spec = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'upstream').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         let incoming = try database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                toSymbolID: "inherit".asSymbolID())
+                                                toSymbolID: "base".asSymbolID())
         XCTAssertEqual(incoming.count, 1, "the upstream should have been created and wired")
 
         let upstream = try database.node.select(nodeID: try XCTUnwrap(incoming.first).fromNodeID)
@@ -61,11 +61,11 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
         let (upstream, _) = try GraphSpecNode.parse("Configuration(role: 'upstream').output")
             .findOrCreateMatchingNode()
 
-        let spec = "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'upstream').output]).output"
+        let spec = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'upstream').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         let incoming = try database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                toSymbolID: "inherit".asSymbolID())
+                                                toSymbolID: "base".asSymbolID())
         XCTAssertEqual(try XCTUnwrap(incoming.first).fromNodeID, try upstream.requireID(),
                        "an identical upstream must be shared, not duplicated")
     }
@@ -111,8 +111,8 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     func test_aLiveShapeTopologyMatchesItsOwnStoredKey() throws {
         let specs = [
             "Configuration(role: 'plain').output",
-            "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'up').output]).output",
-            "Configuration(role: 'two', inherit: ['a': Configuration(role: 'x').output]).output",
+            "Configuration(role: 'consumer', base: ['w': Configuration(role: 'up').output]).output",
+            "Configuration(role: 'two', base: ['a': Configuration(role: 'x').output]).output",
         ]
 
         for spec in specs {
@@ -139,14 +139,14 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     // violated, so the cost is visible before someone rewires a static port.
 
     func test_theStoredKeyGoesStaleIfAStaticInputIsRewired() throws {
-        let originalShape = "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'first').output]).output"
+        let originalShape = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
         let keyAtCreation = try XCTUnwrap(consumer.graphSpec)
 
         // Rewire the static input directly. Note the engine never does this — only
         // dynamic ports are rewired after creation.
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                          toSymbolID: "inherit".asSymbolID()).first)
+                                                          toSymbolID: "base".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
         let (second, _) = try GraphSpecNode.parse("Configuration(role: 'second').output")
@@ -155,7 +155,7 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
                              fromNodeID: try second.requireID(),
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "inherit".asSymbolID(),
+                             toSymbolID: "base".asSymbolID(),
                              name: "w".asSymbolID())
 
         let liveShape = try GraphSpecNode.buildFromNode(database: database,
@@ -172,11 +172,11 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     /// And the consequence if it were: a spec describing wiring the node no longer has
     /// to it, because the lookup only consults the frozen key.
     func test_aStaleKeyStillResolvesToTheRewiredNode() throws {
-        let originalShape = "Configuration(role: 'consumer', inherit: ['w': Configuration(role: 'first').output]).output"
+        let originalShape = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
 
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                          toSymbolID: "inherit".asSymbolID()).first)
+                                                          toSymbolID: "base".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
         let match = try GraphSpecNode.parse(originalShape).findMatchingNode()

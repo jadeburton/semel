@@ -203,7 +203,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         XCTAssertFalse(ConfigMerger.descriptor.toleratesAbsentValue(onInputPort: ConfigMerger.basePort))
         XCTAssertFalse(ConfigFilter.descriptor.toleratesAbsentValue(onInputPort: ConfigFilter.inputPort))
 
-        // Optional at creation is a different question: `inherit` may be left unwired, and a
+        // Optional at creation is a different question: `base` may be left unwired, and a
         // wire that is there is one whose value this node demands.
         XCTAssertFalse(Configuration.descriptor.toleratesAbsentValue(onInputPort: Configuration.inputPort))
         XCTAssertFalse(OutputFile.descriptor.toleratesAbsentValue(onInputPort: OutputFile.inputPort))

@@ -328,21 +328,26 @@ struct SwiftFormulaConverter: Node {
 
     // MARK: - semel.config
 
-    /// The file name a selector looks for beside a package: `semel.config`.
+    /// The project's config file, beside the root: `semel.config`, its choices.
     static let configFileName = "semel.config"
+    /// The machine's, beside it: the tools and SDK, written by `semel tools --write` or
+    /// `semel-swift prepare` and laid under the project's (B-109).
+    static let machineConfigFileName = "semel.machine.config"
 
-    /// The config file a package is configured by: `semel.config` beside the package.
+    /// The settings a package is configured by: the project's `semel.config` laid over the
+    /// machine's `semel.machine.config`, both beside the root, and this namespace's slice
+    /// selected out of the two.
     ///
-    /// Named in the spec rather than looked up, so the wire exists before the file does — an
+    /// Named in the spec rather than looked up, so the wires exist before the files do — an
     /// absent file is a ghost, and pushing it later fills the wire and rebuilds what depends on
     /// it without a rescan.
     static func configSelector(namespace: String, packageFolder: String) -> String {
-        let configPath = "\(packageFolder)/\(configFileName)"
-        return "ConfigFilter(prefix: '\(namespace)', "
-             + "input: ['config': StaticFile(path: '\(configPath)').output]).output"
+        let settings = "ConfigMerger(base: ['machine': StaticFile(path: '\(packageFolder)/\(machineConfigFileName)').output], "
+                     + "override: ['project': StaticFile(path: '\(packageFolder)/\(configFileName)').output]).output"
+        return "ConfigFilter(prefix: '\(namespace)', input: ['config': \(settings)]).output"
     }
 
-    /// Renders a `Configuration(...)` whose `inherit` port carries the selector for
+    /// Renders a `Configuration(...)` whose `base` port carries the selector for
     /// `namespace`, with `literals` overlaid as properties.
     ///
     /// Properties win over the file: `literals` is manifest-derived — `moduleName`,
@@ -360,7 +365,7 @@ struct SwiftFormulaConverter: Node {
                                .joined(separator: ", ")
         let selector = configSelector(namespace: namespace, packageFolder: packageFolder)
         let arguments = rendered.isEmpty ? "" : "\(rendered), "
-        return "Configuration(\(arguments)inherit: ['settings': \(selector)]).output"
+        return "Configuration(\(arguments)base: ['settings': \(selector)]).output"
     }
 
     /// Spec string for a `SwiftPackageReader` that reads the

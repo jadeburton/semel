@@ -126,7 +126,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertTrue(text.contains("cache entry \(key)"), text)
         XCTAssertTrue(text.contains("node Configuration@1"), text)
         XCTAssertTrue(text.contains(#"property {"key":"role","value":"sample"}"#), text)
-        XCTAssertTrue(text.contains(#"input {"port":"inherit","#), text)
+        XCTAssertTrue(text.contains(#"input {"port":"base","#), text)
     }
 
     func test_debugWithAKeyNothingIsStoredUnderSaysSo() throws {
@@ -140,7 +140,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     private func storeOneCacheEntry() throws -> String {
         let (record, _) = try GraphSpecNode.parse("Configuration(role: 'sample')").findOrCreateMatchingNode()
         let node  = try record.makeNode()
-        let input = ProcessInput(inputValues: ["inherit": ["wire0": .value(try "sample=1".intern())]])
+        let input = ProcessInput(inputValues: ["base": ["wire0": .value(try "sample=1".intern())]])
         let material = try node.buildCacheKeyMaterial(input: input)
         try node.saveCacheForAllInputsAndOutputs(
             keyMaterial: material, processingDuration: 0.1,
@@ -189,13 +189,30 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     func test_toolsListsEveryNamespaceEvenWhenNoToolIsInstalled() throws {
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
 
-        let (response, _) = try daemon(.tools)
+        let (response, _) = try daemon(.tools(platform: "macos"))
 
         guard case .tools(let namespaces) = response else {
             return XCTFail("expected tools, got \(response)")
         }
         XCTAssertEqual(namespaces.map(\.namespace), ToolNamespaceRegistry.all.map(\.namespace))
         XCTAssertTrue(namespaces.allSatisfy { $0.descriptors.isEmpty })
+    }
+
+    /// B-109. A namespace is selected when a ConfigFilter with its prefix is resident —
+    /// what `tools --write` writes a block for — whether or not the settings file exists.
+    func test_toolsSaysWhichNamespacesTheGraphSelects() throws {
+        ToolNamespaceRegistry.register(.init(namespace: "clang.compiler", toolName: "clang"))
+        ToolNamespaceRegistry.register(.init(namespace: "swift.linker", toolName: "swiftc"))
+        _ = try GraphSpecNode.parse("ConfigFilter(prefix: 'clang.compiler')").findOrCreateMatchingNode()
+
+        let (response, _) = try daemon(.tools(platform: "macos"))
+
+        guard case .tools(let namespaces) = response else {
+            return XCTFail("expected tools, got \(response)")
+        }
+        let selected = Dictionary(uniqueKeysWithValues: namespaces.map { ($0.namespace, $0.selected) })
+        XCTAssertEqual(selected["clang.compiler"], true)
+        XCTAssertEqual(selected["swift.linker"], false)
     }
 
     /// By path, not by id: `b.c`'s node is made first and so has the lower id.

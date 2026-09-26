@@ -49,7 +49,7 @@ final class CascadeDeletionTests: SemelCoreTestCase {
                              fromNodeID: source.id!,
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID:   consumer.id!,
-                             toSymbolID: "inherit".asSymbolID(),
+                             toSymbolID: "base".asSymbolID(),
                              name: name.asSymbolID())
     }
 

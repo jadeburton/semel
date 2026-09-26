@@ -74,7 +74,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         )
 
         func make(dynamicLibrary) = ClangLinker(
-          configuration: [Configuration(inherit: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
+          configuration: [Configuration(base: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
           objectFiles: ["main.c.o": ClangCompiler(
             configuration: [config(prefix: 'clang.compiler')],
             input: ["main.c.p": preprocessor(path: 'main.c')])]
@@ -109,8 +109,8 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
 
     // MARK: - Building the graph the way ProjectBuilder does
 
-    private func buildGraph(configText: String? = nil) throws {
-        let products = try FormulaFile.parse(formula,
+    private func buildGraph(parsing formulaText: String? = nil, configText: String? = nil) throws {
+        let products = try FormulaFile.parse(formulaText ?? formula,
                                              basePath: Path(projectFolder),
                                              wildcardExpander: { _ in [] })
         XCTAssertFalse(products.isEmpty, "the formula produced no products")
@@ -130,6 +130,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         }
         XCTAssertGreaterThan(found, 0, "nothing in the graph reads the config file")
 
+        try processEveryNode(ofKind: ConfigMerger.kind)
         try processEveryNode(ofKind: ConfigFilter.kind)
         try processEveryNode(ofKind: Configuration.kind)
     }
@@ -289,5 +290,24 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
 
         XCTAssertEqual(unclaimed, ["swift.compiler.sdkVersion"],
                        "only the key no selector's prefix covers")
+    }
+
+    /// The same key behind a `ConfigMerger` (B-109): every prelude formula lays a project
+    /// file over a machine file, and the `cpp` fixture lays its own over a shared one, so a
+    /// report that stopped at the merger would see no project's keys at all. The key is
+    /// reported against the file that holds it.
+    func test_aPrefixNoSelectorClaimsIsReportedThroughAMerger() throws {
+        let merged = formula.replacingOccurrences(
+            of:   "StaticFile(path: <clang.cfg>)",
+            with: "ConfigMerger(base: [StaticFile(path: <semel.machine.config>)], override: [StaticFile(path: <clang.cfg>)])")
+        try buildGraph(parsing: merged, configText: configFile)
+
+        let engine = try BuildEngine(database: database, startProcessingLoop: false)
+        let fileNode = try XCTUnwrap(try database.node.select(kind: StaticFile.kind)
+            .first { $0.properties["path"]?.hasSuffix("clang.cfg") == true })
+
+        let unclaimed = try engine.unclaimedConfigKeys(inFileNodeID: fileNode.requireID())
+
+        XCTAssertEqual(unclaimed, ["swift.compiler.sdkVersion"])
     }
 }

@@ -58,7 +58,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("inputFolder: [\n        'folder0': Folder(path: 'input:/repo/IceCubesApp').manifest\n        ]"), formula)
         XCTAssertTrue(formula.contains("'KeychainSwift': modules_KeychainSwift().files"), formula)
         XCTAssertTrue(formula.contains("'Timeline': modules_Timeline().files"), formula)
-        XCTAssertTrue(formula.contains("ConfigFilter(prefix: 'swift.compiler', input: ['config': StaticFile(path: 'input:/repo/semel.config').output])"), formula)
+        XCTAssertTrue(formula.contains("ConfigFilter(prefix: 'swift.compiler', input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/repo/semel.machine.config').output], override: ['project': StaticFile(path: 'input:/repo/semel.config').output]).output])"), formula)
     }
 
     func test_linksTheExecutableIntoTheBundleWithTheProductsObjectsAndFrameworks() throws {

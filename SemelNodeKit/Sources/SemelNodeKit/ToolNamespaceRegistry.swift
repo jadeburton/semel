@@ -14,15 +14,22 @@ public struct ToolNamespace {
     public let namespace: String
     /// The registered tool name this namespace's nodes run: `swiftc`, `clang`.
     public let toolName: String
-    /// Settings besides `toolDescriptor.*` whose value is a fact about this machine and so
-    /// worth printing beside the tool — the SDK identity for the Swift tools. Evaluated
-    /// when listed, not when registered, and sorted by key when printed.
-    public let machineSettings: () -> [String: String]
+    /// The keys, besides `toolDescriptor.*`, whose value is a fact about the machine rather
+    /// than the project's choice: the SDK's path or identity. What `tools --write` writes
+    /// and a project never types (B-109). Declared apart from the values so a report can
+    /// say which kind a missing key is without asking the machine.
+    public let machineSettingKeys: Set<String>
+    /// Those settings' values on this machine, for a platform — the SDK is one per
+    /// platform. Evaluated when asked, not when registered, and sorted by key when printed.
+    public let machineSettings: (Platform) -> [String: String]
 
-    public init(namespace: String, toolName: String, machineSettings: @escaping () -> [String: String] = { [:] }) {
-        self.namespace       = namespace
-        self.toolName        = toolName
-        self.machineSettings = machineSettings
+    public init(namespace: String, toolName: String,
+                machineSettingKeys: Set<String> = [],
+                machineSettings: @escaping (Platform) -> [String: String] = { _ in [:] }) {
+        self.namespace          = namespace
+        self.toolName           = toolName
+        self.machineSettingKeys = machineSettingKeys
+        self.machineSettings    = machineSettings
     }
 }
 
@@ -33,6 +40,11 @@ public enum ToolNamespaceRegistry {
     /// Idempotent per namespace, because every toolchain's `register()` is.
     public static func register(_ entry: ToolNamespace) {
         byNamespace[entry.namespace] = entry
+    }
+
+    /// The entry for one namespace, or nil when no plugin declared it.
+    public static func entry(forNamespace namespace: String) -> ToolNamespace? {
+        byNamespace[namespace]
     }
 
     /// Every declared namespace, alphabetical — the registry is a dictionary, and order in

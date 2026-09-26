@@ -11,6 +11,16 @@ import SemelNodeKit
 
 public enum SemelClang {
 
+    /// Where the platform's SDK is on this machine, as `xcrun` answers, or nil when it has
+    /// none. Asked when `tools` asks, not at registration.
+    static func sdkPath(forPlatform platform: Platform) -> String? {
+        guard let answer = MachineQuery.output(of: "/usr/bin/xcrun", ["--sdk", platform.sdkName, "--show-sdk-path"]) else {
+            return nil
+        }
+        let path = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        return path.isEmpty ? nil : path
+    }
+
     /// Installs this toolchain's node types, the tool they run and the config namespaces
     /// they read. Idempotent, so a host may call it more than once and every test calls it
     /// again.
@@ -26,12 +36,18 @@ public enum SemelClang {
         // the engine starts.
         ToolDiscovery.register(ClangToolDiscovery.finder)
 
-        // What `tools` prints under each namespace. All three run the one clang binary;
-        // the include finder runs no tool.
-        for namespace in [ClangCompilerConfiguration.settingNamespace,
-                          ClangLinkerConfiguration.settingNamespace,
-                          ClangPreprocessorConfiguration.settingNamespace] {
-            ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang"))
+        // What `tools` prints and `tools --write` writes under each namespace. All three
+        // run the one clang binary; the include finder runs no tool. The preprocessor and
+        // the linker read the SDK at `sdkPath`, a fact about the machine for a platform,
+        // so they declare it as one (B-109); the compiler takes the preprocessed source
+        // and reads no SDK.
+        ToolNamespaceRegistry.register(.init(namespace: ClangCompilerConfiguration.settingNamespace, toolName: "clang"))
+        for namespace in [ClangPreprocessorConfiguration.settingNamespace, ClangLinkerConfiguration.settingNamespace] {
+            ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang",
+                                                 machineSettingKeys: ["sdkPath"],
+                                                 machineSettings: { platform in
+                                                     sdkPath(forPlatform: platform).map { ["sdkPath": $0] } ?? [:]
+                                                 }))
         }
 
         // `include 'clang'`: executables and dylibs from a folder of sources (B-108).
