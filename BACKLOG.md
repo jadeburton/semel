@@ -68,18 +68,8 @@ is callable from the formula too. Split from B-108, whose other residuals are fe
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen
 packages, 26 Swift targets): a cold build of 321 s into an empty home, 2,627 nodes; a
 rebuild with nothing changed took 18.7 s and a one-file add 35.5 s for six scheduled nodes,
-neither broken down yet.
-
-**B-112** `open` — **A Swift compiler runs `swiftc` once per level of its source tree.**
-`SwiftCompiler` finds a target's source folders one level per run, wiring the subfolders it
-has seen so it runs again with their manifests — and every run also compiles the `.swift`
-files found so far. A target nested three folders deep compiles three partial source sets
-before the whole one, and each partial module it publishes re-runs every target that
-imports it. In the measured cold build the 26 compilers ran 82 times, two to five each.
-The fix is to compile only once the walk has stopped: a run whose source or subfolder specs
-differ from what is wired returns the new specs and no object. `ProjectBuilder` (13 runs),
-`ProjectFinder` (15) and the converters (7 to 8) walk the same way; they are cheap, and
-their re-runs are the price of discovering the graph at all.
+neither broken down yet. With a compiler that compiles once its folder walk has finished
+(B-112), the cold build took 93 s.
 
 **B-113** `open` `For Fable Only` — **A batch of nodes waits for its slowest member.**
 `BuildEngine.processSomeNodes` computes every scheduled node concurrently and writes none

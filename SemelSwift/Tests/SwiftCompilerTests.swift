@@ -131,6 +131,38 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(try sourceSpecs(output), [])
     }
 
+    // MARK: - Compiling once the walk has finished (B-112)
+
+    /// A run that finds a subfolder or a file not yet wired is part-way through the walk:
+    /// a compile now would be of a partial source set, published as a module its importers
+    /// compile against and then compile again.
+    func test_aRunThatFindsSomethingNewDoesNotCompile() throws {
+        var input = try makeInput(folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/GRDB/Fixits.swift": .value(try "// fixits".intern())]
+
+        let output = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertTrue(executor.invocations.isEmpty, "swiftc ran on a partial source set")
+        XCTAssertEqual(try subfolderSpecs(output).keys.sorted(), ["input:/pkg/GRDB/Core"])
+        for port in [SwiftCompiler.outputObject, SwiftCompiler.outputModule, SwiftCompiler.outputInterface] {
+            XCTAssertTrue(output.outputValues[port]?.isPending == true, port)
+        }
+    }
+
+    /// The run that finds nothing new compiles everything the walk found.
+    func test_theRunThatFindsNothingNewCompilesEverySource() throws {
+        var input = try makeInput(
+            folder: try manifest("input:/pkg/GRDB", [file("Fixits.swift"), folder("Core")]),
+            subfolders: ["input:/pkg/GRDB/Core": try manifest("input:/pkg/GRDB/Core", [file("Database.swift")])]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/pkg/GRDB/Fixits.swift":        .value(try "// fixits".intern()),
+                                                 "input:/pkg/GRDB/Core/Database.swift": .value(try "// database".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertEqual(executor.lastArguments.filter { $0.hasSuffix(".swift") },
+                       ["input:/pkg/GRDB/Core/Database.swift", "input:/pkg/GRDB/Fixits.swift"])
+    }
+
     // MARK: - Explicit source lists
 
     /// SPM lets one target's directory contain another's, kept apart by `sources:`.
