@@ -93,6 +93,46 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         XCTAssertTrue(captured.isEmpty)
     }
 
+    // MARK: - Nodes of one type carrying one report (B-110)
+
+    private func makeFailingMerger(tag: String, message: String) throws -> ObjectID {
+        let nodeRecord = try NodeRecord.createNode(database: engine.database,
+                                                   kind: TreeMerger.kind,
+                                                   properties: ["tag": tag],
+                                                   graphSpec: nil)
+        try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
+                                         value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
+        return try nodeRecord.requireID()
+    }
+
+    /// Eight compilers missing the same settings are one paragraph that says which eight.
+    func test_nodesOfOneTypeCarryingOneReportAreOneEntryNamingThemAll() throws {
+        let first  = try makeFailingMerger(tag: "a", message: "boom")
+        let second = try makeFailingMerger(tag: "b", message: "boom")
+        let third  = try makeFailingMerger(tag: "c", message: "boom")
+        let other  = try makeFailingMerger(tag: "d", message: "another thing")
+
+        engine.reportIdleTimeErrors()
+
+        let ids = [first, second, third].sorted().map { "#\($0)" }.joined(separator: ", ")
+        XCTAssertEqual(captured[0].map(\.label), ["TreeMerger ×3 (\(ids))", "TreeMerger #\(other)"])
+        XCTAssertEqual(captured[0][0].nodeCount, 3)
+        XCTAssertEqual(captured[0][0].items, [ErrorReport.Item(ports: ["files"], message: "boom")])
+        XCTAssertEqual(captured[0][1].nodeCount, 1)
+    }
+
+    /// A node with a path is one the reader acts on by that path, so two of them stay two
+    /// entries however alike their messages.
+    func test_twoFilesCarryingOneMessageStayTwoEntries() throws {
+        let first  = try makeFailingFile(path: "input:/a.c", message: "gone")
+        let second = try makeFailingFile(path: "input:/b.c", message: "gone")
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0].map(\.label),
+                       ["StaticFile #\(first) 'input:/a.c'", "StaticFile #\(second) 'input:/b.c'"])
+    }
+
     /// The lines the default reporter prints are the same lines `ErrorReport` has always
     /// produced, so an engine run without a server reads as before.
     func test_renderingAnEntryMatchesTheReportFormat() throws {

@@ -177,8 +177,10 @@ final class EnginePlugin: CommandPlugin {
             return
         }
 
-        let errorCount = records.reduce(0) { $0 + $1.entries.reduce(0) { $0 + $1.ports.count } }
-        let nodeCount  = records.count
+        // Per node, as the settle summary counts them: a record naming several nodes of one
+        // type carries each one's errors.
+        let errorCount = records.reduce(0) { $0 + $1.entries.reduce(0) { $0 + $1.ports.count } * $1.nodeCount }
+        let nodeCount  = records.reduce(0) { $0 + $1.nodeCount }
 
         context.outputMessage("\(errorCount) error\(errorCount == 1 ? "" : "s") across " +
                               "\(nodeCount) node\(nodeCount == 1 ? "" : "s"):\n")

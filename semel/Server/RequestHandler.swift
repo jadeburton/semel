@@ -251,7 +251,8 @@ extension ErrorRecord {
                   entries: entry.items.map {
                       ErrorEntry(ports: $0.ports, message: $0.message, missingSource: $0.missingSource)
                   },
-                  downstreamCarrierCount: entry.downstreamCarrierCount)
+                  downstreamCarrierCount: entry.downstreamCarrierCount,
+                  nodeCount: entry.nodeCount)
     }
 }
 

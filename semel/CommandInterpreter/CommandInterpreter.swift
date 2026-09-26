@@ -39,10 +39,24 @@ public final class CommandInterpreter: CommandContext {
     var currentDirectoryPath: Path = .empty
     var openBatchDepth = 0
 
-    func outputMessage(_ message: String) { print(message) }
+    /// Where lines go: the terminal, unless a test wants to read them.
+    public var output: (String) -> Void = { print($0) }
+
+    func outputMessage(_ message: String) { output(message) }
     func outputError(_ errorMessage: String) {
         errorsLock.withLock { errorsReportedStorage += 1 }
-        print(errorMessage)
+        output(errorMessage)
+    }
+
+    /// Whether the idle-time error report is printed as it arrives. Off for the length of
+    /// a `build`, which prints the report once at its end: a settle the follow loop
+    /// answers by pushing what it named is not printed at all, and one that stands is
+    /// printed by `errors` rather than twice (B-110). Counted either way, so the exit
+    /// status is what it was. Under `errorsLock`: events arrive on the connection's thread.
+    private var printsErrorEventsStorage = true
+    private var printsErrorEvents: Bool {
+        get { errorsLock.withLock { printsErrorEventsStorage } }
+        set { errorsLock.withLock { printsErrorEventsStorage = newValue } }
     }
 
     /// Forgets what was counted since `count`: a settle report the follow loop answers by
@@ -137,7 +151,9 @@ public final class CommandInterpreter: CommandContext {
     private func printEvent(_ event: Event) {
         switch event {
         case .daemon(.errors(let records)):
-            records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+            if printsErrorEvents {
+                records.flatMap(ErrorRecordRenderer.lines(for:)).forEach { outputMessage($0) }
+            }
             countErrorRecords(records)
         case .daemon(.notice(let line)):
             outputMessage(line)
@@ -232,6 +248,8 @@ public final class CommandInterpreter: CommandContext {
             }
             let folder = arguments[0]
             let errorsBefore = errorsReported
+            printsErrorEvents = false
+            defer { printsErrorEvents = true }
             try run("push \(folder)")
             let errorsBeforeSettle = errorsReported
             try run("wait")

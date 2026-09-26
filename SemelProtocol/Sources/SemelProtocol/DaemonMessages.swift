@@ -90,11 +90,15 @@ public struct ErrorRecord: Codable, Equatable, Sendable {
     /// sent as its cause plus this count, not as a record per node that carries it: one
     /// deleted header stops every node that reads it, and the header is what can be fixed.
     public let downstreamCarrierCount: Int
+    /// How many nodes the record stands for: one, or the several of one type that carry
+    /// one report and are named together in the label (B-110).
+    public let nodeCount: Int
 
-    public init(label: String, entries: [ErrorEntry], downstreamCarrierCount: Int = 0) {
+    public init(label: String, entries: [ErrorEntry], downstreamCarrierCount: Int = 0, nodeCount: Int = 1) {
         self.label                  = label
         self.entries                = entries
         self.downstreamCarrierCount = downstreamCarrierCount
+        self.nodeCount              = nodeCount
     }
 }
 

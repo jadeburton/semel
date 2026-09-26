@@ -20,7 +20,7 @@ public enum ErrorReport {
     /// The ports travel with every item, whether or not a renderer writes them out: they
     /// are how a caller counts the failures behind a report, and `lines` is where the
     /// question of writing them is answered.
-    public struct Item: Equatable {
+    public struct Item: Hashable {
         public let ports:   [String]
         public let message: String
         /// When the message says a source has not been pushed: that source, as `push`
@@ -52,11 +52,15 @@ public enum ErrorReport {
         /// folded into a count instead of a line each: one deleted header stops every node
         /// that reads it, and the reader can act on the header alone.
         public let downstreamCarrierCount: Int
+        /// How many nodes this entry stands for: one, or the several of one type that carry
+        /// one report and are named together (B-110).
+        public let nodeCount: Int
 
-        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0) {
+        public init(label: String, items: [Item], downstreamCarrierCount: Int = 0, nodeCount: Int = 1) {
             self.label                  = label
             self.items                  = items
             self.downstreamCarrierCount = downstreamCarrierCount
+            self.nodeCount              = nodeCount
         }
     }
 
@@ -530,7 +534,7 @@ public enum ErrorReport {
                                database: DatabaseLayer,
                                sourceMessages: [ObjectID: SourceMessage]? = nil,
                                select: (ObjectID, Set<String>) -> Set<String>)
-                               -> [(nodeID: ObjectID, entry: Entry)] {
+                               -> [(nodeIDs: [ObjectID], entry: Entry)] {
 
         let byNode   = Dictionary(grouping: errorPorts, by: \.nodeID)
         let sourced = sourceMessages ?? Self.sourceMessages(amongPorts: errorPorts, database: database)
@@ -553,9 +557,55 @@ public enum ErrorReport {
                                            sourceMessages: sourced)))
         }
 
-        func sortLabel(_ report: (nodeID: ObjectID, entry: Entry)) -> String {
-            report.entry.label.replacingOccurrences(of: " #\(report.nodeID)", with: "")
+        return fold(reported)
+    }
+
+    /// Nodes of one type carrying one report are one entry, named together: eight
+    /// compilers each missing the same four settings are one paragraph that says which
+    /// eight, not eight paragraphs (B-110). Only a node named by type and id alone folds —
+    /// a node with a path is one the reader acts on by that path, and two of them never
+    /// carry one report anyway, since the report names the path.
+    ///
+    /// Sorted by label and then by node, so a report reads the same from run to run: the
+    /// error map is a dictionary, whose order is seeded per process. The id is left out of
+    /// the label the sort reads and kept as the tie break: compared as text it puts `#10`
+    /// before `#9`, and it would order a folder's files by when their nodes were made
+    /// rather than by their paths.
+    static func fold(_ reported: [(nodeID: ObjectID, entry: Entry)]) -> [(nodeIDs: [ObjectID], entry: Entry)] {
+        struct Key: Hashable {
+            let type:  String
+            let items: [Item]
         }
-        return reported.sorted { (sortLabel($0), $0.nodeID) < (sortLabel($1), $1.nodeID) }
+        var singles: [(sortKey: String, nodeIDs: [ObjectID], entry: Entry)] = []
+        var groups:  [Key: [(nodeID: ObjectID, entry: Entry)]] = [:]
+
+        for report in reported {
+            let label = report.entry.label
+            guard !label.contains(" '"), let typeEnd = label.range(of: " #") else {
+                singles.append((label.replacingOccurrences(of: " #\(report.nodeID)", with: ""),
+                                [report.nodeID], report.entry))
+                continue
+            }
+            groups[Key(type: String(label[..<typeEnd.lowerBound]), items: report.entry.items), default: []].append(report)
+        }
+
+        // Every group holds the report it was made for, so its first member is there.
+        for (key, members) in groups.sorted(by: { $0.value[0].nodeID < $1.value[0].nodeID }) {
+            let ordered = members.sorted { $0.nodeID < $1.nodeID }
+            guard ordered.count > 1 else {
+                singles.append((key.type, [ordered[0].nodeID], ordered[0].entry))
+                continue
+            }
+            let ids = ordered.map { "#\($0.nodeID)" }.joined(separator: ", ")
+            singles.append((key.type, ordered.map(\.nodeID),
+                            Entry(label: "\(key.type) ×\(ordered.count) (\(ids))",
+                                  items: key.items,
+                                  downstreamCarrierCount: ordered.reduce(0) { $0 + $1.entry.downstreamCarrierCount },
+                                  nodeCount: ordered.count)))
+        }
+
+        return singles
+            .sorted { ($0.sortKey, $0.nodeIDs[0]) < ($1.sortKey, $1.nodeIDs[0]) }
+            .map { ($0.nodeIDs, $0.entry) }
     }
 }
