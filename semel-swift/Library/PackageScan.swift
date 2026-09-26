@@ -18,12 +18,18 @@ public struct PackageSummary: Equatable {
     public let pathDependencies: [URL]
     /// Declared deployment versions by SwiftPM platform name: `["ios": "18.0"]`.
     public let platforms: [String: String]
+    /// The folders of the targets the converter compiles — regular and executable ones,
+    /// at the path the manifest names or SwiftPM's `Sources/<name>` — so `prepare` can
+    /// see which languages the tree holds (B-110).
+    public let targetFolders: [URL]
 
-    public init(name: String, folder: URL, pathDependencies: [URL], platforms: [String: String]) {
+    public init(name: String, folder: URL, pathDependencies: [URL], platforms: [String: String],
+                targetFolders: [URL] = []) {
         self.name             = name
         self.folder           = Self.normalized(folder)
         self.pathDependencies = pathDependencies.map(Self.normalized)
         self.platforms        = platforms
+        self.targetFolders    = targetFolders.map(Self.normalized)
     }
 
     /// One spelling per folder, whatever the source: dump-package's absolute string and a
@@ -109,7 +115,20 @@ public enum PackageScan {
             }
         }
 
-        return PackageSummary(name: name, folder: folder, pathDependencies: pathDependencies, platforms: platforms)
+        // The targets the converter turns into compilers; a test, plugin, macro, system or
+        // binary target is not one, as `isCompilable` says.
+        var targetFolders: [URL] = []
+        for target in object["targets"] as? [[String: Any]] ?? [] {
+            guard let targetName = target["name"] as? String,
+                  ["regular", "executable"].contains(target["type"] as? String ?? "regular") else {
+                continue
+            }
+            let path = target["path"] as? String ?? "Sources/\(targetName)"
+            targetFolders.append(URL(fileURLWithPath: path, relativeTo: folder))
+        }
+
+        return PackageSummary(name: name, folder: folder, pathDependencies: pathDependencies,
+                              platforms: platforms, targetFolders: targetFolders)
     }
 
     /// The packages nothing else in the set depends on by path: what a formula has to

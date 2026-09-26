@@ -107,7 +107,7 @@ public enum Preparation {
             report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies)
             declaredVersion = GeneratedFiles.deploymentVersion(for: platform, in: summaries)
             formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
-            namespaces = GeneratedFiles.packageTreeNamespaces
+            namespaces = GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries))
         }
 
         // A formula already there is kept, and it may select namespaces the one written

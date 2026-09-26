@@ -179,6 +179,26 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(CommandInterpreter.relativePath(to: "hello/extra.h", from: "hello"), "extra.h")
     }
 
+    // MARK: - The one command to run next (B-110)
+
+    /// A Swift tree with no configuration fails on missing settings; the report is where
+    /// the reader looks, so it names `prepare`, the command that writes them.
+    func test_aFailedBuildOfAPackageWithNoConfigNamesPrepare() throws {
+        try FileManager.default.createDirectory(at: externalRoot.appendingPathComponent("pkg"),
+                                                withIntermediateDirectories: true)
+        try "// swift-tools-version:6.0".write(to: externalRoot.appendingPathComponent("pkg/Package.swift"),
+                                               atomically: true, encoding: .utf8)
+        try publishFailedProduct("broken.a", message: "the source is gone")
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("build pkg")
+
+        XCTAssertTrue(lines.contains("pkg holds a Package.swift and no semel.config: "
+                                     + "`semel-swift prepare pkg --platform macos` writes one; then build again."),
+                      lines.joined(separator: "\n"))
+    }
+
     // MARK: - --into
 
     /// The destination is the opt-in: with one, a clean build ends with its products on

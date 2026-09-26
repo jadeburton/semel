@@ -115,6 +115,20 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(summary.platforms, ["ios": "18.0", "visionos": "1.0"])
     }
 
+    /// B-110. The targets the converter compiles, where SwiftPM puts them or where the
+    /// manifest says; a test target is not one.
+    func test_theSummaryNamesTheCompilableTargetsFolders() throws {
+        let json = """
+        {"name": "CLib", "dependencies": [], "platforms": [], "products": [],
+         "targets": [{"name": "CLib", "type": "regular"},
+                     {"name": "Tool", "type": "executable", "path": "Tools/Tool"},
+                     {"name": "CLibTests", "type": "test"}]}
+        """
+        let summary = try PackageScan.summary(fromDumpPackageJSON: Data(json.utf8), folder: folder("CLib"))
+
+        XCTAssertEqual(summary.targetFolders, [folder("CLib/Sources/CLib"), folder("CLib/Tools/Tool")])
+    }
+
     // MARK: - Roots
 
     /// IceCubes' shape: five packages nothing depends on, reached through which the rest
@@ -190,10 +204,10 @@ final class PrepareTests: XCTestCase {
         try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
 
         let packages = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
-        for namespace in ["swift.packageReader", "swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler"] {
+        for namespace in ["swift.packageReader", "swift.compiler", "swift.linker"] {
             XCTAssertTrue(packages.contains("\(namespace).toolDescriptor.name="), "got:\n\(packages)")
         }
-        XCTAssertFalse(packages.contains("clang.linker"), "got:\n\(packages)")
+        XCTAssertFalse(packages.contains("clang."), "a tree with no C target reads no clang settings (B-110), got:\n\(packages)")
         XCTAssertFalse(packages.contains("apple."), "got:\n\(packages)")
 
         let project = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
@@ -204,12 +218,28 @@ final class PrepareTests: XCTestCase {
         XCTAssertFalse(project.contains("clang.linker"), "got:\n\(project)")
     }
 
+    /// B-110. A target folder holding C sources and no Swift is compiled through clang, so
+    /// that tree's config carries the clang blocks; the converter's own rule decides.
+    func test_theConfigCarriesTheClangNamespacesWhenATargetIsCFamily() throws {
+        try write("Packages/CLib/Package.swift")
+        try write("Packages/CLib/Sources/CLib/lib.c", "int lib(void) { return 1; }\n")
+        try write("Packages/CLib/Sources/CLib/include/lib.h", "int lib(void);\n")
+
+        try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
+
+        let config = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
+        for namespace in ["swift.compiler", "clang.preprocessor", "clang.compiler"] {
+            XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name="), "got:\n\(config)")
+        }
+        XCTAssertFalse(config.contains("clang.linker"), "got:\n\(config)")
+    }
+
     /// A namespace a converter reads that no toolchain declares would be silently left
     /// out of the config, and the build would then fail naming the missing key.
     func test_everyNamespaceAConverterReadsIsDeclaredByAToolchain() {
         let declared = Set(everyNamespace)
 
-        for namespace in GeneratedFiles.packageTreeNamespaces + GeneratedFiles.projectNamespaces {
+        for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true) + GeneratedFiles.projectNamespaces {
             XCTAssertTrue(declared.contains(namespace), "\(namespace) is read but not declared; declared: \(declared.sorted())")
         }
     }
@@ -310,8 +340,11 @@ final class PrepareTests: XCTestCase {
             summarize: { folder in
                 let name = folder.lastPathComponent
                 let dependsOn = name == "Timeline" ? [self.folder("Packages/Models")] : []
+                // One target per package, at SwiftPM's default place, as the live scan
+                // would read it from the manifest.
                 return PackageSummary(name: name, folder: folder, pathDependencies: dependsOn,
-                                      platforms: name == "Timeline" ? ["ios": "18.0"] : [:])
+                                      platforms: name == "Timeline" ? ["ios": "18.0"] : [:],
+                                      targetFolders: [folder.appendingPathComponent("Sources/\(name)", isDirectory: true)])
             },
             vendor: vendored,
             vendorProject: { project, into in
