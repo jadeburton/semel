@@ -8,6 +8,7 @@
 //  produced it.
 //
 
+import GRDB
 @testable import SemelCore
 import SemelNodeKit
 import XCTest
@@ -67,7 +68,7 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
     /// A row under `key` holding content of a shape this Semel does not read.
     private func storeAnUnreadableRow(key: String, timestamp: Date = Date()) throws {
         let withoutMaterial = #"{"outputValues":{},"inputWireSpecs":{}}"#
-        try engine.database.cacheEntry.save(.init(hash: key, content: [UInt8](withoutMaterial.utf8),
+        try engine.database.cacheEntry.save(.init(hash: key, content: Data(withoutMaterial.utf8),
                                                   cost: 1, timestamp: timestamp))
     }
 
@@ -383,7 +384,7 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         let material = try tool.buildCacheKeyMaterial(input: try makeInput())
         let entry    = ProcessCacheEntry(outputValues: [:], inputWireSpecs: [:], keyMaterial: material)
         let wrongKey = String(repeating: "b", count: 64)
-        try engine.database.cacheEntry.save(.init(hash: wrongKey, content: [UInt8](try entry.toJSON().utf8),
+        try engine.database.cacheEntry.save(.init(hash: wrongKey, content: Data(try entry.toJSON().utf8),
                                                   cost: 1, timestamp: Date()))
 
         let description = engine.cacheEntryDescription(key: wrongKey)
@@ -391,5 +392,24 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
         XCTAssertTrue(description.contains("The entry is damaged."), "got: \(description)")
         XCTAssertTrue(description.contains(try material.cacheKey()),
                       "it names the key the material does account for, got: \(description)")
+    }
+
+    // MARK: - How an entry is stored
+
+    /// B-107. The entry's JSON is stored as its own bytes in a blob column. GRDB encodes a
+    /// `[UInt8]` field as JSON text of one decimal integer per byte, about 3.5 bytes on
+    /// disk for each byte of entry; a `Data` field is a blob.
+    func test_anEntryIsStoredAsABlobOfItsOwnBytes() throws {
+        let key = try store(try makeCompilerNode(), input: try makeInput())
+        let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: key))
+
+        let (type, length) = try engine.database.read { db in
+            let sql = "SELECT typeof(content) AS type, length(content) AS length FROM CacheEntry WHERE hash = ?"
+            let stored = try XCTUnwrap(Row.fetchOne(db, sql: sql, arguments: [key]))
+            return (stored["type"] as String, stored["length"] as Int)
+        }
+        XCTAssertEqual(type, "blob")
+        XCTAssertEqual(length, row.content.count, "one byte on disk for each byte of entry")
+        XCTAssertEqual(row.content.first, UInt8(ascii: "{"), "the content is the entry's JSON itself")
     }
 }

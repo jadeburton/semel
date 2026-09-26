@@ -112,7 +112,7 @@ extension Node {
             return nil
         }
 
-        guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(cacheEntry.content)) else {
+        guard let decodedCacheEntry = try? JSONDecoder().decode(ProcessCacheEntry.self, from: cacheEntry.content) else {
             return nil
         }
 
@@ -191,7 +191,7 @@ extension Node {
         // Replaces rather than refuses: a key whose row this Semel could not read is a key
         // it just missed on, and the build that missed is the one thing that can put a
         // readable entry there.
-        try database.cacheEntry.save(.init(hash: cacheKey, content: [UInt8](cacheEntryData),
+        try database.cacheEntry.save(.init(hash: cacheKey, content: cacheEntryData,
                                            cost: Int(processingDuration * 1000.0),
                                            timestamp: Date()))
         // Best effort: an untrimmed cache is over its limit until the next save trims it.
@@ -206,7 +206,7 @@ extension Node {
         guard let row = (FatalErrors.attempt { try database.cacheEntry.select(hash: cacheKey) }) ?? nil else {
             return false
         }
-        return (try? JSONDecoder().decode(ProcessCacheEntry.self, from: Data(row.content))) == nil
+        return (try? JSONDecoder().decode(ProcessCacheEntry.self, from: row.content)) == nil
     }
 }
 

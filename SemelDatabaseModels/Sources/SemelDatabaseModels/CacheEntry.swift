@@ -4,11 +4,11 @@ import GRDB
 
 public struct CacheEntry: Codable, FetchableRecord, PersistableRecord {
     public var hash: String
-    public var content: [UInt8]
+    public var content: Data
     public var cost: Int
     public var timestamp: Date
 
-    public init(hash: String, content: [UInt8], cost: Int, timestamp: Date) {
+    public init(hash: String, content: Data, cost: Int, timestamp: Date) {
         self.hash = hash
         self.content = content
         self.cost = cost

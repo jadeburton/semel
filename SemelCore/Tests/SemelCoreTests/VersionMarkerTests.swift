@@ -297,7 +297,7 @@ final class VersionMarkerTests: SemelCoreTestCase {
     func test_aVersionChangeKeepsTheCachedBuilds() throws {
         let engine = try makeEngine(try DatabaseLayer())
         try engine.database.cacheEntry.save(.init(hash: "an-entry-built-by-the-older-semel",
-                                                    content: [UInt8]("{}".utf8),
+                                                    content: Data("{}".utf8),
                                                     cost: 100,
                                                     timestamp: Date()))
         try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.0-older")

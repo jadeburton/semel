@@ -11,15 +11,6 @@ item that turns out to be a feature moves to `FUTURE.md` and keeps its ID.
 
 ## Cache
 
-**B-107** `open` — **A cache entry's content is stored as a JSON array of integers.**
-`CacheEntry.content` is `[UInt8]`, which GRDB encodes as `[104,101,…]`, so every byte of
-entry JSON costs about 3.5 bytes on disk — roughly 0.75 MB at the 500-entry limit against
-about 0.2 MB as bytes. Nothing waits on a schema change for this: the column is already
-declared `.blob`, and the schema fingerprint is the table's `CREATE` statement, so declaring
-the field `Data` moves no fingerprint. An entry written the old way then reads as the bytes
-of its JSON text, fails to decode as a `ProcessCacheEntry`, and is an ordinary miss that the
-next save overwrites.
-
 **B-14** `open` — **No blob GC.**
 Unreferenced objects accumulate in the object store with no collector: `DataObjectStore` has
 no delete, and the collectors that exist — cache-entry trimming, unreferenced nodes — remove
