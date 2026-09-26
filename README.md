@@ -191,10 +191,12 @@ product 'Hello.app/' = TreeMerger(input: ['assets': assets().files, 'strings': s
 A package's formula publishes its own products, and beside each product `P` it defines
 two funcs any formula that includes it can call by the product's name: `modules_P()`,
 the tree of every `.swiftmodule` behind the product, and `objects_P()`, the tree of every
-object it links. An app imports and links the product without knowing its targets:
+object it links. An app imports and links the product without knowing its targets, and
+`include funcs` brings those funcs without the package's own products, so the app's
+build root holds the app and not the archives behind it:
 
 ```
-include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
+include funcs SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
 func compiled() = SwiftCompiler(..., moduleTrees: ['HelloKit': modules_HelloKit().files])
 product 'Hello.app/Hello' = SwiftLinker(..., input: ['Hello.o': compiled().object],

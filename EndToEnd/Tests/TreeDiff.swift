@@ -65,6 +65,11 @@ enum TreeDiff {
         let size: Int
     }
 
+    /// Every regular file under `root`, as a path relative to it, sorted.
+    static func relativePaths(under root: URL) throws -> [String] {
+        try files(under: root).keys.sorted()
+    }
+
     private static func files(under root: URL) throws -> [String: Entry] {
         var result: [String: Entry] = [:]
         let keys: Set<URLResourceKey> = [.isRegularFileKey]

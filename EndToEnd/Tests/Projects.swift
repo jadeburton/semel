@@ -59,7 +59,8 @@ enum Projects {
         buildFolder: "swift/HelloApp",
         platform: "ios-simulator",
         expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car"],
-        buildTimeout: fixtureTimeout)
+        buildTimeout: fixtureTimeout,
+        onlyUnder: "Hello.app")
 
     static let icecubes = Project(
         name: "icecubes",
@@ -122,7 +123,8 @@ enum Projects {
         // constraint for this project, not coverage: `actool`, both linkers and both
         // compilers are perturbed by the fixtures on every push.
         twoMounts: false,
-        perturbed: false)
+        perturbed: false,
+        onlyUnder: "Ice Cubes.app")
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
     static let external: [Project] = [icecubes, icecubesApp]

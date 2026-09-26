@@ -11,8 +11,9 @@
 //   topLevel    = funcDef | productDef | include
 //   funcDef     = 'func' IDENT '(' paramList? ')' '=' expr
 //   productDef  = 'product' (STRING | PATH) '=' expr
-//   include     = 'include' expr                          -- a node's formula text, or a
-//                                                         -- STRING naming a plugin's prelude
+//   include     = 'include' 'funcs'? expr                 -- a node's formula text, or a
+//                                                         -- STRING naming a plugin's prelude;
+//                                                         -- 'funcs' brings its funcs, not its products
 //   paramList   = IDENT (',' IDENT)*
 //   expr        = STRING | PATH
 //               | IDENT                                   -- parameter reference
@@ -89,23 +90,31 @@ extension FormulaFile {
         // of definition one way. An included text may include in turn — a project's
         // generated formula includes each package's — so includes are followed to the
         // end, each spec once: two texts that include the same package name one node.
+        //
+        // Whatever is reached through `include funcs` brings its funcs and not its
+        // products, its own includes too. A spec reached both ways brings its products:
+        // one path asking for them is enough, so a spec first merged for its funcs alone
+        // is merged again, whole, when a full include reaches it.
         let own = FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader)
         var pending = file.includes
-        var included = Set<String>()
+        var broughtProducts: [String: Bool] = [:]
         while !pending.isEmpty {
             let include = pending.removeFirst()
-            let spec = try own.resolve(include: include).asString(omitOutputPort: false)
-            guard included.insert(spec).inserted else {
+            let spec = try own.resolve(include: include.expr).asString(omitOutputPort: false)
+            if let brought = broughtProducts[spec], brought || include.funcsOnly {
                 continue
             }
+            broughtProducts[spec] = !include.funcsOnly
             guard let includedFormula = try includeReader(spec) else {
                 return [:]
             }
             // Generated text names every path absolutely, so the base path is nominal.
             var includedParser = FormulaParser(try FormulaLexer.tokenize(includedFormula, basePath: basePath))
             let includedFile = try includedParser.parseFile().namespaced()
-            file = try file.merging(includedFile)
-            pending += includedFile.includes
+            file = try file.merging(include.funcsOnly ? includedFile.withoutProducts() : includedFile)
+            pending += includedFile.includes.map {
+                FormulaInclude(expr: $0.expr, funcsOnly: $0.funcsOnly || include.funcsOnly)
+            }
         }
 
         return try FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader).resolve()
@@ -113,6 +122,14 @@ extension FormulaFile {
 }
 
 // MARK: - Formula AST
+
+/// One `include` statement. `include funcs <expr>` brings the included text's funcs and
+/// leaves its products out: an app includes a package's formula to link its modules and
+/// objects, and the package's own archives are not the app's products (B-67).
+struct FormulaInclude {
+    let expr:      FormulaExpr
+    let funcsOnly: Bool
+}
 
 struct FormulaFile {
     let functions: [FuncDef]
@@ -122,7 +139,7 @@ struct FormulaFile {
     /// That text is merged into this file before resolution, so its products are this
     /// file's products and its funcs are callable. The language knows nothing about
     /// packages or toolchains here: it merges what the named node produces.
-    let includes:  [FormulaExpr]
+    let includes:  [FormulaInclude]
     /// `namespace <name>`: set on a plugin's prelude (B-108), whose funcs a formula calls as
     /// `name.func(…)`. `FormulaPrelude` writes the line; a formula of its own may not.
     var namespace: String?
@@ -150,6 +167,11 @@ struct FormulaFile {
                     body:   function.body.renamingCalls(to: ownNames, under: namespace))
         }
         return FormulaFile(functions: renamed, products: [], includes: includes)
+    }
+
+    /// This file's funcs and includes, without its products: what `include funcs` merges.
+    func withoutProducts() -> FormulaFile {
+        FormulaFile(functions: functions, products: [], includes: includes, namespace: namespace)
     }
 
     /// This file with `other`'s functions and products added.
@@ -608,7 +630,7 @@ private struct FormulaParser {
     mutating func parseFile() throws -> FormulaFile {
         var functions: [FuncDef]     = []
         var products:  [ProductDef]  = []
-        var includes:  [FormulaExpr] = []
+        var includes:  [FormulaInclude] = []
         var namespace: String?
 
         // `namespace <name>` opens a prelude's text. Not a keyword, so that nothing already
@@ -626,7 +648,19 @@ private struct FormulaParser {
                 products.append(try parseProductDef())
             case .kwInclude:
                 try expect(.kwInclude)
-                includes.append(try parseExpr())
+                // `funcs` is not a keyword, for the reason `namespace` is not: it is only a
+                // modifier when an expression follows it, so `include funcs(…)` still calls.
+                var funcsOnly = false
+                if case .ident("funcs") = current {
+                    switch peek1 {
+                    case .ident, .string:
+                        advance()
+                        funcsOnly = true
+                    default:
+                        break
+                    }
+                }
+                includes.append(FormulaInclude(expr: try parseExpr(), funcsOnly: funcsOnly))
             default:
                 throw located(FormulaParseError.unexpectedToken(current, expected: "'func', 'product' or 'include'"))
             }

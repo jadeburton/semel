@@ -45,4 +45,7 @@ struct Project {
     /// perturbed (`Perturbation`), and requires that export to match the first. False
     /// only for a project whose build is too long to run again.
     var perturbed: Bool = true
+    /// When set, every exported file lies under this folder: an app's build root holds the
+    /// app, and not the archives of the packages it links (B-67).
+    var onlyUnder: String?
 }
