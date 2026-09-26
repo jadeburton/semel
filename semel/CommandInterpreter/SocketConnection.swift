@@ -24,7 +24,7 @@ public enum ConnectionError: Error, Equatable, CustomStringConvertible, Localize
     public var description: String {
         switch self {
         case .unavailable(let path, let underlying):
-            return "no server at \(path) (\(underlying)); start one with `semelserv`"
+            return "no server at \(path) (\(underlying))"
         case .pathTooLong(let path, let length, let limit):
             return "socket path is \(length) bytes, over the \(limit)-byte limit: \(path)"
         case .closed:
