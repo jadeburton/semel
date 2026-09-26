@@ -59,6 +59,12 @@ public enum MachineQuery {
         return sysname == "Darwin" ? "macOS" : sysname
     }
 
+    /// How many cores the engine may keep busy. Scheduling reads it; no node's output
+    /// depends on it.
+    public static var activeProcessorCount: Int {
+        ProcessInfo.processInfo.activeProcessorCount
+    }
+
     /// The host's processor architecture as the kernel reports it: `arm64`, `x86_64`.
     public static var hostArchitecture: String {
         uname().machine

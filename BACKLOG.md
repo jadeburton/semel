@@ -69,16 +69,8 @@ Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirt
 packages, 26 Swift targets): a cold build of 321 s into an empty home, 2,627 nodes; a
 rebuild with nothing changed took 18.7 s and a one-file add 35.5 s for six scheduled nodes,
 neither broken down yet. With a compiler that compiles once its folder walk has finished
-(B-112), the cold build took 93 s.
-
-**B-113** `open` `For Fable Only` — **A batch of nodes waits for its slowest member.**
-`BuildEngine.processSomeNodes` computes every scheduled node concurrently and writes none
-of the results until all have finished; writing a result is what schedules its consumers.
-So one long compile holds back every node its batch-mates made ready, and the cost
-compounds along the critical path. Separately, `selectAllScheduled(limit:)` ignores its
-`limit`, so `processingBatchSize` (16) bounds nothing and a batch is every scheduled node.
-Wanted: each result written as it arrives, and a node started as soon as it is scheduled,
-while the graph writes stay on one sequence — the invariant the two phases exist for.
+(B-112), the cold build took 93 s; with results written as each node finishes rather than
+once a whole batch has (B-113), 85 s.
 
 **B-114** `open` `For Fable Only` — **A running tool holds a Swift concurrency thread.**
 `LocalFileSystemTool` waits for its process with `waitUntilExit()` inside a task of the

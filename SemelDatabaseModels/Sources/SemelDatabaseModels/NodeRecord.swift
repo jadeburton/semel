@@ -157,9 +157,15 @@ public struct NodeDataAccess: DataAccessType {
         self.databaseLayer = databaseLayer
     }
 
-    public func selectAllScheduled(limit: Int) throws -> [NodeRecord] {
+    /// At most `limit` scheduled nodes, leaving out `excluding` — the nodes the caller is
+    /// already running — in id order.
+    public func selectScheduled(limit: Int, excluding: Set<ObjectID> = []) throws -> [NodeRecord] {
         try read { db in
-            try NodeRecord.filter(NodeRecord.Columns.scheduled == true).fetchAll(db)
+            try NodeRecord
+                .filter(NodeRecord.Columns.scheduled == true && !excluding.contains(Column("id")))
+                .order(Column("id"))
+                .limit(limit)
+                .fetchAll(db)
         }
     }
 
