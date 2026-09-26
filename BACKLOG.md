@@ -299,7 +299,27 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
 3. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 4. **Merged settings.** `settings:` is one file; a project layering a local file over a
-   shared one (the `cpp` fixture's `ConfigMerger`) still wires by hand.
+   shared one (the `cpp` fixture's `ConfigMerger`) still wires by hand. B-109 makes
+   `settings` a node, which answers this.
+
+## Configuration
+
+**B-109** `open` — **Configuration: the machine's half and the project's half.**
+The configuration model is right — settings are wire values selected by prefix, nothing is
+inherited, nothing has a default — and the file a person writes is not: the C fixture's
+config is twenty lines for a three-line formula, fifteen of them facts about the machine
+(`toolDescriptor.*` per tool, `sdkPath`) repeated once per tool, which is why it cannot be
+checked in, why the fixtures carry a `.template`, and why the tutorial has its reader paste
+a block and type seven lines. Design:
+`docs/superpowers/specs/2026-09-26-semel-configuration-two-files-design.md`. Two files: a
+machine file written by `tools --write` from what each plugin declares as machine settings,
+for the namespaces the graph selects, ignored by version control; and a project file holding
+the project's choices, checked in. A prelude func takes `settings` as a node, and
+`clang.settings(project:machine:)` lays one over the other with `ConfigMerger` — which is
+also what lets a project compose its own settings for the cases the preludes do not cover.
+With it: `Configuration`'s `inherit` port becomes `base` (a `Semel.version` bump), the
+unused-key report follows a file through a merger to its filters, and `prepare`'s C
+standard moves to the project file under a comment naming it a choice.
 
 ## Design, correctness and code quality
 
