@@ -584,6 +584,68 @@ final class FormulaParserTests: SemelCoreTestCase {
         }
     }
 
+    // MARK: - include funcs <node> (B-67)
+
+    /// An app includes a package's formula to link its modules and objects; the package's
+    /// archives are not the app's products.
+    func test_includeFuncsBringsTheFuncsAndNotTheProducts() throws {
+        let result = try parse("""
+            include funcs \(source)
+            product 'app' = compilerX()
+            """, included: [
+            source: """
+                func compilerX() = StaticFile(path: 'input:/repo/x').output
+                product 'libX.a' = compilerX()
+                """,
+        ])
+
+        XCTAssertEqual(Set(result.keys), ["app"])
+        XCTAssertEqual(result["app"]?.typeName, "StaticFile")
+    }
+
+    /// A project's generated formula includes each package's, so what a funcs-only include
+    /// reaches through its own includes brings no products either.
+    func test_includeFuncsHoldsThroughTheIncludedTextsOwnIncludes() throws {
+        let package = "StaticFile(path: 'input:/repo/package.txt').output"
+        let result = try parse("include funcs \(source)", included: [
+            source:  "include \(package)\nproduct 'project' = StaticFile(path: 'input:/repo/p').output",
+            package: "product 'libP.a' = StaticFile(path: 'input:/repo/l').output",
+        ])
+
+        XCTAssertTrue(result.isEmpty, "got \(result.keys.sorted())")
+    }
+
+    /// One path asking for a text's products is enough, whichever include comes first.
+    func test_aTextIncludedBothWaysBringsItsProducts() throws {
+        let texts = [source: "product 'libX.a' = StaticFile(path: 'input:/repo/x').output"]
+
+        XCTAssertEqual(Set(try parse("include funcs \(source)\ninclude \(source)", included: texts).keys), ["libX.a"])
+        XCTAssertEqual(Set(try parse("include \(source)\ninclude funcs \(source)", included: texts).keys), ["libX.a"])
+    }
+
+    /// `funcs` modifies an include only when an expression follows it; a formula's own func
+    /// of that name is still called.
+    func test_aFuncNamedFuncsIsStillCallableInAnInclude() throws {
+        var asked: [String] = []
+        _ = try FormulaFile.parse("""
+            func funcs(p) = StaticFile(path: p).output
+            include funcs(p: <Sub/formula.txt>)
+            """, basePath: Path("input:/repo"),
+            wildcardExpander: { _ in [] },
+            includeReader: { asked.append($0); return nil })
+
+        XCTAssertEqual(asked, ["StaticFile(path: 'input:/repo/Sub/formula.txt').output"])
+    }
+
+    func test_includeFuncsTakesAPrelude() throws {
+        var asked: [String] = []
+        _ = try FormulaFile.parse("include funcs 'clang'", basePath: Path("input:/repo"),
+                                  wildcardExpander: { _ in [] },
+                                  includeReader: { asked.append($0); return nil })
+
+        XCTAssertEqual(asked, [clangPrelude])
+    }
+
     // MARK: - Preludes (B-108)
 
     private let clangPrelude = "FormulaPrelude(name: 'clang').formula"

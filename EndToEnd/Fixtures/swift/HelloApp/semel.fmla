@@ -7,8 +7,9 @@ include 'swift'
 include 'apple'
 
 // A package the app imports: its converter's formula brings the funcs that carry the
-// product's modules and objects as trees, named after the product.
-include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
+// product's modules and objects as trees, named after the product. `include funcs` leaves
+// the package's own archive out of the app's products.
+include funcs SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
 product 'Hello.app/Hello' = swift.executableUsing(
     sources: <Sources>, name: 'Hello', settings: <semel.config>,

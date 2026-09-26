@@ -77,7 +77,7 @@ struct XcodeFormulaEmitter {
             }
         }
         return Array(Set(folders)).sorted().map {
-            "include SwiftFormulaConverter(path: '\($0)', root: '\(build.root)').formula"
+            "include funcs SwiftFormulaConverter(path: '\($0)', root: '\(build.root)').formula"
         }
     }
 

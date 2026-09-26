@@ -39,9 +39,9 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     func test_includesEveryPackageTheProjectReferences() throws {
         let formula = try formula()
 
-        XCTAssertTrue(formula.contains("include SwiftFormulaConverter(path: 'input:/repo/Packages/Timeline', root: 'input:/repo').formula"), formula)
-        XCTAssertTrue(formula.contains("include SwiftFormulaConverter(path: 'input:/repo/Packages/Models', root: 'input:/repo').formula"), formula)
-        XCTAssertTrue(formula.contains("include SwiftFormulaConverter(path: 'input:/repo/Dependencies/keychain-swift', root: 'input:/repo').formula"), formula)
+        XCTAssertTrue(formula.contains("include funcs SwiftFormulaConverter(path: 'input:/repo/Packages/Timeline', root: 'input:/repo').formula"), formula)
+        XCTAssertTrue(formula.contains("include funcs SwiftFormulaConverter(path: 'input:/repo/Packages/Models', root: 'input:/repo').formula"), formula)
+        XCTAssertTrue(formula.contains("include funcs SwiftFormulaConverter(path: 'input:/repo/Dependencies/keychain-swift', root: 'input:/repo').formula"), formula)
     }
 
     // MARK: - Sources and the executable

@@ -108,16 +108,9 @@ extensions it embeds from the project file, and `semel-swift prepare` on a folde
 an `.xcodeproj` resolves the project's packages through Xcode, vendors them and writes the
 formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
 two commands. Device signing is deliberately out — the simulator needs none beyond what
-`ld` does. What follows is what is left: one leak of products the app did not ask for, and
-two places Apple's tools are not byte-reproducible.
-
-**B-67** `open` — **An app publishes every package's archive beside itself.**
-Each included package formula publishes its `lib<P>.a` products beside the including
-formula, so the app's build root ends with twenty archives nobody asked for — 40 MB each
-for IceCubes. A converted project and a hand-written one alike: HelloApp's formula
-publishes `libHelloKit.a` through its include of HelloKit. An include that brings only funcs, not products, or a package converter
-that emits archives only when it is the root, would drop them; the product statement is
-the only thing the app does not want.
+`ld` does. An app includes its packages with `include funcs`, so its build root holds the
+app and not their archives. What follows is what is left: two places Apple's tools are
+not byte-reproducible.
 
 **B-89** `open` — **`actool` output is not byte-reproducible: `.icon` renditions carry a
 UUID and pid, and the appearance table's order varies.** Two separate causes, both in

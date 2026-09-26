@@ -155,6 +155,11 @@ final class EndToEndRun {
                 problems.append("empty: \(product)")
             }
         }
+        if let folder = project.onlyUnder {
+            for path in try TreeDiff.relativePaths(under: out) where !path.hasPrefix(folder + "/") {
+                problems.append("outside \(folder): \(path)")
+            }
+        }
         guard problems.isEmpty else {
             let present = (try? FileManager.default.subpathsOfDirectory(atPath: out.path))?.sorted().joined(separator: "\n    ") ?? "(none)"
             throw EndToEndFailure(step: "products (\(out.lastPathComponent))",
