@@ -354,13 +354,13 @@ public final class CommandInterpreter: CommandContext {
 
     private func printHelp(about verb: String?) {
         var found = false
-        for (group, entries) in Self.help {
-            let matching = verb.map { needle in entries.filter { $0.verbs.contains(needle) } } ?? entries
+        for section in Self.help {
+            let matching = verb.map { needle in section.entries.filter { $0.verbs.contains(needle) } } ?? section.entries
             guard !matching.isEmpty else {
                 continue
             }
             found = true
-            outputMessage("\(group):")
+            outputMessage("\(section.group):")
             let width = matching.map(\.usage.count).max() ?? 0
             for entry in matching {
                 outputMessage("  \(entry.usage.padding(toLength: width, withPad: " ", startingAt: 0))   \(entry.description)")
@@ -375,7 +375,7 @@ public final class CommandInterpreter: CommandContext {
     /// edit for a word of up to three letters, two beyond that — a swapped pair is two.
     /// A one-letter alias is never offered as a guess.
     static func nearestVerb(to typed: String, among verbs: Set<String>) -> String? {
-        let candidates = verbs.filter { $0.count > 1 }.map { (verb: $0, distance: editDistance(typed, $0)) }
+        let candidates = verbs.sorted().filter { $0.count > 1 }.map { (verb: $0, distance: editDistance(typed, $0)) }
         guard let best = candidates.min(by: { ($0.distance, $0.verb) < ($1.distance, $1.verb) }),
               best.distance <= (typed.count <= 3 ? 1 : 2) else {
             return nil
