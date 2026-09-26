@@ -84,6 +84,21 @@ final class FilePlugin: CommandPlugin {
             }
         }
 
+        // Where a build exported its products is not a source, however the tree above it
+        // is pushed. Named only when it was all the push asked for: a push of the tree
+        // leaves it out without comment.
+        let exclusions = context.pushExclusions
+        let excluded = work.filter { entry in
+            exclusions.contains { entry.path.string == $0 || entry.path.string.hasPrefix($0 + "/") }
+        }
+        if !excluded.isEmpty {
+            work.removeAll { entry in excluded.contains { $0.path == entry.path } }
+            if work.isEmpty {
+                context.outputError("push: \(externalPathOrWildcard): a build's export folder is never pushed")
+                return
+            }
+        }
+
         // One batch around the whole push, so the engine coalesces its work signals.
         _ = try context.request(.beginBatch)
         defer { _ = try? context.request(.endBatch) }

@@ -30,6 +30,11 @@ public final class CommandInterpreter: CommandContext {
 
     let connection: any SemelConnection
     var baseDirectory: String
+
+    /// Where `build` puts its products when `--into` is not given: `<base>/semel-out/<folder>`.
+    public static let defaultExportFolder = "semel-out"
+
+    var pushExclusions: Set<String> = [defaultExportFolder]
     var currentFileSystem: FileSystemForCommand = .input
     var currentDirectoryPath: Path = .empty
     var openBatchDepth = 0
@@ -203,11 +208,11 @@ public final class CommandInterpreter: CommandContext {
 
         // `build <folder> [--into <dir>] [--no-follow]` is the whole loop in one word: push
         // the tree, wait for the graph to settle, push what the formula turned out to need
-        // from the rest of the tree, report, and — given a destination — export the
-        // products. A macro over the commands rather than a plugin, so each keeps its own
-        // meaning and its own tests. The destination is the opt-in; there is nothing to
-        // default. No export after a build that reported errors: the exit status already
-        // says it failed, and a partial product set beside it would only mislead.
+        // from the rest of the tree, report, and export the products — to `--into`, or to
+        // `semel-out/<folder>` under the base. A macro over the commands rather than a
+        // plugin, so each keeps its own meaning and its own tests. No export after a build
+        // that reported errors: the exit status already says it failed, and a partial
+        // product set beside it would only mislead.
         if verb == "build" {
             var arguments = remaining
             var destination: String?
@@ -234,8 +239,22 @@ public final class CommandInterpreter: CommandContext {
                 try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
             }
             try run("errors")
-            if let destination, errorsReported == errorsBefore {
-                try run("export \(folder) --into \(destination)")
+            let exportFolder = destination
+                ?? (baseDirectory as NSString).appendingPathComponent("\(Self.defaultExportFolder)/\(folder)")
+            // A destination inside the tree is a folder a later push must leave alone, as
+            // the default one is.
+            if let inTree = Self.relativePath(of: exportFolder, under: baseDirectory) {
+                pushExclusions.insert(inTree)
+            }
+            guard errorsReported == errorsBefore else {
+                return
+            }
+            // A named destination with nothing to put in it is `export`'s error to report;
+            // the default one is only used when there is something to put in it.
+            if try destination != nil || hasProducts(folder) {
+                try run("export \(folder) --into \(exportFolder)")
+            } else {
+                outputMessage("Nothing to export: the build published no products.")
             }
             return
         }
@@ -306,6 +325,16 @@ public final class CommandInterpreter: CommandContext {
         }
     }
 
+    /// Whether the output file system holds a folder for what was built: the products
+    /// `export` would copy.
+    private func hasProducts(_ folder: String) throws -> Bool {
+        let outputFolder = resolve(folder, relativeTo: .empty).string
+        guard case .list(let matches) = try request(.list(fileSystem: .output, pattern: outputFolder)).0 else {
+            return false
+        }
+        return matches.contains { $0.kind == .folder }
+    }
+
     /// What asked for a source: the one formula file in the folder being built, or the
     /// folder when it holds none or several.
     private func formulaName(in folder: String) -> String {
@@ -316,6 +345,17 @@ public final class CommandInterpreter: CommandContext {
             return folder
         }
         return (folder as NSString).appendingPathComponent(formula)
+    }
+
+    /// `path` relative to `base` when it lies under it, else nil. Both are taken as the file
+    /// system spells them, so `out/../out` and `./out` are one folder.
+    static func relativePath(of path: String, under base: String) -> String? {
+        let target = URL(fileURLWithPath: path).standardizedFileURL.path
+        let root   = URL(fileURLWithPath: base).standardizedFileURL.path
+        guard target != root, target.hasPrefix(root + "/") else {
+            return nil
+        }
+        return String(target.dropFirst(root.count + 1))
     }
 
     /// `path` as seen from `folder`, both relative to `base`: `clang.cfg` from `hello` is

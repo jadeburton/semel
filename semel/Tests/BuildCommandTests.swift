@@ -193,13 +193,41 @@ final class BuildCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 0)
     }
 
-    func test_withoutADestinationNothingIsExported() throws {
+    /// Without a destination the products still land somewhere known: `semel-out/<folder>`
+    /// under the base (B-110).
+    func test_withoutADestinationProductsGoToSemelOutUnderTheBase() throws {
         try publishProduct("lib.a", contents: "archive")
 
         interpreter.handleCommand("build src")
 
         XCTAssertEqual(interpreter.errorsReported, 0)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: FileManager.default.currentDirectoryPath + "/lib.a"))
+        XCTAssertEqual(try String(contentsOf: externalRoot.appendingPathComponent("semel-out/src/lib.a"),
+                                  encoding: .utf8), "archive")
+    }
+
+    /// Yesterday's products are not today's sources: a push of the tree leaves the export
+    /// folder out, and a push of the folder itself says why nothing happened.
+    func test_aLaterPushDoesNotSendTheExportFolderBackIn() throws {
+        try publishProduct("lib.a", contents: "archive")
+        interpreter.handleCommand("build src")
+
+        interpreter.handleCommand("push .")
+        XCTAssertNil(try BuildEngine.shared.inputFileSystem.childNode(path: "semel-out"))
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
+
+        XCTAssertEqual(interpreter.handleCommand("push semel-out"), .failed)
+        XCTAssertNil(try BuildEngine.shared.inputFileSystem.childNode(path: "semel-out"))
+    }
+
+    /// A destination inside the tree is left out of later pushes too.
+    func test_aDestinationInsideTheTreeIsLeftOutOfLaterPushes() throws {
+        try publishProduct("lib.a", contents: "archive")
+        interpreter.handleCommand("build src --into \(externalRoot.path)/out")
+
+        interpreter.handleCommand("push .")
+
+        XCTAssertNil(try BuildEngine.shared.inputFileSystem.childNode(path: "out"))
+        XCTAssertNotNil(try BuildEngine.shared.inputFileSystem.childNode(path: "src/main.c"))
     }
 
     /// A partial product set beside a non-zero exit would only mislead.
