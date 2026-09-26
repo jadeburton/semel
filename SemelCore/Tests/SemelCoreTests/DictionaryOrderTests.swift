@@ -110,8 +110,6 @@ final class DictionaryOrderTests: XCTestCase {
             "a literal array of the two kinds a child can be",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.contentRootOutputPort),":
             "a literal array of the two kinds a child can be, each with the port its content is on",
-        "semel/CommandInterpreter/CommandInterpreter.swift: Self.help":
-            "an array of groups, in the order `help` prints them",
 
         // ── accumulated into a dictionary or a set: the result is order-free ─────
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: headerInputFiles":
@@ -176,8 +174,6 @@ final class DictionaryOrderTests: XCTestCase {
             "the module maps are sorted by path two lines below",
 
         // ── a set turned into a sequence: order-free at the far end ─────────────
-        "semel/CommandInterpreter/CommandInterpreter.swift: verbs":
-            "each verb is scored against what was typed, and the nearest is chosen by distance and then by name",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: Set(upstream)":
             "each failing source found is collected into a set of cause IDs",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: carriers":
