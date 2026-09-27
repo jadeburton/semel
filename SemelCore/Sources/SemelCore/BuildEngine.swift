@@ -140,6 +140,12 @@ public final class BuildEngine {
         while true {
 
             await workSignal.clear()
+            // Busy before the wake-ups are consumed, not after. A waiter returns when it
+            // finds the loop idle with no wake-up outstanding, and between consuming them
+            // and marking busy both were true of a pass that had not yet run: a waiter
+            // landing in that window returned with the settle it asked about still ahead
+            // of it — a few instructions wide, and a loaded machine landed in it.
+            await idle.markBusy()
             consumeWakeUps()
             if batchLock.withLock({ stopRequested }) {
                 // Leave every waiter with a settled answer before going: the stop counted
@@ -148,7 +154,6 @@ public final class BuildEngine {
                 batchLock.withLock { loopIsRunning = false }
                 return
             }
-            await idle.markBusy()
 
             do {
                 try await processAllNodes()

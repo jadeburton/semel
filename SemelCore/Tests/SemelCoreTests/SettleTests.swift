@@ -73,6 +73,23 @@ final class SettleTests: SemelCoreTestCase {
         XCTAssertFalse(finder.scheduled, "and nothing is left scheduled")
     }
 
+    /// The loop consumed its wake-ups and then marked itself busy, with an actor hop
+    /// between: a waiter landing in that gap found the loop idle with nothing outstanding
+    /// and returned before the pass had run. A batch end is what a push does and what the
+    /// settle-report tests do, and many rounds because the gap is a few instructions wide
+    /// — a loaded machine landed in it where a quiet one never did.
+    func test_aWaiterNeverSlipsBetweenTheWakeUpAndThePassItAsksFor() throws {
+        for round in 0..<200 {
+            engine.beginBatch()
+            try push("src/file\(round).c", contents: "int value\(round)(void) { return \(round); }")
+            engine.endBatch()
+
+            engine.waitUntilIdleBlocking()
+
+            XCTAssertTrue(try dirtyManifests().isEmpty, "round \(round): the wait returned before the pass ran")
+        }
+    }
+
     /// The synchronous form a REPL command uses: blocks the calling thread, not the loop.
     func test_theBlockingFormReturnsOnceSettled() throws {
         try push("src/main.c", contents: "int main(void) { return 0; }")
