@@ -31,6 +31,10 @@ public struct ConfigFilter: Node {
     /// The namespace this node takes, without a trailing dot: `swift.compiler`.
     public static let prefixProperty = "prefix"
 
+    /// Two wires on `input` are an error where they were merged in key order (B-120), so
+    /// an entry the older code wrote for such a node holds a merge this one refuses.
+    public static let implementationVersion = 2
+
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {
@@ -54,22 +58,15 @@ public struct ConfigFilter: Node {
         // nothing, rather than failing every tool downstream over a config file nobody wrote
         // yet. The tool that actually needs a setting is what can say which one is missing
         // and where to write it; an errored selector output could only ever say "something
-        // upstream is wrong," which helps nobody. Which node carries the error is all this
-        // decides: a file nobody pushed is named by the report, from the state its own port
-        // holds, whatever this node makes of the wire.
-        let wires = input.inputValues[Self.inputPort] ?? [:]
-        var merged: [String: String] = [:]
-        for wireKey in wires.keys.sorted() {
-            guard let hash = try? wires[wireKey]!.expectValue() else { continue }
-            let text = try hash.resolveAsString()
-            merged = merged.mergedWith([String: String](plainText: text))
-        }
+        // upstream is wrong," which helps nobody. Two wires are another matter: a selector
+        // is not where settings meet, and it says so (B-120).
+        let settings = try input.settings(onPort: Self.inputPort)
 
         // A whole segment, so `swift.compiler` does not also claim `swift.compilerPlugin`.
         // Whatever follows is the key, dots and all — stripping, not parsing.
         let qualifier = prefix + "."
         var selected: [String: String] = [:]
-        for (key, value) in merged where key.hasPrefix(qualifier) {
+        for (key, value) in settings where key.hasPrefix(qualifier) {
             let bare = String(key.dropFirst(qualifier.count))
             guard !bare.isEmpty else { continue }
             selected[bare] = value

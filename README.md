@@ -219,9 +219,9 @@ SemelCore/       The engine
     OutputFile         Publishes a built artifact
     ProjectFinder      Discovers project files
     ProjectBuilder     Orchestrates a full project build
-    Configuration      Build configuration node
+    SettingsLiteral    Settings written into a formula, as a source
     ConfigFilter       Selects one node's settings out of a config file
-    ConfigMerger       Lays one config file over another
+    ConfigMerger       Lays one set of settings over another: the only place two meet
     TreeBuilder, TreeFile, TreeMerger   Trees of files on a port, and folder products
   Database             GRDB-backed persistence layer
 SemelNodeKit/    Node-authoring API — no dependency on the engine

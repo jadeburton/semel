@@ -1,8 +1,9 @@
 // ConfigMerger.swift
 // SemelCore
 //
-// Lays one config file over another, so a shared base can be written once and a project
-// state only what it changes.
+// Lays one set of settings over another: a project's config file over the machine's, or a
+// formula's `SettingsLiteral` over what a `ConfigFilter` selected. The one place in the
+// graph where two sets of settings meet (B-120).
 //
 
 import SemelNodeKit
@@ -15,6 +16,10 @@ public struct ConfigMerger: Node {
     /// The settings laid over them. A key here replaces the same key in `base`.
     static let overridePort = "override"
     static let outputPort = "output"
+
+    /// Two wires on one port are an error where they were merged in key order (B-120), so
+    /// an entry the older code wrote for such a node holds a merge this one refuses.
+    public static let implementationVersion = 2
 
     public var thisNode: NodeRecord
 
@@ -29,67 +34,42 @@ public struct ConfigMerger: Node {
     /// Nothing to do with a config file that has not been written yet. Static wires are
     /// created atomically as the formula is interpreted, so naming a file creates its wire
     /// whether or not anyone has pushed it — the wire is simply carrying no value, which
-    /// `settings(on:in:)` reads as nothing to add. An override file that may or may not exist
-    /// is expressible either way; what required rules out is the formula omitting the input.
+    /// `settings(onPort:)` reads as nothing to add. An override file that may or may not
+    /// exist is expressible either way; what required rules out is the formula omitting the
+    /// input.
     ///
     /// The override is the one input in the design that may name a file nobody ever writes,
     /// so it is the one port that tolerates an absent value and the one a report says
     /// nothing about. The base is the settings this node starts from: a formula naming a
     /// base nobody pushed is a formula whose configuration is missing, and the report names
     /// the file rather than leaving the tools below to list the settings they lack.
+    ///
+    /// One wire on each. A second on either port has no stated precedence over the first,
+    /// which is the thing this node exists to make explicit; a third set of settings is a
+    /// second merger with this one on its `base` or its `override`.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(basePort), .required(overridePort)],
         outputPorts: [outputPort],
         inputPortsToleratingAbsentValue: [overridePort]
     )
 
-    public func process(input: ProcessInput) throws -> ProcessOutput {
-        let merged = settings(on: Self.basePort, in: input)
-            .mergedWith(settings(on: Self.overridePort, in: input))
-
-        return .init(outputValues: [Self.outputPort: .value(try merged.asPlainText().intern())],
-                     inputWireSpecs: [:])
-    }
-
-    /// The settings arriving on one port.
-    ///
     /// A wire carrying no value contributes nothing rather than failing the node — the same
     /// reading `ConfigFilter` takes. That is what makes an override file optional: a formula
     /// can name one nobody has written, and until it is, the base passes through whole.
     /// Failing instead would make every project with nothing to override unbuildable until
     /// someone wrote an empty file for it.
     ///
-    /// What arrives is not an absence: a `StaticFile` nobody has pushed publishes
-    /// `noValue(.initializing)`, having no inputs and so nothing that would ever make it run.
-    /// The node still runs on that, because `allInputsAreSatisfied` waits on `pending` and on
-    /// nothing else — otherwise requiring these ports would make an unwritten override stall
-    /// the build rather than mean "nothing to add".
-    ///
     /// This node treats a file nobody wrote and a genuine upstream failure alike, and it is
-    /// the report rather than this loop that tells the reader which it met. The two are
+    /// the report rather than this node that tells the reader which it met. The two are
     /// distinguishable by state — `initializing` is the state of a port nothing has
     /// processed, where a failure is `inputInError` or an error of its own — so an unpushed
     /// base is named as the file it is, and a broken one is named where it broke. Only the
     /// override is silent, because only the override is allowed to be absent.
-    ///
-    /// One wire per port is the intent, and both callers of this write exactly one. Wires are
-    /// merged in sorted key order anyway, so that two of them cannot resolve differently
-    /// between runs — but a port carrying two wires has no stated precedence, which is the
-    /// thing this node exists to make explicit.
-    private func settings(on port: String, in input: ProcessInput) -> [String: String] {
-        let wires = input.inputValues[port] ?? [:]
-        var result: [String: String] = [:]
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        let merged = try input.settings(onPort: Self.basePort)
+            .mergedWith(try input.settings(onPort: Self.overridePort))
 
-        for wireKey in wires.keys.sorted() {
-
-            guard let hash = try? wires[wireKey]?.expectValue(),
-                  let text = try? hash.resolveAsString() else {
-                continue
-            }
-
-            result = result.mergedWith([String: String](plainText: text))
-        }
-
-        return result
+        return .init(outputValues: [Self.outputPort: .value(try merged.asPlainText().intern())],
+                     inputWireSpecs: [:])
     }
 }

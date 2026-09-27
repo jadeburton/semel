@@ -39,8 +39,8 @@ final class SchedulingTests: SemelCoreTestCase {
 
     func test_aFastNodesConsumerDoesNotWaitForASlowNodeStartedBesideIt() async throws {
         // The inputs settle first, so the slow node runs once, on a value.
-        let slowInput = "Configuration(role: 'slow').output"
-        let fastInput = "Configuration(role: 'fast').output"
+        let slowInput = "SettingsLiteral(role: 'slow').output"
+        let fastInput = "SettingsLiteral(role: 'fast').output"
         _ = try GraphSpecNode.parse(slowInput).findOrCreateMatchingNode()
         _ = try GraphSpecNode.parse(fastInput).findOrCreateMatchingNode()
         engine.signalWorkAvailable()

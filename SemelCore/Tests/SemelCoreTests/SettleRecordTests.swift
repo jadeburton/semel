@@ -223,7 +223,7 @@ final class SettleRecordTests: SemelCoreTestCase {
 
     func test_aNodeTheSettleNeverReachedIsUntouched() async throws {
         _ = try await buildGraph()
-        let bystander = try nodeID("Configuration(role: 'bystander').output")
+        let bystander = try nodeID("SettingsLiteral(role: 'bystander').output")
 
         let explained = try explanation(of: bystander)
 

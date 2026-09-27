@@ -27,14 +27,14 @@ extension SemelApple {
         func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: ['config': settings]).output
 
         func assets(catalog, appIcon, settings) = AssetCatalogCompiler(
-            configuration: ['config': Configuration(appIcon: appIcon, base: ['settings': selected(settings: settings, prefix: '\(AssetCatalogCompilerConfiguration.settingNamespace)')]).output],
+            configuration: ['config': ConfigMerger(base: ['settings': selected(settings: settings, prefix: '\(AssetCatalogCompilerConfiguration.settingNamespace)')], override: ['literals': SettingsLiteral(appIcon: appIcon).output]).output],
             catalogs: ['assets': Folder(path: catalog).manifest]
         )
 
         func resources(catalog, appIcon, strings, settings) = TreeMerger(input: [
             'assets': assets(catalog: catalog, appIcon: appIcon, settings: settings).files,
             {file: '%%strings%%/*.xcstrings'} "%%file.0%%": StringCatalogCompiler(
-                configuration: ['config': Configuration(base: ['settings': selected(settings: settings, prefix: '\(StringCatalogCompilerConfiguration.settingNamespace)')]).output],
+                configuration: ['config': selected(settings: settings, prefix: '\(StringCatalogCompilerConfiguration.settingNamespace)')],
                 catalog: ["%%file.0%%.xcstrings": StaticFile(path: file).output]
             ).files
         ]).files

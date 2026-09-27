@@ -102,7 +102,7 @@ final class TypeRegistryTests: SemelCoreTestCase {
     func test_allRegisteredKindsAreDistinct() throws {
         let kinds: [UInt] = [
             ProjectFinder.kind, ProjectBuilder.kind, StaticFile.kind, Folder.kind,
-            OutputFile.kind, Configuration.kind, FolderManifest.kind
+            OutputFile.kind, SettingsLiteral.kind, FolderManifest.kind
         ]
         XCTAssertEqual(kinds.count, Set(kinds).count, "Each Node must have a unique kind")
     }

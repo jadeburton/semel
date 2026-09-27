@@ -23,9 +23,9 @@ final class NodeNameConstantsTests: SemelCoreTestCase {
     }
 
     func test_theSettingsNodeNamesAreTheTypes() {
-        XCTAssertEqual(SettingsNodes.configurationTypeName, String(describing: Configuration.self))
-        XCTAssertEqual(SettingsNodes.configurationBasePort, Configuration.inputPort)
-        XCTAssertEqual(SettingsNodes.configurationOutputPort, Configuration.outputPort)
+        XCTAssertEqual(SettingsNodes.settingsLiteralTypeName, String(describing: SettingsLiteral.self))
+        XCTAssertEqual(SettingsNodes.settingsLiteralOutputPort, SettingsLiteral.outputPort)
+        XCTAssertEqual(SettingsLiteral.descriptor.outputPorts, [SettingsNodes.settingsLiteralOutputPort])
         XCTAssertEqual(SettingsNodes.configFilterTypeName, String(describing: ConfigFilter.self))
         XCTAssertEqual(SettingsNodes.configFilterPrefixProperty, ConfigFilter.prefixProperty)
         XCTAssertEqual(SettingsNodes.configFilterInputPort, ConfigFilter.inputPort)
@@ -43,16 +43,25 @@ final class NodeNameConstantsTests: SemelCoreTestCase {
                        "StaticFile(path: 'input:/a.c').output")
         XCTAssertEqual(GraphSpecNode.folderManifest(at: "input:/src").asString(omitOutputPort: false),
                        "Folder(path: 'input:/src').manifest")
-        let settings = GraphSpecNode.configuration(
-            literals: ["moduleName": "App"],
-            base: ["settings": .configFilter(prefix: "swift.compiler", input: [
+        let settings = GraphSpecNode.literals(
+            ["moduleName": "App"],
+            over: .configFilter(prefix: "swift.compiler", input: [
                 "config": .configMerger(base: ["machine": .staticFile(at: "input:/semel.machine.config")],
                                         override: ["project": .staticFile(at: "input:/semel.config")]),
-            ])])
-        let written = "Configuration(moduleName: 'App', base: ['settings': ConfigFilter(prefix: 'swift.compiler', "
+            ]))
+        let written = "ConfigMerger(base: ['settings': ConfigFilter(prefix: 'swift.compiler', "
                     + "input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/semel.machine.config').output], "
-                    + "override: ['project': StaticFile(path: 'input:/semel.config').output]).output]).output]).output"
+                    + "override: ['project': StaticFile(path: 'input:/semel.config').output]).output]).output], "
+                    + "override: ['literals': SettingsLiteral(moduleName: 'App').output]).output"
         XCTAssertEqual(settings.asString(omitOutputPort: false), try GraphSpecNode.parse(written).asString(omitOutputPort: false))
         XCTAssertEqual(try settings.identity(), try GraphSpecNode.parse(written).identity())
+    }
+
+    /// No literals, no merger: the settings pass through as they are, rather than through a
+    /// node that lays nothing over them.
+    func test_noLiteralsIsTheSettingsThemselves() throws {
+        let selected = GraphSpecNode.configFilter(prefix: "swift.compiler", input: ["config": .staticFile(at: "input:/semel.config")])
+
+        XCTAssertEqual(try GraphSpecNode.literals([:], over: selected).identity(), try selected.identity())
     }
 }

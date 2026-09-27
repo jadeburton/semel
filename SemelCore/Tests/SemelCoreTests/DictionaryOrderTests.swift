@@ -124,7 +124,7 @@ final class DictionaryOrderTests: XCTestCase {
             "collects the decoded manifests into a dictionary by folder",
         "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: allWatchedFolderManifests ?? [:]":
             "collects the manifests into an array whose only use is keyed by folder path, and the watched paths into a set",
-        "SemelCore/Sources/SemelCore/Nodes/ConfigFilter.swift: merged":
+        "SemelCore/Sources/SemelCore/Nodes/ConfigFilter.swift: settings":
             "selects the qualified settings into a dictionary, rendered sorted",
         "SemelNodeKit/Sources/SemelNodeKit/ConfigurationText.swift: other":
             "merges one settings dictionary into another",

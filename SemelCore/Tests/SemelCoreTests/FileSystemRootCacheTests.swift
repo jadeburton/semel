@@ -55,9 +55,9 @@ final class FileSystemRootCacheTests: SemelCoreTestCase {
         // reissues the same rowid for a different node.
         _ = try engine.database.node.delete(nodeID: rootID)
         let impostor = try NodeRecord.createNode(database: engine.database,
-                                           kind: Configuration.kind,
+                                           kind: SettingsLiteral.kind,
                                            properties: ["path": "input:"],
-                                           identity: "Configuration(path: 'input:')")
+                                           identity: "SettingsLiteral(path: 'input:')")
 
         let resolved = try Folder.inputFileSystem
 

@@ -128,7 +128,7 @@ final class BuildEngineResetTests: SemelCoreTestCase {
 
     @discardableResult
     private func makeDerivedNode(role: String) throws -> ObjectID {
-        let (node, _) = try GraphSpecNode.parse("Configuration(role: '\(role)').output").findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode.parse("SettingsLiteral(role: '\(role)').output").findOrCreateMatchingNode()
         return try node.requireID()
     }
 
@@ -276,7 +276,7 @@ final class BuildEngineResetTests: SemelCoreTestCase {
         try engine.database.node.updatePendingDeletion(nodeID: inputChild.id!, pendingDeletion: true)
 
         // Give reset something to delete, so it reaches the bulk-delete transaction.
-        _ = try GraphSpecNode.parse("Configuration(role: 'doomed').output").findOrCreateMatchingNode()
+        _ = try GraphSpecNode.parse("SettingsLiteral(role: 'doomed').output").findOrCreateMatchingNode()
 
         try engine.reset()
 

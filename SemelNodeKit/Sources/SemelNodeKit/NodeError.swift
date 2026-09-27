@@ -17,7 +17,12 @@ public enum NodeError: Error, CustomStringConvertible {
     /// per declared port when it is created, so this is a graph something damaged — not a
     /// port that has yet to be written, which holds a state of its own.
     case outputPortMissing(nodeID: ObjectID, port: String)
-    case onlyOneWireShouldBeConnectedToInput
+    /// More than one wire on an input port that takes one, by the port and the wires'
+    /// names. The settings nodes' ports are the ones that say so: two sets of settings meet
+    /// only in a `ConfigMerger`, whose `base` and `override` state which wins, and a port
+    /// that folded its wires together in key order would be a second merge with no stated
+    /// precedence (B-120).
+    case severalWiresOnOneWirePort(port: String, wires: [String])
     /// Thrown by `expectValue()` when the value asked for is not there to be had. These
     /// three are control flow rather than messages: the engine turns each into the
     /// `NoValueReason` the node publishes, before anything is written to a port, so a node
@@ -50,7 +55,7 @@ public enum NodeError: Error, CustomStringConvertible {
 
         case .nodeNotFound,
              .outputPortMissing,
-             .onlyOneWireShouldBeConnectedToInput,
+             .severalWiresOnOneWirePort,
              .other,
              .processNotSupported,
              .cannotHaveProperties,
@@ -68,8 +73,10 @@ public enum NodeError: Error, CustomStringConvertible {
         case .outputPortMissing(let nodeID, let port):
             return "node #\(nodeID) holds no row for its output port '\(port)', which its type declares, so the "
                  + "graph is damaged; `check` names every such port and `reset` rebuilds the graph"
-        case .onlyOneWireShouldBeConnectedToInput:
-            return "an input port takes one wire, and more than one is connected"
+        case .severalWiresOnOneWirePort(let port, let wires):
+            let names = wires.map { "'\($0)'" }.joined(separator: ", ")
+            return "input port '\(port)' takes one wire, and \(wires.count) are wired to it: \(names). "
+                 + "Settings from two places meet in a ConfigMerger, whose base and override say which wins"
         case .inputValueInError:
             return "an input is in error"
         case .inputValuePending:

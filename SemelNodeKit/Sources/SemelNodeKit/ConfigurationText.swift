@@ -4,7 +4,7 @@
 // How a node's configuration is carried on a wire: one `key=value` per line.
 //
 // Every node parses its configuration this way, so the format belongs with the
-// node-authoring API rather than inside the Configuration node that happens to produce it.
+// node-authoring API rather than inside the SettingsLiteral node that happens to produce it.
 // One consequence worth knowing when adding a setting: a value cannot contain a newline.
 
 public extension Dictionary where Key == String, Value == String {

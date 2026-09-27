@@ -42,9 +42,8 @@ public enum FileSystemNodes {
 /// tests, as `FileSystemNodes` is. A toolchain that demands a configured node builds this
 /// stack rather than writing it out.
 public enum SettingsNodes {
-    public static let configurationTypeName = "Configuration"
-    public static let configurationBasePort = "base"
-    public static let configurationOutputPort = "output"
+    public static let settingsLiteralTypeName = "SettingsLiteral"
+    public static let settingsLiteralOutputPort = "output"
     public static let configFilterTypeName = "ConfigFilter"
     public static let configFilterPrefixProperty = "prefix"
     public static let configFilterInputPort = "input"
@@ -53,18 +52,32 @@ public enum SettingsNodes {
     public static let configMergerBasePort = "base"
     public static let configMergerOverridePort = "override"
     public static let configMergerOutputPort = "output"
+    /// The wire names of a merger laying literals over settings, as `literals(_:over:)`
+    /// builds it and the converters write it: one name each, so the tree built in code and
+    /// the text written in a formula name the same node.
+    public static let literalsBaseWire = "settings"
+    public static let literalsOverrideWire = "literals"
 }
 
 public extension GraphSpecNode {
 
-    /// `Configuration(<literals>, base: [...])`, read at its output: the settings it is
-    /// handed with the literals laid over them.
-    static func configuration(literals: [String: String], base: [String: GraphSpecNode]) -> GraphSpecNode {
-        GraphSpecNode(typeName: SettingsNodes.configurationTypeName,
+    /// `SettingsLiteral(<literals>)`, read at its output: the literals as settings.
+    static func settingsLiteral(_ literals: [String: String]) -> GraphSpecNode {
+        GraphSpecNode(typeName: SettingsNodes.settingsLiteralTypeName,
                       properties: literals.sorted { $0.key < $1.key }.map { GraphSpecProperty(key: $0.key, value: $0.value) },
-                      inputs: [GraphSpecInputPort(portName: SettingsNodes.configurationBasePort,
-                                                  wires: base.sorted { $0.key < $1.key }.map { GraphSpecWire(name: $0.key, node: $0.value) })],
-                      outputPort: SettingsNodes.configurationOutputPort)
+                      outputPort: SettingsNodes.settingsLiteralOutputPort)
+    }
+
+    /// `literals` laid over `settings`: `ConfigMerger(base: ['settings': <settings>],
+    /// override: ['literals': SettingsLiteral(<literals>).output]).output`, so what a formula
+    /// states about a target wins over what a config file says (B-120). With no literals it
+    /// is `settings` itself — a merger over nothing would be one node more for the same text.
+    static func literals(_ literals: [String: String], over settings: GraphSpecNode) -> GraphSpecNode {
+        guard !literals.isEmpty else {
+            return settings
+        }
+        return .configMerger(base:     [SettingsNodes.literalsBaseWire: settings],
+                             override: [SettingsNodes.literalsOverrideWire: .settingsLiteral(literals)])
     }
 
     /// `ConfigFilter(prefix:, input: [...])`, read at its output: one namespace's slice of

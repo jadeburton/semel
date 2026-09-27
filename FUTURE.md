@@ -627,7 +627,7 @@ the tutorial's config section is `build`, `semel-clang`, `build`. Design:
    and could also name the command that rewrites the file (`semel-clang --force`,
    `semel-swift prepare`), which the namespace registers.
 
-**B-120** `open` — **`Configuration` merges; only `ConfigMerger` should.**
+**B-120** `done` — **`Configuration` merges; only `ConfigMerger` should.**
 `Configuration` is two things in one node: the way to put settings inline in a formula, as
 its properties, and a merge of those properties over whatever arrives on its optional
 `base` port. The second half is `ConfigMerger`'s job, with the same precedence — the
@@ -655,6 +655,27 @@ per-module facts — module name, output name, linkage, app icon — and the alt
 worse. Properties on the tool node itself would have each tool merge them over its
 configuration port, moving the merge into every tool; a file per module defeats the point
 of inline settings.
+
+Done (2026-09-28), as decided. The node is `SettingsLiteral` — kind 9 kept — "some literal
+settings", as a string literal is some literal text, where `Settings` alone would read as
+*the* settings again and `InlineSettings` names where it is written rather than what it
+is. It declares no input port and publishes its properties in `didCreate`, as
+`FormulaPrelude` publishes its text: a source is never scheduled, and nothing it depends on
+can change, since the properties are its identity. Having no static input port it is not
+stamped with `projectRoot` either, so equal literals in two projects are one node. Every
+place that wrote `Configuration(<literals>, base: [<selector>])` writes
+`ConfigMerger(base: ['settings': <selector>], override: ['literals':
+SettingsLiteral(<literals>).output])`, and with no literals the selector alone —
+`GraphSpecNode.literals(_:over:)` is the tree for both, and `SettingsNodes` names the two
+wires so the converters' text and the tree agree. A second wire on `ConfigFilter.input`,
+`ConfigMerger.base` or `ConfigMerger.override` is `NodeError.severalWiresOnOneWirePort`,
+naming the port and the wires, read through one `ProcessInput.settings(onPort:)` both
+nodes share; no fixture or converter wired two. Bumped: `SwiftFormulaConverter` and
+`XcodeProjectConverter` to 3 (they emit the new name and shape), `ConfigFilter` and
+`ConfigMerger` to 2 (a two-wire entry the older code wrote holds a merge they now refuse),
+and `Semel.version` to 0.1.10 for the reason 0.1.7 was: a stored literal node holds a wire
+into a port its type no longer declares. The unused-key walk no longer passes through the
+literal, which nothing flows through any more.
 
 ### Design, correctness and code quality
 
@@ -721,10 +742,11 @@ Done: the `Tool` suffix is gone from the tool nodes, `ConfigSubset` is `ConfigFi
 deleted). The glossary and the naming rule live in `AGENTS.md`; the rename cost data moved
 there too.
 
-*Still open.* The config vocabulary — `Configuration` (a node type), the configuration text
-format (`ConfigurationText.swift`), `semel.config`, and a config namespace spelled
+*Still open.* The config vocabulary — the configuration text format
+(`ConfigurationText.swift`), `semel.config`, and a config namespace spelled
 `settingNamespace` in the code — is several words circling one area. Not misleading, just
-crowded; rename opportunistically, when already in the file.
+crowded; rename opportunistically, when already in the file. The node type that was
+`Configuration` is `SettingsLiteral` (B-120).
 
 *Decided, so it is not re-raised.* `isPinned` stays. *Pinned* means "cannot be moved" in
 memory management, where the meaning here is "held alive by user intent rather than by

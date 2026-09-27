@@ -69,7 +69,7 @@ final class ProgressReportTests: SemelCoreTestCase {
     /// `count` independent nodes of `seconds` each, published in one batch once their
     /// inputs have settled, so one pass runs them all.
     private func publishTimedNodes(count: Int, seconds: Double) async throws {
-        let inputs = (0..<count).map { "Configuration(role: 'in\($0)').output" }
+        let inputs = (0..<count).map { "SettingsLiteral(role: 'in\($0)').output" }
         for input in inputs {
             _ = try GraphSpecNode.parse(input).findOrCreateMatchingNode()
         }

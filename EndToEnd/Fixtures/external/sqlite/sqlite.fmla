@@ -20,7 +20,7 @@ func library() = ClangArchiver(
 product "libsqlite3.a" = library()
 
 product "sqlite3" = ClangLinker(
-  configuration: [Configuration(base: [clang.selected(settings: settings(), prefix: 'clang.linker')], dynamicLibrary: 'false')],
+  configuration: [ConfigMerger(base: [clang.selected(settings: settings(), prefix: 'clang.linker')], override: [SettingsLiteral(dynamicLibrary: 'false')])],
   objectFiles: [{source: <shell.c>} "%%source%%.o": clang.compiled(file: source, settings: settings())],
   libraries: ["libsqlite3.a": library()]
 )

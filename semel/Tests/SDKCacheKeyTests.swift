@@ -78,10 +78,10 @@ final class SDKCacheKeyTests: XCTestCase {
     /// tools' material, not a global salt.
     func test_aNodeThatDoesNotReadTheSDKIsUnaffected() throws {
         sdkFingerprintProvider = { _ in "sdk-one" }
-        let one = try key(of: Configuration.self, spec: "Configuration(role: 'x')")
+        let one = try key(of: ConfigFilter.self, spec: "ConfigFilter(prefix: 'x')")
 
         sdkFingerprintProvider = { _ in "sdk-two" }
-        let two = try key(of: Configuration.self, spec: "Configuration(role: 'x')")
+        let two = try key(of: ConfigFilter.self, spec: "ConfigFilter(prefix: 'x')")
 
         XCTAssertEqual(one, two)
     }

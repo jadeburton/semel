@@ -116,12 +116,12 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     /// the builder stays in error until something else reschedules it.
     func test_aReplacedProductTakesTheNameOfTheNodeItReplaces() throws {
         let (old, _) = try GraphSpecNode.parse(
-            "OutputFile(path: 'output:/product', input: ['product': Configuration(role: 'old').output])").findOrCreateMatchingNode()
+            "OutputFile(path: 'output:/product', input: ['product': SettingsLiteral(role: 'old').output])").findOrCreateMatchingNode()
         let oldID = try old.requireID()
         try database.node.updatePendingDeletion(nodeID: oldID, pendingDeletion: true)
 
         let (new, _) = try GraphSpecNode.parse(
-            "OutputFile(path: 'output:/product', input: ['product': Configuration(role: 'new').output])").findOrCreateMatchingNode()
+            "OutputFile(path: 'output:/product', input: ['product': SettingsLiteral(role: 'new').output])").findOrCreateMatchingNode()
 
         XCTAssertNotEqual(try new.requireID(), oldID)
         XCTAssertNil(try database.node.find(nodeID: oldID), "the stale node is collected, not collided with")
@@ -131,22 +131,22 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     /// A sibling that is still referenced is a real collision, whatever its mark says.
     func test_aReferencedSiblingIsStillACollision() throws {
         let (old, _) = try GraphSpecNode.parse(
-            "OutputFile(path: 'output:/held', input: ['product': Configuration(role: 'old').output])").findOrCreateMatchingNode()
-        let (consumer, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'x', input: ['config': OutputFile(path: 'output:/held', input: ['product': Configuration(role: 'old').output]).status])")
+            "OutputFile(path: 'output:/held', input: ['product': SettingsLiteral(role: 'old').output])").findOrCreateMatchingNode()
+        let (consumer, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'x', input: ['config': OutputFile(path: 'output:/held', input: ['product': SettingsLiteral(role: 'old').output]).status])")
             .findOrCreateMatchingNode()
         XCTAssertNotNil(consumer.id)
         try database.node.updatePendingDeletion(nodeID: try old.requireID(), pendingDeletion: true)
 
         XCTAssertThrowsError(try GraphSpecNode.parse(
-            "OutputFile(path: 'output:/held', input: ['product': Configuration(role: 'new').output])").findOrCreateMatchingNode())
+            "OutputFile(path: 'output:/held', input: ['product': SettingsLiteral(role: 'new').output])").findOrCreateMatchingNode())
         XCTAssertNotNil(try database.node.find(nodeID: try old.requireID()))
     }
 
     /// Nameless nodes (compilers, linkers — everything that is not a file-system entry)
     /// share a nil name by design and must not be caught by the check.
     func test_namelessNodesAreNotTreatedAsColliding() throws {
-        let first  = try GraphSpecNode.parse("Configuration(moduleName: 'A')").findOrCreateMatchingNode()
-        let second = try GraphSpecNode.parse("Configuration(moduleName: 'B')").findOrCreateMatchingNode()
+        let first  = try GraphSpecNode.parse("SettingsLiteral(moduleName: 'A')").findOrCreateMatchingNode()
+        let second = try GraphSpecNode.parse("SettingsLiteral(moduleName: 'B')").findOrCreateMatchingNode()
 
         XCTAssertNotEqual(try first.0.requireID(), try second.0.requireID())
     }
@@ -170,8 +170,8 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         return file
     }
 
-    private func makeConfiguration(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+    private func makeNode(role: String) throws -> NodeRecord {
+        let spec = try GraphSpecNode.parse("ConfigFilter(prefix: '\(role)').output")
         let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
@@ -181,7 +181,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
                              fromNodeID: try source.requireID(),
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "base".asSymbolID(),
+                             toSymbolID: "input".asSymbolID(),
                              name: name.asSymbolID())
     }
 
@@ -242,7 +242,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     func test_removingAReferencedFileLeavesAGhostRatherThanCollectingIt() throws {
         let file = try pushFile("src/hello.c")
         let nodeID = try file.requireID()
-        let consumer = try makeConfiguration(role: "consumer")
+        let consumer = try makeNode(role: "consumer")
         try connect(from: try database.node.select(nodeID: nodeID), to: consumer, name: "src")
 
         try file.deleteInInputFileSystem()
@@ -263,7 +263,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         let file = try pushFile("src/hello.c", contents: nil)
         let nodeID = try file.requireID()
 
-        let consumer = try makeConfiguration(role: "consumer")
+        let consumer = try makeNode(role: "consumer")
         try connect(from: try database.node.select(nodeID: nodeID), to: consumer, name: "src")
         try database.node.updatePendingDeletion(nodeID: nodeID, pendingDeletion: true)
 
@@ -290,8 +290,8 @@ final class NodeLifecycleTests: SemelCoreTestCase {
     // Collecting a node deletes its input wires, which can leave its upstream with no
     // consumers — that upstream is then collected on a later pass.
     func test_collectionCascadesUpstream() throws {
-        let upstream = try makeConfiguration(role: "upstream")
-        let middle = try makeConfiguration(role: "middle")
+        let upstream = try makeNode(role: "upstream")
+        let middle = try makeNode(role: "middle")
         try connect(from: upstream, to: middle, name: "link")
 
         let upstreamID = try upstream.requireID()

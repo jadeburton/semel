@@ -19,8 +19,10 @@ public struct XcodeProjectConverter: Node {
     public static let kind: UInt = 34
 
     /// Emitted formula text changed for the same inputs: a target that lists its files,
-    /// localized resources, and the package resource bundles in the app's tree (B-77).
-    public static let implementationVersion = 2
+    /// localized resources, and the package resource bundles in the app's tree (B-77); at 3,
+    /// a target's literals are a `SettingsLiteral` under a `ConfigMerger` where they were a
+    /// `Configuration`'s properties (B-120).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 

@@ -31,7 +31,7 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     // MARK: - findOrCreate
 
     func test_theSameShapeTwiceReturnsTheSameNode() throws {
-        let spec = "Configuration(role: 'shared').output"
+        let spec = "SettingsLiteral(role: 'shared').output"
         let (first, _)  = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
         let (second, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
@@ -39,18 +39,18 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     }
 
     func test_differentArgumentsProduceDifferentNodes() throws {
-        let (debug, _)   = try GraphSpecNode.parse("Configuration(role: 'debug').output").findOrCreateMatchingNode()
-        let (release, _) = try GraphSpecNode.parse("Configuration(role: 'release').output").findOrCreateMatchingNode()
+        let (debug, _)   = try GraphSpecNode.parse("SettingsLiteral(role: 'debug').output").findOrCreateMatchingNode()
+        let (release, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'release').output").findOrCreateMatchingNode()
 
         XCTAssertNotEqual(try debug.requireID(), try release.requireID())
     }
 
     func test_creatingANodeAlsoCreatesAndWiresItsUpstream() throws {
-        let spec = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'upstream').output]).output"
+        let spec = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'upstream').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         let incoming = try database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                toSymbolID: "base".asSymbolID())
+                                                toSymbolID: "input".asSymbolID())
         XCTAssertEqual(incoming.count, 1, "the upstream should have been created and wired")
 
         let upstream = try database.node.select(nodeID: try XCTUnwrap(incoming.first).fromNodeID)
@@ -58,14 +58,14 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     }
 
     func test_reusingAnExistingUpstreamRatherThanDuplicatingIt() throws {
-        let (upstream, _) = try GraphSpecNode.parse("Configuration(role: 'upstream').output")
+        let (upstream, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'upstream').output")
             .findOrCreateMatchingNode()
 
-        let spec = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'upstream').output]).output"
+        let spec = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'upstream').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         let incoming = try database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                toSymbolID: "base".asSymbolID())
+                                                toSymbolID: "input".asSymbolID())
         XCTAssertEqual(try XCTUnwrap(incoming.first).fromNodeID, try upstream.requireID(),
                        "an identical upstream must be shared, not duplicated")
     }
@@ -82,7 +82,7 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     }
 
     func test_aPortTheImplementationDoesNotHaveIsRejected() throws {
-        let spec = "Configuration(role: 'x', noSuchPort: ['w': Configuration(role: 'y').output]).output"
+        let spec = "SettingsLiteral(role: 'x', noSuchPort: ['w': SettingsLiteral(role: 'y').output]).output"
 
         XCTAssertThrowsError(try GraphSpecNode.parse(spec).findOrCreateMatchingNode(),
                              "a formula naming a port that does not exist should not create a node")
@@ -94,7 +94,7 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     /// gives back — the row and its wires, one level, over the sources' own identities —
     /// is the same number. Three parties agree: the demand, the row, and the recomputation.
     func test_aCreatedNodesIdentityIsTheOneItsRowAndWiresGiveIt() throws {
-        let spec = "Configuration(role: 'roundtrip').output"
+        let spec = "SettingsLiteral(role: 'roundtrip').output"
         let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         XCTAssertEqual(node.identity, try GraphSpecNode.parse(spec).identity())
@@ -106,9 +106,9 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     /// properties are immutable. `check` asks the recomputation whether it still holds.
     func test_aLiveNodesRecomputedIdentityMatchesItsStoredOne() throws {
         let specs = [
-            "Configuration(role: 'plain').output",
-            "Configuration(role: 'consumer', base: ['w': Configuration(role: 'up').output]).output",
-            "Configuration(role: 'two', base: ['a': Configuration(role: 'x').output]).output",
+            "SettingsLiteral(role: 'plain').output",
+            "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'up').output]).output",
+            "ConfigFilter(prefix: 'two', input: ['a': SettingsLiteral(role: 'x').output]).output",
         ]
 
         for spec in specs {
@@ -132,23 +132,23 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     // visible before someone rewires a static port.
 
     func test_theStoredIdentityGoesStaleIfAStaticInputIsRewired() throws {
-        let originalShape = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
+        let originalShape = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
         let keyAtCreation = try XCTUnwrap(consumer.identity)
 
         // Rewire the static input directly. Note the engine never does this — only
         // dynamic ports are rewired after creation.
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                          toSymbolID: "base".asSymbolID()).first)
+                                                          toSymbolID: "input".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
-        let (second, _) = try GraphSpecNode.parse("Configuration(role: 'second').output")
+        let (second, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'second').output")
             .findOrCreateMatchingNode()
         try Wire.connectWire(database: database,
                              fromNodeID: try second.requireID(),
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "base".asSymbolID(),
+                             toSymbolID: "input".asSymbolID(),
                              name: "w".asSymbolID())
 
         let rewired = try database.node.select(nodeID: try consumer.requireID())
@@ -162,11 +162,11 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     /// And the consequence if it were: a spec describing wiring the node no longer has
     /// to it, because the lookup only consults the frozen key.
     func test_aStaleKeyStillResolvesToTheRewiredNode() throws {
-        let originalShape = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
+        let originalShape = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
 
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
-                                                          toSymbolID: "base".asSymbolID()).first)
+                                                          toSymbolID: "input".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
         let match = try GraphSpecNode.parse(originalShape).findMatchingNode()

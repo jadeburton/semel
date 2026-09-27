@@ -43,7 +43,7 @@ final class ClangPreludeTests: XCTestCase {
         )
 
         func make(glob, dynamicLibrary) = ClangLinker(
-          configuration: [Configuration(base: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
+          configuration: [ConfigMerger(base: [config(prefix: 'clang.linker')], override: [SettingsLiteral(dynamicLibrary: dynamicLibrary)])],
           objectFiles: [{f: glob} "%%f%%.o": ClangCompiler(configuration: [config(prefix: 'clang.compiler')], input: ["%%f%%.p": preprocessor(path: f)])]
         )
 

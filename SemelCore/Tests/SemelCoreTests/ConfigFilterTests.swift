@@ -113,13 +113,32 @@ final class ConfigFilterTests: SemelCoreTestCase {
         XCTAssertEqual(result, "")
     }
 
-    /// One missing file must not blank out a setting a different, present file supplies.
-    func test_aValuedWireStillContributesWhenAnotherIsAbsent() throws {
-        let result = try subset(prefix: "swift.compiler", wires: [
-            "input:/a/semel.config": .value(try "swift.compiler.sdkVersion=26.5".intern()),
-            "input:/semel.config":   .noValue(reason: .error(messageDataObjectHash: try "absent".intern())),
-        ])
+    // MARK: - One wire
 
-        XCTAssertEqual(result, "sdkVersion=26.5")
+    /// A selector is not where two sets of settings meet (B-120): two wires on its port
+    /// would be merged in the order of two names nobody chose for their order. The error
+    /// names the port and both wires, so the formula line to change is findable.
+    func test_twoWiresAreAnErrorNamingThePortAndTheWires() throws {
+        XCTAssertThrowsError(try subset(prefix: "swift.compiler", wires: [
+            "input:/semel.config":   .value(try "swift.compiler.sdkVersion=26.5".intern()),
+            "input:/a/semel.config": .value(try "swift.compiler.sdkVersion=26.4".intern()),
+        ])) { error in
+            guard case NodeError.severalWiresOnOneWirePort(let port, let wires) = error else {
+                return XCTFail("expected severalWiresOnOneWirePort, got \(error)")
+            }
+            XCTAssertEqual(port, ConfigFilter.inputPort)
+            XCTAssertEqual(wires, ["input:/a/semel.config", "input:/semel.config"])
+            XCTAssertEqual("\(error)", "input port 'input' takes one wire, and 2 are wired to it: "
+                                    + "'input:/a/semel.config', 'input:/semel.config'. Settings from two places "
+                                    + "meet in a ConfigMerger, whose base and override say which wins")
+        }
+    }
+
+    /// Two wires with nothing on either are still two wires: what the formula wired is the
+    /// error, whatever has arrived on it so far.
+    func test_twoWiresAreAnErrorEvenWithNoValueOnEither() throws {
+        let absent = NodeValue.noValue(reason: .error(messageDataObjectHash: try "absent".intern()))
+
+        XCTAssertThrowsError(try subset(prefix: "swift.compiler", wires: ["a": absent, "b": absent]))
     }
 }

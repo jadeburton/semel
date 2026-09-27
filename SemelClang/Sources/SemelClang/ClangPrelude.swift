@@ -45,7 +45,7 @@ extension SemelClang {
         )
 
         func linked(sources, settings, dynamicLibrary) = ClangLinker(
-          configuration: [Configuration(base: [selected(settings: settings, prefix: '\(ClangLinkerConfiguration.settingNamespace)')], dynamicLibrary: dynamicLibrary)],
+          configuration: [ConfigMerger(base: [selected(settings: settings, prefix: '\(ClangLinkerConfiguration.settingNamespace)')], override: [SettingsLiteral(dynamicLibrary: dynamicLibrary)])],
           objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
         )
 

@@ -70,7 +70,7 @@ public final class BuildEngine {
             Folder.self,
             ProjectFinder.self,
             ProjectBuilder.self,
-            Configuration.self,
+            SettingsLiteral.self,
             ConfigFilter.self,
             ConfigMerger.self,
             FormulaPrelude.self,
@@ -280,9 +280,9 @@ public final class BuildEngine {
         let keys = [String: String](plainText: try hash.resolveAsString()).keys
 
         // Down the wires to every selector the file's text reaches: directly, or through
-        // the `ConfigMerger`s and `Configuration`s that lay it under or over other settings
-        // (B-109). Every prelude formula wires a merger, so a walk that stopped at one
-        // would see no project's keys at all.
+        // the `ConfigMerger`s that lay it under or over other settings (B-109). Every
+        // prelude formula wires a merger, so a walk that stopped at one would see no
+        // project's keys at all.
         var prefixes: [String] = []
         var pending: [(producerID: ObjectID, port: String)] = [(fileNodeID, StaticFile.outputPort)]
         var seen: Set<ObjectID> = [fileNodeID]
@@ -298,8 +298,6 @@ public final class BuildEngine {
                     }
                 case ConfigMerger.kind:
                     pending.append((wire.toNodeID, ConfigMerger.outputPort))
-                case Configuration.kind:
-                    pending.append((wire.toNodeID, Configuration.outputPort))
                 default:
                     continue
                 }
@@ -310,9 +308,9 @@ public final class BuildEngine {
     }
 
     /// The `StaticFile`s whose text reaches `nodeID` as settings: wired in directly, or
-    /// through the `ConfigMerger`s and `Configuration`s between (B-109). The upward half of
-    /// the walk `unclaimedConfigKeys` makes downward — a file behind a merger is as much a
-    /// config file as one wired straight in, and is the one the report names.
+    /// through the `ConfigMerger`s between (B-109). The upward half of the walk
+    /// `unclaimedConfigKeys` makes downward — a file behind a merger is as much a config
+    /// file as one wired straight in, and is the one the report names.
     private func configFileNodeIDs(feeding nodeID: ObjectID) throws -> Set<ObjectID> {
         var files: Set<ObjectID> = []
         var pending = [nodeID]
@@ -323,7 +321,7 @@ public final class BuildEngine {
                 switch try database.node.select(nodeID: wire.fromNodeID).kind {
                 case StaticFile.kind:
                     files.insert(wire.fromNodeID)
-                case ConfigMerger.kind, Configuration.kind:
+                case ConfigMerger.kind:
                     pending.append(wire.fromNodeID)
                 default:
                     continue
@@ -433,8 +431,8 @@ public final class BuildEngine {
     /// own. `ConfigFilter` nodes are also rare (one per prefix), where `StaticFile` is not —
     /// most nodes in a real project are source files, so filtering all of them by name would
     /// cost about what `selectAll()` does. From each selector the walk goes up through the
-    /// `ConfigMerger`s and `Configuration`s that lay files over one another (B-109), so
-    /// the project file behind a prelude's merger is found and named. One consequence of
+    /// `ConfigMerger`s that lay files over one another (B-109), so the project file behind
+    /// a prelude's merger is found and named. One consequence of
     /// starting here: a config file with no `ConfigFilter` below it at all is invisible to
     /// this pass, and so is a generated config file that is not a `StaticFile` — only
     /// `StaticFile.read()` is understood as a source of config text.
