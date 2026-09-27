@@ -45,6 +45,17 @@ protocol CommandContext: AnyObject {
     /// the command, so the result the command prints lands on a clean line.
     func settleWaitBegan()
     func settleWaitEnded()
+
+    /// Where the settle under way stood at the last progress event this client heard; nil
+    /// when the last settle it heard of has finished, or it has heard of none. What `watch`
+    /// says when a key ends it, and what the progress line starts from.
+    var settleInProgress: ProgressRecord? { get }
+
+    /// How many settles this client has heard finish. `watch` ends when it moves.
+    var settlesFinished: Int { get }
+
+    /// The key that ends a `watch`: the terminal in the client, a script in a test.
+    var keyReader: any KeyReader { get }
 }
 
 /// A failure the server reported. Thrown by `request` so the interpreter prints it the way

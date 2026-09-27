@@ -54,6 +54,15 @@ final class ProgressLineRendererTests: XCTestCase {
         XCTAssertEqual(line, "⏳ 0 running, 0 pending · 9 done: 4 computed, 5 from cache · 3s")
     }
 
+    /// What `watch` leaves behind scrolls, so it carries the counts and neither the `⏳`
+    /// nor a clock.
+    func test_whereTheSettleStoodIsTheCountsAlone() {
+        XCTAssertEqual(ProgressLineRenderer.standing(record(scheduled: 1_614, computed: 1_100, fromCache: 104,
+                                                            pending: 340, running: 10)),
+                       "Still settling — 10 running, 340 pending · 1,204 done: 1,100 computed, 104 from cache.")
+        XCTAssertEqual(ProgressLineRenderer.standing(nil), "No settle in progress.")
+    }
+
     func test_thousandsAreGroupedWhateverTheLocale() {
         XCTAssertEqual(ProgressLineRenderer.grouped(0), "0")
         XCTAssertEqual(ProgressLineRenderer.grouped(999), "999")
@@ -178,5 +187,148 @@ final class IndicatorLineTests: XCTestCase {
         indicator.tick()
         indicator.end()
         XCTAssertEqual(terminal.writes, [])
+    }
+
+    /// A wait or a watch begun mid-settle draws where the settle last stood at once,
+    /// rather than waiting for a node to start or finish, which under a long compile is
+    /// minutes.
+    func test_beginningMidSettleDrawsTheLastRecordAtOnce() {
+        indicator.begin(showing: record(running: 4, pending: 12))
+        XCTAssertEqual(terminal.writes, [erase + line(running: 4, pending: 12, elapsed: 0)])
+
+        terminal.advance(by: 1)
+        indicator.tick()
+        XCTAssertEqual(terminal.writes.last, erase + line(running: 4, pending: 12, elapsed: 1))
+    }
+}
+
+/// B-95. What the interpreter keeps from the events for `watch`: where the settle under way
+/// stands, and how many have finished.
+final class SettleProgressTrackingTests: XCTestCase {
+
+    private var connection: RecordingConnection!
+    private var interpreter: CommandInterpreter!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        connection = RecordingConnection()
+        connection.responses.append((.hello(.accepted(serverVersion: "test", databasePath: "/tmp/graph")), nil))
+        interpreter = CommandInterpreter(connection: connection, baseDirectory: NSTemporaryDirectory())
+        interpreter.output = { _ in }
+        _ = try interpreter.connect()
+    }
+
+    private func deliver(_ event: DaemonEvent) {
+        connection.onEvent?(.daemon(event))
+    }
+
+    func test_aProgressEventIsWhereTheSettleStandsUntilItSettles() {
+        let record = ProgressRecord(scheduled: 3, computed: 1, fromCache: 0, pending: 1,
+                                    running: [ActiveNode(type: "SampleTool", name: "input:/a")])
+        XCTAssertNil(interpreter.settleInProgress)
+        XCTAssertEqual(interpreter.settlesFinished, 0)
+
+        deliver(.progress(record: record))
+        XCTAssertEqual(interpreter.settleInProgress, record)
+        XCTAssertEqual(interpreter.settlesFinished, 0)
+
+        deliver(.settled(scheduled: 3, computed: 3, fromCache: 0, errors: 0))
+        XCTAssertNil(interpreter.settleInProgress)
+        XCTAssertEqual(interpreter.settlesFinished, 1)
+    }
+
+    /// The interpreter's own `watch`, over a scripted key: the settle the events describe
+    /// is the one the key reports.
+    func test_theInterpretersWatchReportsTheSettleTheEventsDescribe() {
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+        interpreter.keyReader = ScriptedKeyReader()
+        deliver(.progress(record: ProgressRecord(scheduled: 5, computed: 2, fromCache: 1, pending: 2, running: [])))
+
+        XCTAssertEqual(interpreter.handleCommand("watch"), .success)
+
+        XCTAssertEqual(lines, [EnginePlugin.watchBegins,
+                               "Still settling — 0 running, 2 pending · 3 done: 2 computed, 1 from cache."])
+    }
+}
+
+/// B-95. The real terminal reader over a pseudo-terminal: raw for the wait, back as it was
+/// afterwards, ended by a key or by the caller.
+final class TerminalKeyReaderTests: XCTestCase {
+
+    private var controller: Int32 = -1
+    private var terminal: Int32 = -1
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        guard openpty(&controller, &terminal, nil, nil, nil) == 0 else {
+            throw XCTSkip("no pseudo-terminal available: \(String(cString: strerror(errno)))")
+        }
+    }
+
+    override func tearDown() {
+        close(controller)
+        close(terminal)
+        super.tearDown()
+    }
+
+    private func localModes() -> tcflag_t {
+        var settings = termios()
+        tcgetattr(terminal, &settings)
+        return settings.c_lflag
+    }
+
+    func test_aPipeIsNotATerminal() throws {
+        let pipe = Pipe()
+        XCTAssertFalse(TerminalKeyReader(fileDescriptor: pipe.fileHandleForReading.fileDescriptor).isTerminal)
+        XCTAssertTrue(TerminalKeyReader(fileDescriptor: terminal).isTerminal)
+    }
+
+    /// Any key, with no Return after it, ends the wait — and the terminal is in line mode
+    /// with echo again afterwards, whatever else was typed being discarded.
+    func test_aKeyEndsTheWaitAndTheTerminalIsPutBack() throws {
+        let before = localModes()
+        XCTAssertNotEqual(before & tcflag_t(ICANON), 0, "a fresh pseudo-terminal is in line mode")
+        var modesDuringTheWait: tcflag_t = 0
+        var asked = 0
+
+        let outcome = try TerminalKeyReader(fileDescriptor: terminal).waitForKey(orUntil: {
+            asked += 1
+            if asked == 1 {
+                modesDuringTheWait = localModes()
+                _ = "q and more".withCString { write(controller, $0, strlen($0)) }
+            }
+            return false
+        })
+
+        XCTAssertEqual(outcome, .keyPressed)
+        XCTAssertEqual(modesDuringTheWait & tcflag_t(ECHO | ICANON | ISIG), 0, "raw for the wait")
+        XCTAssertEqual(localModes(), before, "put back as it was")
+        var descriptor = pollfd(fd: terminal, events: Int16(POLLIN), revents: 0)
+        XCTAssertEqual(poll(&descriptor, 1, 0), 0, "what was typed after the key is not left for the prompt")
+    }
+
+    /// The caller's condition ends the wait with no key, and the terminal is put back.
+    func test_theCallerCanEndTheWait() throws {
+        let before = localModes()
+        var asked = 0
+
+        let outcome = try TerminalKeyReader(fileDescriptor: terminal).waitForKey(orUntil: {
+            asked += 1
+            return asked > 2
+        })
+
+        XCTAssertEqual(outcome, .stopped)
+        XCTAssertEqual(localModes(), before)
+    }
+
+    /// Not a terminal at all: the settings cannot be read, and that is an error naming the
+    /// call rather than a wait on something no key reaches.
+    func test_aDescriptorThatIsNoTerminalIsAnError() {
+        let pipe = Pipe()
+        XCTAssertThrowsError(try TerminalKeyReader(fileDescriptor: pipe.fileHandleForReading.fileDescriptor)
+                                .waitForKey(orUntil: { false })) { error in
+            XCTAssertTrue("\(error)".contains("tcgetattr"), "\(error)")
+        }
     }
 }

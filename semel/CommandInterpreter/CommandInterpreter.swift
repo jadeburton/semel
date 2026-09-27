@@ -55,8 +55,21 @@ public final class CommandInterpreter: CommandContext {
         indicator.interrupting { output(errorMessage) }
     }
 
-    func settleWaitBegan() { indicator.begin() }
+    func settleWaitBegan() { indicator.begin(showing: settleInProgress) }
     func settleWaitEnded() { indicator.end() }
+
+    /// Reads the key that ends a `watch`. Standard input unless a test puts a script here.
+    var keyReader: any KeyReader = TerminalKeyReader()
+
+    /// The last progress event of the settle under way, and the count of settles finished,
+    /// as the events have told them. Under `settleLock`: events arrive on the connection's
+    /// thread, and `watch` reads both from the command thread while it waits for a key.
+    private let settleLock = NSLock()
+    private var settleInProgressStorage: ProgressRecord?
+    private var settlesFinishedStorage = 0
+
+    var settleInProgress: ProgressRecord? { settleLock.withLock { settleInProgressStorage } }
+    var settlesFinished: Int { settleLock.withLock { settlesFinishedStorage } }
 
     /// Whether the idle-time error report is printed as it arrives. Off for the length of
     /// a `build`, which prints the report once at its end: a settle the follow loop
@@ -213,6 +226,12 @@ public final class CommandInterpreter: CommandContext {
         case .daemon(.notice(let line)):
             outputMessage(line)
         case .daemon(.settled(let scheduled, let computed, let fromCache, let errors)):
+            // Before anything prints, and whether or not a build holds the line: the
+            // settle is over either way, and a `watch` ends on it.
+            settleLock.withLock {
+                settleInProgressStorage = nil
+                settlesFinishedStorage += 1
+            }
             guard !holdSettle(scheduled: scheduled, computed: computed, fromCache: fromCache, errors: errors) else {
                 return
             }
@@ -227,6 +246,7 @@ public final class CommandInterpreter: CommandContext {
             ArtifactChangeRenderer.lines(appeared: appeared, changed: changed, disappeared: disappeared)
                 .forEach { outputMessage($0) }
         case .daemon(.progress(let record)):
+            settleLock.withLock { settleInProgressStorage = record }
             indicator.update(record)
         }
     }
@@ -382,6 +402,9 @@ public final class CommandInterpreter: CommandContext {
                       description: "push the folder, wait, report; push what its formula needs from the tree; "
                                  + "export the products, to semel-out/<folder> under the base unless --into says where"),
             HelpEntry(verbs: ["wait"], usage: "wait", description: "block until the build has settled"),
+            HelpEntry(verbs: ["watch"], usage: "watch",
+                      description: "show where the settle stands until a key is pressed or the settle ends; "
+                                 + "a key leaves it running and says where it stood"),
             HelpEntry(verbs: ["errors", "e"], usage: "errors", description: "the current build errors, one entry per cause"),
             HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
                       description: "why the last settle rebuilt a product: what ran, what came from the cache, "

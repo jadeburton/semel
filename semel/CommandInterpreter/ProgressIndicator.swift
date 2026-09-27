@@ -5,7 +5,8 @@
 // has got, redrawn in place, erased before the command that waited prints its result.
 //
 // Drawn only while a command of this client is blocked — `wait`, `build`, the `commit`
-// that ends a batch — and never at an idle prompt. The prompt is `readLine()` with no
+// that ends a batch, and `watch`, which blocks on a key instead — and never at an idle
+// prompt. The prompt is `readLine()` with no
 // line editor, so a line redrawn under someone typing would erase what they typed or
 // need the client to own its input line; while a command holds the thread nobody is
 // typing, and those are the silent minutes B-95 is about. Nothing here is drawn when
@@ -52,10 +53,24 @@ enum ProgressLineRenderer {
     /// estimate of what remains: the cascade generates work as it goes, so there is no
     /// denominator, and a bar that reaches 90% and then grows is worse than a count.
     static func line(_ record: ProgressRecord, elapsed: TimeInterval) -> String {
+        "\(Mark.working) \(counts(record)) · \(duration(elapsed))"
+    }
+
+    /// The counts the line and `watch`'s last word share: running, pending, done.
+    static func counts(_ record: ProgressRecord) -> String {
         let done = record.computed + record.fromCache
-        return "\(Mark.working) \(grouped(record.running.count)) running, \(grouped(record.pending)) pending · "
-             + "\(grouped(done)) done: \(grouped(record.computed)) computed, \(grouped(record.fromCache)) from cache · "
-             + duration(elapsed)
+        return "\(grouped(record.running.count)) running, \(grouped(record.pending)) pending · "
+             + "\(grouped(done)) done: \(grouped(record.computed)) computed, \(grouped(record.fromCache)) from cache"
+    }
+
+    /// What `watch` leaves on the screen when a key ends it: where the settle stood, or
+    /// that none was running. No mark and no clock: it scrolls, which the `⏳` must never
+    /// do, and the clock was the watch's rather than the settle's.
+    static func standing(_ record: ProgressRecord?) -> String {
+        guard let record else {
+            return "No settle in progress."
+        }
+        return "Still settling — \(counts(record))."
     }
 
     /// Thousands separated by commas, whatever the locale: the line is compared against
@@ -142,14 +157,22 @@ final class IndicatorLine {
     // MARK: - The wait
 
     /// A wait began: the clock starts, and the next event or tick draws.
-    func begin() {
+    ///
+    /// `latest` is where a settle already under way stood at its last event, drawn at
+    /// once: a wait begun mid-settle, or a `watch`, would otherwise show nothing until the
+    /// next node starts or finishes, which under a long compile is minutes.
+    func begin(showing latest: ProgressRecord? = nil) {
         guard enabled else {
             return
         }
         lock.withLock {
-            startedAt = now()
-            record    = nil
+            let current = now()
+            startedAt = current
+            record    = latest
             drawnAt   = nil
+            if latest != nil {
+                draw(at: current)
+            }
         }
         let source = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "semel.progress"))
         source.schedule(deadline: .now() + Self.tickInterval, repeating: Self.tickInterval)
