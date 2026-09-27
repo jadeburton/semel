@@ -1,18 +1,22 @@
 // ClangToolDiscovery.swift
 // SemelClang
 //
-// Where clang is on this machine and what version it reports — what this package
-// declares to `ToolDiscovery` when it registers.
+// Where clang and libtool are on this machine and what version each reports — what this
+// package declares to `ToolDiscovery` when it registers.
 
 import Foundation
 import SemelNodeKit
 
 enum ClangToolDiscovery {
 
-    /// The one tool this package runs: the compiler, linker and preprocessor are all the
-    /// clang binary.
+    /// The compiler, linker and preprocessor are all the clang binary.
     static var finder: ToolFinder {
         ToolFinder(name: "clang", locate: { locate("clang") }, version: version(ofToolAt:))
+    }
+
+    /// The archiver runs libtool: clang writes no static archive itself (B-79).
+    static var libtoolFinder: ToolFinder {
+        ToolFinder(name: "libtool", locate: { locate("libtool") }, version: libtoolVersion(ofToolAt:))
     }
 
     /// Absolute path to `toolName` in the active toolchain, via `xcrun --find`, or nil if
@@ -41,6 +45,19 @@ enum ClangToolDiscovery {
     /// output.
     static func parseVersion(from output: String) -> String? {
         let pattern = #"Apple clang version [0-9]+(\.[0-9]+)*( \([^)]*\))?"#
+        return output.range(of: pattern, options: .regularExpression).map { String(output[$0]) }
+    }
+
+    /// The version the libtool at `path` reports, or nil if it reports nothing recognisable.
+    static func libtoolVersion(ofToolAt path: String) -> String? {
+        MachineQuery.output(of: path, ["-V"]).flatMap(parseLibtoolVersion(from:))
+    }
+
+    /// libtool's own version out of its `-V` output, one line of the form `Apple Inc.
+    /// version cctools_ld-1267` — the cctools release, which is what tells two libtools
+    /// apart, so the whole line is kept.
+    static func parseLibtoolVersion(from output: String) -> String? {
+        let pattern = #"Apple Inc\. version [^\s]+"#
         return output.range(of: pattern, options: .regularExpression).map { String(output[$0]) }
     }
 }

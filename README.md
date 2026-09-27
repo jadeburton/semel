@@ -294,8 +294,9 @@ with the environment perturbed — a different `TMPDIR`, working directory, loca
 zone, none of which is in a cache key. All four export trees must match byte for byte,
 static archives included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
 projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, the
-app itself from its Xcode project, and Semel building Semel from a copy of the checkout —
-the first two fetched once into `~/Library/Caches/semel/end-to-end` (`SEMEL_E2E_CACHE`
+app itself from its Xcode project, Semel building Semel from a copy of the checkout, and
+Lua 5.4 from its mirror with a formula laid over the clone from `EndToEnd/Fixtures/external`
+— the clones fetched once into `~/Library/Caches/semel/end-to-end` (`SEMEL_E2E_CACHE`
 moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's directory under
 `/tmp/semel-tests` for inspection.
 
@@ -364,6 +365,7 @@ SemelSwift/      Swift toolchain node types
 SemelClang/      Clang toolchain node types
   ClangCompiler          Compiles .c/.cpp → .o
   ClangLinker            Links Clang object files
+  ClangArchiver          libtool over Clang object files → a static archive
   ClangPreprocessor      Preprocesses headers
   ClangIncludeFinder     Tracks #include dependencies
 SemelApple/      Apple platform node types — what an app bundle needs beyond code

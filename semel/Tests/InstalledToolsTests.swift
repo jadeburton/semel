@@ -12,7 +12,7 @@ import SemelNodeKit
 import SemelSwift
 import XCTest
 
-/// B-69. The engine knows no tool by name; the five a build needs are what the three
+/// B-69. The engine knows no tool by name; the six a build needs are what the three
 /// toolchains declare, located and versioned by each. This is what `semelserv` and
 /// `semel-swift prepare` register on the machine they run on.
 final class InstalledToolsTests: XCTestCase {
@@ -35,7 +35,7 @@ final class InstalledToolsTests: XCTestCase {
 
     func test_everyToolTheToolchainsDeclareIsFoundOnThisMachine() {
         XCTAssertEqual(Set(registry.registeredDescriptors.map(\.name)),
-                       ["clang", "swiftc", "swift", "actool", "xcstringstool"])
+                       ["clang", "libtool", "swiftc", "swift", "actool", "xcstringstool"])
     }
 
     /// B-17. Every tool found here is registered under a fingerprint of the binary behind
@@ -66,15 +66,19 @@ final class InstalledToolsTests: XCTestCase {
     }
 
     /// Each version names a build, since the descriptor keys the cache and two builds of
-    /// one marketing version are different binaries.
+    /// one marketing version are different binaries. The others bracket the build after a
+    /// marketing version; libtool reports the cctools release alone, which is the build.
     func test_everyToolIsRegisteredUnderAVersionThatNamesABuild() throws {
         XCTAssertTrue(try version(of: "clang").hasPrefix("Apple clang version "))
+        XCTAssertTrue(try version(of: "libtool").hasPrefix("Apple Inc. version cctools"))
         XCTAssertTrue(try version(of: "swiftc").hasPrefix("Apple Swift version "))
         XCTAssertTrue(try version(of: "swift").hasPrefix("Apple Swift version "))
         XCTAssertTrue(try version(of: "actool").hasPrefix("Apple actool version "))
         XCTAssertTrue(try version(of: "xcstringstool").hasPrefix("Xcode "))
-        for descriptor in registry.registeredDescriptors {
+        for descriptor in registry.registeredDescriptors where descriptor.name != "libtool" {
             XCTAssertTrue(descriptor.version.contains("("), "\(descriptor.name): \(descriptor.version)")
+        }
+        for descriptor in registry.registeredDescriptors {
             XCTAssertEqual(descriptor.platform, "macOS")
         }
     }

@@ -34,10 +34,25 @@ final class ClangToolDiscoveryTests: SemelClangTestCase {
         XCTAssertNil(ClangToolDiscovery.parseVersion(from: "some tool that reports nothing useful"))
     }
 
+    /// libtool reports one line, and the cctools release on it is what tells two apart.
+    func test_parseLibtoolVersion_keepsTheCctoolsRelease() {
+        XCTAssertEqual(ClangToolDiscovery.parseLibtoolVersion(from: "Apple Inc. version cctools_ld-1267\n"),
+                       "Apple Inc. version cctools_ld-1267")
+        XCTAssertEqual(ClangToolDiscovery.parseLibtoolVersion(from: "Apple Inc. version cctools-1024.3"),
+                       "Apple Inc. version cctools-1024.3")
+    }
+
+    func test_parseLibtoolVersion_unrecognisedOutput() {
+        XCTAssertNil(ClangToolDiscovery.parseLibtoolVersion(from: "Apple clang version 21.0.0"),
+                     "another tool's version is not this tool's")
+        XCTAssertNil(ClangToolDiscovery.parseLibtoolVersion(from: ""))
+    }
+
     // MARK: - Declaration
 
-    func test_registeringTheToolchainDeclaresClang() {
+    func test_registeringTheToolchainDeclaresClangAndLibtool() {
         XCTAssertTrue(ToolDiscovery.all.contains { $0.name == "clang" })
+        XCTAssertTrue(ToolDiscovery.all.contains { $0.name == "libtool" })
     }
 
     // MARK: - This machine
@@ -48,6 +63,14 @@ final class ClangToolDiscoveryTests: SemelClangTestCase {
 
         let version = try XCTUnwrap(ClangToolDiscovery.version(ofToolAt: path))
         XCTAssertTrue(version.hasPrefix("Apple clang version"), "got \(version)")
+    }
+
+    func test_libtoolIsLocatedAndReportsItsVersion() throws {
+        let path = try XCTUnwrap(ClangToolDiscovery.locate("libtool"), "libtool must be discoverable via xcrun")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: path), "\(path) must be an executable")
+
+        let version = try XCTUnwrap(ClangToolDiscovery.libtoolVersion(ofToolAt: path))
+        XCTAssertTrue(version.hasPrefix("Apple Inc. version"), "got \(version)")
     }
 
     func test_aToolThatDoesNotExistIsNotLocated() {

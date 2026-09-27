@@ -33,18 +33,23 @@ public enum SemelClang {
             ClangLinker.self,
             ClangPreprocessor.self,
             ClangIncludeFinder.self,
+            ClangArchiver.self,
         ])
 
-        // How clang is found on this machine and versioned. Declared here, located when
-        // the engine starts.
+        // How clang and libtool are found on this machine and versioned. Declared here,
+        // located when the engine starts.
         ToolDiscovery.register(ClangToolDiscovery.finder)
+        ToolDiscovery.register(ClangToolDiscovery.libtoolFinder)
 
-        // What `tools` prints and `semel-clang` writes under each namespace (B-119). All
-        // three run the one clang binary; the include finder runs no tool. The preprocessor
-        // and the linker read the SDK at `sdkPath`, a fact about the machine for a platform,
-        // so they declare it as one (B-109); the compiler takes the preprocessed source and
-        // reads no SDK.
+        // What `tools` prints and `semel-clang` writes under each namespace (B-119). The
+        // compiler, preprocessor and linker run the one clang binary and the archiver runs
+        // libtool; the include finder runs no tool. The preprocessor and the linker read
+        // the SDK at `sdkPath`, a fact about the machine for a platform, so they declare it
+        // as one (B-109); the compiler takes the preprocessed source and the archiver takes
+        // objects, and neither reads an SDK.
         ToolNamespaceRegistry.register(.init(namespace: ClangCompilerConfiguration.settingNamespace, toolName: "clang",
+                                             machineFileCommand: machineFileCommand))
+        ToolNamespaceRegistry.register(.init(namespace: ClangArchiverConfiguration.settingNamespace, toolName: "libtool",
                                              machineFileCommand: machineFileCommand))
         for namespace in [ClangPreprocessorConfiguration.settingNamespace, ClangLinkerConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang",
@@ -55,7 +60,7 @@ public enum SemelClang {
                                                  machineFileCommand: machineFileCommand))
         }
 
-        // `include 'clang'`: executables and dylibs from a folder of sources (B-108).
+        // `include 'clang'`: executables, dylibs and archives from a folder of sources (B-108).
         FormulaIncludeProviders.register(includeProvider)
     }
 }

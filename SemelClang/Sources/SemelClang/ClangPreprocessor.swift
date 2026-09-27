@@ -48,6 +48,15 @@ struct ClangLanguageStandards {
 
 // MARK: - Configuration
 
+/// The `arguments` setting a clang node's configuration may carry: extra flags a project
+/// states about its build — `-DLUA_USE_MACOSX`, `-Wno-parentheses-equality` — comma-joined
+/// like every list in a setting, and appended after everything the node builds itself.
+/// A define belongs to the preprocessor, which is the stage that sees the macros; the
+/// compiler reads preprocessed text.
+func clangArguments(_ properties: [String: String]) -> [String] {
+    (properties["arguments"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+}
+
 struct ClangPreprocessorConfiguration {
     let toolDescriptor: ToolDescriptor
     let arguments: [String]
@@ -68,7 +77,7 @@ struct ClangPreprocessorConfiguration {
         target = required.value("target")
         try required.check()
 
-        arguments = []
+        arguments = clangArguments(properties)
         environment = [:]
         sdkPath   = properties["sdkPath"]
         standards = .init(properties: properties)

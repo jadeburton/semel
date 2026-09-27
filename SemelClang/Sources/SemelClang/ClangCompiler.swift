@@ -25,7 +25,7 @@ struct ClangCompilerConfiguration {
         target = required.value("target")
         try required.check()
 
-        arguments = []
+        arguments = clangArguments(properties)
         environment = [:]
         standards = .init(properties: properties)
     }

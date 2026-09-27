@@ -31,6 +31,8 @@ final class ClangMachineFileTests: XCTestCase {
 
     private let clang = ToolDescriptor(name: "clang", version: "Apple clang 21", platform: "macOS",
                                        architecture: "arm64", recursiveHash: nil)
+    private let libtool = ToolDescriptor(name: "libtool", version: "Apple Inc. version cctools_ld-1267", platform: "macOS",
+                                         architecture: "arm64", recursiveHash: nil)
 
     private var file: URL { folder.appendingPathComponent("semel.machine.config") }
 
@@ -42,14 +44,16 @@ final class ClangMachineFileTests: XCTestCase {
         // Another toolchain registered in the same process is not this tool's to write.
         try SemelSwift.register()
 
-        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang] }
+        let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [clang, libtool] }
 
-        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.compiler", "clang.linker", "clang.preprocessor"],
+        XCTAssertEqual(outcome, .written(file, namespaces: ["clang.archiver", "clang.compiler", "clang.linker", "clang.preprocessor"],
                                          notInstalled: []))
         let written = try contents()
         XCTAssertTrue(written.hasPrefix("// Written by semel-clang for --platform macos"), written)
         XCTAssertTrue(written.contains("clang.compiler.toolDescriptor.version=Apple clang 21"), written)
         XCTAssertTrue(written.contains("clang.linker.toolDescriptor.name=clang"), written)
+        XCTAssertTrue(written.contains("clang.archiver.toolDescriptor.name=libtool"), written)
+        XCTAssertTrue(written.contains("clang.archiver.toolDescriptor.version=Apple Inc. version cctools_ld-1267"), written)
         XCTAssertFalse(written.contains("swift."), written)
     }
 
@@ -75,16 +79,17 @@ final class ClangMachineFileTests: XCTestCase {
         XCTAssertTrue(try contents().contains("clang.compiler.toolDescriptor.version=Apple clang 21"))
     }
 
-    /// A machine with no clang still gets a file, whose blocks are comments, and the tool
-    /// says which tool it did not find.
+    /// A machine with no clang and no libtool still gets a file, whose blocks are comments,
+    /// and the tool says which tools it did not find.
     func test_aToolNotInstalledIsNamed() throws {
         let outcome = try ClangMachineFile.write(into: folder, platform: .macos, force: false) { [] }
 
         guard case .written(_, _, let notInstalled) = outcome else {
             return XCTFail("expected a written file, got \(outcome)")
         }
-        XCTAssertEqual(notInstalled, ["clang"])
+        XCTAssertEqual(notInstalled, ["clang", "libtool"])
         let written = try contents()
         XCTAssertTrue(written.contains("no clang is installed"), written)
+        XCTAssertTrue(written.contains("no libtool is installed"), written)
     }
 }

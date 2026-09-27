@@ -84,6 +84,17 @@ final class ClangLinkerTests: SemelClangTestCase {
         XCTAssertTrue(executor.lastArguments.contains("-dynamiclib"))
     }
 
+    /// `clang.linker.arguments`: the project's extra flags, comma-joined, after what the
+    /// node builds — and once, so a `-framework` stated once is passed once.
+    func test_extraArgumentsFromTheConfigurationEndTheCommandLineOnce() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"],
+                                                    extraConfiguration: ["arguments": "-framework,Foundation"]))
+
+        let arguments = executor.lastArguments
+        XCTAssertEqual(Array(arguments.suffix(4)), ["-o", "output.dylib", "-framework", "Foundation"])
+        XCTAssertEqual(arguments.filter { $0 == "-framework" }.count, 1, "got \(arguments)")
+    }
+
     /// The linker's debug map names each object by path. `-oso_prefix .` makes that the
     /// sandbox-relative path, so a binary linked in one sandbox matches one linked in another.
     func test_prefixesTheDebugMapWithTheWorkingDirectory() throws {

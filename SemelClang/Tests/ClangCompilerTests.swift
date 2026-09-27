@@ -36,7 +36,8 @@ final class ClangCompilerTests: SemelClangTestCase {
                            contents: String = "int main(){}",
                            target: String = "arm64-apple-macos14.0",
                            cStandard: String? = "c17",
-                           cxxStandard: String? = nil) throws -> ProcessInput {
+                           cxxStandard: String? = nil,
+                           arguments: String? = nil) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -46,10 +47,23 @@ final class ClangCompilerTests: SemelClangTestCase {
             """
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
+        if let arguments   { configuration += "\narguments=\(arguments)" }
         return ProcessInput(inputValues: [
             ClangCompiler.configuration: ["configuration": .value(try configuration.intern())],
             ClangCompiler.input: [sourcePath: .value(try contents.intern())],
         ])
+    }
+
+    /// `clang.compiler.arguments`: the project's extra flags, comma-joined, after what the
+    /// node builds itself, so a project can say `-Wno-parentheses-equality` about its
+    /// preprocessed text (B-79).
+    func test_extraArgumentsFromTheConfigurationEndTheCommandLine() throws {
+        _ = try makeTool().process(input: try makeInput(arguments: "-Wno-parentheses-equality,-O2"))
+
+        XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-Wno-parentheses-equality", "-O2"])
+
+        _ = try makeTool().process(input: try makeInput(arguments: nil))
+        XCTAssertFalse(executor.lastArguments.contains("-O2"))
     }
 
     // MARK: - Command line

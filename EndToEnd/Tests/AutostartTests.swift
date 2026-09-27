@@ -47,7 +47,7 @@ final class AutostartTests: XCTestCase {
 
     /// B-109, B-119. The loop the missing-settings report describes, end to end: a build
     /// with no machine file fails naming `semel-clang`; that tool, run outside Semel on the
-    /// folder the formula looks in, writes the three clang namespaces and no other tool's;
+    /// folder the formula looks in, writes the four clang namespaces and no other tool's;
     /// and the next build follows the file in and succeeds.
     func test_theMissingSettingsLoopIsBuildWriteBuild() throws {
         let tree = home.appendingPathComponent("tree", isDirectory: true)
@@ -64,7 +64,7 @@ final class AutostartTests: XCTestCase {
         XCTAssertTrue(failed.contains("Run 'semel-clang <folder>'"), failed)
 
         let wrote = try EndToEndRun.run("semel-clang", arguments: [tree.path], timeout: 60, step: "semel-clang").output
-        XCTAssertTrue(wrote.contains("Wrote \(machineFile): clang.compiler, clang.linker, clang.preprocessor"), wrote)
+        XCTAssertTrue(wrote.contains("Wrote \(machineFile): clang.archiver, clang.compiler, clang.linker, clang.preprocessor"), wrote)
         XCTAssertFalse(try String(contentsOfFile: machineFile, encoding: .utf8).contains("swift."), wrote)
 
         let built = try semel("base \(tree.path)", "build c --into \(out)", step: "build with the machine file")

@@ -18,9 +18,9 @@ final class RosterTests: XCTestCase {
         for project in Projects.all {
             let nestsUnderItsName: Bool
             switch project.source {
-            case .git(_, _, let subfolder): nestsUnderItsName = subfolder == "."
-            case .repository:               nestsUnderItsName = true
-            case .fixture:                  nestsUnderItsName = false
+            case .git(_, _, let subfolder, _): nestsUnderItsName = subfolder == "."
+            case .repository:                  nestsUnderItsName = true
+            case .fixture:                     nestsUnderItsName = false
             }
             guard nestsUnderItsName else {
                 continue
@@ -100,8 +100,32 @@ final class RosterTests: XCTestCase {
         }
     }
 
+    /// An overlay is the two files a C project has no converter to write (B-76): one
+    /// formula, which reads the machine file where `configure` writes it, and the project
+    /// config that formula lays over it — in the repository, under `Fixtures`, and nothing
+    /// more, so the build is the checkout's sources and the roster's two files.
+    func test_everyOverlayIsOneFormulaAndAProjectConfigInTheRepository() throws {
+        for project in Projects.all {
+            guard let overlay = project.source.overlay else {
+                continue
+            }
+            let folder = EndToEndEnvironment.fixtures.appendingPathComponent(overlay, isDirectory: true)
+            let entries = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0 != ".DS_Store" }.sorted()
+            let formulas = entries.filter { $0.hasSuffix(".fmla") }
+            XCTAssertEqual(formulas.count, 1, "\(project.name): expected one formula in \(folder.path), found \(entries)")
+            XCTAssertEqual(entries, (formulas + ["semel.config"]).sorted(), "\(project.name): an overlay is a formula and a project config")
+
+            for formula in formulas {
+                let text = try String(contentsOf: folder.appendingPathComponent(formula), encoding: .utf8)
+                XCTAssertTrue(text.contains("<../\(EndToEndRun.machineFileName)>"),
+                              "\(project.name): configure writes the machine file beside the checkout, so the formula reads it there")
+            }
+        }
+    }
+
     /// The machine's half of a configuration is written in the harness's copy and holds
     /// one machine's facts; the project's half is committed, being the project's (B-109).
+    /// The walk covers every overlay too, being under `Fixtures`.
     func test_noFixtureCommitsAMachineFile() throws {
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(atPath: EndToEndEnvironment.fixtures.path))
         let files = enumerator.compactMap { $0 as? String }.filter { $0.hasSuffix(EndToEndRun.machineFileName) }

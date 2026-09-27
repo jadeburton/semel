@@ -147,10 +147,11 @@ formula looks in:
 ```
 
 ```
-Wrote /Users/you/semel-playground/semel.machine.config: clang.compiler, clang.linker, clang.preprocessor
+Wrote /Users/you/semel-playground/semel.machine.config: clang.archiver, clang.compiler, clang.linker, clang.preprocessor
 ```
 
-The three clang namespaces, the ones `include 'clang'` reads. Open the file if you like —
+The four clang namespaces, the ones `include 'clang'` reads — this formula selects three
+of them; the archiver's is for a static library. Open the file if you like —
 the clang version string, the SDK path, once per tool — but do not edit it, and do not
 commit it: it is this machine's, and the next machine writes its own. Run the command again
 and it leaves the file as it is; after installing a new Xcode, `--force` rewrites it.
