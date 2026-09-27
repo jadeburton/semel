@@ -376,13 +376,11 @@ not, so two copies of one tree are comparable wherever they stand. What remains:
 2. **`notFolded` for a kind that is not a product.** The fold reads `Folder` and
    `StaticFile` and answers `notFolded` for every other kind under a folder. Today that is
    only `OutputFile`; a new kind of child would want its own answer rather than this one.
-3. **The fold makes the object store grow on the per-edit path.** Each fold interns its
-   document, so one edit writes a fresh document per ancestor — and for a folder of 3,000
-   children that document is a couple of hundred kilobytes. The object store is
-   append-only: nothing prunes, so a day of editing leaves a few thousand documents nobody
-   will read again. A manifest is interned too, but a manifest moves only when a name does.
-   Wanted alongside whatever collects the store; until then the growth is proportional to
-   edits × depth rather than to the tree. Related: during a flush a folder can publish an
+3. **The fold makes the object store grow on the per-edit path** — collected since B-14
+   (2026-09-27): each fold still interns its document, a couple of hundred kilobytes for
+   a folder of 3,000 children, but the collector removes every document no port refers to
+   at idle, so the growth is bounded by the collection threshold rather than by edits ×
+   depth. Related, and still open: during a flush a folder can publish an
    intermediate root and then the settled one, so once B-06 wires a `contentRoot` consumer
    that consumer is woken twice for one edit — correct, because the flush drains before the
    pass selects, but twice.

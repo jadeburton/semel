@@ -65,6 +65,14 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
+    /// Every distinct object a port refers to — a value, or an error's message — without
+    /// the ports: the collector's root set, one column of hex (B-14).
+    public func selectAllHashes() throws -> [DataObjectHash] {
+        try read { db in
+            try String.fetchAll(db, sql: "SELECT DISTINCT dataObjectHash FROM OutputPort WHERE dataObjectHash IS NOT NULL")
+        }
+    }
+
     public func selectAllCount() throws -> Int {
         try read { db in
             try OutputPort.fetchAll(db).count

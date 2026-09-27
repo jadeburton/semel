@@ -115,6 +115,10 @@ public final class RequestHandler {
                 let report = GraphCheck.run(database: database)
                 return (.daemon(.check(scheduledNodes: report.scheduledNodeCount)),
                         try MessageCoder.encode(report.findings.map(CheckFinding.init)))
+            case .collect:
+                let collection = try engine.collectUnreferencedObjects()
+                return (.daemon(.collected(removed: collection.removed, removedBytes: collection.removedBytes,
+                                           kept: collection.kept)), nil)
             case .tools(let platformName):
                 // A name this server does not know answers as macOS rather than failing:
                 // the reply says what is installed either way, and the client validated it.

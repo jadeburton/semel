@@ -112,6 +112,41 @@ final class DataObjectStoreTests: SemelCoreTestCase {
         XCTAssertEqual(try store.read(hash: fromFile), content)
     }
 
+    // MARK: - What the collector reads (B-14)
+
+    func test_theStoreListsEveryObjectWithItsSize() throws {
+        let small = try [UInt8]("a small object, longer than a digest all the same".utf8).intern()
+        let large = try [UInt8](repeating: 9, count: 10_000).intern()
+
+        let objects = store.objects()
+
+        XCTAssertEqual(Set(objects.map(\.hash)), [small, large])
+        XCTAssertEqual(objects.first { $0.hash == large }?.size, 10_000)
+    }
+
+    func test_anObjectCanBeRemovedAndRemovingItTwiceIsNotAnError() throws {
+        let hash = try [UInt8]("an object on its way out of the store, soon".utf8).intern()
+
+        try store.remove(hash: hash)
+
+        XCTAssertNil(try store.read(hash: hash))
+        XCTAssertNoThrow(try store.remove(hash: hash))
+    }
+
+    /// An object interned again is in use again: its date moves to now, which is what
+    /// keeps a collection that began before the intern from taking it by age.
+    func test_interningAnObjectAgainMakesItYoungAgain() throws {
+        let content = [UInt8]("content stored once, then wanted again much later".utf8)
+        let hash = try content.intern()
+        let url = store.objectURL(hash: hash)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3_600)], ofItemAtPath: url.path)
+
+        _ = try content.intern()
+
+        let date = try XCTUnwrap(store.objects().first { $0.hash == hash }?.modificationDate)
+        XCTAssertLessThan(abs(date.timeIntervalSinceNow), 60)
+    }
+
     // MARK: - Corruption
 
     /// The whole point: the bytes no longer hash to the name they are filed under.

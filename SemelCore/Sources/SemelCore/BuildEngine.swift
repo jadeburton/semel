@@ -180,6 +180,9 @@ public final class BuildEngine {
             // against the totals above it, and a list of paths between the failures and
             // the line that counts them would separate the two halves of one report.
             reportArtifactChanges()
+            // After the reports and before the idle mark: nothing computes, so the only
+            // objects being interned are a client's pushes, which the age margin covers.
+            collectObjectsIfDue()
 
             await idle.markIdle()
             await workSignal.wait()
@@ -333,6 +336,10 @@ public final class BuildEngine {
     /// Tracks the last-reported unclaimed-key set per config-file node so an unchanged
     /// result is not printed again on every idle cycle.
     private var lastReportedUnclaimedKeys: [ObjectID: [String]] = [:]
+
+    /// `DataObjectStore.bytesStored` when the collector last ran; nil until it has (B-14).
+    /// Read and written on the loop's task only.
+    var bytesStoredAtLastCollection: Int?
 
     /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
     /// `print` call so a test can capture what would be printed instead of scraping stdout —
