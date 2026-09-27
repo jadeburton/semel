@@ -83,7 +83,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     }
 
     private func externalSpecs(_ output: ProcessOutput) throws -> [String: String] {
-        try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs])
+        try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs]).rendered
     }
 
     /// DatabaseModels' real shape: GRDB arrives as a git URL, not a local path.
@@ -1088,7 +1088,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_waitsForEveryCompilableTargetsFolderBeforeGenerating() throws {
         let output = try convert(json: appOverCLib, supplyTargetFolders: false)
 
-        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]),
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
                        ["input:/pkg/Sources/App": "Folder(path: 'input:/pkg/Sources/App').manifest",
                         "input:/pkg/src":         "Folder(path: 'input:/pkg/src').manifest",
                         "input:/pkg/extensions":  "Folder(path: 'input:/pkg/extensions').manifest"])

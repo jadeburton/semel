@@ -247,7 +247,7 @@ extension Node {
         }
     }
 
-    private func applySpecs(inputPort: String, wireSpecs: [String: String]) throws {
+    private func applySpecs(inputPort: String, wireSpecs: [String: GraphSpecNode]) throws {
         // 1. remove any wires that exist but are not in the new configuration (by name)
         // 2. add any wires that are in the new configuration but do not exist yet (by name)
         // 3. update spec on wires that exist in both old and new configuration (by name)
@@ -273,16 +273,15 @@ extension Node {
         // Steps 2 & 3 — iterate over the desired configuration. Sorted: the order wires are
         // created in decides the order they are read back in, and a dictionary's is seeded
         // per process (B-04).
-        for (wireName, specString) in wireSpecs.sorted(by: { $0.key < $1.key }) {
+        for (wireName, expected) in wireSpecs.sorted(by: { $0.key < $1.key }) {
             var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
                 // Step 3 — the wire exists; it is right when the node it comes from is the
-                // one the spec describes and the port is the one the spec names. The
+                // one the tree describes and the port is the one the tree names. The
                 // demand's identity is a pure function of its tree and the wire's source
                 // carries its own, so this is one hash against one row (B-115) — no
                 // rebuild of the current subgraph, and nothing to fall back to.
-                let expected = try GraphSpecNode.parse(specString)
                 let source = try database.node.select(nodeID: existingWire.fromNodeID)
                 if source.identity == (try expected.identity()),
                    existingWire.fromSymbolID == expected.outputPort?.asSymbolID() {
@@ -299,14 +298,11 @@ extension Node {
             // it from being left as an orphaned zombie in the database.
             let wireNameSymbolID = wireName.asSymbolID()
             try database.withTransaction {
-                guard let (fromNode, fromSymbolID) = try findExistingOrCreateNodeMatchingSpec(specString) else {
-                    Debug.warn("no node matches spec '\(specString)' for wire '\(wireName)' on input '\(inputPort)' of node #\(thisNode.id ?? -1)")
-                    return
-                }
-                // fromSymbolID is nil when the spec string has no .outputPort suffix,
-                // which is invalid for wiring — spec strings must include a port.
+                let (fromNode, fromSymbolID) = try expected.findOrCreateMatchingNode()
+                // nil when the tree names no output port, which is invalid for wiring — a
+                // demanded tree is a wire's source, and a source is read at a port.
                 guard let fromSymbolID else {
-                    Debug.warn("spec '\(specString)' has no output port — cannot wire")
+                    Debug.warn("spec '\(expected.asString(omitOutputPort: false))' has no output port — cannot wire")
                     return
                 }
                 try Wire.connectWire(database: database,
@@ -317,15 +313,6 @@ extension Node {
                                      name: wireNameSymbolID)
             }
         }
-    }
-
-    /// Parses `specString` into a `GraphSpecNode` and searches the live
-    /// graph for a node whose type and recursive input wiring matches it,
-    /// creating the required nodes and wires if none is found.
-    /// Returns `(fromNodeID, fromSymbolID)` ready to pass to `connectWire`, or
-    /// `nil` if the type name in the spec is not registered in TypeRegistry.
-    private func findExistingOrCreateNodeMatchingSpec(_ specString: String) throws -> (fromNode: NodeRecord, fromSymbolID: ObjectID?)? {
-        try GraphSpecNode.parse(specString).findOrCreateMatchingNode()
     }
 
     /// The output for a thrown error: the reason it puts on every port, decided here and

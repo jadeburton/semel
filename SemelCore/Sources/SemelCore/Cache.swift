@@ -122,11 +122,11 @@ extension Node {
         // such an entry is recoverable — the throw writes an error value on every output
         // port and both hit paths reprocess — so this saves a replay that was going to be
         // thrown away, along with its warning and the error values the ports carry
-        // meanwhile. The cost is one parse of each stored spec, which `applySpecs` repeats
-        // a few lines into the hit it allows: the check at most doubles a parse the path
+        // meanwhile. The cost is a walk of each stored tree, which `applySpecs` repeats
+        // a few lines into the hit it allows: the check at most doubles a walk the path
         // pays anyway.
         let demandedSpecs = decodedCacheEntry.inputWireSpecs.values.flatMap(\.values)
-        guard demandedSpecs.allSatisfy({ GraphSpecNode.namesOnlyRegisteredTypes(spec: $0) }) else {
+        guard demandedSpecs.allSatisfy({ $0.namesOnlyRegisteredTypes() }) else {
             return nil
         }
 
@@ -324,6 +324,6 @@ struct CacheKeyMaterial: Codable {
 /// default and hitting wrongly.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
-    let inputWireSpecs: [String: [String: String]]
+    let inputWireSpecs: [String: [String: GraphSpecNode]]
     let keyMaterial: CacheKeyMaterial
 }

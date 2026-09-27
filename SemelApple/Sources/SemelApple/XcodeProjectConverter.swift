@@ -89,8 +89,8 @@ public struct XcodeProjectConverter: Node {
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let projectFilePath = "\(try projectPath)/project.pbxproj"
-        var specs: [String: [String: String]] = [
-            Self.projectFile: [projectFilePath: "StaticFile(path: '\(projectFilePath)').output"],
+        var specs: [String: [String: GraphSpecNode]] = [
+            Self.projectFile: [projectFilePath: .staticFile(at: projectFilePath)],
             Self.xcconfigs: [:],
             Self.folders: [:],
         ]
@@ -126,7 +126,7 @@ public struct XcodeProjectConverter: Node {
         let xcconfigPaths = project.xcconfigPaths(for: application, configuration: configurationName)
             .map { "\(projectFolder)/\($0)" }
         for path in xcconfigPaths {
-            specs[Self.xcconfigs]?[path] = "StaticFile(path: '\(path)').output"
+            specs[Self.xcconfigs]?[path] = .staticFile(at: path)
         }
         // ── the target's folders, walked ─────────────────────────────────────
         // Demanded alongside the xcconfig files, so the two waits overlap.
@@ -143,7 +143,7 @@ public struct XcodeProjectConverter: Node {
         while index < demanded.count {
             let folder = demanded[index]
             index += 1
-            specs[Self.folders]?[folder] = "Folder(path: '\(folder)').manifest"
+            specs[Self.folders]?[folder] = .folderManifest(at: folder)
             guard let manifest = arrived[folder] else {
                 continue
             }
@@ -248,13 +248,13 @@ public struct XcodeProjectConverter: Node {
             || folderName.hasSuffix(".xcdatamodeld")
     }
 
-    private func pending(_ reason: String, specs: [String: [String: String]]) -> ProcessOutput {
+    private func pending(_ reason: String, specs: [String: [String: GraphSpecNode]]) -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .pending),
                              Self.infoLog: .noValue(reason: .pending)],
               inputWireSpecs: specs)
     }
 
-    private func failed(_ message: String, specs: [String: [String: String]]) -> ProcessOutput {
+    private func failed(_ message: String, specs: [String: [String: GraphSpecNode]]) -> ProcessOutput {
         let reason = NoValueReason.error(messageDataObjectHash: (try? "XcodeProjectConverter: \(message)".intern()) ?? "")
         return .init(outputValues: [Self.formulaOutput: .noValue(reason: reason),
                                     Self.infoLog: .noValue(reason: reason)],

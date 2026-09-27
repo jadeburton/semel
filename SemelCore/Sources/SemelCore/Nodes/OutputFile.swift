@@ -79,11 +79,12 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
     static let inputPort = "input"
     static let fileMetadataInputPort = FileMetadata.portName
     static let statusOutputPort = "status"
+    static let pathProperty = "path"
 
     public var thisNode: NodeRecord
 
     var path: Path {
-        Path(thisNode.properties["path"]!)
+        Path(thisNode.properties[Self.pathProperty]!)
     }
 
     public init(thisNode: NodeRecord) throws {

@@ -87,13 +87,13 @@ struct SwiftFormulaConverter: Node {
     /// The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
     /// every other tool does. This is the first node of every Swift build: wired to an
     /// empty Configuration it fails before the manifest is ever read.
-    private var selfWiringSpecs: [String: [String: String]] {
+    private var selfWiringSpecs: [String: [String: GraphSpecNode]] {
         guard let packageFolder = thisNode.properties["path"] else {
             return [:]
         }
         let manifestPath = "\(packageFolder)/Package.swift"
         return [
-            Self.packageFolder: [packageFolder: "Folder(path: '\(packageFolder)').manifest"],
+            Self.packageFolder: [packageFolder: .folderManifest(at: packageFolder)],
             Self.packageJSON:   [manifestPath: Self.packageReaderSpec(packageFilePath: manifestPath,
                                                                      rootPackageFolder: buildRoot(defaultingTo: packageFolder))],
         ]
@@ -166,7 +166,7 @@ struct SwiftFormulaConverter: Node {
         // via wire specs and the node is re-scheduled when they arrive.
         var bfsQueue: [(path: String, manifest: SPMManifest)] = [(rootPackageFolder, rootManifest)]
         var visitedPaths = Set<String>([rootPackageFolder])
-        var specs: [String: String] = [:]
+        var specs: [String: GraphSpecNode] = [:]
         // Path -> the repository URL or registry package it stands for, nil when the
         // manifest named the path itself. Only ever read to explain a stall.
         var originOfExpectedPath: [String: String?] = [:]
@@ -220,11 +220,11 @@ struct SwiftFormulaConverter: Node {
         // ── every compilable target's folder, to tell C targets from Swift ones ──
         // A manifest says nothing about a target's language; its folder does. The
         // folders are asked for once every manifest is in, so this is one more pass.
-        var targetFolderSpecs: [String: String] = [:]
+        var targetFolderSpecs: [String: GraphSpecNode] = [:]
         for (packageFolder, manifest) in [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }) {
             for target in manifest.targets where target.isCompilable {
                 let folder = "\(packageFolder)/\(target.sourcesRelativePath)"
-                targetFolderSpecs[folder] = "Folder(path: '\(folder)').manifest"
+                targetFolderSpecs[folder] = .folderManifest(at: folder)
             }
         }
 
@@ -294,8 +294,8 @@ struct SwiftFormulaConverter: Node {
     // package wires included, since a spec left out of any output is unwired — so
     // applySpecs keeps (or creates) the needed wires.
     private func pendingOutput(reason: String,
-                               externalSpecs: [String: String],
-                               targetFolderSpecs: [String: String] = [:]) throws -> ProcessOutput {
+                               externalSpecs: [String: GraphSpecNode],
+                               targetFolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
               inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs,
@@ -381,15 +381,24 @@ struct SwiftFormulaConverter: Node {
     /// package being read, and a consuming project cannot write a config file inside a
     /// vendored dependency it does not own.
     static func packageReaderSpec(packageFilePath: String,
-                                         rootPackageFolder: String) -> String {
-        let configExpr = configurationExpression(
-            namespace: SwiftPackageReaderConfiguration.settingNamespace,
-            packageFolder: rootPackageFolder,
-            literals: [:])
-        return "SwiftPackageReader(" +
-               "configuration: ['config': \(configExpr)], " +
-               "packageFile: ['\(packageFilePath)': StaticFile(path: '\(packageFilePath)').output]" +
-               ").packageJSON"
+                                         rootPackageFolder: String) -> GraphSpecNode {
+        GraphSpecNode(SwiftPackageReader.self, inputs: [
+            SwiftPackageReader.configuration: ["config": configurationTree(namespace: SwiftPackageReaderConfiguration.settingNamespace,
+                                                                          packageFolder: rootPackageFolder,
+                                                                          literals: [:])],
+            SwiftPackageReader.packageFile: [packageFilePath: .staticFile(at: packageFilePath)],
+        ]).port(SwiftPackageReader.packageJSON)
+    }
+
+    /// The tree `configurationExpression` renders, for a demand the converter itself
+    /// makes rather than a formula it emits (B-115): the namespace's slice of the
+    /// project's config laid over the machine's, with `literals` over that.
+    static func configurationTree(namespace: String, packageFolder: String, literals: [String: String]) -> GraphSpecNode {
+        let settings = GraphSpecNode.configMerger(
+            base:     ["machine": .staticFile(at: "\(packageFolder)/\(machineConfigFileName)")],
+            override: ["project": .staticFile(at: "\(packageFolder)/\(configFileName)")])
+        return .configuration(literals: literals,
+                              base: ["settings": .configFilter(prefix: namespace, input: ["config": settings])])
     }
 
     // MARK: - SPM JSON model

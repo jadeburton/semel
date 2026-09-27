@@ -43,7 +43,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     func test_demandsTheProjectFileFirst() throws {
         let output = try process()
 
-        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.projectFile],
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.projectFile]?.rendered,
                        [projectFile: "StaticFile(path: '\(projectFile)').output"])
         XCTAssertTrue(isPending(output))
     }
@@ -53,9 +53,9 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     func test_demandsTheXcconfigAndTheTargetFolderOnceTheProjectHasArrived() throws {
         let output = try process(projectFile: try fixtureProject)
 
-        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.xcconfigs],
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.xcconfigs]?.rendered,
                        ["input:/repo/App.xcconfig": "StaticFile(path: 'input:/repo/App.xcconfig').output"])
-        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders],
+        XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.rendered,
                        ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').manifest",
                         "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').manifest"],
                        "the embedded extension's folder is walked too")

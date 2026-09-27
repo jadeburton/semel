@@ -239,7 +239,7 @@ final class CacheTests: SemelCoreTestCase {
         let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
-            inputWireSpecs: [SampleTool.input: ["wire0": "RetiredSampleTool(path: 'input:/x.c').output"]])
+            inputWireSpecs: [SampleTool.input: ["wire0": try GraphSpecNode.parse("RetiredSampleTool(path: 'input:/x.c').output")]])
         try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key),
@@ -255,7 +255,7 @@ final class CacheTests: SemelCoreTestCase {
         let spec = "Configuration(role: 'x', input: [\"a\": RetiredSampleTool().output]).output"
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
-            inputWireSpecs: [SampleTool.input: ["wire0": spec]])
+            inputWireSpecs: [SampleTool.input: ["wire0": try GraphSpecNode.parse(spec)]])
         try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
@@ -268,11 +268,11 @@ final class CacheTests: SemelCoreTestCase {
         let key      = try material.cacheKey()
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
-            inputWireSpecs: [SampleTool.input: ["wire0": "StaticFile(path: 'input:/x.c').output"]])
+            inputWireSpecs: [SampleTool.input: ["wire0": try GraphSpecNode.parse("StaticFile(path: 'input:/x.c').output")]])
         try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
-        XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"],
+        XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"]?.asString(omitOutputPort: false),
                        "StaticFile(path: 'input:/x.c').output")
     }
 

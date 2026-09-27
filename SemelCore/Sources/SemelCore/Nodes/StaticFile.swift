@@ -57,12 +57,13 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
         }
     }
 
+    public static let pathProperty = "path"
     static let outputPort = "output"
 
     public var thisNode: NodeRecord
 
     var path: Path {
-        Path(thisNode.properties["path"]!)
+        Path(thisNode.properties[Self.pathProperty]!)
     }
 
     public init(thisNode: NodeRecord) throws {

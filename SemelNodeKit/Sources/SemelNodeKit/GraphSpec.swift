@@ -46,7 +46,7 @@ import Foundation
 ///
 /// Called a property, not an argument, because that is what a node calls it: these are
 /// exactly a node's `properties`, rendered into a spec.
-public struct GraphSpecProperty: Equatable, Hashable {
+public struct GraphSpecProperty: Equatable, Hashable, Codable {
     public let key: String
     public let value: String
 
@@ -57,7 +57,7 @@ public struct GraphSpecProperty: Equatable, Hashable {
 }
 
 /// A single named wire feeding an input port.
-public struct GraphSpecWire: Equatable {
+public struct GraphSpecWire: Equatable, Codable {
     public let name: String          // wire name, e.g. "src/hello.c"
     public let node: GraphSpecNode  // the upstream node
 
@@ -68,7 +68,7 @@ public struct GraphSpecWire: Equatable {
 }
 
 /// A wired input port.  `wires` holds all named wires feeding this port.
-public struct GraphSpecInputPort: Equatable {
+public struct GraphSpecInputPort: Equatable, Codable {
     public let portName: String
     public let wires:    [GraphSpecWire]
 
@@ -79,7 +79,7 @@ public struct GraphSpecInputPort: Equatable {
 }
 
 /// An expected output port entry (future use — parsed but not yet matched).
-public struct GraphSpecOutputPort: Equatable {
+public struct GraphSpecOutputPort: Equatable, Codable {
     public let portName: String
     public let wires:    [GraphSpecWire]
 
@@ -90,7 +90,7 @@ public struct GraphSpecOutputPort: Equatable {
 }
 
 /// A node in the graph-spec tree.
-public struct GraphSpecNode: Equatable {
+public struct GraphSpecNode: Equatable, Codable {
     /// Swift type name of the Node, e.g. `"StaticFile"`, `"ClangCompiler"`.
     public let typeName:   String
     /// Init-time key-value properties (e.g. `path: 'src/hello.c'`).  Ordered.
@@ -138,21 +138,13 @@ extension GraphSpecNode {
 
 extension GraphSpecNode {
 
-    /// Whether a stored spec names only node types this Semel links, at every depth — the
-    /// question a reader of stored spec text has to ask before acting on it, since the text
-    /// outlives the Semel that wrote it. A spec that does not parse answers false: it
-    /// cannot be applied either.
+    /// Whether a stored tree names only node types this Semel links, at every depth — the
+    /// question a reader of a stored tree has to ask before acting on it, since a cache
+    /// entry outlives the Semel that wrote it.
     ///
     /// `outputs` is not walked, for the same reason `adding(property:)` does not: nothing
     /// is matched or created through an output wire.
-    public static func namesOnlyRegisteredTypes(spec: String) -> Bool {
-        guard let specNode = try? parse(spec) else {
-            return false
-        }
-        return specNode.namesOnlyRegisteredTypes()
-    }
-
-    private func namesOnlyRegisteredTypes() -> Bool {
+    public func namesOnlyRegisteredTypes() -> Bool {
         guard (try? TypeRegistry.kind(forTypeName: typeName)) != nil else {
             return false
         }

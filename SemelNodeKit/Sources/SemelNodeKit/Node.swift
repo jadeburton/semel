@@ -72,11 +72,15 @@ public struct ProcessInput {
 
 public struct ProcessOutput {
     public let outputValues: [String: NodeValue]
-    /// Each named dynamic input port has N named wires connected to it, each with a spec
-    public let inputWireSpecs: [String: [String: String]]
+    /// What the node asks to have wired to each dynamic input port it names: per port, per
+    /// wire name, the tree of the node the wire should come from, read at that tree's
+    /// output port. Trees, not text (B-115): a spec is built from node types and port
+    /// constants, and the engine hashes it without parsing anything. A port not named
+    /// here keeps the wires it has.
+    public let inputWireSpecs: [String: [String: GraphSpecNode]]
 
     public init(outputValues: [String: NodeValue],
-                inputWireSpecs: [String: [String: String]]) {
+                inputWireSpecs: [String: [String: GraphSpecNode]]) {
         self.outputValues = outputValues
         self.inputWireSpecs = inputWireSpecs
     }

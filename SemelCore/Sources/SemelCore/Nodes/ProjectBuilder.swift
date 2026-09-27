@@ -8,6 +8,7 @@ import SemelNodeKit
 public struct ProjectBuilder: Node {
     public static let kind: UInt = 6
 
+    static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
     static let productInputPort       = "input"
     static let statusOutputPort       = "status"
@@ -66,7 +67,7 @@ public struct ProjectBuilder: Node {
         // from the wire key put a package's products in its *parent*, so a package whose
         // folder also held other packages produced a file on the very path their output
         // folder needed — two children of one folder with the same name.
-        let outputFolder = thisNode.properties["outputFolder"].map { Path($0) } ?? parentFolder
+        let outputFolder = thisNode.properties[Self.outputFolderProperty].map { Path($0) } ?? parentFolder
 
         // Decode any folder manifests already wired to our 'folders' port.
         // On the first run these are empty; subsequent runs have real data.
@@ -101,13 +102,15 @@ public struct ProjectBuilder: Node {
         }
 
         // An included formula arrives on a wire of its own, the same way an imported file
-        // does: the node the `include` names is recorded by its spec so it can be wired,
-        // absent or still pending on the first passes, present once that node has run.
-        final class IncludeRecord { var specs = Set<String>(); var anyMissing = false }
+        // does: the node the `include` names is recorded — its rendered spec is the wire's
+        // name, its tree is what is wired there — so it can be wired, absent or still
+        // pending on the first passes, present once that node has run.
+        final class IncludeRecord { var specs: [String: GraphSpecNode] = [:]; var anyMissing = false }
         let includeRecord = IncludeRecord()
 
-        let includeReader: (String) throws -> String? = { spec in
-            includeRecord.specs.insert(spec)
+        let includeReader: (GraphSpecNode) throws -> String? = { included in
+            let spec = included.asString(omitOutputPort: false)
+            includeRecord.specs[spec] = included
             guard let nodeValue = input.inputValues[Self.includesInputPort]?[spec],
                   let hash = try? nodeValue.expectValue() else {
                 includeRecord.anyMissing = true
@@ -131,9 +134,9 @@ public struct ProjectBuilder: Node {
         // specs that will make the missing dependencies available on the next pass.
 
         // Build output-file specs for each formula product.
-        var productSpecs = [String: String]()
+        var productSpecs = [String: GraphSpecNode]()
         // The tree-valued expressions behind tree products, keyed by the product folder.
-        var treeSpecs = [String: String]()
+        var treeSpecs = [String: GraphSpecNode]()
 
         let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
         let importsReady = !importRecord.anyMissing
@@ -141,28 +144,21 @@ public struct ProjectBuilder: Node {
 
         /// The wrapper that publishes `shapeNode`'s value at `fullPath`, with the source's
         /// `fileMetadata` port wired in when it has one, so chmod can be applied on cp.
-        func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) throws -> String {
+        func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) -> GraphSpecNode {
             let shapeNode = shapeNode.adding(property: Self.projectRootProperty, value: outputFolder.string,
                                              where: Self.isCacheable)
-            var metadataWire = ""
+            var inputs: [String: [String: GraphSpecNode]] = [OutputFile.inputPort: ["product": shapeNode]]
             if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
                nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
-                let metaShape = GraphSpecNode(typeName: shapeNode.typeName,
-                                               properties: shapeNode.properties,
-                                               inputs: shapeNode.inputs,
-                                               outputs: shapeNode.outputs,
-                                               outputPort: FileMetadata.portName)
-                metadataWire = ", \(FileMetadata.portName): ['metadata': \(metaShape.asString(omitOutputPort: false))]"
+                inputs[OutputFile.fileMetadataInputPort] = ["metadata": shapeNode.port(FileMetadata.portName)]
             }
-            let wrapper = try GraphSpecNode.parse(
-                "OutputFile(path: '\(fullPath)', input: ['product': \(shapeNode.asString(omitOutputPort: false))]\(metadataWire)).status"
-            )
-            return wrapper.asString(omitOutputPort: false)
+            return GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: fullPath.string], inputs: inputs)
+                .port(OutputFile.statusOutputPort)
         }
 
         /// Two products at one path would be two nodes with one name in one folder; the
         /// formula is wrong, and saying which path is the whole help there is.
-        func publish(_ fullPath: Path, _ spec: String) throws {
+        func publish(_ fullPath: Path, _ spec: GraphSpecNode) throws {
             guard productSpecs[fullPath.string] == nil else {
                 throw NodeError.other(message: "two products at \(fullPath)")
             }
@@ -178,7 +174,7 @@ public struct ProjectBuilder: Node {
                     / Path(productName)
 
                 guard productName.hasSuffix("/") else {
-                    try publish(fullPath, try outputFileSpec(fullPath: fullPath, shapeNode: shapeNode))
+                    try publish(fullPath, outputFileSpec(fullPath: fullPath, shapeNode: shapeNode))
                     continue
                 }
 
@@ -188,40 +184,38 @@ public struct ProjectBuilder: Node {
                 // tree's files are simply not yet products.
                 let treeSpec = shapeNode
                     .adding(property: Self.projectRootProperty, value: outputFolder.string, where: Self.isCacheable)
-                    .asString(omitOutputPort: false)
                 treeSpecs[fullPath.string] = treeSpec
                 guard let manifest = treeManifests[fullPath.string] else {
                     continue
                 }
                 for entry in manifest.entries {
-                    let entryShape = try GraphSpecNode.parse(
-                        "TreeFile(name: '\(entry.path)', tree: ['tree': \(treeSpec)]).output")
+                    let entryShape = GraphSpecNode(TreeFile.self,
+                                                   properties: [TreeFile.nameProperty: entry.path],
+                                                   inputs: [TreeFile.treeInputPort: ["tree": treeSpec]])
+                        .port(TreeFile.outputPort)
                     let entryPath = fullPath / Path(entry.path)
-                    try publish(entryPath, try outputFileSpec(fullPath: entryPath, shapeNode: entryShape))
+                    try publish(entryPath, outputFileSpec(fullPath: entryPath, shapeNode: entryShape))
                 }
             }
         }
 
         // Wire each wildcard-referenced folder's manifest into our 'folders' port so we
         // are automatically rescheduled whenever the folder's contents change.
-        var folderSpecs = [String: String]()
+        var folderSpecs = [String: GraphSpecNode]()
         for folderPath in record.folderPaths {
-            folderSpecs[folderPath] = "Folder(path: '\(folderPath)').manifest"
+            folderSpecs[folderPath] = .folderManifest(at: folderPath)
         }
 
         // Wire each imported .graph file into our 'graphImports' port so we are
         // automatically rescheduled whenever its content changes.
-        var importSpecs = [String: String]()
+        var importSpecs = [String: GraphSpecNode]()
         for importPath in importRecord.filePaths {
-            importSpecs[importPath] = "StaticFile(path: '\(importPath)').output"
+            importSpecs[importPath] = .staticFile(at: importPath)
         }
 
-        // Wire every node an `include` names: the spec is both the wire's key and what is
-        // wired there. Nothing here knows what the node is.
-        var includeSpecs = [String: String]()
-        for spec in includeRecord.specs {
-            includeSpecs[spec] = spec
-        }
+        // Wire every node an `include` names: its rendered spec is the wire's name and its
+        // tree is what is wired there. Nothing here knows what the node is.
+        let includeSpecs = includeRecord.specs
 
         // Nothing here says what happened to the products. Which of them exist, and how
         // that differs from what the user was last told, is the engine's settle diff

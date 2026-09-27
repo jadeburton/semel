@@ -98,7 +98,7 @@ extension RequestHandler {
         _ = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty, pinned: true)
 
         let fullPath      = Path(FileSystemName.input) / relativePath
-        let graphSpecNode = try GraphSpecNode.parse("StaticFile(path: '\(fullPath.string)')")
+        let graphSpecNode = GraphSpecNode(StaticFile.self, properties: [StaticFile.pathProperty: fullPath.string])
         let (fromNode, _) = try graphSpecNode.findOrCreateMatchingNode()
 
         guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {

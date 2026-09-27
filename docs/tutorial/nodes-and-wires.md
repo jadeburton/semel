@@ -99,9 +99,12 @@ wires that:
 ```
 
 In code that is the `inputWireSpecs` every `process` returns, keyed by port and then by
-wire name; `MyLineCounter` returns `[:]` because it has no dynamic port. `input:/` is the
-input file system the push path fills — a formula writes `<dog.txt>` and the parser
-expands it.
+wire name; `MyLineCounter` returns `[:]` because it has no dynamic port. A node builds the
+tree rather than writing the text — `.staticFile(at: path)`, or
+`GraphSpecNode(ClangIncludeFinder.self, inputs: [...]).port(...)` from a node type and its
+port constants — and the engine hashes it into the identity it matches by, parsing
+nothing. The text above is how the same tree reads in a formula. `input:/` is the input
+file system the push path fills — a formula writes `<dog.txt>` and the parser expands it.
 
 ## 7. It usually takes two passes
 

@@ -196,3 +196,40 @@ ever a tree in disguise.
   then have to be parsed. A builder-only tree form would have kept eighteen such sites and
   blessed the pattern; the rule above — text for people, trees between components — is the
   one worth enforcing, and the scan test is what enforces it.
+
+## As built (2026-09-27)
+
+In three layers, each green on its own: the model moved to `SemelNodeKit` (A); the
+identity replaced the text (B); trees replaced strings between components (C). What
+differs from the text above:
+
+- **A port with no wires is not part of the identity.** A demanded tree names only the
+  ports it wires; a node's row has every port its type declares. The hash skips wireless
+  ports so the two agree — found when `check` reported a freshly created leaf as stale.
+- **`check` recomputes from what it has already read**, the nodes and wires in hand, and
+  runs only when both tables were readable: a per-node query would have gone back to a
+  table the walk had found unreadable, which is a fatal volume error, not a finding.
+- **A cache entry stores its demanded specs as trees**, `GraphSpecNode` being `Codable`,
+  not as canonical text: reading text back would have been the second parse site the rule
+  forbids. Entries written before this miss and are rewritten, as a changed entry shape
+  always has.
+- **`buildOutput(reason:)` describes no wires.** It rebuilt full spec text for every
+  dynamic wire so that `applySpecs` would not delete them — but `writeToOutputs` applies
+  specs only to the ports an output names, so naming none keeps them all. The rebuild was
+  never load-bearing, and identities could not have done it anyway.
+- **Engine node names for toolchains.** A plugin cannot import `StaticFile`, `Folder`,
+  `Configuration`, `ConfigFilter` or `ConfigMerger`, so it builds their trees through
+  `FileSystemNodes` and `SettingsNodes` — names and ports as constants in the node kit,
+  pinned to the types by `NodeNameConstantsTests`. The Swift converter's demanded package
+  reader is built this way; its emitted *formula* keeps the same shape as text.
+- **`ProjectBuilderPlugin.spec(forEntry:inFolder:)` returns a tree**, and the parser's
+  `includeReader` is handed the included node's tree, its rendering being the wire's name.
+- **The finding is `staleIdentity`** (protocol 15), and it covers a node with no identity,
+  one whose kind is unlinked is `unlinkedNodeType`, and one whose recomputation differs.
+- **The scan** allows spec text in the files that write formulas — the three preludes, the
+  two formula emitters, prepare's generated files, and the parser — and nowhere else; the
+  eighteen sites and the nine parses are gone, and the tests that asserted on spec text
+  render trees to compare.
+- **Not measured here:** acceptance items 1 and 2 (the IceCubes database size and the
+  nothing-changed rebuild) want the external project, which the fixtures do not stand in
+  for; the next performance pass takes them.

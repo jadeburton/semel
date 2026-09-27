@@ -200,7 +200,7 @@ extension NodeRecord {
                 assert(!pathSoFar.string.hasSuffix("/"))
                 assert(!pathSoFar.string.hasPrefix("/"))
 
-                let specNode = try GraphSpecNode.parse("Folder(path: '\(pathSoFar.string)')")
+                let specNode = GraphSpecNode(Folder.self, properties: [Folder.pathProperty: pathSoFar.string])
                 let (fromNode, _) = try specNode.findOrCreateMatchingNode()
                 var newFolder = fromNode
                 newFolder.parentNodeID = (try currentFolder.requireID())

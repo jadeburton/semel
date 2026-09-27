@@ -141,7 +141,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         let formula = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
             .expectValue().resolveAsString()
         let specs = try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs])
-        return (formula, specs.keys.sorted().compactMap { specs[$0] })
+        return (formula, specs.keys.sorted().compactMap { specs[$0]?.asString(omitOutputPort: false) })
     }
 
     /// Creates every node one spec string names, exactly as `applySpecs`

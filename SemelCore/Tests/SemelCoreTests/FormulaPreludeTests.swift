@@ -148,7 +148,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
             ProjectBuilder.includesInputPort:     [preludeSpec: .value(try text.intern())],
         ]))
 
-        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort], [preludeSpec: preludeSpec])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort]?.rendered, [preludeSpec: preludeSpec])
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]).keys.sorted(),
                        ["output:/repo/hello"])
     }

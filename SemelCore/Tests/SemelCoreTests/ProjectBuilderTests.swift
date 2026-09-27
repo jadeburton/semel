@@ -125,7 +125,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     func test_wiresTheIncludedNodeBeforePublishingAnything() throws {
         let output = try process(formula: "include \(includedNode)")
 
-        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort], [includedNode: includedNode])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort]?.rendered, [includedNode: includedNode])
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
     }
 
@@ -169,7 +169,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
                                  includes: [includedNode: .noValue(reason: .pending)])
 
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
-        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort], [includedNode: includedNode])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.includesInputPort]?.rendered, [includedNode: includedNode])
     }
 
     // MARK: - projectRoot stamping (B-49)
@@ -182,7 +182,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         let output = try process(formula:
             "product 'x' = SampleTool(configuration: ['c': StaticFile(path: 'input:/repo/c').output]).output")
 
-        let spec = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]?["output:/repo/x"])
+        let spec = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]?["output:/repo/x"]).asString(omitOutputPort: false)
         XCTAssertTrue(spec.contains("SampleTool(projectRoot: 'input:/repo', configuration: ["), spec)
         XCTAssertTrue(spec.contains("StaticFile(path: 'input:/repo/c')"), spec)
         XCTAssertFalse(spec.contains("StaticFile(path: 'input:/repo/c', projectRoot"), spec)
@@ -222,7 +222,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     func test_aTreeProductWiresItsTreeBeforePublishingAnything() throws {
         let output = try process(formula: "product 'Hello.app/' = \(treeNode)", trees: [:])
 
-        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.treesInputPort], ["output:/repo/Hello.app": stampedTreeNode])
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.treesInputPort]?.rendered, ["output:/repo/Hello.app": stampedTreeNode])
         XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.productInputPort], [:])
     }
 
@@ -235,7 +235,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         let products = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort])
         XCTAssertEqual(products.keys.sorted(),
                        ["output:/repo/Hello.app/Assets.car", "output:/repo/Hello.app/en.lproj/Localizable.strings"])
-        let spec = try XCTUnwrap(products["output:/repo/Hello.app/en.lproj/Localizable.strings"])
+        let spec = try XCTUnwrap(products["output:/repo/Hello.app/en.lproj/Localizable.strings"]).asString(omitOutputPort: false)
         XCTAssertTrue(spec.contains("TreeFile(name: 'en.lproj/Localizable.strings'"), spec)
         XCTAssertTrue(spec.contains(stampedTreeNode), spec)
         XCTAssertTrue(spec.contains("fileMetadata"), "the entry's mode reaches the output file: \(spec)")
