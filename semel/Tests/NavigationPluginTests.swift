@@ -83,8 +83,26 @@ final class NavigationPluginTests: XCTestCase {
             "-rw-r--r--         4  built.o",
             "-rw-r--r--         -  nobodys.o  [unreferenced]",
             "-rw-r--r--         -  removed.o  [deleted]",
-            "-rw-r--r--         -  unpushed.o  [not produced]",
+            "-rw-r--r--         -  unpushed.o  [not pushed]",
             "-rw-r--r--         -  waiting.o  [pending]",
+        ])
+    }
+
+    /// B-118. Nothing is produced in `input:`: there the state is a source nobody pushed.
+    /// In `output:` it is a product whose input has no value, and the word says so.
+    func test_aNameWithNoValueIsNotPushedInInputAndNotProducedInOutput() throws {
+        connection.reply(.list(entries: [
+            ListEntry(path: "semel.machine.config", kind: .file, size: nil, mode: 0o644, status: .notProduced),
+        ]))
+        try run("ls")
+        connection.reply(.list(entries: [
+            ListEntry(path: "hello", kind: .file, size: nil, mode: 0o644, status: .notProduced),
+        ]))
+        try run("ls", ["-o"])
+
+        XCTAssertEqual(context.messages, [
+            "-rw-r--r--         -  semel.machine.config  [not pushed]",
+            "-rw-r--r--         -  hello  [not produced]",
         ])
     }
 
