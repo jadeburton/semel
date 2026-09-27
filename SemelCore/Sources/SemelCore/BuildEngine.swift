@@ -39,7 +39,10 @@ public final class BuildEngine {
 
     // MARK: - Constants
 
-    private static let processingBatchSize = 16
+    /// How many nodes compute at once. A running tool holds a concurrency thread for as
+    /// long as its process runs (B-114), and the cooperative pool is one thread per core,
+    /// so running more than this would only queue them there.
+    private static let maximumRunningNodes = MachineQuery.activeProcessorCount
 
     // MARK: - State
 
@@ -714,11 +717,7 @@ public final class BuildEngine {
 
     // MARK: - Processing
 
-    private func processAllNodes() async throws {
-        while try await processSomeNodes() {}
-    }
-
-    private struct BatchComputeResult {
+    private struct ComputeResult {
         let nodeRecord: NodeRecord
         let output: ProcessOutput
         let keyMaterial: CacheKeyMaterial?
@@ -726,146 +725,126 @@ public final class BuildEngine {
         let fromCache: Bool
     }
 
-    /// Fetches a batch of scheduled nodes and processes them in two phases.
+    /// Runs scheduled nodes until none is scheduled and none is running, in two roles.
     ///
-    /// **Phase 1 (concurrent):** Each node reads its inputs and runs `process()`
-    /// in parallel.  No graph mutations occur, so concurrent execution is safe
-    /// regardless of shared upstream connections.
+    /// **Computing (concurrent):** up to `maximumRunningNodes` nodes read their inputs and
+    /// run `process()` at once, each in a task of its own. A task mutates nothing in the
+    /// graph, so tasks sharing providers are safe together.
     ///
-    /// **Phase 2 (sequential):** Computed outputs are written to the graph one
-    /// at a time.  All wire writes and cascade deletions happen here — serialised,
-    /// so no wire-deletion races can occur.
+    /// **Writing (this loop, one result at a time):** each result is written as soon as
+    /// its task finishes — outputs, wires, cascades — and the slot it frees is filled from
+    /// the nodes that write scheduled. All graph mutation stays on this one sequence, and
+    /// no node waits for a slower one it merely started beside (B-113).
     ///
-    /// Nodes in the same batch that share providers compute from a consistent
-    /// snapshot of the graph (the state at the start of phase 1).  If a stale
-    /// result is written in phase 2, the normal cascade mechanism reschedules any
-    /// affected consumers for re-evaluation on the next pass.
-    private func processSomeNodes() async throws -> Bool {
-        // Before selecting: a rebuilt manifest's port write is what schedules its consumers
-        // (B-25), and phase 2 of the previous batch may have added output files to folders.
-        try Folder.flushDirtyManifests()
+    /// A node is unscheduled as it starts. A write that changes its inputs while it runs
+    /// schedules it again, so it runs once more after its stale result is written, and
+    /// the cascade re-evaluates whatever read that result. The cache stays sound
+    /// throughout: an entry's key and its output come from the one input a task read.
+    private func processAllNodes() async throws {
+        try await withThrowingTaskGroup(of: (NodeRecord, ComputeResult?).self) { group in
+            var running = Set<ObjectID>()
 
-        let nodeRecords = try database.node.selectAllScheduled(limit: Self.processingBatchSize)
-        guard !nodeRecords.isEmpty else {
-            return false
-        }
+            while true {
+                // Before selecting: a rebuilt manifest's port write is what schedules its
+                // consumers (B-25), and a write may have added output files to folders.
+                try Folder.flushDirtyManifests()
 
-        // Phase 1: read inputs and compute outputs concurrently.
-        // Only DB reads and CPU work happen here — no graph mutations, no cascades.
-        let computedResults: [BatchComputeResult] = await withTaskGroup(of: BatchComputeResult?.self) { group in
-
-            for nodeRecord in nodeRecords {
-                group.addTask {
-
-                    guard let node = try? nodeRecord.makeNode(),
-                          type(of: node).descriptor.hasInputs else {
-                        return nil
+                let free = Self.maximumRunningNodes - running.count
+                let started = free > 0 ? try database.node.selectScheduled(limit: free, excluding: running) : []
+                settleTally.noteScheduled(started.compactMap(\.id))
+                for nodeRecord in started {
+                    guard let nodeID = nodeRecord.id else {
+                        continue
                     }
-
-                    guard let result = node.tryComputeOutput() else {
-                        return nil
+                    try nodeRecord.setScheduled(false)
+                    running.insert(nodeID)
+                    group.addTask {
+                        guard let node = try? nodeRecord.makeNode(),
+                              type(of: node).descriptor.hasInputs,
+                              let result = node.tryComputeOutput() else {
+                            return (nodeRecord, nil)
+                        }
+                        return (nodeRecord, ComputeResult(nodeRecord: nodeRecord,
+                                                          output: result.output,
+                                                          keyMaterial: result.keyMaterial,
+                                                          computeStart: result.computeStart,
+                                                          fromCache: result.fromCache))
                     }
-
-                    return BatchComputeResult(nodeRecord: nodeRecord,
-                                              output: result.output,
-                                              keyMaterial: result.keyMaterial,
-                                              computeStart: result.computeStart,
-                                              fromCache: result.fromCache)
                 }
-            }
 
-            var results: [BatchComputeResult] = []
-
-            for await result in group {
+                // Nothing running and nothing scheduled: settled.
+                guard let (nodeRecord, result) = try await group.next() else {
+                    return
+                }
+                if let nodeID = nodeRecord.id {
+                    running.remove(nodeID)
+                }
+                // A node not ready — waiting on an input — is unscheduled and written
+                // nothing; the input's arrival schedules it again.
                 if let result {
-                    results.append(result)
+                    write(result)
                 }
             }
-
-            return results
         }
+    }
 
+    /// Writes one computed result to the graph: its outputs, the wires it asked for, and
+    /// its cache entry.
+    private func write(_ result: ComputeResult) {
+        guard let nodeID = result.nodeRecord.id else {
+            return
+        }
         // A cache hit is a node that was scheduled and did not run, which is the one
         // distinction the summary exists to carry; counting it beside the nodes that ran
         // would make a rebuild of an unchanged graph read as a full build.
-        let cachedCount   = computedResults.filter(\.fromCache).count
-        let computedCount = computedResults.count - cachedCount
+        settleTally.noteResult(nodeID: nodeID, fromCache: result.fromCache)
+        Debug.log("\(result.fromCache ? "from cache" : "computed"): node \(nodeID)")
 
-        settleTally.noteScheduled(nodeRecords.compactMap(\.id))
-        for result in computedResults {
-            guard let nodeID = result.nodeRecord.id else {
-                continue
+        do {
+            // Skip a node an earlier write cascade-deleted. makeNode() constructs from the
+            // in-memory NodeRecord struct and does not re-query the DB, so this explicit
+            // existence check is required.
+            guard try database.node.find(nodeID: nodeID) != nil else {
+                Debug.warn("node \(nodeID) deleted during processing")
+                return
             }
-            settleTally.noteResult(nodeID: nodeID, fromCache: result.fromCache)
-        }
 
-        Debug.log("batch: \(nodeRecords.count) scheduled, \(computedCount) computed, \(cachedCount) from cache")
+            let node = try result.nodeRecord.makeNode()
+            guard type(of: node).descriptor.hasInputs else {
+                return
+            }
 
-        // Unschedule every fetched node BEFORE any writes so that cascade
-        // reschedules (setScheduled(true)) from phase-2 writes are not clobbered
-        // by a later unschedule in the loop below.
-        for nodeRecord in nodeRecords {
-            try nodeRecord.setScheduled(false)
-        }
-
-        // Phase 2: apply outputs sequentially (all graph mutations happen here).
-        //
-        // If no node was ready (all returned nil from tryComputeOutput), unschedule
-        // the batch and report no work done so the caller re-enters wait() and
-        // stays reactive to future signals from push commands or cascades.
-        guard !computedResults.isEmpty else {
-            return false
-        }
-
-        for result in computedResults {
             do {
-                // Skip nodes that were cascade-deleted by an earlier phase-2 step.
-                // makeNode() constructs from the in-memory NodeRecord struct and does not
-                // re-query the DB, so this explicit existence check is required.
-                guard let nodeID = result.nodeRecord.id, try database.node.find(nodeID: nodeID) != nil else {
-                    Debug.warn("node \(result.nodeRecord.id ?? -1) deleted during processing")
-                    continue
-                }
+                try node.writeToOutputs(output: result.output)
 
-                let node = try result.nodeRecord.makeNode()
-                guard type(of: node).descriptor.hasInputs else {
-                    continue
-                }
-
-                do {
-                    try node.writeToOutputs(output: result.output)
-
-                    if !result.fromCache {
-                        // Failing to save a cache entry must not fail a build — unless the
-                        // failure is the machine's, which no later node will survive either.
-                        do {
-                            try node.saveCacheForAllInputsAndOutputs(
-                                keyMaterial: result.keyMaterial,
-                                processingDuration: Date.now.timeIntervalSince(result.computeStart),
-                                output: result.output
-                            )
-                        } catch {
-                            FatalErrors.check(error)
-                        }
-                    }
-                } catch {
-                    if result.fromCache {
-                        // Cached output is stale — fall back to a full sequential reprocess
-                        // using the current (post-phase-2) graph state. The node ran after
-                        // all, so the summary must not call it a hit.
-                        settleTally.noteResult(nodeID: nodeID, fromCache: false)
-                        Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
-                        try node.processWithPreCheck()
-                    } else {
-                        throw error
+                if !result.fromCache {
+                    // Failing to save a cache entry must not fail a build — unless the
+                    // failure is the machine's, which no later node will survive either.
+                    do {
+                        try node.saveCacheForAllInputsAndOutputs(
+                            keyMaterial: result.keyMaterial,
+                            processingDuration: Date.now.timeIntervalSince(result.computeStart),
+                            output: result.output
+                        )
+                    } catch {
+                        FatalErrors.check(error)
                     }
                 }
             } catch {
-                Debug.warn("error processing node \(result.nodeRecord.id ?? -1): \(error)")
+                if result.fromCache {
+                    // Cached output is stale — fall back to a full sequential reprocess
+                    // using the graph as it stands. The node ran after all, so the
+                    // summary must not call it a hit.
+                    settleTally.noteResult(nodeID: nodeID, fromCache: false)
+                    Debug.warn("writeToOutputs failed for cached output, reprocessing: \(error)")
+                    try node.processWithPreCheck()
+                } else {
+                    throw error
+                }
             }
+        } catch {
+            Debug.warn("error processing node \(nodeID): \(error)")
         }
-
-        return true
     }
 
     func processOneNode(_ nodeRecord: NodeRecord) throws {

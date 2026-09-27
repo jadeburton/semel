@@ -207,8 +207,16 @@ struct SwiftCompiler: Node {
         let inputFolderManifests: [(String, FolderManifest)]
         let subfolderManifests: [(String, FolderManifest)]
         let moduleMapFolderManifests: [(String, FolderManifest)]
+        /// The names of the wires the walk has placed on its dynamic ports so far.
+        let wiredSourceFiles: Set<String>
+        let wiredSubfolders: Set<String>
+        let wiredModuleMapFiles: Set<String>
 
         init(input: ProcessInput) throws {
+            wiredSourceFiles    = Set((input.inputValues[SwiftCompiler.inputSourceFiles] ?? [:]).keys)
+            wiredSubfolders     = Set((input.inputValues[SwiftCompiler.inputSubfolders] ?? [:]).keys)
+            wiredModuleMapFiles = Set((input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:]).keys)
+
             let configString = try input.inputValues[SwiftCompiler.configuration]!
                 .values.first!.expectValue().resolveAsString()
 
@@ -479,6 +487,24 @@ struct SwiftCompiler: Node {
             scope.includesFolder($0)
         }
         let inputModuleMapFilesSpecs = buildInputModuleMapFilesSpecs(moduleMapFolderManifests: inputs.moduleMapFolderManifests)
+
+        // A walk that has just found something is not finished: the new wires schedule
+        // another run, and a compile now would be of a partial source set — a module its
+        // importers compile against and then compile again (B-112). The compile waits for
+        // the run that finds nothing new.
+        guard Set(inputSourceFilesSpecs.keys) == inputs.wiredSourceFiles,
+              Set(inputSubfoldersSpecs.keys) == inputs.wiredSubfolders,
+              Set(inputModuleMapFilesSpecs.keys) == inputs.wiredModuleMapFiles else {
+            let walking = NodeValue.noValue(reason: .pending)
+            return .init(outputObject: walking,
+                         outputModule: walking,
+                         outputInterface: walking,
+                         infoLog: .value(""),
+                         inputSourceFilesSpecs: inputSourceFilesSpecs,
+                         inputSubfoldersSpecs: inputSubfoldersSpecs,
+                         inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
+        }
+
         do {
             return try compile(inputs: inputs,
                                inputSourceFilesSpecs: inputSourceFilesSpecs,
