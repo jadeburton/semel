@@ -453,7 +453,10 @@ counts: the tally counts each node once across batches, and a sum of batches wou
 node that ran twice. Open, and to decide before building: whether
 the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
 (a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
-verb and left with a key).
+verb and left with a key). Design, for review:
+`docs/superpowers/specs/2026-09-27-semel-build-progress-design.md` — a `progress` event
+with the tally's totals and the running nodes, drawn as one line only while this client is
+blocked in `wait`, `build` or `commit`, on by default at a terminal and never elsewhere.
 
 **B-91** `open` `For Fable Only` — **The engine says what a settle did, not why.**
 `DaemonMessages` carry what was published, what failed, one settle's totals — scheduled,
