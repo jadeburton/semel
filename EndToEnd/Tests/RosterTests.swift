@@ -11,16 +11,74 @@ final class RosterTests: XCTestCase {
         XCTAssertEqual(Set(Projects.all.map(\.name)).count, Projects.all.count)
     }
 
-    /// `materialise` nests a `.git(subfolder: ".")` checkout under its own name, so
-    /// `buildFolder` has to spell that name back (`Project.Source.git`'s doc comment).
+    /// `materialise` nests a `.git(subfolder: ".")` checkout, and the repository's own,
+    /// under its name, so `buildFolder` has to spell that name back (`Project.Source`'s
+    /// doc comments).
     func test_aCheckoutRootedProjectBuildsTheFolderNamedAfterIt() {
         for project in Projects.all {
-            guard case .git(_, _, let subfolder) = project.source, subfolder == "." else {
+            let nestsUnderItsName: Bool
+            switch project.source {
+            case .git(_, _, let subfolder): nestsUnderItsName = subfolder == "."
+            case .repository:               nestsUnderItsName = true
+            case .fixture:                  nestsUnderItsName = false
+            }
+            guard nestsUnderItsName else {
                 continue
             }
             XCTAssertEqual(project.buildFolder, project.name,
                            "\(project.name): materialise nests the checkout under its name")
         }
+    }
+
+    /// The repository's copy leaves the fixtures and every build folder behind, and
+    /// carries the formula and the project config the self-build reads (B-78).
+    func test_theRepositoryCopyIsTheBuildAndNothingElse() throws {
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("semel-roster-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: destination) }
+
+        try EndToEndRun.copyRepository(to: destination)
+
+        for present in ["Package.swift", "semel.fmla", "semel.config", "SemelCore/Package.swift", "EndToEnd/Tests"] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent(present).path),
+                          "\(present) belongs in the copy")
+        }
+        for absent in [".build", ".git", "EndToEnd/Fixtures", "SemelCore/.build", "semel.machine.config"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent(absent).path),
+                           "\(absent) does not belong in the copy")
+        }
+
+        // Every file the rules keep is there — walked here by a recursion of its own,
+        // because the copy's enumerator once dropped the rest of a folder after an
+        // excluded file in it.
+        let expected = Set(Self.keptFiles(under: EndToEndEnvironment.repositoryRoot, relativeTo: ""))
+        let copied   = Set(try FileManager.default.subpathsOfDirectory(atPath: destination.path)
+            .filter { !$0.hasSuffix("/.DS_Store") && $0 != ".DS_Store" })
+        XCTAssertEqual(expected.subtracting(copied).sorted().prefix(10).joined(separator: ", "), "",
+                       "files the copy is missing")
+        XCTAssertEqual(copied.subtracting(expected).sorted().prefix(10).joined(separator: ", "), "",
+                       "files the copy should have left out")
+    }
+
+    /// The relative paths of every file and folder under `folder` that the copy's rules
+    /// keep, by the same names and paths `EndToEndRun` excludes.
+    private static func keptFiles(under folder: URL, relativeTo prefix: String) -> [String] {
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        var kept: [String] = []
+        for name in entries.sorted() {
+            let relative = prefix.isEmpty ? name : "\(prefix)/\(name)"
+            guard !EndToEndRun.repositoryCopyExcludedNames.contains(name),
+                  !EndToEndRun.repositoryCopyExcludedPaths.contains(relative) else {
+                continue
+            }
+            kept.append(relative)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                kept.append(contentsOf: keptFiles(under: folder.appendingPathComponent(name), relativeTo: relative))
+            }
+        }
+        return kept
     }
 
     /// The fixtures are the cheap tier and are what proves the hermeticity checks: each

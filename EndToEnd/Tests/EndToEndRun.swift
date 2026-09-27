@@ -84,8 +84,56 @@ final class EndToEndRun {
                 let parent = checkout.appendingPathComponent(subfolder).deletingLastPathComponent()
                 try FileManager.default.copyItem(at: parent, to: tree)
             }
+        case .repository:
+            try Self.copyRepository(to: tree.appendingPathComponent(project.name, isDirectory: true))
         }
         base = tree
+    }
+
+    /// Names left out of the repository's copy wherever they occur: build products of
+    /// this package and of every nested one, version control and editor state, the export
+    /// folder a `build` without `--into` writes, and the two things an in-place `prepare`
+    /// leaves — a machine file and vendored dependencies — which the run's own `prepare`
+    /// writes afresh.
+    static let repositoryCopyExcludedNames: Set<String> = [
+        ".build", ".git", ".swiftpm", ".claude", ".idea", ".DS_Store", "DerivedData",
+        "semel-out", "Dependencies", machineFileName,
+    ]
+
+    /// Paths left out of the copy, relative to the repository root: the fixtures are
+    /// projects of their own, each with a formula the project finder would build and a
+    /// machine file only their own runs write.
+    static let repositoryCopyExcludedPaths: Set<String> = ["EndToEnd/Fixtures"]
+
+    /// The checkout, less what `repositoryCopyExcludedNames` and `…Paths` name, under
+    /// `destination`. A copy by hand rather than `copyItem`, which takes all or nothing.
+    static func copyRepository(to destination: URL) throws {
+        let root = EndToEndEnvironment.repositoryRoot
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        guard let enumerator = fileManager.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
+                                                      options: []) else {
+            throw EndToEndFailure(step: "materialise", message: "cannot list \(root.path)")
+        }
+        for case let url as URL in enumerator {
+            let relative    = String(url.path.dropFirst(root.path.count + 1))
+            let isDirectory = try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+            if repositoryCopyExcludedNames.contains(url.lastPathComponent) || repositoryCopyExcludedPaths.contains(relative) {
+                // Only for a folder: asked after a file, `skipDescendants` skips the rest
+                // of that file's folder, which is how one `.DS_Store` once emptied a
+                // package of its manifest.
+                if isDirectory {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            let target = destination.appendingPathComponent(relative)
+            if isDirectory {
+                try fileManager.createDirectory(at: target, withIntermediateDirectories: true)
+            } else {
+                try fileManager.copyItem(at: url, to: target)
+            }
+        }
     }
 
     // MARK: - 2. Configure

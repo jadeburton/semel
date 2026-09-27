@@ -37,6 +37,14 @@ enum EndToEndEnvironment {
             .appendingPathComponent("Fixtures", isDirectory: true)
     }
 
+    /// The repository root, found from this source file, for the roster entry that builds
+    /// Semel with Semel (B-78).
+    static var repositoryRoot: URL {
+        fixtures
+            .deletingLastPathComponent()   // EndToEnd
+            .deletingLastPathComponent()   // repository root
+    }
+
     /// Short on purpose: sockets live under it, and a Unix-domain socket path is limited
     /// to 103 bytes.
     static func newRoot() throws -> URL {

@@ -534,10 +534,12 @@ project file each, the harness writes the machine file where it rendered the tem
 the tutorial's config section is `build`, `semel-clang`, `build`. Design:
 `docs/superpowers/specs/2026-09-26-semel-configuration-two-files-design.md`. What remains:
 
-1. **This repository's own `semel.config`** still carries its machine facts. Splitting it
-   means writing `semel.machine.config` at the root before a self-build, which the
-   README's Configuration section should then say; until it does, the project file's
-   machine keys pin the toolchain, which the design allows.
+1. **This repository's own `semel.config`** — done (2026-09-27, with B-78's self-build):
+   the project's half only, two targets; `semel-swift prepare <checkout> --platform
+   macos` writes the machine file, and the README says so. `SelfBuildConfigTests` now
+   fails on a machine key in the project file, since the one it carried (`sdkVersion`,
+   pinned to one SDK build) is what would have failed the self-build on any other
+   machine.
 2. **`target` split into its parts** (the spec's *Later*): a tool that took a platform and a
    deployment version and composed the triple with its own architecture would let the
    project file say nothing about the machine at all.
@@ -704,11 +706,15 @@ non-synchronized groups.
 
 **B-78** `open` — **More Swift packages.**
 
-1. *Semel itself* — `semel.fmla` exists; several executables over a real package graph,
-   GRDB with a system-library SQLite. No clone either, which no `Project.source` can say
-   today: a fixture copies `EndToEnd/Fixtures` and a git source needs a URL, so this wants a
-   source for the repository's own checkout, as B-76 wants one for an overlay. (A macOS
-   executable root alone is no longer new: `swift-my-app` is one.)
+1. *Semel itself* — done (2026-09-27): in the roster as `semel`, from a `.repository`
+   source that copies the checkout less what is not the build — build folders, version
+   control, the fixtures, an in-place `prepare`'s leavings — and nests it under its name.
+   `prepare` vendors GRDB, writes the machine file and keeps the committed formula and
+   project config; the four executables come out and match across every hermeticity
+   build. It took two things: the converter mangles a target name into its module name
+   as SwiftPM does (`semel-clang` compiles as `semel_clang`), and the root `semel.config`
+   is the project's half only (B-109 residual 1). External rather than a fixture only
+   because vendoring fetches GRDB.
 2. *swift-nio* — every residual of B-55 at once: `cSettings` `.define` values that matter,
    C sources in nested folders, header paths other than `include`, and executables
    (`NIOEchoServer` and the like) linking C targets, which need the `clang.linker` block.

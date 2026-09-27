@@ -120,7 +120,21 @@ enum Projects {
         perturbed: false,
         onlyUnder: "Ice Cubes.app")
 
+    /// Semel building Semel (B-78): the root package's four executables over the real
+    /// package graph — nested path dependencies, GRDB from git with its system-library
+    /// SQLite. The copy is this checkout less what is not the build (`Project.Source
+    /// .repository`); `prepare` vendors GRDB and writes the machine file, and keeps the
+    /// formula and the project config the repository carries. External rather than a
+    /// fixture only because vendoring fetches GRDB: the build itself is a fixture's size.
+    static let semel = Project(
+        name: "semel",
+        source: .repository,
+        buildFolder: "semel",
+        platform: "macos",
+        expectedProducts: ["semel", "semelserv", "semel-swift", "semel-clang"],
+        buildTimeout: 10 * 60)
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes, icecubesApp]
+    static let external: [Project] = [icecubes, icecubesApp, semel]
     static let all: [Project] = fixtures + external
 }
