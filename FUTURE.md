@@ -524,6 +524,35 @@ the tutorial's config section is `build`, `semel-clang`, `build`. Design:
    and could also name the command that rewrites the file (`semel-clang --force`,
    `semel-swift prepare`), which the namespace registers.
 
+**B-120** `open` — **`Configuration` merges; only `ConfigMerger` should.**
+`Configuration` is two things in one node: the way to put settings inline in a formula, as
+its properties, and a merge of those properties over whatever arrives on its optional
+`base` port. The second half is `ConfigMerger`'s job, with the same precedence — the
+override wins — but weaker rules: `base` is optional, several wires on it merge in sorted
+key order with no stated precedence, and an absent value is silently nothing. That is the
+ambiguity `ConfigMerger`'s own comment says it exists to remove, so the graph has two merge
+semantics, one explicit and one implicit. Decided 2026-09-27: keep a literal node, drop its
+merging.
+
+1. **`Configuration` becomes a pure source**: properties in, plain text out, no input port.
+   Layering is always spelled out, in every prelude helper and in the converters and the
+   Xcode emitter that render these nodes:
+
+       ConfigMerger(base: [selected(settings, prefix)], override: [Configuration(moduleName: name)])
+
+   One node more per module — about 15 on IceCubes' 2,630 — and one merge in one place.
+2. **A name that says what it now is.** `Configuration` reads as *the* configuration; the
+   node is some literal settings. Rename with the change, pre-v1, no shim.
+3. **One wire per port.** All three settings nodes still merge several wires on one port in
+   sorted key order. Make two wires on a port an error, so `ConfigMerger` is the only place
+   in the graph where two sets of settings ever meet.
+
+Not dropping the node altogether: the literals need a home. Every prelude uses them for
+per-module facts — module name, output name, linkage, app icon — and the alternatives are
+worse. Properties on the tool node itself would have each tool merge them over its
+configuration port, moving the merge into every tool; a file per module defeats the point
+of inline settings.
+
 ### Design, correctness and code quality
 
 **B-43** `open` `For Fable Only` — **Formalise the nodes that break the dataflow rule, instead of leaving them
