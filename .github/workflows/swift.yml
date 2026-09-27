@@ -17,10 +17,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# GitHub's hosted macOS image, not the project's own Mac: this workflow runs a pull
+# request's code, and on a public repository that is a stranger's code. Hosted runners
+# are free for a public repository, and the trial (`hosted-runner-trial.yml`) showed the
+# image builds this repository and passes its suites. The nightly, which nobody outside
+# can trigger, stays on the self-hosted runner (end-to-end.yml).
 jobs:
   build-and-test:
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 60
+    runs-on: macos-26
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,18 +78,19 @@ jobs:
   # A separate job so a lint finding and a test failure show up as two red marks, not one.
   # `--strict` because the rule set in .swiftlint.yml is small and curated: every finding is
   # a real defect of the kind that has cost this codebase before, so it fails the build
-  # rather than filing a report nobody reads. Formatting is out of scope here. SwiftLint is
-  # installed on the runner (docs/ci.md); the runner's service PATH may not include
-  # Homebrew, hence the explicit path.
+  # rather than filing a report nobody reads. Formatting is out of scope here.
   lint:
-    runs-on: [self-hosted, macOS]
-    timeout-minutes: 10
+    runs-on: macos-26
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The hosted image may or may not ship SwiftLint; when it does not, Homebrew has it.
       - name: Lint
         run: |
-          SWIFTLINT="$(command -v swiftlint || echo /opt/homebrew/bin/swiftlint)"
-          "$SWIFTLINT" version
-          "$SWIFTLINT" --strict
+          if ! command -v swiftlint > /dev/null; then
+            brew install swiftlint
+          fi
+          swiftlint version
+          swiftlint --strict
