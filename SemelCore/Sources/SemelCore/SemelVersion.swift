@@ -56,11 +56,15 @@ public enum Semel {
     /// the spec text `Node.graphSpec` held (B-115). A column with another meaning, so a
     /// stored graph is rebuilt; the cache is keyed on values, not specs, and survives.
     ///
+    /// 0.1.9: the first public release. Nothing a stored graph holds means anything else;
+    /// the bump is so that the banner and the release tag say the same thing, at the cost
+    /// of one graph rebuild per home, the cache kept.
+    ///
     /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
     /// a schema change usually stops the launch — but this one is derived state that
     /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.8"
+    public static let version = "0.1.9"
 }
