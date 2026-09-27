@@ -164,7 +164,7 @@ final class DictionaryOrderTests: XCTestCase {
         // ── the order is imposed again further down ─────────────────────────────
         "SemelApple/Sources/SemelApple/XcodeProject.swift: objects":
             "appends the borrowed files, which each target sorts once every group is read",
-        "SemelCore/Sources/SemelCore/GraphSpec.swift: otherPorts":
+        "SemelNodeKit/Sources/SemelNodeKit/GraphSpec.swift: otherPorts":
             "every port is compared; which mismatch is quoted first varies, the verdict does not",
         "SemelSwift/Sources/SemelSwift/SwiftCompiler.swift: { fileName, nodeValue in":
             "the discovered and extra sources are sorted by path once the two halves are joined",

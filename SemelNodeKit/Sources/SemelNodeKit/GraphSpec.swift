@@ -1,6 +1,6 @@
 //
 //  GraphSpec.swift
-//  semel
+//  SemelNodeKit
 //
 //  Pure model, serialisation, topology comparison, and parser for graph specs.
 //  No database or live-graph access — see GraphSpecApplier.swift for that.
@@ -37,7 +37,7 @@
 //
 
 import Foundation
-import SemelNodeKit
+
 
 // MARK: - Model
 
@@ -46,43 +46,63 @@ import SemelNodeKit
 ///
 /// Called a property, not an argument, because that is what a node calls it: these are
 /// exactly a node's `properties`, rendered into a spec.
-struct GraphSpecProperty: Equatable, Hashable {
-    let key: String
-    let value: String
+public struct GraphSpecProperty: Equatable, Hashable {
+    public let key: String
+    public let value: String
+
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
 }
 
 /// A single named wire feeding an input port.
-struct GraphSpecWire: Equatable {
-    let name: String          // wire name, e.g. "src/hello.c"
-    let node: GraphSpecNode  // the upstream node
+public struct GraphSpecWire: Equatable {
+    public let name: String          // wire name, e.g. "src/hello.c"
+    public let node: GraphSpecNode  // the upstream node
+
+    public init(name: String, node: GraphSpecNode) {
+        self.name = name
+        self.node = node
+    }
 }
 
 /// A wired input port.  `wires` holds all named wires feeding this port.
-struct GraphSpecInputPort: Equatable {
-    let portName: String
-    let wires:    [GraphSpecWire]
+public struct GraphSpecInputPort: Equatable {
+    public let portName: String
+    public let wires:    [GraphSpecWire]
+
+    public init(portName: String, wires: [GraphSpecWire]) {
+        self.portName = portName
+        self.wires = wires
+    }
 }
 
 /// An expected output port entry (future use — parsed but not yet matched).
-struct GraphSpecOutputPort: Equatable {
-    let portName: String
-    let wires:    [GraphSpecWire]
+public struct GraphSpecOutputPort: Equatable {
+    public let portName: String
+    public let wires:    [GraphSpecWire]
+
+    public init(portName: String, wires: [GraphSpecWire]) {
+        self.portName = portName
+        self.wires = wires
+    }
 }
 
 /// A node in the graph-spec tree.
 public struct GraphSpecNode: Equatable {
     /// Swift type name of the Node, e.g. `"StaticFile"`, `"ClangCompiler"`.
-    let typeName:   String
+    public let typeName:   String
     /// Init-time key-value properties (e.g. `path: 'src/hello.c'`).  Ordered.
-    let properties: [GraphSpecProperty]
+    public let properties: [GraphSpecProperty]
     /// Wired input ports.  Ordered.
-    let inputs:     [GraphSpecInputPort]
+    public let inputs:     [GraphSpecInputPort]
     /// Expected output ports (future use — stored but not yet matched).
-    let outputs:    [GraphSpecOutputPort]
+    public let outputs:    [GraphSpecOutputPort]
     /// Output port consumed downstream, or `nil` for the node-identity / graphSpec form.
-    let outputPort: String?
+    public let outputPort: String?
 
-    init(typeName:   String,
+    public init(typeName:   String,
          properties: [GraphSpecProperty]   = [],
          inputs:     [GraphSpecInputPort]  = [],
          outputs:    [GraphSpecOutputPort] = [],
@@ -101,7 +121,7 @@ extension GraphSpecNode {
     /// A node that already carries `key` keeps its own value: what a formula states wins
     /// over what a builder would stamp. `outputs` is not walked, so a node reachable only
     /// through an output wire is not stamped — nothing matches against it yet.
-    func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
+    public func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
         var properties = self.properties
         if include(self), !properties.contains(where: { $0.key == key }) {
             properties.append(GraphSpecProperty(key: key, value: value))
@@ -125,7 +145,7 @@ extension GraphSpecNode {
     ///
     /// `outputs` is not walked, for the same reason `adding(property:)` does not: nothing
     /// is matched or created through an output wire.
-    static func namesOnlyRegisteredTypes(spec: String) -> Bool {
+    public static func namesOnlyRegisteredTypes(spec: String) -> Bool {
         guard let specNode = try? parse(spec) else {
             return false
         }
@@ -149,7 +169,7 @@ extension GraphSpecNode {
     /// Renders the node to a string.
     /// - Parameter pretty: When `true`, output is indented for human readability.
     ///   When `false` (default), output is compact and suitable for DB storage.
-    func asString(pretty: Bool = false, omitOutputPort: Bool) -> String {
+    public func asString(pretty: Bool = false, omitOutputPort: Bool) -> String {
         asString(pretty: pretty, depth: 0, omitOutputPort: omitOutputPort)
     }
 
@@ -214,11 +234,11 @@ extension GraphSpecNode {
 
 extension GraphSpecNode {
 
-    enum TopologyMatchError: Error {
+    public enum TopologyMatchError: Error {
         case noMatch(reason: String)
     }
 
-    func expectTopologyMatch(_ other: GraphSpecNode) throws {
+    public func expectTopologyMatch(_ other: GraphSpecNode) throws {
         guard typeName == other.typeName else {
             throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
         }
@@ -272,12 +292,12 @@ extension GraphSpecNode {
 
 /// A spec string that could not be read back. Sentences rather than case names, because
 /// the engine interns a thrown error's text onto the failing node's output ports.
-enum GraphSpecParseError: Error, CustomStringConvertible {
+public enum GraphSpecParseError: Error, CustomStringConvertible {
     case unexpectedCharacter(Character?, context: String)
     case unexpectedEndOfInput(context: String)
     case emptyIdentifier
 
-    var description: String {
+    public var description: String {
         switch self {
         case .unexpectedCharacter(let character, let context):
             guard let character else {
