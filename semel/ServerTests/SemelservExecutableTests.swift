@@ -108,7 +108,18 @@ final class SemelservExecutableTests: XCTestCase {
 
         XCTAssertTrue(SocketWait.wait(forSocketAt: socketPath), "the server never created \(socketPath!)")
 
-        let loggedBeforeShutdown = try String(contentsOfFile: logPath, encoding: .utf8)
+        // The socket is listening a moment before the banner is printed, so the file is
+        // read again for a little while: what is asserted is that the lines reach the disk
+        // while the process lives, not that they beat the socket there.
+        let deadline = Date().addingTimeInterval(5)
+        var loggedBeforeShutdown = ""
+        repeat {
+            loggedBeforeShutdown = try String(contentsOfFile: logPath, encoding: .utf8)
+            if loggedBeforeShutdown.contains("Semel server") {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        } while Date() < deadline
         XCTAssertTrue(loggedBeforeShutdown.contains("Semel server"),
                       "banner missing from the redirected log while the server is still running: " +
                       "\(loggedBeforeShutdown)")

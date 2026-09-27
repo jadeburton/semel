@@ -50,6 +50,10 @@ final class HermeticityTests: XCTestCase {
         // node function does depends on them.
         "SemelPaths.swift":
             "launch-time placement of the root and the server socket",
+        // `SEMEL_JOBS`, read at launch for how many nodes compute at once (B-114). Not a
+        // node input: nothing a node function does depends on it.
+        "Jobs.swift":
+            "launch-time reading of the concurrency limit",
     ]
 
     /// What reaches outside a node's inputs. `Process(` also matches `Foundation.Process(`.
