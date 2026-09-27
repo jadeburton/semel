@@ -62,14 +62,6 @@ neither broken down yet. With a compiler that compiles once its folder walk has 
 (B-112), the cold build took 93 s; with results written as each node finishes rather than
 once a whole batch has (B-113), 85 s.
 
-**B-114** `open` `For Fable Only` — **A running tool holds a Swift concurrency thread.**
-`LocalFileSystemTool` waits for its process with `waitUntilExit()` inside a task of the
-engine's task group. The cooperative pool is as wide as the machine has cores, so the
-number of tools running at once is capped by accident rather than by a setting, and any
-other work on that pool waits behind the compilers — whether the server's request handling
-is among it has not been checked. Wanted: a declared limit on concurrent tools, and a
-process wait that does not block a pool thread.
-
 **B-115** `open` `For Fable Only` — **A node's `graphSpec` spells out its whole upstream graph.**
 Each spec is its node's inputs rendered recursively, so a node shared by two consumers is
 written out twice in everything below them, and the text grows with the graph. Measured:
@@ -88,6 +80,14 @@ IceCubes's 57 MB executable and 40 MB archives that is several full passes per f
 build. Streaming the hash and cloning the sandbox file into the store would remove the
 copies; how often a read must be verified is the decision, since verification was added on
 purpose.
+
+**B-117** `open` `For Fable Only` — **A node scheduled during a pass waits for a running one to finish.**
+`processAllNodes` fills its free slots and then awaits the next result. A node that becomes
+scheduled meanwhile — a push arriving during a long link, a batch ending — is picked up only
+when some running task finishes, however many slots are free. Found by B-114's concurrency
+test, where nodes created after the pass's first select ran as a second wave a full node
+later. Wanted: the loop to wake on the work signal as well as on a result — a select over
+the two — so a free slot is filled as soon as there is something for it.
 
 ## Design, correctness and code quality
 

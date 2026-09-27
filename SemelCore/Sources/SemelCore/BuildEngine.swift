@@ -39,10 +39,11 @@ public final class BuildEngine {
 
     // MARK: - Constants
 
-    /// How many nodes compute at once. A running tool holds a concurrency thread for as
-    /// long as its process runs (B-114), and the cooperative pool is one thread per core,
-    /// so running more than this would only queue them there.
-    private static let maximumRunningNodes = MachineQuery.activeProcessorCount
+    /// How many nodes compute at once: `SEMEL_JOBS`, or the machine's core count (B-114).
+    /// A declared limit, not the concurrency runtime's: a node's `process()` runs on a
+    /// thread of its own (`compute`), so the cooperative pool has no part in how many
+    /// tools run at once — and nothing else on that pool waits behind them.
+    public let jobs: Int
 
     // MARK: - State
 
@@ -101,13 +102,15 @@ public final class BuildEngine {
     ///
     /// Pass `startProcessingLoop: false` in unit and integration tests to prevent the
     /// background Task from starting — this keeps tests synchronous and avoids races.
-    init(database: DatabaseLayer, startProcessingLoop: Bool = true) throws {
+    /// `jobs` is how many nodes compute at once; the environment's, unless a test says.
+    init(database: DatabaseLayer, startProcessingLoop: Bool = true, jobs: Int = Jobs.resolve().count) throws {
         try Self.registerTypes()
 
         // The tools the installed toolchains declared, located on this machine now. The
         // engine knows none of them by name; a host registers its toolchains first.
         try ToolDiscovery.registerInstalledTools(into: .instance)
         self.database = database
+        self.jobs = max(1, jobs)
 
         if startProcessingLoop {
             self.startProcessingLoop()
@@ -727,9 +730,10 @@ public final class BuildEngine {
 
     /// Runs scheduled nodes until none is scheduled and none is running, in two roles.
     ///
-    /// **Computing (concurrent):** up to `maximumRunningNodes` nodes read their inputs and
-    /// run `process()` at once, each in a task of its own. A task mutates nothing in the
-    /// graph, so tasks sharing providers are safe together.
+    /// **Computing (concurrent):** up to `jobs` nodes read their inputs and run
+    /// `process()` at once, each in a task of its own that hands the work to a thread and
+    /// waits for it (B-114). A task mutates nothing in the graph, so tasks sharing
+    /// providers are safe together.
     ///
     /// **Writing (this loop, one result at a time):** each result is written as soon as
     /// its task finishes — outputs, wires, cascades — and the slot it frees is filled from
@@ -749,7 +753,7 @@ public final class BuildEngine {
                 // consumers (B-25), and a write may have added output files to folders.
                 try Folder.flushDirtyManifests()
 
-                let free = Self.maximumRunningNodes - running.count
+                let free = jobs - running.count
                 let started = free > 0 ? try database.node.selectScheduled(limit: free, excluding: running) : []
                 settleTally.noteScheduled(started.compactMap(\.id))
                 for nodeRecord in started {
@@ -759,16 +763,7 @@ public final class BuildEngine {
                     try nodeRecord.setScheduled(false)
                     running.insert(nodeID)
                     group.addTask {
-                        guard let node = try? nodeRecord.makeNode(),
-                              type(of: node).descriptor.hasInputs,
-                              let result = node.tryComputeOutput() else {
-                            return (nodeRecord, nil)
-                        }
-                        return (nodeRecord, ComputeResult(nodeRecord: nodeRecord,
-                                                          output: result.output,
-                                                          keyMaterial: result.keyMaterial,
-                                                          computeStart: result.computeStart,
-                                                          fromCache: result.fromCache))
+                        await Self.compute(nodeRecord)
                     }
                 }
 
@@ -785,6 +780,36 @@ public final class BuildEngine {
                     write(result)
                 }
             }
+        }
+    }
+
+    /// One node's computation, on a thread of its own; the task that asked suspends until
+    /// it is done and holds no thread meanwhile.
+    ///
+    /// A `process()` is synchronous by contract, and a tool node's is a wait on a child
+    /// process for as long as it takes. On the cooperative pool — one thread per core,
+    /// carrying the loop's signals and every client's wait — that wait held a thread, and
+    /// everything else queued behind the compilers. A Dispatch queue is no better a home:
+    /// its width is the machine's constrained-thread limit less whatever is already busy,
+    /// and it ran eight nodes of ten asked for. A thread per computing node costs a
+    /// creation per node, and there are never more than `jobs` of them.
+    private static func compute(_ nodeRecord: NodeRecord) async -> (NodeRecord, ComputeResult?) {
+        await withCheckedContinuation { continuation in
+            let thread = Thread {
+                guard let node = try? nodeRecord.makeNode(),
+                      type(of: node).descriptor.hasInputs,
+                      let result = node.tryComputeOutput() else {
+                    return continuation.resume(returning: (nodeRecord, nil))
+                }
+                continuation.resume(returning: (nodeRecord, ComputeResult(nodeRecord: nodeRecord,
+                                                                          output: result.output,
+                                                                          keyMaterial: result.keyMaterial,
+                                                                          computeStart: result.computeStart,
+                                                                          fromCache: result.fromCache)))
+            }
+            thread.name = "semel.compute"
+            thread.qualityOfService = .userInitiated
+            thread.start()
         }
     }
 

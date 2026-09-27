@@ -102,12 +102,45 @@ struct TimedNode: Node {
 
     static let finished = FinishLog()
 
+    /// How many runs are inside `process()` now, and the most there have been at once
+    /// (B-114). Written from the compute threads and read from the test.
+    final class Gauge {
+        private let lock = NSLock()
+        private var inside = 0
+        private var most = 0
+
+        var current: Int { lock.withLock { inside } }
+        var peak: Int { lock.withLock { most } }
+
+        func enter() {
+            lock.withLock {
+                inside += 1
+                most = max(most, inside)
+            }
+        }
+
+        func leave() {
+            lock.withLock { inside -= 1 }
+        }
+
+        func reset() {
+            lock.withLock {
+                inside = 0
+                most = 0
+            }
+        }
+    }
+
+    static let running = Gauge()
+
     func process(input: ProcessInput) throws -> ProcessOutput {
         let label = thisNode.properties["label"] ?? ""
         guard (try? input.inputValues[Self.input]?.values.first?.expectValue()) != nil else {
             return .init(outputValues: [Self.output: .noValue(reason: .inputNotProduced)], inputWireSpecs: [:])
         }
+        Self.running.enter()
         Thread.sleep(forTimeInterval: Double(thisNode.properties["seconds"] ?? "0") ?? 0)
+        Self.running.leave()
         Self.finished.record(label)
         return .init(outputValues: [Self.output: .value(try label.intern())], inputWireSpecs: [:])
     }

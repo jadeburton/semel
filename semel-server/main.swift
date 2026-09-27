@@ -118,5 +118,10 @@ do {
 print("Semel server \(Semel.version)")
 print("Graph:  \(SemelPaths.database.path)")
 print("Socket: \(socketPath)")
+// A setting that silently fell back would be one nobody could trust, so an unusable
+// SEMEL_JOBS is named here beside the value that stands in for it.
+let jobs = Jobs.resolve()
+print("Jobs:   \(BuildEngine.shared.jobs)"
+      + (jobs.ignored.map { " (\(Jobs.variable)=\($0) ignored: not a positive integer)" } ?? ""))
 
 dispatchMain()

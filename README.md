@@ -56,7 +56,9 @@ log is `semelserv.log` beside the graph. Everything the engine persists — the 
 database and the object store — lives under `~/Library/Application Support/semel`,
 whatever directory it was launched from; the banner prints the database path.
 `SEMEL_HOME` moves that root and `SEMEL_SOCKET` the daemon's socket, which is how the
-tests give each server a home of its own. `help` lists the commands at the prompt:
+tests give each server a home of its own; `SEMEL_JOBS` is how many nodes it computes at
+once — every running tool is a process — and is the core count unless set. The banner
+prints all three. `help` lists the commands at the prompt:
 
 ### Navigation
 
