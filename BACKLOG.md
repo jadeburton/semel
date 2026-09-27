@@ -53,14 +53,6 @@ a C-family target; `help`, and a typo names its nearest verb. What remains:
    `❌ 18 nodes scheduled, …, 25 errors` and then the push that fixes it. True, and noise;
    holding the summary of a settle the loop answers is the fix.
 
-## Formula language
-
-**B-111** `open` — **A prelude another prelude includes is callable from the formula.**
-The formula preludes design
-(`docs/superpowers/specs/2026-09-25-semel-formula-preludes-design.md`) says a formula
-reaches only the preludes it includes; a prelude pulled in by another prelude's `include`
-is callable from the formula too. Split from B-108, whose other residuals are features.
-
 ## Performance
 
 Measured 2026-09-27 on the IceCubes packages tree (`C1/icecubes/Packages`, thirteen

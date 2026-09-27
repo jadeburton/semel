@@ -473,11 +473,9 @@ scoped with every parameter bound and usable in templates; dotted calls reach a 
 funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the `c`,
 `tutorial` and `HelloApp` fixtures use them. What remains:
 
-1. **A prelude another prelude includes is callable from the formula** — a bug, filed as
-   B-111 in `BACKLOG.md`.
-2. **Nested source folders.** Folder patterns match one level, so `sources: <src>` finds
+1. **Nested source folders.** Folder patterns match one level, so `sources: <src>` finds
    `src/*.c` and not `src/lib/*.c`; the fix is `**` in `ProjectBuilder`'s wildcard matcher.
-3. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
+2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 
 ### Configuration

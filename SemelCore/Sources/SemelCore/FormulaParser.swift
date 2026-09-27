@@ -95,13 +95,25 @@ extension FormulaFile {
         // products, its own includes too. A spec reached both ways brings its products:
         // one path asking for them is enough, so a spec first merged for its funcs alone
         // is merged again, whole, when a full include reaches it.
+        //
+        // Each text sees the namespaces it includes itself, and no other (B-111): a prelude
+        // pulled in by another prelude is callable inside that prelude, and from the
+        // formula only once the formula includes it too. A scope is a prelude's namespace,
+        // or `nil` for the formula; an unnamespaced text — a package's generated formula —
+        // is merged into its includer's scope, so what it includes, its includer sees.
         let own = FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader)
-        var pending = file.includes
+        var pending = file.includes.map { (include: $0, scope: String?.none) }
         var broughtProducts: [String: Bool] = [:]
+        var namespaceOfSpec: [String: String?] = [:]
+        var visible: [String?: Set<String>] = [:]
         while !pending.isEmpty {
-            let include = pending.removeFirst()
+            let (include, scope) = pending.removeFirst()
             let spec = try own.resolve(include: include.expr).asString(omitOutputPort: false)
             if let brought = broughtProducts[spec], brought || include.funcsOnly {
+                // Merged already, but this includer sees it too.
+                if let namespace = namespaceOfSpec[spec] ?? nil {
+                    visible[scope, default: []].insert(namespace)
+                }
                 continue
             }
             broughtProducts[spec] = !include.funcsOnly
@@ -110,12 +122,18 @@ extension FormulaFile {
             }
             // Generated text names every path absolutely, so the base path is nominal.
             var includedParser = FormulaParser(try FormulaLexer.tokenize(includedFormula, basePath: basePath))
-            let includedFile = try includedParser.parseFile().namespaced()
+            let parsed = try includedParser.parseFile()
+            let includedFile = try parsed.namespaced()
+            namespaceOfSpec[spec] = parsed.namespace
+            if let namespace = parsed.namespace {
+                visible[scope, default: []].insert(namespace)
+            }
             file = try file.merging(include.funcsOnly ? includedFile.withoutProducts() : includedFile)
             pending += includedFile.includes.map {
-                FormulaInclude(expr: $0.expr, funcsOnly: $0.funcsOnly || include.funcsOnly)
+                (FormulaInclude(expr: $0.expr, funcsOnly: $0.funcsOnly || include.funcsOnly), parsed.namespace ?? scope)
             }
         }
+        try file.checkNamespaceVisibility(visible)
 
         return try FormulaResolver(file, wildcardExpander: wildcardExpander, fileReader: fileReader).resolve()
     }
@@ -209,6 +227,39 @@ struct FormulaFile {
 
         return FormulaFile(functions: mergedFunctions, products: mergedProducts, includes: includes)
     }
+
+    /// Every dotted call names a namespace its caller may see (B-111): the caller's own,
+    /// or one the caller's text includes itself. `visible` maps a scope — a prelude's
+    /// namespace, `nil` for the formula — to the namespaces it includes. A func's scope is
+    /// the namespace in its name, since `namespaced()` put it there; a product's is the
+    /// formula's. Checked once, after merging, as a walk over the text: resolution stays a
+    /// lookup by name.
+    func checkNamespaceVisibility(_ visible: [String?: Set<String>]) throws {
+        for function in functions {
+            try Self.checkCalls(in: function.body, from: Self.namespace(ofName: function.name), visible: visible)
+        }
+        for product in products {
+            try Self.checkCalls(in: product.body, from: nil, visible: visible)
+        }
+    }
+
+    /// The namespace of a dotted name, `clang` in `clang.executable`; nil for a bare one.
+    private static func namespace(ofName name: String) -> String? {
+        guard let dot = name.firstIndex(of: ".") else {
+            return nil
+        }
+        return String(name[..<dot])
+    }
+
+    private static func checkCalls(in body: FormulaExpr, from scope: String?, visible: [String?: Set<String>]) throws {
+        for callee in body.callNames {
+            guard let namespace = namespace(ofName: callee), namespace != scope,
+                  !(visible[scope] ?? []).contains(namespace) else {
+                continue
+            }
+            throw FormulaParseError.preludeNotIncluded(namespace: namespace, callee: callee, scope: scope)
+        }
+    }
 }
 
 struct FuncDef: Equatable {
@@ -232,6 +283,38 @@ enum FormulaCallArg: Equatable {
     case positional(FormulaExpr)
     case labeled(key: String, value: FormulaExpr)    // func named-arg OR node property
     case inputWire(portName: String, wires: [WireDictEntry])
+}
+
+// MARK: - The calls an expression makes
+
+extension FormulaExpr {
+    /// The name of every call in this expression, outermost first.
+    var callNames: [String] {
+        guard case .call(let name, let args, _) = self else {
+            return []
+        }
+        return [name] + args.flatMap(\.callNames)
+    }
+}
+
+extension FormulaCallArg {
+    var callNames: [String] {
+        switch self {
+        case .positional(let expr):        return expr.callNames
+        case .labeled(_, let expr):        return expr.callNames
+        case .inputWire(_, let wires):     return wires.flatMap(\.callNames)
+        }
+    }
+}
+
+extension WireDictEntry {
+    var callNames: [String] {
+        switch self {
+        case .simple(let key, let value):            return key.callNames + value.callNames
+        case .unnamed(let value):                    return value.callNames
+        case .forEach(_, let items, _, let value):   return items.flatMap(\.callNames) + value.callNames
+        }
+    }
 }
 
 // MARK: - Namespacing a prelude's calls
@@ -316,6 +399,7 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
     case unboundParameter(function: String, parameter: String)
     case namespaceOutsidePrelude(namespace: String)
     case productInPrelude(namespace: String, product: String)
+    case preludeNotIncluded(namespace: String, callee: String, scope: String?)
 
     var description: String {
         switch self {
@@ -349,6 +433,12 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
             return "'namespace \(namespace)' belongs to a plugin's prelude, not to a formula"
         case .productInPrelude(let namespace, let product):
             return "the prelude '\(namespace)' declares the product '\(product)'; a prelude holds funcs only"
+        case .preludeNotIncluded(let namespace, let callee, let scope):
+            guard let scope else {
+                return "'\(callee)' calls into the prelude '\(namespace)', which this formula does not include; "
+                     + "add the include that provides it"
+            }
+            return "the prelude '\(scope)' calls '\(callee)' without including the prelude that provides '\(namespace)'"
         }
     }
 

@@ -696,6 +696,74 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(result["mine"]?.typeName, "Mine")
     }
 
+    // MARK: Preludes including preludes (B-111)
+
+    private let applePrelude = "FormulaPrelude(name: 'apple').formula"
+    private let swiftPrelude = "FormulaPrelude(name: 'swift').formula"
+
+    /// `apple` includes `swift` for its own use, and `swift` stands alone.
+    private var nestedPreludes: [String: String] {
+        [
+            applePrelude: """
+                namespace apple
+                include 'swift'
+                func app(sources) = Bundle(input: ['exe': swift.module(sources: sources)]).output
+                """,
+            swiftPrelude: "namespace swift\nfunc module(sources) = Compiler(path: sources).output",
+        ]
+    }
+
+    /// A formula that includes only `apple` has not asked for `swift`; a call into it says
+    /// which include is missing rather than resolving through the prelude's own include.
+    func test_aPreludeIncludedByAnotherIsNotCallableFromTheFormula() {
+        XCTAssertThrowsError(try parse("""
+            include 'apple'
+            product 'x' = swift.module(sources: <src>)
+            """, included: nestedPreludes)) { error in
+            XCTAssertEqual("\(error)", "'swift.module' calls into the prelude 'swift', which this formula does not include; "
+                                     + "add the include that provides it")
+        }
+    }
+
+    /// The prelude that includes it may call it, and the formula reaches the result through
+    /// the prelude it did include.
+    func test_aPreludeMayCallThePreludeItIncludes() throws {
+        let result = try parse("include 'apple'\nproduct 'x' = apple.app(sources: <src>)", included: nestedPreludes)
+
+        let product = try XCTUnwrap(result["x"])
+        XCTAssertEqual(product.typeName, "Bundle")
+        XCTAssertEqual(product.inputs.first?.wires.first?.node.typeName, "Compiler")
+    }
+
+    /// Including both is what makes both callable — `HelloApp`'s shape. `swift` first, so
+    /// that `apple`'s own include of it finds the text merged already and still counts.
+    func test_aFormulaIncludingBothPreludesMayCallBoth() throws {
+        let result = try parse("""
+            include 'swift'
+            include 'apple'
+            product 'lib' = swift.module(sources: <lib>)
+            product 'x' = apple.app(sources: <src>)
+            """, included: nestedPreludes)
+
+        XCTAssertEqual(result["lib"]?.typeName, "Compiler")
+        XCTAssertEqual(result["x"]?.typeName, "Bundle")
+    }
+
+    /// A prelude reaching for a prelude it does not include is the plugin's bug, and named
+    /// as the prelude's — even when the formula happens to include the other one.
+    func test_aPreludeCallingAPreludeItDoesNotIncludeIsRejected() {
+        var preludes = nestedPreludes
+        preludes[applePrelude] = "namespace apple\nfunc app(sources) = Bundle(input: ['exe': swift.module(sources: sources)]).output"
+
+        XCTAssertThrowsError(try parse("""
+            include 'apple'
+            include 'swift'
+            product 'x' = apple.app(sources: <src>)
+            """, included: preludes)) { error in
+            XCTAssertEqual("\(error)", "the prelude 'apple' calls 'swift.module' without including the prelude that provides 'swift'")
+        }
+    }
+
     /// A product in a prelude would be published in every project that includes it.
     func test_aPreludeDeclaringAProductIsRejected() {
         XCTAssertThrowsError(try parse("include 'clang'", included: [
