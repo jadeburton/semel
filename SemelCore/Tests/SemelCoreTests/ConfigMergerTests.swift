@@ -156,6 +156,31 @@ final class ConfigMergerTests: SemelCoreTestCase {
         XCTAssertEqual(node.kind, ConfigMerger.kind)
     }
 
+    // MARK: - One wire per port
+
+    /// The merger states which of two sets of settings wins by the port each arrives on;
+    /// two wires on one port would be a merge inside the merge whose precedence is the
+    /// order of two names (B-120). Refused on either port, naming it and its wires.
+    func test_twoWiresOnEitherPortAreAnErrorNamingThePortAndTheWires() throws {
+        let node = try ConfigMerger(thisNode: NodeRecord(id: 1, kind: ConfigMerger.kind))
+        let one  = NodeValue.value(try "a=1".intern())
+        let two  = NodeValue.value(try "a=2".intern())
+
+        for port in [ConfigMerger.basePort, ConfigMerger.overridePort] {
+            let other = port == ConfigMerger.basePort ? ConfigMerger.overridePort : ConfigMerger.basePort
+            XCTAssertThrowsError(try node.process(input: ProcessInput(inputValues: [
+                port:  ["machine": one, "project": two],
+                other: ["only": one],
+            ]))) { error in
+                guard case NodeError.severalWiresOnOneWirePort(let erroredPort, let wires) = error else {
+                    return XCTFail("expected severalWiresOnOneWirePort, got \(error)")
+                }
+                XCTAssertEqual(erroredPort, port)
+                XCTAssertEqual(wires, ["machine", "project"])
+            }
+        }
+    }
+
     // MARK: - Composing
 
     /// Three files need two mergers, because a port has no stated precedence between two wires

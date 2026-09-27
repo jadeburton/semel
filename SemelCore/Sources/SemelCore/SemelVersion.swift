@@ -60,11 +60,18 @@ public enum Semel {
     /// the bump is so that the banner and the release tag say the same thing, at the cost
     /// of one graph rebuild per home, the cache kept.
     ///
+    /// 0.1.10: `Configuration` is `SettingsLiteral`, a source with no input port, and every
+    /// formula lays its literals over its settings with a `ConfigMerger` instead (B-120). The
+    /// rename alone would change nothing stored — an identity is over the kind — but a stored
+    /// literal node holds a wire into the `base` port its type no longer declares, and an
+    /// output merged from it that nothing would ever recompute, a source never being
+    /// scheduled. The same reason as 0.1.7: what a stored node's wiring means has moved.
+    ///
     /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
     /// a schema change usually stops the launch — but this one is derived state that
     /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.9"
+    public static let version = "0.1.10"
 }

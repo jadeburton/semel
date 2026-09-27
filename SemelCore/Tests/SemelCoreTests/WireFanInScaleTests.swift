@@ -88,7 +88,7 @@ final class WireFanInScaleTests: SemelCoreTestCase {
     /// another source is still refused, wherever in the fan it sits.
     func test_aNameTakenEarlyInTheFanIsStillRefusedAtTheEndOfIt() throws {
         let fan = try fanOf(Self.widths.small)
-        let latecomer = try makeConfiguration(role: "latecomer")
+        let latecomer = try makeNode(role: "latecomer")
 
         XCTAssertThrowsError(try connect(latecomer, to: fan.consumer, name: "wire0")) { error in
             guard case WireError.attemptToCreateWireWithDuplicateName(let name) = error else {
@@ -104,7 +104,7 @@ final class WireFanInScaleTests: SemelCoreTestCase {
         let fan = try fanOf(Self.widths.small)
 
         let wires = try database.wire.select(goingToNodeID: try fan.consumer.requireID(),
-                                             toSymbolID: "base".asSymbolID())
+                                             toSymbolID: "input".asSymbolID())
         XCTAssertEqual(wires.count, Self.widths.small)
         XCTAssertEqual(Set(wires.map { $0.fromNodeID }).count, Self.widths.small,
                        "each wire comes from a source of its own")
@@ -131,8 +131,8 @@ final class WireFanInScaleTests: SemelCoreTestCase {
     /// Creates the sources and their consumer, then wires the whole fan into one port of it.
     /// Creating the nodes is set-up and is outside everything the cost counts.
     private func fanOf(_ width: Int) throws -> FanCost {
-        let consumer = try makeConfiguration(role: "consumer-of-\(width)")
-        let sources  = try (0..<width).map { try makeConfiguration(role: "source-\(width)-\($0)") }
+        let consumer = try makeNode(role: "consumer-of-\(width)")
+        let sources  = try (0..<width).map { try makeNode(role: "source-\(width)-\($0)") }
 
         WireDataAccess.rowsRead = 0
         let start = Date.now
@@ -146,8 +146,8 @@ final class WireFanInScaleTests: SemelCoreTestCase {
                        seconds: Date.now.timeIntervalSince(start))
     }
 
-    private func makeConfiguration(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+    private func makeNode(role: String) throws -> NodeRecord {
+        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
         let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
@@ -155,9 +155,9 @@ final class WireFanInScaleTests: SemelCoreTestCase {
     private func connect(_ source: NodeRecord, to consumer: NodeRecord, name: String) throws {
         try Wire.connectWire(database: database,
                              fromNodeID: try source.requireID(),
-                             fromSymbolID: "output".asSymbolID(),
+                             fromSymbolID: "files".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "base".asSymbolID(),
+                             toSymbolID: "input".asSymbolID(),
                              name: name.asSymbolID())
     }
 }

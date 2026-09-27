@@ -6,7 +6,7 @@
 //  parses.
 //
 //  A formula can be perfect text and still describe a build that cannot start: a tool wired
-//  to a `Configuration()` with nothing in it parses, builds a graph, and then throws the
+//  to a `SettingsLiteral()` with nothing in it parses, builds a graph, and then throws the
 //  moment the node reads its settings. Two such holes shipped through six task reviews on
 //  this branch, both invisible to every test that existed, because SemelSwift deliberately
 //  does not depend on the engine and so cannot compose what it emits. This target can see
@@ -162,7 +162,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
     }
 
     /// Pushes `configFile` onto every `semel.config` StaticFile in the graph, then drives the
-    /// two node types between it and a tool so their outputs are on the wire.
+    /// node types between it and a tool so their outputs are on the wire.
     ///
     /// Driven directly rather than through the engine's loop because the tools themselves
     /// must not run: their source folders do not exist, so they would fail for reasons that
@@ -176,9 +176,11 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
         }
         XCTAssertGreaterThan(configFilesFound, 0, "nothing in the graph reads a config file")
 
+        // Mergers twice: one lays the project's file over the machine's above the selectors,
+        // and one per target lays its literals over a selector below them.
         try processEveryNode(ofKind: ConfigMerger.kind)
         try processEveryNode(ofKind: ConfigFilter.kind)
-        try processEveryNode(ofKind: Configuration.kind)
+        try processEveryNode(ofKind: ConfigMerger.kind)
     }
 
     private func processEveryNode(ofKind kind: UInt) throws {
@@ -210,7 +212,7 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
     /// Every node the converter and the plugin put in the graph must be able to construct
     /// its configuration from the file it was wired to. This is the guard that catches a
-    /// node wired to an empty `Configuration()`, or to a config file nothing wrote.
+    /// node wired to an empty `SettingsLiteral()`, or to a config file nothing wrote.
     func test_everyEmittedNodeResolvesItsConfiguration() throws {
         let (formula, readerSpecs) = try convert()
         try buildGraph(fromFormula: formula)
@@ -260,11 +262,11 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
             try buildGraph(fromSpec: spec)
         }
 
-        // The selectors and Configuration nodes still run; what they have to work with is a
-        // config file nobody ever pushed.
+        // The selectors and mergers still run; what they have to work with is a config file
+        // nobody ever pushed.
         try processEveryNode(ofKind: ConfigMerger.kind)
         try processEveryNode(ofKind: ConfigFilter.kind)
-        try processEveryNode(ofKind: Configuration.kind)
+        try processEveryNode(ofKind: ConfigMerger.kind)
 
         for nodeRecord in try database.node.select(kind: SwiftPackageReader.kind) {
             let settings = try settingsReaching(nodeRecord, port: SwiftPackageReader.configuration)

@@ -29,7 +29,7 @@
 //  Examples:
 //      StaticFile(path: 'src/hello.c').output
 //      ClangPreprocessor(
-//          configuration: ["config": Configuration(tool: 'preprocessor').output],
+//          configuration: ["config": SettingsLiteral(tool: 'preprocessor').output],
 //          input: ["hello.c": StaticFile(path: 'hello.c').output]).output
 //      ClangLinker(
 //          objectFiles: ["compiler_hello": ClangCompiler(...).output,

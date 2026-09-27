@@ -49,7 +49,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     /// report from saying the same thing three times and hiding how many distinct problems
     /// there are.
     func test_portsSharingAMessageAreGatheredOntoOneItem() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let ports = [try port(nodeID, "output", "boom"),
                      try port(nodeID, "infoLog", "boom"),
                      try port(nodeID, "errorLog", "boom")]
@@ -67,7 +67,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     /// message came from. A lone port on a lone item does neither, so the prefix repeats
     /// the heading in the engine's own vocabulary and is left out.
     func test_oneItemCarryingOnePortIsWrittenWithoutIt() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let ports = [try port(nodeID, "output", "boom")]
 
         let lines = ErrorReport.lines(forNodeID: nodeID, ports: ports,
@@ -78,7 +78,7 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     /// Two messages are two items, and then the ports say which is which.
     func test_theirPortsAreNamedAsSoonAsThereIsMoreThanOneItem() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let ports = [try port(nodeID, "output", "boom"),
                      try port(nodeID, "errorLog", "bang")]
 
@@ -93,7 +93,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     /// report are sums of ports, so a heading saying two errors sits above a line naming
     /// two ports; dropping the names there would leave the number unaccounted for.
     func test_onePortIsTheConditionRatherThanOneItem() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let ports = [try port(nodeID, "output", "boom"),
                      try port(nodeID, "errorLog", "boom")]
 
@@ -104,7 +104,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     }
 
     func test_distinctMessagesGetTheirOwnLines() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let ports = [try port(nodeID, "output", "first"),
                      try port(nodeID, "infoLog", "second")]
 
@@ -118,7 +118,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     /// Sorted, so the same failure reads the same way twice. Set iteration order is seeded
     /// per process, so without this a report would shuffle between runs.
     func test_messagesAndPortNamesAreSorted() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let ports = [try port(nodeID, "zebra", "b"), try port(nodeID, "alpha", "b"),
                      try port(nodeID, "middle", "a")]
 
@@ -136,7 +136,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     /// With no ports to announce, the first line sits on the bullet and the rest are
     /// indented under it.
     func test_aMultiLineMessageIsIndentedUnderItsFirstLine() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let message = "Missing configuration. Add these:\n\nclang.compiler.target=…\n"
         let ports = [try port(nodeID, "output", message)]
 
@@ -150,7 +150,7 @@ final class ErrorReportTests: SemelCoreTestCase {
 
     /// With the ports announced, the block is indented under them.
     func test_aMultiLineMessageBesideAnotherIsIndentedUnderItsPorts() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let message = "Missing configuration. Add these:\n\nclang.compiler.target=…\n"
         let ports = [try port(nodeID, "output", message),
                      try port(nodeID, "errorLog", "boom")]
@@ -273,7 +273,7 @@ final class ErrorReportTests: SemelCoreTestCase {
         let builder = try ProjectBuilder(thisNode: NodeRecord(id: 1, kind: ProjectBuilder.kind))
         let broken = """
             product 'MyProduct' =
-                Configuration(moduleName: noSuchName).output
+                SettingsLiteral(moduleName: noSuchName).output
             """
         let input = ProcessInput(inputValues: [
             ProjectBuilder.projectFileInputPort:  ["input:/proj/build.fmla": .value(try broken.intern())],
@@ -300,7 +300,7 @@ final class ErrorReportTests: SemelCoreTestCase {
     /// Every node holds the initializing state between being created and first processing,
     /// so reporting it would announce an error for every node in a fresh graph.
     func test_aPortThatHasNotBeenProcessedIsNotReportable() throws {
-        let nodeID = try makeNode(kind: Configuration.kind)
+        let nodeID = try makeNode(kind: SettingsLiteral.kind)
         let initializing = try NodeValue.noValue(reason: .initializing)
             .asOutputPort(nodeID: nodeID, outputSymbolID: "output".asSymbolID())
 

@@ -38,7 +38,7 @@ final class SwallowedDatabaseErrorTests: SemelCoreTestCase {
     }
 
     private func makeDerivedNode() throws -> ObjectID {
-        let (node, _) = try GraphSpecNode.parse("Configuration(role: 'doomed').output").findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'doomed').output").findOrCreateMatchingNode()
         return try node.requireID()
     }
 

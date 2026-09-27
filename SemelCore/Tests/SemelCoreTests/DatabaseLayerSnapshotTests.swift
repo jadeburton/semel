@@ -52,33 +52,33 @@ final class DatabaseLayerSnapshotTests: SemelCoreTestCase {
         DispatchQueue.global().async { [database] in
             startWriter.wait()
             writerAtTheDoor.signal()
-            _ = try? database?.node.insert(NodeRecord(kind: Configuration.kind))
+            _ = try? database?.node.insert(NodeRecord(kind: SettingsLiteral.kind))
             writerDone.signal()
         }
 
         var counts: [Int] = []
         try database.withReadSnapshot {
-            counts.append(try database.node.select(kind: Configuration.kind).count)
+            counts.append(try database.node.select(kind: SettingsLiteral.kind).count)
             startWriter.signal()
             writerAtTheDoor.wait()
-            counts.append(try database.node.select(kind: Configuration.kind).count)
+            counts.append(try database.node.select(kind: SettingsLiteral.kind).count)
         }
 
         XCTAssertEqual(writerDone.wait(timeout: .now() + 5), .success, "the writer must get its turn")
         XCTAssertEqual(counts.first, counts.last, "a writer cannot land between two reads of one snapshot")
-        XCTAssertEqual(try database.node.select(kind: Configuration.kind).count, (counts.first ?? 0) + 1,
+        XCTAssertEqual(try database.node.select(kind: SettingsLiteral.kind).count, (counts.first ?? 0) + 1,
                        "and it lands as soon as the snapshot ends")
     }
 
     /// The inner call finds a connection already published and participates in it, which
     /// is what makes every accessor inside a snapshot share its one state.
     func test_aSnapshotNestedInASnapshotIsTheSameSnapshot() throws {
-        _ = try database.node.insert(NodeRecord(kind: Configuration.kind))
+        _ = try database.node.insert(NodeRecord(kind: SettingsLiteral.kind))
 
         var inner = 0
         try database.withReadSnapshot {
             try database.withReadSnapshot {
-                inner = try database.node.select(kind: Configuration.kind).count
+                inner = try database.node.select(kind: SettingsLiteral.kind).count
             }
         }
 
@@ -95,7 +95,7 @@ final class DatabaseLayerSnapshotTests: SemelCoreTestCase {
     /// report them.
     func test_aWriteInsideASnapshotIsNotBlamedOnTheVolumeAlone() throws {
         XCTAssertThrowsError(try database.withReadSnapshot {
-            _ = try database.node.insert(NodeRecord(kind: Configuration.kind))
+            _ = try database.node.insert(NodeRecord(kind: SettingsLiteral.kind))
         }) { error in
             XCTAssertTrue(error is WriteInsideReadSnapshotError, "got \(type(of: error)): \(error)")
             XCTAssertFalse(error is DatabaseVolumeError, "the volume is not the only thing this can be")
@@ -114,14 +114,14 @@ final class DatabaseLayerSnapshotTests: SemelCoreTestCase {
         XCTAssertThrowsError(try database.withReadSnapshot {
             try database.withTransaction {
                 bodyRan = true
-                _ = try database.node.insert(NodeRecord(kind: Configuration.kind))
+                _ = try database.node.insert(NodeRecord(kind: SettingsLiteral.kind))
             }
         }) { error in
             XCTAssertTrue(error is WriteInsideReadSnapshotError, "got \(type(of: error)): \(error)")
         }
 
         XCTAssertTrue(bodyRan, "the inner call runs the work on the connection it found, rather than opening one")
-        XCTAssertEqual(try database.node.select(kind: Configuration.kind).count, 0, "and nothing was written")
+        XCTAssertEqual(try database.node.select(kind: SettingsLiteral.kind).count, 0, "and nothing was written")
     }
 
     /// Only a read-only refusal is re-read. Anything else the work throws is the caller's

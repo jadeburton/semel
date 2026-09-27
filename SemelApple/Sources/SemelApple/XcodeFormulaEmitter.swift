@@ -347,18 +347,23 @@ struct XcodeFormulaEmitter {
 
     // MARK: - Helpers
 
-    /// `Configuration(<literals>, base: ['settings': ConfigFilter(...)]).output`: the
-    /// namespace's block of the project's `semel.config` laid over the machine's
-    /// `semel.machine.config`, both beside the root (B-109), with the target's own values
-    /// laid over that — the same shape the Swift converter emits.
+    /// `ConfigMerger(base: ['settings': ConfigFilter(...)], override: ['literals':
+    /// SettingsLiteral(<literals>).output]).output`: the namespace's block of the project's
+    /// `semel.config` laid over the machine's `semel.machine.config`, both beside the root
+    /// (B-109), with the target's own values laid over that (B-120) — the same shape the
+    /// Swift converter emits, and the selector alone when there are no values to lay.
     func configuration(namespace: String, literals: [String: String]) -> String {
-        let rendered = literals.sorted { $0.key < $1.key }
-            .map { "\($0.key): \(Self.quoted($0.value))" }
-            .joined(separator: ", ")
         let settings = "ConfigMerger(base: ['machine': StaticFile(path: '\(build.root)/semel.machine.config').output], "
                      + "override: ['project': StaticFile(path: '\(build.root)/semel.config').output]).output"
         let selector = "ConfigFilter(prefix: '\(namespace)', input: ['config': \(settings)]).output"
-        return "Configuration(\(rendered.isEmpty ? "" : rendered + ", ")base: ['settings': \(selector)]).output"
+        guard !literals.isEmpty else {
+            return selector
+        }
+        let rendered = literals.sorted { $0.key < $1.key }
+            .map { "\($0.key): \(Self.quoted($0.value))" }
+            .joined(separator: ", ")
+        return "ConfigMerger(base: ['\(SettingsNodes.literalsBaseWire)': \(selector)], "
+             + "override: ['\(SettingsNodes.literalsOverrideWire)': SettingsLiteral(\(rendered)).output]).output"
     }
 
     /// A formula string literal is delimited by either quote and has no escapes, so a

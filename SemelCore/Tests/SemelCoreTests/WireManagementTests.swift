@@ -30,8 +30,8 @@ final class WireManagementTests: SemelCoreTestCase {
 
     private var database: DatabaseLayer { engine.database }
 
-    private func makeConfiguration(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+    private func makeNode(role: String) throws -> NodeRecord {
+        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
         let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
@@ -42,16 +42,16 @@ final class WireManagementTests: SemelCoreTestCase {
         let to   = try consumer.requireID()
         try Wire.connectWire(database: database,
                              fromNodeID: from,
-                             fromSymbolID: "output".asSymbolID(),
+                             fromSymbolID: "files".asSymbolID(),
                              toNodeID: to,
-                             toSymbolID: "base".asSymbolID(),
+                             toSymbolID: "input".asSymbolID(),
                              name: name.asSymbolID())
         return (from, to)
     }
 
     private func wires(into node: NodeRecord) throws -> [Wire] {
         try database.wire.select(goingToNodeID: try node.requireID(),
-                                 toSymbolID: "base".asSymbolID())
+                                 toSymbolID: "input".asSymbolID())
     }
 
     private func isPendingDeletion(_ node: NodeRecord) throws -> Bool {
@@ -61,8 +61,8 @@ final class WireManagementTests: SemelCoreTestCase {
     // MARK: - connectWire
 
     func test_connectingCreatesTheWire() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
 
         try connect(source, to: consumer, name: "link")
 
@@ -70,8 +70,8 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_connectingTheSameWireTwiceIsANoOp() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
 
         try connect(source, to: consumer, name: "link")
         try connect(source, to: consumer, name: "link")
@@ -82,9 +82,9 @@ final class WireManagementTests: SemelCoreTestCase {
     // Wire names are unique per input port, because the name is how a node addresses
     // one of several wires arriving on the same port.
     func test_twoSourcesCannotShareAWireNameOnOnePort() throws {
-        let first = try makeConfiguration(role: "first")
-        let second = try makeConfiguration(role: "second")
-        let consumer = try makeConfiguration(role: "consumer")
+        let first = try makeNode(role: "first")
+        let second = try makeNode(role: "second")
+        let consumer = try makeNode(role: "consumer")
 
         try connect(first, to: consumer, name: "shared")
 
@@ -100,8 +100,8 @@ final class WireManagementTests: SemelCoreTestCase {
     /// pair of ports. Both are wires in their own right — the name is what the target node
     /// addresses them by — so both have to exist.
     func test_twoDifferentlyNamedWiresShareOnePortPair() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
 
         try connect(source, to: consumer, name: "first")
         try connect(source, to: consumer, name: "second")
@@ -112,8 +112,8 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_deletingOneOfTwoWiresOnOnePortPairLeavesTheOther() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
         try connect(source, to: consumer, name: "first")
         try connect(source, to: consumer, name: "second")
 
@@ -125,8 +125,8 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_aCycleIsRefused() throws {
-        let a = try makeConfiguration(role: "a")
-        let b = try makeConfiguration(role: "b")
+        let a = try makeNode(role: "a")
+        let b = try makeNode(role: "b")
 
         try connect(a, to: b, name: "forward")
 
@@ -138,9 +138,9 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_aLongerCycleIsAlsoRefused() throws {
-        let a = try makeConfiguration(role: "a")
-        let b = try makeConfiguration(role: "b")
-        let c = try makeConfiguration(role: "c")
+        let a = try makeNode(role: "a")
+        let b = try makeNode(role: "b")
+        let c = try makeNode(role: "c")
 
         try connect(a, to: b, name: "ab")
         try connect(b, to: c, name: "bc")
@@ -152,8 +152,8 @@ final class WireManagementTests: SemelCoreTestCase {
     /// `reset()` relies on this: it deliberately leaves pending-deletion marks alone,
     /// because rewiring a node is what legitimately rescues it.
     func test_connectingRescuesASourceMarkedForDeletion() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
         try database.node.updatePendingDeletion(nodeID: try source.requireID(), pendingDeletion: true)
 
         try connect(source, to: consumer, name: "link")
@@ -163,8 +163,8 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_connectingSchedulesTheConsumer() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
         try consumer.setScheduled(false)
 
         try connect(source, to: consumer, name: "link")
@@ -176,8 +176,8 @@ final class WireManagementTests: SemelCoreTestCase {
     // MARK: - deleteWire
 
     func test_deletingRemovesTheWire() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
         try connect(source, to: consumer, name: "link")
 
         let wire = try XCTUnwrap(wires(into: consumer).first)
@@ -187,8 +187,8 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_deletingTheLastConsumerMarksTheSourceForDeletion() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
         try connect(source, to: consumer, name: "link")
 
         let wire = try XCTUnwrap(wires(into: consumer).first)
@@ -199,9 +199,9 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_deletingOneOfSeveralConsumersLeavesTheSourceAlone() throws {
-        let source = try makeConfiguration(role: "source")
-        let first = try makeConfiguration(role: "first")
-        let second = try makeConfiguration(role: "second")
+        let source = try makeNode(role: "source")
+        let first = try makeNode(role: "first")
+        let second = try makeNode(role: "second")
         try connect(source, to: first, name: "link")
         try connect(source, to: second, name: "link")
 
@@ -215,8 +215,8 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_deletingAWireThatIsNotThereFails() throws {
-        let source = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
         try connect(source, to: consumer, name: "link")
 
         let wire = try XCTUnwrap(wires(into: consumer).first)

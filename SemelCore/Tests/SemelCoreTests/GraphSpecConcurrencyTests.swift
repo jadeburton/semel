@@ -44,7 +44,7 @@ final class GraphSpecConcurrencyTests: SemelCoreTestCase {
     /// Many threads asking for the same spec must produce one node, not one each and not a
     /// unique-constraint crash. This is the case the transaction exists for.
     func test_concurrentResolutionOfOneShapeCreatesExactlyOneNode() throws {
-        let specText = "Configuration(role: 'contended').output"
+        let specText = "SettingsLiteral(role: 'contended').output"
         let collected = Collected()
 
         DispatchQueue.concurrentPerform(iterations: 64) { _ in
@@ -69,7 +69,7 @@ final class GraphSpecConcurrencyTests: SemelCoreTestCase {
 
         DispatchQueue.concurrentPerform(iterations: 32) { index in
             do {
-                let spec = try GraphSpecNode.parse("Configuration(role: 'r\(index)').output")
+                let spec = try GraphSpecNode.parse("SettingsLiteral(role: 'r\(index)').output")
                 collected.record(try spec.findOrCreateMatchingNode().fromNode.requireID())
             } catch {
                 collected.record(error: error)

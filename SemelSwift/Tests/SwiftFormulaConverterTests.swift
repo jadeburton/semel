@@ -439,7 +439,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
     /// The reader that parses a vendored dependency's manifest shells out to a toolchain, so
     /// it needs `swift.packageReader.toolDescriptor.*` like every other tool. Wired to an
-    /// empty `Configuration()` it throws before a single target is compiled.
+    /// empty `SettingsLiteral()` it throws before a single target is compiled.
     func test_theExternalPackageReaderIsWiredToASelectorForItsOwnNamespace() throws {
         let output = try convert(packageFolder: "input:/repo/DatabaseModels",
                                  json: sourceControlManifest())
@@ -447,8 +447,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let spec = try XCTUnwrap(try externalSpecs(output)["input:/repo/DatabaseModels/Dependencies/GRDB.swift"])
         XCTAssertTrue(spec.contains("ConfigFilter(prefix: 'swift.packageReader'"),
                       "got:\n\(spec)")
-        XCTAssertFalse(spec.contains("Configuration().output"),
-                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(spec)")
+        XCTAssertFalse(spec.contains("SettingsLiteral().output"),
+                       "an empty SettingsLiteral leaves the reader with no toolDescriptor, got:\n\(spec)")
     }
 
     /// Same rule as the compiler: the reader is part of *this* build, so it selects from the
@@ -514,10 +514,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertTrue(result.contains(
-            "Configuration(moduleName: 'Helper', base: ['settings': "
+            "ConfigMerger(base: ['settings': "
             + "ConfigFilter(prefix: 'swift.compiler', "
             + "input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/pkg/semel.machine.config').output], "
-            + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output]).output"),
+            + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output], "
+            + "override: ['literals': SettingsLiteral(moduleName: 'Helper').output]).output"),
             "got:\n\(result)")
     }
 
@@ -557,10 +558,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             """)
 
         XCTAssertTrue(result.contains(
-            "Configuration(linkage: 'executable', outputName: 'semel', base: ['settings': "
+            "ConfigMerger(base: ['settings': "
             + "ConfigFilter(prefix: 'swift.linker', "
             + "input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/pkg/semel.machine.config').output], "
-            + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output]).output"),
+            + "override: ['project': StaticFile(path: 'input:/pkg/semel.config').output]).output]).output], "
+            + "override: ['literals': SettingsLiteral(linkage: 'executable', outputName: 'semel').output]).output"),
             "got:\n\(result)")
     }
 

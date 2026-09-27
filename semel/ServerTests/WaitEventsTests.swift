@@ -79,12 +79,12 @@ final class WaitEventsTests: XCTestCase {
         _ = try client.send(.daemon(.subscribe), body: nil)
 
         // The input first, settled, so the slow node's one run is on a value.
-        _ = try GraphSpecNode.parse("Configuration(role: 'slow-in').output").findOrCreateMatchingNode()
+        _ = try GraphSpecNode.parse("SettingsLiteral(role: 'slow-in').output").findOrCreateMatchingNode()
         engine.signalWorkAvailable()
         engine.waitUntilIdleBlocking()
 
         engine.beginBatch()
-        _ = try GraphSpecNode.parse("SlowNode(input: ['in': Configuration(role: 'slow-in').output]).output")
+        _ = try GraphSpecNode.parse("SlowNode(input: ['in': SettingsLiteral(role: 'slow-in').output]).output")
             .findOrCreateMatchingNode()
         engine.signalWorkAvailable()
         engine.endBatch()

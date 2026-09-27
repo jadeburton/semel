@@ -66,7 +66,7 @@ Everything so far is *static*: the wires into a port are created with the node, 
 the formula wrote, and are neither added to nor rewired afterwards. A node type declares
 which ports it has in its descriptor, and a static input port is either `.required` —
 wired at creation or the node cannot be made — or `.optional`, which the formula may leave
-empty (`Configuration`'s `base` is one).
+empty (`TreeMerger`'s `input` is one).
 
 ## 5. Dynamic ports
 

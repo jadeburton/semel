@@ -124,9 +124,9 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .debug)
         let text = String(decoding: try XCTUnwrap(body), as: UTF8.self)
         XCTAssertTrue(text.contains("cache entry \(key)"), text)
-        XCTAssertTrue(text.contains("node Configuration@1"), text)
-        XCTAssertTrue(text.contains(#"property {"key":"role","value":"sample"}"#), text)
-        XCTAssertTrue(text.contains(#"input {"port":"base","#), text)
+        XCTAssertTrue(text.contains("node ConfigFilter@\(ConfigFilter.implementationVersion)"), text)
+        XCTAssertTrue(text.contains(#"property {"key":"prefix","value":"sample"}"#), text)
+        XCTAssertTrue(text.contains(#"input {"port":"input","#), text)
     }
 
     func test_debugWithAKeyNothingIsStoredUnderSaysSo() throws {
@@ -138,13 +138,13 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     /// One entry, stored the way a build stores one: the material is taken of a real
     /// node's real input and the key is taken of the material.
     private func storeOneCacheEntry() throws -> String {
-        let (record, _) = try GraphSpecNode.parse("Configuration(role: 'sample')").findOrCreateMatchingNode()
+        let (record, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'sample')").findOrCreateMatchingNode()
         let node  = try record.makeNode()
-        let input = ProcessInput(inputValues: ["base": ["wire0": .value(try "sample=1".intern())]])
+        let input = ProcessInput(inputValues: ["input": ["wire0": .value(try "sample.key=1".intern())]])
         let material = try node.buildCacheKeyMaterial(input: input)
         try node.saveCacheForAllInputsAndOutputs(
             keyMaterial: material, processingDuration: 0.1,
-            output: ProcessOutput(outputValues: ["output": .value(try "sample=1".intern())], inputWireSpecs: [:]))
+            output: ProcessOutput(outputValues: ["output": .value(try "key=1".intern())], inputWireSpecs: [:]))
         return try material.cacheKey()
     }
 

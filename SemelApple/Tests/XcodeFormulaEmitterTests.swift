@@ -163,6 +163,17 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("ConfigFilter(prefix: 'swift.compiler', input: ['config': ConfigMerger(base: ['machine': StaticFile(path: 'input:/repo/semel.machine.config').output], override: ['project': StaticFile(path: 'input:/repo/semel.config').output]).output])"), formula)
     }
 
+    /// The target's own values are a `SettingsLiteral` a `ConfigMerger` lays over the
+    /// selected settings (B-120): the merger's base is the selector, its override the
+    /// literal, so a value the target states wins over the config file.
+    func test_theTargetsValuesAreALiteralLaidOverTheSelectedSettings() throws {
+        let formula = try formula()
+
+        XCTAssertTrue(formula.contains("configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'swift.compiler', "), formula)
+        XCTAssertTrue(formula.contains("override: ['literals': SettingsLiteral(arguments: '-D,DEBUG,-D,EXTRA', "), formula)
+        XCTAssertFalse(formula.contains("Configuration("), formula)
+    }
+
     func test_linksTheExecutableIntoTheBundleWithTheProductsObjectsAndFrameworks() throws {
         let formula = try formula()
 

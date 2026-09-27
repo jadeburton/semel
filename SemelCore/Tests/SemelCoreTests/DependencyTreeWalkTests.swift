@@ -37,16 +37,16 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     /// A node with no file system behind it, so a test graph is exactly the nodes it asks
     /// for.
     private func makeNode(_ role: String) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: Configuration.kind,
+        try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
                                   properties: ["role": role], identity: nil).requireID()
     }
 
     private func connect(_ from: ObjectID, to consumer: ObjectID, name: String) throws {
         try Wire.connectWire(database: database,
                              fromNodeID: from,
-                             fromSymbolID: Configuration.outputPort.asSymbolID(),
+                             fromSymbolID: TreeMerger.outputPort.asSymbolID(),
                              toNodeID: consumer,
-                             toSymbolID: Configuration.inputPort.asSymbolID(),
+                             toSymbolID: TreeMerger.inputPort.asSymbolID(),
                              name: name.asSymbolID())
     }
 

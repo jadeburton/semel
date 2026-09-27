@@ -56,17 +56,17 @@ final class FormulaParserTests: SemelCoreTestCase {
     // MARK: - No-arg node
 
     func test_noArgNode_typeName() throws {
-        let result = try parse("product \"X\" = Configuration().output")
-        XCTAssertEqual(result["X"]?.typeName, "Configuration")
+        let result = try parse("product \"X\" = SettingsLiteral().output")
+        XCTAssertEqual(result["X"]?.typeName, "SettingsLiteral")
     }
 
     func test_noArgNode_emptyArgs() throws {
-        let result = try parse("product \"X\" = Configuration().output")
+        let result = try parse("product \"X\" = SettingsLiteral().output")
         XCTAssertEqual(result["X"]?.properties, [])
     }
 
     func test_noArgNode_outputPort() throws {
-        let result = try parse("product \"X\" = Configuration().output")
+        let result = try parse("product \"X\" = SettingsLiteral().output")
         XCTAssertEqual(result["X"]?.outputPort, "output")
     }
 
@@ -124,7 +124,7 @@ final class FormulaParserTests: SemelCoreTestCase {
     func test_multipleInputPorts_count() throws {
         let result = try parse("""
             product "X" = Tool(
-                config: ["c": Configuration().output],
+                config: ["c": SettingsLiteral().output],
                 input : ["f": StaticFile(path: 'f').output]
             ).output
             """)
@@ -134,7 +134,7 @@ final class FormulaParserTests: SemelCoreTestCase {
     func test_multipleInputPorts_portNames() throws {
         let result = try parse("""
             product "X" = Tool(
-                config: ["c": Configuration().output],
+                config: ["c": SettingsLiteral().output],
                 input : ["f": StaticFile(path: 'f').output]
             ).output
             """)
@@ -445,7 +445,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         func file(path) = StaticFile(path: path).output
 
         func result(path) = SwiftPackageReader(
-          configuration: ['config': Configuration().output],
+          configuration: ['config': SettingsLiteral().output],
           packageFile: ["Package.swift": file(path)]
         ).packageJSON
 
@@ -479,7 +479,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         let result = try parse(specExample)
         let node = try XCTUnwrap(result["Package.json"])
         let port = try XCTUnwrap(node.inputs.first(where: { $0.portName == "configuration" }))
-        XCTAssertEqual(port.wires.first?.node.typeName, "Configuration")
+        XCTAssertEqual(port.wires.first?.node.typeName, "SettingsLiteral")
     }
 
     func test_specExample_configurationWire_upstreamPort() throws {

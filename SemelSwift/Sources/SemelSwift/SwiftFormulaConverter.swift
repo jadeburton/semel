@@ -55,8 +55,10 @@ struct SwiftFormulaConverter: Node {
     static let stringCatalogCompilerNamespace = "apple.stringCatalogCompiler"
 
     /// Emitted formula text changed for the same inputs: every product gained a
-    /// `bundles_<Product>()` func and a target with resources a bundle (B-77).
-    public static let implementationVersion = 2
+    /// `bundles_<Product>()` func and a target with resources a bundle (B-77); at 3, a
+    /// target's literals are a `SettingsLiteral` under a `ConfigMerger` where they were a
+    /// `Configuration`'s properties, in the formula and in the reader it demands (B-120).
+    public static let implementationVersion = 3
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -102,7 +104,7 @@ struct SwiftFormulaConverter: Node {
     ///
     /// The reader shells out to a toolchain, so it needs the same `toolDescriptor` settings
     /// every other tool does. This is the first node of every Swift build: wired to an
-    /// empty Configuration it fails before the manifest is ever read.
+    /// empty `SettingsLiteral()` it fails before the manifest is ever read.
     private var selfWiringSpecs: [String: [String: GraphSpecNode]] {
         guard let packageFolder = thisNode.properties["path"] else {
             return [:]
@@ -406,12 +408,13 @@ struct SwiftFormulaConverter: Node {
         return "ConfigFilter(prefix: '\(namespace)', input: ['config': \(settings)]).output"
     }
 
-    /// Renders a `Configuration(...)` whose `base` port carries the selector for
-    /// `namespace`, with `literals` overlaid as properties.
+    /// Renders the selector for `namespace` with `literals` laid over it: a `ConfigMerger`
+    /// whose `base` is the selector and whose `override` is a `SettingsLiteral` (B-120), or
+    /// the selector alone when there are no literals.
     ///
-    /// Properties win over the file: `literals` is manifest-derived — `moduleName`,
-    /// `linkage` and the like — so it describes what the target *is*, and a config
-    /// file must not be able to override identity through the settings it supplies.
+    /// The literals win over the file: they are manifest-derived — `moduleName`, `linkage`
+    /// and the like — so they describe what the target *is*, and a config file must not be
+    /// able to override identity through the settings it supplies.
     ///
     /// Sorted, because these become a formula string that becomes a node's graphSpec — and
     /// Dictionary iteration order is seeded per process, so an unsorted render would give
@@ -419,12 +422,15 @@ struct SwiftFormulaConverter: Node {
     static func configurationExpression(namespace: String,
                                         packageFolder: String,
                                         literals: [String: String]) -> String {
+        let selector = configSelector(namespace: namespace, packageFolder: packageFolder)
+        guard !literals.isEmpty else {
+            return selector
+        }
         let rendered = literals.sorted { $0.key < $1.key }
                                .map { "\($0.key): '\($0.value)'" }
                                .joined(separator: ", ")
-        let selector = configSelector(namespace: namespace, packageFolder: packageFolder)
-        let arguments = rendered.isEmpty ? "" : "\(rendered), "
-        return "Configuration(\(arguments)base: ['settings': \(selector)]).output"
+        return "ConfigMerger(base: ['\(SettingsNodes.literalsBaseWire)': \(selector)], "
+             + "override: ['\(SettingsNodes.literalsOverrideWire)': SettingsLiteral(\(rendered)).output]).output"
     }
 
     /// Spec string for a `SwiftPackageReader` that reads the
@@ -432,7 +438,7 @@ struct SwiftFormulaConverter: Node {
     ///
     /// The reader is a tool like any other: it shells out to `swift package dump-package`
     /// and so needs a `toolDescriptor` telling it which toolchain to run. Nothing defaults,
-    /// so a reader wired to an empty `Configuration()` fails before any target is compiled —
+    /// so a reader wired to an empty `SettingsLiteral()` fails before any target is compiled —
     /// which is why the selector belongs here rather than only on the compiler and linker.
     ///
     /// `rootPackageFolder` is where the config file is read from, and it is not always the
@@ -456,8 +462,7 @@ struct SwiftFormulaConverter: Node {
         let settings = GraphSpecNode.configMerger(
             base:     ["machine": .staticFile(at: "\(packageFolder)/\(machineConfigFileName)")],
             override: ["project": .staticFile(at: "\(packageFolder)/\(configFileName)")])
-        return .configuration(literals: literals,
-                              base: ["settings": .configFilter(prefix: namespace, input: ["config": settings])])
+        return .literals(literals, over: .configFilter(prefix: namespace, input: ["config": settings]))
     }
 
     // MARK: - SPM JSON model

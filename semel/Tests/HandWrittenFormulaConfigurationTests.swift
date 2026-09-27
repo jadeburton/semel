@@ -74,7 +74,7 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         )
 
         func make(dynamicLibrary) = ClangLinker(
-          configuration: [Configuration(base: [config(prefix: 'clang.linker')], dynamicLibrary: dynamicLibrary)],
+          configuration: [ConfigMerger(base: [config(prefix: 'clang.linker')], override: [SettingsLiteral(dynamicLibrary: dynamicLibrary)])],
           objectFiles: ["main.c.o": ClangCompiler(
             configuration: [config(prefix: 'clang.compiler')],
             input: ["main.c.p": preprocessor(path: 'main.c')])]
@@ -130,13 +130,15 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         }
         XCTAssertGreaterThan(found, 0, "nothing in the graph reads the config file")
 
+        // Mergers twice: one lays the project's file over the machine's above the selectors,
+        // and one lays the linker's literals over its selector below them.
         try processEveryNode(ofKind: ConfigMerger.kind)
         try processEveryNode(ofKind: ConfigFilter.kind)
-        try processEveryNode(ofKind: Configuration.kind)
+        try processEveryNode(ofKind: ConfigMerger.kind)
     }
 
     /// Drives one kind directly. The tools themselves must not run — there is no real source
-    /// file — so this stops at the two node types between the file and a tool.
+    /// file — so this stops at the node types between the file and a tool.
     private func processEveryNode(ofKind kind: UInt) throws {
         for nodeRecord in try database.node.select(kind: kind) {
             let node = try nodeRecord.makeNode()
@@ -224,9 +226,9 @@ final class HandWrittenFormulaConfigurationTests: XCTestCase {
         }
     }
 
-    /// The linker's settings come through a `Configuration` that also carries a literal from
-    /// the formula. Both have to arrive: the file says what environment to build in, the
-    /// literal says what the product is.
+    /// The linker's settings come through a `ConfigMerger` laying a literal from the formula
+    /// over its selector. Both have to arrive: the file says what environment to build in,
+    /// the literal says what the product is.
     func test_aLiteralInTheFormulaAndTheFileBothReachTheLinker() throws {
         try buildGraph(configText: configFile)
 

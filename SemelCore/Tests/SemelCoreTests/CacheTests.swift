@@ -256,8 +256,8 @@ final class CacheTests: SemelCoreTestCase {
         let retired  = String(repeating: "b", count: 64)
         let table = GraphSpecTable(
             inputWireSpecs: [SampleTool.input: ["wire0": .init(identity: root, outputPort: "output")]],
-            rows: [root: .init(typeName: "Configuration", properties: [GraphSpecProperty(key: "role", value: "x")],
-                               inputs: [.init(portName: "base", wires: [.init(name: "a", source: .init(identity: retired, outputPort: "output"))])]),
+            rows: [root: .init(typeName: "ConfigFilter", properties: [GraphSpecProperty(key: "prefix", value: "x")],
+                               inputs: [.init(portName: "input", wires: [.init(name: "a", source: .init(identity: retired, outputPort: "output"))])]),
                    retired: .init(typeName: "RetiredSampleTool", properties: [], inputs: [])])
         try storeEntry(demanding: table, material: material)
 
@@ -308,8 +308,7 @@ final class CacheTests: SemelCoreTestCase {
     func test_aHitWiresWhatItsStoredTableDemands() throws {
         let tool     = try makeCompilerNode()
         let material = try tool.buildCacheKeyMaterial(input: try makeInput())
-        let shared = GraphSpecNode.configuration(literals: ["role": "project"],
-                                                 base: ["machine": .staticFile(at: "input:/semel.config")])
+        let shared = GraphSpecNode.literals(["role": "project"], over: .staticFile(at: "input:/semel.config"))
         let demanded: [String: GraphSpecNode] = [
             "a.c": .configFilter(prefix: "a", input: ["settings": shared]),
             "b.c": .configFilter(prefix: "b", input: ["settings": shared]),
@@ -323,7 +322,7 @@ final class CacheTests: SemelCoreTestCase {
 
         let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: try material.cacheKey()))
         let stored = try ProcessCacheEntry.fromJSON(String(decoding: row.content, as: UTF8.self))
-        XCTAssertEqual(stored.specTable.rows.count, 4, "two filters, the settings they share and its file, once each")
+        XCTAssertEqual(stored.specTable.rows.count, 5, "two filters, the merger they share and its file and literal, once each")
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
         try tool.writeToOutputs(output: loaded)

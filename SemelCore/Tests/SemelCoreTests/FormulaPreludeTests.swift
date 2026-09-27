@@ -133,7 +133,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
             """
         let preludeSpec = FormulaPrelude.spec(forIncludeNamed: "clang").asString(omitOutputPort: false)
         let text = FormulaPrelude.publishedText(namespace: "clang", text: """
-            func executable(sources) = Configuration(sources: sources).output
+            func executable(sources) = SettingsLiteral(sources: sources).output
             """)
 
         var builderRecord = NodeRecord(parentNodeID: nil, kind: ProjectBuilder.kind, name: nil,

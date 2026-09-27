@@ -34,7 +34,7 @@ final class GraphCheckTests: SemelCoreTestCase {
 
     // MARK: - A graph nothing is wrong with
 
-    /// Two wired configurations, a folder holding two pushed files, and the file-system
+    /// A literal wired into a selector, a folder holding two pushed files, and the file-system
     /// roots the engine builds under them. Everything the checks look at is present and
     /// agrees with everything else.
     @discardableResult
@@ -43,7 +43,7 @@ final class GraphCheckTests: SemelCoreTestCase {
         // includes the wire. A static port wired by hand after creation is the one damage
         // `check` now reports (B-115), and a healthy graph has none.
         let (consumer, _) = try GraphSpecNode.parse(
-            "Configuration(role: 'consumer', base: ['link': Configuration(role: 'source').output])"
+            "ConfigFilter(prefix: 'consumer', input: ['link': SettingsLiteral(role: 'source').output])"
         ).findOrCreateMatchingNode()
 
         try push("src/hello.c", contents: "int hello(void) { return 0; }")
@@ -56,8 +56,14 @@ final class GraphCheckTests: SemelCoreTestCase {
         return consumer
     }
 
-    private func makeConfiguration(role: String) throws -> NodeRecord {
-        let (node, _) = try GraphSpecNode.parse("Configuration(role: '\(role)')").findOrCreateMatchingNode()
+    private func makeLiteral(role: String) throws -> NodeRecord {
+        let (node, _) = try GraphSpecNode.parse("SettingsLiteral(role: '\(role)')").findOrCreateMatchingNode()
+        return node
+    }
+
+    /// A node with a static input port and nothing on it yet, for a test to wire by hand.
+    private func makeConsumer() throws -> NodeRecord {
+        let (node, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'consumer')").findOrCreateMatchingNode()
         return node
     }
 
@@ -94,7 +100,7 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// them: a node the engine has not finished wiring looks exactly like a node whose
     /// wiring is missing, and only this number tells the two apart.
     func test_theReportCountsTheNodesThatWereStillScheduled() throws {
-        let node = try makeConfiguration(role: "source")
+        let node = try makeConsumer()
 
         let scheduled = GraphCheck.run(database: database).scheduledNodeCount
         XCTAssertGreaterThan(scheduled, 0, "a node that declares inputs is scheduled when it is created")
@@ -138,11 +144,11 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// nothing produces. The product here is wired and sound, which is what makes the
     /// finding it would otherwise draw a false one.
     func test_anUnreadableWireTableSkipsTheChecksThatRestOnIt() throws {
-        let source = try makeConfiguration(role: "source")
+        let source = try makeLiteral(role: "source")
         let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
         try Wire.connectWire(database: database,
                              fromNodeID:   try source.requireID(),
-                             fromSymbolID: Configuration.outputPort.asSymbolID(),
+                             fromSymbolID: SettingsLiteral.outputPort.asSymbolID(),
                              toNodeID:     try product.requireID(),
                              toSymbolID:   OutputFile.inputPort.asSymbolID(),
                              name:         "link".asSymbolID())
@@ -189,13 +195,13 @@ final class GraphCheckTests: SemelCoreTestCase {
     // MARK: - A wire whose endpoint node is gone
 
     func test_findsAWireIntoANodeThatDoesNotExist() throws {
-        let source = try makeConfiguration(role: "source")
+        let source = try makeLiteral(role: "source")
         let missingNodeID: ObjectID = 987_654
 
         _ = try database.wire.insert(Wire(fromNodeID:   try source.requireID(),
-                                          fromSymbolID: Configuration.outputPort.asSymbolID(),
+                                          fromSymbolID: SettingsLiteral.outputPort.asSymbolID(),
                                           toNodeID:     missingNodeID,
-                                          toSymbolID:   Configuration.inputPort.asSymbolID(),
+                                          toSymbolID:   ConfigFilter.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
 
         let findings = GraphCheck.run(database: database).findings
@@ -208,13 +214,13 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// The port, not only the node: a wire from an output port that is not there is a
     /// consumer that will never be handed anything, and the node at the far end is real.
     func test_findsAWireFromAnOutputPortThatDoesNotExist() throws {
-        let source   = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source   = try makeLiteral(role: "source")
+        let consumer = try makeConsumer()
 
         _ = try database.wire.insert(Wire(fromNodeID:   try source.requireID(),
                                           fromSymbolID: "goneAway".asSymbolID(),
                                           toNodeID:     try consumer.requireID(),
-                                          toSymbolID:   Configuration.inputPort.asSymbolID(),
+                                          toSymbolID:   ConfigFilter.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
         try refreshIdentity(of: consumer)
 
@@ -222,15 +228,15 @@ final class GraphCheckTests: SemelCoreTestCase {
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .danglingWire)
-        XCTAssertEqual(findings.first?.sentence, "Configuration #\(try source.requireID()) has no output port 'goneAway'")
+        XCTAssertEqual(findings.first?.sentence, "SettingsLiteral #\(try source.requireID()) has no output port 'goneAway'")
     }
 
     /// The same end asked the question the other end is asked: a port dropped from a type
     /// leaves its row behind, and a wire still hanging off that row is handed whatever it
     /// last held, forever, by a port nothing will ever write again.
     func test_findsAWireFromAnOutputPortItsTypeDoesNotDeclare() throws {
-        let source   = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source   = try makeLiteral(role: "source")
+        let consumer = try makeConsumer()
 
         try database.outputPort.insertOrUpdate(
             OutputPort(nodeID:         try source.requireID(),
@@ -240,7 +246,7 @@ final class GraphCheckTests: SemelCoreTestCase {
         _ = try database.wire.insert(Wire(fromNodeID:   try source.requireID(),
                                           fromSymbolID: "goneAway".asSymbolID(),
                                           toNodeID:     try consumer.requireID(),
-                                          toSymbolID:   Configuration.inputPort.asSymbolID(),
+                                          toSymbolID:   ConfigFilter.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
         try refreshIdentity(of: consumer)
 
@@ -249,7 +255,7 @@ final class GraphCheckTests: SemelCoreTestCase {
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .danglingWire)
         XCTAssertEqual(findings.first?.sentence,
-                       "Configuration #\(try source.requireID()) declares no output port 'goneAway'")
+                       "SettingsLiteral #\(try source.requireID()) declares no output port 'goneAway'")
     }
 
     // MARK: - A port its type declares and the node holds no row for
@@ -257,15 +263,15 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// Every node is given a row per declared port when it is created, so one without is a
     /// node something damaged — and a read of that port has nothing true to answer.
     func test_findsANodeHoldingNoRowForAnOutputPortItsTypeDeclares() throws {
-        let node = try makeConfiguration(role: "source")
+        let node = try makeLiteral(role: "source")
         _ = try database.outputPort.delete(nodeID: try node.requireID(),
-                                           nameSymbolID: Configuration.outputPort.asSymbolID())
+                                           nameSymbolID: SettingsLiteral.outputPort.asSymbolID())
 
         let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
         XCTAssertEqual(findings.first?.kind, .missingOutputPort)
-        XCTAssertEqual(findings.first?.subject, "Configuration #\(try node.requireID())")
+        XCTAssertEqual(findings.first?.subject, "SettingsLiteral #\(try node.requireID())")
         XCTAssertEqual(findings.first?.sentence,
                        "its type declares the output port 'output', and it holds no row for it")
     }
@@ -273,7 +279,7 @@ final class GraphCheckTests: SemelCoreTestCase {
     // MARK: - An identity that is stale, or a kind nobody links (B-115)
 
     func test_findsANodeWhoseKindTheServerDoesNotLink() throws {
-        var node = try makeConfiguration(role: "source")
+        var node = try makeLiteral(role: "source")
         node.kind = 999_999
         try database.node.update(node)
 
@@ -286,7 +292,7 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// The column is nullable only for the moment between a row's insert and its update.
     /// A NULL that survives is a node the matcher can never reach again.
     func test_findsANodeWithNoIdentityAtAll() throws {
-        var node = try makeConfiguration(role: "source")
+        var node = try makeLiteral(role: "source")
         node.identity = nil
         try database.node.update(node)
 
@@ -301,20 +307,20 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// compare: a stored value that no longer matches is a node whose wiring was changed
     /// behind the applier's back, and the next demand for it makes a second node.
     func test_findsANodeWhoseStaticInputWasRewiredBehindItsIdentity() throws {
-        let spec = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
+        let spec = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
-        let wire = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(), toSymbolID: "base".asSymbolID()).first)
+        let wire = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(), toSymbolID: "input".asSymbolID()).first)
         try wire.deleteWire(database: database)
-        let (second, _) = try GraphSpecNode.parse("Configuration(role: 'second').output").findOrCreateMatchingNode()
+        let (second, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'second').output").findOrCreateMatchingNode()
         try Wire.connectWire(database: database,
                              fromNodeID: try second.requireID(), fromSymbolID: "output".asSymbolID(),
-                             toNodeID: try consumer.requireID(), toSymbolID: "base".asSymbolID(),
+                             toNodeID: try consumer.requireID(), toSymbolID: "input".asSymbolID(),
                              name: "w".asSymbolID())
 
         let findings = GraphCheck.run(database: database).findings.filter { $0.kind == .staleIdentity }
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
-        XCTAssertEqual(findings.first?.subject, "Configuration #\(try consumer.requireID())")
+        XCTAssertEqual(findings.first?.subject, "ConfigFilter #\(try consumer.requireID())")
         XCTAssertTrue(findings.first?.sentence.hasPrefix("its identity is \(NodeIdentity.shown(try XCTUnwrap(consumer.identity)))… but its row and wires give ") == true,
                       "\(findings)")
     }
@@ -386,11 +392,11 @@ final class GraphCheckTests: SemelCoreTestCase {
     // MARK: - An error port with no message, or none that can be read
 
     func test_findsAnErrorPortCarryingNoMessage() throws {
-        let node = try makeConfiguration(role: "source")
+        let node = try makeLiteral(role: "source")
 
         try database.outputPort.insertOrUpdate(
             OutputPort(nodeID:         try node.requireID(),
-                       nameSymbolID:   Configuration.outputPort.asSymbolID(),
+                       nameSymbolID:   SettingsLiteral.outputPort.asSymbolID(),
                        valueKind:      .error,
                        dataObjectHash: nil))
 
@@ -405,11 +411,11 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// A message the port names and the object store cannot produce is a different and
     /// worse defect than one that was never written, so it is said differently.
     func test_findsAnErrorPortWhoseMessageCannotBeRead() throws {
-        let node = try makeConfiguration(role: "source")
+        let node = try makeLiteral(role: "source")
 
         try database.outputPort.insertOrUpdate(
             OutputPort(nodeID:         try node.requireID(),
-                       nameSymbolID:   Configuration.outputPort.asSymbolID(),
+                       nameSymbolID:   SettingsLiteral.outputPort.asSymbolID(),
                        valueKind:      .error,
                        dataObjectHash: String(repeating: "ab", count: 32)))
 
@@ -426,11 +432,11 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// and the report writes the sentence for it from the path. The finding is about a node
     /// that failed and said nothing, which this is not.
     func test_doesNotFindARemovedSourceCarryingNoMessage() throws {
-        let node = try makeConfiguration(role: "source")
+        let node = try makeLiteral(role: "source")
 
         try database.outputPort.insertOrUpdate(
             OutputPort(nodeID:         try node.requireID(),
-                       nameSymbolID:   Configuration.outputPort.asSymbolID(),
+                       nameSymbolID:   SettingsLiteral.outputPort.asSymbolID(),
                        valueKind:      .deleted,
                        dataObjectHash: nil))
 

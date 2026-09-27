@@ -21,8 +21,9 @@ extension SemelSwift {
     /// `modules_<P>().files`, `objects_<P>().files`.
     ///
     /// The settings wiring is the converter's own — a `ConfigFilter` per tool over the
-    /// settings node, merged under a `Configuration` carrying what the formula states — so
-    /// a target built here reads its settings as a package target does. The node is what
+    /// settings node, and a `ConfigMerger` laying a `SettingsLiteral` of what the formula
+    /// states over that (B-120) — so a target built here reads its settings as a package
+    /// target does. The node is what
     /// `settings(project:machine:)` builds, the project's file over the machine's (B-109),
     /// or a stack the formula lays itself.
     static let prelude = """
@@ -30,9 +31,9 @@ extension SemelSwift {
 
         func selected(settings, prefix) = ConfigFilter(prefix: prefix, input: ['config': settings]).output
 
-        func compilerSettings(name, settings) = Configuration(moduleName: name, base: ['settings': selected(settings: settings, prefix: '\(SwiftCompilerConfiguration.settingNamespace)')]).output
+        func compilerSettings(name, settings) = ConfigMerger(base: ['settings': selected(settings: settings, prefix: '\(SwiftCompilerConfiguration.settingNamespace)')], override: ['literals': SettingsLiteral(moduleName: name).output]).output
 
-        func linkerSettings(name, linkage, settings) = Configuration(linkage: linkage, outputName: name, base: ['settings': selected(settings: settings, prefix: '\(SwiftLinkerConfiguration.settingNamespace)')]).output
+        func linkerSettings(name, linkage, settings) = ConfigMerger(base: ['settings': selected(settings: settings, prefix: '\(SwiftLinkerConfiguration.settingNamespace)')], override: ['literals': SettingsLiteral(linkage: linkage, outputName: name).output]).output
 
         func module(sources, name, settings) = SwiftCompiler(
             configuration: ['config': compilerSettings(name: name, settings: settings)],

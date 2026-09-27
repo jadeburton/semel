@@ -122,7 +122,7 @@ Push file: hello/src/main.c
 Settled.
 25 errors across 9 nodes:
 
-❌ ClangCompiler ×3 (#23, #27, #29)
+❌ ClangCompiler ×3 (#24, #28, #30)
    · errorLog, infoLog, output:
      Missing machine settings. Run 'semel-clang <folder>': it writes semel.machine.config with the tool descriptors and SDK facts of the tools installed here, these among them:
      clang.compiler.toolDescriptor.architecture
@@ -351,7 +351,7 @@ No errors.
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Nine nodes woken out of the thirty-eight in this graph, and eight of them
+`config.txt` not. Nine nodes woken out of the forty in this graph, and eight of them
 ran: the project finder and the include finder, then one preprocessor and one compiler —
 `hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
 because both products take that object, then the two output files. The ninth is the node
@@ -414,13 +414,13 @@ explain output:/hello/hello
 ```
 OutputFile #18 'output:/hello/hello' — computed: 2 inputs unchanged
   ClangLinker #19 — computed: configuration 'wire0' changed; 3 inputs unchanged
-    Configuration #20 — computed: base 'wire0' changed
+    ConfigMerger #20 — computed: base 'wire0' changed
       ConfigFilter #21 — computed: input 'wire0' changed
         ConfigMerger #22 — computed: override 'wire0' changed
           StaticFile #6 'input:/hello/semel.config' — changed
-    ClangCompiler #23 — from cache: 2 inputs unchanged
-    ClangCompiler #27 — from cache: 2 inputs unchanged
-    ClangCompiler #29 — from cache: 2 inputs unchanged
+    ClangCompiler #24 — from cache: 2 inputs unchanged
+    ClangCompiler #28 — from cache: 2 inputs unchanged
+    ClangCompiler #30 — from cache: 2 inputs unchanged
 ```
 
 One line per node, each under the node it woke, read from the bottom up: `semel.config`
@@ -443,7 +443,7 @@ this story in full, and the whole file is seventy-five lines — read it now; it
 of the node you are about to write.
 
 `errors` shows what is wrong when a build fails; after a good build it says `No errors.`
-`debug` dumps the whole graph — thirty-eight nodes here, two thousand lines. It is a lot,
+`debug` dumps the whole graph — forty nodes here, two thousand lines. It is a lot,
 and worth seeing once.
 
 ## Part 3 — Write a node

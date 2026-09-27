@@ -63,7 +63,7 @@ struct ClangPreprocessorConfiguration {
     let environment: [String: String]
     /// Path to the SDK root (e.g. `/path/to/MacOSX.sdk`).
     /// When set, `-isysroot <sdkPath>` is passed so clang can find system headers.
-    /// Supply via `Configuration(sdkPath: '/path/to/MacOSX.sdk')` in the formula.
+    /// A machine setting, written by `semel-clang` as `clang.preprocessor.sdkPath`.
     let sdkPath: String?
     /// `cStandard` and `cxxStandard`; the one the source file's language needs is required,
     /// which `ClangLanguageStandards.standard(forLanguage:namespace:)` decides once the

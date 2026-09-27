@@ -125,14 +125,14 @@ final class GraphSpecTests: SemelCoreTestCase {
 
     func test_multipleInputPorts_parsesCount() throws {
         let node = try GraphSpecNode.parse(
-            "ClangCompiler(configuration: [\"config\": Configuration(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+            "ClangCompiler(configuration: [\"config\": SettingsLiteral(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         )
         XCTAssertEqual(node.inputs.count, 2)
     }
 
     func test_multipleInputPorts_portNames() throws {
         let node = try GraphSpecNode.parse(
-            "ClangCompiler(configuration: [\"config\": Configuration(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+            "ClangCompiler(configuration: [\"config\": SettingsLiteral(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         )
         let portNames = node.inputs.map(\.portName)
         XCTAssertTrue(portNames.contains("configuration"))
@@ -140,7 +140,7 @@ final class GraphSpecTests: SemelCoreTestCase {
     }
 
     func test_multipleInputPorts_roundTrip() throws {
-        let input = "ClangCompiler(configuration: [\"config\": Configuration(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
+        let input = "ClangCompiler(configuration: [\"config\": SettingsLiteral(tool: 'compiler').output], input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
         XCTAssertEqual(try GraphSpecNode.parse(input).asString(omitOutputPort: false), input)
     }
 
@@ -198,12 +198,12 @@ final class GraphSpecTests: SemelCoreTestCase {
     }
 
     func test_identity_differsWithTheType() throws {
-        XCTAssertNotEqual(try identity("Configuration(path: 'x')"), try identity("StaticFile(path: 'x')"))
+        XCTAssertNotEqual(try identity("SettingsLiteral(path: 'x')"), try identity("StaticFile(path: 'x')"))
     }
 
     func test_identity_isPortAndWireOrderIndependent() throws {
         let configuration = GraphSpecInputPort(portName: "configuration", wires: [
-            GraphSpecWire(name: "config", node: GraphSpecNode(typeName: "Configuration",
+            GraphSpecWire(name: "config", node: GraphSpecNode(typeName: "SettingsLiteral",
                                                               properties: [GraphSpecProperty(key: "tool", value: "compiler")],
                                                               outputPort: "output")),
         ])
@@ -213,32 +213,32 @@ final class GraphSpecTests: SemelCoreTestCase {
         ])
         let reversedInput = GraphSpecInputPort(portName: "input", wires: input.wires.reversed())
 
-        let one = GraphSpecNode(typeName: "Configuration", inputs: [configuration, input], outputPort: "output")
-        let other = GraphSpecNode(typeName: "Configuration", inputs: [reversedInput, configuration], outputPort: "output")
+        let one = GraphSpecNode(typeName: "SampleTool", inputs: [configuration, input], outputPort: "output")
+        let other = GraphSpecNode(typeName: "SampleTool", inputs: [reversedInput, configuration], outputPort: "output")
 
         XCTAssertEqual(try one.identity(), try other.identity())
     }
 
     func test_identity_differsWithAWireName() throws {
-        XCTAssertNotEqual(try identity("Configuration(base: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"),
-                          try identity("Configuration(base: [\"main.c\": StaticFile(path: 'hello.c').output]).output"))
+        XCTAssertNotEqual(try identity("TreeMerger(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).files"),
+                          try identity("TreeMerger(input: [\"main.c\": StaticFile(path: 'hello.c').output]).files"))
     }
 
     func test_identity_differsWithTheSourcesOutputPort() throws {
-        XCTAssertNotEqual(try identity("Configuration(base: [\"w\": StaticFile(path: 'a.c').output]).output"),
-                          try identity("Configuration(base: [\"w\": StaticFile(path: 'a.c').metadata]).output"))
+        XCTAssertNotEqual(try identity("TreeMerger(input: [\"w\": StaticFile(path: 'a.c').output]).files"),
+                          try identity("TreeMerger(input: [\"w\": StaticFile(path: 'a.c').metadata]).files"))
     }
 
     func test_identity_differsWithTheWireCount() throws {
-        XCTAssertNotEqual(try identity("Configuration(base: [\"a\": StaticFile(path: 'a.c').output]).output"),
-                          try identity("Configuration(base: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"))
+        XCTAssertNotEqual(try identity("TreeMerger(input: [\"a\": StaticFile(path: 'a.c').output]).files"),
+                          try identity("TreeMerger(input: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).files"))
     }
 
     /// A change anywhere below moves every identity above it: the Merkle property that
     /// makes one hash stand for a whole subgraph.
     func test_identity_differsWithAChangeDeepInTheTree() throws {
-        let shallow = "Configuration(base: [\"m\": Configuration(base: [\"f\": StaticFile(path: 'hello.c').output]).output]).output"
-        let changed = "Configuration(base: [\"m\": Configuration(base: [\"f\": StaticFile(path: 'other.c').output]).output]).output"
+        let shallow = "TreeMerger(input: [\"m\": TreeMerger(input: [\"f\": StaticFile(path: 'hello.c').output]).files]).files"
+        let changed = "TreeMerger(input: [\"m\": TreeMerger(input: [\"f\": StaticFile(path: 'other.c').output]).files]).files"
 
         XCTAssertEqual(try identity(shallow), try identity(shallow))
         XCTAssertNotEqual(try identity(shallow), try identity(changed))
@@ -251,7 +251,7 @@ final class GraphSpecTests: SemelCoreTestCase {
     }
 
     func test_identity_needsAnOutputPortOnEveryWire() {
-        XCTAssertThrowsError(try identity("Configuration(base: [\"w\": StaticFile(path: 'a.c')]).output"))
+        XCTAssertThrowsError(try identity("TreeMerger(input: [\"w\": StaticFile(path: 'a.c')]).files"))
     }
 
     // MARK: - adding(property:value:where:)

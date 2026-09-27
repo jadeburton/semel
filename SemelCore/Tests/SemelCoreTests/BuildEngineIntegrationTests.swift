@@ -35,11 +35,11 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         super.tearDown()
     }
 
-    // Creates a Configuration node with the given role property so tests can
-    // build distinguishable nodes without the file-system plumbing that
-    // StaticFile requires.
-    private func makeConfiguration(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("Configuration(role: '\(role)').output")
+    // Creates a TreeMerger with the given role as its folder, so tests can build
+    // distinguishable nodes that both take wires and give them, without the
+    // file-system plumbing that StaticFile requires.
+    private func makeNode(role: String) throws -> NodeRecord {
+        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
         let (node, _) = try spec.findOrCreateMatchingNode()
         return node
     }
@@ -47,9 +47,9 @@ final class CascadeDeletionTests: SemelCoreTestCase {
     private func wire(_ source: NodeRecord, to consumer: NodeRecord, name: String) throws {
         try Wire.connectWire(database: engine.database,
                              fromNodeID: source.id!,
-                             fromSymbolID: "output".asSymbolID(),
+                             fromSymbolID: "files".asSymbolID(),
                              toNodeID:   consumer.id!,
-                             toSymbolID: "base".asSymbolID(),
+                             toSymbolID: "input".asSymbolID(),
                              name: name.asSymbolID())
     }
 
@@ -67,8 +67,8 @@ final class CascadeDeletionTests: SemelCoreTestCase {
     // When a consumer is marked pendingDeletion, processPendingDeletions
     // should delete it and mark its (now-orphaned) source for deletion too.
     func test_cascadeDeletion_orphansUpstreamNode() throws {
-        let source   = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
+        let source   = try makeNode(role: "source")
+        let consumer = try makeNode(role: "consumer")
 
         try wire(source, to: consumer, name: "link")
 
@@ -81,9 +81,9 @@ final class CascadeDeletionTests: SemelCoreTestCase {
 
     // A three-node chain A → B → C: removing C should cascade all the way to A.
     func test_cascadeDeletion_threeNodeChain_allRemoved() throws {
-        let nodeA = try makeConfiguration(role: "A")
-        let nodeB = try makeConfiguration(role: "B")
-        let nodeC = try makeConfiguration(role: "C")
+        let nodeA = try makeNode(role: "A")
+        let nodeB = try makeNode(role: "B")
+        let nodeC = try makeNode(role: "C")
 
         try wire(nodeA, to: nodeB, name: "a_b")
         try wire(nodeB, to: nodeC, name: "b_c")
@@ -99,9 +99,9 @@ final class CascadeDeletionTests: SemelCoreTestCase {
     // A source shared by two consumers must not be deleted when only one
     // consumer is removed; it still has a live downstream wire.
     func test_cascadeDeletion_sharedSource_survivesPartialRemoval() throws {
-        let source    = try makeConfiguration(role: "shared")
-        let consumer1 = try makeConfiguration(role: "c1")
-        let consumer2 = try makeConfiguration(role: "c2")
+        let source    = try makeNode(role: "shared")
+        let consumer1 = try makeNode(role: "c1")
+        let consumer2 = try makeNode(role: "c2")
 
         try wire(source, to: consumer1, name: "to_c1")
         try wire(source, to: consumer2, name: "to_c2")
@@ -116,9 +116,9 @@ final class CascadeDeletionTests: SemelCoreTestCase {
 
     // Removing both consumers of a shared source should eventually clean it up.
     func test_cascadeDeletion_sharedSource_deletedAfterAllConsumersRemoved() throws {
-        let source    = try makeConfiguration(role: "shared")
-        let consumer1 = try makeConfiguration(role: "c1")
-        let consumer2 = try makeConfiguration(role: "c2")
+        let source    = try makeNode(role: "shared")
+        let consumer1 = try makeNode(role: "c1")
+        let consumer2 = try makeNode(role: "c2")
 
         try wire(source, to: consumer1, name: "to_c1")
         try wire(source, to: consumer2, name: "to_c2")
@@ -157,7 +157,7 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 
     // Parsing the same spec string twice must return the same node.
     func test_findMatchingNode_sameString_returnsSameNode() throws {
-        let spec = "Configuration(env: 'test').output"
+        let spec = "SettingsLiteral(env: 'test').output"
         let (node, portID) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         let match = try GraphSpecNode.parse(spec).findMatchingNode()
@@ -169,13 +169,13 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
     // Two nodes with different args must produce different graph specs and
     // therefore not collide.
     func test_findMatchingNode_differentArgs_returnsDifferentNodes() throws {
-        let (nodeA, _) = try GraphSpecNode.parse("Configuration(env: 'debug').output").findOrCreateMatchingNode()
-        let (nodeB, _) = try GraphSpecNode.parse("Configuration(env: 'release').output").findOrCreateMatchingNode()
+        let (nodeA, _) = try GraphSpecNode.parse("SettingsLiteral(env: 'debug').output").findOrCreateMatchingNode()
+        let (nodeB, _) = try GraphSpecNode.parse("SettingsLiteral(env: 'release').output").findOrCreateMatchingNode()
 
         XCTAssertNotEqual(nodeA.id!, nodeB.id!)
 
-        let matchA = try GraphSpecNode.parse("Configuration(env: 'debug').output").findMatchingNode()
-        let matchB = try GraphSpecNode.parse("Configuration(env: 'release').output").findMatchingNode()
+        let matchA = try GraphSpecNode.parse("SettingsLiteral(env: 'debug').output").findMatchingNode()
+        let matchB = try GraphSpecNode.parse("SettingsLiteral(env: 'release').output").findMatchingNode()
 
         XCTAssertEqual(matchA?.fromNodeID, nodeA.id!)
         XCTAssertEqual(matchB?.fromNodeID, nodeB.id!)
@@ -183,13 +183,13 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 
     // A node that has not been created yet must not be found.
     func test_findMatchingNode_unknownNode_returnsNil() throws {
-        let match = try GraphSpecNode.parse("Configuration(env: 'nonexistent').output").findMatchingNode()
+        let match = try GraphSpecNode.parse("SettingsLiteral(env: 'nonexistent').output").findMatchingNode()
         XCTAssertNil(match)
     }
 
     // After a node is cascade-deleted it must no longer be findable.
     func test_findMatchingNode_deletedNode_returnsNil() throws {
-        let spec = "Configuration(env: 'temporary').output"
+        let spec = "SettingsLiteral(env: 'temporary').output"
         let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
         // Mark the node pendingDeletion and run cleanup.

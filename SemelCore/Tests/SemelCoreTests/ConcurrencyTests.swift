@@ -39,7 +39,7 @@ final class ConcurrencyTests: SemelCoreTestCase {
     /// `count` independent nodes of `seconds` each. Their inputs settle first, so each
     /// runs once, on a value, and the loop is asked for the pass that runs them.
     private func publishTimedNodes(count: Int, seconds: Double) async throws {
-        let inputs = (0..<count).map { "Configuration(role: 'in\($0)').output" }
+        let inputs = (0..<count).map { "SettingsLiteral(role: 'in\($0)').output" }
         for input in inputs {
             _ = try GraphSpecNode.parse(input).findOrCreateMatchingNode()
         }
@@ -80,7 +80,7 @@ final class ConcurrencyTests: SemelCoreTestCase {
         }
         XCTAssertEqual(TimedNode.running.current, 1, "precondition: the slow node is running")
 
-        let fastInput = "Configuration(role: 'fast-in').output"
+        let fastInput = "SettingsLiteral(role: 'fast-in').output"
         engine.beginBatch()
         _ = try GraphSpecNode.parse(fastInput).findOrCreateMatchingNode()
         _ = try GraphSpecNode.parse("TimedNode(label: 'fast', seconds: '0', input: ['in': \(fastInput)]).output")

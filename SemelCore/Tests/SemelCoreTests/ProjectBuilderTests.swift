@@ -39,7 +39,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// irrelevant here, only the output path it is wrapped in.
     private let oneProduct = """
         product 'MyProduct' =
-            Configuration(moduleName: 'X').output
+            SettingsLiteral(moduleName: 'X').output
         """
 
     private func productPaths(projectFile: String,
@@ -91,10 +91,10 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     func test_nestedPackagesProduceNonCollidingProductPaths() throws {
         let outer = try productPaths(projectFile: "input:/repo",
                                      properties: ["outputFolder": "input:/repo"],
-                                     formula: "product 'repo' =\n    Configuration(moduleName: 'X').output")
+                                     formula: "product 'repo' =\n    SettingsLiteral(moduleName: 'X').output")
         let inner = try productPaths(projectFile: "input:/repo/Core",
                                      properties: ["outputFolder": "input:/repo/Core"],
-                                     formula: "product 'Core' =\n    Configuration(moduleName: 'X').output")
+                                     formula: "product 'Core' =\n    SettingsLiteral(moduleName: 'X').output")
 
         XCTAssertEqual(outer, ["output:/repo/repo"])
         XCTAssertEqual(inner, ["output:/repo/Core/Core"])
@@ -104,9 +104,9 @@ final class ProjectBuilderTests: SemelCoreTestCase {
 
     // MARK: - A formula that includes another (B-10)
 
-    /// The included node here is a Configuration, so the spec parses without a real
+    /// The included node here is a SettingsLiteral, so the spec parses without a real
     /// converter; in a Swift build it is `SwiftFormulaConverter(path: <.>).formula`.
-    private let includedNode = "Configuration(role: 'generated').output"
+    private let includedNode = "SettingsLiteral(role: 'generated').output"
 
     private func process(formula: String,
                          includes: [String: NodeValue] = [:]) throws -> ProcessOutput {
@@ -132,7 +132,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// Later pass: the text has arrived, and the included products are published beside
     /// the formula file — the formula's folder, not somewhere the included node chose.
     func test_publishesTheIncludedProductsBesideTheFormula() throws {
-        let included = "product 'libX.a' = Configuration(moduleName: 'X').output"
+        let included = "product 'libX.a' = SettingsLiteral(moduleName: 'X').output"
 
         let output = try process(formula: "include \(includedNode)",
                                  includes: [includedNode: .value(try included.intern())])
@@ -145,9 +145,9 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// package's. The nested include is wired once the outer text has arrived, and the
     /// nested text's funcs are callable from the outer text once both are there.
     func test_followsAnIncludeInsideAnIncludedText() throws {
-        let innerNode = "Configuration(role: 'package').output"
+        let innerNode = "SettingsLiteral(role: 'package').output"
         let outer = "include \(innerNode)\nproduct 'App' = kit().output"
-        let inner = "func kit() = Configuration(moduleName: 'Kit')"
+        let inner = "func kit() = SettingsLiteral(moduleName: 'Kit')"
 
         let firstPass = try process(formula: "include \(includedNode)",
                                     includes: [includedNode: .value(try outer.intern())])
@@ -191,13 +191,13 @@ final class ProjectBuilderTests: SemelCoreTestCase {
 
     // MARK: - Tree products (B-63)
 
-    /// The tree-valued node here is a Configuration, so the spec parses without a real
+    /// The tree-valued node here is a TreeMerger, so the spec parses without a real
     /// resource compiler; in an app build it is `AssetCatalogCompiler(...).files`.
-    private let treeNode = "Configuration(role: 'catalog').output"
+    private let treeNode = "TreeMerger(under: 'catalog').files"
 
-    /// `treeNode` as it is wired and embedded downstream: Configuration has a static input
+    /// `treeNode` as it is wired and embedded downstream: TreeMerger has a static input
     /// port, so it is cacheable and carries the project's root.
-    private let stampedTreeNode = "Configuration(projectRoot: 'input:/repo', role: 'catalog').output"
+    private let stampedTreeNode = "TreeMerger(projectRoot: 'input:/repo', under: 'catalog').files"
 
     private func process(formula: String, trees: [String: NodeValue]) throws -> ProcessOutput {
         let node = try makeBuilderNode(properties: ["outputFolder": "input:/repo"])
@@ -245,7 +245,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// compiled resources is the whole point.
     func test_aTreeProductAndAPlainProductShareAFolder() throws {
         let output = try process(formula: """
-            product 'Hello.app/Hello' = Configuration(role: 'exe').output
+            product 'Hello.app/Hello' = SettingsLiteral(role: 'exe').output
             product 'Hello.app/' = \(treeNode)
             """, trees: ["output:/repo/Hello.app": try tree(["Assets.car"])])
 
@@ -257,7 +257,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// formula is wrong, and the builder says so rather than letting one win.
     func test_twoProductsAtOnePathAreAnError() throws {
         XCTAssertThrowsError(try process(formula: """
-            product 'Hello.app/Assets.car' = Configuration(role: 'exe').output
+            product 'Hello.app/Assets.car' = SettingsLiteral(role: 'exe').output
             product 'Hello.app/' = \(treeNode)
             """, trees: ["output:/repo/Hello.app": try tree(["Assets.car"])])) { error in
             XCTAssertTrue("\(error)".contains("Hello.app/Assets.car"), "\(error)")

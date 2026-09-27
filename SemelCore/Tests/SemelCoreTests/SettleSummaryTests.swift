@@ -56,7 +56,7 @@ final class SettleSummaryTests: SemelCoreTestCase {
     /// cacheable in it. `SampleTool.process` interns a result, and its `configuration`
     /// port is static, which is what makes it a node the cache answers for.
     private func makeToolWiredToAConfiguration() throws -> NodeRecord {
-        let spec = "SampleTool(configuration: ['cfg': Configuration(role: 'settle-summary').output])"
+        let spec = "SampleTool(configuration: ['cfg': SettingsLiteral(role: 'settle-summary').output])"
         let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
         return node
     }

@@ -20,8 +20,8 @@ final class AppPreludeTests: XCTestCase {
     /// What the converter's formula for HelloKit provides: the product's trees.
     private let converterSpec = "SwiftFormulaConverter(path: 'input:/app/HelloKit', root: 'input:/app').formula"
     private let converterText = """
-        func modules_HelloKit() = TreeMerger(input: ['HelloKit': Configuration(role: 'modules').output])
-        func objects_HelloKit() = TreeBuilder(input: ['HelloKit.o': Configuration(role: 'objects').output])
+        func modules_HelloKit() = TreeMerger(input: ['HelloKit': SettingsLiteral(role: 'modules').output])
+        func objects_HelloKit() = TreeBuilder(input: ['HelloKit.o': SettingsLiteral(role: 'objects').output])
         """
 
     private func parse(_ formula: String) throws -> [String: GraphSpecNode] {
@@ -48,18 +48,18 @@ final class AppPreludeTests: XCTestCase {
         include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
         func compiled() = SwiftCompiler(
-            configuration: ['config': Configuration(moduleName: 'Hello', base: ['settings': settings(prefix: 'swift.compiler')]).output],
+            configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'swift.compiler')], override: ['literals': SettingsLiteral(moduleName: 'Hello').output]).output],
             inputFolder: ['folder0': Folder(path: <Sources>).manifest],
             moduleTrees: ['HelloKit': modules_HelloKit().files]
         )
 
         func assets() = AssetCatalogCompiler(
-            configuration: ['config': Configuration(appIcon: 'AppIcon', base: ['settings': settings(prefix: 'apple.assetCatalogCompiler')]).output],
+            configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'apple.assetCatalogCompiler')], override: ['literals': SettingsLiteral(appIcon: 'AppIcon').output]).output],
             catalogs: ['assets': Folder(path: <Assets.xcassets>).manifest]
         )
 
         product 'Hello.app/Hello' = SwiftLinker(
-            configuration: ['config': Configuration(linkage: 'executable', outputName: 'Hello', base: ['settings': settings(prefix: 'swift.linker')]).output],
+            configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'swift.linker')], override: ['literals': SettingsLiteral(linkage: 'executable', outputName: 'Hello').output]).output],
             input: ['Hello.o': compiled().object],
             objectTrees: ['HelloKit': objects_HelloKit().files]
         ).output

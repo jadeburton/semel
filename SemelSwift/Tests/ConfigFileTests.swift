@@ -152,8 +152,8 @@ final class PackagePluginConfigTests: SemelSwiftTestCase {
         let reader = try XCTUnwrap(try selfWiring()[SwiftFormulaConverter.packageJSON]?.values.first).asString(omitOutputPort: false)
 
         XCTAssertTrue(reader.contains("ConfigFilter(prefix: 'swift.packageReader'"), "got:\n\(reader)")
-        XCTAssertFalse(reader.contains("Configuration().output"),
-                       "an empty Configuration leaves the reader with no toolDescriptor, got:\n\(reader)")
+        XCTAssertFalse(reader.contains("SettingsLiteral().output"),
+                       "an empty SettingsLiteral leaves the reader with no toolDescriptor, got:\n\(reader)")
     }
 
     func test_theNamedPackagesReaderReadsTheConfigFileBesideThePackage() throws {
