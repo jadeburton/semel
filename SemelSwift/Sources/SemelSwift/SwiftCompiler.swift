@@ -34,6 +34,11 @@ struct SwiftCompilerConfiguration {
     let sourcePaths: [String]
     /// SPM's `exclude:` list, relative to the target folder.
     let excludedPaths: [String]
+    /// The bundle the target's resources are built into, `FoodTruckKit_FoodTruckKit`, when
+    /// it has any (B-77). Set, the compiler adds the source SwiftPM would generate: the
+    /// `Bundle.module` accessor that finds that bundle at run time. A formula literal from
+    /// the converter, so it is part of the node's identity and of its key.
+    let resourceBundleName: String?
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -54,7 +59,43 @@ struct SwiftCompilerConfiguration {
         languageMode = properties["languageMode"]
         sourcePaths = Self.pathList(properties["sourcePaths"])
         excludedPaths = Self.pathList(properties["excludedPaths"])
+        resourceBundleName = properties["resourceBundleName"].flatMap { $0.isEmpty ? nil : $0 }
     }
+
+    /// The source SwiftPM generates for a target with resources, as this build lays the
+    /// bundle out: beside the executable in an iOS bundle, under `Contents/Resources` in
+    /// a macOS one, or beside the code that asks, for a test or a tool run in place.
+    /// Looked up at first use and kept, as SwiftPM's is.
+    static func resourceBundleAccessorSource(bundleName: String) -> String {
+        """
+        import Foundation
+
+        private final class SemelResourceBundleFinder {}
+
+        extension Foundation.Bundle {
+            /// The resource bundle of this module, `\(bundleName).bundle`.
+            static let module: Bundle = {
+                let bundleName = "\(bundleName).bundle"
+                let candidates = [
+                    Bundle.main.bundleURL,
+                    Bundle.main.bundleURL.appendingPathComponent("Contents/Resources"),
+                    Bundle(for: SemelResourceBundleFinder.self).bundleURL,
+                ]
+                for candidate in candidates {
+                    let path = candidate.appendingPathComponent(bundleName).path
+                    if let bundle = Bundle(path: path) {
+                        return bundle
+                    }
+                }
+                fatalError("unable to find bundle named \\(bundleName)")
+            }()
+        }
+
+        """
+    }
+
+    /// The name the accessor is placed under among the sources.
+    static let resourceBundleAccessorFileName = "resource_bundle_accessor.swift"
 
     /// Configuration values are one line of `key=value`, so a list is comma-joined.
     private static func pathList(_ value: String?) -> [String] {
@@ -230,7 +271,15 @@ struct SwiftCompiler: Node {
                 .map { fileName, nodeValue in
                     FileNameAndContent(filePath: "extra/" + fileName, hash: try nodeValue.expectValue())
                 }
-            sourceFiles = (discovered + extra).sorted { $0.filePath < $1.filePath }
+            // The accessor a target with resources compiles with (B-77): a source of this
+            // node's making, interned like a file the walk found.
+            var generated: [FileNameAndContent] = []
+            if let bundleName = configuration.resourceBundleName {
+                let source = SwiftCompilerConfiguration.resourceBundleAccessorSource(bundleName: bundleName)
+                generated.append(FileNameAndContent(filePath: SwiftCompilerConfiguration.resourceBundleAccessorFileName,
+                                                    hash: try source.intern()))
+            }
+            sourceFiles = (discovered + extra + generated).sorted { $0.filePath < $1.filePath }
 
             moduleFiles = try (input.inputValues[SwiftCompiler.inputModules] ?? [:])
                 .map { fileName, nodeValue in

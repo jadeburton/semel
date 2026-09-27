@@ -152,7 +152,35 @@ enum Projects {
         expectedProducts: ["liblua.a", "lua"],
         buildTimeout: 5 * 60)
 
+    /// Apple's Food Truck sample (B-77): an Xcode project in the older form — targets that
+    /// list their files through groups, a localized `.strings` per language as a variant
+    /// group — with a local package that carries resources of its own, and a widget
+    /// extension. The whole checkout is the project's root, nested under its name as
+    /// `icecubesApp` is. The package's resources come out as
+    /// `FoodTruckKit_FoodTruckKit.bundle` inside the app and inside the extension.
+    static let foodTruck = Project(
+        name: "food-truck",
+        source: .git(url: "https://github.com/apple/sample-food-truck.git",
+                     commit: "3954a769e99f3cc53297d94f2b960ceb2665b3d6",
+                     subfolder: "."),
+        buildFolder: "food-truck",
+        platform: "ios-simulator",
+        expectedProducts: [
+            "Food Truck.app/Food Truck",
+            "Food Truck.app/Info.plist",
+            "Food Truck.app/Assets.car",
+            "Food Truck.app/en.lproj/Localizable.strings",
+            "Food Truck.app/FoodTruckKit_FoodTruckKit.bundle/Assets.car",
+            "Food Truck.app/FoodTruckKit_FoodTruckKit.bundle/en.lproj/Localizable.strings",
+            "Food Truck.app/PlugIns/Widgets.appex/Widgets",
+            "Food Truck.app/PlugIns/Widgets.appex/Info.plist",
+        ],
+        buildTimeout: 10 * 60,
+        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
+        mayDiffer: ["Assets.car"],
+        onlyUnder: "Food Truck.app")
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, foodTruck]
     static let all: [Project] = fixtures + external
 }

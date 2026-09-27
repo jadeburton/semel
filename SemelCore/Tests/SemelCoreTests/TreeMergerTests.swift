@@ -30,6 +30,19 @@ final class TreeMergerTests: SemelCoreTestCase {
         return try XCTUnwrap(output.outputValues[TreeMerger.outputPort])
     }
 
+    /// B-77. A package target's resources become a bundle inside an app bundle: the merged
+    /// tree is placed under a folder, and a collision is still a collision.
+    func test_placesEveryEntryUnderTheFolderNamed() throws {
+        let node = try TreeMerger(thisNode: NodeRecord(id: 1, kind: TreeMerger.kind,
+                                                       properties: [TreeMerger.underProperty: "Kit_Kit.bundle"]))
+        let output = try node.process(input: ProcessInput(inputValues: [TreeMerger.inputPort: [
+            "assets": try tree(["Assets.car"]), "strings": try tree(["en.lproj/Localizable.strings"])]]))
+
+        let merged = try XCTUnwrap(output.outputValues[TreeMerger.outputPort])
+        let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try merged.expectValue().resolveAsString())
+        XCTAssertEqual(manifest.entries.map(\.path), ["Kit_Kit.bundle/Assets.car", "Kit_Kit.bundle/en.lproj/Localizable.strings"])
+    }
+
     func test_mergesEveryEntryOfEveryTree() throws {
         let merged = try process(["assets": try tree(["Assets.car", "AppIcon60x60@2x.png"]),
                                   "strings": try tree(["en.lproj/Localizable.strings"])])

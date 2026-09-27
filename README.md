@@ -238,11 +238,24 @@ include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>, configur
 
 The emitted formula includes every package the project references — local ones as the
 project's wrappers, remote ones under `Dependencies/` by repository name — compiles the
-synchronized folders against the linked products' module trees, links their object
-trees into the executable, compiles the asset and string catalogs, copies the plain
-resources flat, and builds the Info.plist from the project's file, the generated keys
-and actool's partial. The xcconfig a fresh clone lacks is an empty layer; a `$(VAR)` it
-would have defined is then reported by the plist builder rather than shipped.
+target's sources against the linked products' module trees, links their object trees
+into the executable, compiles the asset and string catalogs, copies the plain resources
+flat and a localized one under its `.lproj`, merges in the resource bundles of the
+packages the target links, and builds the Info.plist from the project's file, the
+generated keys and actool's partial. A target's sources are its synchronized folders,
+walked, or — in a project of the older form — the files its sources phase lists, each
+resolved through its groups. The xcconfig a fresh clone lacks is an empty layer; a
+`$(VAR)` it would have defined is then reported by the plist builder rather than
+shipped. For `sdk: 'macosx'` the bundle has a `Contents/` — `MacOS/` for the executable,
+`Resources/` for what is copied or compiled, `PlugIns/` for the extensions, the Info.plist
+directly in it — where an iOS bundle is flat.
+
+A package target with resources — an asset catalog, an `.lproj`, a string catalog,
+whatever its manifest's `.process` and `.copy` rules name — is built into
+`<Package>_<Target>.bundle`, as SwiftPM builds it, and compiled with the `Bundle.module`
+accessor SwiftPM would generate; the app's formula puts the bundle beside the executable,
+or under `Contents/Resources` on the Mac. The Swift converter walks each target's folder
+for them, and its formula carries them as `bundles_<Product>()`, empty when none.
 
 ### Dependencies, and clone to build
 
@@ -294,10 +307,11 @@ with the environment perturbed — a different `TMPDIR`, working directory, loca
 zone, none of which is in a cache key. All four export trees must match byte for byte,
 static archives included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
 projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, the
-app itself from its Xcode project, Semel building Semel from a copy of the checkout, and
-Lua 5.4 from its mirror with a formula laid over the clone from `EndToEnd/Fixtures/external`
-— the clones fetched once into `~/Library/Caches/semel/end-to-end` (`SEMEL_E2E_CACHE`
-moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's directory under
+app itself from its Xcode project, Apple's Food Truck sample for the simulator, Semel
+building Semel from a copy of the checkout, and Lua 5.4 from its mirror with a formula
+laid over the clone from `EndToEnd/Fixtures/external` — the clones fetched once into
+`~/Library/Caches/semel/end-to-end` (`SEMEL_E2E_CACHE` moves that); CI runs those
+nightly. `SEMEL_E2E_KEEP=1` keeps a run's directory under
 `/tmp/semel-tests` for inspection.
 
 To build Semel with Semel by hand, the checkout is a package tree like any other:

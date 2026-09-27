@@ -53,7 +53,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         for (path, externalJSON) in externalManifests {
             externalValues[path] = .value(try externalJSON.intern())
         }
-        let input = ProcessInput(inputValues: [
+        var inputValues: [String: [String: NodeValue]] = [
             SwiftFormulaConverter.packageFolder:        ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:          ["json":   .value(try json.intern())],
             SwiftFormulaConverter.externalPackageJSONs: externalValues,
@@ -61,8 +61,27 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                 ? try targetFolderManifests(packageFolder: packageFolder, json: json,
                                             externalManifests: externalManifests, folderContents: folderContents)
                 : [:],
-        ])
-        return try makeConverter().process(input: input)
+            SwiftFormulaConverter.targetSubfolders:     [:],
+        ]
+        // The converter walks each target's subfolders for its resources (B-77), one level
+        // per run: every subfolder it asks for is answered from `folderContents`, or as
+        // empty, until it stops asking.
+        let converter = try makeConverter()
+        for _ in 0..<8 {
+            let output = try converter.process(input: ProcessInput(inputValues: inputValues))
+            let asked = (output.inputWireSpecs[SwiftFormulaConverter.targetSubfolders] ?? [:]).keys
+                .filter { inputValues[SwiftFormulaConverter.targetSubfolders]?[$0] == nil }
+            guard !asked.isEmpty else {
+                return output
+            }
+            for folder in asked {
+                let entries = folderContents[folder] ?? []
+                inputValues[SwiftFormulaConverter.targetSubfolders]?[folder] =
+                    .value(try FolderManifest(baseFolderPath: folder, entries: entries).toJSON().intern())
+            }
+        }
+        XCTFail("the converter kept asking for subfolders")
+        return try converter.process(input: ProcessInput(inputValues: inputValues))
     }
 
     private func formula(packageFolder: String = "input:/pkg",

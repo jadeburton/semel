@@ -91,8 +91,104 @@ final class XcodeProjectTests: XCTestCase {
         }
         """
 
+    /// A project in the older form (B-77): the application lists its files through
+    /// groups, each group a folder on disk, with a localized resource as a variant group
+    /// over one file per `.lproj`, a group that stands at the source root, and a group
+    /// whose path is `.`.
+    static let groupedFixture = """
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            objectVersion = 56;
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 ); };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { SWIFT_VERSION = 5.0; IPHONEOS_DEPLOYMENT_TARGET = 16.4; }; };
+                G1 = { isa = PBXGroup; children = ( G2, G4, G5, W1, PR1 ); sourceTree = "<group>"; };
+                G2 = { isa = PBXGroup; children = ( F1, G3, V1, F5, F6 ); path = App; sourceTree = "<group>"; };
+                G3 = { isa = PBXGroup; children = ( F2 ); path = Views; sourceTree = "<group>"; };
+                G4 = { isa = PBXGroup; children = ( F3 ); name = Shared; path = Shared/Sources; sourceTree = SOURCE_ROOT; };
+                G5 = { isa = PBXGroup; children = ( F4 ); name = LICENSE; path = .; sourceTree = "<group>"; };
+                F1 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+                F2 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Home.swift; sourceTree = "<group>"; };
+                F3 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Util.swift; sourceTree = "<group>"; };
+                F4 = { isa = PBXFileReference; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
+                F5 = { isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+                F6 = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Food-Info.plist; sourceTree = "<group>"; };
+                V1 = { isa = PBXVariantGroup; children = ( F7, F8 ); name = Localizable.strings; sourceTree = "<group>"; };
+                F7 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+                F8 = { isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ar; path = ar.lproj/Localizable.strings; sourceTree = "<group>"; };
+                W1 = { isa = PBXFileReference; lastKnownFileType = wrapper; path = FoodKit; sourceTree = "<group>"; };
+                T1 = {
+                    isa = PBXNativeTarget;
+                    name = "Food Truck";
+                    productType = "com.apple.product-type.application";
+                    productReference = PR1;
+                    buildConfigurationList = CL2;
+                    buildPhases = ( BP1, BP2, BP3 );
+                    packageProductDependencies = ( PD1 );
+                };
+                PR1 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = "Food Truck.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+                CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
+                C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                    PRODUCT_NAME = "$(TARGET_NAME)";
+                    PRODUCT_BUNDLE_IDENTIFIER = "com.example.food-truck";
+                    INFOPLIST_FILE = "App/Food-Info.plist";
+                    GENERATE_INFOPLIST_FILE = YES;
+                }; };
+                BP1 = { isa = PBXSourcesBuildPhase; files = ( BF1, BF2, BF3 ); };
+                BF1 = { isa = PBXBuildFile; fileRef = F2; };
+                BF2 = { isa = PBXBuildFile; fileRef = F1; };
+                BF3 = { isa = PBXBuildFile; fileRef = F3; platformFilters = ( ios, ); };
+                BP2 = { isa = PBXResourcesBuildPhase; files = ( BF4, BF5, BF6 ); };
+                BF4 = { isa = PBXBuildFile; fileRef = F5; };
+                BF5 = { isa = PBXBuildFile; fileRef = V1; };
+                BF6 = { isa = PBXBuildFile; fileRef = F4; };
+                BP3 = { isa = PBXFrameworksBuildPhase; files = ( BF7 ); };
+                BF7 = { isa = PBXBuildFile; productRef = PD1; };
+                PD1 = { isa = XCSwiftPackageProductDependency; productName = FoodKit; };
+            };
+            rootObject = P1;
+        }
+        """
+
     private func project() throws -> XcodeProject {
         try XcodeProject(pbxproj: Data(Self.fixture.utf8))
+    }
+
+    private func groupedApp() throws -> XcodeProject.Target {
+        try XCTUnwrap(try XcodeProject(pbxproj: Data(Self.groupedFixture.utf8)).targets.first)
+    }
+
+    // MARK: - Reading a project of groups (B-77)
+
+    /// Each listed file's path is its own under its groups' up to the main group; a group
+    /// at the source root starts over from the project folder; a group whose path is `.`
+    /// adds nothing. Sorted, so the formula is the same on every run.
+    func test_resolvesListedSourcesThroughTheirGroups() throws {
+        XCTAssertEqual(try groupedApp().sourceFiles.map(\.path), ["App/App.swift", "App/Views/Home.swift", "Shared/Sources/Util.swift"])
+        XCTAssertEqual(try groupedApp().synchronizedFolders.count, 0)
+    }
+
+    /// A variant group stands for one file per language; a catalog and a plain file
+    /// resolve like a source.
+    func test_resolvesListedResourcesAndExpandsVariantGroups() throws {
+        XCTAssertEqual(try groupedApp().resourceFiles.map(\.path),
+                       ["App/Assets.xcassets", "App/ar.lproj/Localizable.strings", "App/en.lproj/Localizable.strings",
+                        "LICENSE.txt"])
+    }
+
+    /// A multiplatform target marks a file for some platforms only; it is built for the
+    /// SDKs of those platforms and left out of the others.
+    func test_aFileLimitedToAPlatformIsBuiltForItsSDKsOnly() throws {
+        let app = try groupedApp()
+        let util = try XCTUnwrap(app.sourceFiles.first { $0.path == "Shared/Sources/Util.swift" })
+
+        XCTAssertEqual(util.platformFilters, ["ios"])
+        XCTAssertEqual(app.sourcePaths(forSDK: "iphonesimulator"), ["App/App.swift", "App/Views/Home.swift", "Shared/Sources/Util.swift"])
+        XCTAssertEqual(app.sourcePaths(forSDK: "iphoneos"), ["App/App.swift", "App/Views/Home.swift", "Shared/Sources/Util.swift"])
+        XCTAssertEqual(app.sourcePaths(forSDK: "macosx"), ["App/App.swift", "App/Views/Home.swift"])
+        XCTAssertEqual(app.resourcePaths(forSDK: "macosx").count, app.resourceFiles.count, "nothing in the resources is limited")
     }
 
     private func app() throws -> XcodeProject.Target {
@@ -158,7 +254,7 @@ final class XcodeProjectTests: XCTestCase {
                                                 .remote(product: "KeychainSwift", repositoryURL: "https://github.com/evgenyneu/keychain-swift")])
         XCTAssertEqual(target.frameworks, ["QuickLook"])
         XCTAssertEqual(target.embeddedExtensions, ["IceCubesShareExtension.appex"])
-        XCTAssertEqual(target.resourceFiles, ["AppIcon.icon"])
+        XCTAssertEqual(target.resourceFiles.map(\.path), ["AppIcon.icon"])
     }
 
     func test_readsTheLocalAndRemotePackagesTheProjectReferences() throws {

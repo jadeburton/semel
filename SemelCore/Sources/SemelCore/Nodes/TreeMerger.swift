@@ -21,6 +21,11 @@ struct TreeMerger: Node {
     static let inputPort = "input"
     static let outputPort = "files"
 
+    /// A folder every merged entry is placed under: `FoodTruckKit_FoodTruckKit.bundle`
+    /// puts a package target's resources where a bundle inside an app bundle lives
+    /// (B-77). Absent or empty, the trees merge at the root.
+    static let underProperty = "under"
+
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {
@@ -35,6 +40,7 @@ struct TreeMerger: Node {
     public func process(input: ProcessInput) throws -> ProcessOutput {
         var merged: [String: TreeManifestEntry] = [:]
         var from: [String: String] = [:]
+        let under = thisNode.properties[Self.underProperty].map { Path($0) } ?? .empty
 
         for (key, value) in (input.inputValues[Self.inputPort] ?? [:]).sorted(by: { $0.key < $1.key }) {
             // Whatever stopped one tree stops the merge, and demanding the value is how this
@@ -48,7 +54,8 @@ struct TreeMerger: Node {
                     return .init(outputValues: [Self.outputPort: .noValue(reason: .error(messageDataObjectHash: try message.intern()))],
                                  inputWireSpecs: [:])
                 }
-                merged[entry.path] = entry
+                let placed = (under / Path(entry.path)).string
+                merged[placed] = TreeManifestEntry(path: placed, hash: entry.hash, mode: entry.mode)
                 from[entry.path] = key
             }
         }

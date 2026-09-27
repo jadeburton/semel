@@ -34,6 +34,42 @@ struct XcodeFormulaEmitter {
     let project: XcodeProject
     let build: Build
 
+    /// Where the parts of a bundle go, by platform (B-77). An iOS bundle is flat: the
+    /// executable, the Info.plist and every resource at its root, extensions under
+    /// `PlugIns/`. A macOS bundle has a `Contents/` with `MacOS/` for the executable,
+    /// `Resources/` for everything copied or compiled, `PlugIns/` for extensions, and the
+    /// Info.plist directly in it.
+    struct BundleLayout {
+        let isShallow: Bool
+
+        init(sdk: String) {
+            isShallow = !sdk.hasPrefix("macosx")
+        }
+
+        func executable(in bundle: String, named name: String) -> String {
+            isShallow ? "\(bundle)/\(name)" : "\(bundle)/Contents/MacOS/\(name)"
+        }
+
+        func infoPlist(in bundle: String) -> String {
+            isShallow ? "\(bundle)/Info.plist" : "\(bundle)/Contents/Info.plist"
+        }
+
+        func resource(in bundle: String, at path: String) -> String {
+            isShallow ? "\(bundle)/\(path)" : "\(bundle)/Contents/Resources/\(path)"
+        }
+
+        /// The tree product the compiled resources are merged into, with its trailing slash.
+        func resourcesTree(in bundle: String) -> String {
+            isShallow ? "\(bundle)/" : "\(bundle)/Contents/Resources/"
+        }
+
+        func plugIn(in bundle: String, named name: String) -> String {
+            isShallow ? "\(bundle)/PlugIns/\(name)" : "\(bundle)/Contents/PlugIns/\(name)"
+        }
+    }
+
+    var layout: BundleLayout { BundleLayout(sdk: build.sdk) }
+
     /// The Swift nodes a target is built through. Named rather than imported: this
     /// package does not depend on SemelSwift, and a formula names a node by type name.
     static let swiftCompilerNamespace = derivedSettingNamespace(forTypeName: "SwiftCompiler")
@@ -57,7 +93,7 @@ struct XcodeFormulaEmitter {
         let applicationBundle = try TargetIdentity(target: application, settings: try settings(application), sdk: build.sdk).bundleName
         blocks += try bundle(for: application, at: applicationBundle, settings: try settings(application), listing: listing)
         for anExtension in extensions {
-            blocks += try bundle(for: anExtension, at: "\(applicationBundle)/PlugIns/\(anExtension.productFileName)",
+            blocks += try bundle(for: anExtension, at: layout.plugIn(in: applicationBundle, named: anExtension.productFileName),
                                  settings: try settings(anExtension), listing: listing)
         }
         return blocks.joined(separator: "\n\n") + "\n"
@@ -112,8 +148,17 @@ struct XcodeFormulaEmitter {
         // them all on its folder port and walks each. Exceptions are relative to their
         // own folder, which is how the compiler reads an excluded path too. A target with
         // no folder of its own compiles what it borrows, and nothing else.
-        guard !target.synchronizedFolders.isEmpty || target.borrowedFiles.contains(where: { $0.hasSuffix(".swift") }) else {
-            throw XcodeProjectError.noSuchTarget("\(target.name): no synchronized folder and no borrowed sources; targets with file lists are not read yet")
+        // A target lists its files through groups (B-77) or owns synchronized folders;
+        // either way it has to have a Swift source somewhere. A listed file that is not
+        // Swift is a build this converter cannot write yet, said rather than dropped.
+        let listedSources = target.sourcePaths(forSDK: build.sdk).filter { $0.hasSuffix(".swift") }
+        let listedOther   = target.sourcePaths(forSDK: build.sdk).filter { !$0.hasSuffix(".swift") }
+        guard listedOther.isEmpty else {
+            throw XcodeProjectError.unsupportedSources(target: target.name, files: listedOther)
+        }
+        guard !target.synchronizedFolders.isEmpty || !listedSources.isEmpty
+                || target.borrowedFiles.contains(where: { $0.hasSuffix(".swift") }) else {
+            throw XcodeProjectError.noSuchTarget("\(target.name): no synchronized folder, no listed sources and no borrowed sources")
         }
         let sourceFolders = target.synchronizedFolders.map { ($0, "\(build.projectFolder)/\($0.path)") }
         let folderWires = sourceFolders.enumerated().map { index, folder in
@@ -145,9 +190,13 @@ struct XcodeFormulaEmitter {
             compilerLiterals["arguments"] = compilerArguments.joined(separator: ",")
         }
         // What the target takes from another target's folder: sources one by one on the
-        // compiler, resources with the target's own.
+        // compiler, resources with the target's own. A listed file goes the same way,
+        // keyed by its whole path: two groups may each hold a `View.swift`, and the key
+        // is where the compiler puts the file.
         let borrowedSources = target.borrowedFiles.filter { $0.hasSuffix(".swift") }.map {
             "        \(Self.quoted(($0 as NSString).lastPathComponent)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
+        } + listedSources.map {
+            "        \(Self.quoted($0)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
         }
         blocks.append(
             "func compiler_\(name)() =\n" +
@@ -170,7 +219,7 @@ struct XcodeFormulaEmitter {
             linkerLiterals["arguments"] = linkerArguments.joined(separator: ",")
         }
         products.append(
-            "product '\(bundlePath)/\(identity.productName)' =\n" +
+            "product '\(layout.executable(in: bundlePath, named: identity.productName))' =\n" +
             "    SwiftLinker(\n" +
             "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
             "        input: ['\(identity.moduleName).o': compiler_\(name)().object]" +
@@ -179,7 +228,9 @@ struct XcodeFormulaEmitter {
 
         // ── resources ────────────────────────────────────────────────────────
         // Each folder's listing, with the paths of what it holds, less its exceptions.
-        struct ResourceFile { let folderPath: String; let relativePath: String }
+        // `bundlePath` is where the file lands in the bundle: flat, as Xcode flattens a
+        // folder's files, except a localized file, which keeps its `<lang>.lproj/`.
+        struct ResourceFile { let folderPath: String; let relativePath: String; let bundlePath: String }
         var catalogs: [String] = []
         var stringCatalogs: [ResourceFile] = []
         var plainResources: [ResourceFile] = []
@@ -190,19 +241,29 @@ struct XcodeFormulaEmitter {
                 .map { "\(folderPath)/\($0)" }
             for file in contents.files.sorted() where !excluded.contains(file) {
                 if file.hasSuffix(".xcstrings") && !Self.isInsideCatalog(file) {
-                    stringCatalogs.append(ResourceFile(folderPath: folderPath, relativePath: file))
+                    stringCatalogs.append(ResourceFile(folderPath: folderPath, relativePath: file,
+                                                       bundlePath: (file as NSString).lastPathComponent))
                 } else if Self.isPlainResource(file) {
-                    plainResources.append(ResourceFile(folderPath: folderPath, relativePath: file))
+                    plainResources.append(ResourceFile(folderPath: folderPath, relativePath: file,
+                                                       bundlePath: (file as NSString).lastPathComponent))
                 }
             }
         }
-        catalogs += target.resourceFiles.filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
+        // The resources phase's own files: catalogs from a folder-owning target too, and
+        // for a target that lists its files (B-77) everything else it copies.
+        let resourcePaths = target.resourcePaths(forSDK: build.sdk)
+        catalogs += resourcePaths.filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
             .map { "\(build.projectFolder)/\($0)" }
-        for borrowed in target.borrowedFiles where !borrowed.hasSuffix(".swift") {
-            if borrowed.hasSuffix(".xcstrings") {
-                stringCatalogs.append(ResourceFile(folderPath: build.projectFolder, relativePath: borrowed))
-            } else if Self.isPlainResource(borrowed) {
-                plainResources.append(ResourceFile(folderPath: build.projectFolder, relativePath: borrowed))
+        let listedResources = target.sourceFiles.isEmpty ? [] : resourcePaths
+        for file in listedResources + target.borrowedFiles where !file.hasSuffix(".swift") {
+            if let localized = Self.localizedBundlePath(file) {
+                plainResources.append(ResourceFile(folderPath: build.projectFolder, relativePath: file, bundlePath: localized))
+            } else if file.hasSuffix(".xcstrings") {
+                stringCatalogs.append(ResourceFile(folderPath: build.projectFolder, relativePath: file,
+                                                   bundlePath: (file as NSString).lastPathComponent))
+            } else if Self.isPlainResource(file) {
+                plainResources.append(ResourceFile(folderPath: build.projectFolder, relativePath: file,
+                                                   bundlePath: (file as NSString).lastPathComponent))
             }
         }
         var partials: [String] = []
@@ -236,10 +297,11 @@ struct XcodeFormulaEmitter {
         }
 
         // Plain resources: what is neither source nor compiled, flattened into the bundle
-        // root as Xcode flattens a synchronized folder's files.
+        // root as Xcode flattens a synchronized folder's files — a localized one under
+        // its `.lproj`.
         for file in plainResources {
-            let fileName = (file.relativePath as NSString).lastPathComponent
-            products.append("product '\(bundlePath)/\(fileName)' = StaticFile(path: '\(file.folderPath)/\(file.relativePath)').output")
+            products.append("product '\(layout.resource(in: bundlePath, at: file.bundlePath))' = "
+                          + "StaticFile(path: \(Self.quoted("\(file.folderPath)/\(file.relativePath)"))).output")
         }
 
         // ── Info.plist ───────────────────────────────────────────────────────
@@ -261,7 +323,7 @@ struct XcodeFormulaEmitter {
         let variableText = variables.sorted { $0.key < $1.key }
             .map { "\($0.key): \(Self.quoted($0.value))" }.joined(separator: ",\n        ")
         products.append(
-            "product '\(bundlePath)/Info.plist' =\n" +
+            "product '\(layout.infoPlist(in: bundlePath))' =\n" +
             "    InfoPlistBuilder(\n" +
             "        keys: '\(keysJSON)',\n" +
             "        \(variableText),\n" +
@@ -269,8 +331,15 @@ struct XcodeFormulaEmitter {
             "        partials: [\(partials.joined(separator: ", "))]\n" +
             "    ).plist")
 
+        // The resource bundles of the packages the target links, each under its own
+        // `<Package>_<Target>.bundle/` (B-77): the package's formula carries them as one
+        // tree per product, empty when no target has resources, so every product is named.
+        for product in target.packageProducts.map(\.product).sorted() {
+            bundleTrees.append("'\(FormulaIdentifier.bundlesFunc(forProduct: product))': \(FormulaIdentifier.bundlesFunc(forProduct: product))().files")
+        }
+
         if !bundleTrees.isEmpty {
-            products.append("product '\(bundlePath)/' = TreeMerger(input: [\(bundleTrees.joined(separator: ", "))]).files")
+            products.append("product '\(layout.resourcesTree(in: bundlePath))' = TreeMerger(input: [\(bundleTrees.joined(separator: ", "))]).files")
         }
 
         return blocks + products
@@ -315,6 +384,19 @@ struct XcodeFormulaEmitter {
 
     static func isInsideCatalog(_ relativePath: String) -> Bool {
         relativePath.contains(".xcassets/") || relativePath.contains(".icon/") || relativePath.contains(".lproj/")
+    }
+
+    /// Where a localized file lands in the bundle: `App/ar.lproj/Localizable.strings` is
+    /// `ar.lproj/Localizable.strings`, the language folder kept and everything above it
+    /// dropped, which is how a bundle finds its localizations. Nil for a file in no
+    /// `.lproj`. A `.strings` file is copied as the text it is: a property list in either
+    /// form is one to `Bundle`, and the text form is what the repository holds.
+    static func localizedBundlePath(_ relativePath: String) -> String? {
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard let languageIndex = components.dropLast().lastIndex(where: { $0.hasSuffix(".lproj") }) else {
+            return nil
+        }
+        return components[languageIndex...].joined(separator: "/")
     }
 
     /// A file Xcode copies into the bundle as it is. Sources, catalogs, plists that are
@@ -362,6 +444,8 @@ struct TargetIdentity {
         default:                self.target = "arm64-apple-macosx\(deployment)"
         }
 
+        // A macOS build is for the Mac whatever the device family says: a multiplatform
+        // target keeps `1,2` for its iOS side, and actool for `macosx` takes only `mac`.
         let families = (settings["TARGETED_DEVICE_FAMILY"] ?? "1,2").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         let devices = families.compactMap { family -> String? in
             switch family {
@@ -371,7 +455,11 @@ struct TargetIdentity {
             default: return nil
             }
         }
-        targetDevices = devices.isEmpty ? "iphone,ipad" : devices.joined(separator: ",")
+        if sdk.hasPrefix("macosx") {
+            targetDevices = "mac"
+        } else {
+            targetDevices = devices.isEmpty ? "iphone,ipad" : devices.joined(separator: ",")
+        }
 
         // `6.0` → `6`: the compiler takes the major mode; nothing declared is nothing.
         languageMode = settings["SWIFT_VERSION"].flatMap { $0.split(separator: ".").first.map(String.init) }
@@ -390,20 +478,28 @@ struct TargetIdentity {
             "CFBundlePackageType": packageType,
             "CFBundleShortVersionString": settings["MARKETING_VERSION"] ?? "1.0",
             "CFBundleVersion": settings["CURRENT_PROJECT_VERSION"] ?? "1",
-            "MinimumOSVersion": deploymentTarget,
             "DTPlatformName": sdk,
         ]
+        // The deployment target under the key each platform reads, and the device
+        // families only where there are any: a Mac bundle has neither `UIDeviceFamily`
+        // nor `MinimumOSVersion`, and a stray one is what LaunchServices refuses.
         switch sdk {
         case "iphonesimulator":
             keys["CFBundleSupportedPlatforms"] = ["iPhoneSimulator"]
             keys["LSRequiresIPhoneOS"] = true
+            keys["MinimumOSVersion"] = deploymentTarget
         case "iphoneos":
             keys["CFBundleSupportedPlatforms"] = ["iPhoneOS"]
             keys["LSRequiresIPhoneOS"] = true
+            keys["MinimumOSVersion"] = deploymentTarget
         default:
             keys["CFBundleSupportedPlatforms"] = ["MacOSX"]
+            keys["LSMinimumSystemVersion"] = deploymentTarget
         }
-        keys["UIDeviceFamily"] = targetDevices.split(separator: ",").compactMap { $0 == "iphone" ? 1 : $0 == "ipad" ? 2 : nil }
+        let families = targetDevices.split(separator: ",").compactMap { $0 == "iphone" ? 1 : $0 == "ipad" ? 2 : nil }
+        if !families.isEmpty {
+            keys["UIDeviceFamily"] = families
+        }
 
         // Sorted: two settings can name one plist key — `UILaunchScreen_Generation` and a
         // literal `UILaunchScreen`, `UISupportedInterfaceOrientations_iPad` and

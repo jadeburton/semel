@@ -24,4 +24,23 @@ public enum FormulaIdentifier {
     public static func objectsFunc(forProduct product: String) -> String {
         "objects_\(sanitized(product))"
     }
+
+    /// The func carrying the resource bundles of every target behind a package product,
+    /// each under its `<Package>_<Target>.bundle/`, as one tree (B-77). Empty when no
+    /// target has resources, so a consumer can name it without knowing.
+    public static func bundlesFunc(forProduct product: String) -> String {
+        "bundles_\(sanitized(product))"
+    }
+
+    /// The func carrying one target's resource bundle as a tree.
+    public static func bundleFunc(forTarget target: String) -> String {
+        "bundle_\(sanitized(target))"
+    }
+
+    /// The bundle a target's resources are built into, as SwiftPM names it:
+    /// `FoodTruckKit_FoodTruckKit`. `Bundle.module` in the target's code finds it by this
+    /// name beside the executable, or under `Contents/Resources` on macOS.
+    public static func resourceBundleName(package: String, target: String) -> String {
+        "\(package)_\(target)"
+    }
 }
