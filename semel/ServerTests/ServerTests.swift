@@ -214,32 +214,11 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertEqual(server.connectionCount, 1)
     }
 
-    /// B-61's documented limit: a wait while another session holds a batch open blocks
-    /// until that batch closes. Pinned so the behavior is deliberate, not accidental.
-    func test_waitBlocksWhileAnotherSessionHoldsABatchOpen() throws {
-        let holder = try connect()
-        let waiter = try connect()
-        _ = try daemon(holder, .beginBatch)
-        let finished = expectation(description: "wait returned")
-
-        DispatchQueue.global().async {
-            _ = try? self.daemon(waiter, .wait)
-            finished.fulfill()
-        }
-
-        // The engine in this fixture has no processing loop, so waitUntilIdle returns at
-        // once regardless of batches; the limit only bites with a live loop. Document that
-        // here by asserting the wait returns, and leave the live-loop case to B-61.
-        wait(for: [finished], timeout: 5)
-        _ = try daemon(holder, .endBatch)
-    }
-
-    /// A parked `wait` belongs to its own connection. The handler answers `wait` off its
-    /// request queue, so a client waiting for the graph to settle must not hold another
-    /// client's commands behind it.
-    func test_aWaitOnOneConnectionLeavesAnotherFree() throws {
-        // The fixture's engine has no processing loop, so a wait on it settles at once and
-        // would pin nothing. This one test builds an engine that runs.
+    /// The fixture's engine has no processing loop, so a wait on it settles at once and
+    /// would pin nothing about waiting. This runs `body` against a server over an engine
+    /// that runs, with the loop's own startup work already settled, so the only wake-ups
+    /// outstanding are the ones the test makes.
+    private func withLiveServer(_ body: (_ socketPath: String, _ engine: BuildEngine) throws -> Void) throws {
         let fixtureEngine   = BuildEngine.shared
         let fixtureDatabase = DatabaseLayer.shared
         let liveDatabase    = try DatabaseLayer()
@@ -257,15 +236,51 @@ final class ServerTests: RequestHandlerTestCase {
         try liveServer.start()
         defer { liveServer.stop() }
 
+        liveEngine.waitUntilIdleBlocking()
+        try body(livePath, liveEngine)
+    }
+
+    /// B-61's documented limit: a wait while another session holds a batch open blocks
+    /// until that batch closes, because the batch's work signal is counted and not sent
+    /// until `endBatch`. Fail-safe — a wait never reports a settle that has work still
+    /// ahead of it — and pinned so the behaviour is deliberate, not accidental.
+    func test_waitBlocksWhileAnotherSessionHoldsABatchOpen() throws {
+        try withLiveServer { socketPath, _ in
+            let holder = try SocketConnection.connect(to: socketPath)
+            let waiter = try SocketConnection.connect(to: socketPath)
+            _ = try daemon(holder, .beginBatch)
+            _ = try daemon(holder, .pushFile(path: "held.c", mode: 0o644), body: Data("int held;".utf8))
+
+            let parked = expectation(description: "the wait returned while the batch was open")
+            parked.isInverted = true
+            let released = expectation(description: "the wait returned once the batch closed")
+            DispatchQueue.global().async {
+                _ = try? self.daemon(waiter, .wait)
+                parked.fulfill()
+                released.fulfill()
+            }
+
+            wait(for: [parked], timeout: 1)
+            _ = try daemon(holder, .endBatch)
+            wait(for: [released], timeout: 5)
+        }
+    }
+
+    /// A parked `wait` belongs to its own connection. The handler answers `wait` off its
+    /// request queue, so a client waiting for the graph to settle must not hold another
+    /// client's commands behind it.
+    func test_aWaitOnOneConnectionLeavesAnotherFree() throws {
+        try withLiveServer { socketPath, _ in
+            try aWaitOnOneConnectionLeavesAnotherFree(socketPath: socketPath)
+        }
+    }
+
+    private func aWaitOnOneConnectionLeavesAnotherFree(socketPath livePath: String) throws {
         let commander = try SocketConnection.connect(to: livePath)
         let waiter    = try SocketConnection.connect(to: livePath)
         let returned  = NSLock()
         var waitHasReturned = false
         let waitFinished = expectation(description: "the parked wait returned")
-
-        // Settle the loop's own startup work first, so the only outstanding wake-up is the
-        // one the batch below withholds.
-        liveEngine.waitUntilIdleBlocking()
 
         // The batch withholds the coalesced signal the reset asks for, so the loop never
         // marks a newer idle generation and the wait cannot settle.
