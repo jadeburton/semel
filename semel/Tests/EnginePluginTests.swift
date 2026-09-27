@@ -150,7 +150,9 @@ final class EnginePluginTests: XCTestCase {
 
     /// The settle-time event this unblocks can fire and count *during* the `.wait`
     /// request, so the guard must already be clear before that request goes out, not
-    /// after it comes back.
+    /// after it comes back. The progress line lives exactly as long as the request (B-95):
+    /// begun after the reset, ended before `Settled.` prints, so the result lands on a
+    /// clean line rather than stepping around the indicator.
     func test_waitResetsErrorAccountingBeforeSendingTheRequest() throws {
         let orderLog = OrderLog()
         connection.orderLog = orderLog
@@ -158,8 +160,9 @@ final class EnginePluginTests: XCTestCase {
 
         try run("wait")
 
-        XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "send"])
+        XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "settleWaitBegan", "send", "settleWaitEnded"])
     }
+
 
     /// A wait with a batch open would block for good: the batch holds the very signal the
     /// wait is waiting on (B-61). Refused, naming the command that ends the batch.

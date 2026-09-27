@@ -66,7 +66,12 @@ final class EnginePlugin: CommandPlugin {
         // reporter) can fire and count *during* this request, ahead of `outputMessage`
         // below ever running.
         context.resetErrorRecordAccounting()
-        _ = try context.request(.wait)
+        // The progress line lives exactly as long as the request: ended before the result
+        // prints, so the result does not have to step around it.
+        context.settleWaitBegan()
+        let waited = Result { try context.request(.wait) }
+        context.settleWaitEnded()
+        _ = try waited.get()
         context.outputMessage("Settled.")
     }
 

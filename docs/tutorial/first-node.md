@@ -219,7 +219,9 @@ Hello, World 1!
 
 `push` copied your files into Semel's own input file system — the engine never reads your
 disk during a build, only what was pushed. `build` is `push`, wait until the graph settles,
-report errors, and copy the products out. `semel.machine.config` needs its own `push`
+report errors, and copy the products out. While it waits, a line at the bottom of the
+terminal counts the nodes running, pending and done; it is erased when the summary prints,
+which is why it is not in the transcripts above. `semel.machine.config` needs its own `push`
 because `build` pushes the folder you name and that file is not in it — which is what you
 watched: the report named the file itself, `semel.machine.config has not been pushed`,
 under the missing-setting errors from the tools that then had nothing to read.

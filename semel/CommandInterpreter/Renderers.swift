@@ -26,6 +26,12 @@ enum Mark {
     /// Nothing is wrong: a settle that left the graph with no errors in it, or a `check`
     /// that found nothing to report.
     static let settled = "✅"
+
+    /// Not yet: the settle is still running. The one mark that says neither good nor bad,
+    /// allowed because it never stays on the screen — it opens the progress line, which
+    /// is redrawn in place and erased before any report prints (B-95). Nothing that
+    /// scrolls may use it.
+    static let working = "⏳"
 }
 
 /// How many paths any one of the prompt's reports names, one per line, before it reports

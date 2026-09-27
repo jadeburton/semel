@@ -439,24 +439,22 @@ One binary, three modes, sharing a wire protocol:
 
 ### Command line
 
-**B-95** `open` `For Fable Only` — **Nothing shows a build's progress before it settles.**
-The end of a build is told: the settle summary prints when the graph settles, and the
-artifact diff under it names what appeared, changed and disappeared. Everything before that
-is silent — after `push` or `build` the prompt returns at once, and `wait` blocks with no
-indication of progress. Wanted: a live indicator redrawn in place rather than scrolled, in
-two sizes. Minimal: one line with the number of pending nodes, which may rise while the
-cascade is still generating work, replaced by the settle summary. Maximal: the active nodes
-listed, a dashboard. The transport exists — a subscribed connection already receives the
-`settled` and `artifacts` events — so the work is a progress event and a terminal renderer.
-The event should carry the running totals the settle keeps (`SettleTally`), not per-batch
-counts: the tally counts each node once across batches, and a sum of batches would count a
-node that ran twice. Open, and to decide before building: whether
-the indicator is opt-in or opt-out, and how the user keeps typing commands while it redraws
-(a status line above the prompt, as `ninja` and `cargo` do, versus a mode entered with a
-verb and left with a key). Design, for review:
-`docs/superpowers/specs/2026-09-27-semel-build-progress-design.md` — a `progress` event
-with the tally's totals and the running nodes, drawn as one line only while this client is
-blocked in `wait`, `build` or `commit`, on by default at a terminal and never elsewhere.
+**B-95** `open` `For Fable Only` — **Build progress: the dashboard, and a line at the prompt.**
+Shipped: a `progress` event from the engine — the settle tally's running totals, the
+pending count, the nodes computing now by type and name — drawn by the client as one
+line redrawn in place while it is blocked in `wait`, `build` or the `commit` that ends a
+batch, erased before the command prints. On at a terminal unless `SEMEL_PROGRESS=0`,
+never into a pipe. Design and particulars:
+`docs/superpowers/specs/2026-09-27-semel-build-progress-design.md`. What remains:
+
+1. **The dashboard.** The active nodes listed, one line per job, each with its elapsed
+   time. The event already carries the list, so this is a renderer that owns N lines —
+   which is where terminal drawing goes wrong, and why the one line went first.
+2. **A `watch` verb**: the line until a key is pressed, for the person who pushed at the
+   prompt and wants to look without blocking on a settle.
+3. **A status line at an idle prompt**, as `cargo` and `ninja` draw above nothing. The
+   prompt is `readLine()` with no line editor, so this needs the client to own its input
+   line — raw mode, cursor save and restore, a width to track — a project of its own.
 
 **B-91** `open` `For Fable Only` — **The engine says what a settle did, not why.**
 `DaemonMessages` carry what was published, what failed, one settle's totals — scheduled,

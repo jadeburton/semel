@@ -39,6 +39,12 @@ protocol CommandContext: AnyObject {
     /// the engine's own idle-time report will not repeat a message it already delivered,
     /// so only this reset lets the following `errors` verb's query count it again.
     func resetErrorRecordAccounting()
+
+    /// A command is about to block until the graph settles: the progress line may be
+    /// drawn from here until `settleWaitEnded()` (B-95). Bracketing the wait rather than
+    /// the command, so the result the command prints lands on a clean line.
+    func settleWaitBegan()
+    func settleWaitEnded()
 }
 
 /// A failure the server reported. Thrown by `request` so the interpreter prints it the way

@@ -2,9 +2,10 @@
 // SemelServer
 //
 // One client. A serial queue of its own, a FrameStream, a Session, and the shared handler.
-// Each request frame becomes one handler call on this queue and one reply frame back on
-// the same stream, so replies leave in request order; events from the registry go out on
-// the same stream and so cannot interleave with a reply.
+// Each request frame becomes one handler call on this queue — a `wait`, which blocks until
+// the graph settles, on a thread of its own — and one reply frame back on the same stream,
+// so replies leave in request order; events from the registry go out on the same stream
+// and so cannot interleave with a reply.
 
 import Foundation
 import Network
@@ -23,9 +24,9 @@ final class ServerConnection {
     private let queue: DispatchQueue
     private var finished = false
 
-    /// The queue named by `label` is a plain dispatch queue and must stay one: the handler
-    /// parks it on `wait` until the engine settles, which a cooperative-pool thread could
-    /// not afford to do.
+    /// The queue named by `label` is a plain dispatch queue: every request but `wait` is
+    /// handled on it, and the events to this client leave through it, which is why a
+    /// `wait` is handled on a thread of its own (`receive`).
     init(connection: NWConnection, handler: RequestHandler, label: String) {
         self.handler = handler
         self.queue   = DispatchQueue(label: label)
@@ -68,7 +69,33 @@ final class ServerConnection {
             }
             return
         }
-        let (response, body) = handler.handle(request, body: frame.body.isEmpty ? nil : frame.body, session: session)
+        let body = frame.body.isEmpty ? nil : frame.body
+
+        // A wait blocks until the graph settles, and not on this queue: the events the
+        // client reads meanwhile — progress above all (B-95), a notice, the idle-time
+        // error report — go out through this same queue, and a wait parked on it held
+        // every one of them back until it ended, which is exactly when they stop being
+        // worth reading. A thread of its own, then: not this queue, and not the
+        // cooperative pool's, whose threads the engine's loop needs (see the handler).
+        // The client sends one request at a time, so a reply leaving from another thread
+        // still leaves in request order.
+        if case .daemon(.wait) = request {
+            let thread = Thread { [self] in
+                let (response, replyBody) = handler.handle(request, body: body, session: session)
+                reply(response, body: replyBody, to: frame, request: request)
+            }
+            thread.name = "semel.wait"
+            thread.start()
+            return
+        }
+
+        let (response, replyBody) = handler.handle(request, body: body, session: session)
+        reply(response, body: replyBody, to: frame, request: request)
+    }
+
+    /// One reply frame back on the stream, from whichever thread handled the request;
+    /// `FrameStream.send` serializes the write on the connection's queue.
+    private func reply(_ response: Response, body: Data?, to frame: Frame, request: Request) {
         do {
             try stream.send(try Frame.response(response, correlationID: frame.correlationID, body: body ?? Data()))
         } catch {

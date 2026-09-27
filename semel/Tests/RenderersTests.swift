@@ -17,6 +17,9 @@ final class MarkTests: XCTestCase {
     func test_theMarksAreExactlyThese() {
         XCTAssertEqual(Mark.failure, "❌")
         XCTAssertEqual(Mark.settled, "✅")
+        // The third says neither good nor bad, and earns its place by never staying on the
+        // screen: it opens the progress line, which is erased before any report prints (B-95).
+        XCTAssertEqual(Mark.working, "⏳")
     }
 }
 

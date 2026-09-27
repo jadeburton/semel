@@ -226,6 +226,15 @@ public final class RequestHandler {
                                                         changed:     changes.changed,
                                                         disappeared: changes.disappeared)))
         }
+        // Between the two, as often as the pass changes state (B-95).
+        engine.progressReporter = { [weak self] report in
+            let running = report.running.map { ActiveNode(type: $0.typeName, name: $0.name) }
+            self?.eventSink?.deliver(.daemon(.progress(record: ProgressRecord(scheduled: report.scheduled,
+                                                                              computed:  report.computed,
+                                                                              fromCache: report.fromCache,
+                                                                              pending:   report.pending,
+                                                                              running:   running))))
+        }
     }
 
     // MARK: - Shared helpers for the file verbs
