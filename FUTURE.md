@@ -353,6 +353,21 @@ nested folders are not compiled (the glob is one level); a `publicHeadersPath` o
 `include` is not honoured; and a package vending an *executable* with C targets would
 need a `clang.linker` block, which the archive case never reads.
 
+**B-122** `open` — **`prepare` writes no clang settings for a tree with C targets.**
+Seen 2026-09-27 on a fresh copy of the IceCubes packages: `semel-swift prepare Packages
+--platform ios-simulator` vendored swift-cmark and swift-markdown's CAtomic, wrote the
+formula, and wrote `semel.config` and `semel.machine.config` with the three `swift.*`
+namespaces and nothing else — while the comment it writes into `semel.config` promises
+"for the clang tools a language standard to start from", and B-119's third point assumes
+`prepare` writes the `clang.*` namespaces when the tree has a C-family target. The first
+build then failed on 70 clang nodes with the missing-settings report, and the loop it
+names — add `clang.compiler.target` and the standards to the project file, run the
+machine-file writer — is one `prepare` was meant to close. The 2026-09-13 tree at
+`C1/icecubes/Packages` has the clang blocks, so either they were written by hand then or
+the detection has regressed since; `PrepareTests` should hold a package with a C target to
+a config carrying both `clang.preprocessor` and `clang.compiler`, project half and machine
+half, and B-119's plan should be read against whichever answer this turns out to be.
+
 **B-26** `open` `For Fable Only` — **Recursive content hash for a folder tree.**
 Done 2026-09-25: a `Folder` publishes a Merkle root on a `contentRoot` port of its own —
 the hash of a document with one line per child carrying its kind, what it holds and its name:
@@ -408,6 +423,26 @@ per tool run (about 1 GB/s); a sampled verification of stored objects is where t
 Make the engine talk to the cache as though it were a separate server, without a socket or a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
+
+**B-121** `open` `For Fable Only` — **A cache entry spells out its upstream tree, once per wire.**
+A `ProcessCacheEntry` holds the node's `inputWireSpecs` so that a hit can apply them
+without running the node — and each wire's spec is the fully expanded tree above it.
+Measured on the IceCubes packages tree (2026-09-27, after B-115): the two entries of the
+project builder's export output hold 31 of the database's 34 MB. The spec for one linker
+output is a tree of some 20,000 nodes, in which the settings chain — `ConfigMerger`,
+`ConfigFilter`, `Configuration` — appears 2,668 times and each source file's `StaticFile`
+twice. The trees B-115 put in place of text made this 2.5 times larger than it was
+(6.8 MB an entry to 15.5 MB), and gzip takes the 15.5 MB to 0.2 MB: it is repetition, not
+information. The rest of the cache — 223 entries — is 2.7 MB.
+
+Wanted: an entry that stores each distinct spec once. B-115 gives every spec node an
+identity that is a pure function of its tree, so an entry can carry a table of nodes by
+identity with each node's wires naming their sources by identity, and the demanded trees
+as references into it — the same folding the identity column already does in the graph.
+Decoding rebuilds the trees, or better, `applySpecs` learns to walk the table and never
+rebuilds them. Not a change to the cache key, which is over values, so every entry keeps
+hitting; a change to the entry's encoding, which is a new field or shape on
+`ProcessCacheEntry` and so a miss for what older code wrote, as AGENTS.md says.
 
 ### Server
 
