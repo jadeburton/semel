@@ -73,6 +73,58 @@ final class ConfigFileTests: SemelSwiftTestCase {
         XCTAssertFalse(result.contains("sdkVersion:"),
                        "a setting must not be rendered as a property, got:\n\(result)")
     }
+
+    /// A target named `semel-clang` compiles to the module `semel_clang`, as SwiftPM
+    /// mangles it (B-78): swiftc rejects the hyphenated name outright, and an importer
+    /// of a hyphenated library looks for the mangled `.swiftmodule`. The wire that carries
+    /// the module is named for the module; the func and the object wire keep the target's
+    /// name.
+    func test_aTargetNameThatIsNotAnIdentifierIsMangledIntoItsModuleName() throws {
+        let manifest = """
+            {
+              "name": "pkg",
+              "dependencies": [],
+              "products": [{"name": "my-tool", "targets": ["my-tool"], "type": {"executable": null}}],
+              "targets": [
+                {"name": "swift-base", "type": "regular", "path": "Sources/swift-base", "dependencies": []},
+                {"name": "my-tool", "type": "executable", "path": "Sources/my-tool",
+                 "dependencies": [{"byName": ["swift-base", null]}]}
+              ]
+            }
+            """
+        let packageFolder = "input:/pkg"
+        let folderManifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
+        func swiftFolder(_ name: String) -> FolderManifest {
+            FolderManifest(baseFolderPath: "\(packageFolder)/Sources/\(name)",
+                           entries: [FolderManifestEntry(name: "main.swift", isFolder: false, isPinned: true)])
+        }
+        let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
+        let output = try converter.process(input: ProcessInput(inputValues: [
+            SwiftFormulaConverter.packageFolder:        ["folder": .value(try folderManifest.toJSON().intern())],
+            SwiftFormulaConverter.packageJSON:          ["json":   .value(try manifest.intern())],
+            SwiftFormulaConverter.externalPackageJSONs: [:],
+            SwiftFormulaConverter.targetFolders: [
+                "\(packageFolder)/Sources/swift-base": .value(try swiftFolder("swift-base").toJSON().intern()),
+                "\(packageFolder)/Sources/my-tool":    .value(try swiftFolder("my-tool").toJSON().intern()),
+            ],
+        ]))
+        let result = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
+
+        XCTAssertTrue(result.contains("moduleName: 'my_tool'"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("moduleName: 'swift_base'"), "got:\n\(result)")
+        XCTAssertTrue(result.contains("'swift_base': compilerswift_base().swiftmodule"),
+                      "the module wire is named for the module, got:\n\(result)")
+        XCTAssertTrue(result.contains("'my-tool.o': compilermy_tool().object"),
+                      "the object wire keeps the target's name, got:\n\(result)")
+        XCTAssertTrue(result.contains("outputName: 'my-tool'"), "the product keeps its name, got:\n\(result)")
+    }
+
+    func test_c99IdentifiersFollowSwiftPM() {
+        XCTAssertEqual(SwiftFormulaConverter.c99Identifier("SemelCore"), "SemelCore")
+        XCTAssertEqual(SwiftFormulaConverter.c99Identifier("semel-clang"), "semel_clang")
+        XCTAssertEqual(SwiftFormulaConverter.c99Identifier("3d-kit"), "_3d_kit")
+        XCTAssertEqual(SwiftFormulaConverter.c99Identifier("a.b c"), "a_b_c")
+    }
 }
 
 // MARK: - The first node of every build

@@ -38,3 +38,7 @@ EndToEnd/Fixtures/**/Dependencies/
 # The machine's half of any configuration (B-109): written by `semel-clang` or
 # `semel-swift prepare`, one machine's facts, never committed
 semel.machine.config
+
+# What `semel-swift prepare` vendors at the root when Semel builds itself in place (B-78):
+# GRDB at the commit Package.resolved pins. The roster builds a copy and vendors there.
+/Dependencies/

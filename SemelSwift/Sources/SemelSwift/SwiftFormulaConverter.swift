@@ -648,6 +648,14 @@ struct SwiftFormulaConverter: Node {
         // SPM default: Sources/<TargetName> relative to the package root.
         var sourcesRelativePath: String { path ?? "Sources/\(name)" }
 
+        /// The module the target compiles to. A target's name is free text — `semel-clang`,
+        /// `swift-markdown` — and a Swift module name is an identifier, so SwiftPM mangles
+        /// one into the other (`c99name`) and every `import` and `.swiftmodule` file uses
+        /// the mangled form. The same rule here: any character that is not a letter, a
+        /// digit or an underscore becomes an underscore, and a leading digit gets one in
+        /// front. Wire names and formula funcs keep the target's own name.
+        var moduleName: String { SwiftFormulaConverter.c99Identifier(name) }
+
         // systemLibrary targets (type == "system-target") wrap C system libraries
         // via a module.modulemap.  They have no Swift sources and cannot be compiled
         // with SwiftCompiler.
@@ -912,7 +920,7 @@ struct SwiftFormulaConverter: Node {
             // funcs are the product's public face; the product statement is for this
             // package's own output.
             let moduleWires = allTargets.map { t in
-                "            '\(t.name).swiftmodule': \(compilerFuncName(for: t.name))().swiftmodule"
+                "            '\(t.moduleName).swiftmodule': \(compilerFuncName(for: t.name))().swiftmodule"
             }
             // A .swiftmodule records the Clang modules it was built against, so a consumer
             // loading it needs their module maps on its import path too: every C target
@@ -1083,6 +1091,17 @@ struct SwiftFormulaConverter: Node {
         return ordered
     }
 
+    /// SwiftPM's `c99name`: `semel-clang` is the module `semel_clang`, `3d-kit` is `_3d_kit`.
+    static func c99Identifier(_ name: String) -> String {
+        var identifier = String(name.map { character -> Character in
+            character.isASCII && (character.isLetter || character.isNumber || character == "_") ? character : "_"
+        })
+        if let first = identifier.first, first.isNumber {
+            identifier = "_" + identifier
+        }
+        return identifier
+    }
+
     // "MyTarget-A" → "compilerMyTarget_A"  (must be a valid formula identifier)
     private func compilerFuncName(for targetName: String) -> String {
         "compiler\(sanitizedIdentifier(targetName))"
@@ -1160,7 +1179,7 @@ struct SwiftFormulaConverter: Node {
         let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
         // moduleName is what makes a target itself, and a config file must not be able to
         // rename it -- so it is a literal property, which is what makes it win over the file.
-        var derived = ["moduleName": target.name]
+        var derived = ["moduleName": target.moduleName]
         if target.type == "executable" {
             derived["parseAsLibrary"] = "false"
         }
@@ -1195,8 +1214,10 @@ struct SwiftFormulaConverter: Node {
         var moduleWires: [String] = []
         for depTarget in collectTransitiveTargets(root: target, lookupAll: lookupAll)
         where depTarget.name != target.name {
+            // Named for the module, not the target: the compiler writes the wire's name
+            // plus `.swiftmodule`, and swiftc looks for the file under the module's name.
             let fn = compilerFuncName(for: depTarget.name)
-            moduleWires.append("            '\(depTarget.name)': \(fn)().swiftmodule")
+            moduleWires.append("            '\(depTarget.moduleName)': \(fn)().swiftmodule")
         }
 
         // System libraries, by contrast, must reach every target that imports them

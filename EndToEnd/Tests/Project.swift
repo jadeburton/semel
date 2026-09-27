@@ -21,6 +21,13 @@ struct Project {
         /// build folder cannot be the base itself, the checkout is nested one level under
         /// base instead, named after `name` — so `buildFolder` must equal `name`.
         case git(url: String, commit: String, subfolder: String)
+        /// This repository's own checkout, as it is on disk: Semel building Semel (B-78).
+        /// What is not the build stays out of the copy — build products, version control,
+        /// the end-to-end fixtures, which are projects of their own with formulas the
+        /// finder would otherwise build too, and anything a developer's in-place `prepare`
+        /// left behind. Nested one level under base, named after `name`, for the reason a
+        /// `.git` checkout with `subfolder: "."` is; `buildFolder` must equal `name`.
+        case repository
     }
 
     let name: String

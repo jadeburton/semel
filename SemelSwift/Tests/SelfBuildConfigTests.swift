@@ -94,21 +94,39 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
 
     // MARK: - What the types require
 
-    /// Runs `check` against the named namespace of every config file in the tree, so a file
-    /// that is present but short of a key fails here rather than mid-build.
+    /// What the machine file supplies under every namespace: the tool's descriptor, with
+    /// the SDK facts a namespace declares (B-109). Stood in for here with one machine's
+    /// values, because the file itself is written by `prepare` and never committed; the
+    /// keys are what the test is about, not the values.
+    private static let machineHalf = [
+        "toolDescriptor.name":         "swiftc",
+        "toolDescriptor.version":      "Apple Swift version 6.3.3",
+        "toolDescriptor.platform":     "macOS",
+        "toolDescriptor.architecture": "arm64",
+    ]
+
+    /// The keys a project file must not carry: they describe the machine, and a project
+    /// file that pins them builds on one machine only, which is what the split exists to
+    /// end. `sdkVersion` is the one that caught the repository's own file (B-109
+    /// residual 1): pinned to one SDK build, it failed the self-build everywhere else.
+    private static let machineOnlyKeyPrefixes = ["toolDescriptor.", "sdk"]
+
+    /// Runs `check` against the named namespace of every config file in the tree, laid
+    /// over the machine's half, so a file that is present but short of a project key
+    /// fails here rather than mid-build.
     private func forEachConfigFile(namespace: String,
                                    literals: [String: String] = [:],
                                    check: (String, [String: String]) throws -> Void) throws {
         for folder in try Self.packageFolders() {
             let all = [String: String](plainText: try Self.configText(inPackageFolder: folder))
-            try check(folder.path, subset(all, under: namespace).mergedWith(literals))
+            try check(folder.path, Self.machineHalf.mergedWith(subset(all, under: namespace)).mergedWith(literals))
         }
     }
 
     /// `moduleName` is not in the file -- it reaches the real node as a manifest-derived
     /// literal, merged in beside the selector's output (see SwiftFormulaConverter). That
     /// merge is stood in for here, so this test checks exactly what the file owes: every
-    /// other required key in `swift.compiler`.
+    /// other required key in `swift.compiler` that the machine file does not supply.
     func test_swiftCompilerNamespaceSatisfiesSwiftCompilerConfiguration() throws {
         try forEachConfigFile(namespace: SwiftCompilerConfiguration.settingNamespace,
                               literals: ["moduleName": "Test"]) { path, settings in
@@ -126,10 +144,25 @@ final class SelfBuildConfigTests: SemelSwiftTestCase {
     }
 
     /// No literals here: every setting `SwiftPackageReaderConfiguration` requires is a
-    /// toolDescriptor field, and all of those come from the file.
+    /// toolDescriptor field, and all of those come from the machine file.
     func test_swiftPackageReaderNamespaceSatisfiesSwiftPackageReaderConfiguration() throws {
         try forEachConfigFile(namespace: SwiftPackageReaderConfiguration.settingNamespace) { path, settings in
             XCTAssertNoThrow(try SwiftPackageReaderConfiguration(properties: settings), path)
+        }
+    }
+
+    /// The project file carries the project's choices and nothing about this machine, so
+    /// that the self-build runs wherever `prepare` has written the machine file — the
+    /// end-to-end roster's copy, another developer's checkout, CI.
+    func test_theProjectFileCarriesNoMachineFacts() throws {
+        let all = [String: String](plainText: try Self.configText(inPackageFolder: Self.repositoryRoot))
+        for namespace in [SwiftCompilerConfiguration.settingNamespace,
+                          SwiftLinkerConfiguration.settingNamespace,
+                          SwiftPackageReaderConfiguration.settingNamespace] {
+            for key in subset(all, under: namespace).keys.sorted()
+            where Self.machineOnlyKeyPrefixes.contains(where: { key.hasPrefix($0) }) {
+                XCTFail("\(namespace).\(key) is the machine's, written by prepare into semel.machine.config, not the project's")
+            }
         }
     }
 }

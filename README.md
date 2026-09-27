@@ -293,10 +293,17 @@ four fresh homes: twice over the same copy, once from a copy at another mount, a
 with the environment perturbed — a different `TMPDIR`, working directory, locale and time
 zone, none of which is in a cache key. All four export trees must match byte for byte,
 static archives included. `SEMEL_E2E_EXTERNAL=1 swift test --filter SemelEndToEndTests` adds the real
-projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, and the
-app itself from its Xcode project — fetched once into `~/Library/Caches/semel/end-to-end`
-(`SEMEL_E2E_CACHE` moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's
-directory under `/tmp/semel-tests` for inspection.
+projects pinned in `EndToEnd/Tests/Projects.swift` — IceCubesApp's package tree, the
+app itself from its Xcode project, and Semel building Semel from a copy of the checkout —
+the first two fetched once into `~/Library/Caches/semel/end-to-end` (`SEMEL_E2E_CACHE`
+moves that); CI runs those nightly. `SEMEL_E2E_KEEP=1` keeps a run's directory under
+`/tmp/semel-tests` for inspection.
+
+To build Semel with Semel by hand, the checkout is a package tree like any other:
+`semel-swift prepare <checkout> --platform macos` vendors GRDB into `Dependencies/`
+(ignored by git) and writes `semel.machine.config`, keeping the `semel.fmla` and
+`semel.config` the repository carries; then, from the checkout's parent, `semel 'base .'
+'build <checkout>'` exports the four executables to `semel-out/<checkout>`.
 
 ## Architecture
 

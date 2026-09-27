@@ -32,7 +32,20 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-78: Semel builds Semel. Needs the network for GRDB, like the others; otherwise
+    /// it is a fixture's size, and it runs every hermeticity build.
+    func test_semelBuildsItself() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.semel)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("semel\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
-        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes", "icecubes-app"])
+        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes", "icecubes-app", "semel"])
     }
 }
