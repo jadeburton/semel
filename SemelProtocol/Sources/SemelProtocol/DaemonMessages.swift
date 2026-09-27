@@ -167,6 +167,99 @@ public struct ToolNamespaceRecord: Codable, Equatable, Sendable {
     }
 }
 
+/// Why the last settle did what it did to one node (B-91): the node, and upstream of it
+/// every node the settle touched on the wires that woke it, each once. Causes point at
+/// other nodes by index, so the client draws the tree and nothing it reads is a sentence
+/// to take apart.
+public struct Explanation: Codable, Equatable, Sendable {
+    /// The node asked about first, then the rest in the order the walk reached them —
+    /// nearest first, so that what a bound leaves out is what lies furthest away.
+    public let nodes: [ExplainedNode]
+    /// Nodes the walk reached that a bound left out.
+    public let omittedNodes: Int
+    /// The bounds the walk had, so a reader told "and 312 more" is told why.
+    public let nodeLimit:  Int
+    public let depthLimit: Int
+
+    public init(nodes: [ExplainedNode], omittedNodes: Int, nodeLimit: Int, depthLimit: Int) {
+        self.nodes        = nodes
+        self.omittedNodes = omittedNodes
+        self.nodeLimit    = nodeLimit
+        self.depthLimit   = depthLimit
+    }
+}
+
+public struct ExplainedNode: Codable, Equatable, Sendable {
+
+    /// What the node did in the last settle.
+    public enum Outcome: String, Codable, Equatable, Sendable {
+        /// It ran.
+        case computed
+        /// It was woken and the cache answered it.
+        case fromCache
+        /// It was woken and produced nothing: an input was not ready.
+        case notRun
+        /// It did not run, and its value moved: a pushed file, a folder's manifest.
+        case changed
+        /// The settle did not reach it.
+        case untouched
+    }
+
+    /// What a report calls the node — its type, id and path — decided server-side, as
+    /// `ErrorRecord.label` is.
+    public let label:   String
+    public let outcome: Outcome
+    /// Whether the settle created it.
+    public let isNew:   Bool
+    /// The wires whose writes woke it: changed, connected and disconnected ones first, then
+    /// by port and wire name.
+    public let causes:  [ExplainedCause]
+    /// How many more wires woke it than `causes` lists.
+    public let unlistedCauses: Int
+
+    public init(label: String, outcome: Outcome, isNew: Bool, causes: [ExplainedCause], unlistedCauses: Int) {
+        self.label          = label
+        self.outcome        = outcome
+        self.isNew          = isNew
+        self.causes         = causes
+        self.unlistedCauses = unlistedCauses
+    }
+}
+
+/// One wire that woke a node, and what it brought.
+public struct ExplainedCause: Codable, Equatable, Sendable {
+
+    public enum Change: String, Codable, Equatable, Sendable {
+        /// The source wrote a value other than the one it held when the settle began.
+        case changed
+        /// The source wrote the value it already held: the node was woken, and had
+        /// nothing new to read on this wire.
+        case unchanged
+        /// The wire was connected in the settle.
+        case connected
+        /// The wire was disconnected in the settle.
+        case disconnected
+    }
+
+    /// The node's input port, and the wire's name on it.
+    public let port:        String
+    public let wire:        String
+    public let change:      Change
+    public let sourceLabel: String
+    /// Where the source is in `Explanation.nodes`: nil for a source the settle did not
+    /// touch — a header a new node was wired to — which the walk does not go into, and for
+    /// a source a bound left out.
+    public let source:      Int?
+
+    public init(port: String, wire: String, change: Change, sourceLabel: String, source: Int?) {
+        self.port        = port
+        self.wire        = wire
+        self.change      = change
+        self.sourceLabel = sourceLabel
+        self.source      = source
+    }
+}
+
 // MARK: - Requests
 
 public enum DaemonRequest: Codable, Equatable, Sendable {
@@ -206,6 +299,11 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// asking for another pass. The reply is `.ok`. What a script needs between a push
     /// and a report, since every other request returns while the build runs behind it.
     case wait
+    /// Why the last settle did what it did to the node at `path`: the nodes upstream of it
+    /// that ran or were answered from the cache, and the wires whose values changed on the
+    /// way, down to the sources a push changed (B-91). The path is resolved by the client
+    /// as `fetch`'s is.
+    case explain(fileSystem: FileSystemKind, path: String)
     /// With no key, the whole graph as text. With one, that cache entry's key material —
     /// the text its key is the hash of, which is what makes two builds that disagreed a
     /// diff rather than two hashes. Either answer travels in the reply's body.
@@ -246,6 +344,13 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// necessary can still be read. Absent when there was nothing to discard, and when the
     /// server holds its graph in memory and has no file to copy.
     case reset(archivedGraphPath: String?)
+    /// Nil when the server has settled nothing since it started: the record is kept in
+    /// memory, for the last settle only, and a restart forgets it (B-91).
+    ///
+    /// In the JSON section rather than the body, unlike `check` and `debug`: their size
+    /// follows the graph's, and this one's follows the explanation's own bounds — forty
+    /// nodes of ten causes each is tens of kilobytes.
+    case explain(explanation: Explanation?)
     /// The description of the graph travels in the frame body, as UTF-8. A few hundred
     /// nodes describe themselves in more than the megabyte the JSON section allows, and
     /// that cap is not a number to raise: a declared JSON length is checked before the

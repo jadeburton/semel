@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsSixteen() {
-        XCTAssertEqual(ProtocolVersion.current, 16)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 16,
+    func test_currentProtocolVersionIsSeventeen() {
+        XCTAssertEqual(ProtocolVersion.current, 17)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 17,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -133,6 +133,7 @@ final class MessageJSONTests: XCTestCase {
             .wait,
             .debug(cacheKey: nil),
             .debug(cacheKey: "285a5050ac7e8501af9c3bab064c1cf5432b67646d915ae3477fe816dced6419"),
+            .explain(fileSystem: .output, path: "hello/hello"),
             .subscribe,
         ]
         for request in requests {
@@ -207,10 +208,49 @@ final class MessageJSONTests: XCTestCase {
             .check(scheduledNodes: 0),
             .check(scheduledNodes: 12),
             .collected(removed: 3, removedBytes: 4096, kept: 12),
+            .explain(explanation: nil),
+            .explain(explanation: Self.sampleExplanation),
         ]
         for response in responses {
             XCTAssertEqual(try roundTrip(Response.daemon(response)), .daemon(response))
         }
+    }
+
+    /// B-91. A linker woken by one changed object and one that republished its value, and
+    /// the compiler behind the changed one.
+    private static let sampleExplanation = Explanation(
+        nodes: [
+            ExplainedNode(label: "ClangLinker #44", outcome: .computed, isNew: false,
+                          causes: [ExplainedCause(port: "objects", wire: "hello2.o", change: .changed,
+                                                  sourceLabel: "ClangCompiler #41", source: 1),
+                                   ExplainedCause(port: "objects", wire: "main.o", change: .unchanged,
+                                                  sourceLabel: "ClangCompiler #42", source: nil)],
+                          unlistedCauses: 0),
+            ExplainedNode(label: "ClangCompiler #41", outcome: .fromCache, isNew: true, causes: [],
+                          unlistedCauses: 3),
+        ],
+        omittedNodes: 2, nodeLimit: 40, depthLimit: 16)
+
+    /// The walk's answer is typed all the way down: outcomes and changes by name, sources
+    /// by index, and a cause the walk did not follow with no index at all.
+    func test_encodesTheExplainReplyAsRecords() throws {
+        let explanation = Explanation(
+            nodes: [ExplainedNode(label: "OutputFile #9 'output:/app'", outcome: .computed, isNew: false,
+                                  causes: [ExplainedCause(port: "input", wire: "app", change: .unchanged,
+                                                          sourceLabel: "ClangLinker #8", source: nil)],
+                                  unlistedCauses: 0)],
+            omittedNodes: 0, nodeLimit: 40, depthLimit: 16)
+
+        XCTAssertEqual(try json(Response.daemon(.explain(explanation: explanation))),
+                       #"{"daemon":{"explain":{"explanation":{"depthLimit":16,"nodeLimit":40,"nodes":[{"#
+                     + #""causes":[{"change":"unchanged","port":"input","sourceLabel":"ClangLinker #8","wire":"app"}],"#
+                     + #""isNew":false,"label":"OutputFile #9 'output:\/app'","outcome":"computed","unlistedCauses":0}],"#
+                     + #""omittedNodes":0}}}}"#)
+    }
+
+    func test_encodesTheExplainRequestWithItsFileSystem() throws {
+        XCTAssertEqual(try json(Request.daemon(.explain(fileSystem: .output, path: "hello/hello"))),
+                       #"{"daemon":{"explain":{"fileSystem":"output","path":"hello\/hello"}}}"#)
     }
 
     /// The findings are the reply's *body*, so the reply itself carries only the count of

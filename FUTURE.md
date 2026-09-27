@@ -117,14 +117,15 @@ where a person pays for one of them by hand, or where the engine holds what the 
 needs and has no channel to say it. Three items are filed (B-91 to B-93); the rest are
 questions about settled decisions, recorded so they are argued rather than re-discovered.
 
-- **The engine had no output channel (B-91, half fixed).** The protocol carried products
+- **The engine had no output channel (B-91, fixed).** The protocol carried products
   and errors, and everything else left through `Debug.log`, compiled out of a release
   build — so the tutorial's Part 2, the one that shows the work Semel does not do, needed
   three terminals, a debug build and two internal log lines. Each settle now reports its
   totals, cache hits apart from recomputations, and the tutorial reads them at the prompt.
   What is still unanswered is the question behind them: "why did this rebuild?" is the
-  first thing anyone asks a build system whose promise is *never twice*, and the engine can
-  say how many nodes ran but not which, or which wire woke them.
+  first thing anyone asks a build system whose promise is *never twice*, and the engine
+  could say how many nodes ran but not which, or which wire woke them. `explain` now
+  answers it from the last settle's record.
 
 - **A missing file is a state nobody is told about (B-92, fixed).** A `StaticFile` nobody
   pushed publishes `noValue(.initializing)` — no value has ever been produced there, and
@@ -511,7 +512,15 @@ never into a pipe. Design and particulars:
    prompt is `readLine()` with no line editor, so this needs the client to own its input
    line — raw mode, cursor save and restore, a width to track — a project of its own.
 
-**B-91** `open` `For Fable Only` — **The engine says what a settle did, not why.**
+**B-91** `done` — **The engine says what a settle did, not why.**
+Done 2026-09-27 (design and "As built" notes:
+`docs/superpowers/specs/2026-09-27-semel-explain-design.md`): the engine keeps the last
+settle's record in memory — per node, whether it ran or the cache answered it, and per
+wire that woke it, whether the value it brought differed from the one the port held when
+the settle began — and `explain <path>` (`why`) walks upstream from a node through that
+record and draws what ran, what the cache answered and which wires changed, down to the
+pushed files. The tutorial's fourth experiment quotes it. A restart forgets the record,
+and `explain` says so. The problem as it was filed:
 `DaemonMessages` carry what was published, what failed, one settle's totals — scheduled,
 computed, from cache, errors — and the artifact diff. What the engine knows about *why* —
 which wire changed, which nodes ran and which came from the cache, node by node — leaves

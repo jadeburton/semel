@@ -383,6 +383,9 @@ public final class CommandInterpreter: CommandContext {
                                  + "export the products, to semel-out/<folder> under the base unless --into says where"),
             HelpEntry(verbs: ["wait"], usage: "wait", description: "block until the build has settled"),
             HelpEntry(verbs: ["errors", "e"], usage: "errors", description: "the current build errors, one entry per cause"),
+            HelpEntry(verbs: ["explain", "why"], usage: "explain <path>",
+                      description: "why the last settle rebuilt a product: what ran, what came from the cache, "
+                                 + "which wires changed, down to the sources"),
             HelpEntry(verbs: ["check"], usage: "check",
                       description: "report every graph invariant that does not hold; ask it of a settled graph"),
             HelpEntry(verbs: ["collect"], usage: "collect",

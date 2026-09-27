@@ -77,6 +77,9 @@ extension NodeRecord {
                                     identity: identity)
 
         nodeRecord.id = try database.node.insert(nodeRecord)
+        if let nodeID = nodeRecord.id {
+            BuildEngine.shared?.settleRecorder.noteCreated(nodeID: nodeID)
+        }
 
         let node = try nodeRecord.makeNode()
 
@@ -337,18 +340,29 @@ extension NodeRecord {
 
     @discardableResult func writeToOutputPort(port: OutputPort) throws -> Bool {
 
-        if let existing = try database.outputPort.select(nodeID: (try requireID()), nameSymbolID: port.nameSymbolID) {
-            if existing == port { return false }
+        let nodeID   = try requireID()
+        let existing = try database.outputPort.select(nodeID: nodeID, nameSymbolID: port.nameSymbolID)
+        if existing == port {
+            return false
         }
+
+        // What the port held when the settle began, asked before the row is replaced: the
+        // first write in a settle is usually the cascade's `pending`, so comparing with
+        // `existing` would call every value that followed it a change (B-91).
+        let recorder    = BuildEngine.shared?.settleRecorder
+        let settleStart = recorder?.valueAtSettleStart(nodeID: nodeID, portSymbolID: port.nameSymbolID,
+                                                       replacing: existing)
 
         try database.outputPort.insertOrUpdate(port)
 
-        for wire in try database.wire.select(comingFromNodeID: (try requireID()), fromSymbolID: port.nameSymbolID) {
+        for wire in try database.wire.select(comingFromNodeID: nodeID, fromSymbolID: port.nameSymbolID) {
             let toNode = try database.node.select(nodeID: wire.toNodeID)
 
             try toNode.writePendingToAllOutputsOfNode()
 
             if port.valueKind != .pending {
+                recorder?.noteWake(consumerNodeID: wire.toNodeID, wire: wire,
+                                   change: SettleRecorder.change(from: settleStart, to: port))
                 try toNode.setScheduled(true)
             }
         }

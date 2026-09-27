@@ -78,6 +78,10 @@ extension Wire {
 
         let toNode = try database.node.select(nodeID: toNodeID)
         try toNode.writePendingToAllOutputsOfNode()
+        BuildEngine.shared?.settleRecorder.noteWake(consumerNodeID: toNodeID,
+                                                    wire: Wire(fromNodeID: fromNodeID, fromSymbolID: fromSymbolID,
+                                                               toNodeID: toNodeID, toSymbolID: toSymbolID, name: name),
+                                                    change: .connected)
         try toNode.setScheduled(true)
     }
 
@@ -145,6 +149,7 @@ extension Wire {
             // Notify the consumer that one of its inputs changed so it can re-evaluate.
             let toNode = try database.node.select(nodeID: toNodeID)
             try toNode.writePendingToAllOutputsOfNode()
+            BuildEngine.shared?.settleRecorder.noteWake(consumerNodeID: toNodeID, wire: self, change: .disconnected)
             try toNode.setScheduled(true)
         }
     }

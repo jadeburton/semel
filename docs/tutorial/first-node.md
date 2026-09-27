@@ -405,6 +405,33 @@ against nine for a one-character edit to a source file: the settings feed every 
 build, so touching them wakes nearly the whole graph. Seven of those were answered from the
 cache, and those seven are all six preprocessors and compilers plus the formula reader.
 
+The summary counts; `explain` names. Ask it about the program:
+
+```
+explain output:/hello/hello
+```
+
+```
+OutputFile #18 'output:/hello/hello' — computed: 2 inputs unchanged
+  ClangLinker #19 — computed: configuration 'wire0' changed; 3 inputs unchanged
+    Configuration #20 — computed: base 'wire0' changed
+      ConfigFilter #21 — computed: input 'wire0' changed
+        ConfigMerger #22 — computed: override 'wire0' changed
+          StaticFile #6 'input:/hello/semel.config' — changed
+    ClangCompiler #23 — from cache: 2 inputs unchanged
+    ClangCompiler #27 — from cache: 2 inputs unchanged
+    ClangCompiler #29 — from cache: 2 inputs unchanged
+```
+
+One line per node, each under the node it woke, read from the bottom up: `semel.config`
+changed, so the linker's settings did, so the linker ran — and wrote the bytes it wrote
+before, which is why the product above it was woken by an input that did not change, and
+why no `changed:` line followed the summary. The three compilers under the linker woke it
+too, with the objects they already had: each was woken by inputs that arrived unchanged and
+answered from the cache. The numbers after `#` are node ids and yours will differ. `explain`
+reads the last settle only: the record is kept in memory, and a server that has restarted
+since says it has none.
+
 Each of the six reads its settings through a `ConfigFilter` that passes on only
 `clang.compiler.*` or `clang.preprocessor.*`, so what reached them was byte-identical and
 their keys did not move — woken, and not one of them ran. Only the linkers, whose selector
