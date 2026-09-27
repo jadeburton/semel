@@ -1,0 +1,26 @@
+// SQLite 3.53.4 from the amalgamation mirror, built as SQLite's own "how to compile" page
+// builds it (B-79): `sqlite3.c`, the whole library as one translation unit of some 270,000
+// lines, archived alone, and the `sqlite3` shell linked from `shell.c` against the archive.
+// Laid over the checkout with semel.config by the end-to-end harness (B-76).
+//
+// One file per chain rather than `clang.staticLibrary`: the checkout's root holds both
+// sources, and the library is one of them. Named, not a pattern with an `except`, because
+// the amalgamation is one file by construction and a second library source upstream would
+// be a different kind of project.
+
+include 'clang'
+
+func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+func library() = ClangArchiver(
+  configuration: [clang.selected(settings: settings(), prefix: 'clang.archiver')],
+  objectFiles: [{source: <sqlite3.c>} "%%source%%.o": clang.compiled(file: source, settings: settings())]
+)
+
+product "libsqlite3.a" = library()
+
+product "sqlite3" = ClangLinker(
+  configuration: [Configuration(base: [clang.selected(settings: settings(), prefix: 'clang.linker')], dynamicLibrary: 'false')],
+  objectFiles: [{source: <shell.c>} "%%source%%.o": clang.compiled(file: source, settings: settings())],
+  libraries: ["libsqlite3.a": library()]
+)

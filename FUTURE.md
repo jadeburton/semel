@@ -849,9 +849,35 @@ fixture tier.
    flags, so `arguments` is honoured by all three, comma-joined as the Swift nodes' is, for
    Lua's `-DLUA_USE_MACOSX` (the linker had appended its always-empty list twice). About 35
    files is right: 35 `.c`, of which 32 are the library.
-2. *SQLite amalgamation* — one 250k-line translation unit: the preprocessor and compiler
-   nodes and the cache with a single enormous entry, the opposite of IceCubes's 271 small
-   ones.
+2. *SQLite amalgamation* — done (2026-09-28): in the roster as `sqlite`, SQLite 3.53.4 from
+   the `rhuijben/sqlite-amalgamation` mirror (a maintained fork of `azadkuh/`, whose last
+   tag is 3.38.2) at the commit its `3.53.4` tag names — SQLite's own repository holds no
+   amalgamation, its build generates one. The mirror's BSD-3-Clause LICENSE covers its
+   CMake files; the sources are SQLite's, public domain by their header notice.
+   `Fixtures/external/sqlite` archives `libsqlite3.a` from `sqlite3.c` alone (269,649
+   lines, 9.5 MB) and links the `sqlite3` shell from `shell.c` against it, with SQLite's
+   default options — no defines, so threadsafe, extension loading on, no readline — and
+   both match across all four hermeticity builds. It surfaced one gap: the include
+   finder reads quoted includes without evaluating a conditional, and the amalgamation
+   names eight headers no checkout holds, each under an `#if` false here (`windows.h`,
+   `mingw.h`, `_mingw.h`, a configure step's `sqlite_cfg.h`, `tclsqlite.h` under
+   `SQLITE_TEST`, `sqlite3rtree.h` outside an amalgamation; `shell.c`'s `linenoise.h`, and
+   `qrf.h` under a guard its own inlined copy defines), each a `StaticFile` nobody pushed,
+   so the build stopped on eight "has not been pushed". The preprocessor now leaves a
+   header whose file was never pushed out of the sandbox and lets clang judge — an
+   `#include` it reaches fails as "file not found", the node's own error — and the
+   finder lists no includes for one; both ports tolerate an absent value, so the report
+   does not name them either, and both types are at `implementationVersion` 2. Size
+   surfaced nothing: an entry holds object-store hashes, not bytes, so the compiler's
+   entry for `sqlite3.c` weighs 648 bytes and the largest in the home is the
+   `ProjectBuilder`'s at 8,457; the bytes are in the object store — the 9.5 MB source,
+   3.07 MB preprocessed, a 1.54 MB object, 20 MB in all. Recorded costs on an M4: the
+   compile 607 ms, the preprocessor 99 ms, the include finder over the 9.5 MB source
+   97 ms; the whole test, four cold builds, 13.6 s. One oddity for the cache: the
+   preprocessor's first pass over `sqlite3.c`, which only asks for the include lists and
+   runs no clang, took 72 ms and so crossed the 15 ms floor and wrote an entry for the
+   waiting state; harmless, since the key holds the absent lists, but a "not yet" pass
+   is not work worth a row.
 3. *fmt* or *simdjson* — C++ beyond the emulator; few sources, heavy templates.
 
 **B-80** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`

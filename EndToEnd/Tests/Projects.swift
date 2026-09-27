@@ -152,6 +152,26 @@ enum Projects {
         expectedProducts: ["liblua.a", "lua"],
         buildTimeout: 5 * 60)
 
+    /// SQLite 3.53.4 (B-79): the amalgamation, which SQLite's own repository does not hold —
+    /// its build generates it — from the `rhuijben/sqlite-amalgamation` mirror at the
+    /// commit its `3.53.4` tag names. The mirror's LICENSE is BSD-3-Clause and covers its
+    /// CMake files; the three sources are SQLite's, in the public domain by the notice at
+    /// their head. `sqlite3.c` is the whole library as one translation unit, so the build
+    /// is one preprocessor and one compiler node over a 9.5 MB file and one large cache
+    /// entry each — the opposite of IceCubes's many small ones. The `sqlite3` shell is
+    /// linked from `shell.c` against the archive. Laid over the checkout from
+    /// `Fixtures/external/sqlite` (B-76). Seconds to build, so every hermeticity build runs.
+    static let sqlite = Project(
+        name: "sqlite",
+        source: .git(url: "https://github.com/rhuijben/sqlite-amalgamation.git",
+                     commit: "fa2905e70a3d9659cd219162d7f1ebfb3715a206",
+                     subfolder: ".",
+                     overlay: "external/sqlite"),
+        buildFolder: "sqlite",
+        platform: nil,
+        expectedProducts: ["libsqlite3.a", "sqlite3"],
+        buildTimeout: 5 * 60)
+
     /// Apple's Food Truck sample (B-77): an Xcode project in the older form — targets that
     /// list their files through groups, a localized `.strings` per language as a variant
     /// group — with a local package that carries resources of its own, and a widget
@@ -211,6 +231,6 @@ enum Projects {
         onlyUnder: "Food Truck.app")
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua, foodTruck, foodTruckMac]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, foodTruck, foodTruckMac]
     static let all: [Project] = fixtures + external
 }

@@ -92,6 +92,59 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertFalse(executor.lastArguments.contains("-DNDEBUG"))
     }
 
+    // MARK: - A header nobody pushed (B-79)
+
+    // The include finder reads quoted includes without evaluating a conditional, so a
+    // source can name a header that exists on no machine this builds on: SQLite's
+    // amalgamation includes `windows.h` and a configure step's `sqlite_cfg.h` under `#if`s
+    // that are false here. The preprocessor leaves such a header out and lets clang judge.
+
+    private func makeInputNaming(headers: [String: NodeValue]) throws -> ProcessInput {
+        let sourcePath = "src/sqlite3.c"
+        var inputValues = try makeInput(sourcePath: sourcePath).inputValues
+        var includeLists: [String: NodeValue] = [sourcePath: .value(try headers.keys.sorted().joined(separator: "\n").intern())]
+        for header in headers.keys {
+            includeLists[header] = .value(try "".intern())
+        }
+        inputValues[ClangPreprocessor.includeFileLists] = includeLists
+        inputValues[ClangPreprocessor.headerInputFiles] = headers
+        return ProcessInput(inputValues: inputValues)
+    }
+
+    func test_aHeaderNobodyPushedIsLeftOutAndThePreprocessorRuns() throws {
+        let output = try makeTool().process(input: try makeInputNaming(headers: [
+            "src/sqlite3.h":    .value(try "// the API".intern()),
+            "src/sqlite_cfg.h": .noValue(reason: .initializing),
+        ]))
+
+        let invocation = try XCTUnwrap(executor.invocations.last, "the preprocessor runs")
+        XCTAssertTrue(invocation.inputFileNames.contains("src/sqlite3.h"))
+        XCTAssertFalse(invocation.inputFileNames.contains("src/sqlite_cfg.h"),
+                       "a header that does not exist is not placed in the sandbox")
+        XCTAssertFalse(output.outputValues[ClangPreprocessor.output]?.isNoValue ?? true, "got \(output.outputValues)")
+        XCTAssertEqual(output.inputWireSpecs[ClangPreprocessor.headerInputFiles]?.keys.sorted(),
+                       ["src/sqlite3.h", "src/sqlite_cfg.h"], "the absent header stays wired, so pushing it later reruns this")
+    }
+
+    /// Only a file nobody pushed is absent: a header that failed upstream, or one that was
+    /// pushed and then removed, still stops the preprocessor.
+    func test_aHeaderInErrorOrDeletedStillFails() throws {
+        for reason in [NoValueReason.inputInError, .deleted, .error(messageDataObjectHash: try "broken".intern())] {
+            XCTAssertThrowsError(try makeTool().process(input: try makeInputNaming(headers: [
+                "src/sqlite3.h": .noValue(reason: reason),
+            ])), "\(reason)")
+        }
+        XCTAssertTrue(executor.invocations.isEmpty)
+    }
+
+    /// So a report does not name the absent header as a file to push: whether it matters is
+    /// in clang's error, when it does.
+    func test_theHeaderPortToleratesAnAbsentValueAndNoOtherDoes() {
+        XCTAssertTrue(ClangPreprocessor.descriptor.toleratesAbsentValue(onInputPort: ClangPreprocessor.headerInputFiles))
+        XCTAssertFalse(ClangPreprocessor.descriptor.toleratesAbsentValue(onInputPort: ClangPreprocessor.sourceFileInput))
+        XCTAssertFalse(ClangPreprocessor.descriptor.toleratesAbsentValue(onInputPort: ClangPreprocessor.configuration))
+    }
+
     // MARK: - The language standard
 
     // B-48: one key per language, each required for the language of the file at hand. See

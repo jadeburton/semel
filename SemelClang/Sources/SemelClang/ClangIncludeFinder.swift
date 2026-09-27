@@ -12,14 +12,21 @@ import SemelDatabaseModels
 public struct ClangIncludeFinder: Node {
     public static let kind: UInt = 15
 
+    /// 2: a source nobody pushed lists no includes (B-79), where version 1 failed on it.
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     static let sourceFileInputPort = "sourceFile"
     static let includePathListOutputPort = "includePathList"
 
+    /// An absent source is tolerated, and lists no includes: the preprocessor asks for a
+    /// finder on every header a quoted include names, and a header that does not exist is
+    /// clang's to judge, not the report's (`ClangPreprocessor`'s `absentHeaderPaths`).
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(sourceFileInputPort)],
-        outputPorts: [includePathListOutputPort]
+        outputPorts: [includePathListOutputPort],
+        inputPortsToleratingAbsentValue: [sourceFileInputPort]
     )
 
     public var thisNode: NodeRecord
@@ -85,6 +92,12 @@ public struct ClangIncludeFinder: Node {
             // iteration order is seeded per process, so an unsorted walk gives the same
             // set of sources a different output hash from one run to the next (B-04).
             for (headerFileName, nodeValue) in sourceFiles.sorted(by: { $0.key < $1.key }) {
+                // A file nobody pushed does not exist and includes nothing. It is here
+                // because a quoted include named it, possibly under a conditional that is
+                // false (B-79); the preprocessor leaves it to clang whether that matters.
+                if case .noValue(reason: .initializing) = nodeValue {
+                    continue
+                }
                 inputSourceFiles.append(.init(filePath: headerFileName, hash: try nodeValue.expectValue()))
             }
 

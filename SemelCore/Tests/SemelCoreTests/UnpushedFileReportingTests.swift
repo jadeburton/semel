@@ -192,9 +192,10 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     // MARK: - Where the knowledge lives
 
-    /// The rule reads the port, not the node's type. The set has one member, and it is
-    /// stated here so that admitting a second is a change to that node and to this line,
-    /// and never to the report.
+    /// The rule reads the port, not the node's type. Among the engine's nodes the set has
+    /// one member, and it is stated here so that admitting a second is a change to that
+    /// node and to this line, and never to the report. The clang plugin's header ports are
+    /// the others (B-79), pinned in its own tests, since this target cannot see them.
     func test_onlyAConfigMergersOverrideToleratesAnAbsentValue() {
         XCTAssertTrue(ConfigMerger.descriptor.toleratesAbsentValue(onInputPort: ConfigMerger.overridePort))
 
@@ -210,7 +211,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         XCTAssertFalse(DemandingSampleTool.descriptor.toleratesAbsentValue(onInputPort: DemandingSampleTool.input))
     }
 
-    // MARK: - The one port that tolerates an absence
+    // MARK: - The engine's one port that tolerates an absence
 
     /// An override file nobody wrote means "nothing to add", which is what makes a formula
     /// able to name one at all — `6502emu.fmla` lays a project-local `clang.cfg` over the
