@@ -236,13 +236,14 @@ final class CacheTests: SemelCoreTestCase {
     func test_anEntryDemandingATypeThisSemelDoesNotLinkIsAMiss() throws {
         let tool     = try makeCompilerNode()
         let material = try tool.buildCacheKeyMaterial(input: try makeInput())
-        let key      = try material.cacheKey()
-        let output = ProcessOutput(
-            outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
-            inputWireSpecs: [SampleTool.input: ["wire0": try GraphSpecNode.parse("RetiredSampleTool(path: 'input:/x.c').output")]])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        let retired  = String(repeating: "a", count: 64)
+        let table = GraphSpecTable(
+            inputWireSpecs: [SampleTool.input: ["wire0": .init(identity: retired, outputPort: "output")]],
+            rows: [retired: .init(typeName: "RetiredSampleTool",
+                                  properties: [GraphSpecProperty(key: "path", value: "input:/x.c")], inputs: [])])
+        try storeEntry(demanding: table, material: material)
 
-        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key),
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: try material.cacheKey()),
                      "a spec naming a type this Semel cannot make is not an entry to hand back")
     }
 
@@ -251,14 +252,39 @@ final class CacheTests: SemelCoreTestCase {
     func test_anEntryDemandingARetiredTypeDeeperInASpecIsAMissToo() throws {
         let tool     = try makeCompilerNode()
         let material = try tool.buildCacheKeyMaterial(input: try makeInput())
-        let key      = try material.cacheKey()
-        let spec = "Configuration(role: 'x', input: [\"a\": RetiredSampleTool().output]).output"
-        let output = ProcessOutput(
-            outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
-            inputWireSpecs: [SampleTool.input: ["wire0": try GraphSpecNode.parse(spec)]])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        let root     = String(repeating: "a", count: 64)
+        let retired  = String(repeating: "b", count: 64)
+        let table = GraphSpecTable(
+            inputWireSpecs: [SampleTool.input: ["wire0": .init(identity: root, outputPort: "output")]],
+            rows: [root: .init(typeName: "Configuration", properties: [GraphSpecProperty(key: "role", value: "x")],
+                               inputs: [.init(portName: "base", wires: [.init(name: "a", source: .init(identity: retired, outputPort: "output"))])]),
+                   retired: .init(typeName: "RetiredSampleTool", properties: [], inputs: [])])
+        try storeEntry(demanding: table, material: material)
 
-        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: key))
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+    }
+
+    /// A table whose reference names a row it does not hold is damaged; the entry is a
+    /// miss, and the build that misses replaces it.
+    func test_anEntryWhoseTableDoesNotUnfoldIsAMiss() throws {
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let table = GraphSpecTable(
+            inputWireSpecs: [SampleTool.input: ["wire0": .init(identity: String(repeating: "c", count: 64), outputPort: "output")]],
+            rows: [:])
+        try storeEntry(demanding: table, material: material)
+
+        XCTAssertNil(try tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+    }
+
+    /// Stores an entry with a table as it stands — the table a Semel that linked a type this
+    /// one does not would have written, or a damaged one. No fold of this Semel's trees
+    /// makes either: folding takes a kind for every type it names.
+    private func storeEntry(demanding table: GraphSpecTable, material: CacheKeyMaterial) throws {
+        let entry = ProcessCacheEntry(outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
+                                      specTable: table, keyMaterial: material)
+        try engine.database.cacheEntry.save(.init(hash: try material.cacheKey(), content: Data(try entry.toJSON().utf8),
+                                                  cost: 100, timestamp: Date()))
     }
 
     /// The common entry, which every spec of it names a linked type: it comes back.
@@ -274,6 +300,42 @@ final class CacheTests: SemelCoreTestCase {
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
         XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"]?.asString(omitOutputPort: false),
                        "StaticFile(path: 'input:/x.c').output")
+    }
+
+    /// B-121. An entry stores its demands with each distinct node once, and a hit wires the
+    /// graph as the run that stored it did: every wire on its port, each from the node its
+    /// tree describes, and the node several demands share made once.
+    func test_aHitWiresWhatItsStoredTableDemands() throws {
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let shared = GraphSpecNode.configuration(literals: ["role": "project"],
+                                                 base: ["machine": .staticFile(at: "input:/semel.config")])
+        let demanded: [String: GraphSpecNode] = [
+            "a.c": .configFilter(prefix: "a", input: ["settings": shared]),
+            "b.c": .configFilter(prefix: "b", input: ["settings": shared]),
+            "c.c": shared,
+        ]
+        let output = ProcessOutput(outputValues: [SampleTool.output:   .value(try "OBJECT".intern()),
+                                                  SampleTool.errorLog: .value(""),
+                                                  SampleTool.infoLog:  .value("")],
+                                   inputWireSpecs: [SampleTool.input: demanded])
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+
+        let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: try material.cacheKey()))
+        let stored = try ProcessCacheEntry.fromJSON(String(decoding: row.content, as: UTF8.self))
+        XCTAssertEqual(stored.specTable.rows.count, 4, "two filters, the settings they share and its file, once each")
+
+        let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+        try tool.writeToOutputs(output: loaded)
+
+        let wires = try engine.database.wire.select(goingToNodeID: try tool.requireID(),
+                                                    toSymbolID: SampleTool.input.asSymbolID())
+        var sourceIdentities: [String: String] = [:]
+        for wire in wires {
+            sourceIdentities[wire.name.resolveSymbol()] = try engine.database.node.select(nodeID: wire.fromNodeID).identity
+        }
+        XCTAssertEqual(sourceIdentities, try demanded.mapValues { try $0.identity() })
+        XCTAssertEqual(try engine.database.node.select(identity: try shared.identity()).count, 1)
     }
 
     // MARK: - What a node reads from outside its inputs

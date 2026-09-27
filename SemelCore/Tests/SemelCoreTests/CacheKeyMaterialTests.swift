@@ -382,7 +382,8 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
     func test_aRowWhoseMaterialDoesNotHashToItsKeyIsCalledDamaged() throws {
         let tool     = try makeCompilerNode()
         let material = try tool.buildCacheKeyMaterial(input: try makeInput())
-        let entry    = ProcessCacheEntry(outputValues: [:], inputWireSpecs: [:], keyMaterial: material)
+        let entry    = ProcessCacheEntry(outputValues: [:], specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]),
+                                         keyMaterial: material)
         let wrongKey = String(repeating: "b", count: 64)
         try engine.database.cacheEntry.save(.init(hash: wrongKey, content: Data(try entry.toJSON().utf8),
                                                   cost: 1, timestamp: Date()))

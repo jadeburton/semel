@@ -127,7 +127,7 @@ final class ObjectCollectionTests: SemelCoreTestCase {
         let message = try agedOrphan("and an error message a cached failure carries")
         let entry = ProcessCacheEntry(outputValues: ["output": .value(output),
                                                      "errorLog": .noValue(reason: .error(messageDataObjectHash: message))],
-                                      inputWireSpecs: [:],
+                                      specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]),
                                       keyMaterial: CacheKeyMaterial(nodeType: "SampleTool", implementationVersion: 1,
                                                                     properties: [], fingerprint: nil, inputs: []))
         try database.cacheEntry.save(CacheEntry(hash: String(repeating: "c", count: 64),

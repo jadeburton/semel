@@ -424,7 +424,7 @@ Make the engine talk to the cache as though it were a separate server, without a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised
 entirely in-process.
 
-**B-121** `open` `For Fable Only` — **A cache entry spells out its upstream tree, once per wire.**
+**B-121** `done` — **A cache entry spells out its upstream tree, once per wire.**
 A `ProcessCacheEntry` holds the node's `inputWireSpecs` so that a hit can apply them
 without running the node — and each wire's spec is the fully expanded tree above it.
 Measured on the IceCubes packages tree (2026-09-27, after B-115): the two entries of the
@@ -443,6 +443,19 @@ Decoding rebuilds the trees, or better, `applySpecs` learns to walk the table an
 rebuilds them. Not a change to the cache key, which is over values, so every entry keeps
 hitting; a change to the entry's encoding, which is a new field or shape on
 `ProcessCacheEntry` and so a miss for what older code wrote, as AGENTS.md says.
+
+Done (2026-09-27): `GraphSpecTable` in `SemelNodeKit` folds the demanded trees into one row
+per distinct node, keyed by the identity the graph stores (`NodeIdentity.hash`), each row
+naming its wires' sources by identity and output port; the demands are references into it.
+`ProcessCacheEntry.specTable` replaces `inputWireSpecs`, so every older entry misses once;
+the key does not move. On the IceCubes packages tree: the largest entry 15.6 MB → 179 KB
+(218 rows), the cache 34.0 MB → 4.2 MB, the compact database 36.1 MB → 6.2 MB; the five
+archives byte-identical; after a `reset` the second build answers 157 of 180 nodes from the
+cache, as before, in 32 s where it took 61. Design and particulars:
+`docs/superpowers/specs/2026-09-27-semel-cache-entry-spec-table-design.md`. Residuals: a hit
+unfolds the table into trees and `applySpecs` hashes them again — an applier that walked the
+table would read the identities instead; and the small entries grew from 2.9 to 3.8 MB
+together, a 64-character identity costing more than the short tree it names.
 
 ### Server
 
