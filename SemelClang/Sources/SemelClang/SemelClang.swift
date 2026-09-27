@@ -11,6 +11,9 @@ import SemelNodeKit
 
 public enum SemelClang {
 
+    /// The command, outside Semel, that writes this toolchain's machine settings (B-119).
+    public static let machineFileCommand = "semel-clang <folder>"
+
     /// Where the platform's SDK is on this machine, as `xcrun` answers, or nil when it has
     /// none. Asked when `tools` asks, not at registration.
     static func sdkPath(forPlatform platform: Platform) -> String? {
@@ -36,18 +39,20 @@ public enum SemelClang {
         // the engine starts.
         ToolDiscovery.register(ClangToolDiscovery.finder)
 
-        // What `tools` prints and `tools --write` writes under each namespace. All three
-        // run the one clang binary; the include finder runs no tool. The preprocessor and
-        // the linker read the SDK at `sdkPath`, a fact about the machine for a platform,
-        // so they declare it as one (B-109); the compiler takes the preprocessed source
-        // and reads no SDK.
-        ToolNamespaceRegistry.register(.init(namespace: ClangCompilerConfiguration.settingNamespace, toolName: "clang"))
+        // What `tools` prints and `semel-clang` writes under each namespace (B-119). All
+        // three run the one clang binary; the include finder runs no tool. The preprocessor
+        // and the linker read the SDK at `sdkPath`, a fact about the machine for a platform,
+        // so they declare it as one (B-109); the compiler takes the preprocessed source and
+        // reads no SDK.
+        ToolNamespaceRegistry.register(.init(namespace: ClangCompilerConfiguration.settingNamespace, toolName: "clang",
+                                             machineFileCommand: machineFileCommand))
         for namespace in [ClangPreprocessorConfiguration.settingNamespace, ClangLinkerConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang",
                                                  machineSettingKeys: ["sdkPath"],
                                                  machineSettings: { platform in
                                                      sdkPath(forPlatform: platform).map { ["sdkPath": $0] } ?? [:]
-                                                 }))
+                                                 },
+                                                 machineFileCommand: machineFileCommand))
         }
 
         // `include 'clang'`: executables and dylibs from a folder of sources (B-108).

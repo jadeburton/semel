@@ -96,17 +96,18 @@ public struct RequiredSettings {
     /// Reports every missing key, splitting them by who knows the answer.
     ///
     /// A `toolDescriptor.*` key, and every key the node's namespace declares as a machine
-    /// setting, describes the machine the build runs on: `tools --write` writes them all
-    /// with the machine's own values, so writing `=…` beside them would invite the reader
-    /// to invent a value that has one correct spelling. Every other key is the project's
-    /// own choice, and `=…` is where that choice goes (B-109).
+    /// setting, describes the machine the build runs on: the toolchain's own tool writes
+    /// them all with the machine's own values, so writing `=…` beside them would invite the
+    /// reader to invent a value that has one correct spelling. Every other key is the
+    /// project's own choice, and `=…` is where that choice goes (B-109).
     public func check() throws {
         guard !missing.isEmpty else {
             return
         }
 
         let toolDescriptorPrefix = "\(namespace).toolDescriptor."
-        let declared   = ToolNamespaceRegistry.entry(forNamespace: namespace)?.machineSettingKeys ?? []
+        let entry      = ToolNamespaceRegistry.entry(forNamespace: namespace)
+        let declared   = entry?.machineSettingKeys ?? []
         let sorted     = missing.sorted()
         let machine    = sorted.filter { key in
             key.hasPrefix(toolDescriptorPrefix) || declared.contains(String(key.dropFirst(namespace.count + 1)))
@@ -123,9 +124,12 @@ public struct RequiredSettings {
         }
 
         if !machine.isEmpty {
-            paragraphs.append("Missing machine settings. Run 'tools --write semel.machine.config': it writes the " +
-                              "tool descriptors and SDK facts of the tools installed here, for every namespace " +
-                              "this graph reads, these among them:")
+            // Which command writes them is the toolchain's to say; a namespace that names
+            // none still says which file the settings belong in.
+            let writer = entry?.machineFileCommand.map { "Run '\($0)': it writes semel.machine.config with" }
+                ?? "They belong in semel.machine.config, with"
+            paragraphs.append("Missing machine settings. \(writer) the tool descriptors and SDK facts of the " +
+                              "tools installed here, these among them:")
             paragraphs.append(machine.joined(separator: "\n"))
         }
 

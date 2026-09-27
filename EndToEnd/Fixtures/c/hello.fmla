@@ -4,7 +4,7 @@
 // that node by the prefix its node type reads — so this formula does not.
 //
 // The settings are two files (B-109): this project's choices in `semel.config`, laid over
-// the machine's tools and SDK in `../semel.machine.config`, which `semel tools --write`
+// the machine's tools and SDK in `../semel.machine.config`, which `semel-clang`
 // writes and nobody edits or commits.
 
 include 'clang'

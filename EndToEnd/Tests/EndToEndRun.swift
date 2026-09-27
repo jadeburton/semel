@@ -35,10 +35,10 @@ final class EndToEndRun {
     }
 
     static var binariesAreBuilt: Bool {
-        ["semel", "semelserv", "semel-swift"].allSatisfy { FileManager.default.isExecutableFile(atPath: binary($0).path) }
+        ["semel", "semelserv", "semel-swift", "semel-clang"].allSatisfy { FileManager.default.isExecutableFile(atPath: binary($0).path) }
     }
 
-    /// Runs one of the three executables to completion. A non-zero status or the
+    /// Runs one of the executables to completion. A non-zero status or the
     /// deadline is a failure naming `step`, with the command and the output's tail.
     @discardableResult
     static func run(_ tool: String, arguments: [String], environment: [String: String] = [:],
@@ -107,21 +107,12 @@ final class EndToEndRun {
     static let machineFileName = "semel.machine.config"
 
     /// The file the C fixtures read as `../semel.machine.config`, written the way a user
-    /// writes it: `tools --write` against a server of its own. `--all` for the `clang`
-    /// namespaces, because nothing has been built in this run yet, so no graph selects
-    /// anything; the loop a user goes through instead — build, write, build — is
+    /// writes it: `semel-clang` on the folder the formula looks in, outside Semel (B-119).
+    /// The loop a user goes through when it is missing — build, write, build — is
     /// `AutostartTests`' to prove.
     private func writeMachineFile(to file: URL) throws {
-        let server = ServerSession(home: root.appendingPathComponent("configure", isDirectory: true))
-        try server.start()
-        do {
-            try Self.run("semel", arguments: ["tools clang --all --write \(file.path)"], environment: server.environment,
-                         timeout: 60, step: "tools --write", serverLog: { server.logTail })
-        } catch {
-            server.killIfRunning()
-            throw error
-        }
-        try server.stop()
+        try Self.run("semel-clang", arguments: [file.deletingLastPathComponent().path],
+                     timeout: 60, step: "semel-clang")
     }
 
     // MARK: - 3, 5, 6b and 6c. A cold build

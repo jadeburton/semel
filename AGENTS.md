@@ -77,9 +77,9 @@ root: it registers the toolchains, starts the engine and listens on
 `semelserv` first, or `semel` says so and exits. Tests point both at a temporary directory
 with `SEMEL_HOME` and `SEMEL_SOCKET`.
 
-`EndToEnd/Tests` is the one place the three executables are run together, as a user
-runs them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel` and
-`semel-swift` against it, and builds each project up to four times to compare the bytes:
+`EndToEnd/Tests` is the one place the executables are run together, as a user runs
+them: `EndToEndRun` starts `semelserv` over a fresh home, drives `semel`, `semel-swift`
+and `semel-clang` against it, and builds each project up to four times to compare the bytes:
 twice over one copy, once from a copy at a second mount, once under a perturbed
 environment.
 

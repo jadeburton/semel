@@ -199,7 +199,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     }
 
     /// B-109. A namespace is selected when a ConfigFilter with its prefix is resident —
-    /// what `tools --write` writes a block for — whether or not the settings file exists.
+    /// whether or not the settings file exists.
     func test_toolsSaysWhichNamespacesTheGraphSelects() throws {
         ToolNamespaceRegistry.register(.init(namespace: "clang.compiler", toolName: "clang"))
         ToolNamespaceRegistry.register(.init(namespace: "swift.linker", toolName: "swiftc"))

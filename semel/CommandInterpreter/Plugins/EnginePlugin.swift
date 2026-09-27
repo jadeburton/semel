@@ -74,9 +74,16 @@ final class EnginePlugin: CommandPlugin {
 
     /// With no argument, every namespace. With a prefix, only the namespaces whose name
     /// starts with it — `tools clang` gives the three `clang.*` blocks instead of all
-    /// eight, and `tools clang --all --write <file>` writes those three. Filtered on the
-    /// client: the records already carry the namespace, so the server has nothing to add.
+    /// eight. Filtered on the client: the records already carry the namespace, so the
+    /// server has nothing to add. A report of what this server's plugins found, and
+    /// nothing more: the machine file is written outside Semel, by each toolchain's own
+    /// tool (B-119).
     private func handleTools(tokens: [String], context: any CommandContext) throws {
+        guard !tokens.contains("--write") else {
+            context.outputError("tools: lists what is installed; semel.machine.config is written by each "
+                              + "toolchain's own tool — semel-clang <folder>, semel-swift prepare <folder>")
+            return
+        }
         var tokens = tokens
         var platform = Platform.macos
         if let flag = tokens.firstIndex(of: "--platform") {
@@ -88,18 +95,6 @@ final class EnginePlugin: CommandPlugin {
             platform = named
             tokens.removeSubrange(flag...(flag + 1))
         }
-        var destination: String?
-        if let flag = tokens.firstIndex(of: "--write") {
-            guard flag + 1 < tokens.count else {
-                context.outputError("tools: --write needs a file to write")
-                return
-            }
-            destination = tokens[flag + 1]
-            tokens.removeSubrange(flag...(flag + 1))
-        }
-        let writesAll = tokens.contains("--all")
-        tokens.removeAll { $0 == "--all" }
-
         guard case .tools(let namespaces) = try context.request(.tools(platform: platform.rawValue)).0 else {
             return
         }
@@ -118,41 +113,7 @@ final class EnginePlugin: CommandPlugin {
             }
         }
 
-        if let destination {
-            try writeMachineFile(to: destination, platform: platform, namespaces: matching,
-                                 all: writesAll, context: context)
-            return
-        }
-
         context.outputMessage(ToolNamespaceRenderer.text(for: matching))
-    }
-
-    /// `tools --write <file>`: the machine's half of the configuration (B-109). The tool
-    /// descriptors and machine settings for the namespaces the graph selects — the
-    /// `ConfigFilter`s that exist once a build has been attempted, whether or not the file
-    /// did — so a file holds what this tree reads and nothing the unused-key report would
-    /// flag. `--all` writes every installed namespace instead — every one under the prefix,
-    /// given one — for a master file, or for a machine no graph has been built on yet.
-    private func writeMachineFile(to destination: String, platform: Platform, namespaces: [ToolNamespaceRecord],
-                                  all: Bool, context: any CommandContext) throws {
-        let chosen = all ? namespaces : namespaces.filter(\.selected)
-        guard !chosen.isEmpty else {
-            context.outputError("tools: the graph selects no settings yet — build once, so the formula's "
-                              + "selectors exist, then write again; or --all writes every installed namespace")
-            return
-        }
-
-        let path = ExternalPathSanitizer.expandPartialPath(destination)
-        let text = ToolNamespaceRenderer.machineFile(writtenBy: "`semel tools --write`", platformName: platform.rawValue,
-                                                     namespaces: chosen)
-        try text.write(toFile: path, atomically: true, encoding: .utf8)
-
-        let names = chosen.map(\.namespace).joined(separator: ", ")
-        let missing = chosen.filter(\.descriptors.isEmpty).map(\.toolName)
-        context.outputMessage("Wrote \(chosen.count) namespace\(chosen.count == 1 ? "" : "s") to \(path): \(names)")
-        if !missing.isEmpty {
-            context.outputMessage("No tool is installed for: \(missing.joined(separator: ", ")); those blocks are comments.")
-        }
     }
 
     // MARK: - collect

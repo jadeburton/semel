@@ -42,7 +42,7 @@ final class MaterialiseTests: XCTestCase {
         try run.configure()
 
         let written = try String(contentsOf: run.base.appendingPathComponent("semel.machine.config"), encoding: .utf8)
-        XCTAssertTrue(written.hasPrefix("// Written by `semel tools --write` for --platform macos"), written)
+        XCTAssertTrue(written.hasPrefix("// Written by semel-clang for --platform macos"), written)
         XCTAssertTrue(written.contains("clang.linker.toolDescriptor.version=" + (try MachineFacts.clangVersion())), written)
         XCTAssertTrue(written.contains("clang.linker.sdkPath=" + (try MachineFacts.macOSSDKPath())), written)
         XCTAssertFalse(written.contains("swift."), "the clang namespaces only: \(written)")

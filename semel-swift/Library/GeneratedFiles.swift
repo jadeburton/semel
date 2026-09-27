@@ -12,6 +12,7 @@
 import Foundation
 import SemelApple
 import SemelClang
+import SemelMachineFile
 import SemelNodeKit
 import SemelProtocol
 import SemelSwift
@@ -37,9 +38,7 @@ public struct ToolchainFacts {
         try SemelSwift.register()
         try SemelClang.register()
         try SemelApple.register()
-        let registry = ToolRunnerRegistry()
-        try ToolDiscovery.registerInstalledTools(into: registry)
-        return ToolchainFacts(descriptors: registry.registeredDescriptors,
+        return ToolchainFacts(descriptors: try MachineFile.installedDescriptors(),
                               namespaces: ToolNamespaceRegistry.all,
                               sdkIdentity: SemelSwift.sdkIdentity(sdk:))
     }
@@ -49,7 +48,7 @@ public enum GeneratedFiles {
 
     public static let formulaFileName       = "semel.fmla"
     public static let configFileName        = "semel.config"
-    public static let machineConfigFileName = ToolNamespaceRenderer.machineFileName
+    public static let machineConfigFileName = MachineFile.fileName
 
     /// One build root above the packages: each root is converted with the formula's folder
     /// as the root, so their common dependencies are vendored once and one config serves
@@ -159,35 +158,11 @@ public enum GeneratedFiles {
     /// The machine's half: the tool descriptors and the machine settings each namespace
     /// declares — the SDK's path or identity — for the namespaces the formula selects
     /// from, and no other, because the engine reports a key no filter claims as unused on
-    /// every build. The same file `semel tools --write` writes, through the same renderer:
-    /// a tool installed in several versions is pinned to the newest, and a tool not
-    /// installed leaves a comment saying so.
-    ///
-    /// The records are built here as the daemon builds them for `tools`; the two cannot
-    /// share the code, because the one type that could hold it would have to know both
-    /// the registry's types and the protocol's.
+    /// every build. Written by the one writer `semel-clang` uses too (B-119).
     public static func machineConfig(platform: Platform, facts: ToolchainFacts, namespaces: [String]) -> String {
         let wanted = Set(namespaces)
-        let records = facts.namespaces
-            .filter { wanted.contains($0.namespace) }
-            .sorted { $0.namespace < $1.namespace }
-            .map { entry -> ToolNamespaceRecord in
-                let machineSettings = entry.machineSettings(platform)
-                let descriptors = facts.descriptors
-                    .filter { $0.name == entry.toolName }
-                    .sorted { ($0.version, $0.platform, $0.architecture) < ($1.version, $1.platform, $1.architecture) }
-                    .map { descriptor in
-                        ToolDescriptorRecord(name:            descriptor.name,
-                                             version:         descriptor.version,
-                                             platform:        descriptor.platform,
-                                             architecture:    descriptor.architecture,
-                                             machineSettings: machineSettings)
-                    }
-                return ToolNamespaceRecord(namespace: entry.namespace, toolName: entry.toolName,
-                                           descriptors: descriptors, selected: true)
-            }
-        return ToolNamespaceRenderer.machineFile(writtenBy: "semel-swift prepare", platformName: platform.rawValue,
-                                                 namespaces: records)
+        return MachineFile.text(writtenBy: "semel-swift prepare", platform: platform, descriptors: facts.descriptors,
+                                namespaces: facts.namespaces.filter { wanted.contains($0.namespace) })
     }
 
     /// The project's half: what prepare derives from the manifests and the platform — the
@@ -207,7 +182,7 @@ public enum GeneratedFiles {
             // the target at the deployment version the manifests declare, and for the clang
             // tools a language standard to start from. Yours to edit and check in. The machine's
             // tools and SDK are in \(machineConfigFileName) beside this file, which prepare
-            // and `semel tools --write` rewrite.
+            // rewrites.
             """,
         ]
         for entry in facts.namespaces.sorted(by: { $0.namespace < $1.namespace }) where wanted.contains(entry.namespace) {

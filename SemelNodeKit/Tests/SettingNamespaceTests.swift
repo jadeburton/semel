@@ -62,20 +62,36 @@ final class SettingNamespaceTests: XCTestCase {
             """)
     }
 
-    /// The toolchain's own identity has one correct spelling, which `tools` prints. Listing
-    /// those keys with `=…` would invite the reader to invent it.
-    func test_missingToolDescriptorKeysNameTheToolsCommandInsteadOfAPlaceholder() {
-        var settings = RequiredSettings(properties: [:], namespace: "clang.linker")
+    /// The toolchain's own identity has one correct spelling, which the machine file holds.
+    /// Listing those keys with `=…` would invite the reader to invent it.
+    func test_missingToolDescriptorKeysNameTheMachineFileInsteadOfAPlaceholder() {
+        var settings = RequiredSettings(properties: [:], namespace: "unregistered.linker")
         _ = ToolDescriptor(required: &settings, properties: [:])
 
         XCTAssertEqual(messageFrom(settings), """
-            Missing machine settings. Run 'tools --write semel.machine.config': it writes the tool descriptors \
-            and SDK facts of the tools installed here, for every namespace this graph reads, these among them:
+            Missing machine settings. They belong in semel.machine.config, with the tool descriptors \
+            and SDK facts of the tools installed here, these among them:
 
-            clang.linker.toolDescriptor.architecture
-            clang.linker.toolDescriptor.name
-            clang.linker.toolDescriptor.platform
-            clang.linker.toolDescriptor.version
+            unregistered.linker.toolDescriptor.architecture
+            unregistered.linker.toolDescriptor.name
+            unregistered.linker.toolDescriptor.platform
+            unregistered.linker.toolDescriptor.version
+            """)
+    }
+
+    /// B-119. Which command writes the machine file is the toolchain's to say: the report
+    /// names the one its namespace registered, and the core names none of its own.
+    func test_missingMachineSettingsNameTheCommandTheToolchainRegistered() {
+        ToolNamespaceRegistry.register(.init(namespace: "writer.linker", toolName: "clang",
+                                             machineFileCommand: "semel-clang <folder>"))
+        var settings = RequiredSettings(properties: [:], namespace: "writer.linker")
+        _ = settings.value("toolDescriptor.name")
+
+        XCTAssertEqual(messageFrom(settings), """
+            Missing machine settings. Run 'semel-clang <folder>': it writes semel.machine.config with the tool \
+            descriptors and SDK facts of the tools installed here, these among them:
+
+            writer.linker.toolDescriptor.name
             """)
     }
 
@@ -105,7 +121,7 @@ final class SettingNamespaceTests: XCTestCase {
         XCTAssertTrue(message.contains("clang.linker.target=…"), message)
         XCTAssertTrue(message.contains("\nclang.linker.toolDescriptor.name"), message)
         XCTAssertFalse(message.contains("toolDescriptor.name=…"), message)
-        XCTAssertTrue(message.contains("Run 'tools --write semel.machine.config'"), message)
+        XCTAssertTrue(message.contains("Missing machine settings."), message)
     }
 
     /// The message reads as its own words rather than as the enum case wrapping it: that

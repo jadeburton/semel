@@ -35,6 +35,6 @@ DerivedData/
 EndToEnd/Fixtures/swift/MyApp/semel.config
 EndToEnd/Fixtures/**/Dependencies/
 
-# The machine's half of any configuration (B-109): written by `semel tools --write` or
+# The machine's half of any configuration (B-109): written by `semel-clang` or
 # `semel-swift prepare`, one machine's facts, never committed
 semel.machine.config
