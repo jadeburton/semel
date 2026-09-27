@@ -48,6 +48,73 @@ final class MaterialiseTests: XCTestCase {
         XCTAssertFalse(written.contains("swift."), "the clang namespaces only: \(written)")
     }
 
+    // MARK: - Overlays
+
+    /// A checkout and an overlay in a temporary folder, each written from a map of relative
+    /// path to contents; removed at the end of the test.
+    private func checkoutAndOverlay(checkout checkoutFiles: [String: String],
+                                    overlay overlayFiles: [String: String]) throws -> (checkout: URL, overlay: URL) {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("semel-overlay-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        let checkout = folder.appendingPathComponent("checkout", isDirectory: true)
+        let overlay  = folder.appendingPathComponent("overlay", isDirectory: true)
+        for (root, files) in [(checkout, checkoutFiles), (overlay, overlayFiles)] {
+            for relativePath in files.keys.sorted() {
+                let file = root.appendingPathComponent(relativePath)
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data((files[relativePath] ?? "").utf8).write(to: file)
+            }
+        }
+        return (checkout, overlay)
+    }
+
+    private func contents(of folder: URL, _ relativePath: String) -> String? {
+        (try? Data(contentsOf: folder.appendingPathComponent(relativePath))).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// B-77: a correction deep in a sample's tree replaces that file and nothing else — the
+    /// overlay's `App` merges into the checkout's rather than replacing it — and the
+    /// overlay's note stays out of the checkout, whose own `README.md` a project may list.
+    func test_anOverlayReplacesANestedFileAndLeavesTheRestOfItsFolder() throws {
+        let (checkout, overlay) = try checkoutAndOverlay(
+            checkout: ["App/Orders/OrderDetailView.swift": "sample", "App/Orders/OrderRow.swift": "row",
+                       "App/App.swift": "app", "README.md": "the sample's"],
+            overlay:  ["App/Orders/OrderDetailView.swift": "corrected", "README.md": "the overlay's"])
+
+        try EndToEndRun.lay(overlay: overlay, over: checkout, replacingOnly: true)
+
+        XCTAssertEqual(contents(of: checkout, "App/Orders/OrderDetailView.swift"), "corrected")
+        XCTAssertEqual(contents(of: checkout, "App/Orders/OrderRow.swift"), "row")
+        XCTAssertEqual(contents(of: checkout, "App/App.swift"), "app")
+        XCTAssertEqual(contents(of: checkout, "README.md"), "the sample's")
+    }
+
+    /// A correction whose path the checkout does not have would add a file nothing
+    /// compiles and leave the uncorrected one in the build, so it fails where it happens.
+    func test_anOverlayOfCorrectionsRefusesAFileTheCheckoutDoesNotHave() throws {
+        let (checkout, overlay) = try checkoutAndOverlay(
+            checkout: ["App/Orders/OrderDetailView.swift": "sample"],
+            overlay:  ["App/Order/OrderDetailView.swift": "corrected"])
+
+        XCTAssertThrowsError(try EndToEndRun.lay(overlay: overlay, over: checkout, replacingOnly: true))
+        XCTAssertEqual(contents(of: checkout, "App/Orders/OrderDetailView.swift"), "sample")
+    }
+
+    /// The Lua shape (B-76): a formula the checkout lacks is added, and a project config it
+    /// happens to have is replaced.
+    func test_aFormulaOverlayAddsItsFormulaAndReplacesAConfig() throws {
+        let (checkout, overlay) = try checkoutAndOverlay(
+            checkout: ["lua.c": "source", "semel.config": "the checkout's"],
+            overlay:  ["lua.fmla": "formula", "semel.config": "the roster's"])
+
+        try EndToEndRun.lay(overlay: overlay, over: checkout, replacingOnly: false)
+
+        XCTAssertEqual(contents(of: checkout, "lua.fmla"), "formula")
+        XCTAssertEqual(contents(of: checkout, "semel.config"), "the roster's")
+        XCTAssertEqual(contents(of: checkout, "lua.c"), "source")
+    }
+
     func test_configurePreparesAProjectWithAPlatform() throws {
         try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
         let run = try EndToEndRun(project: Projects.swiftMyApp)

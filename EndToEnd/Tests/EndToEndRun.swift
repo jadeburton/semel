@@ -69,8 +69,9 @@ final class EndToEndRun {
     /// cannot be the base itself (`push .` resolves to nothing to push), so a project
     /// whose build folder is the checkout's own root needs a real subfolder to name; its
     /// `buildFolder` is then `project.name`. Either way `base` is what the build folder
-    /// is relative to. A `.git` source with an overlay then gets the overlay's entries
-    /// copied over the subfolder's copy (B-76).
+    /// is relative to. A `.git` source with an overlay then gets the overlay laid over the
+    /// subfolder's copy (B-76) — here, before `configure`, so that `prepare` runs over the
+    /// corrected tree, and every build, the second mount's copy included, sees it.
     func materialise() throws {
         let tree = root.appendingPathComponent("tree", isDirectory: true)
         switch project.source {
@@ -89,8 +90,9 @@ final class EndToEndRun {
                 copiedSubfolder = tree.appendingPathComponent(URL(fileURLWithPath: subfolder).lastPathComponent, isDirectory: true)
             }
             if let overlay {
-                try Self.lay(overlay: EndToEndEnvironment.fixtures.appendingPathComponent(overlay, isDirectory: true),
-                             over: copiedSubfolder)
+                try Self.lay(overlay:       EndToEndEnvironment.fixtures.appendingPathComponent(overlay, isDirectory: true),
+                             over:          copiedSubfolder,
+                             replacingOnly: project.platform != nil)
             }
         case .repository:
             try Self.copyRepository(to: tree.appendingPathComponent(project.name, isDirectory: true))
@@ -98,17 +100,44 @@ final class EndToEndRun {
         base = tree
     }
 
-    /// Each entry of `overlay` replaces the entry of its name under `folder`, whole: an
-    /// overlay holds a formula and a project config, so entry by entry is the grain, and a
-    /// file the checkout happens to have under the same name is the overlay's to replace.
-    static func lay(overlay: URL, over folder: URL) throws {
+    /// The entry at an overlay's root that is the overlay's own and is not laid: the note
+    /// saying where its files come from and what was changed in them. Laid, it would
+    /// replace the checkout's `README.md`, which a project file may list.
+    static let overlayNoteName = "README.md"
+
+    /// Lays `overlay` over `folder`, file by file: a file replaces the file at its path, and
+    /// a folder merges into the checkout's folder of its name rather than replacing it, so
+    /// `App/Orders/OrderDetailView.swift` corrects that one file and leaves the rest of `App`
+    /// as the checkout has it. The two kinds of overlay need both: the formula and config a
+    /// C project lacks sit at the root, while a correction to a sample's sources sits deep in
+    /// its tree (B-77). `replacingOnly` is for the second kind: every file must replace one
+    /// the checkout has, because a path that has drifted would otherwise add a file nothing
+    /// compiles and leave the uncorrected one in the build, failing far from the cause.
+    static func lay(overlay: URL, over folder: URL, replacingOnly: Bool) throws {
+        try merge(overlay, into: folder, replacingOnly: replacingOnly, skipping: [overlayNoteName])
+    }
+
+    private static func merge(_ source: URL, into folder: URL, replacingOnly: Bool, skipping skipped: Set<String>) throws {
         let fileManager = FileManager.default
-        for name in try fileManager.contentsOfDirectory(atPath: overlay.path).sorted() where name != ".DS_Store" {
+        for name in try fileManager.contentsOfDirectory(atPath: source.path).sorted() where name != ".DS_Store" && !skipped.contains(name) {
+            let entry  = source.appendingPathComponent(name)
             let target = folder.appendingPathComponent(name)
-            if fileManager.fileExists(atPath: target.path) {
+            var entryIsFolder:  ObjCBool = false
+            var targetIsFolder: ObjCBool = false
+            _ = fileManager.fileExists(atPath: entry.path, isDirectory: &entryIsFolder)
+            let targetExists = fileManager.fileExists(atPath: target.path, isDirectory: &targetIsFolder)
+            if entryIsFolder.boolValue && targetIsFolder.boolValue {
+                try merge(entry, into: target, replacingOnly: replacingOnly, skipping: [])
+                continue
+            }
+            guard targetExists || !replacingOnly else {
+                throw EndToEndFailure(step: "materialise",
+                                      message: "the overlay's \(entry.path) replaces nothing: \(target.path) is not in the checkout")
+            }
+            if targetExists {
                 try fileManager.removeItem(at: target)
             }
-            try fileManager.copyItem(at: overlay.appendingPathComponent(name), to: target)
+            try fileManager.copyItem(at: entry, to: target)
         }
     }
 
@@ -161,12 +190,13 @@ final class EndToEndRun {
     // MARK: - 2. Configure
 
     /// The machine's half of the C fixtures' settings is written beside them (B-109), and
-    /// beside an overlaid checkout, whose formula reads it the same way (B-76); a project
-    /// with a platform is prepared, which writes its own. Once, before both builds, so the
-    /// two builds see identical inputs.
+    /// beside a checkout overlaid with a formula, which reads it the same way (B-76); a
+    /// project with a platform is prepared, which writes its own — an overlaid one too,
+    /// whose overlay corrects sources and carries no formula. Once, before both builds, so
+    /// the two builds see identical inputs.
     func configure() throws {
         switch project.source {
-        case .fixture, .git(_, _, _, .some):
+        case .fixture, .git(_, _, _, .some) where project.platform == nil:
             try writeMachineFile(to: base.appendingPathComponent(Self.machineFileName))
         case .git, .repository:
             break
