@@ -1,23 +1,24 @@
 # Continuous integration
 
-Both workflows (`.github/workflows/swift.yml` on every push and pull request,
-`.github/workflows/end-to-end.yml` nightly) run on a self-hosted macOS runner: a Mac that
-belongs to the project, registered with the repository. GitHub-hosted macOS runners bill a
-private repository ten minutes of quota per minute run, and a ten-minute suite on every
-pull request exhausts the included minutes within a month; a self-hosted runner costs
-nothing per minute and builds with the same Xcode the project is developed against, which
-the hosted image never had (its pinned Xcode lacked the simulator runtime actool needs, and
-main's CI was red for five days before anyone read the cause).
+The two workflows run on two kinds of runner. `.github/workflows/swift.yml`, on every push
+and pull request, runs on GitHub's hosted `macos-26` image: a pull request's code is a
+stranger's code on a public repository, and a hosted runner is where that may run. The
+image carries Xcode 26.6 and Swift 6.3.3, the toolchain the project is developed against,
+and hosted runners are free for a public repository — while the repository was private
+they billed ten minutes of quota per minute run, which is why the workflow began on a
+self-hosted runner, and an earlier hosted image's Xcode lacked what actool needed, which
+left main red for five days before anyone read the cause. `hosted-runner-trial.yml`, run by
+hand, is how a new image is checked before the workflow moves to it: it prints what the
+image carries and runs the build and two suites.
 
-A self-hosted runner and a public repository are a bad pair: a pull request from a fork
-runs its own code on the runner, which is somebody's Mac. Two things stand between them.
-The repository's Actions settings require approval for every outside collaborator's
-workflow run before it starts, and the nightly runs on schedule and dispatch only, which a
-fork cannot trigger. The better answer is a hosted runner for pull requests, if its image
-can build this repository: `.github/workflows/hosted-runner-trial.yml`, run by hand, says
-what each image carries and whether the build and a suite pass on it. The workflows pin
-the actions they use by commit SHA, which the repository requires, and Dependabot keeps
-those pins current.
+`.github/workflows/end-to-end.yml`, nightly, runs on a self-hosted macOS runner: a Mac
+that belongs to the project, registered with the repository. It clones and builds real
+projects for a quarter of an hour, which is the project's own code and its pinned
+dependencies, never a pull request's; it runs on schedule and dispatch only, which a fork
+cannot trigger. Two settings stand behind that anyway: the repository's Actions settings
+require approval for every outside collaborator's workflow run before it starts, and the
+workflows pin the actions they use by commit SHA, which the repository requires, with
+Dependabot keeping the pins current.
 
 ## What the runner needs
 
