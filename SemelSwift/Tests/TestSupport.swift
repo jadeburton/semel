@@ -82,11 +82,11 @@ final class RecordingToolRunner: ToolRunner {
         }
 
         for name in expectedOutputFileNames {
-            output.write(name, producedFiles[name] ?? [])
+            output.write(name, try (producedFiles[name] ?? []).intern())
         }
         for folder in expectedOutputFolders {
             for (relativePath, data) in (producedTrees[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {
-                output.writeTreeEntry(folder, relativePath, data, FileMetadata.defaultMode)
+                output.writeTreeEntry(folder, relativePath, try data.intern(), FileMetadata.defaultMode)
             }
         }
 

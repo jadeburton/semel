@@ -142,7 +142,7 @@ public struct AssetCatalogCompiler: Node {
 
         let partialPlist: NodeValue
         if result.exitCode == 0, let plist = result.outputFiles[Self.partialInfoPlistFile] {
-            partialPlist = .value(try plist.intern())
+            partialPlist = .value(plist)
         } else {
             partialPlist = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: result).intern()))
         }

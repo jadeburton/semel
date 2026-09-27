@@ -439,9 +439,10 @@ struct SwiftCompiler: Node {
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.moduleMapFiles,
             expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput])
 
-        let objectBytes = result.outputFiles[objectOutput] ?? []
-        let moduleBytes = result.outputFiles[moduleOutput] ?? []
-        let interfaceBytes = result.outputFiles[interfaceOutput] ?? []
+        // Stored by the runner; an output the tool did not write is the empty object.
+        let objectHash = result.outputFiles[objectOutput] ?? ""
+        let moduleHash = result.outputFiles[moduleOutput] ?? ""
+        let interfaceHash = result.outputFiles[interfaceOutput] ?? ""
 
         guard result.exitCode == 0 else {
             let message = result.failureMessage(tool: "swiftc", settings: settings)
@@ -455,9 +456,9 @@ struct SwiftCompiler: Node {
                          inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         }
 
-        return .init(outputObject:    .value(try objectBytes.intern()),
-                     outputModule:    .value(try moduleBytes.intern()),
-                     outputInterface: .value(try interfaceBytes.intern()),
+        return .init(outputObject:    .value(objectHash),
+                     outputModule:    .value(moduleHash),
+                     outputInterface: .value(interfaceHash),
                      infoLog:         .value(try result.infoOutput.intern()),
                      inputSourceFilesSpecs: inputSourceFilesSpecs,
                      inputSubfoldersSpecs: inputSubfoldersSpecs,
