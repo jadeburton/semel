@@ -686,7 +686,11 @@ the checkout is copied, each replacing the entry of its name. `configure` then w
 machine file beside the subfolder, where the C fixtures' formulas read it too, so an overlaid
 formula says `<../semel.machine.config>` like theirs. `RosterTests` pin that every overlay is
 in the repository and is exactly one formula, which names that file, plus a `semel.config`,
-and the walk for committed machine files covers it. First used by Lua (B-79).
+and the walk for committed machine files covers it. First used by Lua (B-79). Since
+extended to a project with a platform (`food-truck-mac`, B-77): there the overlay is
+corrected copies of the checkout's own files, laid file by file with folders merged,
+each required to replace a file the checkout has; `prepare` writes the formula and the
+configs afterwards, so the pin for that kind is no formula, no config and no machine file.
 
 **B-77** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
 application target, simulator only, all library code in packages. In suggested order:
@@ -705,11 +709,14 @@ application target, simulator only, all library code in packages. In suggested o
    `Contents/` layout, the Mac as actool's device and its own plist keys, pinned by
    `XcodeFormulaEmitterTests` — but the sample itself no longer compiles for the Mac
    with the current SDK: it guards ActivityKit with `canImport`, false on the macOS 13
-   SDK it was written against and true on 26.5, so Xcode fails on it the same way. A
-   `food-truck-mac` roster entry waits for B-76's overlay, which can lay one corrected
-   file over the clone; with the guards corrected by hand in a copy, the Mac build came
-   out whole — `Contents/MacOS`, an `AppIcon.icns`, the widget under `Contents/PlugIns`
-   — in 19 s. What no Mac build here does yet is sign: an arm64 executable needs at
+   SDK it was written against and true on 26.5, so Xcode fails on it the same way. The
+   Mac build is in the roster as `food-truck-mac`, over B-76's overlay:
+   `Fixtures/external/food-truck-mac` holds the four files with the guard corrected to
+   `canImport(ActivityKit) && !os(macOS)`, laid over the clone file by file before
+   `prepare` — `lay` merges folders and, for a project with a platform, refuses a file
+   the checkout lacks — and the bundle comes out whole, `Contents/MacOS`, an
+   `AppIcon.icns`, the widget under `Contents/PlugIns`, through all four hermeticity
+   builds. What no Mac build here does yet is sign: an arm64 executable needs at
    least an ad-hoc signature to launch, and Semel writes none, so the bundle is inspected
    rather than run. Left as copies rather than compiled, said here rather than
    silently: a storyboard, a xib, a Core Data model, a Metal file listed among a target's

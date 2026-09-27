@@ -180,7 +180,37 @@ enum Projects {
         mayDiffer: ["Assets.car"],
         onlyUnder: "Food Truck.app")
 
+    /// The same sample for the Mac (B-77): a Mac bundle's `Contents/` layout, the app
+    /// icon as an `.icns`, the widget under `Contents/PlugIns`. The sample guards
+    /// ActivityKit with `canImport`, which the current macOS SDK satisfies although the
+    /// Live Activity API stays unavailable there, so Xcode fails on it too; the overlay
+    /// `Fixtures/external/food-truck-mac` lays the four files with the guard corrected
+    /// over the clone, before `prepare` (its README says what changed). The build takes
+    /// seconds, so it runs every hermeticity build.
+    static let foodTruckMac = Project(
+        name: "food-truck-mac",
+        source: .git(url: "https://github.com/apple/sample-food-truck.git",
+                     commit: "3954a769e99f3cc53297d94f2b960ceb2665b3d6",
+                     subfolder: ".",
+                     overlay: "external/food-truck-mac"),
+        buildFolder: "food-truck-mac",
+        platform: "macos",
+        expectedProducts: [
+            "Food Truck.app/Contents/MacOS/Food Truck",
+            "Food Truck.app/Contents/Info.plist",
+            "Food Truck.app/Contents/Resources/Assets.car",
+            "Food Truck.app/Contents/Resources/AppIcon.icns",
+            "Food Truck.app/Contents/Resources/en.lproj/Localizable.strings",
+            "Food Truck.app/Contents/Resources/FoodTruckKit_FoodTruckKit.bundle/Assets.car",
+            "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets",
+            "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/Info.plist",
+        ],
+        buildTimeout: 10 * 60,
+        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
+        mayDiffer: ["Assets.car"],
+        onlyUnder: "Food Truck.app")
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua, foodTruck]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, foodTruck, foodTruckMac]
     static let all: [Project] = fixtures + external
 }

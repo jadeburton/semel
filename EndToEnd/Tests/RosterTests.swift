@@ -100,12 +100,13 @@ final class RosterTests: XCTestCase {
         }
     }
 
-    /// An overlay is the two files a C project has no converter to write (B-76): one
-    /// formula, which reads the machine file where `configure` writes it, and the project
-    /// config that formula lays over it — in the repository, under `Fixtures`, and nothing
-    /// more, so the build is the checkout's sources and the roster's two files.
-    func test_everyOverlayIsOneFormulaAndAProjectConfigInTheRepository() throws {
-        for project in Projects.all {
+    /// An overlay for a project with no platform is the two files a C project has no
+    /// converter to write (B-76): one formula, which reads the machine file where
+    /// `configure` writes it, and the project config that formula lays over it — in the
+    /// repository, under `Fixtures`, and nothing more, so the build is the checkout's
+    /// sources and the roster's two files.
+    func test_everyFormulaOverlayIsOneFormulaAndAProjectConfigInTheRepository() throws {
+        for project in Projects.all where project.platform == nil {
             guard let overlay = project.source.overlay else {
                 continue
             }
@@ -119,6 +120,34 @@ final class RosterTests: XCTestCase {
                 let text = try String(contentsOf: folder.appendingPathComponent(formula), encoding: .utf8)
                 XCTAssertTrue(text.contains("<../\(EndToEndRun.machineFileName)>"),
                               "\(project.name): configure writes the machine file beside the checkout, so the formula reads it there")
+            }
+        }
+    }
+
+    /// An overlay for a project with a platform corrects the checkout's own files, and
+    /// `prepare` writes the formula and both configs after it is laid. A formula or a
+    /// project config in the overlay would be one `prepare` keeps, as it keeps Semel's own,
+    /// and the build would be the roster's and not the converter's; a machine file is never
+    /// committed. So it holds none of them, and at least one file besides its note. That
+    /// each file replaces one the checkout has is `lay`'s to check when the run
+    /// materialises, since the checkout is not here.
+    func test_everySourceOverlayHoldsFilesAndNoFormulaOrConfig() throws {
+        let generated: Set<String> = ["semel.config", EndToEndRun.machineFileName]
+        for project in Projects.all where project.platform != nil {
+            guard let overlay = project.source.overlay else {
+                continue
+            }
+            let folder = EndToEndEnvironment.fixtures.appendingPathComponent(overlay, isDirectory: true)
+            let files = try FileManager.default.subpathsOfDirectory(atPath: folder.path).filter { subpath in
+                var isFolder: ObjCBool = false
+                FileManager.default.fileExists(atPath: folder.appendingPathComponent(subpath).path, isDirectory: &isFolder)
+                return !isFolder.boolValue && !subpath.hasSuffix(".DS_Store") && subpath != EndToEndRun.overlayNoteName
+            }
+            XCTAssertFalse(files.isEmpty, "\(project.name): \(folder.path) lays nothing")
+            for file in files {
+                let name = URL(fileURLWithPath: file).lastPathComponent
+                XCTAssertFalse(name.hasSuffix(".fmla"), "\(project.name): prepare writes the formula, not the overlay: \(file)")
+                XCTAssertFalse(generated.contains(name), "\(project.name): prepare writes the configs, not the overlay: \(file)")
             }
         }
     }

@@ -21,13 +21,17 @@ struct Project {
         /// build folder cannot be the base itself, the checkout is nested one level under
         /// base instead, named after `name` — so `buildFolder` must equal `name`.
         ///
-        /// `overlay` names a folder under `EndToEnd/Fixtures` — `"external/lua"` — whose
-        /// entries are copied over the subfolder once the checkout is: the formula and the
-        /// project config of a project that has no converter to write them (B-76). Only
-        /// `prepare` writes into a clone otherwise, and a C project has no `prepare`. An
-        /// overlaid formula reads the machine's settings from `../semel.machine.config`,
-        /// as the C fixtures do, and the harness writes that file beside the subfolder for
-        /// it, as it does for a fixture.
+        /// `overlay` names a folder under `EndToEnd/Fixtures` — `"external/lua"` — laid
+        /// over the subfolder once the checkout is copied, each file at its path
+        /// (`EndToEndRun.lay`). It is one of two things. For a project with no `platform`,
+        /// the formula and the project config of a project that has no converter to write
+        /// them (B-76): only `prepare` writes into a clone otherwise, and a C project has
+        /// no `prepare`. Such a formula reads the machine's settings from
+        /// `../semel.machine.config`, as the C fixtures do, and the harness writes that
+        /// file beside the subfolder for it, as it does for a fixture. For a project with a
+        /// `platform`, corrected copies of the checkout's own files, each replacing the
+        /// file at its path, because `prepare` writes the formula and the configs and the
+        /// sample does not compile as it stands (`food-truck-mac`, B-77).
         case git(url: String, commit: String, subfolder: String, overlay: String? = nil)
         /// This repository's own checkout, as it is on disk: Semel building Semel (B-78).
         /// What is not the build stays out of the copy — build products, version control,

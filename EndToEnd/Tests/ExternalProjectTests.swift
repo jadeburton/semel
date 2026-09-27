@@ -72,7 +72,21 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-77: the same sample for the Mac, over a clone with four files' ActivityKit guards
+    /// corrected by the overlay (B-76). Seconds to build, so every hermeticity build runs.
+    func test_foodTruckBuildsTwiceForTheMac() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.foodTruckMac)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("food-truck-mac\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
-        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes", "icecubes-app", "semel", "lua", "food-truck"])
+        XCTAssertEqual(Set(Projects.external.map(\.name)),
+                       ["icecubes", "icecubes-app", "semel", "lua", "food-truck", "food-truck-mac"])
     }
 }
