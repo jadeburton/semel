@@ -172,7 +172,8 @@ final class ListingStateTests: XCTestCase {
         ])
     }
 
-    /// A product whose input has never had a value is neither failing nor going away.
+    /// A product whose input has never had a value is neither failing nor going away; the
+    /// source behind it is one nobody pushed, which is what `input:` calls it (B-118).
     func test_aProductWhoseInputWasNeverProducedIsListedAsNotProduced() throws {
         try wireProduct("unpushed.a")
 
@@ -180,7 +181,7 @@ final class ListingStateTests: XCTestCase {
             "-rw-r--r--         -  unpushed.a  [not produced]",
         ])
         XCTAssertEqual(try lines(.input, "stand-in"), [
-            "-rw-r--r--         -  unpushed.a  [not produced]",
+            "-rw-r--r--         -  unpushed.a  [not pushed]",
         ])
     }
 }

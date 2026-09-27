@@ -120,7 +120,9 @@ final class NavigationPlugin: CommandPlugin {
             case .none:         break
             case .unreferenced: statusNote = "  [unreferenced]"
             case .pending:      statusNote = "  [pending]"
-            case .notProduced:  statusNote = "  [not produced]"
+            // One state, two words: nothing is produced in `input:`, where a name with no
+            // value is a source the formula names and nobody pushed (B-118).
+            case .notProduced:  statusNote = targetFS == .input ? "  [not pushed]" : "  [not produced]"
             case .deleted:      statusNote = "  [deleted]"
             case .failed:       statusNote = "  [failed]"
             }
