@@ -25,11 +25,35 @@ final class HelpTests: XCTestCase {
 
         XCTAssertEqual(lines.filter { !$0.hasPrefix("  ") }, ["Build:", "Files:", "Navigation:", "Session:"])
         let mentioned = lines.joined(separator: "\n")
-        for verb in ["build", "wait", "errors", "check", "collect", "tools", "debug", "nudge", "reset",
+        for verb in ["build", "wait", "errors", "explain", "check", "collect", "tools", "debug", "nudge", "reset",
                      "push", "rm", "cp", "export", "ls", "cd", "pwd", "base", "begin", "quit", "semel stop"] {
             XCTAssertTrue(mentioned.contains("  \(verb)"), "help does not name \(verb)")
         }
         XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
+    /// B-91. The README's command tables and `help` describe one set of commands: every
+    /// verb `help` lists, aliases included, opens a row of a table there. `semel stop` is
+    /// the exception — a word to the binary rather than a command at the prompt, which the
+    /// README describes in the paragraph about the server.
+    func test_everyVerbHelpListsHasARowInTheReadme() throws {
+        let readme = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // semel
+            .deletingLastPathComponent()   // repository root
+            .appendingPathComponent("README.md")
+        let firstCells = try String(contentsOf: readme, encoding: .utf8)
+            .components(separatedBy: "\n")
+            .filter { $0.hasPrefix("| `") }
+            .map { $0.dropFirst(2).components(separatedBy: " | ").first ?? "" }
+
+        for entry in CommandInterpreter.help.flatMap(\.entries) where !entry.usage.hasPrefix("semel ") {
+            for verb in entry.verbs {
+                XCTAssertTrue(firstCells.contains { $0.contains("`\(verb)`") || $0.contains("`\(verb) ") },
+                              "README.md has no command-table row for `\(verb)`")
+            }
+        }
+        XCTAssertTrue(firstCells.contains { $0.contains("`explain <path>`") })
     }
 
     func test_helpAboutOneVerbIsItsLineAlone() {

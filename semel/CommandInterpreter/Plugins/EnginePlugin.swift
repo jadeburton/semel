@@ -1,7 +1,7 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, check, collect, reset, t / tools, wait
+// Handles: d / debug, n / nudge, e / errors, check, collect, explain / why, reset, t / tools, wait
 
 import Foundation
 import SemelNodeKit
@@ -9,19 +9,21 @@ import SemelProtocol
 
 final class EnginePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "reset", "t", "tools", "wait"]
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "explain", "why",
+                              "reset", "t", "tools", "wait"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
-        case "d", "debug":  try handleDebug(tokens: tokens, context: context)
-        case "n", "nudge":  _ = try context.request(.nudge)
-        case "e", "errors": try handleErrors(context: context)
-        case "check":       try handleCheck(context: context)
-        case "collect":     try handleCollect(context: context)
-        case "reset":       try handleReset(tokens: tokens, context: context)
-        case "t", "tools":  try handleTools(tokens: tokens, context: context)
-        case "wait":        try handleWait(context: context)
-        default:            break
+        case "d", "debug":      try handleDebug(tokens: tokens, context: context)
+        case "n", "nudge":      _ = try context.request(.nudge)
+        case "e", "errors":     try handleErrors(context: context)
+        case "check":           try handleCheck(context: context)
+        case "collect":         try handleCollect(context: context)
+        case "explain", "why":  try handleExplain(tokens: tokens, context: context)
+        case "reset":           try handleReset(tokens: tokens, context: context)
+        case "t", "tools":      try handleTools(tokens: tokens, context: context)
+        case "wait":            try handleWait(context: context)
+        default:                break
         }
     }
 
@@ -43,6 +45,54 @@ final class EnginePlugin: CommandPlugin {
             return
         }
         context.outputMessage(String(decoding: body ?? Data(), as: UTF8.self))
+    }
+
+    // MARK: - explain
+
+    /// `explain <path>`: why the last settle did what it did to that node — which nodes
+    /// upstream of it ran, which the cache answered, and which wires changed on the way,
+    /// down to the sources a push changed (B-91). The server walks and answers records;
+    /// the lines are drawn here.
+    private func handleExplain(tokens: [String], context: any CommandContext) throws {
+        let (flagged, remaining) = parseOptionalFileSystemFlag(tokens: tokens)
+        guard let token = remaining.first else {
+            throw CommandParserError.missingArgument(command: "explain", expected: "path")
+        }
+        guard remaining.count == 1 else {
+            throw CommandParserError.tooManyArguments(command: "explain")
+        }
+
+        let (fileSystem, path) = Self.explainTarget(token, flagged: flagged, context: context)
+        let response: DaemonResponse
+        do {
+            response = try context.request(.explain(fileSystem: fileSystem.kind, path: path.string)).0
+        } catch let error as ServerError {
+            context.outputError("explain: \(error.description)")
+            return
+        }
+        guard case .explain(let explanation) = response else {
+            return
+        }
+        guard let explanation else {
+            context.outputMessage(ExplanationRenderer.noRecord)
+            return
+        }
+        ExplanationRenderer.lines(for: explanation).forEach { context.outputMessage($0) }
+    }
+
+    /// Where `explain`'s argument points, named as `ls` and `cp` name things: with its file
+    /// system — `output:/hello/hello`, or `-o` before a path from that root — or relative
+    /// to the session's current directory in its current file system. Resolved here, so
+    /// `..` never reaches the server.
+    static func explainTarget(_ token: String, flagged: FileSystemForCommand?,
+                              context: any CommandContext) -> (FileSystemForCommand, Path) {
+        for fileSystem in [FileSystemForCommand.output, .input] where token.hasPrefix(fileSystem.rootName) {
+            let rest = String(token.dropFirst(fileSystem.rootName.count))
+            return (fileSystem, context.resolve(rest, relativeTo: .empty))
+        }
+        let fileSystem = flagged ?? context.currentFileSystem
+        let base: Path = flagged != nil ? .empty : context.currentDirectoryPath
+        return (fileSystem, context.resolve(token, relativeTo: base))
     }
 
     // MARK: - wait

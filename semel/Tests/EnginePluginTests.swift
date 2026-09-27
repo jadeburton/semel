@@ -7,6 +7,7 @@
 //
 
 @testable import SemelCLI
+import SemelNodeKit
 import SemelProtocol
 import XCTest
 
@@ -30,6 +31,70 @@ final class EnginePluginTests: XCTestCase {
     private static let checkOffer =
         "Run `check` before the next reset: it names the invariants a graph is breaking — "
       + "the evidence a reset discards."
+
+    // MARK: - explain (B-91)
+
+    private static let explained = Explanation(
+        nodes: [ExplainedNode(label: "OutputFile #9 'output:/hello/hello'", outcome: .fromCache, isNew: false,
+                              causes: [ExplainedCause(port: "input", wire: "hello", change: .unchanged,
+                                                      sourceLabel: "ClangLinker #8", source: nil)],
+                              unlistedCauses: 0)],
+        omittedNodes: 0, nodeLimit: 40, depthLimit: 16)
+
+    /// The file system named in the path, as a person copies it from an artifact line.
+    func test_explainSendsANamedPathFromItsRoot() throws {
+        connection.reply(.explain(explanation: Self.explained))
+
+        try run("explain", ["output:/hello/hello"])
+
+        XCTAssertEqual(connection.daemonRequests, [.explain(fileSystem: .output, path: "hello/hello")])
+        XCTAssertEqual(context.messages, ["OutputFile #9 'output:/hello/hello' — from cache: 1 input unchanged"])
+    }
+
+    /// Relative to where the session stands, `..` resolved before it leaves the client.
+    func test_explainResolvesARelativePathInTheCurrentFileSystem() throws {
+        context.currentFileSystem    = .output
+        context.currentDirectoryPath = Path("hello/sub")
+        connection.reply(.explain(explanation: Self.explained))
+
+        try run("why", ["../hello"])
+
+        XCTAssertEqual(connection.daemonRequests, [.explain(fileSystem: .output, path: "hello/hello")])
+    }
+
+    func test_explainTakesTheOutputFlagAsCpDoes() throws {
+        context.currentDirectoryPath = Path("elsewhere")
+        connection.reply(.explain(explanation: Self.explained))
+
+        try run("explain", ["-o", "hello/hello"])
+
+        XCTAssertEqual(connection.daemonRequests, [.explain(fileSystem: .output, path: "hello/hello")])
+    }
+
+    /// No record is not "not touched": the server settled nothing since it started.
+    func test_explainWithNoRecordSaysARestartForgetsIt() throws {
+        connection.reply(.explain(explanation: nil))
+
+        try run("explain", ["output:/hello/hello"])
+
+        XCTAssertEqual(context.messages, [ExplanationRenderer.noRecord])
+        XCTAssertTrue(ExplanationRenderer.noRecord.contains("restart"))
+    }
+
+    func test_explainOfAPathNotInTheGraphIsAnErrorNamingIt() throws {
+        connection.responses.append((.error(.pathNotFound(path: "output:/hello/nope")), nil))
+
+        try run("explain", ["output:/hello/nope"])
+
+        XCTAssertEqual(context.errors, ["explain: output:/hello/nope: no such file or directory"])
+    }
+
+    func test_explainWithoutAPathSaysWhatItTakes() {
+        XCTAssertThrowsError(try run("explain")) { error in
+            XCTAssertEqual("\(error)", "\(CommandParserError.missingArgument(command: "explain", expected: "path"))")
+        }
+        XCTAssertEqual(connection.daemonRequests, [])
+    }
 
     // MARK: - collect (B-14)
 

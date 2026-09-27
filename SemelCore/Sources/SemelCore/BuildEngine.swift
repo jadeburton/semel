@@ -580,7 +580,9 @@ public final class BuildEngine {
 
     // MARK: - Settle summary
 
-    /// What one settle has seen so far, kept per node rather than per batch.
+    /// What one settle has seen so far, kept per node rather than per batch. Its three
+    /// sets outlive the totals taken from them: they become the settle record `explain`
+    /// reads (B-91).
     ///
     /// A settle takes as many batches as the cascade needs, and one node can be fetched by
     /// several of them: woken, found to be waiting on an input, unscheduled, woken again
@@ -638,13 +640,32 @@ public final class BuildEngine {
     /// where the interesting case — a build where everything came from the cache — is one
     /// line among it.
     private func reportSettleSummary() {
-        let summary = settleTally.summary
+        let tally   = settleTally
+        let summary = tally.summary
         settleTally = SettleTally()
 
         guard summary.scheduled > 0 else {
             return
         }
+        // Before the reporter: a client that reads the summary and asks `explain` at once
+        // is asking about the settle the summary describes (B-91).
+        settleRecorder.finishSettle(scheduled: tally.scheduledNodeIDs,
+                                    computed:  tally.computedNodeIDs,
+                                    fromCache: tally.fromCacheNodeIDs)
         settleReporter(summary)
+    }
+
+    // MARK: - Settle record
+
+    /// What the settle in progress has woken, and the last settle's record once it is
+    /// reported (B-91). The write path reaches it through `BuildEngine.shared`, as it
+    /// reaches the artifact candidates.
+    let settleRecorder = SettleRecorder()
+
+    /// The last settle that did work, node by node; nil until one has since this engine
+    /// started. Not persisted: a restart forgets it, and `explain` says so.
+    public var lastSettleRecord: SettleRecord? {
+        settleRecorder.last
     }
 
     // MARK: - Batch mode

@@ -180,3 +180,108 @@ enum CheckFindingRenderer {
              + "run `wait` first."
     }
 }
+
+enum ExplanationRenderer {
+
+    /// What `explain` says when the server has no record to read. Said as what it is,
+    /// never as "not touched": a node nothing touched and a settle nobody recorded are
+    /// different answers, and the second is the one a restart gives.
+    static let noRecord = "No settle has done work since the server started. explain reads the last "
+                        + "settle's record, which is kept in memory and forgotten by a restart."
+
+    /// How many of one node's changed wires its line names before counting the rest.
+    static let causesNamed = 3
+
+    /// One line per node, indented under the node it woke, from the node asked about down
+    /// to the sources that changed. A node two chains share is described
+    /// where the walk first meets it and named as "see above" after that, so the tree has
+    /// as many lines as the answer has nodes plus one per second meeting.
+    ///
+    /// Unmarked: a mark says good or bad, and a node that ran is neither.
+    static func lines(for explanation: Explanation) -> [String] {
+        var lines:   [String] = []
+        var printed: Set<Int> = []
+
+        func visit(_ index: Int, depth: Int) {
+            guard explanation.nodes.indices.contains(index) else {
+                return
+            }
+            let node   = explanation.nodes[index]
+            let indent = String(repeating: "  ", count: depth)
+            guard printed.insert(index).inserted else {
+                lines.append("\(indent)\(node.label) — see above")
+                return
+            }
+            lines.append("\(indent)\(node.label) — \(summary(of: node))")
+            // Each source once under its consumer: a node wired to one source by two
+            // ports — a product's value and its metadata — has one child, not two.
+            var children: [Int] = []
+            for cause in node.causes {
+                if let source = cause.source, !children.contains(source) {
+                    children.append(source)
+                }
+            }
+            for child in children {
+                visit(child, depth: depth + 1)
+            }
+        }
+        visit(0, depth: 0)
+
+        if explanation.omittedNodes > 0 {
+            let nodes = explanation.omittedNodes == 1 ? "node" : "nodes"
+            lines.append("… and \(explanation.omittedNodes) more \(nodes) upstream: the walk stops at "
+                       + "\(explanation.nodeLimit) nodes, \(explanation.depthLimit) wires deep")
+        }
+        return lines
+    }
+
+    /// What one node did, then the wires that reached it: the ones that brought something
+    /// new by name, the ones that woke it with the value they had as a count.
+    static func summary(of node: ExplainedNode) -> String {
+        var outcome: String
+        switch node.outcome {
+        case .computed:  outcome = "computed"
+        case .fromCache: outcome = "from cache"
+        case .notRun:    outcome = "woken, not run (an input was not ready)"
+        case .changed:   outcome = "changed"
+        case .untouched: return "not touched by the last settle"
+        }
+        if node.isNew {
+            outcome += " (new)"
+        }
+
+        let moved     = node.causes.filter { $0.change != .unchanged }
+        let unchanged = node.causes.count - moved.count
+
+        var parts = moved.prefix(causesNamed).map(phrase(for:))
+        if moved.count > causesNamed {
+            parts.append("\(moved.count - causesNamed) more changed")
+        }
+        if unchanged > 0 {
+            parts.append("\(unchanged) \(unchanged == 1 ? "input" : "inputs") unchanged")
+        }
+        if node.unlistedCauses > 0 {
+            parts.append("\(node.unlistedCauses) more \(node.unlistedCauses == 1 ? "input" : "inputs")")
+        }
+
+        guard !parts.isEmpty else {
+            // A node that ran with no wire behind it and was not created in the settle was
+            // put back on the schedule by hand: `nudge`, `reset`, a formula prelude
+            // refreshed at start.
+            let ran = node.outcome == .computed || node.outcome == .fromCache
+            return ran && !node.isNew ? "\(outcome): rescheduled, not woken by a wire" : outcome
+        }
+        return "\(outcome): \(parts.joined(separator: "; "))"
+    }
+
+    /// One wire that brought something: its port, and its name when that says more.
+    private static func phrase(for cause: ExplainedCause) -> String {
+        let name = cause.wire.isEmpty || cause.wire == cause.port ? cause.port : "\(cause.port) '\(cause.wire)'"
+        switch cause.change {
+        case .changed:      return "\(name) changed"
+        case .connected:    return "\(name) wired"
+        case .disconnected: return "\(name) unwired"
+        case .unchanged:    return "\(name) unchanged"
+        }
+    }
+}

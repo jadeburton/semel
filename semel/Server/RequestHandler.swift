@@ -134,6 +134,8 @@ public final class RequestHandler {
                 // Answered in `handle`, before the queue. Unreachable here, and the switch
                 // wants every case.
                 return (.daemon(.ok), nil)
+            case .explain(let fileSystem, let path):
+                return (.daemon(.explain(explanation: try explain(fileSystem: fileSystem, path: path))), nil)
             case .debug(let cacheKey):
                 guard let cacheKey else {
                     return (.daemon(.debug), Data(try engine.graphDescription().utf8))
@@ -170,6 +172,18 @@ public final class RequestHandler {
                             database: database,
                             select: { _, messages in messages })
             .map { ErrorRecord($0.entry) }
+    }
+
+    /// Why the last settle did what it did to the node at `path` (B-91). A path with no node
+    /// is an error naming it, whether or not anything has settled; a node with no settle
+    /// behind it — nothing has done work since this server started — answers nil, which
+    /// the client says in words rather than as a node nothing touched.
+    private func explain(fileSystem: FileSystemKind, path: String) throws -> Explanation? {
+        guard let nodeRecord = try rootFolder(fileSystem).childNode(path: Path(path)) else {
+            let rootName = fileSystem == .input ? FileSystemName.input : FileSystemName.output
+            throw HandlerFailure.pathNotFound(path: "\(rootName)/\(path)")
+        }
+        return engine.explain(nodeID: try nodeRecord.requireID()).map(Explanation.init)
     }
 
     /// The installed tools per namespace, unrendered; the client prints them as config
@@ -275,6 +289,56 @@ extension ErrorRecord {
                   },
                   downstreamCarrierCount: entry.downstreamCarrierCount,
                   nodeCount: entry.nodeCount)
+    }
+}
+
+extension Explanation {
+
+    /// The wire form of the engine's walk, mirrored for the reason `ErrorRecord` is.
+    init(_ explanation: SettleExplanation) {
+        self.init(nodes: explanation.entries.map { entry in
+                      ExplainedNode(label:   entry.label,
+                                    outcome: ExplainedNode.Outcome(entry.state),
+                                    isNew:   entry.isNew,
+                                    causes:  entry.causes.map { cause in
+                                        ExplainedCause(port:        cause.port,
+                                                       wire:        cause.wire,
+                                                       change:      ExplainedCause.Change(cause.change),
+                                                       sourceLabel: cause.sourceLabel,
+                                                       source:      cause.sourceIndex)
+                                    },
+                                    unlistedCauses: entry.unlistedCauses)
+                  },
+                  omittedNodes: explanation.omittedNodes,
+                  nodeLimit:    explanation.nodeLimit,
+                  depthLimit:   explanation.depthLimit)
+    }
+}
+
+extension ExplainedNode.Outcome {
+
+    /// Case by case, so a state added to the engine's walk does not compile until the
+    /// wire has a name for it.
+    init(_ state: SettleExplanation.State) {
+        switch state {
+        case .computed:  self = .computed
+        case .fromCache: self = .fromCache
+        case .notRun:    self = .notRun
+        case .changed:   self = .changed
+        case .untouched: self = .untouched
+        }
+    }
+}
+
+extension ExplainedCause.Change {
+
+    init(_ change: SettleRecord.Change) {
+        switch change {
+        case .changed:      self = .changed
+        case .connected:    self = .connected
+        case .disconnected: self = .disconnected
+        case .unchanged:    self = .unchanged
+        }
     }
 }
 
