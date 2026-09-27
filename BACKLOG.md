@@ -72,14 +72,6 @@ the demanded one on every `ProjectBuilder` pass (13 in the cold build), walking 
 subgraphs once per product. Naming each input by its node's spec hash would make a spec one
 level deep; identity by spec, and every reader of the column, would have to follow.
 
-**B-116** `open` `For Fable Only` — **Every object passes through memory whole, and every read re-hashes it.**
-A tool's output file is read into a `Data`, copied into a `[UInt8]`, hashed and written to
-the store as a second file (`LocalFileSystemTool`, `Interning.intern`); every
-`DataObjectStore.read` re-hashes the whole object to catch a corrupted store. For
-IceCubes's 57 MB executable and 40 MB archives that is several full passes per file per
-build. Streaming the hash and cloning the sandbox file into the store would remove the
-copies; how often a read must be verified is the decision, since verification was added on
-purpose.
 
 ## Design, correctness and code quality
 

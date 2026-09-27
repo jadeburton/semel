@@ -14,6 +14,23 @@ import XCTest
 /// cache that hits on one machine and misses on the next.
 final class LocalFileSystemToolTests: XCTestCase {
 
+    private var userStore: DataObjectStore!
+
+    /// A store of this test's own: the runner stores every output it collects (B-116),
+    /// and the user's store is not the place for a test's bytes.
+    override func setUp() {
+        super.setUp()
+        userStore = DataObjectStore.shared
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("semel-tool-tests/\(UUID().uuidString)", isDirectory: true)
+        DataObjectStore.shared = DataObjectStore(storeRoot: root)
+    }
+
+    override func tearDown() {
+        DataObjectStore.shared = userStore
+        super.tearDown()
+    }
+
     private func runShell(_ script: String) throws -> SimplifiedToolExecuteResult {
         try LocalFileSystemTool(localPath: "/bin/sh")
             .execute(arguments: ["-c", script],
@@ -94,8 +111,24 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0, result.errorOutput)
         let files = try XCTUnwrap(result.outputTrees["out"])
         XCTAssertEqual(files.map(\.relativePath), ["Assets.car", "en.lproj/Localizable.strings", "zz/tool"])
-        XCTAssertEqual(files.map { String(decoding: $0.data, as: UTF8.self) }, ["car", "strings", "run"])
+        XCTAssertEqual(try files.map { try $0.hash.resolveAsString() }, ["car", "strings", "run"])
         XCTAssertEqual(files.map(\.mode), [0o644, 0o644, 0o755])
+    }
+
+    /// B-116. An output file reaches the caller as a stored object: the hash resolves to
+    /// what the tool wrote, and the sandbox it was written in is gone.
+    func test_anExpectedOutputFileComesBackStored() throws {
+        let result = try LocalFileSystemTool(localPath: "/bin/sh")
+            .execute(arguments: ["-c", "printf 'object bytes that are longer than a digest' > out.o"],
+                     environment: [:],
+                     inputFiles: [],
+                     expectedOutputFileNames: ["out.o"])
+
+        XCTAssertEqual(result.exitCode, 0, result.errorOutput)
+        let hash = try XCTUnwrap(result.outputFiles["out.o"])
+        XCTAssertEqual(try hash.resolveAsString(), "object bytes that are longer than a digest")
+        XCTAssertTrue(DataObjectStore.shared.exists(hash: hash))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: result.resolvedSandboxPath))
     }
 
     /// `actool --compile <dir>` writes into a directory it does not create, so an expected

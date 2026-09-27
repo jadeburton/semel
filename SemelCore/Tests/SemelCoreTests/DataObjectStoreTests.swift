@@ -42,6 +42,76 @@ final class DataObjectStoreTests: SemelCoreTestCase {
         XCTAssertNil(try store.read(hash: String(repeating: "a", count: 64)))
     }
 
+    // MARK: - Storing a file where it lies (B-116)
+
+    private func temporaryFile(holding bytes: [UInt8]) throws -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("semel-store-tests-\(UUID().uuidString).bin")
+        try Data(bytes).write(to: url)
+        return url
+    }
+
+    /// A file is filed under the hash its bytes would intern to — the two ways in are
+    /// one store — and reads back as those bytes, read-only, like any object.
+    func test_aFileIsStoredUnderTheSameHashAsItsBytes() throws {
+        let content = [UInt8]((0..<100_000).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        let file = try temporaryFile(holding: content)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let hash = try store.store(fileAt: file)
+
+        XCTAssertEqual(hash, Sha256.hash(content))
+        XCTAssertEqual(try store.read(hash: hash), content)
+        let mode = try FileManager.default.attributesOfItem(atPath: store.objectURL(hash: hash).path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o444)
+    }
+
+    /// The two rules `intern()` applies hold for a file too: nothing is the empty hash,
+    /// and an object no longer than a digest is filed under its own hex.
+    func test_anEmptyFileAndAShortFileAreFiledAsTheirBytesWouldBe() throws {
+        let empty = try temporaryFile(holding: [])
+        let short = try temporaryFile(holding: [UInt8]("short".utf8))
+        defer {
+            try? FileManager.default.removeItem(at: empty)
+            try? FileManager.default.removeItem(at: short)
+        }
+
+        XCTAssertEqual(try store.store(fileAt: empty), "")
+        XCTAssertEqual(try store.store(fileAt: short), try [UInt8]("short".utf8).intern())
+        XCTAssertEqual(try store.read(hash: try store.store(fileAt: short)), [UInt8]("short".utf8))
+    }
+
+    /// The object is the store's, not a view of the caller's file: a tool's sandbox is
+    /// deleted after the run, and a source rewritten afterwards must not reach into the
+    /// store — which is what a clone's copy-on-write promises and a copy trivially keeps.
+    func test_theStoredObjectIsIndependentOfTheSourceFile() throws {
+        let content = [UInt8]("the source file, before anything happens to it".utf8)
+        let file = try temporaryFile(holding: content)
+        let hash = try store.store(fileAt: file)
+
+        try Data("the source file, rewritten in place after storing".utf8).write(to: file)
+        XCTAssertEqual(try store.read(hash: hash), content, "rewriting the source must not change the object")
+
+        try FileManager.default.removeItem(at: file)
+        XCTAssertEqual(try store.read(hash: hash), content, "deleting the source must not lose the object")
+    }
+
+    /// A second store of the same content — from a file or from bytes — finds the object
+    /// there and changes nothing.
+    func test_storingTheSameContentAgainIsANoOp() throws {
+        let content = [UInt8]("content that arrives twice, once each way".utf8)
+        let file = try temporaryFile(holding: content)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let fromBytes = try content.intern()
+        let fromFile = try store.store(fileAt: file)
+        let again = try store.store(fileAt: file)
+
+        XCTAssertEqual(fromBytes, fromFile)
+        XCTAssertEqual(fromFile, again)
+        XCTAssertEqual(try store.read(hash: fromFile), content)
+    }
+
     // MARK: - Corruption
 
     /// The whole point: the bytes no longer hash to the name they are filed under.

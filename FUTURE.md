@@ -400,6 +400,12 @@ cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost ×
 rather than uniformly — `CacheEntry` keeps `cost` but no reuse count yet. On a shared cache, have each client ignore a small percentage of hits
 and recompute: coverage is sampling-rate × fleet-size.
 
+Also the store's side of the same question (from B-116, 2026-09-27): `DataObjectStore.read`
+re-hashes what it returns, but the reads that feed tools go through `project(hash:to:)`, a
+clone that verifies nothing — so a damaged object is caught when exported or read as text
+and not when compiled against. Hashing every projected input would cost a pass per input
+per tool run (about 1 GB/s); a sampled verification of stored objects is where that belongs.
+
 **B-15** `open` `For Fable Only` — **Cache abstraction behind a client interface.**
 Make the engine talk to the cache as though it were a separate server, without a socket or a
 separate process yet. Groundwork for the Cache Server role (B-30) that can be exercised

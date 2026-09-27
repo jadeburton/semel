@@ -13,7 +13,10 @@ import SemelDatabaseModels
 /// Input files are populated via `DataObjectStore.project(hash:to:)`, which uses
 /// an APFS copy-on-write clone (essentially free) when available.
 /// All input bytes must already be stored in `DataObjectStore` before calling
-/// `execute` — `FileNameAndContent` carries only the path and the hash.
+/// `execute` — `FileNameAndContent` carries only the path and the hash. Output files
+/// go the same way in reverse: `DataObjectStore.store(fileAt:)` hashes each one where
+/// the tool left it and clones it into the store, so a tool's output never passes
+/// through this process's memory (B-116).
 public class LocalFileSystemTool: ToolRunner {
     private let localPath: String
 
@@ -157,15 +160,16 @@ public class LocalFileSystemTool: ToolRunner {
             output.logError(text)
         }
 
-        // 6. Read back expected output files and forward via ToolOutput.
+        // 6. Store each expected output file straight from the sandbox — hashed mapped,
+        // cloned into the store, never read into memory (B-116) — and forward its hash.
         for expectedOutputFileName in expectedOutputFileNames {
             let outputFileURL = Foundation.URL(fileURLWithPath: sandboxPath)
                 .appendingPathComponent(expectedOutputFileName)
-            if let data = fileManager.contents(atPath: outputFileURL.path) {
-                output.write(expectedOutputFileName, [UInt8](data))
-            } else {
+            guard fileManager.fileExists(atPath: outputFileURL.path) else {
                 output.logError("Expected output file not found: \(expectedOutputFileName)")
+                continue
             }
+            output.write(expectedOutputFileName, try DataObjectStore.shared.store(fileAt: outputFileURL))
         }
 
         // 7. Read back every file of each expected output folder. Sorted, so the tree a
@@ -183,14 +187,10 @@ public class LocalFileSystemTool: ToolRunner {
                 .sorted { $0.path < $1.path }
             let prefix = folderURL.standardizedFileURL.path + "/"
             for fileURL in fileURLs {
-                guard let data = fileManager.contents(atPath: fileURL.path) else {
-                    output.logError("Expected output file could not be read: \(fileURL.path)")
-                    continue
-                }
                 let relativePath = String(fileURL.standardizedFileURL.path.dropFirst(prefix.count))
                 let permissions  = (try? fileManager.attributesOfItem(atPath: fileURL.path))?[.posixPermissions] as? NSNumber
                 let mode         = permissions.map { UInt16(truncatingIfNeeded: $0.intValue) } ?? FileMetadata.defaultMode
-                output.writeTreeEntry(folder, relativePath, [UInt8](data), mode)
+                output.writeTreeEntry(folder, relativePath, try DataObjectStore.shared.store(fileAt: fileURL), mode)
             }
         }
 
