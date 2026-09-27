@@ -71,6 +71,10 @@ struct SwiftLinkerConfiguration {
 struct SwiftLinker: Node {
     public static let kind: UInt = 21
 
+    /// 2: links with small objc_msgSend selector stubs (B-90), so a link of equal inputs
+    /// differs from what version 1 wrote.
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     static let configuration = "configuration"
@@ -219,6 +223,11 @@ struct SwiftLinker: Node {
             // ld's debug map (N_OSO) names each object file. Prefixed with the working
             // directory it is the object's sandbox-relative path, not the sandbox's own name.
             arguments.append(contentsOf: ["-Xlinker", "-oso_prefix", "-Xlinker", "."])
+            // ld's default "fast" objc_msgSend selector stubs load objc_msgSend through a
+            // GOT entry of their own, beside the one ordinary calls use, and which of the
+            // two the stubs reference differs between identical links (B-90). Small stubs
+            // branch to objc_msgSend instead, leaving one GOT entry and nothing to choose.
+            arguments.append(contentsOf: ["-Xlinker", "-objc_stubs_small"])
         }
 
         // Pass the SDK path so swiftc's linker driver can find libSystem and

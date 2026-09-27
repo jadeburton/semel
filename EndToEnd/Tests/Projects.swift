@@ -111,13 +111,6 @@ enum Projects {
             // `.icon` and still hit it. A bare name, not a full path, so the exemption
             // reaches every target's `Assets.car`.
             "Assets.car",
-            // The linker picks between two duplicate `_objc_msgSend` GOT entries
-            // non-deterministically wherever a target's objects carry the duplicate pair
-            // (B-90); `IceCubesActionExtension` links a single entry and needs none.
-            "Ice Cubes.app/Ice Cubes",
-            "Ice Cubes.app/PlugIns/IceCubesNotifications.appex/IceCubesNotifications",
-            "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex/IceCubesShareExtension",
-            "Ice Cubes.app/PlugIns/IceCubesAppWidgetsExtensionExtension.appex/IceCubesAppWidgetsExtensionExtension",
         ],
         // A cold build takes several minutes; the third build the fixtures prove is not
         // worth a third here, and neither is the perturbed fourth — run time is the

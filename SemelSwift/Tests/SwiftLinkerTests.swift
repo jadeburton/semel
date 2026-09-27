@@ -79,6 +79,21 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         XCTAssertEqual(target, "arm64-apple-ios18.0-simulator")
     }
 
+    /// B-90. ld's default objc_msgSend selector stubs give the linked image a second GOT entry
+    /// for objc_msgSend, and which of the two the stubs reference differs between identical
+    /// links. Small stubs leave one entry. An archive is not linked by ld, so it is not asked.
+    func test_linksWithSmallObjcStubs() throws {
+        for linkage in ["executable", "dynamicLibrary"] {
+            _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: linkage))
+            let arguments = executor.lastArguments
+            let flag = try XCTUnwrap(arguments.firstIndex(of: "-objc_stubs_small"), "\(linkage): \(arguments)")
+            XCTAssertEqual(arguments[flag - 1], "-Xlinker", linkage)
+        }
+
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: "staticArchive"))
+        XCTAssertFalse(executor.lastArguments.contains("-objc_stubs_small"), "\(executor.lastArguments)")
+    }
+
     // Same reproducibility requirement as the Clang linker: identical inputs must produce
     // an identical command line, so dictionary iteration order must not leak through.
     func test_objectFilesAreOrderedDeterministically() throws {
