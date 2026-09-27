@@ -45,10 +45,10 @@ final class AutostartTests: XCTestCase {
         XCTAssertFalse(second.contains("Started semelserv"), "the second client finds the first's daemon: \(second)")
     }
 
-    /// B-109. The loop the missing-settings report describes, end to end: a build with no
-    /// machine file fails naming `tools --write`; the write names the namespaces the graph
-    /// selects — the three clang ones, not every tool installed — and the next build
-    /// follows the file in and succeeds.
+    /// B-109, B-119. The loop the missing-settings report describes, end to end: a build
+    /// with no machine file fails naming `semel-clang`; that tool, run outside Semel on the
+    /// folder the formula looks in, writes the three clang namespaces and no other tool's;
+    /// and the next build follows the file in and succeeds.
     func test_theMissingSettingsLoopIsBuildWriteBuild() throws {
         let tree = home.appendingPathComponent("tree", isDirectory: true)
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
@@ -61,11 +61,11 @@ final class AutostartTests: XCTestCase {
         // names it as unpushed and every tool below it says what it lacks and what writes it.
         let failed = try semelExpectingFailure("base \(tree.path)", "build c --into \(out)", step: "build without the machine file")
         XCTAssertTrue(failed.contains("semel.machine.config has not been pushed"), failed)
-        XCTAssertTrue(failed.contains("Run 'tools --write semel.machine.config'"), failed)
+        XCTAssertTrue(failed.contains("Run 'semel-clang <folder>'"), failed)
 
-        let wrote = try semel("tools --write \(machineFile)", step: "tools --write")
-        XCTAssertTrue(wrote.contains("Wrote 3 namespaces to \(machineFile): clang.compiler, clang.linker, clang.preprocessor"), wrote)
-        XCTAssertFalse(wrote.contains("swift."), "only what the graph selects: \(wrote)")
+        let wrote = try EndToEndRun.run("semel-clang", arguments: [tree.path], timeout: 60, step: "semel-clang").output
+        XCTAssertTrue(wrote.contains("Wrote \(machineFile): clang.compiler, clang.linker, clang.preprocessor"), wrote)
+        XCTAssertFalse(try String(contentsOfFile: machineFile, encoding: .utf8).contains("swift."), wrote)
 
         let built = try semel("base \(tree.path)", "build c --into \(out)", step: "build with the machine file")
         XCTAssertTrue(built.contains("Push file: semel.machine.config"), built)

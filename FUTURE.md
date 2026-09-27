@@ -487,79 +487,42 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
 **B-109** `open` — **Configuration: the machine's half and the project's half — residuals.**
 Shipped: the configuration is two files. `semel.machine.config` holds the tool descriptors
 and the machine settings each plugin declares (`ToolNamespace.machineSettingKeys`, answered
-per `Platform`), written by `tools --write` for the namespaces the graph selects — `--all`
-for every installed one — and by `semel-swift prepare`, through one renderer in
-`SemelProtocol`; it is in `.gitignore`. `semel.config` holds the project's choices, typed
+per `Platform`), written outside Semel by the toolchain's own tool (B-119) — `semel-clang`
+for the clang namespaces, when the folder has none or with `--force`, and `semel-swift
+prepare` for a Swift tree — through one writer, `SemelMachineFile`; it is in `.gitignore`. `semel.config` holds the project's choices, typed
 once or written by prepare with the C standard under a comment naming it a choice, and
 checked in. Every prelude func takes `settings` as a node and provides
 `settings(project:machine:)`; `Configuration`'s port is `base` (`Semel.version` 0.1.7); the
 unused-key report follows a file through mergers to its filters; the C fixtures commit a
 project file each, the harness writes the machine file where it rendered the template, and
-the tutorial's config section is `build`, `tools --write`, `build`. Design:
+the tutorial's config section is `build`, `semel-clang`, `build`. Design:
 `docs/superpowers/specs/2026-09-26-semel-configuration-two-files-design.md`. What remains:
 
 1. **This repository's own `semel.config`** still carries its machine facts. Splitting it
-   means `tools --write semel.machine.config` at the root before a self-build, which the
+   means writing `semel.machine.config` at the root before a self-build, which the
    README's Configuration section should then say; until it does, the project file's
    machine keys pin the toolchain, which the design allows.
 2. **`target` split into its parts** (the spec's *Later*): a tool that took a platform and a
    deployment version and composed the triple with its own architecture would let the
    project file say nothing about the machine at all.
-3. **One machine file for several platforms.** `--platform` on `tools --write` is one
-   platform per write; a project building for the simulator and for macOS wants both
-   blocks, and the writer's answer — several flags, or every SDK the machine has — waits
-   for the first project that needs two.
+3. **One machine file for several platforms.** `--platform` on `semel-clang` and on
+   `semel-swift prepare` is one platform per write; a project building for the simulator
+   and for macOS wants both blocks, and the writers' answer — several flags, or every SDK
+   the machine has — waits for the first project that needs two.
 4. **The missing-source line when the file is not there.** A first build with no machine
    file reports `semel.machine.config has not been pushed` under the tools' missing
-   settings; `build` could add the one line the loop needs — *run `tools --write`* — where
+   settings; `build` could add the one line the loop needs — which tool writes it — where
    it reports the unpushed source, instead of leaving it to each tool's paragraph.
-
-**B-119** `open` — **Write the machine file outside Semel.**
-Semel is agnostic: a toolchain's setup of a source tree belongs outside it, which is why
-`semel-swift prepare` is its own tool. `tools --write` breaks that — a verb of `semel` that
-writes a toolchain's machine facts into the user's tree. Wanted: the machine file written
-by a toolchain's own tool, as `semel-swift prepare` already writes it for a Swift tree, and
-`semel` keeping `tools` as a read-only report of what the server's plugins found.
-
-The proposed shape is `semel-clang`, the C and C++ counterpart of `semel-swift`, rather than
-a general program of its own: a machine-file writer has little logic in it, so a new tool
-for that alone is overhead. It writes `semel.machine.config` when there is none, through
-the code `semel-swift` already uses — `ToolNamespaceRenderer`, over what SemelClang
-registers: its `ToolNamespace`s with their `machineSettings(platform)`, and the tool
-discovery `MachineQuery` runs — linking the plugin but no engine.
-
-    semel-clang [<dir>] [--platform macos] [--force]
-
-The "Missing machine settings" paragraph (`SettingNamespace`) names the toolchain's tool,
-as `build` already names `semel-swift prepare` for a package tree with no config — so the
-plugin supplies the name rather than the core. A found defect goes with the verb:
-`tools --write` resolves a relative path against the `semel` process's working directory,
-not against `base` as `push` does, so run from Xcode it wrote into DerivedData and the
-`push` after it found nothing.
-
-To decide before building:
-
-1. **Which namespaces.** `tools --write` writes those the graph selects, which a tool
-   outside the engine cannot see. A toolchain's tool writes its own — `clang.preprocessor`,
-   `clang.compiler`, `clang.linker` — whether or not the graph reads all three. That is
-   only quiet if the unused-key report leaves the machine file alone, which is to check.
-2. **Written only when absent.** A file nobody rewrites keeps the tool versions and SDK of
-   the toolchain it was written for, so an Xcode update leaves it stale; the tool needs a
-   way to rewrite it (`--force` above), and the stale-descriptor failure should name it.
-   `prepare` rewrites its file every run.
-3. **Two tools, one file.** For a package tree nothing changes: `prepare` already writes
-   the `clang.*` namespaces when the tree has a C-family target, and `semel-clang` after
-   it finds the file and leaves it. The case left is a hand-written formula that includes
-   both `clang` and `swift` preludes with no `prepare`: whichever tool runs first decides
-   the file, and it carries one toolchain's namespaces. Rare, and the missing-settings
-   report names what is missing; a tool that adds its own namespaces to a file that exists,
-   rather than skipping it, would close it.
-4. **Agreement with the server.** Written by the server, the descriptors are the ones it
-   registered. Written from the shell, they are the shell's machine — a different
-   `DEVELOPER_DIR` gives a file the server rejects, naming the descriptor. A new failure,
-   loud rather than silent.
-
-B-109's residuals 1, 3 and 4 name `tools --write`; they carry over to the tool.
+5. **Two toolchains, one machine file.** `semel-clang` writes only when the folder has no
+   machine file, because one `semel-swift prepare` wrote holds the Swift namespaces too.
+   A hand-written formula that includes both `clang` and `swift` preludes, with no
+   `prepare`, therefore gets whichever toolchain's namespaces were written first, and the
+   missing-settings report names the rest. A tool that adds its own namespaces to a file
+   that exists, rather than leaving it, would close it.
+6. **A stale file names its fix.** After an Xcode update the file names a clang that is
+   gone; `ToolError.noMatchingToolFound` names what was asked for and what is installed,
+   and could also name the command that rewrites the file (`semel-clang --force`,
+   `semel-swift prepare`), which the namespace registers.
 
 ### Design, correctness and code quality
 

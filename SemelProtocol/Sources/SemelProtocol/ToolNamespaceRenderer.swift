@@ -57,9 +57,8 @@ public enum ToolNamespaceRenderer {
         }
         let header = """
             // Written by \(writer) for --platform \(platformName): the tools and SDK this
-            // machine has, for the namespaces the graph reads. Not for editing — run it again
-            // after installing a toolchain — and not for checking in: the project's own choices
-            // go in semel.config beside it.
+            // machine has. Not for editing — write it again after installing a toolchain —
+            // and not for checking in: the project's own choices go in semel.config beside it.
 
             """
         return header + text(for: pinned) + "\n"

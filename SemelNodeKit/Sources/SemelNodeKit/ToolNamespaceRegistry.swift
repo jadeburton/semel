@@ -15,21 +15,28 @@ public struct ToolNamespace {
     /// The registered tool name this namespace's nodes run: `swiftc`, `clang`.
     public let toolName: String
     /// The keys, besides `toolDescriptor.*`, whose value is a fact about the machine rather
-    /// than the project's choice: the SDK's path or identity. What `tools --write` writes
-    /// and a project never types (B-109). Declared apart from the values so a report can
-    /// say which kind a missing key is without asking the machine.
+    /// than the project's choice: the SDK's path or identity. What the toolchain's own tool
+    /// writes into `semel.machine.config` and a project never types (B-109). Declared apart
+    /// from the values so a report can say which kind a missing key is without asking the
+    /// machine.
     public let machineSettingKeys: Set<String>
     /// Those settings' values on this machine, for a platform — the SDK is one per
     /// platform. Evaluated when asked, not when registered, and sorted by key when printed.
     public let machineSettings: (Platform) -> [String: String]
+    /// The command, outside Semel, that writes this namespace's machine settings —
+    /// `semel-clang <folder>`, `semel-swift prepare <folder>` — named by the report of a
+    /// missing machine setting. The toolchain supplies it, so the core names no tool (B-119).
+    public let machineFileCommand: String?
 
     public init(namespace: String, toolName: String,
                 machineSettingKeys: Set<String> = [],
-                machineSettings: @escaping (Platform) -> [String: String] = { _ in [:] }) {
+                machineSettings: @escaping (Platform) -> [String: String] = { _ in [:] },
+                machineFileCommand: String? = nil) {
         self.namespace          = namespace
         self.toolName           = toolName
         self.machineSettingKeys = machineSettingKeys
         self.machineSettings    = machineSettings
+        self.machineFileCommand = machineFileCommand
     }
 }
 

@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .executable(name: "semel", targets: ["semel"]),
         .executable(name: "semel-swift", targets: ["semel-swift"]),
+        .executable(name: "semel-clang", targets: ["semel-clang"]),
         // The binary is `semelserv`; the target is `semel-server`, and the library it links
         // is `SemelServer`, not `SemelServ`. No target may be a case variant of any product
         // name: SwiftPM names build directories after targets, but Xcode names an
@@ -128,11 +129,10 @@ let package = Package(
         .target(
             name: "SemelSwiftTool",
             dependencies: [
+                "SemelMachineFile",
                 .product(name: "SemelSwift", package: "SemelSwift"),
                 .product(name: "SemelClang", package: "SemelClang"),
                 .product(name: "SemelApple", package: "SemelApple"),
-                // For the machine file's renderer: prepare writes the same file `semel
-                // tools --write` does (B-109).
                 .product(name: "SemelProtocol", package: "SemelProtocol"),
             ],
             path: "semel-swift/Library"
@@ -141,6 +141,35 @@ let package = Package(
             name: "semel-swift",
             dependencies: ["SemelSwiftTool"],
             path: "semel-swift",
+            exclude: ["Library"],
+            sources: ["main.swift"]
+        ),
+        // The machine's half of a configuration, `semel.machine.config`, written outside
+        // Semel by each toolchain's own tool (B-119): one writer, knowing no toolchain —
+        // the tool registers the toolchains it serves and names the namespaces to write.
+        .target(
+            name: "SemelMachineFile",
+            dependencies: [
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+                .product(name: "SemelProtocol", package: "SemelProtocol"),
+            ],
+            path: "machine-file"
+        ),
+        // The C and C++ counterpart of semel-swift (B-119): writes the machine file for the
+        // clang tools. The work lives in a library so it can be tested.
+        .target(
+            name: "SemelClangTool",
+            dependencies: [
+                "SemelMachineFile",
+                .product(name: "SemelClang", package: "SemelClang"),
+                .product(name: "SemelNodeKit", package: "SemelNodeKit"),
+            ],
+            path: "semel-clang/Library"
+        ),
+        .executableTarget(
+            name: "semel-clang",
+            dependencies: ["SemelClangTool"],
+            path: "semel-clang",
             exclude: ["Library"],
             sources: ["main.swift"]
         ),
@@ -168,6 +197,8 @@ let package = Package(
                 "SemelCLI",
                 "SemelServer",
                 "SemelSwiftTool",
+                "SemelClangTool",
+                "SemelMachineFile",
                 "SemelTransport",
                 .product(name: "SemelCore", package: "SemelCore"),
                 .product(name: "SemelNodeKit", package: "SemelNodeKit"),
@@ -189,6 +220,7 @@ let package = Package(
                 "semel",
                 "semel-server",
                 "semel-swift",
+                "semel-clang",
             ],
             path: "EndToEnd/Tests"
         ),

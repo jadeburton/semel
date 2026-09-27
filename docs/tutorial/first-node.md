@@ -124,7 +124,7 @@ Settled.
 
 ❌ ClangCompiler ×3 (#23, #27, #29)
    · errorLog, infoLog, output:
-     Missing machine settings. Run 'tools --write semel.machine.config': it writes the tool descriptors and SDK facts of the tools installed here, for every namespace this graph reads, these among them:
+     Missing machine settings. Run 'semel-clang <folder>': it writes semel.machine.config with the tool descriptors and SDK facts of the tools installed here, these among them:
      clang.compiler.toolDescriptor.architecture
      clang.compiler.toolDescriptor.name
      clang.compiler.toolDescriptor.platform
@@ -137,21 +137,23 @@ Settled.
 
 It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
 nothing is there, and every tool below it lacks the settings that file would hold — and
-each names the command that writes them. Run it:
+each names the command that writes them. That command is not one of Semel's: what this
+machine has is the toolchain's to say, so its own tool writes it, outside Semel, as
+`semel-swift prepare` does for a Swift tree. In the **shell** terminal, on the folder the
+formula looks in:
+
+```sh
+.build/debug/semel-clang ~/semel-playground
+```
 
 ```
-tools --write semel.machine.config
+Wrote /Users/you/semel-playground/semel.machine.config: clang.compiler, clang.linker, clang.preprocessor
 ```
 
-```
-Wrote 3 namespaces to /Users/you/semel-playground/semel.machine.config: clang.compiler, clang.linker, clang.preprocessor
-```
-
-Three, not the eight this server knows: `tools --write` writes the namespaces the graph
-you just built actually selects, so nothing in the file goes unread. The path is relative
-to where you ran `semel`, which is beside `hello/`, where the formula looks. Open it if you
-like — the clang version string, the SDK path, once per tool — but do not edit it, and do
-not commit it: it is this machine's, and the next machine writes its own.
+The three clang namespaces, the ones `include 'clang'` reads. Open the file if you like —
+the clang version string, the SDK path, once per tool — but do not edit it, and do not
+commit it: it is this machine's, and the next machine writes its own. Run the command again
+and it leaves the file as it is; after installing a new Xcode, `--force` rewrites it.
 
 ### The build
 

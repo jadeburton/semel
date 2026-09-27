@@ -330,7 +330,7 @@ struct SwiftFormulaConverter: Node {
 
     /// The project's config file, beside the root: `semel.config`, its choices.
     static let configFileName = "semel.config"
-    /// The machine's, beside it: the tools and SDK, written by `semel tools --write` or
+    /// The machine's, beside it: the tools and SDK, written by `semel-clang` or
     /// `semel-swift prepare` and laid under the project's (B-109).
     static let machineConfigFileName = "semel.machine.config"
 

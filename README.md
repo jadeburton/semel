@@ -32,8 +32,9 @@ cd semel
 swift build -c release
 ```
 
-The build places three executables under `.build/release`: `semelserv`, the engine;
-`semel`, the prompt; and `semel-swift`, the Swift conversion tool.
+The build places four executables under `.build/release`: `semelserv`, the engine;
+`semel`, the prompt; `semel-swift`, the Swift conversion tool; and `semel-clang`, which
+writes the machine's configuration for the clang tools.
 
 Plain `swift build` is right for a clone, and for every `swift` line in this file: a cold
 build plans from scratch. Once you are editing the tree, build with `scripts/build.sh`
@@ -103,7 +104,7 @@ rm build/**
 | `e` / `errors` | Show all current build errors |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |
 | `collect` | Delete every object in the store that nothing refers to — no port, no cached build, no artifact snapshot, no archived graph, and no tree or content-root document that a referenced object is — and say how many went and how many stayed. The engine runs the same collection itself at idle, once after launch and then whenever the store has grown by 64 MB; an object younger than a minute is never collected |
-| `t` / `tools [prefix] [--write <file> [--all]] [--platform <p>]` | List the installed tools as config settings, one block per namespace; a prefix narrows it to namespaces starting with it (`tools clang`). `--write` writes the machine's half of the configuration — the tool descriptors and each tool's SDK facts — for the namespaces the graph selects, which exist once a build has been attempted; `--all` writes every installed namespace (under the prefix, given one) instead |
+| `t` / `tools [prefix] [--platform <p>]` | List the installed tools as config settings, one block per namespace, as this server's plugins found them; a prefix narrows it to namespaces starting with it (`tools clang`). A report only: the machine's half of the configuration is written outside Semel, by `semel-clang` or `semel-swift prepare` |
 | `reset [--cache]` | Discard everything derived and rebuild it from the input file system, copying the discarded graph aside first; the cached builds are kept, so the rebuild is a pass of cache lookups, and `--cache` discards those too |
 
 ### Session
@@ -132,7 +133,10 @@ Semel has no defaults. Every tool a build runs is declared in configuration in t
 file system, down to the tool's version string, because the version is part of what makes
 a cached result reusable. The configuration is two files, with two owners:
 `semel.machine.config` holds what is a fact about the machine — each tool's descriptor
-and its SDK — and is written by `tools --write`, never edited and never committed;
+and its SDK — and is written outside Semel by the toolchain's own tool, never edited and
+never committed: `semel-clang <folder>` writes it for the clang tools when the folder has
+none (`--force` rewrites it, after a toolchain update), and `semel-swift prepare` for a
+Swift tree;
 `semel.config` holds the project's choices — the target, the language standard — and is
 typed once and checked in. A formula names both: `clang.settings(project: <semel.config>,
 machine: <../semel.machine.config>)` lays the project's file over the machine's, and a
@@ -274,13 +278,14 @@ It is the same command every time: after cloning, and again after changing a dep
 Each vendored copy is replaced, not merged; a formula or config already there is kept, so
 edits survive, and a project that ships its own needs no `prepare` at all. Semel itself
 knows nothing of Swift packages or Xcode projects; `semel-swift` is the Swift conversion
-tool, and another toolchain gets one of its own if it needs one.
+tool, and another toolchain gets one of its own if it needs one — `semel-clang`, for the
+clang tools, writes only the machine file.
 
 ### Testing against real projects
 
 `swift test` builds the fixtures under `EndToEnd/Fixtures` — a C program, a C++ one,
 the tutorial's project, a Swift package with a path dependency and a SwiftUI app for the
-simulator — through `semelserv`, `semel` and `semel-swift` together, each four times in
+simulator — through `semelserv`, `semel`, `semel-swift` and `semel-clang` together, each four times in
 four fresh homes: twice over the same copy, once from a copy at another mount, and once
 with the environment perturbed — a different `TMPDIR`, working directory, locale and time
 zone, none of which is in a cache key. All four export trees must match byte for byte,
@@ -303,6 +308,9 @@ semel/           semel — the prompt; opens a connection to semelserv and nothi
   Transport/           SemelTransport: the Unix-socket listener and frame stream
 semel-swift/     semel-swift — `prepare`: finds a tree's roots, vendors git dependencies,
                  writes semel.fmla and the two config files (SemelSwiftTool)
+semel-clang/     semel-clang — writes semel.machine.config for the clang tools
+                 (SemelClangTool)
+machine-file/    SemelMachineFile: the one writer of semel.machine.config, for both tools
 ```
 
 The packages they link:

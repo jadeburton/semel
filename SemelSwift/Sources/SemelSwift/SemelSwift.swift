@@ -29,21 +29,24 @@ public enum SemelSwift {
         // located when the engine starts.
         SwiftToolDiscovery.finders.forEach(ToolDiscovery.register)
 
-        // What `tools` prints and `tools --write` writes under each namespace. The compiler
-        // and linker check the declared SDK against the machine, so the SDK's name and the
-        // machine's identity for it are the two machine settings they declare, for whichever
-        // platform is asked. The package reader declares no SDK.
+        // What `tools` prints and `semel-swift prepare` writes under each namespace (B-119).
+        // The compiler and linker check the declared SDK against the machine, so the SDK's
+        // name and the machine's identity for it are the two machine settings they
+        // declare, for whichever platform is asked. The package reader declares no SDK.
         let sdk: (Platform) -> [String: String] = { platform in
             resolveSDKVersion(sdk: platform.sdkName).map { ["sdk": platform.sdkName, "sdkVersion": $0] } ?? [:]
         }
+        let writer = "semel-swift prepare <folder>"
         ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerConfiguration.settingNamespace,
                                              toolName: "swiftc",
-                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk))
+                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk,
+                                             machineFileCommand: writer))
         ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerConfiguration.settingNamespace,
                                              toolName: "swiftc",
-                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk))
+                                             machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk,
+                                             machineFileCommand: writer))
         ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
-                                             toolName: "swift"))
+                                             toolName: "swift", machineFileCommand: writer))
 
         // `include 'swift'`: a target outside a package, from a folder of sources (B-108).
         FormulaIncludeProviders.register(includeProvider)
