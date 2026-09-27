@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Toolchain
         run: |
@@ -37,12 +37,22 @@ jobs:
           SEMEL_E2E_KEEP: "1"
         run: scripts/build.sh test --filter SemelEndToEndTests
 
+      # As one archive: the roots hold vendored dependencies whose documentation names
+      # files with characters the artifact store refuses (`!=(_:_:).json` in Bodega), and
+      # an upload that stops at one such name keeps nothing.
+      - name: Archive the run roots on failure
+        if: failure()
+        run: |
+          if [ -d /tmp/semel-tests ]; then
+            tar -czf /tmp/semel-e2e-roots.tgz -C /tmp semel-tests
+          fi
+
       - name: Keep the run roots on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: semel-e2e-roots
-          path: /tmp/semel-tests
+          path: /tmp/semel-e2e-roots.tgz
           if-no-files-found: ignore
 
       # The kept roots are gigabytes each; on a machine that is also a workstation they

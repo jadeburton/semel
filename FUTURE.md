@@ -353,7 +353,14 @@ nested folders are not compiled (the glob is one level); a `publicHeadersPath` o
 `include` is not honoured; and a package vending an *executable* with C targets would
 need a `clang.linker` block, which the archive case never reads.
 
-**B-122** `open` — **`prepare` writes no clang settings for a tree with C targets.**
+**B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
+Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before
+vendoring, so a C target that arrives with a dependency — swift-cmark under IceCubes — was
+never seen on a fresh copy, while the 13 September tree, vendored long before, passed by
+hand. The decision is now taken after vendoring, over the vendored packages too;
+`PrepareTests` holds it to a Swift root whose dependency brings a C target, and the
+nightly's `icecubes` run is what failed on it (the night after B-109 landed). The account
+below is what was seen before the cause was found.
 Seen 2026-09-27 on a fresh copy of the IceCubes packages: `semel-swift prepare Packages
 --platform ios-simulator` vendored swift-cmark and swift-markdown's CAtomic, wrote the
 formula, and wrote `semel.config` and `semel.machine.config` with the three `swift.*`

@@ -1,0 +1,38 @@
+# Whether GitHub's hosted macOS runners can build this repository today: run by hand,
+# it prints the toolchain each image carries and tries the build and one suite. What
+# it answers is where pull-request CI can live once the repository is public — a
+# self-hosted runner must not run a stranger's pull request, and a hosted one may.
+name: Hosted runner trial
+
+on:
+  workflow_dispatch:
+
+jobs:
+  trial:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-26, macos-15]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          ls /Applications | grep -i xcode || true
+          xcrun --sdk macosx --show-sdk-version
+          xcrun simctl list runtimes | grep -i ios || true
+
+      - name: Build
+        run: scripts/build.sh
+
+      - name: Test SemelNodeKit
+        run: scripts/build.sh test --package-path SemelNodeKit
+
+      - name: Test SemelCore
+        run: scripts/build.sh test --package-path SemelCore
