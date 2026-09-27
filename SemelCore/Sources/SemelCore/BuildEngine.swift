@@ -377,6 +377,12 @@ public final class BuildEngine {
     /// with no server has nobody to tell, so the default is silence.
     public var artifactReporter: (ArtifactChanges) -> Void = { _ in }
 
+    /// Where a settle's progress goes as the pass changes state — after a round of
+    /// scheduling starts nodes and after a result is written (B-95). The tally's running
+    /// totals rather than a batch's, for the reason the summary carries them. An engine
+    /// with no server has nobody waiting at a terminal, so the default is silence.
+    public var progressReporter: (ProgressReport) -> Void = { _ in }
+
     // MARK: - Artifact change tracking
 
     /// Guards the two candidate sets below. The write path reaches them from whichever
@@ -757,6 +763,8 @@ public final class BuildEngine {
     private func processAllNodes() async throws {
         try await withThrowingTaskGroup(of: PassEvent.self) { group in
             var running = Set<ObjectID>()
+            // The same nodes, named and in start order, for the progress report (B-95).
+            var runningDescriptions: [(nodeID: ObjectID, description: ActiveNodeDescription)] = []
             // Signals up to here are this pass's to act on by selecting; the watcher below
             // asks for the next one after them (B-117).
             var seenSignal = await workSignal.generation
@@ -776,9 +784,15 @@ public final class BuildEngine {
                     }
                     try nodeRecord.setScheduled(false)
                     running.insert(nodeID)
+                    runningDescriptions.append((nodeID, describeForProgress(nodeRecord)))
                     group.addTask {
                         .computed(await Self.compute(nodeRecord))
                     }
+                }
+                // Only when something started: a pass that starts nothing says nothing,
+                // as the settle summary says nothing for a settle that scheduled nothing.
+                if !started.isEmpty {
+                    reportProgress(running: runningDescriptions.map(\.description))
                 }
 
                 // Nothing running and nothing scheduled: settled.
@@ -803,12 +817,17 @@ public final class BuildEngine {
                 case .computed(let nodeRecord, let result):
                     if let nodeID = nodeRecord.id {
                         running.remove(nodeID)
+                        runningDescriptions.removeAll { $0.nodeID == nodeID }
                     }
                     // A node not ready — waiting on an input — is unscheduled and written
                     // nothing; the input's arrival schedules it again.
                     if let result {
                         write(result)
                     }
+                    // After the write: what it scheduled is in the pending count, and the
+                    // tally has the result. The last of a settle has nothing running and
+                    // nothing pending, and the summary follows it with the same totals.
+                    reportProgress(running: runningDescriptions.map(\.description))
                 case .woken(let generation):
                     seenSignal = generation
                     watching = false
@@ -821,6 +840,27 @@ public final class BuildEngine {
             group.cancelAll()
             while try await group.next() != nil {}
         }
+    }
+
+    /// Hands where the settle stands to whoever is reading: the tally's totals, the
+    /// scheduled rows still ahead, and the nodes computing now (B-95).
+    private func reportProgress(running: [ActiveNodeDescription]) {
+        let summary = settleTally.summary
+        let pending = FatalErrors.attempt({ try database.node.countScheduled() }) ?? 0
+        progressReporter(ProgressReport(scheduled: summary.scheduled,
+                                        computed:  summary.computed,
+                                        fromCache: summary.fromCache,
+                                        pending:   pending,
+                                        running:   running))
+    }
+
+    /// The type name and the name a report gives the node, taken as it starts: one read
+    /// per node start, which is one per tool process.
+    private func describeForProgress(_ nodeRecord: NodeRecord) -> ActiveNodeDescription {
+        let typeName = (try? TypeRegistry.type(kind: nodeRecord.kind)).map { String(describing: $0) }
+            ?? "kind \(nodeRecord.kind)"
+        return ActiveNodeDescription(typeName: typeName,
+                                     name: ErrorReport.path(of: nodeRecord, database: database) ?? "")
     }
 
     /// What a pass waits on: a node's result, or a signal that something was scheduled.

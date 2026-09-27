@@ -169,6 +169,14 @@ public struct NodeDataAccess: DataAccessType {
         }
     }
 
+    /// How many nodes are scheduled: the queue ahead of a pass, which a running node has
+    /// already left (B-95).
+    public func countScheduled() throws -> Int {
+        try read { db in
+            try NodeRecord.filter(NodeRecord.Columns.scheduled == true).fetchCount(db)
+        }
+    }
+
     public func selectAllPendingDeletion() throws -> [NodeRecord] {
         try read { db in
             try NodeRecord.filter(NodeRecord.Columns.pendingDeletion == true).fetchAll(db)

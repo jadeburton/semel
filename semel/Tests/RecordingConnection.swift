@@ -80,4 +80,7 @@ final class TestCommandContext: CommandContext {
         resetErrorRecordAccountingCallCount += 1
         orderLog?.record("resetErrorRecordAccounting")
     }
+
+    func settleWaitBegan() { orderLog?.record("settleWaitBegan") }
+    func settleWaitEnded() { orderLog?.record("settleWaitEnded") }
 }

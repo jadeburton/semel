@@ -281,4 +281,48 @@ public enum DaemonEvent: Codable, Equatable, Sendable {
     /// to `errors`, and saying it twice in two vocabularies is what this event exists to
     /// stop.
     case artifacts(appeared: [String], changed: [String], disappeared: [String])
+    /// Where the current settle stands, sent as the engine's pass changes state: after a
+    /// round of scheduling starts nodes and after a result is written (B-95). Never from
+    /// a pass that started nothing, as `settled` says nothing for one. The last of a
+    /// settle has `running` empty and `pending` zero; `settled` follows it with the same
+    /// three totals and the error count.
+    case progress(record: ProgressRecord)
+}
+
+/// Where a settle stands, in the settle's own running totals rather than a batch's: the
+/// three counts are the ones `settled` will end with, read from the same tally, so a node
+/// that ran twice is one node here as it is there.
+public struct ProgressRecord: Codable, Equatable, Sendable {
+    /// Nodes this settle has fetched as scheduled, once each.
+    public let scheduled: Int
+    /// Of those, the ones whose latest result was one they ran themselves.
+    public let computed: Int
+    /// Of those, the ones whose latest result came from a cache entry.
+    public let fromCache: Int
+    /// Scheduled and not started: the queue ahead, which rises while the cascade is still
+    /// generating work and falls as it drains.
+    public let pending: Int
+    /// Started and not finished, in start order. Carried on every record so that a
+    /// renderer showing the active nodes needs nothing more on the wire.
+    public let running: [ActiveNode]
+
+    public init(scheduled: Int, computed: Int, fromCache: Int, pending: Int, running: [ActiveNode]) {
+        self.scheduled = scheduled
+        self.computed  = computed
+        self.fromCache = fromCache
+        self.pending   = pending
+        self.running   = running
+    }
+}
+
+/// One node computing now: its type and the name a report would give it — its path when
+/// it has one, the project file when it is a builder, empty otherwise.
+public struct ActiveNode: Codable, Equatable, Sendable {
+    public let type: String
+    public let name: String
+
+    public init(type: String, name: String) {
+        self.type = type
+        self.name = name
+    }
 }

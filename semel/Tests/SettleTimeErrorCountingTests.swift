@@ -279,6 +279,8 @@ final class SettleTimeErrorCountingTests: XCTestCase {
                 case .daemon(.settled):   return "settled"
                 case .daemon(.artifacts): return "artifacts"
                 case .daemon(.notice):    return nil
+                // Progress is where the settle stands, not one of its reports (B-95).
+                case .daemon(.progress):  return nil
                 }
             }
         }

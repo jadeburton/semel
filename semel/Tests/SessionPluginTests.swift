@@ -57,7 +57,7 @@ final class SessionPluginTests: XCTestCase {
         try run("begin")
         try run("commit")
 
-        XCTAssertEqual(orderLog.entries, ["send", "send", "resetErrorRecordAccounting", "send"])
+        XCTAssertEqual(orderLog.entries, ["send", "send", "resetErrorRecordAccounting", "settleWaitBegan", "send", "settleWaitEnded"])
     }
 
     /// Nested begins are one batch: the engine counts depth, so only the outermost commit

@@ -47,10 +47,21 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsFifteen() {
-        XCTAssertEqual(ProtocolVersion.current, 15)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 15,
+    func test_currentProtocolVersionIsSixteen() {
+        XCTAssertEqual(ProtocolVersion.current, 16)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 16,
                        "a hello sent with no version named speaks the current one")
+    }
+
+    /// B-95. The running list travels on every record, so a renderer that shows the
+    /// active nodes needs nothing more on the wire.
+    func test_encodesProgressEvent() throws {
+        let record = ProgressRecord(scheduled: 12, computed: 3, fromCache: 4, pending: 5,
+                                    running: [ActiveNode(type: "ClangCompiler", name: "input:/src/main.c")])
+        XCTAssertEqual(try json(Event.daemon(.progress(record: record))),
+                       #"{"daemon":{"progress":{"record":{"computed":3,"fromCache":4,"pending":5,"#
+                     + #""running":[{"name":"input:\/src\/main.c","type":"ClangCompiler"}],"scheduled":12}}}}"#)
+        XCTAssertEqual(try roundTrip(Event.daemon(.progress(record: record))), .daemon(.progress(record: record)))
     }
 
     func test_encodesSettledEvent() throws {

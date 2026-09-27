@@ -42,11 +42,21 @@ public final class CommandInterpreter: CommandContext {
     /// Where lines go: the terminal, unless a test wants to read them.
     public var output: (String) -> Void = { print($0) }
 
-    func outputMessage(_ message: String) { output(message) }
+    /// The progress line, drawn while a command of this client waits for a settle (B-95).
+    /// Every line the interpreter prints steps around it, so a notice or an error report
+    /// arriving mid-wait lands above it rather than through it.
+    private let indicator: IndicatorLine
+
+    func outputMessage(_ message: String) {
+        indicator.interrupting { output(message) }
+    }
     func outputError(_ errorMessage: String) {
         errorsLock.withLock { errorsReportedStorage += 1 }
-        output(errorMessage)
+        indicator.interrupting { output(errorMessage) }
     }
+
+    func settleWaitBegan() { indicator.begin() }
+    func settleWaitEnded() { indicator.end() }
 
     /// Whether the idle-time error report is printed as it arrives. Off for the length of
     /// a `build`, which prints the report once at its end: a settle the follow loop
@@ -152,19 +162,26 @@ public final class CommandInterpreter: CommandContext {
         return map
     }()
 
+    /// `showsProgress` is the terminal's decision, made by `main` from
+    /// `ProgressPolicy.showsInThisProcess()`; false by default so that a test's output is
+    /// the lines and nothing else.
     public convenience init(connection: any SemelConnection,
-                            baseDirectory: String = FileManager.default.currentDirectoryPath) {
+                            baseDirectory: String = FileManager.default.currentDirectoryPath,
+                            showsProgress: Bool = false) {
         self.init(connection: connection,
                   baseDirectory: baseDirectory,
-                  plugins: [NavigationPlugin(), FilePlugin(), EnginePlugin(), SessionPlugin()])
+                  plugins: [NavigationPlugin(), FilePlugin(), EnginePlugin(), SessionPlugin()],
+                  showsProgress: showsProgress)
     }
 
     required init(connection: any SemelConnection,
                   baseDirectory: String,
-                  plugins: [any CommandPlugin]) {
+                  plugins: [any CommandPlugin],
+                  showsProgress: Bool = false) {
         self.connection    = connection
         self.baseDirectory = baseDirectory
         self.plugins       = plugins
+        self.indicator     = IndicatorLine(enabled: showsProgress)
     }
 
     // MARK: - Handshake
@@ -209,6 +226,8 @@ public final class CommandInterpreter: CommandContext {
         case .daemon(.artifacts(let appeared, let changed, let disappeared)):
             ArtifactChangeRenderer.lines(appeared: appeared, changed: changed, disappeared: disappeared)
                 .forEach { outputMessage($0) }
+        case .daemon(.progress(let record)):
+            indicator.update(record)
         }
     }
 

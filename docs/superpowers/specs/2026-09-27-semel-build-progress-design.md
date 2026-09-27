@@ -206,3 +206,43 @@ bump; a `progressReporter` on the engine beside `settleReporter`, called from tw
   started nothing.
 - `DaemonMessagesTests`: the event round-trips; the protocol pin moves to 16.
 - `EndToEnd`: unchanged, which is the point — it is not a terminal.
+
+## As built (2026-09-27)
+
+Built as designed, with these particulars:
+
+- **The event** is `DaemonEvent.progress(record:)` carrying `ProgressRecord` and
+  `ActiveNode` in `SemelProtocol`; `ProtocolVersion.current` is 16. The engine's own type
+  is `ProgressReport` with `ActiveNodeDescription` in `SemelCore`, handed to
+  `BuildEngine.progressReporter`; `RequestHandler.installReporters` maps one to the other.
+- **The two points** are in `processAllNodes`: after a scheduling round that started at
+  least one node, and after every result, once its write is done — so the pending count
+  includes what the write scheduled. `pending` is `NodeDataAccess.countScheduled()`, a
+  count of the rows a running node has already left. A pass that starts nothing sends
+  nothing, and `ProgressReportTests` holds it to that and to the tally's promises.
+- **A node's name** is what a report gives it, through `ErrorReport.path(of:database:)`,
+  factored out of the report's label: the `path` property, else the project file wired
+  to it, else empty. The type name is the registered type's.
+- **The client** has `ProgressPolicy` (public, read by `main`), `ProgressLineRenderer`
+  and `IndicatorLine` in `ProgressIndicator.swift`. The interpreter owns the line, routes
+  `outputMessage` and `outputError` through `interrupting`, and answers two new
+  `CommandContext` calls, `settleWaitBegan` and `settleWaitEnded`, which
+  `EnginePlugin.waitForSettle` puts around the `.wait` request and nothing else — so the
+  `commit` that ends a batch has the line too, through the same function.
+- **The mark.** `Mark.working` (`⏳`) is the third mark and the one that says neither good
+  nor bad; it is allowed because it never stays on the screen. `MarkTests` pins all three.
+- **Redraws** are at most one per 100 ms on events and one per second from a timer; the
+  timer exists only between `begin` and `end`. Writes go through C stdio and are flushed,
+  so they keep their order with `print`.
+- **A defect the first terminal run found.** `ServerConnection` handled every request on
+  the connection's own queue, and a `wait` parked that queue until the settle — while the
+  events to that client leave through the same queue. Every event the waiting client
+  should have read meanwhile, progress and the collector's notice alike, arrived in one
+  burst as the wait returned; nobody had noticed because `settled` and the idle-time
+  error report arrive at that moment anyway. A `wait` now runs on a thread of its own,
+  and `WaitEventsTests` holds a socket client to seeing the slow node running well before
+  its wait returns. Measured on the IceCubes graph after a `nudge`: 115 drawings over a
+  39 s settle, the first within the first second, and the screen afterwards byte for byte
+  the piped output.
+- **Not built:** the dashboard, the `watch` verb, and a status line at an idle prompt, as
+  the *Later* section says. B-95's residual in `FUTURE.md` names the first.

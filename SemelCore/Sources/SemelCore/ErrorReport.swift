@@ -75,15 +75,21 @@ public enum ErrorReport {
         guard let nodeRecord = FatalErrors.attempt({ try database.node.find(nodeID: nodeID) }) ?? nil else {
             return GraphCheck.subject(missingNodeID: nodeID)
         }
+        return GraphCheck.subject(nodeRecord, path: path(of: nodeRecord, database: database))
+    }
 
+    /// The path a node is named by: its own when it has one, the project file it builds
+    /// when it is a builder, nil when it is neither. Best effort, as the label is.
+    public static func path(of nodeRecord: NodeRecord, database: DatabaseLayer) -> String? {
         if let path = nodeRecord.properties["path"] {
-            return GraphCheck.subject(nodeRecord, path: path)
+            return path
         }
-
-        let projectFile = FatalErrors.attempt({
+        guard let nodeID = nodeRecord.id else {
+            return nil
+        }
+        return FatalErrors.attempt({
             try database.wire.select(goingToNodeID: nodeID, toSymbolID: "projectFile".asSymbolID())
         })?.first?.name.resolveSymbol()
-        return GraphCheck.subject(nodeRecord, path: projectFile)
     }
 
     /// The lines for one node's errors: a heading, then one entry per distinct message.

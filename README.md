@@ -60,7 +60,10 @@ whatever directory it was launched from; the banner prints the database path.
 `SEMEL_HOME` moves that root and `SEMEL_SOCKET` the daemon's socket, which is how the
 tests give each server a home of its own; `SEMEL_JOBS` is how many nodes it computes at
 once — every running tool is a process — and is the core count unless set. The banner
-prints all three. `help` lists the commands at the prompt:
+prints all three. While `wait`, `build` or `commit` blocks at a terminal, one line shows
+where the settle stands — nodes running, nodes pending, nodes done — redrawn in place and
+erased before the settle summary prints; a pipe never sees it, and `SEMEL_PROGRESS=0`
+turns it off at a terminal. `help` lists the commands at the prompt:
 
 ### Navigation
 
