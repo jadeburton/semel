@@ -84,10 +84,10 @@ final class PackagePluginConfigTests: SemelSwiftTestCase {
 
     /// The wires a `SwiftFormulaConverter(path: <folder>)` asks for on its first pass, when
     /// a formula's `include` named it and nothing is wired yet.
-    private func selfWiring(packageFolder folder: String = "input:/repo/pkg") throws -> [String: [String: String]] {
+    private func selfWiring(packageFolder folder: String = "input:/repo/pkg") throws -> [String: [String: GraphSpecNode]] {
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind,
                                                                        name: nil, properties: ["path": folder],
-                                                                       scheduled: false, graphSpec: nil))
+                                                                       scheduled: false, identity: nil))
         let output = try converter.process(input: ProcessInput(inputValues: [:]))
         guard case .noValue = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]) else {
             XCTFail("the first pass has no manifest to convert; it should be pending")
@@ -97,7 +97,7 @@ final class PackagePluginConfigTests: SemelSwiftTestCase {
     }
 
     func test_theNamedPackagesReaderIsWiredToASelectorForItsOwnNamespace() throws {
-        let reader = try XCTUnwrap(try selfWiring()[SwiftFormulaConverter.packageJSON]?.values.first)
+        let reader = try XCTUnwrap(try selfWiring()[SwiftFormulaConverter.packageJSON]?.values.first).asString(omitOutputPort: false)
 
         XCTAssertTrue(reader.contains("ConfigFilter(prefix: 'swift.packageReader'"), "got:\n\(reader)")
         XCTAssertFalse(reader.contains("Configuration().output"),
@@ -106,10 +106,10 @@ final class PackagePluginConfigTests: SemelSwiftTestCase {
 
     func test_theNamedPackagesReaderReadsTheConfigFileBesideThePackage() throws {
         let specs  = try selfWiring(packageFolder: "input:/repo/pkg")
-        let reader = try XCTUnwrap(specs[SwiftFormulaConverter.packageJSON]?["input:/repo/pkg/Package.swift"])
+        let reader = try XCTUnwrap(specs[SwiftFormulaConverter.packageJSON]?["input:/repo/pkg/Package.swift"]).asString(omitOutputPort: false)
 
         XCTAssertTrue(reader.contains("StaticFile(path: 'input:/repo/pkg/semel.config')"), "got:\n\(reader)")
-        XCTAssertEqual(specs[SwiftFormulaConverter.packageFolder],
+        XCTAssertEqual(specs[SwiftFormulaConverter.packageFolder]?.rendered,
                        ["input:/repo/pkg": "Folder(path: 'input:/repo/pkg').manifest"])
     }
 
@@ -131,7 +131,7 @@ final class PackagePluginConfigTests: SemelSwiftTestCase {
 
         let entry = FolderManifestEntry(name: "Package.swift", isFolder: false, isPinned: true)
         for plugin in ProjectDiscovery.plugins {
-            XCTAssertNil(plugin.specString(forEntry: entry, inFolder: "input:/repo/pkg"),
+            XCTAssertNil(plugin.spec(forEntry: entry, inFolder: "input:/repo/pkg"),
                          "\(type(of: plugin)) still claims Package.swift")
         }
     }

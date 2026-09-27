@@ -37,11 +37,11 @@ final class GraphDescriptionTests: SemelCoreTestCase {
 
     func test_listsANodeUnderItsTypeName() throws {
         _ = try NodeRecord.createNode(database: engine.database, kind: StaticFile.kind,
-                                      properties: ["path": "input:/a.c"], graphSpec: nil)
+                                      properties: ["path": "input:/a.c"], identity: nil)
 
         let text = try engine.graphDescription()
 
         XCTAssertTrue(text.contains("⬢ StaticFile #"), text)
-        XCTAssertTrue(text.contains("name: 'input:/a.c'") || text.contains("graphSpec:"), text)
+        XCTAssertTrue(text.contains("name: 'input:/a.c'") || text.contains("identity: "), text)
     }
 }

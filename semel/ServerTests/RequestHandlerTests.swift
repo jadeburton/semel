@@ -275,11 +275,11 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     /// says the same, because both are built by `ErrorReport`.
     func test_errorsFoldsACascadeOntoItsCauseInBothTheReplyAndTheEvent() throws {
         let source = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                               properties: ["path": "input:/shared.h"], graphSpec: nil)
+                                               properties: ["path": "input:/shared.h"], identity: nil)
         var carriers: [NodeRecord] = []
         for index in 1...20 {
             let carrier = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                                    properties: ["tag": "\(index)"], graphSpec: nil)
+                                                    properties: ["tag": "\(index)"], identity: nil)
             // Wired before it fails: connecting writes pending to every output of the target.
             try Wire.connectWire(database: database,
                                  fromNodeID: try source.requireID(),
@@ -361,7 +361,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     @discardableResult
     private func makeFailingFile(path: String, message: String) throws -> ObjectID {
         let nodeRecord = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                                   properties: ["path": path], graphSpec: nil)
+                                                   properties: ["path": path], identity: nil)
         try nodeRecord.writeToOutputPort("output",
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         return try nodeRecord.requireID()
@@ -377,7 +377,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         // one node to the graph; `path` is deliberately not it, since that is what a label
         // would be made of.
         let nodeRecord = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                                   properties: ["tag": tag ?? message], graphSpec: nil)
+                                                   properties: ["tag": tag ?? message], identity: nil)
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
     }

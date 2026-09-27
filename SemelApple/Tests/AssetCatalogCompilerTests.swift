@@ -72,9 +72,9 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
     func test_demandsEverySubfolderAndFileBeforeRunning() throws {
         let output = try process()
 
-        XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogSubfolders],
+        XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogSubfolders]?.rendered,
                        ["\(catalog)/AccentColor.colorset": "Folder(path: '\(catalog)/AccentColor.colorset').manifest"])
-        XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogFiles],
+        XCTAssertEqual(output.inputWireSpecs[AssetCatalogCompiler.catalogFiles]?.rendered,
                        ["\(catalog)/Contents.json": "StaticFile(path: '\(catalog)/Contents.json').output"])
         XCTAssertTrue(executor.invocations.isEmpty, "actool must not run on a partial catalog")
         guard case .noValue(.pending) = try XCTUnwrap(output.outputValues[AssetCatalogCompiler.output]) else {

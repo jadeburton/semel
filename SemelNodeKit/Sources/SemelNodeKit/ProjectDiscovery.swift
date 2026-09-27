@@ -13,9 +13,9 @@
 
 /// Recognises one kind of project file and says how to build it.
 public protocol ProjectBuilderPlugin {
-    /// The `ProjectBuilder` spec string for `entry` inside `folderPath`, or nil if
+    /// The `ProjectBuilder` tree for `entry` inside `folderPath`, or nil if
     /// this plugin does not claim the entry.
-    func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String?
+    func spec(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> GraphSpecNode?
 }
 
 /// The set of registered project kinds.

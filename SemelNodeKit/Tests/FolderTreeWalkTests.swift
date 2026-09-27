@@ -24,7 +24,7 @@ final class FolderTreeWalkTests: XCTestCase {
 
         let specs = FolderTreeWalk.fileSpecs(of: [manifest]) { $0.hasSuffix(".swift") }
 
-        XCTAssertEqual(specs, ["input:/pkg/Sources/Keep.swift": "StaticFile(path: 'input:/pkg/Sources/Keep.swift').output"])
+        XCTAssertEqual(specs.rendered, ["input:/pkg/Sources/Keep.swift": "StaticFile(path: 'input:/pkg/Sources/Keep.swift').output"])
     }
 
     /// The default keeps every pinned file, unchanged from before `include` existed.
@@ -45,6 +45,11 @@ final class FolderTreeWalkTests: XCTestCase {
 
         let specs = FolderTreeWalk.subfolderSpecs(of: [manifest]) { $0 != "input:/pkg/Vendor" }
 
-        XCTAssertEqual(specs, ["input:/pkg/Core": "Folder(path: 'input:/pkg/Core').manifest"])
+        XCTAssertEqual(specs.rendered, ["input:/pkg/Core": "Folder(path: 'input:/pkg/Core').manifest"])
     }
+}
+
+extension Dictionary where Key == String, Value == GraphSpecNode {
+    /// The trees as the spec text they render to, for assertions written against text.
+    var rendered: [String: String] { mapValues { $0.asString(omitOutputPort: false) } }
 }

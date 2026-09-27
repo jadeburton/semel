@@ -76,7 +76,7 @@ extension FormulaFile {
         basePath: Path,
         wildcardExpander: @escaping (String) throws -> [String],
         fileReader: @escaping (String) throws -> String? = { _ in nil },
-        includeReader: @escaping (String) throws -> String? = { _ in nil }
+        includeReader: @escaping (GraphSpecNode) throws -> String? = { _ in nil }
     ) throws -> [String: GraphSpecNode] {
         let tokens = try FormulaLexer.tokenize(source, basePath: basePath)
         var parser = FormulaParser(tokens)
@@ -108,7 +108,8 @@ extension FormulaFile {
         var visible: [String?: Set<String>] = [:]
         while !pending.isEmpty {
             let (include, scope) = pending.removeFirst()
-            let spec = try own.resolve(include: include.expr).asString(omitOutputPort: false)
+            let includedNode = try own.resolve(include: include.expr)
+            let spec = includedNode.asString(omitOutputPort: false)
             if let brought = broughtProducts[spec], brought || include.funcsOnly {
                 // Merged already, but this includer sees it too.
                 if let namespace = namespaceOfSpec[spec] ?? nil {
@@ -117,7 +118,7 @@ extension FormulaFile {
                 continue
             }
             broughtProducts[spec] = !include.funcsOnly
-            guard let includedFormula = try includeReader(spec) else {
+            guard let includedFormula = try includeReader(includedNode) else {
                 return [:]
             }
             // Generated text names every path absolutely, so the base path is nominal.

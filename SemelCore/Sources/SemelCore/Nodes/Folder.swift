@@ -69,7 +69,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     }
 
     var path: Path {
-        .init(thisNode.properties["path"]!)
+        .init(thisNode.properties[Self.pathProperty]!)
     }
 
     // Ignores the fact that a node that has wires to/from it should never be deleted; that check needs to happen outside this
@@ -144,6 +144,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     }
 
     // The manifest is a non-recursive list of immediate children
+    static let pathProperty = "path"
     static let folderManifestOutputPort = "manifest"
 
     /// The Merkle root of everything under this folder (B-26): the hash of the document
@@ -577,8 +578,8 @@ extension Folder {
     /// primary key instead of a graph-spec lookup wrapped in a write transaction.
     ///
     /// `root(named:)` is on a very hot path: every `resolveFolderID` goes through it, which
-    /// is every `StaticFile` and every `Folder` init. The graphSpec lookup it did was itself
-    /// cheap — `Node.graphSpec` is unique-indexed — but `findOrCreateMatchingNode` wraps
+    /// is every `StaticFile` and every `Folder` init. The identity lookup it did was itself
+    /// cheap — `Node.identity` is unique-indexed — but `findOrCreateMatchingNode` wraps
     /// find-and-create in a transaction, so the read paid for a write it never did.
     ///
     /// The ID is cached rather than the NodeRecord: `NodeRecord` is a mutable value type, and handing
@@ -622,7 +623,7 @@ extension Folder {
         if let cachedID = cachedRootID(named: name),
            let cached = try? DatabaseLayer.shared.node.select(nodeID: cachedID),
            cached.kind == Folder.kind,
-           cached.properties["path"] == name {
+           cached.properties[Folder.pathProperty] == name {
             return cached
         }
 

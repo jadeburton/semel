@@ -27,7 +27,7 @@ final class ClangPreludeTests: XCTestCase {
         let preludeText = FormulaPrelude.publishedText(namespace: "clang", text: SemelClang.prelude)
         return try FormulaFile.parse(formula, basePath: basePath,
                                      wildcardExpander: sources,
-                                     includeReader: { $0 == preludeSpec ? preludeText : nil })
+                                     includeReader: { $0.asString(omitOutputPort: false) == preludeSpec ? preludeText : nil })
     }
 
     /// The chain `EndToEnd/Fixtures/c/hello.fmla` wired by hand before B-108, over the two

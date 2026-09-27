@@ -62,7 +62,7 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
     }
 
     private func subfolderSpecs(_ output: ProcessOutput) throws -> [String: String] {
-        try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputSubfolders])
+        try XCTUnwrap(output.inputWireSpecs[SwiftCompiler.inputSubfolders]).rendered
     }
 
     // MARK: - Subfolder discovery

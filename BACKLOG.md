@@ -58,19 +58,6 @@ neither broken down yet. With a compiler that compiles once its folder walk has 
 (B-112), the cold build took 93 s; with results written as each node finishes rather than
 once a whole batch has (B-113), 85 s.
 
-**B-115** `open` `For Fable Only` — **A node's `graphSpec` spells out its whole upstream graph.**
-Each spec is its node's inputs rendered recursively, so a node shared by two consumers is
-written out twice in everything below them, and the text grows with the graph. Measured:
-8.9 MB of spec text over 2,627 nodes; each archive's `OutputFile` about 1.4 MB, each linker
-about 690 KB; the column carries a UNIQUE index, so that is stored twice — some 18 MB of a
-33 MB database. `Node.applySpecs` rebuilds a product's spec from the database and parses
-the demanded one on every `ProjectBuilder` pass (13 in the cold build), walking shared
-subgraphs once per product. Naming each input by its node's spec hash would make a spec one
-level deep; identity by spec, and every reader of the column, would have to follow. Design
-(2026-09-27): `docs/superpowers/specs/2026-09-27-semel-node-identity-design.md` — an
-identity that is a hash one level deep over kind, properties and the identities on the
-static ports' wires, stored in place of the text; the demanded side handed over as trees.
-
 
 ## Design, correctness and code quality
 

@@ -162,7 +162,7 @@ public struct AssetCatalogCompiler: Node {
             : result.failureMessage(tool: "actool")
     }
 
-    private static func pending(inputWireSpecs: [String: [String: String]]) -> ProcessOutput {
+    private static func pending(inputWireSpecs: [String: [String: GraphSpecNode]]) -> ProcessOutput {
         let pending = NodeValue.noValue(reason: .pending)
         return .init(outputValues: [output: pending, partialInfoPlist: pending, infoLog: pending, errorLog: pending],
                      inputWireSpecs: inputWireSpecs)

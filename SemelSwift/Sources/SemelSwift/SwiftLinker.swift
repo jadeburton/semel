@@ -167,7 +167,7 @@ struct SwiftLinker: Node {
         let output: NodeValue
         let infoLog: NodeValue
         let fileMetadata: NodeValue
-        let librariesSpecs: [String: String]
+        let librariesSpecs: [String: GraphSpecNode]
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftLinker.output: output,
@@ -187,13 +187,13 @@ struct SwiftLinker: Node {
     /// belong to the compile, and handing them to the linker would be an error rather
     /// than merely noise.  A folder with no archive yields nothing, which is the
     /// "link against the system library" default.
-    private func buildLibrariesSpecs(libraryFolderManifests: [(String, FolderManifest)]) -> [String: String] {
-        var result: [String: String] = [:]
+    private func buildLibrariesSpecs(libraryFolderManifests: [(String, FolderManifest)]) -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
 
         for (_, manifest) in libraryFolderManifests {
             for entry in manifest.entries where entry.isPinned && !entry.isFolder && entry.name.hasSuffix(".a") {
                 let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
-                result[fullPath] = "StaticFile(path: '\(fullPath)').output"
+                result[fullPath] = .staticFile(at: fullPath)
             }
         }
 

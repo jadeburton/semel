@@ -37,7 +37,7 @@ final class AppPreludeTests: XCTestCase {
                                          pattern == "input:/app/Resources/*.xcstrings"
                                              ? ["input:/app/Resources/Localizable.xcstrings"] : []
                                      },
-                                     includeReader: { included[$0] })
+                                     includeReader: { included[$0.asString(omitOutputPort: false)] })
     }
 
     /// `EndToEnd/Fixtures/swift/HelloApp/semel.fmla` before B-108, over the two files B-109

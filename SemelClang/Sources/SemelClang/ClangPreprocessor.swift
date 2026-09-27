@@ -174,8 +174,8 @@ public struct ClangPreprocessor: Node {
         let errorLog: NodeValue
         let infoLog: NodeValue
 
-        let headerInputFilesWireSpecs: [String: String]
-        let includeFileListWireSpecs: [String: String]
+        let headerInputFilesWireSpecs: [String: GraphSpecNode]
+        let includeFileListWireSpecs: [String: GraphSpecNode]
 
         func asProcessOutput() -> ProcessOutput {
             return .init(outputValues: [ClangPreprocessor.output: output,
@@ -223,8 +223,8 @@ public struct ClangPreprocessor: Node {
     }
 
     private func runPreprocessor(inputs: ClangPreprocessorInputs,
-                                 headerInputFilesWireSpecs: [String: String],
-                                 includeFileListWireSpecs: [String: String]) throws -> ClangPreprocessorOutputs {
+                                 headerInputFilesWireSpecs: [String: GraphSpecNode],
+                                 includeFileListWireSpecs: [String: GraphSpecNode]) throws -> ClangPreprocessorOutputs {
 
         let outputFilename = inputs.inputSourceFile.filePath + ".p"
 
@@ -287,13 +287,13 @@ public struct ClangPreprocessor: Node {
         // Folders given: every file in them is a header input, no finder is consulted, and
         // the run waits until all of them are on the wire.
         if !inputs.headerFolderManifests.isEmpty {
-            var folderFileSpecs = [String: String]()
+            var folderFileSpecs = [String: GraphSpecNode]()
             for (_, manifest) in inputs.headerFolderManifests {
                 for entry in manifest.entries where entry.isPinned && !entry.isFolder {
                     let path = (Path(manifest.baseFolderPath) / entry.name).string
                     // The source itself sits in its own folder and is already an input.
                     guard path != inputs.inputSourceFile.filePath else { continue }
-                    folderFileSpecs[path] = "StaticFile(path: '\(path)').output"
+                    folderFileSpecs[path] = .staticFile(at: path)
                 }
             }
             guard inputs.headerFiles.count == folderFileSpecs.count else {
@@ -309,20 +309,23 @@ public struct ClangPreprocessor: Node {
                                        includeFileListWireSpecs: [:])
         }
 
-        var headerInputFilesWireSpecs = [String: String]()
+        var headerInputFilesWireSpecs = [String: GraphSpecNode]()
 
         let setOfIncludeFiles: Set<String> = Set(inputs.includePathLists.flatMap { (_, list) in list })
 
         let aggregatedIncludePathList: [String] = .init(setOfIncludeFiles)
 
         for includePath in aggregatedIncludePathList {
-            headerInputFilesWireSpecs[includePath] = "StaticFile(path: '\(includePath)').output"
+            headerInputFilesWireSpecs[includePath] = .staticFile(at: includePath)
         }
 
-        var includeFileListWireSpecs = [String: String]()
+        var includeFileListWireSpecs = [String: GraphSpecNode]()
 
         for sourcePath in (aggregatedIncludePathList + [inputs.inputSourceFile.filePath]) {
-            includeFileListWireSpecs[sourcePath] = "ClangIncludeFinder(sourceFile: ['\(sourcePath)': StaticFile(path: '\(sourcePath)').output]).includePathList"
+            includeFileListWireSpecs[sourcePath] = GraphSpecNode(
+                ClangIncludeFinder.self,
+                inputs: [ClangIncludeFinder.sourceFileInputPort: [sourcePath: .staticFile(at: sourcePath)]]
+            ).port(ClangIncludeFinder.includePathListOutputPort)
         }
 
         // There must be one ClangIncludeFinder attached to the .c file.

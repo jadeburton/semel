@@ -83,7 +83,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     }
 
     private func externalSpecs(_ output: ProcessOutput) throws -> [String: String] {
-        try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs])
+        try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.externalPackageJSONs]).rendered
     }
 
     /// DatabaseModels' real shape: GRDB arrives as a git URL, not a local path.
@@ -1088,7 +1088,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_waitsForEveryCompilableTargetsFolderBeforeGenerating() throws {
         let output = try convert(json: appOverCLib, supplyTargetFolders: false)
 
-        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]),
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
                        ["input:/pkg/Sources/App": "Folder(path: 'input:/pkg/Sources/App').manifest",
                         "input:/pkg/src":         "Folder(path: 'input:/pkg/src').manifest",
                         "input:/pkg/extensions":  "Folder(path: 'input:/pkg/extensions').manifest"])
@@ -1179,7 +1179,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let manifest  = FolderManifest(baseFolderPath: packageFolder, entries: [])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind,
                                                                        name: nil, properties: ["root": root],
-                                                                       scheduled: false, graphSpec: nil))
+                                                                       scheduled: false, identity: nil))
         return try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder: ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:   ["json":   .value(try json.intern())],

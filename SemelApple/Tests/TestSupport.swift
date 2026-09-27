@@ -103,3 +103,8 @@ final class RecordingToolRunner: ToolRunner {
         return ToolExecuteResult(exitCode: exitCode, resolvedSandboxPath: "/tmp/recording-tool-sandbox")
     }
 }
+
+extension Dictionary where Key == String, Value == GraphSpecNode {
+    /// The trees as the spec text they render to, for assertions written against text.
+    var rendered: [String: String] { mapValues { $0.asString(omitOutputPort: false) } }
+}

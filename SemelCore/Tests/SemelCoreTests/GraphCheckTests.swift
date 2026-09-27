@@ -39,14 +39,12 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// agrees with everything else.
     @discardableResult
     private func makeHealthyGraph() throws -> NodeRecord {
-        let source   = try makeConfiguration(role: "source")
-        let consumer = try makeConfiguration(role: "consumer")
-        try Wire.connectWire(database: database,
-                             fromNodeID:   try source.requireID(),
-                             fromSymbolID: Configuration.outputPort.asSymbolID(),
-                             toNodeID:     try consumer.requireID(),
-                             toSymbolID:   Configuration.inputPort.asSymbolID(),
-                             name:         "link".asSymbolID())
+        // Wired the way the engine wires: through the applier, so the consumer's identity
+        // includes the wire. A static port wired by hand after creation is the one damage
+        // `check` now reports (B-115), and a healthy graph has none.
+        let (consumer, _) = try GraphSpecNode.parse(
+            "Configuration(role: 'consumer', base: ['link': Configuration(role: 'source').output])"
+        ).findOrCreateMatchingNode()
 
         try push("src/hello.c", contents: "int hello(void) { return 0; }")
         try push("src/main.c", contents: "int main(void) { return hello(); }")
@@ -61,6 +59,15 @@ final class GraphCheckTests: SemelCoreTestCase {
     private func makeConfiguration(role: String) throws -> NodeRecord {
         let (node, _) = try GraphSpecNode.parse("Configuration(role: '\(role)')").findOrCreateMatchingNode()
         return node
+    }
+
+    /// Records what a hand-wired node now is. The tests below wire a static port directly
+    /// to stage one particular damage; without this the identity check would also report
+    /// the wiring itself (B-115), which is true and not the finding under test.
+    private func refreshIdentity(of node: NodeRecord) throws {
+        var refreshed = try database.node.select(nodeID: try node.requireID())
+        refreshed.identity = try refreshed.recomputedIdentity(database: database)
+        try database.node.update(refreshed)
     }
 
     /// The sequence a push runs, which is how a file and its folders enter the graph.
@@ -139,6 +146,7 @@ final class GraphCheckTests: SemelCoreTestCase {
                              toNodeID:     try product.requireID(),
                              toSymbolID:   OutputFile.inputPort.asSymbolID(),
                              name:         "link".asSymbolID())
+        try refreshIdentity(of: product)
         try Folder.flushDirtyManifests()
         XCTAssertEqual(GraphCheck.run(database: database).findings, [], "the graph is sound to begin with")
 
@@ -208,6 +216,7 @@ final class GraphCheckTests: SemelCoreTestCase {
                                           toNodeID:     try consumer.requireID(),
                                           toSymbolID:   Configuration.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
+        try refreshIdentity(of: consumer)
 
         let findings = GraphCheck.run(database: database).findings
 
@@ -233,6 +242,7 @@ final class GraphCheckTests: SemelCoreTestCase {
                                           toNodeID:     try consumer.requireID(),
                                           toSymbolID:   Configuration.inputPort.asSymbolID(),
                                           name:         "link".asSymbolID()))
+        try refreshIdentity(of: consumer)
 
         let findings = GraphCheck.run(database: database).findings
 
@@ -260,46 +270,52 @@ final class GraphCheckTests: SemelCoreTestCase {
                        "its type declares the output port 'output', and it holds no row for it")
     }
 
-    // MARK: - A graph spec that cannot be read back, or names a type nobody links
+    // MARK: - An identity that is stale, or a kind nobody links (B-115)
 
-    func test_findsAGraphSpecNamingATypeTheServerDoesNotLink() throws {
+    func test_findsANodeWhoseKindTheServerDoesNotLink() throws {
         var node = try makeConfiguration(role: "source")
-        node.graphSpec = "NoSuchType(role: 'source')"
+        node.kind = 999_999
         try database.node.update(node)
 
-        let findings = GraphCheck.run(database: database).findings
+        let findings = GraphCheck.run(database: database).findings.filter { $0.kind == .unlinkedNodeType }
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
-        XCTAssertEqual(findings.first?.kind, .unlinkedNodeType)
-        XCTAssertEqual(findings.first?.sentence,
-                       "its graph spec names the type 'NoSuchType', which this server does not link")
+        XCTAssertEqual(findings.first?.sentence, "its kind 999999 is a type this server does not link")
     }
 
-    /// The column is nullable only because a row exists for a moment before its spec is
-    /// patched in. A NULL that survives is a node the matcher can never reach again, which
-    /// is the same defect as a spec that will not parse.
-    func test_findsANodeWithNoGraphSpecAtAll() throws {
+    /// The column is nullable only for the moment between a row's insert and its update.
+    /// A NULL that survives is a node the matcher can never reach again.
+    func test_findsANodeWithNoIdentityAtAll() throws {
         var node = try makeConfiguration(role: "source")
-        node.graphSpec = nil
+        node.identity = nil
         try database.node.update(node)
 
         let findings = GraphCheck.run(database: database).findings
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
-        XCTAssertEqual(findings.first?.kind, .unreadableGraphSpec)
-        XCTAssertEqual(findings.first?.sentence, "it has no graph spec, so nothing can match it again")
+        XCTAssertEqual(findings.first?.kind, .staleIdentity)
+        XCTAssertEqual(findings.first?.sentence, "it has no identity, so nothing can match it again")
     }
 
-    func test_findsAGraphSpecThatCannotBeReadBack() throws {
-        var node = try makeConfiguration(role: "source")
-        node.graphSpec = "Configuration(role: 'source'"
-        try database.node.update(node)
+    /// The identity is a function of the row and its wires, so `check` can recompute it and
+    /// compare: a stored value that no longer matches is a node whose wiring was changed
+    /// behind the applier's back, and the next demand for it makes a second node.
+    func test_findsANodeWhoseStaticInputWasRewiredBehindItsIdentity() throws {
+        let spec = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
+        let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
+        let wire = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(), toSymbolID: "base".asSymbolID()).first)
+        try wire.deleteWire(database: database)
+        let (second, _) = try GraphSpecNode.parse("Configuration(role: 'second').output").findOrCreateMatchingNode()
+        try Wire.connectWire(database: database,
+                             fromNodeID: try second.requireID(), fromSymbolID: "output".asSymbolID(),
+                             toNodeID: try consumer.requireID(), toSymbolID: "base".asSymbolID(),
+                             name: "w".asSymbolID())
 
-        let findings = GraphCheck.run(database: database).findings
+        let findings = GraphCheck.run(database: database).findings.filter { $0.kind == .staleIdentity }
 
         XCTAssertEqual(findings.count, 1, "\(findings)")
-        XCTAssertEqual(findings.first?.kind, .unreadableGraphSpec)
-        XCTAssertTrue(findings.first?.sentence.hasPrefix("its graph spec cannot be read back — ") == true,
+        XCTAssertEqual(findings.first?.subject, "Configuration #\(try consumer.requireID())")
+        XCTAssertTrue(findings.first?.sentence.hasPrefix("its identity is \(NodeIdentity.shown(try XCTUnwrap(consumer.identity)))… but its row and wires give ") == true,
                       "\(findings)")
     }
 

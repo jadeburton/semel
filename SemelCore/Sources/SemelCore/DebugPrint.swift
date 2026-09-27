@@ -221,12 +221,9 @@ extension BuildEngine {
                 text.append("  name: '\(name)'")
             }
 
-            if let graphSpec = nodeRecord.graphSpec {
-                let graphSpecNode = try GraphSpecNode.parse(graphSpec)
-                text.append("  graphSpec:\n\(graphSpecNode.asString(pretty: true, omitOutputPort: true))\n")
-            } else {
-                text.append("  graphSpec: nil")
-            }
+            // Eight characters (B-115): enough to tell nodes apart in a dump; the wire
+            // lines below name each source by the same prefix.
+            text.append("  identity: \(nodeRecord.identity.map(NodeIdentity.shown) ?? "nil")")
 
             if let parentNodeID = nodeRecord.parentNodeID {
                 text.append("  parent: \(nodeByID[parentNodeID]?.name ?? "?") #\(parentNodeID)")
@@ -249,7 +246,8 @@ extension BuildEngine {
                         text.append("    · \(inputPort)\(dynamic)  — no wires")
                     } else {
                         for wire in wires {
-                            let fromNode = nodeByID[wire.fromNodeID]?.name ?? "?"
+                            let source = nodeByID[wire.fromNodeID]
+                            let fromNode = "\(source?.name ?? "?") [\(source?.identity.map(NodeIdentity.shown) ?? "?")]"
                             let fromPort = portName(wire.fromSymbolID)
                             let outputPort = outputPortRows(of: wire.fromNodeID)
                                 .first { $0.nameSymbolID == wire.fromSymbolID }

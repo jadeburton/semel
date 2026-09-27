@@ -48,8 +48,9 @@ public enum ProtocolVersion {
     /// carries `debug`'s text in the frame body; version 1 carried it in the reply's JSON. A
     /// peer speaking an older one decodes such a reply as an empty answer and prints
     /// nothing, which is why the mismatch is worth a rejection naming both.
+    /// Version 15 renames the check finding `unreadableGraphSpec` to `staleIdentity` (B-115).
     /// Version 14 adds the `collect` request and its `collected` reply (B-14).
-    public static let current = 14
+    public static let current = 15
 }
 
 public struct Hello: Codable, Equatable, Sendable {

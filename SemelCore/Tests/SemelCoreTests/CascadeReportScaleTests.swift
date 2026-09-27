@@ -122,7 +122,7 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
     private func buildCascade(consumers: Int, database: DatabaseLayer) throws {
         let source = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
                                                properties: ["path": "input:/shared.h"],
-                                               graphSpec: nil).requireID()
+                                               identity: nil).requireID()
         let sink = try makeConsumer(tag: "sink", database: database)
 
         var carriers = [sink]
@@ -145,7 +145,7 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
 
     private func makeConsumer(tag: String, database: DatabaseLayer) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                  properties: ["tag": tag], graphSpec: nil).requireID()
+                                  properties: ["tag": tag], identity: nil).requireID()
     }
 
     /// The row, inserted rather than demanded through `Wire.connectWire`.

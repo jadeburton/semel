@@ -112,7 +112,7 @@ public struct CheckFinding: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Equatable, Sendable {
         case danglingWire
         case missingOutputPort
-        case unreadableGraphSpec
+        case staleIdentity
         case unlinkedNodeType
         case productWithNoProducer
         case missingManifestChild

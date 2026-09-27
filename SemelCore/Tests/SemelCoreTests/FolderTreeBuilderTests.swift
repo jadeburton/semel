@@ -22,7 +22,7 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
                          files: [String: NodeValue] = [:]) throws -> ProcessOutput {
         let node = try FolderTreeBuilder(thisNode: NodeRecord(id: 1, kind: FolderTreeBuilder.kind, name: nil,
                                                               properties: under.map { ["under": $0] } ?? [:],
-                                                              scheduled: false, graphSpec: nil))
+                                                              scheduled: false, identity: nil))
         return try node.process(input: ProcessInput(inputValues: [
             FolderTreeBuilder.folderPort: ["folder": try manifest("input:/pkg/include", files: ["module.modulemap"], folders: ["nested"])],
             FolderTreeBuilder.subfoldersPort: subfolders,
