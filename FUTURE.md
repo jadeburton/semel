@@ -518,6 +518,29 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
 2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 
+**B-123** `open` — **A for-each that says `except`.**
+The for-each takes literal paths and wildcard patterns and nothing else, so "every `.c`
+in this folder except the mains and the tests" can only be said by enumeration. Lua's
+formula (`EndToEnd/Fixtures/external/lua/lua.fmla`, B-79) names its 32 library sources
+one by one to leave out `lua.c`, `onelua.c` and `ltests.c` — faithful to Lua's own
+makefile, which lists every object too, but every hand-written C formula will meet the
+same case: fmt and simdjson keep tests and benchmarks beside the library, and a `test_*.c`
+convention wants a negative pattern, not a positive list. Enumeration also fails
+quietly the other way: a file added upstream is not compiled, where a glob would have
+picked it up and a second main would have failed at link time, out loud.
+
+Wanted: an `except` clause on the item list, taking the same literal-or-pattern items,
+subtracted after wildcard expansion:
+
+    {f: <*.c> except <lua.c>, <onelua.c>, <ltests.c>} "%%f%%.o": clang.compiled(file: f, settings: settings())
+
+`forEachPrefix = '{' IDENT ':' items ('except' items)? '}'` in `FormulaParser`; the
+resolver expands both lists through its `wildcardExpander` and removes the second set
+from the first; a subtraction that leaves nothing is an error, as an empty item list is
+(`forEachRequiresAtLeastOneItem`).
+The enumerated form stays valid for the author who wants the makefile's exactness. The
+Lua formula is rewritten with it in the same change, so the roster exercises it.
+
 ### Configuration
 
 **B-109** `open` — **Configuration: the machine's half and the project's half — residuals.**
