@@ -59,6 +59,44 @@ public final class CommandInterpreter: CommandContext {
         set { errorsLock.withLock { printsErrorEventsStorage = newValue } }
     }
 
+    /// The totals of the settles a `build` has seen so far, held rather than printed while
+    /// the build runs: a settle the follow loop answers by pushing what it named would
+    /// otherwise print a failing line just before the push that fixes it (B-110). The
+    /// build prints one line at its end — the work summed over its settles, the errors of
+    /// the last, which is the verdict. Nil when no build is holding. Under `errorsLock`:
+    /// events arrive on the connection's thread.
+    private var heldSettleStorage: (scheduled: Int, computed: Int, fromCache: Int, errors: Int)?
+
+    /// Starts holding settle summaries, with nothing held yet.
+    private func holdSettleSummaries() {
+        errorsLock.withLock { heldSettleStorage = (0, 0, 0, 0) }
+    }
+
+    /// Stops holding, and returns the one line the held settles come to, if any did work.
+    private func releaseSettleSummaries() -> String? {
+        let held = errorsLock.withLock { () -> (scheduled: Int, computed: Int, fromCache: Int, errors: Int)? in
+            defer { heldSettleStorage = nil }
+            return heldSettleStorage
+        }
+        guard let held else {
+            return nil
+        }
+        return SettleSummaryRenderer.line(scheduled: held.scheduled, computed: held.computed,
+                                          fromCache: held.fromCache, errors: held.errors)
+    }
+
+    /// Adds one settle to what a build holds, and says whether it was held.
+    private func holdSettle(scheduled: Int, computed: Int, fromCache: Int, errors: Int) -> Bool {
+        errorsLock.withLock {
+            guard let held = heldSettleStorage else {
+                return false
+            }
+            heldSettleStorage = (held.scheduled + scheduled, held.computed + computed,
+                                 held.fromCache + fromCache, errors)
+            return true
+        }
+    }
+
     /// Forgets what was counted since `count`: a settle report the follow loop answers by
     /// pushing what it named is not this build's verdict, the settle after it is.
     private func resetErrorsReported(to count: Int) {
@@ -158,6 +196,9 @@ public final class CommandInterpreter: CommandContext {
         case .daemon(.notice(let line)):
             outputMessage(line)
         case .daemon(.settled(let scheduled, let computed, let fromCache, let errors)):
+            guard !holdSettle(scheduled: scheduled, computed: computed, fromCache: fromCache, errors: errors) else {
+                return
+            }
             guard let line = SettleSummaryRenderer.line(scheduled: scheduled,
                                                         computed:  computed,
                                                         fromCache: fromCache,
@@ -255,11 +296,16 @@ public final class CommandInterpreter: CommandContext {
             let errorsBefore = errorsReported
             printsErrorEvents = false
             defer { printsErrorEvents = true }
+            holdSettleSummaries()
+            defer { _ = releaseSettleSummaries() }
             try run("push \(folder)")
             let errorsBeforeSettle = errorsReported
             try run("wait")
             if follows {
                 try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
+            }
+            if let summary = releaseSettleSummaries() {
+                outputMessage(summary)
             }
             try run("errors")
             let exportFolder = destination

@@ -29,7 +29,7 @@ What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C 
 (2026-09-23); the engine-side report these lean on is the settle-time artifact diff, which
 the `artifacts` event carries.
 
-**B-110** `open` — **Clone and build: `semel build` is one command — residuals.**
+**B-110** `open` `For Fable Only` — **Clone and build: `semel build` is one command — residuals.**
 Done 2026-09-26 (design and "As built":
 `docs/superpowers/specs/2026-09-26-semel-clone-and-build-design.md`): `semel` starts the
 engine it finds missing and `semel stop` ends it; `build` follows the formula's inputs
@@ -49,9 +49,11 @@ a C-family target; `help`, and a typo names its nearest verb. What remains:
    reported missing; a `semel.machine.config` beside the folder that is rewritten after a
    toolchain change is the user's to `push`. Following the inputs the graph already holds
    outside the folder would close it.
-3. **The first settle's summary line prints before the follow answers it:**
-   `❌ 18 nodes scheduled, …, 25 errors` and then the push that fixes it. True, and noise;
-   holding the summary of a settle the loop answers is the fix.
+
+Both are design rather than mechanics. The first needs a node's error to carry a path the
+build can push — a new `NoValueReason` case, persisted and versioned, against deriving the
+path when the report is built or having the client infer the package folder. The second
+needs a decision on how far `build` reaches unasked into sources outside the folder.
 
 ## Performance
 
