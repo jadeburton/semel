@@ -32,15 +32,15 @@ public enum FolderTreeWalk {
     /// ghosts — deleted, or never pushed — and wiring one would resurrect a folder the
     /// user removed.
     public static func subfolderSpecs(of manifests: [FolderManifest],
-                                      include: (String) -> Bool = { _ in true }) -> [String: String] {
-        var result: [String: String] = [:]
+                                      include: (String) -> Bool = { _ in true }) -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
         for manifest in manifests {
             for entry in manifest.entries where entry.isFolder && entry.isPinned {
                 let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
                 guard include(fullPath) else {
                     continue
                 }
-                result[fullPath] = "Folder(path: '\(fullPath)').manifest"
+                result[fullPath] = .folderManifest(at: fullPath)
             }
         }
         return result
@@ -49,15 +49,15 @@ public enum FolderTreeWalk {
     /// One `StaticFile(...).output` spec per pinned file of `manifests`, keyed by the
     /// file's full path, for the files `include` accepts.
     public static func fileSpecs(of manifests: [FolderManifest],
-                                 include: (String) -> Bool = { _ in true }) -> [String: String] {
-        var result: [String: String] = [:]
+                                 include: (String) -> Bool = { _ in true }) -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
         for manifest in manifests {
             for entry in manifest.entries where !entry.isFolder && entry.isPinned {
                 let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
                 guard include(fullPath) else {
                     continue
                 }
-                result[fullPath] = "StaticFile(path: '\(fullPath)').output"
+                result[fullPath] = .staticFile(at: fullPath)
             }
         }
         return result

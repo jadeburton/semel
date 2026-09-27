@@ -495,7 +495,7 @@ final class FormulaParserTests: SemelCoreTestCase {
     private func parse(_ text: String, included: [String: String]) throws -> [String: GraphSpecNode] {
         try FormulaFile.parse(text, basePath: Path("input:/repo"),
                               wildcardExpander: { _ in [] },
-                              includeReader: { included[$0] })
+                              includeReader: { included[$0.asString(omitOutputPort: false)] })
     }
 
     func test_anIncludedFormulasProductsBecomeTheFormulasProducts() throws {
@@ -530,7 +530,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             include text(p: <Sub/formula.txt>)
             """, basePath: Path("input:/repo"),
             wildcardExpander: { _ in [] },
-            includeReader: { asked.append($0); return nil })
+            includeReader: { asked.append($0.asString(omitOutputPort: false)); return nil })
 
         XCTAssertEqual(asked, ["StaticFile(path: 'input:/repo/Sub/formula.txt').output"])
     }
@@ -632,7 +632,7 @@ final class FormulaParserTests: SemelCoreTestCase {
             include funcs(p: <Sub/formula.txt>)
             """, basePath: Path("input:/repo"),
             wildcardExpander: { _ in [] },
-            includeReader: { asked.append($0); return nil })
+            includeReader: { asked.append($0.asString(omitOutputPort: false)); return nil })
 
         XCTAssertEqual(asked, ["StaticFile(path: 'input:/repo/Sub/formula.txt').output"])
     }
@@ -641,7 +641,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         var asked: [String] = []
         _ = try FormulaFile.parse("include funcs 'clang'", basePath: Path("input:/repo"),
                                   wildcardExpander: { _ in [] },
-                                  includeReader: { asked.append($0); return nil })
+                                  includeReader: { asked.append($0.asString(omitOutputPort: false)); return nil })
 
         XCTAssertEqual(asked, [clangPrelude])
     }
@@ -656,7 +656,7 @@ final class FormulaParserTests: SemelCoreTestCase {
         var asked: [String] = []
         _ = try FormulaFile.parse("include 'clang'", basePath: Path("input:/repo"),
                                   wildcardExpander: { _ in [] },
-                                  includeReader: { asked.append($0); return nil })
+                                  includeReader: { asked.append($0.asString(omitOutputPort: false)); return nil })
 
         XCTAssertEqual(asked, [clangPrelude])
     }

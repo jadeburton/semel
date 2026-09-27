@@ -290,9 +290,9 @@ struct SwiftCompiler: Node {
         let outputModule:    NodeValue
         let outputInterface: NodeValue
         let infoLog:         NodeValue
-        let inputSourceFilesSpecs:    [String: String]
-        let inputSubfoldersSpecs:     [String: String]
-        let inputModuleMapFilesSpecs: [String: String]
+        let inputSourceFilesSpecs:    [String: GraphSpecNode]
+        let inputSubfoldersSpecs:     [String: GraphSpecNode]
+        let inputModuleMapFilesSpecs: [String: GraphSpecNode]
 
         func asProcessOutput() -> ProcessOutput {
             .init(outputValues: [SwiftCompiler.outputObject:    outputObject,
@@ -315,21 +315,21 @@ struct SwiftCompiler: Node {
 
     /// Generates dynamic wire specs for all files inside each system-library
     /// folder manifest.  Wire key format: "<sandboxDirName>/<filename>".
-    private func buildInputModuleMapFilesSpecs(moduleMapFolderManifests: [(String, FolderManifest)]) -> [String: String] {
-        var result: [String: String] = [:]
+    private func buildInputModuleMapFilesSpecs(moduleMapFolderManifests: [(String, FolderManifest)]) -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
         for (dirName, manifest) in moduleMapFolderManifests {
             for entry in manifest.entries where entry.isPinned && !entry.isFolder {
                 let wireKey = Path(dirName) / entry.name
-                result[wireKey.string] = "StaticFile(path: \"\(Path(manifest.baseFolderPath) / entry.name)\").output"
+                result[wireKey.string] = .staticFile(at: (Path(manifest.baseFolderPath) / entry.name).string)
             }
         }
         return result
     }
 
     private func compile(inputs: SwiftCompilerInputs,
-                         inputSourceFilesSpecs: [String: String],
-                         inputSubfoldersSpecs: [String: String],
-                         inputModuleMapFilesSpecs: [String: String]) throws -> SwiftCompilerOutputs {
+                         inputSourceFilesSpecs: [String: GraphSpecNode],
+                         inputSubfoldersSpecs: [String: GraphSpecNode],
+                         inputModuleMapFilesSpecs: [String: GraphSpecNode]) throws -> SwiftCompilerOutputs {
 
         guard !inputs.sourceFiles.isEmpty else {
             let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "SwiftCompiler: no source files".intern()))

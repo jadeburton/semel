@@ -38,7 +38,7 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     /// for.
     private func makeNode(_ role: String) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: Configuration.kind,
-                                  properties: ["role": role], graphSpec: nil).requireID()
+                                  properties: ["role": role], identity: nil).requireID()
     }
 
     private func connect(_ from: ObjectID, to consumer: ObjectID, name: String) throws {

@@ -57,7 +57,7 @@ final class FileSystemRootCacheTests: SemelCoreTestCase {
         let impostor = try NodeRecord.createNode(database: engine.database,
                                            kind: Configuration.kind,
                                            properties: ["path": "input:"],
-                                           graphSpec: "Configuration(path: 'input:')")
+                                           identity: "Configuration(path: 'input:')")
 
         let resolved = try Folder.inputFileSystem
 

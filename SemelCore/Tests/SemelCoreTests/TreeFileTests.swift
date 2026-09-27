@@ -18,7 +18,7 @@ final class TreeFileTests: SemelCoreTestCase {
 
     private func process(name: String, tree: NodeValue) throws -> ProcessOutput {
         let node = NodeRecord(id: 1, kind: TreeFile.kind, name: nil,
-                              properties: [TreeFile.nameProperty: name], scheduled: false, graphSpec: nil)
+                              properties: [TreeFile.nameProperty: name], scheduled: false, identity: nil)
         return try TreeFile(thisNode: node).process(input: ProcessInput(inputValues: [
             TreeFile.treeInputPort: ["tree": tree],
         ]))

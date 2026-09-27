@@ -22,14 +22,14 @@ final class ProjectDiscoveryTests: XCTestCase {
     }
 
     private struct AlphaPlugin: ProjectBuilderPlugin {
-        func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
-            entry.name == "alpha" ? "Alpha" : nil
+        func spec(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> GraphSpecNode? {
+            entry.name == "alpha" ? GraphSpecNode(typeName: "Alpha") : nil
         }
     }
 
     private struct ZuluPlugin: ProjectBuilderPlugin {
-        func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
-            entry.name == "zulu" ? "Zulu" : nil
+        func spec(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> GraphSpecNode? {
+            entry.name == "zulu" ? GraphSpecNode(typeName: "Zulu") : nil
         }
     }
 
@@ -41,16 +41,16 @@ final class ProjectDiscoveryTests: XCTestCase {
         ProjectDiscovery.register(AlphaPlugin())
 
         let claimed = ProjectDiscovery.plugins.compactMap {
-            $0.specString(forEntry: entry("alpha"), inFolder: "input:/x")
+            $0.spec(forEntry: entry("alpha"), inFolder: "input:/x")
         }
-        XCTAssertEqual(claimed, ["Alpha"])
+        XCTAssertEqual(claimed.map(\.typeName), ["Alpha"])
     }
 
     func test_anUnclaimedEntryProducesNothing() {
         ProjectDiscovery.register(AlphaPlugin())
 
         XCTAssertTrue(ProjectDiscovery.plugins.allSatisfy {
-            $0.specString(forEntry: entry("something else"), inFolder: "input:/x") == nil
+            $0.spec(forEntry: entry("something else"), inFolder: "input:/x") == nil
         })
     }
 

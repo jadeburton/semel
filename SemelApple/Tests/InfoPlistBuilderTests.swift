@@ -20,7 +20,7 @@ final class InfoPlistBuilderTests: SemelAppleTestCase {
                          base: NodeValue? = nil,
                          partials: [String: NodeValue] = [:]) throws -> [String: Any] {
         let node = try InfoPlistBuilder(thisNode: NodeRecord(id: 1, kind: InfoPlistBuilder.kind, name: nil,
-                                                             properties: properties, scheduled: false, graphSpec: nil))
+                                                             properties: properties, scheduled: false, identity: nil))
         var inputs: [String: [String: NodeValue]] = [InfoPlistBuilder.partials: partials]
         if let base {
             inputs[InfoPlistBuilder.base] = ["input:/app/Info.plist": base]

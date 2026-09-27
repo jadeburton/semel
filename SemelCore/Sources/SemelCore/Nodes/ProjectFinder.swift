@@ -8,14 +8,16 @@ import SemelNodeKit
 // MARK: - Project kinds
 
 struct FormulaFilePlugin: ProjectBuilderPlugin {
-    func specString(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> String? {
+    func spec(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> GraphSpecNode? {
         guard entry.isPinned, entry.name.hasSuffix(".fmla") else {
             return nil
         }
         let fullPath = (Path(folderPath) / entry.name).string
         // The .fmla file sits *in* the project's directory, so products go beside it.
-        return "ProjectBuilder(outputFolder: '\(folderPath)', projectFile: [\"\(fullPath)\": StaticFile(path: \"\(fullPath)\").output]).status"
-            .replacingOccurrences(of: "\\'", with: "'")
+        return GraphSpecNode(ProjectBuilder.self,
+                             properties: [ProjectBuilder.outputFolderProperty: folderPath],
+                             inputs: [ProjectBuilder.projectFileInputPort: [fullPath: .staticFile(at: fullPath)]])
+            .port(ProjectBuilder.statusOutputPort)
     }
 }
 
@@ -51,14 +53,14 @@ public struct ProjectFinder: Node {
         false
     }
 
-    private func buildProjectBuildersSpecsFromFolderManifest(folderManifests: [(String, FolderManifest)]) throws -> [String: String] {
-        var result: [String: String] = [:]
+    private func buildProjectBuildersSpecsFromFolderManifest(folderManifests: [(String, FolderManifest)]) throws -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
 
         for (folderPath, folderManifest) in folderManifests {
             for entry in folderManifest.entries {
                 let fullPath = (Path(folderPath) / entry.name).string
                 for plugin in ProjectDiscovery.plugins {
-                    if let spec = plugin.specString(forEntry: entry, inFolder: folderPath) {
+                    if let spec = plugin.spec(forEntry: entry, inFolder: folderPath) {
                         result[fullPath] = spec
                         break
                     }
@@ -70,7 +72,7 @@ public struct ProjectFinder: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        var projectBuildersSpecs = [String: String]()
+        var projectBuildersSpecs = [String: GraphSpecNode]()
 
         let allWatchedFolderManifests = input.inputValues[Self.watchedFolderManifestInputPort]
 
@@ -112,14 +114,14 @@ public struct ProjectFinder: Node {
 
         projectBuildersSpecs = try buildProjectBuildersSpecsFromFolderManifest(folderManifests: allFolderManifests)
 
-        var watchedFolderSpecs = [String: String]()
+        var watchedFolderSpecs = [String: GraphSpecNode]()
 
         for watchedPath in watchedPaths {
-            watchedFolderSpecs[watchedPath] = "Folder(path: '\(watchedPath)').manifest"
+            watchedFolderSpecs[watchedPath] = .folderManifest(at: watchedPath)
         }
 
         return .init(outputValues: [:],
-                     inputWireSpecs: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: "Folder(path: 'input:').manifest"],
+                     inputWireSpecs: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: .folderManifest(at: Folder.inputFileSystemName)],
                                              Self.watchedFolderManifestInputPort: watchedFolderSpecs,
                                              Self.projectBuildersInputPort: projectBuildersSpecs])
     }

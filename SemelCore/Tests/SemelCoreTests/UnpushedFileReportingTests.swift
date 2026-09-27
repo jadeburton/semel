@@ -54,7 +54,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// A node that insists on its input's value, the way a tool reads the files it compiles.
     private func makeDemanding(tag: String) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
-                                  properties: ["tag": tag], graphSpec: nil).requireID()
+                                  properties: ["tag": tag], identity: nil).requireID()
     }
 
     private func connect(_ from: ObjectID, to: ObjectID, name: String,
@@ -220,7 +220,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         let override = try makeUnpushedFile(path: "input:/override.cfg")
         let base     = try makeUnpushedFile(path: "input:/base.cfg")
         let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], graphSpec: nil).requireID()
+                                               properties: [:], identity: nil).requireID()
 
         try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
         try connect(override, to: merger, name: "override", toPort: ConfigMerger.overridePort)
@@ -239,7 +239,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         let override = try makeUnpushedFile(path: "input:/override.cfg")
         let base     = try makeUnpushedFile(path: "input:/base.cfg")
         let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], graphSpec: nil).requireID()
+                                               properties: [:], identity: nil).requireID()
 
         try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
         try connect(override, to: merger, name: "override", toPort: ConfigMerger.overridePort)
@@ -260,7 +260,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         let file = try makeUnpushedFile(path: "input:/clang.cfg")
         let filter = try NodeRecord.createNode(database: database, kind: ConfigFilter.kind,
                                                properties: [ConfigFilter.prefixProperty: "clang.compiler"],
-                                               graphSpec: nil).requireID()
+                                               identity: nil).requireID()
 
         try connect(file, to: filter, name: "config", toPort: ConfigFilter.inputPort)
         try run(filter)
@@ -283,7 +283,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
         let file = try makeUnpushedFile(path: "input:/override.cfg")
         let base = try makeUnpushedFile(path: "input:/base.cfg")
         let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], graphSpec: nil).requireID()
+                                               properties: [:], identity: nil).requireID()
         let tool = try makeDemanding(tag: "tool")
 
         try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)

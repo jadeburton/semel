@@ -64,14 +64,17 @@ extension NodeRecord {
         }
     }
 
-    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], graphSpec: String?) throws -> NodeRecord {
+    /// `identity` is the node's, computed by the applier from the tree it is creating;
+    /// a caller creating a node outside any tree — a file-system root, a test — passes
+    /// nil and gets the identity of the node as it stands, which has no wires yet.
+    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], identity: String?) throws -> NodeRecord {
 
         var nodeRecord = NodeRecord(parentNodeID: nil,
                                     kind: kind,
                                     name: nil,
                                     properties: properties,
                                     scheduled: false,
-                                    graphSpec: graphSpec)
+                                    identity: identity)
 
         nodeRecord.id = try database.node.insert(nodeRecord)
 
@@ -127,18 +130,13 @@ extension NodeRecord {
             try nodeRecord.setScheduled(true)
         }
 
-        if graphSpec == nil {
-            do {
-                nodeRecord.graphSpec = try GraphSpecNode.buildFromNode(database: database, nodeID: (try nodeRecord.requireID())).asString(omitOutputPort: true)
-            } catch {
-                Debug.warn("failed to patch in graphSpec (\(error)) — a duplicate node? graphSpec = \(nodeRecord.graphSpec ?? "(null)")")
-                throw error
-            }
+        if identity == nil {
+            nodeRecord.identity = try nodeRecord.recomputedIdentity(database: database)
         }
 
         try database.node.update(nodeRecord)
 
-        assert(nodeRecord.graphSpec != nil)
+        assert(nodeRecord.identity != nil)
 
         try node.notifyParentThisChildAdded()
 
@@ -202,7 +200,7 @@ extension NodeRecord {
                 assert(!pathSoFar.string.hasSuffix("/"))
                 assert(!pathSoFar.string.hasPrefix("/"))
 
-                let specNode = try GraphSpecNode.parse("Folder(path: '\(pathSoFar.string)')")
+                let specNode = GraphSpecNode(Folder.self, properties: [Folder.pathProperty: pathSoFar.string])
                 let (fromNode, _) = try specNode.findOrCreateMatchingNode()
                 var newFolder = fromNode
                 newFolder.parentNodeID = (try currentFolder.requireID())

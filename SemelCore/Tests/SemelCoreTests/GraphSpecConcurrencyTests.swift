@@ -7,7 +7,7 @@
 //  here under real threads rather than reasoned about.
 //
 //  The create half has a recorded history: doing the find outside a transaction and then
-//  inserting is what produced "UNIQUE constraint failed: Node.graphSpec", because two tasks
+//  inserting is what produced "UNIQUE constraint failed: Node.identity", because two tasks
 //  both saw nil and both inserted. The read added in front must not bring that back.
 //
 

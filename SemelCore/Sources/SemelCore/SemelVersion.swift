@@ -51,11 +51,16 @@ public enum Semel {
     /// port name is in every `Configuration` node's spec, so the rename changes the
     /// identity of each one and of everything wired below it.
     ///
+    /// 0.1.8: a node's identity is a hash one level deep — its kind, its properties and
+    /// the identities on its static ports' wires — stored in `Node.identity` in place of
+    /// the spec text `Node.graphSpec` held (B-115). A column with another meaning, so a
+    /// stored graph is rebuilt; the cache is keyed on values, not specs, and survives.
+    ///
     /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
     /// a schema change usually stops the launch — but this one is derived state that
     /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.7"
+    public static let version = "0.1.8"
 }

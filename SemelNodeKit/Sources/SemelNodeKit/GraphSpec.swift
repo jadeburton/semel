@@ -1,6 +1,6 @@
 //
 //  GraphSpec.swift
-//  semel
+//  SemelNodeKit
 //
 //  Pure model, serialisation, topology comparison, and parser for graph specs.
 //  No database or live-graph access — see GraphSpecApplier.swift for that.
@@ -23,7 +23,7 @@
 //
 //  The trailing `.outputPort` suffix is optional:
 //    • Present  → wire-endpoint form, used in spec strings
-//    • Absent   → node-identity form, stored in Node.graphSpec
+//    • Absent   → node-identity form, the tree a node's identity is the hash of
 //
 //
 //  Examples:
@@ -37,7 +37,7 @@
 //
 
 import Foundation
-import SemelNodeKit
+
 
 // MARK: - Model
 
@@ -46,43 +46,63 @@ import SemelNodeKit
 ///
 /// Called a property, not an argument, because that is what a node calls it: these are
 /// exactly a node's `properties`, rendered into a spec.
-struct GraphSpecProperty: Equatable, Hashable {
-    let key: String
-    let value: String
+public struct GraphSpecProperty: Equatable, Hashable, Codable {
+    public let key: String
+    public let value: String
+
+    public init(key: String, value: String) {
+        self.key = key
+        self.value = value
+    }
 }
 
 /// A single named wire feeding an input port.
-struct GraphSpecWire: Equatable {
-    let name: String          // wire name, e.g. "src/hello.c"
-    let node: GraphSpecNode  // the upstream node
+public struct GraphSpecWire: Equatable, Codable {
+    public let name: String          // wire name, e.g. "src/hello.c"
+    public let node: GraphSpecNode  // the upstream node
+
+    public init(name: String, node: GraphSpecNode) {
+        self.name = name
+        self.node = node
+    }
 }
 
 /// A wired input port.  `wires` holds all named wires feeding this port.
-struct GraphSpecInputPort: Equatable {
-    let portName: String
-    let wires:    [GraphSpecWire]
+public struct GraphSpecInputPort: Equatable, Codable {
+    public let portName: String
+    public let wires:    [GraphSpecWire]
+
+    public init(portName: String, wires: [GraphSpecWire]) {
+        self.portName = portName
+        self.wires = wires
+    }
 }
 
 /// An expected output port entry (future use — parsed but not yet matched).
-struct GraphSpecOutputPort: Equatable {
-    let portName: String
-    let wires:    [GraphSpecWire]
+public struct GraphSpecOutputPort: Equatable, Codable {
+    public let portName: String
+    public let wires:    [GraphSpecWire]
+
+    public init(portName: String, wires: [GraphSpecWire]) {
+        self.portName = portName
+        self.wires = wires
+    }
 }
 
 /// A node in the graph-spec tree.
-public struct GraphSpecNode: Equatable {
+public struct GraphSpecNode: Equatable, Codable {
     /// Swift type name of the Node, e.g. `"StaticFile"`, `"ClangCompiler"`.
-    let typeName:   String
+    public let typeName:   String
     /// Init-time key-value properties (e.g. `path: 'src/hello.c'`).  Ordered.
-    let properties: [GraphSpecProperty]
+    public let properties: [GraphSpecProperty]
     /// Wired input ports.  Ordered.
-    let inputs:     [GraphSpecInputPort]
+    public let inputs:     [GraphSpecInputPort]
     /// Expected output ports (future use — stored but not yet matched).
-    let outputs:    [GraphSpecOutputPort]
-    /// Output port consumed downstream, or `nil` for the node-identity / graphSpec form.
-    let outputPort: String?
+    public let outputs:    [GraphSpecOutputPort]
+    /// Output port consumed downstream, or `nil` for the node-identity form.
+    public let outputPort: String?
 
-    init(typeName:   String,
+    public init(typeName:   String,
          properties: [GraphSpecProperty]   = [],
          inputs:     [GraphSpecInputPort]  = [],
          outputs:    [GraphSpecOutputPort] = [],
@@ -101,7 +121,7 @@ extension GraphSpecNode {
     /// A node that already carries `key` keeps its own value: what a formula states wins
     /// over what a builder would stamp. `outputs` is not walked, so a node reachable only
     /// through an output wire is not stamped — nothing matches against it yet.
-    func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
+    public func adding(property key: String, value: String, where include: (GraphSpecNode) -> Bool) -> GraphSpecNode {
         var properties = self.properties
         if include(self), !properties.contains(where: { $0.key == key }) {
             properties.append(GraphSpecProperty(key: key, value: value))
@@ -118,21 +138,13 @@ extension GraphSpecNode {
 
 extension GraphSpecNode {
 
-    /// Whether a stored spec names only node types this Semel links, at every depth — the
-    /// question a reader of stored spec text has to ask before acting on it, since the text
-    /// outlives the Semel that wrote it. A spec that does not parse answers false: it
-    /// cannot be applied either.
+    /// Whether a stored tree names only node types this Semel links, at every depth — the
+    /// question a reader of a stored tree has to ask before acting on it, since a cache
+    /// entry outlives the Semel that wrote it.
     ///
     /// `outputs` is not walked, for the same reason `adding(property:)` does not: nothing
     /// is matched or created through an output wire.
-    static func namesOnlyRegisteredTypes(spec: String) -> Bool {
-        guard let specNode = try? parse(spec) else {
-            return false
-        }
-        return specNode.namesOnlyRegisteredTypes()
-    }
-
-    private func namesOnlyRegisteredTypes() -> Bool {
+    public func namesOnlyRegisteredTypes() -> Bool {
         guard (try? TypeRegistry.kind(forTypeName: typeName)) != nil else {
             return false
         }
@@ -149,7 +161,7 @@ extension GraphSpecNode {
     /// Renders the node to a string.
     /// - Parameter pretty: When `true`, output is indented for human readability.
     ///   When `false` (default), output is compact and suitable for DB storage.
-    func asString(pretty: Bool = false, omitOutputPort: Bool) -> String {
+    public func asString(pretty: Bool = false, omitOutputPort: Bool) -> String {
         asString(pretty: pretty, depth: 0, omitOutputPort: omitOutputPort)
     }
 
@@ -210,74 +222,16 @@ extension GraphSpecNode {
     }
 }
 
-// MARK: - Topology comparison (structural, port-order-independent)
-
-extension GraphSpecNode {
-
-    enum TopologyMatchError: Error {
-        case noMatch(reason: String)
-    }
-
-    func expectTopologyMatch(_ other: GraphSpecNode) throws {
-        guard typeName == other.typeName else {
-            throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
-        }
-        guard Set(properties) == Set(other.properties) else {
-            throw TopologyMatchError.noMatch(reason: "Properties mismatch: \(properties) != \(other.properties)")
-        }
-
-        let selfPorts  = Dictionary(inputs.map       { ($0.portName, $0.wires) },
-                                    uniquingKeysWith: { first, _ in first })
-
-        let otherPorts = Dictionary(other.inputs.map { ($0.portName, $0.wires) },
-                                    uniquingKeysWith: { first, _ in first })
-
-        // Ports that are ONLY in `self` (current) are allowed to be extra — they are
-        // dynamic ports added by the engine after node creation (e.g.
-        // ClangPreprocessor's `includeFileLists` / `headerInputFiles`).
-        //
-        // For ports that appear in BOTH `self` and `other` (i.e. ports the formula
-        // explicitly specifies), the wire sets must match exactly: same count and
-        // same named wires.  A current port with MORE wires than expected means a
-        // source file was removed and the node must be rewired, not reused.
-        //
-        // Within each port, wires are matched by name (not by position).
-        // `database.wire.select` returns wires in insertion order, which can
-        // differ from the order the formula string enumerates them, so a
-        // positional zip would produce false mismatches.
-        for (portName, otherWires) in otherPorts {
-            guard let selfWires = selfPorts[portName] else {
-                throw TopologyMatchError.noMatch(reason: "Expected port '\(portName)' is absent in the current graph spec")
-            }
-            guard selfWires.count == otherWires.count else {
-                throw TopologyMatchError.noMatch(reason: "Wire count mismatch on port '\(portName)': current=\(selfWires.count), expected=\(otherWires.count)")
-            }
-            let selfWiresByName = Dictionary(selfWires.map { ($0.name, $0.node) },
-                                             uniquingKeysWith: { first, _ in first })
-            for otherWire in otherWires {
-                guard let selfWireNode = selfWiresByName[otherWire.name] else {
-                    throw TopologyMatchError.noMatch(reason: "Expected wire '\(otherWire.name)' on port '\(portName)' is absent in the current graph spec")
-                }
-                do {
-                    try selfWireNode.expectTopologyMatch(otherWire.node)
-                } catch let error as TopologyMatchError {
-                    throw TopologyMatchError.noMatch(reason: "Child topology of wire '\(otherWire.name)' does not match for a \(selfWireNode.typeName): \(error)")
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Parser
 
 /// A spec string that could not be read back. Sentences rather than case names, because
 /// the engine interns a thrown error's text onto the failing node's output ports.
-enum GraphSpecParseError: Error, CustomStringConvertible {
+public enum GraphSpecParseError: Error, CustomStringConvertible {
     case unexpectedCharacter(Character?, context: String)
     case unexpectedEndOfInput(context: String)
     case emptyIdentifier
 
-    var description: String {
+    public var description: String {
         switch self {
         case .unexpectedCharacter(let character, let context):
             guard let character else {

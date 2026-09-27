@@ -40,14 +40,14 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
     private func makeFile(path: String) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                  properties: ["path": path], graphSpec: nil).requireID()
+                                  properties: ["path": path], identity: nil).requireID()
     }
 
     /// A node with no path of its own, so the label says only its type — what a compiler
     /// node in the middle of a cascade looks like in a report.
     private func makeConsumer(tag: String) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                  properties: ["tag": tag], graphSpec: nil).requireID()
+                                  properties: ["tag": tag], identity: nil).requireID()
     }
 
     /// Wiring a node writes pending to every output of its target, so the states are put on
@@ -88,7 +88,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// not the node's.
     private func makeDemanding(tag: String) throws -> ObjectID {
         try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
-                                  properties: ["tag": tag], graphSpec: nil).requireID()
+                                  properties: ["tag": tag], identity: nil).requireID()
     }
 
     private func run(_ nodeID: ObjectID) throws {
@@ -260,7 +260,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
         let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
             .findOrCreateMatchingNode()
         let consumer = try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
-                                                 properties: [:], graphSpec: nil)
+                                                 properties: [:], identity: nil)
         try connect(try file.requireID(), to: try consumer.requireID(), name: "config")
 
         try consumer.makeNode().processWithPreCheck()
