@@ -114,8 +114,8 @@ an `.xcodeproj` resolves the project's packages through Xcode, vendors them and 
 formula and config; a fresh clone of IceCubesApp goes from `prepare` to a launched app in
 two commands. Device signing is deliberately out — the simulator needs none beyond what
 `ld` does. An app includes its packages with `include funcs`, so its build root holds the
-app and not their archives. What follows is what is left: two places Apple's tools are
-not byte-reproducible.
+app and not their archives, and the linker writes small objc_msgSend stubs, so an app's
+executables are byte-reproducible. What follows is what is left: `actool`'s output is not.
 
 **B-89** `open` `For Fable Only` — **`actool` output is not byte-reproducible: `.icon` renditions carry a
 UUID and pid, and the appearance table's order varies.** Two separate causes, both in
@@ -165,22 +165,3 @@ That rewrites Apple's undocumented BOM-based CAR format, and the replacement suf
 not keep the name's length (the pid varies in digits), so it is a rewrite of the file
 rather than a patch in place. Whether that is worth owning, against keeping the exemption,
 is the decision.
-
-**B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
-IceCubesApp's linked executable carries two GOT entries binding the same import,
-`_objc_msgSend`, and which one the linker's `__objc_stubs` synthesis references varies
-between two identical links of the same objects — 531 `ldr` displacements differ and so
-does `LC_UUID`, while every symbol, address and fixup is identical. All inputs to the link
-are the same hash in both builds. To find: the linker option that makes GOT emission
-deterministic (`-no_deduplicate` is already passed by clang's driver in debug; check
-`-fixup_chains` and `-ld_classic` behaviour), or confirm the duplicate originates from a
-specific input. Evidence, from `icecubes-app`'s two-build comparisons: carrying the duplicate pair is necessary but not sufficient — which
-of the executables carrying the pair flips varies — three of the four `.appex` executables
-in one run, the app's own executable in another — while `IceCubesActionExtension` links a
-single `_objc_msgSend` GOT entry (`dyld_info -fixups` shows one `_objc_msgSend$` line
-against two for every other target) and has been identical in both runs; comparing its link
-inputs against `IceCubesNotifications`'s is the shortest route to the input that introduces
-the second entry. The roster exempts `Ice Cubes.app`'s executable and three of its four
-extensions' (every one but `IceCubesActionExtension`'s) for `icecubes-app`; removing that
-exemption is this item's exit.
-
