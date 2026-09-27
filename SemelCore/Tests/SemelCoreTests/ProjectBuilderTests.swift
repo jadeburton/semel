@@ -29,7 +29,7 @@ final class ProjectBuilderTests: SemelCoreTestCase {
     /// a damaged graph rather than a fresh one.
     private func makeBuilderNode(properties: [String: String]) throws -> NodeRecord {
         var node = NodeRecord(parentNodeID: nil, kind: ProjectBuilder.kind, name: nil,
-                              properties: properties, scheduled: false, graphSpec: nil)
+                              properties: properties, scheduled: false, identity: nil)
         node.id = try DatabaseLayer.shared.node.insert(node)
         try node.writePendingToAllOutputsOfNode()
         return node

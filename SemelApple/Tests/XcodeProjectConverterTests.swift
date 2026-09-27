@@ -20,7 +20,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                          xcconfigs: [String: NodeValue] = [:],
                          folders: [String: NodeValue] = [:]) throws -> ProcessOutput {
         let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
-                                                                  properties: ["path": projectPath], scheduled: false, graphSpec: nil))
+                                                                  properties: ["path": projectPath], scheduled: false, identity: nil))
         var inputs: [String: [String: NodeValue]] = [XcodeProjectConverter.xcconfigs: xcconfigs,
                                                      XcodeProjectConverter.folders: folders]
         if let projectFile {

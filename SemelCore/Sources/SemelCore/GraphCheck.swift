@@ -37,9 +37,11 @@ public struct GraphCheck {
         /// one per declared port when it is created, so a missing row is a node something
         /// has damaged, and a read of that port has nothing true to answer.
         case missingOutputPort
-        /// A node whose `graphSpec` cannot be read back, or which has none at all.
-        case unreadableGraphSpec
-        /// A node whose `graphSpec` names a type this server does not link.
+        /// A node with no identity, or whose stored identity is not the one its row and
+        /// wires give it: a demand for it will make a second node, and its wires were
+        /// changed by something other than the applier.
+        case staleIdentity
+        /// A node whose kind is a type this server does not link.
         case unlinkedNodeType
         /// A required input port with no wire: nothing will ever produce what it asks for.
         case productWithNoProducer
@@ -129,7 +131,7 @@ public struct GraphCheck {
         var findings: [Finding] = []
         if context.canRun(.nodes, .wires)    { findings += danglingWires(context) }
         if context.canRun(.nodes)            { findings += missingOutputPorts(context) }
-        if context.canRun(.nodes)            { findings += graphSpecs(context) }
+        if context.canRun(.nodes, .wires)    { findings += identities(context) }
         if context.canRun(.nodes, .wires)    { findings += productsWithNoProducer(context) }
         if context.canRun(.nodes, .metadata) { findings += folderManifests(context) }
         // Neither of these rests on a table another check needs: a port in error says so
@@ -410,37 +412,55 @@ public struct GraphCheck {
         return findings
     }
 
-    // MARK: - A graph spec that cannot be read back, or names a type the server does not link
+    // MARK: - An identity that is stale, or a kind the server does not link
 
-    /// A node's `graphSpec` is its identity: it is what `findOrCreateMatchingNode` matches
-    /// against, so a spec that cannot be read back is a node nothing will ever find again,
-    /// and one naming an absent type is a node nothing can rebuild.
+    /// A node's identity is what `findOrCreateMatchingNode` matches against, and it is a
+    /// function of the node's row and its wires (B-115). So it can be recomputed and
+    /// compared: one that differs from what is stored is a node whose wires were changed
+    /// by something other than the applier, and a demand for it will make a second node
+    /// beside it. A node with no identity at all is the same defect in its plainest form —
+    /// the column is nullable only for the moment between a row's insert and its update.
     ///
-    /// A node with no spec at all is the same defect in its plainest form. The column is
-    /// nullable only because a row exists for a moment before its spec is patched in, and
-    /// `createNode` asserts one is there by the time it returns — so a NULL that survives
-    /// is a node the matcher can never reach.
-    private static func graphSpecs(_ context: Context) -> [Finding] {
+    /// A kind this server does not link cannot be recomputed and cannot be rebuilt either,
+    /// and is reported as that rather than as stale.
+    private static func identities(_ context: Context) -> [Finding] {
         var findings: [Finding] = []
+        // Recomputed from what the walk already read, not queried per node: the tables are
+        // in hand, and a table this walk found unreadable is one it must not go back to.
+        let wiresByToNodeID = Dictionary(grouping: context.wires, by: \.toNodeID)
 
         for node in context.nodes {
-            guard let graphSpec = node.graphSpec else {
-                findings.append(Finding(kind: .unreadableGraphSpec, subject: subject(node),
-                                        sentence: "it has no graph spec, so nothing can match it again"))
-                continue
-            }
-            let spec: GraphSpecNode
-            do {
-                spec = try GraphSpecNode.parse(graphSpec)
-            } catch {
-                findings.append(Finding(kind: .unreadableGraphSpec, subject: subject(node),
-                                        sentence: "its graph spec cannot be read back — \(error)"))
-                continue
-            }
-            if TypeRegistry.nodeType(forTypeName: spec.typeName) == nil {
+            guard let nodeID = node.id, let type = try? TypeRegistry.type(kind: node.kind) as? Node.Type else {
                 findings.append(Finding(kind: .unlinkedNodeType, subject: subject(node),
-                                        sentence: "its graph spec names the type '\(spec.typeName)', "
-                                                + "which this server does not link"))
+                                        sentence: "its kind \(node.kind) is a type this server does not link"))
+                continue
+            }
+            guard let stored = node.identity else {
+                findings.append(Finding(kind: .staleIdentity, subject: subject(node),
+                                        sentence: "it has no identity, so nothing can match it again"))
+                continue
+            }
+            let recomputed: String
+            do {
+                recomputed = try node.recomputedIdentity(
+                    wiresIn: wiresByToNodeID[nodeID] ?? [],
+                    staticPorts: type.descriptor.staticInputPorts,
+                    symbolName: { context.name(ofSymbol: $0) },
+                    sourceIdentity: { sourceID in
+                        guard let identity = context.nodesByID[sourceID]?.identity else {
+                            throw NodeIdentityError.sourceWithoutIdentity(nodeID: sourceID)
+                        }
+                        return identity
+                    })
+            } catch {
+                findings.append(Finding(kind: .staleIdentity, subject: subject(node),
+                                        sentence: "its identity cannot be recomputed from its wires — \(error)"))
+                continue
+            }
+            if recomputed != stored {
+                findings.append(Finding(kind: .staleIdentity, subject: subject(node),
+                                        sentence: "its identity is \(NodeIdentity.shown(stored))… but its row and wires give "
+                                                + "\(NodeIdentity.shown(recomputed))…; a demand for it will make a second node"))
             }
         }
 

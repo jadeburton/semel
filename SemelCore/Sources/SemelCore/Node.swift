@@ -277,33 +277,18 @@ extension Node {
             var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
-                // Step 3 — wire already exists; check whether its current graph spec
-                // still satisfies the spec.  Compare parsed specs structurally
-                // (port-order-independent, bracket-format-independent) rather than as
-                // raw strings to avoid spurious mismatches.
-                let currentShapeNode  = try GraphSpecNode.buildFromWire(existingWire, database: database)
-                let expectedShapeNode = try GraphSpecNode.parse(specString)
-
-                do {
-                    try currentShapeNode.expectTopologyMatch(expectedShapeNode)
-                    // Topology matches — the existing wire already connects the correct
-                    // node. Skip reconnection entirely: calling findOrCreate here risks
-                    // picking up a zombie node that shares the same graphSpec and then
-                    // failing with attemptToCreateWireWithDuplicateName.
+                // Step 3 — the wire exists; it is right when the node it comes from is the
+                // one the spec describes and the port is the one the spec names. The
+                // demand's identity is a pure function of its tree and the wire's source
+                // carries its own, so this is one hash against one row (B-115) — no
+                // rebuild of the current subgraph, and nothing to fall back to.
+                let expected = try GraphSpecNode.parse(specString)
+                let source = try database.node.select(nodeID: existingWire.fromNodeID)
+                if source.identity == (try expected.identity()),
+                   existingWire.fromSymbolID == expected.outputPort?.asSymbolID() {
                     needsReconnection = false
-                } catch {
-                    // Topology changed (e.g. a formula was updated to add/remove a dependency).
-                    // Before deleting, check whether the demanded spec's graphSpec already
-                    // matches the node the wire connects to.  If so, expectTopologyMatch
-                    // produced a false positive — reconnecting would reschedule this node every
-                    // pass and cause an infinite loop.
-                    if let match = try? expectedShapeNode.findMatchingNode(),
-                       match.fromNodeID == existingWire.fromNodeID,
-                       match.fromSymbolID == existingWire.fromSymbolID {
-                        needsReconnection = false
-                    } else {
-                        _ = try existingWire.deleteWire(database: database)
-                    }
+                } else {
+                    _ = try existingWire.deleteWire(database: database)
                 }
             }
 
@@ -360,51 +345,17 @@ extension Node {
         return buildOutput(reason: .error(messageDataObjectHash: (try? message.intern()) ?? ""))
     }
 
-    /// One reason on every output port, with the dynamic wire specs the graph already holds
-    /// preserved.
+    /// One reason on every output port, and the dynamic wires the graph already holds left
+    /// as they are: `writeToOutputs` applies specs only to the ports an output names, so an
+    /// output that names none keeps every wire — which is what a node that could not run
+    /// wants, and needs no description of those wires to say.
     func buildOutput(reason: NoValueReason) -> ProcessOutput {
         var outputValues = [String: NodeValue]()
 
         for outputPort in descriptor.outputPorts {
             outputValues[outputPort] = .noValue(reason: reason)
         }
-
-        // Reconstruct existing dynamic wire specs from the live graph so
-        // applySpecs's step 1 doesn't delete them when the node publishes no values.
-        // A brand-new node has no wires yet, so the dict is empty for it — which is also
-        // correct (nothing to preserve).
-
-        var wireSpecs = [String: [String: String]]()
-
-        for port in descriptor.dynamicInputPorts {
-            // Already building a result that publishes nothing, so a further failure here
-            // just means this port's specs cannot be preserved — skip it rather than
-            // escalate. Unless it is the machine failing, which the fatal handler hears
-            // about either way.
-            let toSymbolID = port.asSymbolID()
-            guard let nodeID = try? requireID(),
-                  let wires = FatalErrors.attempt({
-                      try database.wire.select(goingToNodeID: nodeID, toSymbolID: toSymbolID)
-                  }),
-                  !wires.isEmpty else {
-                continue
-            }
-
-            var portSpecs = [String: String]()
-
-            for wire in wires {
-                let wireName = wire.name.resolveSymbol()
-
-                if let shapeNode = try? GraphSpecNode.buildFromWire(wire, database: database) {
-                    portSpecs[wireName] = shapeNode.asString(omitOutputPort: false)
-                }
-            }
-
-            if !portSpecs.isEmpty {
-                wireSpecs[port] = portSpecs
-            }
-        }
-        return .init(outputValues: outputValues, inputWireSpecs: wireSpecs)
+        return .init(outputValues: outputValues, inputWireSpecs: [:])
     }
 
     /// A thrown error's text for a node's output ports. `SemelNodeKit` cannot name `reset`

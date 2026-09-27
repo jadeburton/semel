@@ -167,101 +167,91 @@ final class GraphSpecTests: SemelCoreTestCase {
         XCTAssertFalse(node.asString(pretty: false, omitOutputPort: false).contains("\n"))
     }
 
-    func test_asString_pretty_parsesBackToSameTopology() throws {
+    func test_asString_pretty_parsesBackToTheSameTree() throws {
         let input = "ClangCompiler(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
         let original = try GraphSpecNode.parse(input)
         let prettyString = original.asString(pretty: true, omitOutputPort: false)
-        let reparsed = try GraphSpecNode.parse(prettyString)
-        XCTAssertNoThrow(try original.expectTopologyMatch(reparsed))
+        XCTAssertEqual(try GraphSpecNode.parse(prettyString), original)
     }
 
-    // MARK: - topologyMatches
+    // MARK: - identity (B-115)
+    //
+    // The types here are ones the engine registers, since an identity is taken over a
+    // kind; the ports need not exist, since the hash is of the tree and not of the graph.
 
-    func test_topologyMatches_identicalNodes() throws {
-        let a = try GraphSpecNode.parse("StaticFile(path: 'hello.c').output")
-        let b = try GraphSpecNode.parse("StaticFile(path: 'hello.c').output")
-        XCTAssertNoThrow(try a.expectTopologyMatch(b))
+    private func identity(_ spec: String) throws -> String {
+        try GraphSpecNode.parse(spec).identity()
     }
 
-    func test_topologyMatches_outputPortIgnored() throws {
-        let a = try GraphSpecNode.parse("StaticFile(path: 'hello.c').output")
-        let b = try GraphSpecNode.parse("StaticFile(path: 'hello.c').otherPort")
-        XCTAssertNoThrow(try a.expectTopologyMatch(b))
+    func test_identity_isTheSameForTheSameTree() throws {
+        XCTAssertEqual(try identity("StaticFile(path: 'hello.c').output"), try identity("StaticFile(path: 'hello.c').output"))
+        XCTAssertEqual(try identity("StaticFile(path: 'hello.c').output").count, 64)
     }
 
-    func test_topologyMatches_differentArg_doesNotMatch() throws {
-        let a = try GraphSpecNode.parse("StaticFile(path: 'hello.c')")
-        let b = try GraphSpecNode.parse("StaticFile(path: 'main.c')")
-        XCTAssertThrowsError(try a.expectTopologyMatch(b))
+    /// A node's own output port is where a consumer reads it, not what it is.
+    func test_identity_ignoresTheNodesOwnOutputPort() throws {
+        XCTAssertEqual(try identity("StaticFile(path: 'hello.c').output"), try identity("StaticFile(path: 'hello.c').otherPort"))
     }
 
-    func test_topologyMatches_differentTypeName_doesNotMatch() throws {
-        let a = try GraphSpecNode.parse("ClangCompiler()")
-        let b = try GraphSpecNode.parse("ClangLinker()")
-        XCTAssertThrowsError(try a.expectTopologyMatch(b))
+    func test_identity_differsWithAProperty() throws {
+        XCTAssertNotEqual(try identity("StaticFile(path: 'hello.c')"), try identity("StaticFile(path: 'main.c')"))
     }
 
-    func test_topologyMatches_portOrderIndependent() throws {
-        let a = GraphSpecNode(
-            typeName: "ClangCompiler",
-            inputs: [
-                GraphSpecInputPort(portName: "configuration", wires: [
-                    GraphSpecWire(name: "config",
-                                   node: GraphSpecNode(typeName: "Configuration",
-                                                        properties: [GraphSpecProperty(key: "tool", value: "compiler")]))
-                ]),
-                GraphSpecInputPort(portName: "input", wires: [
-                    GraphSpecWire(name: "hello.c",
-                                   node: GraphSpecNode(typeName: "StaticFile",
-                                                        properties: [GraphSpecProperty(key: "path", value: "hello.c")]))
-                ])
-            ],
-            outputPort: "output"
-        )
-        let b = GraphSpecNode(
-            typeName: "ClangCompiler",
-            inputs: [
-                GraphSpecInputPort(portName: "input", wires: [
-                    GraphSpecWire(name: "hello.c",
-                                   node: GraphSpecNode(typeName: "StaticFile",
-                                                        properties: [GraphSpecProperty(key: "path", value: "hello.c")]))
-                ]),
-                GraphSpecInputPort(portName: "configuration", wires: [
-                    GraphSpecWire(name: "config",
-                                   node: GraphSpecNode(typeName: "Configuration",
-                                                        properties: [GraphSpecProperty(key: "tool", value: "compiler")]))
-                ])
-            ],
-            outputPort: "output"
-        )
-        XCTAssertNoThrow(try a.expectTopologyMatch(b))
+    func test_identity_differsWithTheType() throws {
+        XCTAssertNotEqual(try identity("Configuration(path: 'x')"), try identity("StaticFile(path: 'x')"))
     }
 
-    func test_topologyMatches_differentWireName_doesNotMatch() throws {
-        let a = try GraphSpecNode.parse(
-            "ClangCompiler(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"
-        )
-        let b = try GraphSpecNode.parse(
-            "ClangCompiler(input: [\"main.c\": StaticFile(path: 'hello.c').output]).output"
-        )
-        XCTAssertThrowsError(try a.expectTopologyMatch(b))
+    func test_identity_isPortAndWireOrderIndependent() throws {
+        let configuration = GraphSpecInputPort(portName: "configuration", wires: [
+            GraphSpecWire(name: "config", node: GraphSpecNode(typeName: "Configuration",
+                                                              properties: [GraphSpecProperty(key: "tool", value: "compiler")],
+                                                              outputPort: "output")),
+        ])
+        let input = GraphSpecInputPort(portName: "input", wires: [
+            GraphSpecWire(name: "b.c", node: GraphSpecNode(typeName: "StaticFile", properties: [GraphSpecProperty(key: "path", value: "b.c")], outputPort: "output")),
+            GraphSpecWire(name: "a.c", node: GraphSpecNode(typeName: "StaticFile", properties: [GraphSpecProperty(key: "path", value: "a.c")], outputPort: "output")),
+        ])
+        let reversedInput = GraphSpecInputPort(portName: "input", wires: input.wires.reversed())
+
+        let one = GraphSpecNode(typeName: "Configuration", inputs: [configuration, input], outputPort: "output")
+        let other = GraphSpecNode(typeName: "Configuration", inputs: [reversedInput, configuration], outputPort: "output")
+
+        XCTAssertEqual(try one.identity(), try other.identity())
     }
 
-    func test_topologyMatches_differentWireCount_doesNotMatch() throws {
-        let a = try GraphSpecNode.parse(
-            "ClangLinker(objectFiles: [\"a\": StaticFile(path: 'a.c').output]).output"
-        )
-        let b = try GraphSpecNode.parse(
-            "ClangLinker(objectFiles: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"
-        )
-        XCTAssertThrowsError(try a.expectTopologyMatch(b))
+    func test_identity_differsWithAWireName() throws {
+        XCTAssertNotEqual(try identity("Configuration(base: [\"hello.c\": StaticFile(path: 'hello.c').output]).output"),
+                          try identity("Configuration(base: [\"main.c\": StaticFile(path: 'hello.c').output]).output"))
     }
 
-    func test_topologyMatches_nestedNodesMatch() throws {
-        let input = "ClangCompiler(input: [\"hello.c.p\": ClangPreprocessor(input: [\"hello.c\": StaticFile(path: 'hello.c').output]).output]).output"
-        let a = try GraphSpecNode.parse(input)
-        let b = try GraphSpecNode.parse(input)
-        XCTAssertNoThrow(try a.expectTopologyMatch(b))
+    func test_identity_differsWithTheSourcesOutputPort() throws {
+        XCTAssertNotEqual(try identity("Configuration(base: [\"w\": StaticFile(path: 'a.c').output]).output"),
+                          try identity("Configuration(base: [\"w\": StaticFile(path: 'a.c').metadata]).output"))
+    }
+
+    func test_identity_differsWithTheWireCount() throws {
+        XCTAssertNotEqual(try identity("Configuration(base: [\"a\": StaticFile(path: 'a.c').output]).output"),
+                          try identity("Configuration(base: [\"a\": StaticFile(path: 'a.c').output, \"b\": StaticFile(path: 'b.c').output]).output"))
+    }
+
+    /// A change anywhere below moves every identity above it: the Merkle property that
+    /// makes one hash stand for a whole subgraph.
+    func test_identity_differsWithAChangeDeepInTheTree() throws {
+        let shallow = "Configuration(base: [\"m\": Configuration(base: [\"f\": StaticFile(path: 'hello.c').output]).output]).output"
+        let changed = "Configuration(base: [\"m\": Configuration(base: [\"f\": StaticFile(path: 'other.c').output]).output]).output"
+
+        XCTAssertEqual(try identity(shallow), try identity(shallow))
+        XCTAssertNotEqual(try identity(shallow), try identity(changed))
+    }
+
+    func test_identity_needsARegisteredType() {
+        XCTAssertThrowsError(try identity("NoSuchType(path: 'x').output")) { error in
+            XCTAssertEqual("\(error)", "no node type is registered under the name 'NoSuchType'")
+        }
+    }
+
+    func test_identity_needsAnOutputPortOnEveryWire() {
+        XCTAssertThrowsError(try identity("Configuration(base: [\"w\": StaticFile(path: 'a.c')]).output"))
     }
 
     // MARK: - adding(property:value:where:)

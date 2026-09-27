@@ -100,8 +100,8 @@ extension Node {
         thisNode.scheduled
     }
 
-    public var graphSpec: String? {
-        thisNode.graphSpec
+    public var identity: String? {
+        thisNode.identity
     }
 }
 

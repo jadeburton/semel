@@ -35,7 +35,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         let nodeRecord = try NodeRecord.createNode(database: engine.database,
                                                    kind: StaticFile.kind,
                                                    properties: ["path": path],
-                                                   graphSpec: nil)
+                                                   identity: nil)
         try nodeRecord.writeToOutputPort("output",
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         return try nodeRecord.requireID()
@@ -78,7 +78,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         let nodeRecord = try NodeRecord.createNode(database: engine.database,
                                                    kind: StaticFile.kind,
                                                    properties: ["path": "input:/a.c"],
-                                                   graphSpec: nil)
+                                                   identity: nil)
         for port in ["output", "errorLog"] {
             try nodeRecord.writeToOutputPort(port,
                                              value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
@@ -99,7 +99,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
         let nodeRecord = try NodeRecord.createNode(database: engine.database,
                                                    kind: TreeMerger.kind,
                                                    properties: ["tag": tag],
-                                                   graphSpec: nil)
+                                                   identity: nil)
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         return try nodeRecord.requireID()

@@ -1179,7 +1179,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let manifest  = FolderManifest(baseFolderPath: packageFolder, entries: [])
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind,
                                                                        name: nil, properties: ["root": root],
-                                                                       scheduled: false, graphSpec: nil))
+                                                                       scheduled: false, identity: nil))
         return try converter.process(input: ProcessInput(inputValues: [
             SwiftFormulaConverter.packageFolder: ["folder": .value(try manifest.toJSON().intern())],
             SwiftFormulaConverter.packageJSON:   ["json":   .value(try json.intern())],

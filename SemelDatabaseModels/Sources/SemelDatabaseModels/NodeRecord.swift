@@ -24,7 +24,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
         public static let name = Column("name")
         public static let parentNodeID = Column("parentNodeID")
         public static let scheduled = Column("scheduled")
-        public static let graphSpec = Column("graphSpec")
+        public static let identity = Column("identity")
         public static let encodedProperties = Column("encodedProperties")
         public static let pendingDeletion = Column("pendingDeletion")
     }
@@ -35,7 +35,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
     public var name: String?
     public var properties: [String: String]
     public var scheduled: Bool
-    public var graphSpec: String?
+    public var identity: String?
     /// Set when a node loses its last output-wire consumer. Actual deletion is
     /// deferred to idle time so no structural graph mutations occur during processing.
     public var pendingDeletion: Bool
@@ -57,7 +57,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
                 name: String? = nil,
                 properties: [String: String] = [:],
                 scheduled: Bool = false,
-                graphSpec: String? = nil,
+                identity: String? = nil,
                 pendingDeletion: Bool = false) {
         self.id = id
         self.parentNodeID = parentNodeID
@@ -65,7 +65,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
         self.name = name
         self.properties = properties
         self.scheduled = scheduled
-        self.graphSpec = graphSpec
+        self.identity = identity
         self.pendingDeletion = pendingDeletion
     }
 
@@ -103,7 +103,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
         kind = row["kind"]
         name = row["name"]
         scheduled = row["scheduled"] ?? false
-        graphSpec = row["graphSpec"]
+        identity = row["identity"]
         properties = Self.decodeProperties(row["encodedProperties"])
         pendingDeletion = row["pendingDeletion"] ?? false
     }
@@ -117,7 +117,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
         container["name"] = name
         container["encodedProperties"] = Self.encodeProperties(properties)
         container["scheduled"] = scheduled
-        container["graphSpec"] = graphSpec
+        container["identity"] = identity
         container["pendingDeletion"] = pendingDeletion
     }
 
@@ -130,7 +130,7 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
                 t.column("name", .text)
                 t.column("encodedProperties", .text)
                 t.column("scheduled", .integer).indexed().notNull()
-                t.column("graphSpec", .text).unique()
+                t.column("identity", .text).unique()
                 t.column("pendingDeletion", .integer).notNull().defaults(to: false)
             }
         }
@@ -259,9 +259,9 @@ public struct NodeDataAccess: DataAccessType {
         }
     }
 
-    public func select(graphSpec: String) throws -> [NodeRecord] {
+    public func select(identity: String) throws -> [NodeRecord] {
         try read { db in
-            try NodeRecord.filter(NodeRecord.Columns.graphSpec == graphSpec).fetchAll(db)
+            try NodeRecord.filter(NodeRecord.Columns.identity == identity).fetchAll(db)
         }
     }
 
@@ -318,7 +318,7 @@ public struct NodeDataAccess: DataAccessType {
                             kind              = ?,
                             name              = ?,
                             encodedProperties = ?,
-                            graphSpec         = ?
+                            identity         = ?
                       WHERE id = ?
                      """,
                 arguments: [
@@ -326,7 +326,7 @@ public struct NodeDataAccess: DataAccessType {
                     node.kind,
                     node.name,
                     NodeRecord.encodeProperties(node.properties),
-                    node.graphSpec,
+                    node.identity,
                     node.id
                 ]
             )

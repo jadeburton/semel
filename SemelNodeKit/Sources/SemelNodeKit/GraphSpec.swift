@@ -23,7 +23,7 @@
 //
 //  The trailing `.outputPort` suffix is optional:
 //    • Present  → wire-endpoint form, used in spec strings
-//    • Absent   → node-identity form, stored in Node.graphSpec
+//    • Absent   → node-identity form, the tree a node's identity is the hash of
 //
 //
 //  Examples:
@@ -99,7 +99,7 @@ public struct GraphSpecNode: Equatable {
     public let inputs:     [GraphSpecInputPort]
     /// Expected output ports (future use — stored but not yet matched).
     public let outputs:    [GraphSpecOutputPort]
-    /// Output port consumed downstream, or `nil` for the node-identity / graphSpec form.
+    /// Output port consumed downstream, or `nil` for the node-identity form.
     public let outputPort: String?
 
     public init(typeName:   String,
@@ -227,64 +227,6 @@ extension GraphSpecNode {
             }
             .sorted { ($0.name, $0.text) < ($1.name, $1.text) }
             .map(\.text)
-    }
-}
-
-// MARK: - Topology comparison (structural, port-order-independent)
-
-extension GraphSpecNode {
-
-    public enum TopologyMatchError: Error {
-        case noMatch(reason: String)
-    }
-
-    public func expectTopologyMatch(_ other: GraphSpecNode) throws {
-        guard typeName == other.typeName else {
-            throw TopologyMatchError.noMatch(reason: "Type name mismatch: \(typeName) != \(other.typeName)")
-        }
-        guard Set(properties) == Set(other.properties) else {
-            throw TopologyMatchError.noMatch(reason: "Properties mismatch: \(properties) != \(other.properties)")
-        }
-
-        let selfPorts  = Dictionary(inputs.map       { ($0.portName, $0.wires) },
-                                    uniquingKeysWith: { first, _ in first })
-
-        let otherPorts = Dictionary(other.inputs.map { ($0.portName, $0.wires) },
-                                    uniquingKeysWith: { first, _ in first })
-
-        // Ports that are ONLY in `self` (current) are allowed to be extra — they are
-        // dynamic ports added by the engine after node creation (e.g.
-        // ClangPreprocessor's `includeFileLists` / `headerInputFiles`).
-        //
-        // For ports that appear in BOTH `self` and `other` (i.e. ports the formula
-        // explicitly specifies), the wire sets must match exactly: same count and
-        // same named wires.  A current port with MORE wires than expected means a
-        // source file was removed and the node must be rewired, not reused.
-        //
-        // Within each port, wires are matched by name (not by position).
-        // `database.wire.select` returns wires in insertion order, which can
-        // differ from the order the formula string enumerates them, so a
-        // positional zip would produce false mismatches.
-        for (portName, otherWires) in otherPorts {
-            guard let selfWires = selfPorts[portName] else {
-                throw TopologyMatchError.noMatch(reason: "Expected port '\(portName)' is absent in the current graph spec")
-            }
-            guard selfWires.count == otherWires.count else {
-                throw TopologyMatchError.noMatch(reason: "Wire count mismatch on port '\(portName)': current=\(selfWires.count), expected=\(otherWires.count)")
-            }
-            let selfWiresByName = Dictionary(selfWires.map { ($0.name, $0.node) },
-                                             uniquingKeysWith: { first, _ in first })
-            for otherWire in otherWires {
-                guard let selfWireNode = selfWiresByName[otherWire.name] else {
-                    throw TopologyMatchError.noMatch(reason: "Expected wire '\(otherWire.name)' on port '\(portName)' is absent in the current graph spec")
-                }
-                do {
-                    try selfWireNode.expectTopologyMatch(otherWire.node)
-                } catch let error as TopologyMatchError {
-                    throw TopologyMatchError.noMatch(reason: "Child topology of wire '\(otherWire.name)' does not match for a \(selfWireNode.typeName): \(error)")
-                }
-            }
-        }
     }
 }
 

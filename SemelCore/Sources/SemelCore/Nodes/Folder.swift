@@ -577,8 +577,8 @@ extension Folder {
     /// primary key instead of a graph-spec lookup wrapped in a write transaction.
     ///
     /// `root(named:)` is on a very hot path: every `resolveFolderID` goes through it, which
-    /// is every `StaticFile` and every `Folder` init. The graphSpec lookup it did was itself
-    /// cheap — `Node.graphSpec` is unique-indexed — but `findOrCreateMatchingNode` wraps
+    /// is every `StaticFile` and every `Folder` init. The identity lookup it did was itself
+    /// cheap — `Node.identity` is unique-indexed — but `findOrCreateMatchingNode` wraps
     /// find-and-create in a transaction, so the read paid for a write it never did.
     ///
     /// The ID is cached rather than the NodeRecord: `NodeRecord` is a mutable value type, and handing

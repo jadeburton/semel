@@ -105,7 +105,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
         FormulaIncludeProviders.register(TestProvider(pluginName: "SemelClang", preludes: ["clang": "func x() = Old()"]))
         let prelude  = try preludeNode(named: "clang")
         let consumer = try NodeRecord.createNode(database: DatabaseLayer.shared, kind: SampleTool.kind,
-                                                 properties: [:], graphSpec: nil)
+                                                 properties: [:], identity: nil)
         try Wire.connectWire(database: DatabaseLayer.shared,
                              fromNodeID:   try prelude.requireID(),
                              fromSymbolID: FormulaPrelude.formulaOutputPort.asSymbolID(),
@@ -137,7 +137,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
             """)
 
         var builderRecord = NodeRecord(parentNodeID: nil, kind: ProjectBuilder.kind, name: nil,
-                                       properties: ["outputFolder": "input:/repo"], scheduled: false, graphSpec: nil)
+                                       properties: ["outputFolder": "input:/repo"], scheduled: false, identity: nil)
         builderRecord.id = try DatabaseLayer.shared.node.insert(builderRecord)
         try builderRecord.writePendingToAllOutputsOfNode()
         let output = try ProjectBuilder(thisNode: builderRecord).process(input: ProcessInput(inputValues: [

@@ -88,27 +88,23 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
                              "a formula naming a port that does not exist should not create a node")
     }
 
-    // MARK: - Spec built from the live graph
+    // MARK: - The identity, computed two ways (B-115)
 
-    func test_aCreatedNodesShapeMatchesTheKeyItWasCreatedWith() throws {
+    /// The identity the applier stores is the hash of the demanded tree; the one the graph
+    /// gives back — the row and its wires, one level, over the sources' own identities —
+    /// is the same number. Three parties agree: the demand, the row, and the recomputation.
+    func test_aCreatedNodesIdentityIsTheOneItsRowAndWiresGiveIt() throws {
         let spec = "Configuration(role: 'roundtrip').output"
         let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
-        let rebuilt = try GraphSpecNode.buildFromNode(database: database, nodeID: try node.requireID())
-            .asString(omitOutputPort: true)
-
-        XCTAssertEqual(rebuilt, node.graphSpec,
-                       "the spec read back from the graph should be the one stored as the key")
+        XCTAssertEqual(node.identity, try GraphSpecNode.parse(spec).identity())
+        XCTAssertEqual(try node.recomputedIdentity(database: database), node.identity)
     }
 
-    /// A node's live spec must always topology-match the key it is stored under.
-    ///
-    /// This is the invariant the whole identity scheme rests on: the key is written once
-    /// at creation and never recomputed, which is only sound because a node's static
-    /// wiring and args are immutable. If this ever fails, `expectTopologyMatch` and
-    /// `findMatchingNode` can disagree about the same node — which is exactly the
-    /// disagreement `applySpecs` papers over as a "false positive".
-    func test_aLiveShapeTopologyMatchesItsOwnStoredKey() throws {
+    /// The invariant the identity scheme rests on: the stored identity is written once at
+    /// creation and never recomputed, which is sound because a node's static wiring and
+    /// properties are immutable. `check` asks the recomputation whether it still holds.
+    func test_aLiveNodesRecomputedIdentityMatchesItsStoredOne() throws {
         let specs = [
             "Configuration(role: 'plain').output",
             "Configuration(role: 'consumer', base: ['w': Configuration(role: 'up').output]).output",
@@ -117,31 +113,28 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
 
         for spec in specs {
             let (node, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
-            let live = try GraphSpecNode.buildFromNode(database: database,
-                                                        nodeID: try node.requireID())
-            let stored = try GraphSpecNode.parse(try XCTUnwrap(node.graphSpec))
 
-            XCTAssertNoThrow(try live.expectTopologyMatch(stored),
-                             "live spec disagrees with the stored key for \(spec)")
+            XCTAssertEqual(try node.recomputedIdentity(database: database), node.identity,
+                           "the recomputed identity disagrees with the stored one for \(spec)")
         }
     }
 
-    // MARK: - The invariant that makes a frozen key sound
+    // MARK: - The invariant that makes a frozen identity sound
     //
-    // A graphSpec is written once at creation and never recomputed. That is correct only
-    // while a node's static wiring and args cannot change: static topology is identity, so
-    // different static wiring is a different node. Only dynamic ports are rewired after
-    // creation, and they are deliberately excluded from the spec.
+    // An identity is written once at creation and never recomputed. That is correct only
+    // while a node's static wiring and properties cannot change: static topology is
+    // identity, so different static wiring is a different node. Only dynamic ports are
+    // rewired after creation, and they are deliberately outside the identity.
     //
     // The two tests below reach past the engine and mutate static wiring directly. Nothing
-    // in the engine does this — applySpecs only ever touches ports
-    // declared `.dynamic`. They exist to show what breaks if that invariant is ever
-    // violated, so the cost is visible before someone rewires a static port.
+    // in the engine does this — applySpecs only ever touches ports declared `.dynamic`.
+    // They exist to show what breaks if that invariant is ever violated, so the cost is
+    // visible before someone rewires a static port.
 
-    func test_theStoredKeyGoesStaleIfAStaticInputIsRewired() throws {
+    func test_theStoredIdentityGoesStaleIfAStaticInputIsRewired() throws {
         let originalShape = "Configuration(role: 'consumer', base: ['w': Configuration(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
-        let keyAtCreation = try XCTUnwrap(consumer.graphSpec)
+        let keyAtCreation = try XCTUnwrap(consumer.identity)
 
         // Rewire the static input directly. Note the engine never does this — only
         // dynamic ports are rewired after creation.
@@ -158,15 +151,12 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
                              toSymbolID: "base".asSymbolID(),
                              name: "w".asSymbolID())
 
-        let liveShape = try GraphSpecNode.buildFromNode(database: database,
-                                                         nodeID: try consumer.requireID())
-            .asString(omitOutputPort: true)
-        let storedKey = try XCTUnwrap(database.node.select(nodeID: try consumer.requireID())).graphSpec
+        let rewired = try database.node.select(nodeID: try consumer.requireID())
 
-        XCTAssertNotEqual(liveShape, storedKey,
-                          "the node's live wiring no longer matches the key it is stored under")
-        XCTAssertEqual(storedKey, keyAtCreation,
-                       "and the key was never recomputed")
+        XCTAssertNotEqual(try rewired.recomputedIdentity(database: database), rewired.identity,
+                          "the node's live wiring no longer gives the identity it is stored under")
+        XCTAssertEqual(rewired.identity, keyAtCreation,
+                       "and the identity was never recomputed")
     }
 
     /// And the consequence if it were: a spec describing wiring the node no longer has

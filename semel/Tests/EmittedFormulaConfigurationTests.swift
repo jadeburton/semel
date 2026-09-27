@@ -277,23 +277,32 @@ final class EmittedFormulaConfigurationTests: XCTestCase {
 
     // MARK: - Where the settings came from
 
-    /// The values are on a wire and not in the spec. This is what makes editing a setting
-    /// a cache hit rather than a new node: put a value in a graphSpec and every node that
-    /// reads it becomes a different node the moment it changes.
-    func test_noSettingValueAppearsInANodesGraphSpec() throws {
+    /// The values are on a wire and not in the identity. This is what makes editing a
+    /// setting a cache hit rather than a new node: were a value part of a node's identity,
+    /// every node that reads it would become a different node the moment it changes. So
+    /// the identity of each node that reads settings is the identity of the spec the
+    /// converter emitted for it — a function of the tree alone — before and after the
+    /// config file's content arrives.
+    func test_noSettingValueEntersANodesIdentity() throws {
         let (formula, readerSpecs) = try convert()
         try buildGraph(fromFormula: formula)
         for spec in readerSpecs {
             try buildGraph(fromSpec: spec)
         }
+        let identitiesBefore = try [SwiftCompiler.kind, SwiftLinker.kind, SwiftPackageReader.kind]
+            .flatMap { try database.node.select(kind: $0) }
+            .map { try XCTUnwrap($0.identity) }
+        XCTAssertFalse(identitiesBefore.isEmpty)
+
         try supplyConfigFile()
 
-        for kind in [SwiftCompiler.kind, SwiftLinker.kind, SwiftPackageReader.kind] {
-            for nodeRecord in try database.node.select(kind: kind) {
-                let graphSpec = nodeRecord.graphSpec ?? ""
-                XCTAssertFalse(graphSpec.contains("test-swiftc"), "got:\n\(graphSpec)")
-                XCTAssertFalse(graphSpec.contains("test-swift"), "got:\n\(graphSpec)")
-            }
+        for spec in readerSpecs {
+            XCTAssertEqual(try database.node.select(identity: try GraphSpecNode.parse(spec).identity()).count, 1,
+                           "the reader's node is the one its spec names, whatever the file says")
         }
+        let identitiesAfter = try [SwiftCompiler.kind, SwiftLinker.kind, SwiftPackageReader.kind]
+            .flatMap { try database.node.select(kind: $0) }
+            .map { try XCTUnwrap($0.identity) }
+        XCTAssertEqual(identitiesAfter, identitiesBefore)
     }
 }

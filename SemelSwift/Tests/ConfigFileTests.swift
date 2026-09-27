@@ -87,7 +87,7 @@ final class PackagePluginConfigTests: SemelSwiftTestCase {
     private func selfWiring(packageFolder folder: String = "input:/repo/pkg") throws -> [String: [String: String]] {
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind,
                                                                        name: nil, properties: ["path": folder],
-                                                                       scheduled: false, graphSpec: nil))
+                                                                       scheduled: false, identity: nil))
         let output = try converter.process(input: ProcessInput(inputValues: [:]))
         guard case .noValue = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]) else {
             XCTFail("the first pass has no manifest to convert; it should be pending")
