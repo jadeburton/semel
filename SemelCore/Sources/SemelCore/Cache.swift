@@ -122,11 +122,17 @@ extension Node {
         // such an entry is recoverable — the throw writes an error value on every output
         // port and both hit paths reprocess — so this saves a replay that was going to be
         // thrown away, along with its warning and the error values the ports carry
-        // meanwhile. The cost is a walk of each stored tree, which `applySpecs` repeats
-        // a few lines into the hit it allows: the check at most doubles a walk the path
-        // pays anyway.
-        let demandedSpecs = decodedCacheEntry.inputWireSpecs.values.flatMap(\.values)
-        guard demandedSpecs.allSatisfy({ $0.namesOnlyRegisteredTypes() }) else {
+        // meanwhile. Asked of the table's rows, so once per distinct node.
+        guard decodedCacheEntry.specTable.namesOnlyRegisteredTypes() else {
+            return nil
+        }
+
+        // A table that does not unfold is damaged, and a damaged entry is a miss.
+        //
+        // TODO: B-121's residual. `applySpecs` hashes each unfolded tree again to find
+        // the identities the table is keyed by; an applier that walked the table would
+        // read them instead.
+        guard let inputWireSpecs = try? decodedCacheEntry.specTable.trees() else {
             return nil
         }
 
@@ -144,7 +150,7 @@ extension Node {
         Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
 
         return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
-                             inputWireSpecs: decodedCacheEntry.inputWireSpecs)
+                             inputWireSpecs: inputWireSpecs)
     }
 
     /// Stores one build under the key its material takes, and the material with it. The
@@ -184,7 +190,7 @@ extension Node {
         //Debug.log("Saving cache entry..")
 
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
-                                           inputWireSpecs: output.inputWireSpecs,
+                                           specTable: try GraphSpecTable(trees: output.inputWireSpecs),
                                            keyMaterial: keyMaterial)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
 
@@ -322,8 +328,13 @@ struct CacheKeyMaterial: Codable {
 /// the cache rather than with the node protocol. A field added here is non-optional, so an
 /// entry written before it fails to decode and misses, rather than decoding short with a
 /// default and hitting wrongly.
+///
+/// The demanded specs are stored as a table, each distinct spec node once (B-121): spelled
+/// out as trees, one entry of a product builder's held the settings chain thousands of
+/// times over and ran to 15 MB. The output's `inputWireSpecs` go in as trees and come back
+/// as trees; the table is only the stored form.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
-    let inputWireSpecs: [String: [String: GraphSpecNode]]
+    let specTable: GraphSpecTable
     let keyMaterial: CacheKeyMaterial
 }
