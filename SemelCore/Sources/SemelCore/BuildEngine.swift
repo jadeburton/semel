@@ -738,15 +738,22 @@ public final class BuildEngine {
     /// **Writing (this loop, one result at a time):** each result is written as soon as
     /// its task finishes — outputs, wires, cascades — and the slot it frees is filled from
     /// the nodes that write scheduled. All graph mutation stays on this one sequence, and
-    /// no node waits for a slower one it merely started beside (B-113).
+    /// no node waits for a slower one it merely started beside (B-113). Nor does a node
+    /// scheduled from outside while the pass runs — a push, a batch ending — wait for a
+    /// result: the pass wakes on the work signal too, and fills a free slot at once
+    /// (B-117).
     ///
     /// A node is unscheduled as it starts. A write that changes its inputs while it runs
     /// schedules it again, so it runs once more after its stale result is written, and
     /// the cascade re-evaluates whatever read that result. The cache stays sound
     /// throughout: an entry's key and its output come from the one input a task read.
     private func processAllNodes() async throws {
-        try await withThrowingTaskGroup(of: (NodeRecord, ComputeResult?).self) { group in
+        try await withThrowingTaskGroup(of: PassEvent.self) { group in
             var running = Set<ObjectID>()
+            // Signals up to here are this pass's to act on by selecting; the watcher below
+            // asks for the next one after them (B-117).
+            var seenSignal = await workSignal.generation
+            var watching = false
 
             while true {
                 // Before selecting: a rebuilt manifest's port write is what schedules its
@@ -763,24 +770,56 @@ public final class BuildEngine {
                     try nodeRecord.setScheduled(false)
                     running.insert(nodeID)
                     group.addTask {
-                        await Self.compute(nodeRecord)
+                        .computed(await Self.compute(nodeRecord))
                     }
                 }
 
                 // Nothing running and nothing scheduled: settled.
-                guard let (nodeRecord, result) = try await group.next() else {
-                    return
+                if running.isEmpty {
+                    break
                 }
-                if let nodeID = nodeRecord.id {
-                    running.remove(nodeID)
+
+                // A node scheduled while these run — a push, a batch ending — is picked
+                // up as soon as it is, not when one of them finishes: the wait below is
+                // for the next result or the next signal, whichever comes first.
+                if !watching {
+                    group.addTask { [seenSignal, workSignal] in
+                        .woken(await workSignal.wait(after: seenSignal))
+                    }
+                    watching = true
                 }
-                // A node not ready — waiting on an input — is unscheduled and written
-                // nothing; the input's arrival schedules it again.
-                if let result {
-                    write(result)
+
+                guard let event = try await group.next() else {
+                    break
+                }
+                switch event {
+                case .computed(let nodeRecord, let result):
+                    if let nodeID = nodeRecord.id {
+                        running.remove(nodeID)
+                    }
+                    // A node not ready — waiting on an input — is unscheduled and written
+                    // nothing; the input's arrival schedules it again.
+                    if let result {
+                        write(result)
+                    }
+                case .woken(let generation):
+                    seenSignal = generation
+                    watching = false
                 }
             }
+
+            // The watcher, if one is still waiting: the pass is over and the outer loop's
+            // own wait takes the signal from here. The signal itself is left pending, so
+            // a pass that ended with one outstanding is followed by another at once.
+            group.cancelAll()
+            while try await group.next() != nil {}
         }
+    }
+
+    /// What a pass waits on: a node's result, or a signal that something was scheduled.
+    private enum PassEvent {
+        case computed((NodeRecord, ComputeResult?))
+        case woken(Int)
     }
 
     /// One node's computation, on a thread of its own; the task that asked suspends until
@@ -1013,16 +1052,46 @@ private actor WorkSignal {
 
     private var pendingCount: Int = 0
     private var continuation: CheckedContinuation<Void, Never>?
+    /// Every signal ever, so a waiter inside a pass can ask for the next one after the
+    /// ones it has acted on (B-117); `pendingCount` is the outer loop's, cleared per pass.
+    private(set) var generation = 0
 
     /// Increment the pending count and wake any waiting consumer.
     func signal() {
         pendingCount += 1
+        generation += 1
         continuation?.resume()
         continuation = nil
     }
 
     /// Returns true if at least one signal has arrived since the last `clear()`.
     var isPending: Bool { pendingCount > 0 }
+
+    /// The generation once a signal has taken it past `seen`; at once if one already has.
+    /// Leaves at once on cancellation, with nothing left waiting: the one continuation
+    /// slot is the outer loop's again the moment the pass ends.
+    func wait(after seen: Int) async -> Int {
+        if generation > seen {
+            return generation
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                if Task.isCancelled {
+                    cont.resume()
+                    return
+                }
+                self.continuation = cont
+            }
+        } onCancel: {
+            Task { await self.abandonWait() }
+        }
+        return generation
+    }
+
+    private func abandonWait() {
+        continuation?.resume()
+        continuation = nil
+    }
 
     /// Reset the pending count to zero. Call at the start of each drain pass.
     func clear() {
