@@ -23,8 +23,9 @@
 //               | IDENT ':' expr                          -- labeled / property
 //               | expr                                    -- positional
 //   wireEntry   = forEachPrefix? (STRING | PATH) ':' expr (',' wireEntry)*
-//   forEachPrefix = '{' IDENT ':' forEachItem (',' forEachItem)* '}'
-//   forEachItem = STRING | PATH                           -- literal or wildcard pattern
+//   forEachPrefix = '{' IDENT ':' forEachItems ('except' forEachItems)? '}'
+//   forEachItems = forEachItem (',' forEachItem)*
+//   forEachItem = STRING | PATH | IDENT                   -- literal, wildcard pattern or parameter
 //   PATH        = '<' relativePath '>'
 //
 // PATH is resolved by the lexer: <rel/path> → basePath/rel/path, with '.' and
@@ -40,6 +41,10 @@
 // expands to two wire entries with var='a' and var='b' substituted.
 // Glob patterns in for-each items (e.g. <src/*.c>) are expanded via the
 // wildcardExpander callback passed to FormulaFile.parse.
+//   {f: <*.c> except <main.c>, <test_*.c>} "%%f%%.o": …
+// expands both lists and iterates the first less every path the second matched.
+// 'except' is a keyword only there — after an item and before another — so a func,
+// parameter or wire named 'except' is still a name everywhere else.
 //
 // %%var%%    — full value of var
 // %%var.N%%  — Nth wildcard capture group (0-based) from a wildcard pattern
@@ -313,7 +318,8 @@ extension WireDictEntry {
         switch self {
         case .simple(let key, let value):            return key.callNames + value.callNames
         case .unnamed(let value):                    return value.callNames
-        case .forEach(_, let items, _, let value):   return items.flatMap(\.callNames) + value.callNames
+        case .forEach(_, let items, let excluded, _, let value):
+            return items.flatMap(\.callNames) + excluded.flatMap(\.callNames) + value.callNames
         }
     }
 }
@@ -352,9 +358,10 @@ extension WireDictEntry {
                            value: value.renamingCalls(to: names, under: namespace))
         case .unnamed(let value):
             return .unnamed(value: value.renamingCalls(to: names, under: namespace))
-        case .forEach(let variable, let items, let key, let value):
+        case .forEach(let variable, let items, let excluded, let key, let value):
             return .forEach(variable: variable,
-                            items:    items.map { $0.renamingCalls(to: names, under: namespace) },
+                            items:    items.map    { $0.renamingCalls(to: names, under: namespace) },
+                            excluded: excluded.map { $0.renamingCalls(to: names, under: namespace) },
                             key:      key,
                             value:    value.renamingCalls(to: names, under: namespace))
         }
@@ -366,15 +373,17 @@ extension WireDictEntry {
 /// A `simple` entry contributes exactly one wire with an explicit key.
 /// An `unnamed` entry contributes one wire whose name is auto-generated
 /// as `"wire0"`, `"wire1"`, … based on its position in the port's wire list.
-/// A `forEach` entry contributes one wire per item (after wildcard expansion),
-/// with `%%variable%%` substituted into the key template and every string literal.
+/// A `forEach` entry contributes one wire per item (after wildcard expansion) that no
+/// `excluded` item names, with `%%variable%%` substituted into the key template and every
+/// string literal.
 enum WireDictEntry: Equatable {
     case simple(key: FormulaExpr, value: FormulaExpr)
     case unnamed(value: FormulaExpr)
-    case forEach(variable: String, items: [FormulaExpr], key: String, value: FormulaExpr)
+    case forEach(variable: String, items: [FormulaExpr], excluded: [FormulaExpr], key: String, value: FormulaExpr)
     // simple.key: any expression that resolves to a String (literal, identifier, or template)
     // forEach.key: template string — may contain %%variable%%
     // items: string expressions or parameter references — evaluated then wildcard-expanded if they contain wildcards
+    // excluded: the items after 'except', evaluated and expanded the same way; empty when there is no 'except'
 }
 
 // MARK: - Errors
@@ -396,6 +405,7 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
     case pathEscapesBasePath(path: String)
     case pathEscapesRoot(path: String)
     case forEachRequiresAtLeastOneItem
+    case forEachExceptLeavesNothing(variable: String, removed: [String])
     case duplicateDefinition(kind: String, name: String)
     case unboundParameter(function: String, parameter: String)
     case namespaceOutsidePrelude(namespace: String)
@@ -426,6 +436,9 @@ enum FormulaParseError: Error, LocalizedError, CustomStringConvertible {
             return "Path literal '<\(p)>' escapes the root path"
         case .forEachRequiresAtLeastOneItem:
             return "for-each '{...}' requires at least one item"
+        case .forEachExceptLeavesNothing(let variable, let removed):
+            return "for-each '{\(variable): ...}' leaves nothing: its 'except' removes every item it matched ("
+                 + removed.joined(separator: ", ") + ")"
         case .duplicateDefinition(let kind, let name):
             return "\(kind) '\(name)' is defined both by the formula and by a formula it includes"
         case .unboundParameter(let function, let parameter):
@@ -876,7 +889,7 @@ private struct FormulaParser {
 
     // '[' (wireEntry (',' wireEntry)*)? ']'
     // wireEntry = forEachPrefix? (STRING | PATH) ':' expr
-    // forEachPrefix = '{' IDENT ':' item (',' item)* '}'
+    // forEachPrefix = '{' IDENT ':' items ('except' items)? '}'
     private mutating func parseWireDict() throws -> [WireDictEntry] {
         try expect(.lbracket)
         var entries: [WireDictEntry] = []
@@ -911,7 +924,7 @@ private struct FormulaParser {
         return entries
     }
 
-    // '{' IDENT ':' item (',' item)* '}' (STRING | PATH) ':' expr
+    // '{' IDENT ':' items ('except' items)? '}' (STRING | PATH) ':' expr
     private mutating func parseForEachEntry() throws -> WireDictEntry {
         try expect(.lbrace)
         guard case .ident(let variable) = current else {
@@ -920,22 +933,12 @@ private struct FormulaParser {
         advance()
         try expect(.colon)
 
-        // Parse one or more items separated by commas, until '}'.
-        var items: [FormulaExpr] = []
-        repeat {
-            switch current {
-            case .string(let item):
-                items.append(.string(item))
-                advance()
-            case .ident(let name):
-                items.append(.identifier(name))
-                advance()
-            default:
-                throw located(FormulaParseError.unexpectedToken(current,
-                                                                 expected: "for-each item (string, path, or parameter name) after '\(variable):'"))
-            }
-            if current == .comma { advance() }
-        } while current != .rbrace
+        let items = try parseForEachItems(after: "'\(variable):'")
+        var excluded: [FormulaExpr] = []
+        if atExceptKeyword {
+            advance()
+            excluded = try parseForEachItems(after: "'except'")
+        }
         try expect(.rbrace)
 
         guard !items.isEmpty else {
@@ -949,7 +952,46 @@ private struct FormulaParser {
         advance()
         try expect(.colon)
 
-        return .forEach(variable: variable, items: items, key: key, value: try parseExpr())
+        return .forEach(variable: variable, items: items, excluded: excluded, key: key, value: try parseExpr())
+    }
+
+    /// One or more for-each items, separated by commas, up to the `}` or the `except` that
+    /// ends them. `context` names what they follow, for the error when one is not an item.
+    private mutating func parseForEachItems(after context: String) throws -> [FormulaExpr] {
+        var items: [FormulaExpr] = []
+        repeat {
+            switch current {
+            case .string(let item):
+                items.append(.string(item))
+                advance()
+            case .ident(let name):
+                items.append(.identifier(name))
+                advance()
+            default:
+                throw located(FormulaParseError.unexpectedToken(current,
+                                                                 expected: "for-each item (string, path, or parameter name) after \(context)"))
+            }
+            if current == .comma { advance() }
+        } while current != .rbrace && !atExceptKeyword
+        return items
+    }
+
+    /// Whether `except` here opens a for-each's exclusions rather than naming a parameter.
+    ///
+    /// Not a keyword, for the reason `namespace` and `funcs` are not: a func, a parameter or a
+    /// wire already spelled `except` must keep working. The loop above asks only after it has
+    /// read an item, and the word opens the exclusions only when another item follows it, so
+    /// `{f: except}` and `{f: 'a', except}` still iterate a parameter of that name.
+    private var atExceptKeyword: Bool {
+        guard case .ident("except") = current else {
+            return false
+        }
+        switch peek1 {
+        case .string, .ident:
+            return true
+        default:
+            return false
+        }
     }
 
     // ('.' IDENT)?
@@ -1332,19 +1374,12 @@ private struct FormulaResolver {
                         }
                         graphWires.append(GraphSpecWire(name: "wire\(graphWires.count)", node: node))
 
-                    case .forEach(let variable, let itemExprs, let key, let expr):
-                        var resolvedItems: [String] = []
-                        for itemExpr in itemExprs {
-                            let itemValue = try eval(itemExpr, env: env, templateEnv: templateEnv)
-                            guard case .string(let s) = itemValue else {
-                                throw FormulaParseError.typeMismatch(
-                                    expected: "string (for-each item)",
-                                    got: itemValue.typeName,
-                                    context: "for-each items must resolve to strings")
-                            }
-                            resolvedItems.append(s)
-                        }
-                        let bindings = try expandForEachItems(variable: variable, items: resolvedItems)
+                    case .forEach(let variable, let itemExprs, let excludedExprs, let key, let expr):
+                        let bindings = try forEachBindings(variable:    variable,
+                                                           items:       itemExprs,
+                                                           excluded:    excludedExprs,
+                                                           env:         env,
+                                                           templateEnv: templateEnv)
                         for binding in bindings {
                             var newTemplateEnv = templateEnv
                             newTemplateEnv[variable] = binding
@@ -1386,6 +1421,60 @@ private struct FormulaResolver {
     }
 
     // MARK: For-each item expansion
+
+    /// What a for-each iterates: its items expanded, less every path its `except` items
+    /// expand to. The two lists meet as expanded paths, not as the text written, so
+    /// `<*.c> except <lua.c>` removes the match the pattern made for `lua.c`: both spellings
+    /// went through the lexer's path resolution and the expander hands back the same form.
+    ///
+    /// An `except` item that matches nothing is neither an error nor a notice. A project
+    /// keeps an exclusion after upstream deletes the file — the formula then builds either
+    /// side of that commit — and the resolver cannot tell that case from the one it runs into
+    /// on every build: the first pass, before any folder manifest has arrived, expands every
+    /// pattern to nothing, so a notice there would be noise each time.
+    ///
+    /// For the same reason the error is for an `except` that *removes* everything, not for an
+    /// empty result: items that expanded to nothing are the first pass, or a pattern that
+    /// matches nothing, and neither is an error without `except` either.
+    private func forEachBindings(
+        variable: String,
+        items: [FormulaExpr],
+        excluded: [FormulaExpr],
+        env: [String: FormulaValue],
+        templateEnv: [String: ForEachBinding]
+    ) throws -> [ForEachBinding] {
+        let bindings = try expandForEachItems(variable: variable,
+                                              items:    evalForEachItems(items, env: env, templateEnv: templateEnv))
+        guard !excluded.isEmpty else {
+            return bindings
+        }
+        let excludedBindings = try expandForEachItems(variable: variable,
+                                                      items:    evalForEachItems(excluded, env: env, templateEnv: templateEnv))
+        let excludedPaths = Set(excludedBindings.map(\.full))
+        let kept = bindings.filter { !excludedPaths.contains($0.full) }
+        guard kept.isEmpty, !bindings.isEmpty else {
+            return kept
+        }
+        throw FormulaParseError.forEachExceptLeavesNothing(variable: variable, removed: bindings.map(\.full))
+    }
+
+    /// Each for-each item's text: a literal, a pattern, or the string a parameter holds.
+    private func evalForEachItems(
+        _ itemExprs: [FormulaExpr],
+        env: [String: FormulaValue],
+        templateEnv: [String: ForEachBinding]
+    ) throws -> [String] {
+        try itemExprs.map { itemExpr in
+            let itemValue = try eval(itemExpr, env: env, templateEnv: templateEnv)
+            guard case .string(let item) = itemValue else {
+                throw FormulaParseError.typeMismatch(
+                    expected: "string (for-each item)",
+                    got: itemValue.typeName,
+                    context: "for-each items must resolve to strings")
+            }
+            return item
+        }
+    }
 
     private func expandForEachItems(variable: String, items: [String]) throws -> [ForEachBinding] {
         var bindings: [ForEachBinding] = []

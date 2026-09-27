@@ -538,7 +538,7 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
 2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 
-**B-123** `open` — **A for-each that says `except`.**
+**B-123** `done` — **A for-each that says `except`.**
 The for-each takes literal paths and wildcard patterns and nothing else, so "every `.c`
 in this folder except the mains and the tests" can only be said by enumeration. Lua's
 formula (`EndToEnd/Fixtures/external/lua/lua.fmla`, B-79) names its 32 library sources
@@ -560,6 +560,17 @@ from the first; a subtraction that leaves nothing is an error, as an empty item 
 (`forEachRequiresAtLeastOneItem`).
 The enumerated form stays valid for the author who wants the makefile's exactness. The
 Lua formula is rewritten with it in the same change, so the roster exercises it.
+
+Done (2026-09-27), as specified: `except` is a keyword only after an item and before
+another, so a func, parameter or wire of that name still parses. `WireDictEntry.forEach`
+carries the `excluded` items; the resolver expands them through the same expander and
+removes their paths from the items' expansion. The error is for an `except` that removes
+every item it matched (`forEachExceptLeavesNothing`, naming them), not for an empty
+result: the builder's first pass, before any folder manifest has arrived, expands every
+pattern to nothing. An `except` item that matches nothing is silent, for the same reason
+and because a project may keep an exclusion after upstream deletes the file.
+`lua.fmla` says `<*.c> except <lua.c>, <onelua.c>, <ltests.c>`, and `liblua.a` and `lua`
+came out byte-identical to the enumerated formula's.
 
 ### Configuration
 
@@ -827,8 +838,8 @@ fixture tier.
 
 1. *Lua 5.4* — done (2026-09-27): in the roster as `lua`, the `lua/lua` mirror at the
    commit `v5.4.7` names, with `Fixtures/external/lua` laid over it (B-76): `liblua.a` from
-   the 32 library sources named in the formula — `lua.c`, `onelua.c` and `ltests.c` left
-   out, which no folder pattern can say — and `lua` linked against it; both match across
+   the 32 library sources — every C file in the root, `lua.c`, `onelua.c` and `ltests.c`
+   left out through the for-each's `except` (B-123) — and `lua` linked against it; both match across
    all four hermeticity builds. No `luac`: the mirror is the development tree and `luac.c`
    is added to the release tarballs only, so it cannot be built from a pinned commit. It
    surfaced two gaps in the clang nodes: nothing wrote a static archive — clang cannot,
