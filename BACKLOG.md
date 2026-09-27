@@ -81,14 +81,6 @@ build. Streaming the hash and cloning the sandbox file into the store would remo
 copies; how often a read must be verified is the decision, since verification was added on
 purpose.
 
-**B-117** `open` `For Fable Only` — **A node scheduled during a pass waits for a running one to finish.**
-`processAllNodes` fills its free slots and then awaits the next result. A node that becomes
-scheduled meanwhile — a push arriving during a long link, a batch ending — is picked up only
-when some running task finishes, however many slots are free. Found by B-114's concurrency
-test, where nodes created after the pass's first select ran as a second wave a full node
-later. Wanted: the loop to wake on the work signal as well as on a result — a select over
-the two — so a free slot is filled as soon as there is something for it.
-
 ## Design, correctness and code quality
 
 **B-47** `open` `For Fable Only` — **The SDK is declared but not a graph input.**

@@ -68,6 +68,35 @@ final class ConcurrencyTests: SemelCoreTestCase {
         XCTAssertEqual((0..<4).compactMap { TimedNode.finished["n\($0)"] }.count, 4, "every node ran")
     }
 
+    /// B-117. A node scheduled while another runs starts as soon as a slot is free, not
+    /// when the running one finishes: the pass waits on the next result or the next
+    /// signal, whichever comes first. Before, the fast node here waited the slow one out.
+    func test_aNodeScheduledDuringAPassStartsWhileASlotIsFree() async throws {
+        try start(jobs: 2)
+        try await publishTimedNodes(count: 1, seconds: 2)
+        let deadline = Date().addingTimeInterval(5)
+        while TimedNode.running.current < 1, Date() < deadline {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(TimedNode.running.current, 1, "precondition: the slow node is running")
+
+        let fastInput = "Configuration(role: 'fast-in').output"
+        engine.beginBatch()
+        _ = try GraphSpecNode.parse(fastInput).findOrCreateMatchingNode()
+        _ = try GraphSpecNode.parse("TimedNode(label: 'fast', seconds: '0', input: ['in': \(fastInput)]).output")
+            .findOrCreateMatchingNode()
+        engine.signalWorkAvailable()
+        let published = Date()
+        engine.endBatch()
+
+        await engine.waitUntilIdle()
+
+        let fastDone = try XCTUnwrap(TimedNode.finished["fast"])
+        let slowDone = try XCTUnwrap(TimedNode.finished["n0"])
+        XCTAssertLessThan(fastDone, slowDone, "the fast node did not wait for the slow one")
+        XCTAssertLessThan(fastDone.timeIntervalSince(published), 1, "the fast node started as soon as it was scheduled")
+    }
+
     /// As many blocking nodes as the pool has threads, all running — and a task put on the
     /// pool still runs at once, because the nodes are not on it. Before B-114 that task
     /// waited for the first node to finish.
