@@ -114,17 +114,6 @@ the plugins — and the machine facts in a key (the SDK, the tool binary) are in
 outside the input file system by design. It has to be stated as "or declared as coming from
 outside", which is B-43's external port.
 
-**B-61** `open` — **The cross-session `wait` limit is documented and not pinned.**
-`wait` has been offered across socket connections since the socket server landed, and both
-conditions this item set are settled: each connection is served on its own queue, and a
-`wait` is answered off the serial request queue. One behaviour is accepted rather than
-fixed — a `wait` while another session holds a batch open blocks until that batch closes,
-because a batched work signal is counted but not sent until `endBatch` (fail-safe: never a
-false settle). Nothing pins it: `test_waitBlocksWhileAnotherSessionHoldsABatchOpen` runs
-over an engine with no processing loop, where a wait returns at once, and so asserts that
-it *returns*. A test over a live loop, asserting the block and its release at `endBatch`,
-is what is owed — and the test's name, until then.
-
 ## App bundles
 
 Building the app that consumes the packages, for the simulator first. Design:
