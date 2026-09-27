@@ -189,6 +189,10 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// missing. The reply carries how many nodes were scheduled so a client can say which
     /// graph it asked; the server neither waits nor refuses.
     case check
+    /// Delete every stored object nothing refers to (B-14). The engine does this itself
+    /// as the store grows; the verb is for the reader who wants it now, or wants to see
+    /// what it does.
+    case collect
     /// The installed tools with their machine settings for `platform` (a `Platform`'s raw
     /// value): the SDK is one per platform (B-109).
     case tools(platform: String)
@@ -235,6 +239,8 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     /// the body: it is one integer, and it is what tells a reader whether a finding about
     /// wiring describes a defect or work in flight.
     case check(scheduledNodes: Int)
+    /// What `collect` removed and what it kept, in objects and bytes.
+    case collected(removed: Int, removedBytes: Int, kept: Int)
     case tools(namespaces: [ToolNamespaceRecord])
     /// Where the graph the reset discarded was copied to, so the state that made the reset
     /// necessary can still be read. Absent when there was nothing to discard, and when the

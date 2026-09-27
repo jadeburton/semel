@@ -366,6 +366,8 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["errors", "e"], usage: "errors", description: "the current build errors, one entry per cause"),
             HelpEntry(verbs: ["check"], usage: "check",
                       description: "report every graph invariant that does not hold; ask it of a settled graph"),
+            HelpEntry(verbs: ["collect"], usage: "collect",
+                      description: "delete every stored object nothing refers to; the engine does this as the store grows"),
             HelpEntry(verbs: ["tools", "t"], usage: "tools [<prefix>] [--write <file> [--all]]",
                       description: "the installed tools as config settings; --write writes the machine file"),
             HelpEntry(verbs: ["debug", "d"], usage: "debug [<cache key>]",

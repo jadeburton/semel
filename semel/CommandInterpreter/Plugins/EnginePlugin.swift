@@ -1,7 +1,7 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, check, reset, t / tools, wait
+// Handles: d / debug, n / nudge, e / errors, check, collect, reset, t / tools, wait
 
 import Foundation
 import SemelNodeKit
@@ -9,7 +9,7 @@ import SemelProtocol
 
 final class EnginePlugin: CommandPlugin {
 
-    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "reset", "t", "tools", "wait"]
+    let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "reset", "t", "tools", "wait"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -17,6 +17,7 @@ final class EnginePlugin: CommandPlugin {
         case "n", "nudge":  _ = try context.request(.nudge)
         case "e", "errors": try handleErrors(context: context)
         case "check":       try handleCheck(context: context)
+        case "collect":     try handleCollect(context: context)
         case "reset":       try handleReset(tokens: tokens, context: context)
         case "t", "tools":  try handleTools(tokens: tokens, context: context)
         case "wait":        try handleWait(context: context)
@@ -152,6 +153,23 @@ final class EnginePlugin: CommandPlugin {
         if !missing.isEmpty {
             context.outputMessage("No tool is installed for: \(missing.joined(separator: ", ")); those blocks are comments.")
         }
+    }
+
+    // MARK: - collect
+
+    /// `collect`: every stored object nothing refers to is deleted, now (B-14). The engine
+    /// does the same on its own as the store grows, so this is for the reader who wants
+    /// the space back at once, or wants to see what the collector would do.
+    private func handleCollect(context: any CommandContext) throws {
+        guard case .collected(let removed, let removedBytes, let kept) = try context.request(.collect).0 else {
+            return
+        }
+        let megabytes = String(format: "%.1f", Double(removedBytes) / 1_048_576)
+        guard removed > 0 else {
+            context.outputMessage("Nothing to collect; \(kept) object\(kept == 1 ? "" : "s") kept.")
+            return
+        }
+        context.outputMessage("Collected \(removed) unreferenced object\(removed == 1 ? "" : "s") (\(megabytes) MB); \(kept) kept.")
     }
 
     // MARK: - check

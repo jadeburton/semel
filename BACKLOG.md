@@ -17,12 +17,6 @@ experiment, and any model can take it.
 
 ## Cache
 
-**B-14** `open` `For Fable Only` — **No blob GC.**
-Unreferenced objects accumulate in the object store with no collector: `DataObjectStore` has
-no delete, and the collectors that exist — cache-entry trimming, unreferenced nodes — remove
-rows and leave their objects. Less "not urgent" than it was: since B-26, every edit interns
-a fresh content-root document per ancestor folder (B-26 residual 3).
-
 ## Command line
 
 What a user sees at the prompt. Found by using `semel` on IceCubesApp and the C fixture

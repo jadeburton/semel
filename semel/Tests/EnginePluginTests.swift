@@ -31,6 +31,25 @@ final class EnginePluginTests: XCTestCase {
         "Run `check` before the next reset: it names the invariants a graph is breaking — "
       + "the evidence a reset discards."
 
+    // MARK: - collect (B-14)
+
+    func test_collectSaysWhatWentAndWhatStayed() throws {
+        connection.reply(.collected(removed: 3, removedBytes: 1_572_864, kept: 120))
+
+        try run("collect")
+
+        XCTAssertEqual(connection.daemonRequests, [.collect])
+        XCTAssertEqual(context.messages, ["Collected 3 unreferenced objects (1.5 MB); 120 kept."])
+    }
+
+    func test_collectWithNothingToRemoveSaysSo() throws {
+        connection.reply(.collected(removed: 0, removedBytes: 0, kept: 1))
+
+        try run("collect")
+
+        XCTAssertEqual(context.messages, ["Nothing to collect; 1 object kept."])
+    }
+
     func test_errorsWithNoneSaysSo() throws {
         connection.reply(.errors(records: []))
 

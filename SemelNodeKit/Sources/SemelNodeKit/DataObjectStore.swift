@@ -63,6 +63,85 @@ public final class DataObjectStore {
         FileManager.default.fileExists(atPath: objectURL(hash: hash).path)
     }
 
+    // MARK: - What the collector reads (B-14)
+
+    /// One object as the collector sees it: its name, its size, and when it was last
+    /// stored — which is also when it was last *re*-stored, see `touch`.
+    public struct StoredObject: Equatable {
+        public let hash: String
+        public let size: Int
+        public let modificationDate: Date
+    }
+
+    /// Every object in the store, by hash, with size and age. Walks the shards; a name
+    /// starting with a dot is bytes on their way in (`temporaryURL`) and not an object.
+    public func objects() -> [StoredObject] {
+        let fileManager = FileManager.default
+        var objects: [StoredObject] = []
+        guard let shards = try? fileManager.contentsOfDirectory(atPath: storeRoot.path) else {
+            return []
+        }
+        for shard in shards.sorted() {
+            let shardURL = storeRoot.appendingPathComponent(shard, isDirectory: true)
+            guard let names = try? fileManager.contentsOfDirectory(atPath: shardURL.path) else {
+                continue
+            }
+            for name in names.sorted() where !name.hasPrefix(".") {
+                let values = try? shardURL.appendingPathComponent(name).resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                objects.append(StoredObject(hash: name,
+                                            size: values?.fileSize ?? 0,
+                                            modificationDate: values?.contentModificationDate ?? .distantPast))
+            }
+        }
+        return objects
+    }
+
+    /// The first `count` bytes of an object, or nil when it is not there — enough to tell
+    /// a document that names other objects from a file that does not, without reading a
+    /// 57 MB executable to find out it is not a manifest.
+    public func prefix(ofHash hash: String, count: Int) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: objectURL(hash: hash)) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount: count)
+    }
+
+    /// Deletes an object. Only the collector calls this, and only for an object nothing
+    /// refers to; an object already gone is not an error.
+    public func remove(hash: String) throws {
+        let url = objectURL(hash: hash)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            throw ObjectStoreError.cannotWrite(storeRoot: storeRoot.path, underlying: error)
+        }
+    }
+
+    /// Bytes written to this store since the process started, across both ways in. What
+    /// the collector's trigger reads: a store that has grown is one worth walking.
+    public var bytesStored: Int {
+        bytesStoredLock.withLock { bytesStoredCount }
+    }
+
+    private let bytesStoredLock = NSLock()
+    private var bytesStoredCount = 0
+
+    private func noteStored(bytes: Int) {
+        bytesStoredLock.withLock { bytesStoredCount += bytes }
+    }
+
+    /// An object interned again is in use again. Its modification date moves to now, so
+    /// a collection that began before this intern — and so did not see whichever row is
+    /// about to refer to it — leaves it alone by age. That is the one race a collector
+    /// walking a snapshot of the graph has, and this is what closes it.
+    private func touch(_ url: URL) {
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+    }
+
     // MARK: - Reading
 
     /// Returns the stored bytes for `hash`, or `nil` if not present.
@@ -110,8 +189,10 @@ public final class DataObjectStore {
         let url = objectURL(hash: hash)
 
         guard !FileManager.default.fileExists(atPath: url.path) else {
+            touch(url)
             return
         }
+        noteStored(bytes: content.count)
 
         // Every failure here is a property of the volume, not of the content being
         // stored: out of space, read-only mount, permissions. The next node would hit
@@ -167,8 +248,10 @@ public final class DataObjectStore {
         let url = objectURL(hash: hash)
 
         guard !FileManager.default.fileExists(atPath: url.path) else {
+            touch(url)
             return hash
         }
+        noteStored(bytes: data.count)
 
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

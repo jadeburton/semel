@@ -25,7 +25,7 @@ final class HelpTests: XCTestCase {
 
         XCTAssertEqual(lines.filter { !$0.hasPrefix("  ") }, ["Build:", "Files:", "Navigation:", "Session:"])
         let mentioned = lines.joined(separator: "\n")
-        for verb in ["build", "wait", "errors", "check", "tools", "debug", "nudge", "reset",
+        for verb in ["build", "wait", "errors", "check", "collect", "tools", "debug", "nudge", "reset",
                      "push", "rm", "cp", "export", "ls", "cd", "pwd", "base", "begin", "quit", "semel stop"] {
             XCTAssertTrue(mentioned.contains("  \(verb)"), "help does not name \(verb)")
         }

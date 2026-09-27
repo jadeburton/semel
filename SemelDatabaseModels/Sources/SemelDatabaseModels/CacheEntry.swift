@@ -39,6 +39,12 @@ public struct CacheEntryDataAccess: DataAccessType {
         return try read { db in try CacheEntry.fetchAll(db) }
     }
 
+    /// Every entry's content, without the rest of the row: what the collector decodes for
+    /// the objects a cached build refers to (B-14). Each is a small JSON document.
+    public func selectAllContent() throws -> [Data] {
+        try read { db in try Data.fetchAll(db, sql: "SELECT content FROM CacheEntry ORDER BY hash") }
+    }
+
     /// Every entry's key, without its content. A caller inspecting the keys would
     /// otherwise pull every cached build through memory to read a column of hex.
     public func selectAllHashes() throws -> [String] {
