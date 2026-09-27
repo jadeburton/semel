@@ -359,5 +359,7 @@ Where the implementation departs from the design above, and why:
 
 What the clang and swift preludes build is node for node what the hand-written fixtures
 built (`ClangPreludeTests`, `AppPreludeTests`), so a formula that moves to them keeps its
-graph and its cache. Not enforced: a prelude that another prelude includes is callable from
-the formula without the formula including it.
+graph and its cache. Enforced since B-111 (2026-09-27): each text sees the namespaces it
+includes itself, so a prelude that another prelude includes is callable inside that prelude
+and from the formula only once the formula includes it too; the parser checks every dotted
+call after merging and names the missing include.
