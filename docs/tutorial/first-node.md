@@ -6,7 +6,10 @@ redone when things change, write a node type of your own, and use it in a build.
 This is for someone who wants to work on Semel. If you only want your Swift project built,
 the README's [clone to build](../../README.md#dependencies-and-clone-to-build) is two
 commands. Words in *italics* are defined in the [glossary](../../AGENTS.md#glossary); they
-are introduced here where they first do something.
+are introduced here where they first do something. The model they belong to — nodes,
+ports, wires, specs, and a value that is nothing — is drawn out in
+[Nodes and wires](nodes-and-wires.md), eight pictures to read before Part 3 or whenever a
+term stops making sense.
 
 Last walked through at commit `d5cc9f1`, and Parts 1 and 2 again when the prompt learned to
 print a settle summary. The commits in between change documents, comments, tests and the
@@ -414,7 +417,9 @@ and worth seeing once.
 ## Part 3 — Write a node
 
 `MyLineCounter`: whatever files are wired to it, it outputs one `name: count` line per
-wire. No tool, no configuration — everything a node must have, and nothing else.
+wire. No tool, no configuration — everything a node must have, and nothing else. If
+"wired to it" is not yet a picture in your head, [Nodes and wires](nodes-and-wires.md) is
+ten minutes and draws it.
 
 This is the part that does touch the checkout, and it has to: node types are compiled into
 `semelserv`, so your node has to live in a package the server links. "Cleaning up" at the
@@ -657,9 +662,10 @@ Each of these is the smallest real example of something this tutorial left out.
 
 | To learn | Read |
 |---|---|
+| The model itself — ports, named wires, specs, dynamic ports, a value that is nothing — in pictures | [Nodes and wires](nodes-and-wires.md) |
 | A node that runs a tool: `ToolRunner`, tool discovery, a config namespace | [`StringCatalogCompiler.swift`](../../SemelApple/Sources/SemelApple/StringCatalogCompiler.swift) (85 lines) and [`SemelApple.swift`](../../SemelApple/Sources/SemelApple/SemelApple.swift) |
 | A node whose output is a tree of files | [`AssetCatalogCompiler.swift`](../../SemelApple/Sources/SemelApple/AssetCatalogCompiler.swift) |
-| A node that asks for more inputs while it runs (`inputWireSpecs`) | [`ClangIncludeFinder.swift`](../../SemelClang/Sources/SemelClang/ClangIncludeFinder.swift) |
+| A node that asks for more inputs while it runs (`inputWireSpecs`) | [`ClangPreprocessor.swift`](../../SemelClang/Sources/SemelClang/ClangPreprocessor.swift) — it demands a [`ClangIncludeFinder`](../../SemelClang/Sources/SemelClang/ClangIncludeFinder.swift) per file and a header per include, round after round |
 | A node that emits formula text | [`SwiftFormulaConverter.swift`](../../SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift) — 1,228 lines; read [`XcodeProjectConverter.swift`](../../SemelApple/Sources/SemelApple/XcodeProjectConverter.swift) first |
 | What must never break, and what looks wrong but is deliberate | [`AGENTS.md`](../../AGENTS.md) |
 | What needs doing | [`BACKLOG.md`](../../BACKLOG.md) |

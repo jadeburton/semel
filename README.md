@@ -43,7 +43,8 @@ instead — SwiftPM reuses a stale plan across the path-dependency packages, and
 ## Usage
 
 New here, and want to change Semel rather than only run it? Start with
-[the tutorial](docs/tutorial/first-node.md): build something, watch the cache, write a node.
+[the tutorial](docs/tutorial/first-node.md): build something, watch the cache, write a node;
+[Nodes and wires](docs/tutorial/nodes-and-wires.md) draws the model it rests on.
 
 ```sh
 .build/release/semel
