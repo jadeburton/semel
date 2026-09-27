@@ -45,7 +45,21 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-79: a real C project, from a clone with the roster's formula laid over it (B-76).
+    /// Needs the network for the clone; the build is seconds, so it runs every
+    /// hermeticity build.
+    func test_luaBuildsFromTheMirrorWithTheOverlaidFormula() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.lua)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("lua\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
-        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes", "icecubes-app", "semel"])
+        XCTAssertEqual(Set(Projects.external.map(\.name)), ["icecubes", "icecubes-app", "semel", "lua"])
     }
 }

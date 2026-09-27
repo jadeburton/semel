@@ -72,6 +72,52 @@ final class ClangPreludeTests: XCTestCase {
         }
     }
 
+    /// The archive's chain wired by hand: the same compiler per file as the linker's,
+    /// under a `ClangArchiver` selecting its own namespace (B-79).
+    private let handWrittenArchive = """
+        func rawConfig() = ConfigMerger(base: [StaticFile(path: <../semel.machine.config>)], override: [StaticFile(path: <semel.config>)])
+
+        func config(prefix) = ConfigFilter(prefix: prefix, input: [rawConfig()])
+
+        func preprocessor(path) = ClangPreprocessor(
+          configuration: [config(prefix: 'clang.preprocessor')],
+          input: [path: StaticFile(path: path)]
+        )
+
+        product "libhello.a" = ClangArchiver(
+          configuration: [config(prefix: 'clang.archiver')],
+          objectFiles: [{f: <src/*.c>} "%%f%%.o": ClangCompiler(configuration: [config(prefix: 'clang.compiler')], input: ["%%f%%.p": preprocessor(path: f)])]
+        )
+        """
+
+    private let archiveWithPrelude = """
+        include 'clang'
+
+        func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+        product "libhello.a" = clang.staticLibrary(sources: <src>, settings: settings())
+        """
+
+    /// The shape a project whose files are not one folder's worth writes — Lua names the
+    /// library's files itself (B-79): the same nodes, from `clang.compiled` per named file.
+    private let archiveFromNamedFiles = """
+        include 'clang'
+
+        func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+        product "libhello.a" = ClangArchiver(
+          configuration: [clang.selected(settings: settings(), prefix: 'clang.archiver')],
+          objectFiles: [{f: <src/hello.c>, <src/main.c>} "%%f%%.o": clang.compiled(file: f, settings: settings())]
+        )
+        """
+
+    func test_theStaticLibraryFuncBuildsTheNodesTheHandWrittenArchiveChainBuilds() throws {
+        let expected = try XCTUnwrap(try parse(handWrittenArchive)["libhello.a"]).asString(omitOutputPort: false)
+
+        XCTAssertEqual(try XCTUnwrap(try parse(archiveWithPrelude)["libhello.a"]).asString(omitOutputPort: false), expected)
+        XCTAssertEqual(try XCTUnwrap(try parse(archiveFromNamedFiles)["libhello.a"]).asString(omitOutputPort: false), expected)
+    }
+
     func test_registeringSemelClangAnswersTheIncludeName() throws {
         FormulaIncludeProviders.removeAll()
         try SemelClang.register()

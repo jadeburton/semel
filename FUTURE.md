@@ -675,11 +675,18 @@ from a clone: pin a commit, run `semel-swift prepare` — or, for a C or C++ pro
 has no converter, lay a formula over the clone (B-76) — and let the first failure list
 correct the entry. The gap list a project produces is worth more than its eventual pass.
 
-**B-76** `open` — **A roster source for a clone plus a hand-written formula.**
-`Project.source` is `.fixture` or `.git(url:commit:subfolder:)`, and only `prepare` writes
-a formula into a clone. A C or C++ project has no converter, so its `.fmla` and `clang.cfg`
-have to be laid over the clone from the fixtures folder — `.git(…, overlay:
-"external/lua")` or similar. Blocks B-79.
+**B-76** `done` — **A roster source for a clone plus a hand-written formula.**
+`Project.source` is `.fixture`, `.git(url:commit:subfolder:)` or `.repository`, and only
+`prepare` writes a formula into a clone. A C or C++ project has no converter, so its `.fmla`
+and `semel.config` have to be laid over the clone from the fixtures folder. Blocked B-79.
+
+Done (2026-09-27): `.git(url:commit:subfolder:overlay:)` — `overlay` names a folder under
+`EndToEnd/Fixtures` whose entries `materialise` copies over the checkout's subfolder once
+the checkout is copied, each replacing the entry of its name. `configure` then writes the
+machine file beside the subfolder, where the C fixtures' formulas read it too, so an overlaid
+formula says `<../semel.machine.config>` like theirs. `RosterTests` pin that every overlay is
+in the repository and is exactly one formula, which names that file, plus a `semel.config`,
+and the walk for committed machine files covers it. First used by Lua (B-79).
 
 **B-77** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
 application target, simulator only, all library code in packages. In suggested order:
@@ -728,14 +735,34 @@ non-synchronized groups.
    the local-engines-plus-cache-server design.
 
 **B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world (twice:
-`c` and `tutorial`) and an emulator of three `.cpp` files and eight headers. Needs B-76. `c-hello` is subsumed by `tutorial` — identical sources, the
-same products plus `lines.txt` — so when a real C project is pinned it is `c-hello` that
-goes, not the tutorial fixture. `RosterTests.test_theTutorialFixtureSourcesMatchTheCFixture`
-compares the two `src/` trees, though, so that test and the tutorial's "copy
-`EndToEnd/Fixtures/c`" instruction move to `Fixtures/tutorial` at the same time as `c-hello`.
+`c` and `tutorial`) and an emulator of three `.cpp` files and eight headers. Needed B-76,
+done. `c-hello` is subsumed by `tutorial` — identical sources, the same products plus
+`lines.txt` — so when a real C project is pinned it is `c-hello` that goes, not the tutorial
+fixture. `RosterTests.test_theTutorialFixtureSourcesMatchTheCFixture` compares the two
+`src/` trees, though, so that test and the tutorial's "copy `EndToEnd/Fixtures/c`"
+instruction move to `Fixtures/tutorial` at the same time as `c-hello`.
 
-1. *Lua 5.4* — about 35 files in one flat folder, no configure step, `liblua.a` plus the
-   `lua` and `luac` executables.
+*Not done with Lua (2026-09-27), on purpose.* The tutorial copies `Fixtures/c` because it
+is the starting point — a formula without `lines.txt`, which the reader adds while writing
+`LineCounter`; pointing the copy at `Fixtures/tutorial` would hand over the finished formula
+and make the tutorial's first builds fail on a node not yet registered. And Lua is external,
+opt-in, while `c-hello` runs the prelude's C path on every push. `c-hello` goes when the
+tutorial gets a starting-point fixture of its own, or when a real C project joins the
+fixture tier.
+
+1. *Lua 5.4* — done (2026-09-27): in the roster as `lua`, the `lua/lua` mirror at the
+   commit `v5.4.7` names, with `Fixtures/external/lua` laid over it (B-76): `liblua.a` from
+   the 32 library sources named in the formula — `lua.c`, `onelua.c` and `ltests.c` left
+   out, which no folder pattern can say — and `lua` linked against it; both match across
+   all four hermeticity builds. No `luac`: the mirror is the development tree and `luac.c`
+   is added to the release tarballs only, so it cannot be built from a pinned commit. It
+   surfaced two gaps in the clang nodes: nothing wrote a static archive — clang cannot,
+   `swiftc -static` drives libtool — so `ClangArchiver` runs `libtool -static` under
+   `ZERO_AR_DATE` in a namespace of its own, `clang.archiver`, that `semel-clang` writes and
+   `clang.staticLibrary(sources:settings:)` selects; and no clang configuration read extra
+   flags, so `arguments` is honoured by all three, comma-joined as the Swift nodes' is, for
+   Lua's `-DLUA_USE_MACOSX` (the linker had appended its always-empty list twice). About 35
+   files is right: 35 `.c`, of which 32 are the library.
 2. *SQLite amalgamation* — one 250k-line translation unit: the preprocessor and compiler
    nodes and the cache with a single enormous entry, the opposite of IceCubes's 271 small
    ones.

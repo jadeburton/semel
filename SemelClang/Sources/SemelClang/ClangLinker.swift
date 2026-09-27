@@ -28,7 +28,7 @@ struct ClangLinkerConfiguration {
         target = required.value("target")
         try required.check()
 
-        arguments = []
+        arguments = clangArguments(properties)
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
         sdkPath = properties["sdkPath"]
@@ -135,8 +135,6 @@ public struct ClangLinker: Node {
         // diagnostic about one of them can name the key behind it (B-98).
         var settings = [SettingArgument]()
         let namespace = ClangLinkerConfiguration.settingNamespace
-
-        arguments.append(contentsOf: inputs.configuration.arguments)
 
         arguments.append("-target");
         arguments.append(inputs.configuration.target)

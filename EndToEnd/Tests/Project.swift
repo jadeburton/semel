@@ -20,7 +20,15 @@ struct Project {
         /// `"."` means the checkout's own root holds what `buildFolder` names; since a
         /// build folder cannot be the base itself, the checkout is nested one level under
         /// base instead, named after `name` — so `buildFolder` must equal `name`.
-        case git(url: String, commit: String, subfolder: String)
+        ///
+        /// `overlay` names a folder under `EndToEnd/Fixtures` — `"external/lua"` — whose
+        /// entries are copied over the subfolder once the checkout is: the formula and the
+        /// project config of a project that has no converter to write them (B-76). Only
+        /// `prepare` writes into a clone otherwise, and a C project has no `prepare`. An
+        /// overlaid formula reads the machine's settings from `../semel.machine.config`,
+        /// as the C fixtures do, and the harness writes that file beside the subfolder for
+        /// it, as it does for a fixture.
+        case git(url: String, commit: String, subfolder: String, overlay: String? = nil)
         /// This repository's own checkout, as it is on disk: Semel building Semel (B-78).
         /// What is not the build stays out of the copy — build products, version control,
         /// the end-to-end fixtures, which are projects of their own with formulas the
@@ -55,4 +63,15 @@ struct Project {
     /// When set, every exported file lies under this folder: an app's build root holds the
     /// app, and not the archives of the packages it links (B-67).
     var onlyUnder: String?
+}
+
+extension Project.Source {
+
+    /// The fixtures folder laid over a `.git` checkout, when the source has one.
+    var overlay: String? {
+        guard case .git(_, _, _, let overlay) = self else {
+            return nil
+        }
+        return overlay
+    }
 }

@@ -69,25 +69,47 @@ final class EndToEndRun {
     /// cannot be the base itself (`push .` resolves to nothing to push), so a project
     /// whose build folder is the checkout's own root needs a real subfolder to name; its
     /// `buildFolder` is then `project.name`. Either way `base` is what the build folder
-    /// is relative to.
+    /// is relative to. A `.git` source with an overlay then gets the overlay's entries
+    /// copied over the subfolder's copy (B-76).
     func materialise() throws {
         let tree = root.appendingPathComponent("tree", isDirectory: true)
         switch project.source {
         case .fixture:
             try FileManager.default.copyItem(at: EndToEndEnvironment.fixtures, to: tree)
-        case .git(let url, let commit, let subfolder):
+        case .git(let url, let commit, let subfolder, let overlay):
             let checkout = try CloneCache.checkout(name: project.name, url: url, commit: commit)
+            let copiedSubfolder: URL
             if subfolder == "." {
                 try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-                try FileManager.default.copyItem(at: checkout, to: tree.appendingPathComponent(project.name, isDirectory: true))
+                copiedSubfolder = tree.appendingPathComponent(project.name, isDirectory: true)
+                try FileManager.default.copyItem(at: checkout, to: copiedSubfolder)
             } else {
                 let parent = checkout.appendingPathComponent(subfolder).deletingLastPathComponent()
                 try FileManager.default.copyItem(at: parent, to: tree)
+                copiedSubfolder = tree.appendingPathComponent(URL(fileURLWithPath: subfolder).lastPathComponent, isDirectory: true)
+            }
+            if let overlay {
+                try Self.lay(overlay: EndToEndEnvironment.fixtures.appendingPathComponent(overlay, isDirectory: true),
+                             over: copiedSubfolder)
             }
         case .repository:
             try Self.copyRepository(to: tree.appendingPathComponent(project.name, isDirectory: true))
         }
         base = tree
+    }
+
+    /// Each entry of `overlay` replaces the entry of its name under `folder`, whole: an
+    /// overlay holds a formula and a project config, so entry by entry is the grain, and a
+    /// file the checkout happens to have under the same name is the overlay's to replace.
+    static func lay(overlay: URL, over folder: URL) throws {
+        let fileManager = FileManager.default
+        for name in try fileManager.contentsOfDirectory(atPath: overlay.path).sorted() where name != ".DS_Store" {
+            let target = folder.appendingPathComponent(name)
+            if fileManager.fileExists(atPath: target.path) {
+                try fileManager.removeItem(at: target)
+            }
+            try fileManager.copyItem(at: overlay.appendingPathComponent(name), to: target)
+        }
     }
 
     /// Names left out of the repository's copy wherever they occur: build products of
@@ -138,12 +160,16 @@ final class EndToEndRun {
 
     // MARK: - 2. Configure
 
-    /// The machine's half of the C fixtures' settings is written beside them (B-109); a
-    /// project with a platform is prepared, which writes its own. Once, before both
-    /// builds, so the two builds see identical inputs.
+    /// The machine's half of the C fixtures' settings is written beside them (B-109), and
+    /// beside an overlaid checkout, whose formula reads it the same way (B-76); a project
+    /// with a platform is prepared, which writes its own. Once, before both builds, so the
+    /// two builds see identical inputs.
     func configure() throws {
-        if case .fixture = project.source {
+        switch project.source {
+        case .fixture, .git(_, _, _, .some):
             try writeMachineFile(to: base.appendingPathComponent(Self.machineFileName))
+        case .git, .repository:
+            break
         }
         if let platform = project.platform {
             try Self.run("semel-swift",

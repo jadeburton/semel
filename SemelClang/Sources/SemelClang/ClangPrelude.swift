@@ -2,7 +2,8 @@
 // SemelClang
 //
 // The funcs a formula gets from `include 'clang'` (B-108): a C or C++ project as a folder
-// of sources and a settings file, without the preprocessor → compiler → linker chain.
+// of sources and a settings file, without the preprocessor → compiler → linker (or
+// archiver) chain.
 //
 // The text expands to the graph a hand-written formula builds — one preprocessor and one
 // compiler per source file, the wires named as the fixtures name them — so a formula that
@@ -23,6 +24,11 @@ extension SemelClang {
     /// type reads, which is the wiring every hand-written formula repeated. `sources` is a
     /// folder: the prelude, not the formula, says which files in it a compiler takes —
     /// `*.c`, `*.cpp` — one level deep, as folder patterns match.
+    ///
+    /// `compiled(file:settings:)` is a func of its own, and not only the body of `linked`,
+    /// because a project whose sources are not one folder's worth — Lua's flat root holds
+    /// the library, the interpreter's `main` and a file that includes every other (B-79) —
+    /// names its files itself and still wants the chain per file.
     static let prelude = """
         func settings(project, machine) = ConfigMerger(base: [StaticFile(path: machine)], override: [StaticFile(path: project)])
 
@@ -33,16 +39,23 @@ extension SemelClang {
           input: [file: StaticFile(path: file)]
         )
 
+        func compiled(file, settings) = ClangCompiler(
+          configuration: [selected(settings: settings, prefix: '\(ClangCompilerConfiguration.settingNamespace)')],
+          input: ["%%file%%.p": preprocessed(file: file, settings: settings)]
+        )
+
         func linked(sources, settings, dynamicLibrary) = ClangLinker(
           configuration: [Configuration(base: [selected(settings: settings, prefix: '\(ClangLinkerConfiguration.settingNamespace)')], dynamicLibrary: dynamicLibrary)],
-          objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": ClangCompiler(
-            configuration: [selected(settings: settings, prefix: '\(ClangCompilerConfiguration.settingNamespace)')],
-            input: ["%%file%%.p": preprocessed(file: file, settings: settings)]
-          )]
+          objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
         )
 
         func executable(sources, settings) = linked(sources: sources, settings: settings, dynamicLibrary: 'false')
 
         func dynamicLibrary(sources, settings) = linked(sources: sources, settings: settings, dynamicLibrary: 'true')
+
+        func staticLibrary(sources, settings) = ClangArchiver(
+          configuration: [selected(settings: settings, prefix: '\(ClangArchiverConfiguration.settingNamespace)')],
+          objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
+        )
         """
 }

@@ -40,7 +40,8 @@ final class ClangPreprocessorTests: SemelClangTestCase {
                            target: String = "arm64-apple-macos14.0",
                            sdkPath: String? = nil,
                            cStandard: String? = "c17",
-                           cxxStandard: String? = nil) throws -> ProcessInput {
+                           cxxStandard: String? = nil,
+                           arguments: String? = nil) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -51,6 +52,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         if let sdkPath     { configuration += "\nsdkPath=\(sdkPath)" }
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
+        if let arguments   { configuration += "\narguments=\(arguments)" }
         return ProcessInput(inputValues: [
             ClangPreprocessor.configuration:    ["configuration": .value(try configuration.intern())],
             ClangPreprocessor.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
@@ -77,6 +79,17 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
         XCTAssertTrue(executor.lastArguments.contains("x86_64-apple-macos13.0"))
         XCTAssertFalse(executor.lastArguments.contains("arm64-apple-macos14.0"))
+    }
+
+    /// `clang.preprocessor.arguments`: a project's defines are the preprocessor's to see —
+    /// Lua wants `-DLUA_USE_MACOSX` (B-79) — comma-joined, after what the node builds.
+    func test_extraArgumentsFromTheConfigurationEndTheCommandLine() throws {
+        _ = try makeTool().process(input: try makeInput(arguments: "-DLUA_USE_MACOSX,-DNDEBUG"))
+
+        XCTAssertEqual(Array(executor.lastArguments.suffix(2)), ["-DLUA_USE_MACOSX", "-DNDEBUG"])
+
+        _ = try makeTool().process(input: try makeInput(arguments: nil))
+        XCTAssertFalse(executor.lastArguments.contains("-DNDEBUG"))
     }
 
     // MARK: - The language standard

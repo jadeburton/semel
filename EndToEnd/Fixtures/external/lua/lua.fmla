@@ -1,0 +1,31 @@
+// Lua 5.4 from the lua/lua mirror, built as its own makefile builds it (B-79): the
+// library archived from the C files in the root, and the interpreter linked against it.
+// Laid over the checkout with semel.config by the end-to-end harness (B-76); the mirror
+// carries no luac.c — that is added to the release tarballs — so there is no luac here.
+//
+// The library's files are named rather than globbed: `lua.c` is the interpreter's main,
+// `onelua.c` includes every other source into one translation unit, and `ltests.c` is
+// the internal test module the makefile compiles only under LUA_USER_H. A folder pattern
+// cannot leave three out, and naming the rest is what the makefile does too.
+
+include 'clang'
+
+func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+func library() = ClangArchiver(
+  configuration: [clang.selected(settings: settings(), prefix: 'clang.archiver')],
+  objectFiles: [{f: <lapi.c>, <lauxlib.c>, <lbaselib.c>, <lcode.c>, <lcorolib.c>, <lctype.c>, <ldblib.c>,
+                    <ldebug.c>, <ldo.c>, <ldump.c>, <lfunc.c>, <lgc.c>, <linit.c>, <liolib.c>, <llex.c>,
+                    <lmathlib.c>, <lmem.c>, <loadlib.c>, <lobject.c>, <lopcodes.c>, <loslib.c>, <lparser.c>,
+                    <lstate.c>, <lstring.c>, <lstrlib.c>, <ltable.c>, <ltablib.c>, <ltm.c>, <lundump.c>,
+                    <lutf8lib.c>, <lvm.c>, <lzio.c>}
+                "%%f%%.o": clang.compiled(file: f, settings: settings())]
+)
+
+product "liblua.a" = library()
+
+product "lua" = ClangLinker(
+  configuration: [Configuration(base: [clang.selected(settings: settings(), prefix: 'clang.linker')], dynamicLibrary: 'false')],
+  objectFiles: [{f: <lua.c>} "%%f%%.o": clang.compiled(file: f, settings: settings())],
+  libraries: ["liblua.a": library()]
+)

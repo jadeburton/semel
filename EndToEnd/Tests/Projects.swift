@@ -134,7 +134,25 @@ enum Projects {
         expectedProducts: ["semel", "semelserv", "semel-swift", "semel-clang"],
         buildTimeout: 10 * 60)
 
+    /// Lua 5.4 (B-79): the `lua/lua` mirror at the commit its `v5.4.7` tag names, a flat
+    /// folder of C with no configure step, nested under its name as a `.git` source with
+    /// `subfolder: "."` is, and built by the formula and project config laid over it from
+    /// `Fixtures/external/lua` (B-76): the library archived, and the interpreter linked
+    /// against it. No `luac`: the mirror carries the development tree, and `luac.c` is
+    /// added to the release tarballs only. External for the fetch alone; the build is a
+    /// fixture's size, so it runs every hermeticity build.
+    static let lua = Project(
+        name: "lua",
+        source: .git(url: "https://github.com/lua/lua.git",
+                     commit: "1ab3208a1fceb12fca8f24ba57d6e13c5bff15e3",
+                     subfolder: ".",
+                     overlay: "external/lua"),
+        buildFolder: "lua",
+        platform: nil,
+        expectedProducts: ["liblua.a", "lua"],
+        buildTimeout: 5 * 60)
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua]
     static let all: [Project] = fixtures + external
 }
