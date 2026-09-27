@@ -1,0 +1,9 @@
+# Keeps the actions the workflows pin by commit SHA current: the repository requires
+# SHA pinning, so a bump arrives as a pull request with the new SHA and its version
+# in a comment, and nothing floats.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

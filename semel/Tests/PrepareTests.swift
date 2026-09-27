@@ -273,6 +273,31 @@ final class PrepareTests: XCTestCase {
         XCTAssertFalse(config.contains("clang.linker"), "got:\n\(config)")
     }
 
+    /// B-122. The tree's languages are decided after vendoring: a Swift root whose git
+    /// dependency brings a C target — swift-cmark under IceCubes — reads the clang
+    /// settings like a tree with a C target of its own, and a scan taken before the copy
+    /// could not see it. The nightly's fresh clone failed on exactly this.
+    func test_theConfigCarriesTheClangNamespacesWhenAVendoredDependencyIsCFamily() throws {
+        try write("Packages/App/Package.swift")
+        try write("Packages/App/Sources/App/App.swift", "import Foundation\n")
+        let vendoring: ([URL], URL) throws -> [Vendoring.Copied] = { _, into in
+            let cmark = into.appendingPathComponent("cmark", isDirectory: true)
+            try self.write(Preparation.relativePath(of: cmark.appendingPathComponent("Package.swift"), under: self.root))
+            try self.write(Preparation.relativePath(of: cmark.appendingPathComponent("Sources/cmark/cmark.c"), under: self.root),
+                           "int cmark(void) { return 1; }\n")
+            return []
+        }
+
+        try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps(vendored: vendoring))
+
+        let machine = try String(contentsOf: folder("Packages").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        let project = try String(contentsOf: folder("Packages").appendingPathComponent("semel.config"), encoding: .utf8)
+        for namespace in ["swift.compiler", "clang.preprocessor", "clang.compiler"] {
+            XCTAssertTrue(machine.contains("\(namespace).toolDescriptor.name="), "got:\n\(machine)")
+        }
+        XCTAssertTrue(project.contains("clang.compiler.target="), "the project half carries clang's target too, got:\n\(project)")
+    }
+
     /// A namespace a converter reads that no toolchain declares would be silently left
     /// out of the config, and the build would then fail naming the missing key.
     func test_everyNamespaceAConverterReadsIsDeclaredByAToolchain() {

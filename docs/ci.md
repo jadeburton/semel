@@ -9,6 +9,16 @@ nothing per minute and builds with the same Xcode the project is developed again
 the hosted image never had (its pinned Xcode lacked the simulator runtime actool needs, and
 main's CI was red for five days before anyone read the cause).
 
+A self-hosted runner and a public repository are a bad pair: a pull request from a fork
+runs its own code on the runner, which is somebody's Mac. Two things stand between them.
+The repository's Actions settings require approval for every outside collaborator's
+workflow run before it starts, and the nightly runs on schedule and dispatch only, which a
+fork cannot trigger. The better answer is a hosted runner for pull requests, if its image
+can build this repository: `.github/workflows/hosted-runner-trial.yml`, run by hand, says
+what each image carries and whether the build and a suite pass on it. The workflows pin
+the actions they use by commit SHA, which the repository requires, and Dependabot keeps
+those pins current.
+
 ## What the runner needs
 
 - Xcode selected (`xcode-select -p`), with the iOS simulator runtime for that Xcode's SDK
@@ -48,8 +58,11 @@ pull-request run, so a backlog of stale runs does not form.
 
 ## What the workflows do to stay cheap
 
-- A push or pull request that changes only `docs/**` or Markdown files runs nothing
-  (`paths-ignore`). Backlog-only changes were a third of one week's runs.
+- Every push and pull request runs, documentation included. It did not always: a
+  `paths-ignore` for `docs/**` and Markdown once saved a third of a week's runs, and went
+  when the `main` ruleset began requiring `build-and-test` and `lint` to pass — a check
+  that never reports on a docs-only change leaves that change unmergeable by anyone
+  without bypass.
 - A newer push to the same branch cancels the run in flight (`concurrency` with
   `cancel-in-progress`); the nightly never cancels itself.
 - Each run starts from a clean checkout. `.build` is not carried between runs on purpose:

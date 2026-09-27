@@ -253,3 +253,8 @@ SemelDatabaseModels/        GRDB schema models (NodeRecord, Wire, OutputPort, â€
 ## License
 
 Released under the [MIT License](LICENSE).
+
+The end-to-end roster builds other people's projects, fetched at test time and never
+vendored here, with one exception: `EndToEnd/Fixtures/external/food-truck-mac` carries
+four source files of Apple's Food Truck sample with one guard corrected, under Apple's
+sample code license, which is beside them.

@@ -3,17 +3,14 @@ name: Swift
 # Runs on a self-hosted macOS runner (docs/ci.md): the machine's own Xcode, simulator
 # runtimes and SwiftLint, and no billed minutes. A change that touches only documentation
 # or the backlog runs nothing. A newer push to the same branch cancels the run in flight.
+# Every push and pull request, documentation included: the `main` ruleset requires
+# `build-and-test` and `lint` to pass, and a check that never reports on a docs-only
+# change would leave that change unmergeable by anyone without bypass.
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
   workflow_dispatch:
 
 concurrency:
@@ -26,7 +23,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # What this machine builds with, so a failure can be read against it.
       - name: Toolchain
@@ -84,7 +81,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Lint
         run: |

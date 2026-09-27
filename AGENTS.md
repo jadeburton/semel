@@ -261,7 +261,7 @@ the nearest standard equivalent and how Semel's differs.
 
 ## Maintaining backwards compatibility
 
-- This software is not yet public. (Once it is, this rule will be removed.) This means 
+- This software is before 1.0, whether or not the repository is public. (At 1.0, this rule will be removed.) This means 
   file formats and database schemas do NOT need to be migrated by the code, nor does it 
   need to tolerate or convert old formats; we can just break the format completely. 
   It is very important to keep database and serialization code clean and not have to 

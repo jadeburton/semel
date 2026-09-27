@@ -109,7 +109,16 @@ public enum Preparation {
             report.vendored = try steps.vendor(report.roots.map(\.folder), dependencies)
             declaredVersion = GeneratedFiles.deploymentVersion(for: platform, in: summaries)
             formula = GeneratedFiles.formula(rootPaths: report.roots.map { relativePath(of: $0.folder, under: folder) })
-            namespaces = GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries))
+            // Which languages the tree holds is decided after vendoring, over the vendored
+            // packages too: a C target that arrives with a dependency — swift-cmark under
+            // IceCubes — is compiled through clang like one of the tree's own, and a scan
+            // before the copy could not see it (B-122). The vendored packages are not roots
+            // and say nothing about the deployment version; they only add languages.
+            let vendoredSummaries = FileManager.default.fileExists(atPath: dependencies.path)
+                ? try PackageScan.manifestFolders(under: dependencies).map(steps.summarize)
+                : []
+            namespaces = GeneratedFiles.packageTreeNamespaces(
+                forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
         }
 
         // A formula already there is kept, and it may select namespaces the one written
