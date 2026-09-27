@@ -5,6 +5,7 @@
 // in an isolated sandbox environment.
 
 import Foundation
+import SemelDatabaseModels
 
 // Identifies a specific tool and version
 public struct ToolDescriptor: Hashable, Codable {
@@ -102,20 +103,24 @@ public protocol ToolRunner {
 
 // MARK: - Supporting types
 
+/// What a run hands back. Files arrive as their hashes, interned by the runner from the
+/// sandbox (B-116): a tool's output never passes through a node's memory, and a node that
+/// wants the bytes of a small one resolves the hash.
 public struct ToolOutput {
     public let logError: (_ error: String) -> Void
     public let logMessage: (_ message: String) -> Void
-    public let write: (_ filePath: String, _ data: [UInt8]) -> Void
-    /// One file of an expected output folder: the folder, the path below it, the bytes
-    /// and the mode.
-    public let writeTreeEntry: (_ folder: String, _ relativePath: String, _ data: [UInt8], _ mode: UInt16) -> Void
+    /// One expected output file, stored, as its hash.
+    public let write: (_ filePath: String, _ hash: DataObjectHash) -> Void
+    /// One file of an expected output folder: the folder, the path below it, the stored
+    /// file's hash and the mode.
+    public let writeTreeEntry: (_ folder: String, _ relativePath: String, _ hash: DataObjectHash, _ mode: UInt16) -> Void
 
     // Spelled out because a public struct's memberwise initializer is internal, and a
     // node in another package has to be able to construct one.
     public init(logError: @escaping (_ error: String) -> Void,
                 logMessage: @escaping (_ message: String) -> Void,
-                write: @escaping (_ filePath: String, _ data: [UInt8]) -> Void,
-                writeTreeEntry: @escaping (_ folder: String, _ relativePath: String, _ data: [UInt8], _ mode: UInt16) -> Void = { _, _, _, _ in }) {
+                write: @escaping (_ filePath: String, _ hash: DataObjectHash) -> Void,
+                writeTreeEntry: @escaping (_ folder: String, _ relativePath: String, _ hash: DataObjectHash, _ mode: UInt16) -> Void = { _, _, _, _ in }) {
         self.logError = logError
         self.logMessage = logMessage
         self.write = write
@@ -215,20 +220,21 @@ public struct SimplifiedToolExecuteResult {
     public let resolvedSandboxPath: String
     public let infoOutput: String
     public let errorOutput: String
-    public let outputFiles: [String: [UInt8]]
+    /// Each expected output file the tool produced, stored, as its hash.
+    public let outputFiles: [String: DataObjectHash]
     /// Every file of each expected output folder, keyed by the folder.
-    public let outputTrees: [String: [TreeFileContent]]
+    public let outputTrees: [String: [TreeOutputFile]]
 }
 
-/// One collected file of an output folder, before it is interned.
-public struct TreeFileContent {
+/// One file of an output folder, stored: the path below the folder, its hash, its mode.
+public struct TreeOutputFile {
     public let relativePath: String
-    public let data: [UInt8]
+    public let hash: DataObjectHash
     public let mode: UInt16
 
-    public init(relativePath: String, data: [UInt8], mode: UInt16) {
+    public init(relativePath: String, hash: DataObjectHash, mode: UInt16) {
         self.relativePath = relativePath
-        self.data = data
+        self.hash = hash
         self.mode = mode
     }
 }
@@ -243,8 +249,8 @@ extension ToolRunner {
 
         var infoOutput = ""
         var errorOutput = ""
-        var outputFiles = [String: [UInt8]]()
-        var outputTrees = [String: [TreeFileContent]]()
+        var outputFiles = [String: DataObjectHash]()
+        var outputTrees = [String: [TreeOutputFile]]()
 
         let result = try execute(arguments: arguments,
                                  environment: environment,
@@ -259,16 +265,12 @@ extension ToolRunner {
                                                    infoOutput += message
                                                    infoOutput += "\n"
                                                },
-                                               write: { filename, data in
-                                                   if outputFiles[filename] == nil {
-                                                       outputFiles[filename] = data
-                                                   } else {
-                                                       outputFiles[filename] = outputFiles[filename]! + data
-                                                   }
+                                               write: { filename, hash in
+                                                   outputFiles[filename] = hash
                                                },
-                                               writeTreeEntry: { folder, relativePath, data, mode in
+                                               writeTreeEntry: { folder, relativePath, hash, mode in
                                                    outputTrees[folder, default: []].append(
-                                                       TreeFileContent(relativePath: relativePath, data: data, mode: mode))
+                                                       TreeOutputFile(relativePath: relativePath, hash: hash, mode: mode))
                                                }))
 
         return .init(exitCode: result.exitCode,
@@ -281,10 +283,10 @@ extension ToolRunner {
 }
 
 extension SimplifiedToolExecuteResult {
-    /// One expected output folder as a tree value: every file interned, the manifest
-    /// interned, the manifest's hash on the wire. The tool's error output if it failed.
-    /// A folder the tool left empty is an empty tree, which is a value — a catalog with
-    /// nothing to compile for the platform produces one.
+    /// One expected output folder as a tree value: every file already stored by the
+    /// runner, the manifest interned, the manifest's hash on the wire. The tool's error
+    /// output if it failed. A folder the tool left empty is an empty tree, which is a
+    /// value — a catalog with nothing to compile for the platform produces one.
     public func asTreeNodeValue(folder: String,
                                 tool: String = "the tool",
                                 settings: [SettingArgument] = []) throws -> NodeValue {
@@ -293,8 +295,8 @@ extension SimplifiedToolExecuteResult {
             return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
         }
         let files = outputTrees[folder] ?? []
-        let entries = try files.map { file in
-            TreeManifestEntry(path: file.relativePath, hash: try file.data.intern(), mode: file.mode)
+        let entries = files.map { file in
+            TreeManifestEntry(path: file.relativePath, hash: file.hash, mode: file.mode)
         }
         return .value(try TreeManifest(entries: entries).toJSON().intern())
     }
@@ -335,7 +337,7 @@ extension SimplifiedToolExecuteResult {
                                   settings: [SettingArgument] = []) throws -> NodeValue {
         if exitCode == 0 {
             if let outputFile = outputFiles.values.first {
-                return .value(try outputFile.intern())
+                return .value(outputFile)
             } else {
                 return .noValue(reason: .error(messageDataObjectHash: try "No output file emitted by tool".intern()))
             }

@@ -77,18 +77,20 @@ public final class DataObjectStore {
     /// silently, which is exactly the wrong response to a damaged store.
     public func read(hash: String) throws -> [UInt8]? {
         let url = objectURL(hash: hash)
-        guard let data = try? Data(contentsOf: url) else {
+        // Mapped, and hashed as mapped: the one copy made is the array handed back
+        // (B-116). Objects are read-only once stored, so the mapping cannot change
+        // under the hash.
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else {
             return nil
         }
-        let bytes = [UInt8](data)
 
-        let actual = Sha256.hash(bytes)
+        let actual = Sha256.hash(data)
 
         guard actual == hash else {
             throw ObjectStoreReadError.corrupted(expected: hash, actual: actual, path: url.path)
         }
 
-        return bytes
+        return [UInt8](data)
     }
 
     /// Returns the on-disk byte count for `hash`, or `nil` if not present.
@@ -118,13 +120,104 @@ public final class DataObjectStore {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
-            try Data(content).write(to: url, options: .atomic)
-            // Mark immutable so nothing can accidentally overwrite the entry.
-            try FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: 0o444)],
-                ofItemAtPath: url.path)
+            // Written from the array's own buffer to a temporary name, then renamed:
+            // atomic, as `Data.write(options: .atomic)` is, without the copy into a
+            // `Data` first (B-116).
+            let temporary = temporaryURL(beside: url)
+            guard FileManager.default.createFile(atPath: temporary.path, contents: nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            do {
+                let handle = try FileHandle(forWritingTo: temporary)
+                try content.withUnsafeBytes { try handle.write(contentsOf: $0) }
+                try handle.close()
+                try place(temporary, at: url)
+            } catch {
+                try? FileManager.default.removeItem(at: temporary)
+                throw error
+            }
         } catch {
             throw ObjectStoreError.cannotWrite(storeRoot: storeRoot.path, underlying: error)
+        }
+    }
+
+    /// Persists the file at `source` and returns its content hash — the same hash its
+    /// bytes would intern to — without reading it into memory (B-116). The file is
+    /// hashed mapped and then *cloned* into the store: on APFS a clone shares blocks
+    /// with the source until either side is written, so storing a 57 MB executable costs
+    /// its hash and nothing else. Across volumes, or on a file system without clones, the
+    /// file is copied — one copy, still through no buffer of ours.
+    ///
+    /// The source is the caller's to dispose of afterwards; a tool's sandbox is deleted
+    /// with it, and the stored object is unaffected. A source that is rewritten after
+    /// storing leaves the object as it was: the clone's blocks copy on write.
+    public func store(fileAt source: URL) throws -> DataObjectHash {
+        let data: Data
+        do {
+            data = try Data(contentsOf: source, options: .alwaysMapped)
+        } catch {
+            throw ObjectStoreError.cannotWrite(storeRoot: storeRoot.path, underlying: error)
+        }
+        // The same two rules `intern()` applies: nothing is the empty hash, and an object
+        // no longer than a digest is filed under its own bytes (`Sha256.hash`).
+        guard !data.isEmpty else {
+            return ""
+        }
+        let hash = Sha256.hash(data)
+        let url = objectURL(hash: hash)
+
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            return hash
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Not created in advance: the clone, or the copy, makes the file.
+            let temporary = temporaryURL(beside: url)
+            do {
+                let cloned = source.withUnsafeFileSystemRepresentation { sourcePath in
+                    temporary.withUnsafeFileSystemRepresentation { temporaryPath in
+                        Foundation.clonefileat(AT_FDCWD, sourcePath!, AT_FDCWD, temporaryPath!, 0) == 0
+                    }
+                }
+                if !cloned {
+                    try FileManager.default.copyItem(at: source, to: temporary)
+                }
+                try place(temporary, at: url)
+            } catch {
+                try? FileManager.default.removeItem(at: temporary)
+                throw error
+            }
+        } catch {
+            throw ObjectStoreError.cannotWrite(storeRoot: storeRoot.path, underlying: error)
+        }
+        return hash
+    }
+
+    /// A name in the object's own shard for the bytes on their way in, so the rename that
+    /// finishes them never crosses a file system.
+    private func temporaryURL(beside url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+    }
+
+    /// Makes `temporary` the object at `url`: read-only, then renamed into place. A second
+    /// writer of the same object loses the rename and its bytes are dropped — the two are
+    /// identical by construction, which is what content addressing means.
+    private func place(_ temporary: URL, at url: URL) throws {
+        // Mark immutable so nothing can accidentally overwrite the entry.
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: 0o444)], ofItemAtPath: temporary.path)
+        let renamed = temporary.withUnsafeFileSystemRepresentation { temporaryPath in
+            url.withUnsafeFileSystemRepresentation { finalPath in
+                Foundation.renamex_np(temporaryPath!, finalPath!, UInt32(RENAME_EXCL)) == 0
+            }
+        }
+        guard renamed else {
+            let failure = errno
+            try? FileManager.default.removeItem(at: temporary)
+            guard failure == EEXIST else {
+                throw POSIXError(POSIXErrorCode(rawValue: failure) ?? .EIO)
+            }
+            return
         }
     }
 
@@ -194,10 +287,15 @@ extension Sequence<UInt8> {
 }
 
 public struct Sha256 {
-    public static func hash(_ data: [UInt8]) -> String {
-        let hash = [UInt8](SHA256.hash(data: Data(data)))
-        let final = (hash.count < data.count) ? hash : data
-        return final.asHex()
+    /// The name an object is filed under: its SHA-256 as hex — or, for an object no longer
+    /// than a digest, its own bytes as hex, which is shorter and just as unique. Hashed in
+    /// place, whatever the bytes are held in: an array, or a file mapped into memory.
+    public static func hash(_ data: some DataProtocol) -> String {
+        let hash = [UInt8](SHA256.hash(data: data))
+        guard hash.count < data.count else {
+            return [UInt8](data).asHex()
+        }
+        return hash.asHex()
     }
 }
 
