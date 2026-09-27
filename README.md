@@ -55,8 +55,8 @@ tests give each server a home of its own; `SEMEL_JOBS` is how many nodes it comp
 once — every running tool is a process — and is the core count unless set. The banner
 prints all three. While `wait`, `build` or `commit` blocks at a terminal, one line shows
 where the settle stands — nodes running, nodes pending, nodes done — redrawn in place and
-erased before the settle summary prints; a pipe never sees it, and `SEMEL_PROGRESS=0`
-turns it off at a terminal. `help` lists the commands at the prompt:
+erased before the settle summary prints; `watch` shows it after a bare `push` until a
+key is pressed. A pipe never sees it, and `SEMEL_PROGRESS=0` turns it off at a terminal. `help` lists the commands at the prompt:
 
 ### Navigation
 
@@ -97,6 +97,7 @@ rm build/**
 | `d` / `debug [<cache key>]` | Dump the full graph state; given a cache entry's key, dump instead the key material that entry was keyed on — the text whose sha256 is that key, so two machines that disagreed about a build diff two texts rather than two hashes |
 | `n` / `nudge` | Force-reschedule all nodes for re-evaluation |
 | `wait` | Block until the build has settled: every scheduled node processed, nothing asking for another pass |
+| `watch` | Show the progress line without committing to a wait: until any key is pressed, which leaves the settle running and says where it stood, or until the settle ends, which prints its summary and `Settled.` as `wait` would. Needs a terminal on standard input; in a script it says so and returns |
 | `e` / `errors` | Show all current build errors |
 | `explain <path>` (`why`) | Say why the last settle did what it did to a product (`output:/hello/hello`, `-o hello/hello`, or relative to the current directory): the nodes upstream of it that ran and the ones the cache answered, each with the wires whose values changed for it, down to the pushed files that changed. The record is the last settle's only, kept in memory: a restart forgets it, and `explain` says so |
 | `check` | Walk the graph and report every invariant that does not hold — a wire whose endpoint is gone, a product nothing produces, a manifest disagreeing with its folder. Repairs nothing; `reset` is the repair. Ask it of a settled graph (`wait`, or after `build`): a node the engine is still wiring has no wires yet, and the reply says how many nodes were still scheduled |

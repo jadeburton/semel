@@ -506,8 +506,10 @@ never into a pipe. Design and particulars:
 1. **The dashboard.** The active nodes listed, one line per job, each with its elapsed
    time. The event already carries the list, so this is a renderer that owns N lines —
    which is where terminal drawing goes wrong, and why the one line went first.
-2. **A `watch` verb**: the line until a key is pressed, for the person who pushed at the
-   prompt and wants to look without blocking on a settle.
+2. ~~**A `watch` verb**~~ — done 2026-09-28: `watch` shows the line until a key is
+   pressed, which leaves the settle running and says where it stood, or until the settle
+   ends, which prints as a `wait` would; see the design's "As built". Items 1 and 3
+   remain.
 3. **A status line at an idle prompt**, as `cargo` and `ninja` draw above nothing. The
    prompt is `readLine()` with no line editor, so this needs the client to own its input
    line — raw mode, cursor save and restore, a width to track — a project of its own.

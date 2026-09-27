@@ -83,4 +83,28 @@ final class TestCommandContext: CommandContext {
 
     func settleWaitBegan() { orderLog?.record("settleWaitBegan") }
     func settleWaitEnded() { orderLog?.record("settleWaitEnded") }
+
+    var settleInProgress: ProgressRecord?
+    var settlesFinished = 0
+    var keyReader: any KeyReader = ScriptedKeyReader()
+}
+
+/// A key reader that plays a script instead of reading a terminal: whether there is one,
+/// and what happens while the command waits — a key at once, a settle finishing first, a
+/// failure. Notes the wait in the shared `OrderLog`, so a test can pin what brackets it.
+final class ScriptedKeyReader: KeyReader {
+
+    var isTerminal = true
+    var orderLog: OrderLog?
+    private(set) var waits = 0
+
+    /// What happens during the wait. Handed the caller's `stop`, so a script can make
+    /// something happen and then ask whether the caller has seen it. A key, by default.
+    var script: (() -> Bool) throws -> KeyWait = { _ in .keyPressed }
+
+    func waitForKey(orUntil stop: () -> Bool) throws -> KeyWait {
+        waits += 1
+        orderLog?.record("waitForKey")
+        return try script(stop)
+    }
 }

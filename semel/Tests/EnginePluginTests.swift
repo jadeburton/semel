@@ -15,11 +15,14 @@ final class EnginePluginTests: XCTestCase {
 
     private var connection: RecordingConnection!
     private var context: TestCommandContext!
+    private var keyReader: ScriptedKeyReader!
 
     override func setUp() {
         super.setUp()
         connection = RecordingConnection()
         context    = TestCommandContext(connection: connection)
+        keyReader  = ScriptedKeyReader()
+        context.keyReader = keyReader
     }
 
     private func run(_ verb: String, _ tokens: [String] = []) throws {
@@ -239,6 +242,118 @@ final class EnginePluginTests: XCTestCase {
         XCTAssertEqual(connection.daemonRequests, [])
         XCTAssertEqual(context.errors, ["wait: a batch is open; `commit` ends it and waits"])
         XCTAssertEqual(context.resetErrorRecordAccountingCallCount, 0)
+    }
+
+    // MARK: - watch (B-95)
+
+    private static let midSettle = ProgressRecord(scheduled: 40, computed: 18, fromCache: 2, pending: 17,
+                                                  running: [ActiveNode(type: "ClangCompiler", name: "input:/a.c")])
+
+    /// The progress line lives exactly as long as the key wait: begun after the error
+    /// accounting is reset, as a wait's is, and ended before the last word prints. A key
+    /// asks nothing of the server.
+    func test_watchBracketsTheKeyWaitWithTheProgressLine() throws {
+        let orderLog = OrderLog()
+        connection.orderLog = orderLog
+        context.orderLog    = orderLog
+        keyReader.orderLog  = orderLog
+
+        try run("watch")
+
+        XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "settleWaitBegan", "waitForKey",
+                                          "settleWaitEnded"])
+        XCTAssertEqual(connection.daemonRequests, [])
+    }
+
+    /// At an idle engine there is nothing to draw; the key returns, saying so.
+    func test_aKeyWhileIdleSaysNothingWasSettling() throws {
+        try run("watch")
+
+        XCTAssertEqual(context.messages, [EnginePlugin.watchBegins, "No settle in progress."])
+        XCTAssertEqual(context.errors, [])
+    }
+
+    /// A key mid-settle leaves the settle running and says where it stood — without the
+    /// `⏳`, which must never scroll, and without the watch's clock.
+    func test_aKeyMidSettleSaysWhereTheSettleStood() throws {
+        context.settleInProgress = Self.midSettle
+
+        try run("watch")
+
+        XCTAssertEqual(context.messages.last,
+                       "Still settling — 1 running, 17 pending · 20 done: 18 computed, 2 from cache.")
+        XCTAssertFalse(context.messages.joined().contains(Mark.working))
+    }
+
+    /// A settle finishing ends the watch as it would end a wait: one `wait` asked after it,
+    /// whose reply comes after the settle's artifact lines, and then `Settled.` under them.
+    func test_aSettleFinishingEndsTheWatch() throws {
+        let orderLog = OrderLog()
+        connection.orderLog = orderLog
+        context.orderLog    = orderLog
+        keyReader.orderLog  = orderLog
+        context.settleInProgress = Self.midSettle
+        // What the connection's thread does when the `settled` event arrives.
+        let watchedContext: TestCommandContext = context
+        keyReader.script = { stop in
+            XCTAssertFalse(stop(), "nothing has finished yet")
+            watchedContext.settleInProgress = nil
+            watchedContext.settlesFinished += 1
+            return stop() ? .stopped : .keyPressed
+        }
+
+        try run("watch")
+
+        XCTAssertEqual(orderLog.entries, ["resetErrorRecordAccounting", "settleWaitBegan", "waitForKey", "send",
+                                          "settleWaitEnded"])
+        XCTAssertEqual(connection.daemonRequests, [.wait])
+        XCTAssertEqual(context.messages, [EnginePlugin.watchBegins, "Settled."])
+    }
+
+    /// A script has no key to press: the watch says so and returns rather than hanging,
+    /// and never touches the terminal or draws.
+    func test_watchWithoutATerminalSaysSoAndReturns() throws {
+        let orderLog = OrderLog()
+        context.orderLog     = orderLog
+        keyReader.isTerminal = false
+
+        try run("watch")
+
+        XCTAssertEqual(context.errors, ["watch: standard input is not a terminal, so no key can end it; "
+                                      + "`wait` blocks until the settle ends"])
+        XCTAssertEqual(keyReader.waits, 0)
+        XCTAssertEqual(orderLog.entries, [])
+        XCTAssertEqual(connection.daemonRequests, [])
+    }
+
+    /// A terminal that cannot be put into raw mode is reported as the command's failure,
+    /// and the line is still taken down: a failure is no reason to leave it drawn.
+    func test_aKeyReaderFailureStillEndsTheLine() {
+        let orderLog = OrderLog()
+        context.orderLog   = orderLog
+        keyReader.orderLog = orderLog
+        keyReader.script   = { _ in throw KeyReaderError.terminalCall(name: "tcsetattr", errorNumber: EIO) }
+
+        XCTAssertThrowsError(try run("watch"))
+
+        XCTAssertEqual(orderLog.entries.suffix(2), ["waitForKey", "settleWaitEnded"])
+        XCTAssertEqual(context.messages, [EnginePlugin.watchBegins])
+    }
+
+    /// With a batch open the settle is held back until `commit`, and the wait a finished
+    /// settle asks for would be held with it (B-61).
+    func test_watchWithABatchOpenIsRefused() throws {
+        context.openBatchDepth = 1
+
+        try run("watch")
+
+        XCTAssertEqual(context.errors, ["watch: a batch is open; `commit` ends it and waits"])
+        XCTAssertEqual(keyReader.waits, 0)
+    }
+
+    func test_watchTakesNoArguments() {
+        XCTAssertThrowsError(try run("watch", ["hello"]))
+        XCTAssertEqual(keyReader.waits, 0)
     }
 
     // MARK: - check

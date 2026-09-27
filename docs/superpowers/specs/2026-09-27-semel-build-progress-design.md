@@ -244,5 +244,24 @@ Built as designed, with these particulars:
   its wait returns. Measured on the IceCubes graph after a `nudge`: 115 drawings over a
   39 s settle, the first within the first second, and the screen afterwards byte for byte
   the piped output.
-- **Not built:** the dashboard, the `watch` verb, and a status line at an idle prompt, as
-  the *Later* section says. B-95's residual in `FUTURE.md` names the first.
+- **The `watch` verb** (2026-09-28) is the blocked case spelled as a key: `watch` begins
+  the line, waits for a key on standard input with the terminal raw for the wait — echo,
+  canonical mode and signals off, so Control-C is a key that ends the watch rather than a
+  signal that kills the client with echo off — and ends the line. A key leaves the settle
+  running and prints where it stood (`Still settling — …`, the counts without the `⏳`
+  or the clock) or `No settle in progress.`. A settle that finishes ends the watch as it
+  would end a `wait`: its summary and artifact lines print through `interrupting`, then a
+  `.wait` request whose reply lands after them, then `Settled.`. Kept open instead, the
+  watch would sit over a finished settle, and the person who began typing their next
+  command would lose its first letter to the key that ends it. The terminal is put back
+  with `TCSAFLUSH`, so the rest of what was typed after the key does not reach the prompt.
+  Standard input not a terminal, the verb says so and returns; a batch open, it refuses
+  as `wait` does. The key wait is `KeyReader` on the `CommandContext` —
+  `TerminalKeyReader` in the client, a script in `EnginePluginTests` — and polls a tenth
+  of a second at a time so the finished settle, counted by the interpreter from the
+  `settled` event, is seen. The interpreter also keeps the last `progress` record until
+  `settled`, which `settleWaitBegan` now hands the line so that a `wait` or a `watch`
+  begun mid-settle draws at once rather than at the next node's start or finish. No
+  one-letter alias: `w` is as much `wait` as `watch`.
+- **Not built:** the dashboard and a status line at an idle prompt, as the *Later*
+  section says. B-95's residual in `FUTURE.md` names both.

@@ -1,7 +1,7 @@
 // EnginePlugin.swift
 // semel
 //
-// Handles: d / debug, n / nudge, e / errors, check, collect, explain / why, reset, t / tools, wait
+// Handles: d / debug, n / nudge, e / errors, check, collect, explain / why, reset, t / tools, wait, watch
 
 import Foundation
 import SemelNodeKit
@@ -9,8 +9,10 @@ import SemelProtocol
 
 final class EnginePlugin: CommandPlugin {
 
+    /// `watch` has no one-letter alias: `w` is free, but it is as much `wait` as `watch`,
+    /// and the one of the two that waits for a key is the wrong one to reach by accident.
     let verbs: Set<String> = ["d", "debug", "n", "nudge", "e", "errors", "check", "collect", "explain", "why",
-                              "reset", "t", "tools", "wait"]
+                              "reset", "t", "tools", "wait", "watch"]
 
     func handle(verb: String, tokens: [String], context: any CommandContext) throws {
         switch verb {
@@ -23,6 +25,7 @@ final class EnginePlugin: CommandPlugin {
         case "reset":           try handleReset(tokens: tokens, context: context)
         case "t", "tools":      try handleTools(tokens: tokens, context: context)
         case "wait":            try handleWait(context: context)
+        case "watch":           try handleWatch(tokens: tokens, context: context)
         default:                break
         }
     }
@@ -123,6 +126,65 @@ final class EnginePlugin: CommandPlugin {
         context.settleWaitEnded()
         _ = try waited.get()
         context.outputMessage("Settled.")
+    }
+
+    // MARK: - watch
+
+    /// The first line of a watch: nothing is echoed while it runs, so this is what says
+    /// how to leave.
+    static let watchBegins = "Watching; any key returns to the prompt."
+
+    /// `watch`: the progress line until a key is pressed, for the person who pushed at the
+    /// prompt and wants to look without committing to a wait (B-95). A key leaves the
+    /// settle running and says where it stood; nothing running, and the key says that.
+    ///
+    /// A settle that finishes ends the watch too, as `wait` would end: its summary and the
+    /// artifacts it changed print through the indicator as they do during a wait, and then
+    /// there is nothing left to look at. Kept open, the watch would sit over a finished
+    /// settle, and the person who then started typing their next command would lose its
+    /// first letter to the key that ends it.
+    private func handleWatch(tokens: [String], context: any CommandContext) throws {
+        guard tokens.isEmpty else {
+            throw CommandParserError.tooManyArguments(command: "watch")
+        }
+        // A settle that ends the watch is followed by a wait for the reply's ordering,
+        // below, and a batch holds back the signal that wait would wait on (B-61).
+        guard context.openBatchDepth == 0 else {
+            context.outputError("watch: a batch is open; `commit` ends it and waits")
+            return
+        }
+        let keyReader = context.keyReader
+        // A script's standard input is no keyboard: a watch there would never end.
+        guard keyReader.isTerminal else {
+            context.outputError("watch: standard input is not a terminal, so no key can end it; "
+                              + "`wait` blocks until the settle ends")
+            return
+        }
+
+        let settlesBefore = context.settlesFinished
+        context.outputMessage(Self.watchBegins)
+        // As `waitForSettle` does, so a settle's error report during the watch counts once.
+        context.resetErrorRecordAccounting()
+        context.settleWaitBegan()
+        let watched = Result { () -> (KeyWait, ProgressRecord?) in
+            let outcome = try keyReader.waitForKey(orUntil: { context.settlesFinished != settlesBefore })
+            // Read before the line goes: what the key saw is what the line showed.
+            let standing = context.settleInProgress
+            if outcome == .stopped {
+                // The `settled` event has arrived, and the artifact lines follow it on
+                // the connection. A wait's reply is sent only after them, so asking for
+                // one is what lands `Settled.` under them, as it lands under a `wait`.
+                _ = try context.request(.wait)
+            }
+            return (outcome, standing)
+        }
+        context.settleWaitEnded()
+
+        let (outcome, standing) = try watched.get()
+        switch outcome {
+        case .keyPressed: context.outputMessage(ProgressLineRenderer.standing(standing))
+        case .stopped:    context.outputMessage("Settled.")
+        }
     }
 
     // MARK: - tools
