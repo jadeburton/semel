@@ -59,6 +59,19 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-79: one very large translation unit — SQLite's amalgamation — through the
+    /// preprocessor, the compiler and the cache, with the shell linked against it.
+    func test_sqliteBuildsFromTheAmalgamation() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.sqlite)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("sqlite\n\(error)")
+        }
+    }
+
     /// B-77: Apple's Food Truck sample for the simulator — file lists over groups, a
     /// localized `.strings`, a package with resources, a widget extension.
     func test_foodTruckBuildsTwiceForTheSimulator() throws {
@@ -87,6 +100,6 @@ final class ExternalProjectTests: XCTestCase {
 
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
-                       ["icecubes", "icecubes-app", "semel", "lua", "food-truck", "food-truck-mac"])
+                       ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "food-truck", "food-truck-mac"])
     }
 }

@@ -177,6 +177,43 @@ final class ClangIncludeFinderTests: SemelClangTestCase {
                        ["src/a1.h", "src/a2.h", "src/b1.h", "src/b2.h"])
     }
 
+    // MARK: - A source nobody pushed (B-79)
+
+    // The finder reads every quoted include, conditional or not, so the preprocessor asks
+    // for a finder on headers that exist on no machine this builds on — SQLite's
+    // amalgamation names `windows.h` and a configure step's `sqlite_cfg.h`. Such a file
+    // includes nothing; whether it is needed is clang's to say.
+
+    func test_aSourceNobodyPushedListsNoIncludes() throws {
+        let wires: [String: NodeValue] = [
+            "src/a.c":       .value(try "#include \"a1.h\"\n".intern()),
+            "src/windows.h": .noValue(reason: .initializing),
+        ]
+
+        let finder = try ClangIncludeFinder(thisNode: NodeRecord(id: 1, kind: ClangIncludeFinder.kind))
+        let inputs = try ClangIncludeFinder.ClangIncludeFinderInputs(
+            input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires]))
+        let outputs = try finder.process(inputs: inputs)
+
+        XCTAssertEqual(try outputs.includePathList.expectValue().resolveAsString(), "src/a1.h")
+    }
+
+    /// Only a file nobody pushed is read as absent: a source that failed upstream, or one
+    /// that was pushed and then removed, still stops the finder.
+    func test_aSourceInErrorOrDeletedStillFails() throws {
+        for reason in [NoValueReason.inputInError, .deleted, .error(messageDataObjectHash: try "broken".intern())] {
+            let wires: [String: NodeValue] = ["src/a.h": .noValue(reason: reason)]
+            XCTAssertThrowsError(try ClangIncludeFinder.ClangIncludeFinderInputs(
+                input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires])),
+                "\(reason)")
+        }
+    }
+
+    /// So a report does not name the absent header as a file to push.
+    func test_theSourcePortToleratesAnAbsentValue() {
+        XCTAssertTrue(ClangIncludeFinder.descriptor.toleratesAbsentValue(onInputPort: ClangIncludeFinder.sourceFileInputPort))
+    }
+
     /// `src/b.c` includes `b.h`: one header per source, named after it, so the aggregate
     /// says which source contributed which part of it.
     private static func headerName(forSource path: String) -> String {

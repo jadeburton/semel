@@ -92,6 +92,9 @@ struct ClangPreprocessorConfiguration {
 public struct ClangPreprocessor: Node {
     public static let kind: UInt = 17
 
+    /// 2: a header nobody pushed is left to clang (B-79), where version 1 failed on it.
+    public static let implementationVersion = 2
+
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {
@@ -115,6 +118,9 @@ public struct ClangPreprocessor: Node {
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
 
+    /// A header nobody pushed is tolerated on `headerInputFiles` (see `absentHeaderPaths`),
+    /// so a report does not name it: whether it is needed is clang's to say, and it says so
+    /// in this node's own error when it is.
     public static let descriptor = NodeDescriptor(
         inputPorts: [
             .required(configuration),
@@ -125,7 +131,8 @@ public struct ClangPreprocessor: Node {
             // this one is wired by the generated formula, not by this node's own specs.
             .optional(headerFolders),
         ],
-        outputPorts: [output, errorLog, infoLog]
+        outputPorts: [output, errorLog, infoLog],
+        inputPortsToleratingAbsentValue: [headerInputFiles]
     )
 
     // MARK: Processing
@@ -134,7 +141,19 @@ public struct ClangPreprocessor: Node {
         let configuration: ClangPreprocessorConfiguration
         let inputSourceFile: FileNameAndContent
         let headerFiles: [FileNameAndContent]
+        /// Headers the include finder named that nobody has pushed: the file does not exist.
+        /// The finder reads quoted includes without evaluating a conditional, so SQLite's
+        /// amalgamation names `windows.h`, `mingw.h` and a configure step's `sqlite_cfg.h`
+        /// under `#if`s that are false on this machine (B-79). Such a header is left out of
+        /// the sandbox and clang decides: an `#include` it reaches fails as "file not found",
+        /// the node's own error, and one it skips costs nothing.
+        let absentHeaderPaths: [String]
         let includePathLists: [String: [String]]
+
+        /// Every header on a wire, present or absent: what the run waits on is each named
+        /// header having arrived, and an absent one has arrived as far as it ever will.
+        var wiredHeaderCount: Int { headerFiles.count + absentHeaderPaths.count }
+
         /// The folders on `headerFolders`, ordered by wire key so the command line is
         /// the same for the same inputs.
         let headerFolderManifests: [(String, FolderManifest)]
@@ -159,12 +178,18 @@ public struct ClangPreprocessor: Node {
             let headerInputFiles = input.inputValues[ClangPreprocessor.headerInputFiles]!
 
             var headerFiles: [FileNameAndContent] = []
+            var absentHeaderPaths: [String] = []
 
             for (headerFileName, nodeValue) in headerInputFiles {
+                if case .noValue(reason: .initializing) = nodeValue {
+                    absentHeaderPaths.append(headerFileName)
+                    continue
+                }
                 headerFiles.append(.init(filePath: headerFileName, hash: try nodeValue.expectValue()))
             }
 
             self.headerFiles = headerFiles
+            self.absentHeaderPaths = absentHeaderPaths
 
             includePathLists = try Dictionary(uniqueKeysWithValues: input.inputValues[ClangPreprocessor.includeFileLists]!.map { includeFilesValue in
                 let wireName = includeFilesValue.key
@@ -305,7 +330,7 @@ public struct ClangPreprocessor: Node {
                     folderFileSpecs[path] = .staticFile(at: path)
                 }
             }
-            guard inputs.headerFiles.count == folderFileSpecs.count else {
+            guard inputs.wiredHeaderCount == folderFileSpecs.count else {
                 let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still collecting header folders".intern()))
                 return .init(output: error,
                              errorLog: error,
@@ -353,7 +378,7 @@ public struct ClangPreprocessor: Node {
         //          that will cause us to be scheduled for processing a second time. and connecting a new wire instantly causes all downstream
         //          nodes' outputs to go to Pending, including us.
         //    yes -> proceed to running the preprocessor
-        guard inputs.headerFiles.count == aggregatedIncludePathList.count else {
+        guard inputs.wiredHeaderCount == aggregatedIncludePathList.count else {
             let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still resolving include files".intern()))
             return .init(output: error,
                          errorLog: error,

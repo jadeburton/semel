@@ -32,10 +32,12 @@ public struct NodeDescriptor {
     /// to, so an unpushed file feeding it is named; a port named here is one where a file
     /// nobody wrote is the expected state and naming it would be noise.
     ///
-    /// The set is deliberately small — `ConfigMerger.override` is its member, the one input
-    /// in the design a formula may name for a file that need never exist. It still earns its
-    /// place as an axis: a project with a local override builds clean because the port says
-    /// so, and the report learns that without being taught any node's type.
+    /// The set is deliberately small — `ConfigMerger.override`, the one input in the design a
+    /// formula may name for a file that need never exist, and the clang preprocessor's and
+    /// include finder's header ports, which a quoted include under a false `#if` fills with
+    /// a header no checkout holds and clang itself judges (B-79). It still earns its place
+    /// as an axis: a project with a local override builds clean because the port says so,
+    /// and the report learns that without being taught any node's type.
     public let inputPortsToleratingAbsentValue: Set<String>
 
     public init(inputPorts: [InputPort] = [],
