@@ -274,6 +274,106 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(wires.first?.node.properties.first?.value, "input:/hello/src/main.c")
     }
 
+    // MARK: - For-each except (B-123)
+
+    /// A stand-in for `ProjectBuilder`'s expander over one folder, `input:/lib`: a pattern
+    /// yields the files it matches there, as full paths, sorted.
+    private func parse(_ source: String, files: [String]) throws -> [String: GraphSpecNode] {
+        try FormulaFile.parse(source, basePath: Path("input:/lib"), wildcardExpander: { pattern in
+            files.filter { WildcardSegment.matches(pattern: String(pattern.dropFirst("input:/lib/".count)), name: $0) }
+                 .map { "input:/lib/\($0)" }
+                 .sorted()
+        })
+    }
+
+    private func wireNames(_ result: [String: GraphSpecNode]) throws -> [String] {
+        try XCTUnwrap(result["X"]?.inputs.first?.wires).map(\.name)
+    }
+
+    func test_aForEachWithoutExceptIteratesEveryMatch() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <*.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, files: ["lapi.c", "lua.c", "onelua.c"])
+        XCTAssertEqual(try wireNames(result), ["lapi.o", "lua.o", "onelua.o"])
+    }
+
+    /// Lua's case: every C file in the folder but the mains, named as the pattern would
+    /// have named them — the literal and the match meet as one expanded path.
+    func test_exceptRemovesItsItemsFromThePatternsMatches() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <*.c> except <lua.c>, <onelua.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, files: ["lapi.c", "lcode.c", "lua.c", "onelua.c"])
+        XCTAssertEqual(try wireNames(result), ["lapi.o", "lcode.o"])
+        XCTAssertEqual(try XCTUnwrap(result["X"]?.inputs.first?.wires.first).node.properties.first?.value,
+                       "input:/lib/lapi.c")
+    }
+
+    /// The negative pattern enumeration cannot say: a naming convention, not a list.
+    func test_exceptTakesAPatternToo() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <*.c> except <test_*.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, files: ["format.c", "os.c", "test_format.c", "test_os.c"])
+        XCTAssertEqual(try wireNames(result), ["format.o", "os.o"])
+    }
+
+    func test_exceptSubtractsFromLiteralItems() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: 'a', 'b', 'c' except 'b'} "%%f%%": StaticFile(path: f)])
+            """)
+        XCTAssertEqual(try wireNames(result), ["a", "c"])
+    }
+
+    /// A project may keep an exclusion after the file is gone upstream.
+    func test_anExceptItemThatMatchesNothingIsNotAnError() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <*.c> except <ltests.c>, <gone_*.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, files: ["lapi.c", "lua.c"])
+        XCTAssertEqual(try wireNames(result), ["lapi.o", "lua.o"])
+    }
+
+    func test_anExceptThatRemovesEveryItemIsAnError() {
+        XCTAssertThrowsError(try parse("""
+            product "X" = Linker(input: [{f: <*.c> except <lua.c>, <onelua.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, files: ["lua.c", "onelua.c"])) { error in
+            XCTAssertEqual("\(error)", "for-each '{f: ...}' leaves nothing: its 'except' removes every item it matched "
+                                     + "(input:/lib/lua.c, input:/lib/onelua.c)")
+        }
+    }
+
+    /// The builder's first pass, before the folder's manifest has arrived, expands every
+    /// pattern to nothing; that is no wires yet, as it is without `except`.
+    func test_aPatternMatchingNothingIsNotAnErrorWithExcept() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <*.c> except <lua.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, files: [])
+        XCTAssertEqual(try wireNames(result), [])
+    }
+
+    func test_exceptIsANameEverywhereElse() throws {
+        let result = try parse("""
+            func except(path) = StaticFile(path: path)
+            func objects(except) = Linker(input: [{f: except} "%%f%%": except(path: f)])
+            func others(except) = Linker(input: [{f: 'a', except} "%%f%%": StaticFile(path: f)])
+            func keyed(except) = Linker(input: [except: except('e')])
+            product "X" = Linker(input: [{except: 'a', 'b' except 'b'} "%%except%%": except('%%except%%')])
+            product "Y" = objects(except: 'c')
+            product "Z" = others(except: 'd')
+            product "W" = keyed(except: 'k')
+            """)
+        XCTAssertEqual(try wireNames(result), ["a"])
+        XCTAssertEqual(result["X"]?.inputs.first?.wires.first?.node.properties.first?.value, "a")
+        XCTAssertEqual(result["Y"]?.inputs.first?.wires.map(\.name), ["c"])
+        XCTAssertEqual(result["Z"]?.inputs.first?.wires.map(\.name), ["a", "d"])
+        XCTAssertEqual(result["W"]?.inputs.first?.wires.map(\.name), ["k"])
+        XCTAssertEqual(result["W"]?.inputs.first?.wires.first?.node.properties.first?.value, "e")
+    }
+
+    func test_aSecondExceptIsRejected() {
+        XCTAssertThrowsError(try parse("""
+            product "X" = Linker(input: [{f: 'a', 'b' except 'a' except 'b'} "%%f%%": StaticFile(path: f)])
+            """))
+    }
+
     // MARK: - Comments
 
     func test_lineComment_isIgnored() throws {

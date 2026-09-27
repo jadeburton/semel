@@ -126,6 +126,12 @@ against a graph already broken the same way prints nothing) — which makes it a
 
 A .fmla, or formula file, declaratively describes one or more products and what each product comprises. Formula files describe build graph structure and identity but should avoid containing too much configuration; compiler arguments for example. Such configuration is kept in separate configuration files and referenced from formula files.
 
+A *for-each* makes one wire per file: `{f: <*.c>} "%%f%%.o": …` iterates the paths the pattern matches, and literal paths may stand beside patterns. An `except` clause takes the same kind of items and leaves out every path they match, so the files a folder should not contribute are named rather than all the others:
+
+```
+objectFiles: [{f: <*.c> except <lua.c>, <onelua.c>, <ltests.c>} "%%f%%.o": clang.compiled(file: f, settings: settings())]
+```
+
 ### Building a Swift package
 
 A formula names the package it builds:
