@@ -37,11 +37,26 @@ struct SwiftFormulaConverter: Node {
     /// by folder path. A manifest says nothing about a target's language; the folder does:
     /// C sources and no Swift make it a C target (B-54), built through the clang nodes.
     static let targetFolders        = "targetFolders"
+    /// Every folder under a compilable target's folder that is not a resource whole,
+    /// keyed by path: what says which resources a target carries — a catalog at its top,
+    /// `Resources/en.lproj` two levels down (B-77). Walked level by level once the
+    /// target folders are in.
+    static let targetSubfolders     = "targetSubfolders"
 
     /// The clang nodes a C target is built through. Named rather than imported: this
     /// package does not depend on SemelClang, and a formula names a node by type name.
     static let clangPreprocessorNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessor")
     static let clangCompilerNamespace     = derivedSettingNamespace(forTypeName: "ClangCompiler")
+
+    /// The Apple nodes a target's resources are built through, named the same way; the
+    /// Apple package pins its namespaces under `apple.` rather than deriving them, so the
+    /// names are spelled here and `SemelApple`'s tests hold them to these (B-77).
+    static let assetCatalogCompilerNamespace  = "apple.assetCatalogCompiler"
+    static let stringCatalogCompilerNamespace = "apple.stringCatalogCompiler"
+
+    /// Emitted formula text changed for the same inputs: every product gained a
+    /// `bundles_<Product>()` func and a target with resources a bundle (B-77).
+    public static let implementationVersion = 2
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -76,6 +91,7 @@ struct SwiftFormulaConverter: Node {
             .dynamic(packageJSON),
             .dynamic(externalPackageJSONs),
             .dynamic(targetFolders),
+            .dynamic(targetSubfolders),
         ],
         outputPorts: [formulaOutput, infoLog]
     )
@@ -246,16 +262,57 @@ struct SwiftFormulaConverter: Node {
                 targetFolderSpecs: targetFolderSpecs)
         }
 
+        // ── every target folder's subfolders, for the resources a target carries (B-77) ──
+        // Level by level, one pass each; a folder that is a resource whole — a catalog,
+        // an `.lproj` — is named and not entered. The compiler walks these same folders
+        // for its sources, so the folder nodes exist already; this adds wires to them.
+        var folderManifests = targetFolderManifests
+        for (folder, nodeValue) in (input.inputValues[Self.targetSubfolders] ?? [:]).sorted(by: { $0.key < $1.key }) {
+            guard let json = try? nodeValue.expectValue().resolveAsString(),
+                  let manifest = try? TypeRegistry.decode(encodedJSON: json) as? FolderManifest else {
+                continue
+            }
+            folderManifests[folder] = manifest
+        }
+        var subfolderSpecs: [String: GraphSpecNode] = [:]
+        var walked = targetFolderSpecs.keys.sorted()
+        var walkIndex = 0
+        while walkIndex < walked.count {
+            let folder = walked[walkIndex]
+            walkIndex += 1
+            guard let manifest = folderManifests[folder] else {
+                continue
+            }
+            for entry in manifest.entries where entry.isFolder && entry.isPinned && PackageResources.isWalked(folderName: entry.name) {
+                let subfolder = "\(folder)/\(entry.name)"
+                subfolderSpecs[subfolder] = .folderManifest(at: subfolder)
+                walked.append(subfolder)
+            }
+        }
+        let missingSubfolders = subfolderSpecs.keys.filter { folderManifests[$0] == nil }.sorted()
+        guard missingSubfolders.isEmpty else {
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: walking \(missingSubfolders.count) target subfolder(s) for resources",
+                externalSpecs: specs,
+                targetFolderSpecs: targetFolderSpecs,
+                targetSubfolderSpecs: subfolderSpecs)
+        }
+
         // ── all manifests present — generate formula ──────────────────────────
         let formula = generateFormula(rootManifest: rootManifest,
                                       externalManifests: availableManifests,
                                       rootPackageFolder: rootPackageFolder,
-                                      clangInfo: { ClangTargetInfo(folderManifest: targetFolderManifests[$0]) })
+                                      clangInfo: { ClangTargetInfo(folderManifest: targetFolderManifests[$0]) },
+                                      resources: { target, folder in
+                                          PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
+                                                                  manifests: folderManifests)
+                                      })
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
             inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs,
-                                                     Self.targetFolders: targetFolderSpecs]) { _, new in new })
+                                                     Self.targetFolders: targetFolderSpecs,
+                                                     Self.targetSubfolders: subfolderSpecs]) { _, new in new })
     }
 
     /// What a target's folder says about building it with clang: nil for a Swift target.
@@ -295,11 +352,13 @@ struct SwiftFormulaConverter: Node {
     // applySpecs keeps (or creates) the needed wires.
     private func pendingOutput(reason: String,
                                externalSpecs: [String: GraphSpecNode],
-                               targetFolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
+                               targetFolderSpecs: [String: GraphSpecNode] = [:],
+                               targetSubfolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
               inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs,
-                                                       Self.targetFolders: targetFolderSpecs]) { _, new in new })
+                                                       Self.targetFolders: targetFolderSpecs,
+                                                       Self.targetSubfolders: targetSubfolderSpecs]) { _, new in new })
     }
 
     // MARK: - Stalls
@@ -605,6 +664,27 @@ struct SwiftFormulaConverter: Node {
         /// Non-decoded. What the target's folder said, once it arrived: nil means Swift.
         var clangInfo: ClangTargetInfo?
 
+        /// Non-decoded. The resources the target's folder holds, by the manifest's rules
+        /// and SwiftPM's types, once the folder tree has been walked (B-77).
+        var resources: [PackageResource] = []
+
+        /// Non-decoded. The name of the package the target belongs to, for its bundle.
+        var packageName: String?
+
+        /// The manifest's `resources:` rules, relative to the target folder.
+        let declaredResources: [SPMResource]
+
+        /// `FoodTruckKit_FoodTruckKit`: the bundle a target's resources are built into.
+        var resourceBundleName: String {
+            FormulaIdentifier.resourceBundleName(package: packageName ?? "", target: name)
+        }
+
+        /// What the resource reading needs of the manifest, without the manifest's types.
+        var resourceRules: PackageResources.Rules {
+            .init(declared: declaredResources.map { .init(path: $0.path, isCopy: $0.rule == .copy) },
+                  sources: sources, exclude: exclude)
+        }
+
         var isClangTarget: Bool { clangInfo != nil }
 
         /// Whether a build compiles this target at all: not a test, a system library, a
@@ -614,7 +694,34 @@ struct SwiftFormulaConverter: Node {
         }
 
         enum CodingKeys: String, CodingKey {
-            case name, type, path, dependencies, sources, exclude, settings
+            case name, type, path, dependencies, sources, exclude, settings, resources
+        }
+
+        /// One entry of a target's `resources` as `dump-package` emits it:
+        /// `{"path": "Resources", "rule": {"process": {}}}`; a rule the reader does not
+        /// know is read as `process`, the common one.
+        struct SPMResource: Decodable, Equatable {
+            enum Rule: Equatable {
+                case process
+                case copy
+            }
+
+            let path: String
+            let rule: Rule
+
+            enum CodingKeys: String, CodingKey { case path, rule }
+
+            init(path: String, rule: Rule) {
+                self.path = path
+                self.rule = rule
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                path = try container.decode(String.self, forKey: .path)
+                let ruleObject = (try? container.decode([String: [String: String]].self, forKey: .rule)) ?? [:]
+                rule = ruleObject["copy"] != nil ? .copy : .process
+            }
         }
 
         /// One entry of a target's `settings` as `dump-package` emits it:
@@ -640,6 +747,7 @@ struct SwiftFormulaConverter: Node {
             dependencies = (try? c.decode([SPMTargetDependency].self, forKey: .dependencies)) ?? []
             sources      = (try? c.decode([String].self, forKey: .sources)) ?? []
             exclude      = (try? c.decode([String].self, forKey: .exclude)) ?? []
+            declaredResources = (try? c.decode([SPMResource].self, forKey: .resources)) ?? []
             let settings = (try? c.decode([SPMSetting].self, forKey: .settings)) ?? []
             languageMode = settings.compactMap { $0.kind?["swiftLanguageMode"]?["_0"] }.first
             overridePackageFolder = nil
@@ -761,19 +869,23 @@ struct SwiftFormulaConverter: Node {
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
-                                 clangInfo: (String) -> ClangTargetInfo?) -> String {
+                                 clangInfo: (String) -> ClangTargetInfo?,
+                                 resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
         // iteration order is seeded per process, so walking the dictionary itself let two
         // packages vending the same name resolve differently on every restart — and the
         // formula text is what every downstream graphSpec is derived from.
         let externalPackages = externalManifests.sorted { $0.key < $1.key }
 
-        // A target with its package folder and what its own folder says about its
-        // language, which is what every walk below asks.
+        // A target with its package folder, what its own folder says about its language,
+        // and the resources its folder holds (B-77), which is what every walk below asks.
         func placed(_ target: SPMTarget, in packageFolder: String?) -> SPMTarget {
             var placed = target
+            let folder = "\(packageFolder ?? rootPackageFolder)/\(target.sourcesRelativePath)"
             placed.overridePackageFolder = packageFolder
-            placed.clangInfo = clangInfo("\(packageFolder ?? rootPackageFolder)/\(target.sourcesRelativePath)")
+            placed.packageName = packageFolder.flatMap { externalManifests[$0]?.name } ?? rootManifest.name
+            placed.clangInfo = clangInfo(folder)
+            placed.resources = placed.isClangTarget ? [] : resources(placed, folder)
             return placed
         }
 
@@ -848,6 +960,21 @@ struct SwiftFormulaConverter: Node {
                                            lookupAll: allTargetsNamed))
                 emittedFuncs.insert(fn)
             }
+
+            // Each target's resource bundle, once, and the product's tree of them (B-77):
+            // emitted for every product, empty or not, so an app can name it without
+            // knowing which targets carry resources.
+            var bundleWires: [String] = []
+            for target in allTargets where !target.resources.isEmpty {
+                let fn = FormulaIdentifier.bundleFunc(forTarget: target.name)
+                if emittedFuncs.insert(fn).inserted {
+                    blocks.append(resourceBundleFuncDef(target: target, rootPackageFolder: rootPackageFolder))
+                }
+                bundleWires.append("        '\(target.name)': \(fn)().files")
+            }
+            blocks.append(
+                "func \(FormulaIdentifier.bundlesFunc(forProduct: product.name))() =\n" +
+                "    TreeMerger(input: [" + (bundleWires.isEmpty ? "" : "\n" + bundleWires.joined(separator: ",\n") + "\n    ") + "]).files")
             for target in clangTargets {
                 let fn = preprocessorFuncName(for: target.name)
                 guard !emittedFuncs.contains(fn) else { continue }
@@ -1183,6 +1310,11 @@ struct SwiftFormulaConverter: Node {
         if target.type == "executable" {
             derived["parseAsLibrary"] = "false"
         }
+        // A target with resources compiles with the `Bundle.module` accessor SwiftPM
+        // would generate, naming the bundle `resourceBundleFuncDef` builds (B-77).
+        if !target.resources.isEmpty {
+            derived["resourceBundleName"] = target.resourceBundleName
+        }
         // Like moduleName, a fact about the target: dropped, the code compiles in Swift 5
         // mode with different diagnostics, and a config file must not be able to change it.
         if let languageMode = target.languageMode {
@@ -1250,6 +1382,47 @@ struct SwiftFormulaConverter: Node {
             args += ",\n    inputModuleMapFolders: [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
         }
         return "func \(compilerFuncName(for: target.name))() =\n    SwiftCompiler(\n\(args)\n    )"
+    }
+
+    /// The func carrying one target's resource bundle as a tree, every piece under
+    /// `<Package>_<Target>.bundle/` (B-77): a catalog through the asset compiler, a string
+    /// catalog through its compiler, an `.lproj` or a copied folder as the folder it is,
+    /// and every copied file in one tree. The Apple compilers select their settings from
+    /// the root's config, as the Swift tools do.
+    private func resourceBundleFuncDef(target: SPMTarget, rootPackageFolder: String) -> String {
+        let pkgRoot      = target.overridePackageFolder ?? rootPackageFolder
+        let targetFolder = "\(pkgRoot)/\(target.sourcesRelativePath)"
+        let configRoot   = buildRoot(defaultingTo: rootPackageFolder)
+        var wires: [String] = []
+        var copiedFiles: [String] = []
+        for (index, resource) in target.resources.enumerated() {
+            let fullPath = "\(targetFolder)/\(resource.path)"
+            let name     = (resource.path as NSString).lastPathComponent
+            switch resource.kind {
+            case .assetCatalog:
+                let configuration = Self.configurationExpression(namespace: Self.assetCatalogCompilerNamespace,
+                                                                 packageFolder: configRoot, literals: [:])
+                wires.append("        'r\(index)': AssetCatalogCompiler(configuration: ['config': \(configuration)], "
+                           + "catalogs: ['\(name)': Folder(path: '\(fullPath)').manifest]).files")
+            case .stringCatalog:
+                let configuration = Self.configurationExpression(namespace: Self.stringCatalogCompilerNamespace,
+                                                                 packageFolder: configRoot, literals: [:])
+                wires.append("        'r\(index)': StringCatalogCompiler(configuration: ['config': \(configuration)], "
+                           + "catalog: ['\(name)': StaticFile(path: '\(fullPath)').output]).files")
+            case .localizedFolder, .folder:
+                wires.append("        'r\(index)': FolderTreeBuilder(under: '\(resource.bundlePath)', "
+                           + "folder: ['folder': Folder(path: '\(fullPath)').manifest]).files")
+            case .file:
+                copiedFiles.append("            '\(resource.bundlePath)': StaticFile(path: '\(fullPath)').output")
+            }
+        }
+        if !copiedFiles.isEmpty {
+            wires.append("        'files': TreeBuilder(input: [\n" + copiedFiles.joined(separator: ",\n") + "\n        ]).files")
+        }
+        return "func \(FormulaIdentifier.bundleFunc(forTarget: target.name))() =\n" +
+               "    TreeMerger(under: '\(target.resourceBundleName).bundle', input: [\n" +
+               wires.joined(separator: ",\n") + "\n" +
+               "    ]).files"
     }
 
     // Resolves a relative path (which may contain "..") against a base path.

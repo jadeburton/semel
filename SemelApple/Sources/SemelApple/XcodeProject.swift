@@ -43,6 +43,35 @@ struct XcodeProject {
         }
     }
 
+    /// One entry of a build phase: the file, and the platforms it is limited to — a
+    /// multiplatform target marks an iOS-only file `platformFilters = (ios, )`, and a
+    /// Mac build leaves it out. Empty means every platform.
+    struct BuildFile: Equatable {
+        let path: String
+        let platformFilters: Set<String>
+
+        init(path: String, platformFilters: Set<String> = []) {
+            self.path = path
+            self.platformFilters = platformFilters
+        }
+
+        /// Whether the file is built for the SDK named, by Xcode's platform names.
+        func isBuilt(forSDK sdk: String) -> Bool {
+            platformFilters.isEmpty || platformFilters.contains(XcodeProject.platformName(forSDK: sdk))
+        }
+    }
+
+    /// The platform a file filter names for an SDK: `ios` for both iPhone SDKs, `macos`
+    /// for the Mac's.
+    static func platformName(forSDK sdk: String) -> String {
+        if sdk.hasPrefix("macosx") { return "macos" }
+        if sdk.hasPrefix("iphone") { return "ios" }
+        if sdk.hasPrefix("appletv") { return "tvos" }
+        if sdk.hasPrefix("watch") { return "watchos" }
+        if sdk.hasPrefix("xr") { return "visionos" }
+        return sdk
+    }
+
     struct Target {
         let name: String
         /// `com.apple.product-type.application`, `com.apple.product-type.app-extension`.
@@ -56,13 +85,29 @@ struct XcodeProject {
         let frameworks: [String]
         /// Product file names the copy-files phase embeds under `PlugIns`.
         let embeddedExtensions: [String]
-        /// File references in the resources phase, relative to the project folder.
-        let resourceFiles: [String]
+        /// File references in the resources phase, relative to the project folder, each
+        /// with the platforms it is limited to.
+        let resourceFiles: [BuildFile]
         /// Files this target takes from another target's synchronized folder — an
         /// exception set in that folder naming this target — relative to the project
         /// folder: a widget's sounds and strings from the app's folder, an intents
         /// extension's entities from the app's.
         var borrowedFiles: [String] = []
+        /// The files in the sources phase, relative to the project folder, for a target
+        /// that lists its files through groups rather than owning a synchronized folder
+        /// (B-77), each with the platforms it is limited to. Empty for a folder-owning
+        /// target, whose sources are its folder's.
+        var sourceFiles: [BuildFile] = []
+
+        /// The listed sources built for `sdk`, in order.
+        func sourcePaths(forSDK sdk: String) -> [String] {
+            sourceFiles.filter { $0.isBuilt(forSDK: sdk) }.map(\.path)
+        }
+
+        /// The resources phase's files built for `sdk`, in order.
+        func resourcePaths(forSDK sdk: String) -> [String] {
+            resourceFiles.filter { $0.isBuilt(forSDK: sdk) }.map(\.path)
+        }
 
         var isApplication: Bool { productType == "com.apple.product-type.application" }
         var isExtension: Bool { productType == "com.apple.product-type.app-extension" }
@@ -160,8 +205,57 @@ struct XcodeProject {
     private struct Reader {
         let objects: [String: [String: Any]]
 
+        /// The group each group and file reference is a child of: what a `<group>`
+        /// relative path is relative to.
+        let parentOf: [String: String]
+
+        init(objects: [String: [String: Any]]) {
+            self.objects = objects
+            var parentOf: [String: String] = [:]
+            for (groupID, group) in objects {
+                for childID in group["children"] as? [String] ?? [] {
+                    parentOf[childID] = groupID
+                }
+            }
+            self.parentOf = parentOf
+        }
+
         func object(_ id: String?) -> [String: Any]? {
             id.flatMap { objects[$0] }
+        }
+
+        /// The path of a file reference or group relative to the project's folder, the
+        /// way Xcode resolves it: its own `path` under each parent group's, up to the main
+        /// group — or up to a level whose `sourceTree` is the source root, which stands
+        /// on its own. Nil for a reference outside the tree: a product, an SDK framework,
+        /// an absolute path. A group named for the reader with `path = .` adds nothing.
+        func path(of id: String) -> String? {
+            var components: [String] = []
+            var current: String? = id
+            while let currentID = current, let object = objects[currentID] {
+                if let path = object["path"] as? String, !path.isEmpty, path != "." {
+                    components.insert(path, at: 0)
+                }
+                switch object["sourceTree"] as? String ?? "<group>" {
+                case "<group>":     current = parentOf[currentID]
+                case "SOURCE_ROOT": current = nil
+                default:            return nil
+                }
+            }
+            return components.isEmpty ? nil : components.joined(separator: "/")
+        }
+
+        /// The files one build-phase entry stands for: the file it references, or — for a
+        /// localized resource, which Xcode keeps as a variant group over one file per
+        /// `.lproj` — every variant's file.
+        func paths(ofFileReference id: String) -> [String] {
+            guard let reference = objects[id] else {
+                return []
+            }
+            if reference["isa"] as? String == "PBXVariantGroup" {
+                return (reference["children"] as? [String] ?? []).compactMap { path(of: $0) }
+            }
+            return path(of: id).map { [$0] } ?? []
         }
 
         func configurations(listID: String?) throws -> [BuildConfiguration] {
@@ -206,14 +300,27 @@ struct XcodeProject {
 
             var frameworks: [String] = []
             var embeddedExtensions: [String] = []
-            var resourceFiles: [String] = []
+            var sourceFiles: [BuildFile] = []
+            var resourceFiles: [BuildFile] = []
             for phaseID in target["buildPhases"] as? [String] ?? [] {
                 guard let phase = object(phaseID), let isa = phase["isa"] as? String else {
                     continue
                 }
-                let fileRefs = (phase["files"] as? [String] ?? [])
-                    .compactMap { object($0)?["fileRef"] as? String }
-                    .compactMap { object($0) }
+                let buildFiles = (phase["files"] as? [String] ?? []).compactMap { object($0) }
+                let fileRefIDs = buildFiles.compactMap { $0["fileRef"] as? String }
+                let fileRefs = fileRefIDs.compactMap { object($0) }
+                // Each build file's paths with the platforms the entry is limited to:
+                // `platformFilter = ios` or `platformFilters = (ios, maccatalyst)`.
+                let listed: [BuildFile] = buildFiles.flatMap { buildFile -> [BuildFile] in
+                    guard let fileRefID = buildFile["fileRef"] as? String else {
+                        return []
+                    }
+                    var filters = Set(buildFile["platformFilters"] as? [String] ?? [])
+                    if let single = buildFile["platformFilter"] as? String {
+                        filters.insert(single)
+                    }
+                    return paths(ofFileReference: fileRefID).map { BuildFile(path: $0, platformFilters: filters) }
+                }
                 switch isa {
                 case "PBXFrameworksBuildPhase":
                     frameworks += fileRefs
@@ -226,8 +333,12 @@ struct XcodeProject {
                     if destination == "13" {
                         embeddedExtensions += fileRefs.compactMap { $0["path"] as? String }
                     }
+                case "PBXSourcesBuildPhase":
+                    // A target that lists its files rather than owning a folder (B-77):
+                    // each resolved through its groups to a path under the project.
+                    sourceFiles += listed
                 case "PBXResourcesBuildPhase":
-                    resourceFiles += fileRefs.compactMap { $0["path"] as? String }
+                    resourceFiles += listed
                 default:
                     break
                 }
@@ -256,7 +367,8 @@ struct XcodeProject {
                           packageProducts: packageProducts,
                           frameworks: frameworks.sorted(),
                           embeddedExtensions: embeddedExtensions.sorted(),
-                          resourceFiles: resourceFiles.sorted())
+                          resourceFiles: resourceFiles.sorted { $0.path < $1.path },
+                          sourceFiles: sourceFiles.sorted { $0.path < $1.path })
         }
     }
 }
@@ -265,6 +377,9 @@ enum XcodeProjectError: Error, CustomStringConvertible {
     case notAProject
     case noSuchTarget(String)
     case noSuchConfiguration(String, available: [String])
+    /// Listed sources the converter does not compile: Objective-C, C, Metal, a Core Data
+    /// model in the sources phase. Named, so the reader knows what the build would need.
+    case unsupportedSources(target: String, files: [String])
 
     var description: String {
         switch self {
@@ -272,6 +387,8 @@ enum XcodeProjectError: Error, CustomStringConvertible {
             return "not a project.pbxproj: no objects table and root object"
         case .noSuchTarget(let name):
             return "the project has no target named '\(name)'"
+        case .unsupportedSources(let target, let files):
+            return "\(target): sources that are not Swift are not compiled yet: \(files.joined(separator: ", "))"
         case .noSuchConfiguration(let name, let available):
             return "the project has no configuration named '\(name)'; it has: \(available.joined(separator: ", "))"
         }

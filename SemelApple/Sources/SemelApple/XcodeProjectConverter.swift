@@ -18,6 +18,10 @@ import SemelNodeKit
 public struct XcodeProjectConverter: Node {
     public static let kind: UInt = 34
 
+    /// Emitted formula text changed for the same inputs: a target that lists its files,
+    /// localized resources, and the package resource bundles in the app's tree (B-77).
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     /// `project.pbxproj`, one wire.

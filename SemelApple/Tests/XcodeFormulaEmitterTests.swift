@@ -32,6 +32,108 @@ final class XcodeFormulaEmitterTests: XCTestCase {
             listing: { $0 == "input:/repo/IceCubesApp" ? listing : nil })
     }
 
+    /// The formula for the grouped fixture (B-77): a target that lists its files.
+    private func groupedFormula(pbxproj: String = XcodeProjectTests.groupedFixture) throws -> String {
+        let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(pbxproj.utf8)), build: build)
+        return try emitter.formula(
+            settings: { target in
+                try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "iphonesimulator",
+                                               xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
+            },
+            listing: { _ in nil })
+    }
+
+    // MARK: - A target that lists its files (B-77)
+
+    /// Each listed source goes to the compiler by itself, keyed by its whole path — two
+    /// groups may each hold a `View.swift` — and there is no folder to walk.
+    func test_compilesListedSourcesOneByOne() throws {
+        let formula = try groupedFormula()
+
+        XCTAssertTrue(formula.contains("func compiler_Food_Truck() =\n    SwiftCompiler("), formula)
+        XCTAssertFalse(formula.contains("inputFolder:"), formula)
+        XCTAssertTrue(formula.contains("extraSourceFiles: [\n"
+                                       + "        'App/App.swift': StaticFile(path: 'input:/repo/App/App.swift').output,\n"
+                                       + "        'App/Views/Home.swift': StaticFile(path: 'input:/repo/App/Views/Home.swift').output,\n"
+                                       + "        'Shared/Sources/Util.swift': StaticFile(path: 'input:/repo/Shared/Sources/Util.swift').output\n"
+                                       + "        ]"), formula)
+        XCTAssertTrue(formula.contains("'FoodKit': modules_FoodKit().files"), formula)
+    }
+
+    /// The resources phase's files: the catalog compiled, a localized file kept under its
+    /// `.lproj`, a plain file flat, and the Info.plist read as the plist's base rather
+    /// than copied.
+    func test_copiesListedResourcesWithLocalizedOnesUnderTheirLanguageFolder() throws {
+        let formula = try groupedFormula()
+
+        XCTAssertTrue(formula.contains("'Assets.xcassets': Folder(path: 'input:/repo/App/Assets.xcassets').manifest"), formula)
+        XCTAssertTrue(formula.contains("product 'Food Truck.app/en.lproj/Localizable.strings' = StaticFile(path: 'input:/repo/App/en.lproj/Localizable.strings').output"), formula)
+        XCTAssertTrue(formula.contains("product 'Food Truck.app/ar.lproj/Localizable.strings' = StaticFile(path: 'input:/repo/App/ar.lproj/Localizable.strings').output"), formula)
+        XCTAssertTrue(formula.contains("product 'Food Truck.app/LICENSE.txt' = StaticFile(path: 'input:/repo/LICENSE.txt').output"), formula)
+        XCTAssertTrue(formula.contains("base: ['base': StaticFile(path: 'input:/repo/App/Food-Info.plist').output]"), formula)
+        XCTAssertFalse(formula.contains("product 'Food Truck.app/Food-Info.plist'"), formula)
+    }
+
+    /// A listed source that is not Swift is a build this converter cannot write yet, and
+    /// it says which files rather than compiling around them.
+    func test_aListedSourceThatIsNotSwiftIsRefusedByName() throws {
+        let pbxproj = XcodeProjectTests.groupedFixture
+            .replacingOccurrences(of: "path = Util.swift;", with: "path = Util.m;")
+        XCTAssertThrowsError(try groupedFormula(pbxproj: pbxproj)) { error in
+            XCTAssertEqual("\(error)", "Food Truck: sources that are not Swift are not compiled yet: Shared/Sources/Util.m")
+        }
+    }
+
+    // MARK: - A macOS bundle (B-77)
+
+    /// The same fixture for `macosx`: the executable under `Contents/MacOS`, the plist
+    /// directly in `Contents`, every resource under `Contents/Resources`, the extension
+    /// under `Contents/PlugIns` with a `Contents` of its own, and the identity a Mac
+    /// bundle has — the Mac as the one device, the deployment target under
+    /// `LSMinimumSystemVersion`, no `UIDeviceFamily`.
+    func test_aMacBundleHasAContentsFolderWithMacOSResourcesAndPlugIns() throws {
+        let macBuild = XcodeFormulaEmitter.Build(root: "input:/repo", projectFolder: "input:/repo", configuration: "Debug", sdk: "macosx")
+        let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(XcodeProjectTests.fixture.utf8)), build: macBuild)
+        let formula = try emitter.formula(
+            settings: { target in
+                let resolved = try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "macosx",
+                                                              xcconfig: { _ in "BUNDLE_ID_PREFIX = com.example" },
+                                                              extra: ["TARGET_NAME": target.name])
+                return XcodeBuildSettings(values: resolved.values.merging(["MACOSX_DEPLOYMENT_TARGET": "13.3"]) { _, new in new })
+            },
+            listing: { $0 == "input:/repo/IceCubesApp" ? .init(files: ["App.swift", "Fonts/Mono.ttf"], folders: ["Fonts"]) : nil })
+
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/MacOS/Ice Cubes' =\n    SwiftLinker("), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Info.plist' =\n    InfoPlistBuilder("), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Resources/Mono.ttf' = StaticFile(path: 'input:/repo/IceCubesApp/Fonts/Mono.ttf').output"), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Resources/' = TreeMerger(input: ["), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/PlugIns/IceCubesShareExtension.appex/Contents/MacOS/IceCubesShareExtension' ="), formula)
+        XCTAssertTrue(formula.contains("target: 'arm64-apple-macosx13.3'"), formula)
+        XCTAssertTrue(formula.contains("platform: 'macosx'"), formula)
+        XCTAssertTrue(formula.contains("targetDevices: 'mac'"), formula)
+        XCTAssertTrue(formula.contains("\"LSMinimumSystemVersion\":\"13.3\""), formula)
+        XCTAssertFalse(formula.contains("MinimumOSVersion\""), formula)
+        XCTAssertFalse(formula.contains("UIDeviceFamily"), formula)
+        XCTAssertFalse(formula.contains("LSRequiresIPhoneOS"), formula)
+    }
+
+    /// The resource bundles of every package the target links travel into the bundle's
+    /// tree, named per product so the app needs no knowledge of which targets carry any.
+    func test_mergesThePackagesResourceBundlesIntoTheBundle() throws {
+        let formula = try formula()
+
+        XCTAssertTrue(formula.contains("'bundles_KeychainSwift': bundles_KeychainSwift().files"), formula)
+        XCTAssertTrue(formula.contains("'bundles_Timeline': bundles_Timeline().files"), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger(input: ["), formula)
+    }
+
+    func test_aLocalizedFileKeepsItsLanguageFolderAndNothingAbove() {
+        XCTAssertEqual(XcodeFormulaEmitter.localizedBundlePath("App/ar.lproj/Localizable.strings"), "ar.lproj/Localizable.strings")
+        XCTAssertEqual(XcodeFormulaEmitter.localizedBundlePath("Base.lproj/Main.storyboard"), "Base.lproj/Main.storyboard")
+        XCTAssertNil(XcodeFormulaEmitter.localizedBundlePath("App/Fonts/Mono.ttf"))
+        XCTAssertNil(XcodeFormulaEmitter.localizedBundlePath("en.lproj"), "a folder, not a file in one")
+    }
+
     // MARK: - Packages
 
     /// Every local package the project references, and each remote one where the
@@ -85,7 +187,8 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("'Assets.xcassets': Folder(path: 'input:/repo/IceCubesApp/Assets.xcassets').manifest"), formula)
         XCTAssertTrue(formula.contains("'AppIcon.icon': Folder(path: 'input:/repo/AppIcon.icon').manifest"), formula)
         XCTAssertTrue(formula.contains("catalog: ['Localizable.xcstrings': StaticFile(path: 'input:/repo/IceCubesApp/Resources/Localizable.xcstrings').output]"), formula)
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger(input: ['assets': assets_IceCubesApp().files, 'strings0': strings_IceCubesApp_0().files]).files"), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger(input: ['assets': assets_IceCubesApp().files, 'strings0': strings_IceCubesApp_0().files, "
+                                       + "'bundles_KeychainSwift': bundles_KeychainSwift().files, 'bundles_Timeline': bundles_Timeline().files]).files"), formula)
     }
 
     /// A file that is neither source nor compiled is copied into the bundle root, as

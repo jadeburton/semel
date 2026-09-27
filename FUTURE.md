@@ -691,9 +691,34 @@ and the walk for committed machine files covers it. First used by Lua (B-79).
 **B-77** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
 application target, simulator only, all library code in packages. In suggested order:
 
-1. *apple/sample-food-truck* — small, no third-party dependencies, iOS and macOS, a local
-   package, a widget extension. The first `sdk: 'macosx'` app build; the cheap second
-   data point for the converter.
+1. *apple/sample-food-truck* — done for the simulator (2026-09-27), in the roster as
+   `food-truck`. Not the cheap data point it looked: the project is in the older form,
+   every target a file list over groups, so the converter now resolves a file reference
+   through its groups (`<group>` and `SOURCE_ROOT` levels, a group whose path is `.`),
+   honours a build file's `platformFilters`, and expands a variant group into one
+   `.lproj` file per language, kept under its language folder in the bundle; and its
+   local package carries resources, so package resource bundles exist now (see B-80
+   item 4): the Swift converter walks each target's folder, builds
+   `<Package>_<Target>.bundle` from what SwiftPM's rules recognise and what the manifest
+   declares, compiles the target with the `Bundle.module` accessor, and hands the app
+   `bundles_<Product>()`. The `macosx` build is written too — a Mac bundle gets its
+   `Contents/` layout, the Mac as actool's device and its own plist keys, pinned by
+   `XcodeFormulaEmitterTests` — but the sample itself no longer compiles for the Mac
+   with the current SDK: it guards ActivityKit with `canImport`, false on the macOS 13
+   SDK it was written against and true on 26.5, so Xcode fails on it the same way. A
+   `food-truck-mac` roster entry waits for B-76's overlay, which can lay one corrected
+   file over the clone; with the guards corrected by hand in a copy, the Mac build came
+   out whole — `Contents/MacOS`, an `AppIcon.icns`, the widget under `Contents/PlugIns`
+   — in 19 s. What no Mac build here does yet is sign: an arm64 executable needs at
+   least an ad-hoc signature to launch, and Semel writes none, so the bundle is inspected
+   rather than run. Left as copies rather than compiled, said here rather than
+   silently: a storyboard, a xib, a Core Data model, a Metal file listed among a target's
+   resources; a listed source that is not Swift is refused by name. Two things `prepare`
+   writes for a project that a Swift-only one reports as unused keys on every build —
+   the `clang.*` project blocks, and the string catalog compiler's machine block when no
+   `.xcstrings` exists — are noise worth silencing at the writer. A package *tree* with
+   resources still wants the `apple.*` namespaces in its config, which `prepare` does
+   not write for a tree.
 2. *NetNewsWire* — nearly every build setting lives in layered xcconfig files, so it is the
    hard test of evaluating settings the way Xcode layers them. Mac and iOS apps, framework
    targets, group-based file references rather than synchronized folders, some
@@ -708,8 +733,8 @@ application target, simulator only, all library code in packages. In suggested o
    `-Swift.h`. Only when mixed-language app targets are in scope.
 
 Expected to surface: script build phases, framework and dynamic-library targets,
-Objective-C in the application target, Core Data models, storyboards and xibs (`ibtool`),
-non-synchronized groups.
+Objective-C in the application target, Core Data models, storyboards and xibs (`ibtool`).
+Non-synchronized groups surfaced with item 1 and are read.
 
 **B-78** `open` — **More Swift packages.**
 
