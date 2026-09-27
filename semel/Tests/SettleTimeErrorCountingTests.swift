@@ -89,6 +89,26 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         XCTAssertGreaterThan(interpreter.errorsReported, 0)
     }
 
+    /// B-110. A settle the follow loop answers by pushing what it named is not the build's
+    /// verdict, so its failing summary is not printed ahead of the push that fixes it: a
+    /// build prints one summary, at its end, carrying the last settle's errors.
+    func test_aBuildThatFollowsASourcePrintsOneSummaryAtItsEnd() throws {
+        try "product 'copy.txt' = StaticFile(path: <../side.txt>).output"
+            .write(to: externalRoot.appendingPathComponent("src/semel.fmla"), atomically: true, encoding: .utf8)
+        try "beside the folder".write(to: externalRoot.appendingPathComponent("side.txt"),
+                                     atomically: true, encoding: .utf8)
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("build src")
+
+        let summaries = lines.filter { $0.contains(" scheduled, ") }
+        XCTAssertTrue(lines.contains { $0.contains("needs ../side.txt") }, lines.joined(separator: "\n"))
+        XCTAssertEqual(summaries.count, 1, lines.joined(separator: "\n"))
+        XCTAssertTrue(summaries.first?.hasSuffix(" 0 errors") == true, lines.joined(separator: "\n"))
+        XCTAssertEqual(interpreter.errorsReported, 0, lines.joined(separator: "\n"))
+    }
+
     /// `build --into` is what ships a product: an error surfacing only at settle must
     /// still fail the build and withhold the export.
     func test_buildWithASettleTimeErrorExportsNothingAndReportsFailure() throws {

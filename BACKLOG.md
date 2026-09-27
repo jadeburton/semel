@@ -49,9 +49,6 @@ a C-family target; `help`, and a typo names its nearest verb. What remains:
    reported missing; a `semel.machine.config` beside the folder that is rewritten after a
    toolchain change is the user's to `push`. Following the inputs the graph already holds
    outside the folder would close it.
-3. **The first settle's summary line prints before the follow answers it:**
-   `❌ 18 nodes scheduled, …, 25 errors` and then the push that fixes it. True, and noise;
-   holding the summary of a settle the loop answers is the fix.
 
 ## Performance
 
