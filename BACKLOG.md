@@ -133,7 +133,7 @@ two commands. Device signing is deliberately out — the simulator needs none be
 app and not their archives. What follows is what is left: two places Apple's tools are
 not byte-reproducible.
 
-**B-89** `open` — **`actool` output is not byte-reproducible: `.icon` renditions carry a
+**B-89** `open` `For Fable Only` — **`actool` output is not byte-reproducible: `.icon` renditions carry a
 UUID and pid, and the appearance table's order varies.** Two separate causes, both in
 IceCubesApp's compiled asset catalogs. First, `actool` embeds a fresh UUID, its pid and a
 mach timestamp in the names of the renditions it generates from an Icon Composer `.icon`
@@ -148,14 +148,39 @@ three two-build comparisons, 16 bytes in all: the two entry names `UIAppearanceA
 `UIAppearanceDark` written in swapped order, and the four
 key indices pointing at them following suit; `xcrun assetutil --info` on the two files
 differs only in a timestamp field that is the file's own mtime, confirming the content
-itself is the same table, reordered. To find: an actool flag or environment variable that
-fixes the rendition identifier or the appearance order, whether actool has a
-single-threaded mode that makes the appearance table's order stable, or whether
-`--output-format` or a newer Xcode's `.icon` handling avoids the first cause; failing that,
-the harness exempts `Assets.car` from `TreeDiff` for a project with a catalog carrying
-either an `.icon` input or more than one appearance, named per project. The roster exempts
-every `Assets.car` of `icecubes-app`; removing
-that exemption is this item's exit.
+itself is the same table, reordered. The roster exempts every `Assets.car` of
+`icecubes-app`; removing that exemption is this item's exit.
+
+*Nothing Apple ships turns either cause off* (2026-09-27, Xcode 26.6 and 26.2, `actool`
+run directly, each compile in a fresh directory holding copies of the inputs, as the
+sandbox does). Both causes reproduce outside Semel: the app's catalog with `AppIcon.icon`
+gave a different `Assets.car` on every one of three compiles, and the widgets catalog two
+variants in ten (8:2 on 26.6, 6:4 on 26.2). The rendition suffix is
+`<UUID>-<pid>-<mach time>`, the shape of `NSProcessInfo.globallyUniqueString`, so the name
+comes from a temporary file named unique. Ruled out:
+
+- **A flag.** `actool` accepts no `--help`, and its asset-catalog frameworks carry no
+  determinism, serial-compilation or reproducibility switch (`strings` over
+  `AssetCatalogFoundation`, `AssetCatalogKit`, `IconComposerFoundation`).
+  `--output-format` selects the format of `actool`'s own report and was not tried
+  against the catalog.
+- **An environment variable.** `actool` reads none that selects behaviour; the one it
+  looks for, `RC_XBS`, is Apple's build service.
+- **Address randomisation behind the order.** `actool` is a launcher: the work happens in
+  `ibtoold`, which it spawns itself from its own directory and which has no override for
+  its location, so spawning `actool` without ASLR (`_POSIX_SPAWN_DISABLE_ASLR`) leaves the
+  order varying.
+- **Interposing `globallyUniqueString`.** `ibtoold` is signed with library validation, so
+  `DYLD_INSERT_LIBRARIES` cannot load a library of ours into it.
+- **Another Xcode.** 26.2 behaves as 26.6.
+
+What remains is Semel's own: a node after `actool` that puts `Assets.car` in a canonical
+form — rendition names with the unique suffix replaced by one derived from the rendition's
+content, and the appearance table in name order with the key indices renumbered to match.
+That rewrites Apple's undocumented BOM-based CAR format, and the replacement suffix need
+not keep the name's length (the pid varies in digits), so it is a rewrite of the file
+rather than a patch in place. Whether that is worth owning, against keeping the exemption,
+is the decision.
 
 **B-90** `open` — **`ld` picks between two duplicate `_objc_msgSend` GOT entries non-deterministically.**
 IceCubesApp's linked executable carries two GOT entries binding the same import,
