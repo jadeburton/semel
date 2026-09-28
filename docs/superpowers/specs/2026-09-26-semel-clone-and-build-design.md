@@ -241,7 +241,7 @@ Where the implementation departs from the design above, and why:
 - **What the loop follows is what the graph reported by name.** For a package dependency
   that is the manifest the converter wired, then the target folders — three rounds, not
   one — because the converter's own "waiting for a package" error carries no typed path
-  (residual 2).
+  (residual 2). Closed 2026-09-28: see "Residual 1, as built" below.
 - **Attribution is client-side:** the one `.fmla` in the built folder, or the folder when
   it holds none or several; the engine does not record which formula created a source.
 - **The `prepare` hint is client-side too**, decided from the disk: a built folder holding
@@ -251,3 +251,59 @@ Where the implementation departs from the design above, and why:
   `export`'s error.
 - **A typo is one edit away for a word of up to three letters, two beyond**; a one-letter
   alias is never offered as the guess.
+
+## Residual 1, as built (2026-09-28)
+
+A package dependency outside the built folder took three settles: `build Packages`
+waited, pushed the `Package.swift` the converter's reader was wired to, waited, pushed
+each target folder the converter then asked for, and waited again. The converter knew
+the package folder from its first pass; its "waiting for 1 package(s)" error said so in a
+sentence and in nothing the client could act on. Four shapes were weighed for putting
+that path where the build could push it.
+
+- **A new `NoValueReason` case carrying the path.** The reason is stored per port as a
+  number beside one hash, so the case needs a `Semel.version` bump (the 0.1.3/0.1.4
+  precedent), a stored encoding for a path *and* a sentence where a row holds one hash,
+  and a new arm in every switch over the reason in five packages — each arm meaning to a
+  consumer exactly what `.error` means. All of that to state, in a new vocabulary, what
+  the graph already states in its own: a source nobody has pushed, which a node needs.
+- **Deriving the path when the report is built.** The report builder would have to
+  recognise the converter's port state: by its sentence, which is the thing the house rule
+  forbids; by a port the engine knows by name, which is the core naming a plugin; or by a
+  generic "sources I am missing" port any node could publish, a second channel beside the
+  one the report already reads absence from.
+- **The client inferring the folder** from a reported `…/Package.swift`: Swift knowledge
+  in the CLI, and wrong for any other kind of package.
+- **The stall as a demand — chosen.** While the converter waits for a package it wires
+  that package's folder manifest, on a dynamic port `awaitedPackageFolders`, and withdraws
+  the wire once the manifest has arrived; the value is never read. A folder nobody has
+  pushed that a node needs is what the report already names, typed, as `missingSource`
+  (B-104 brought folders under the rule), so the path travels the route every other
+  missing source takes: no engine type, no protocol field, no client change. The converter
+  bumps `implementationVersion` to 5, because the specs it demands changed.
+
+One report rule comes with it. The stalled converter demands the package's folder *and*
+the reader of its `Package.swift`, and both are unpushed sources something needs. A
+source under a folder that is itself unpushed and needed is now the folder's detail —
+pushing the folder pushes it — so the report reads `Helper/ has not been pushed` alone, the
+follow loop pushes the folder once, and the line printed is the design's shape:
+
+```
+Packages/semel.fmla needs ../Helper
+Push folder: Helper
+…
+```
+
+Two settles, where there were three: the build's own, and the one after the push.
+`PackageDependencyFollowTests` holds it to that count over a live loop with the real
+converter and reader, the reader's tool faked to echo its manifest.
+
+The same pass closes B-10's discoverability residual: `ProjectFinder`, which reads every
+listing, publishes the project files an `IncludableProjectPlugin` claims — SemelSwift
+claims a pushed `Package.swift` that is not under a `Dependencies` folder — and after a
+settle with no errors the engine gives one notice per file nothing reads:
+`input:/Packages/Foo/Package.swift is not named by any formula; a formula's include
+SwiftFormulaConverter(path: <Foo>).formula builds it`, spelled from the nearest folder
+above that holds a formula. Read is the test: a node exists only while something is wired
+below it, so a manifest some node reads is one a formula reaches, directly or through the
+converter of the package that depends on it.

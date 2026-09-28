@@ -145,7 +145,8 @@ include SwiftFormulaConverter(path: <.>).formula
 
 `include` here names a node whose output is formula text, effectively pasting it into this formula file, so the included products are the file's
 products and the included funcs can be called from further `product` definitions. The packages a package depends on are reached through it. Every node of the build,
-dependencies included, reads its settings from the `semel.config` and `semel.machine.config` beside the root.
+dependencies included, reads its settings from the `semel.config` and `semel.machine.config` beside the root. A pushed `Package.swift` that no formula
+includes builds nothing, and a settle with no errors says so once, naming the include that would build it.
 
 The following includes multiple packages in the formula:
 

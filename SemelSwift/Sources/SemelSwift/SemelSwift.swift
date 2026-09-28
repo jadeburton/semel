@@ -23,7 +23,9 @@ public enum SemelSwift {
         ])
         // A Package.swift is not discovered as a project of its own. A formula names the
         // package it builds — `include SwiftFormulaConverter(path: <.>).formula` — and the
-        // converter wires its own reader from that path. Nothing is registered for it.
+        // converter wires its own reader from that path. What is registered for it is only
+        // the include that would build it, so one nothing names is reported (B-10).
+        ProjectDiscovery.register(includable: SwiftPackageIncludePlugin())
 
         // How `swiftc` and `swift` are found on this machine and versioned. Declared here,
         // located when the engine starts.

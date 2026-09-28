@@ -42,6 +42,13 @@ struct SwiftFormulaConverter: Node {
     /// `Resources/en.lproj` two levels down (B-77). Walked level by level once the
     /// target folders are in.
     static let targetSubfolders     = "targetSubfolders"
+    /// The folder of every dependency package whose manifest has not arrived, keyed by
+    /// path, wired for as long as the converter waits for it. The value is never read: the
+    /// wire is how the stall names what it waits for, typed. A folder nobody has pushed
+    /// that a node needs is a source the settle reports by path, so `build` pushes the
+    /// whole package in one round rather than the reader's `Package.swift` and then each
+    /// target folder, a settle apiece (B-110).
+    static let awaitedPackageFolders = "awaitedPackageFolders"
 
     /// The clang nodes a C target is built through. Named rather than imported: this
     /// package does not depend on SemelClang, and a formula names a node by type name.
@@ -59,8 +66,9 @@ struct SwiftFormulaConverter: Node {
     /// target's literals are a `SettingsLiteral` under a `ConfigMerger` where they were a
     /// `Configuration`'s properties, in the formula and in the reader it demands (B-120);
     /// at 4, a C target's sources are one `**` for-each with its exclusions as `except`,
-    /// and its public headers follow `publicHeadersPath` (B-55).
-    public static let implementationVersion = 4
+    /// and its public headers follow `publicHeadersPath` (B-55); at 5, a stall demands the
+    /// folder of each package it waits for (B-110).
+    public static let implementationVersion = 5
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -96,6 +104,7 @@ struct SwiftFormulaConverter: Node {
             .dynamic(externalPackageJSONs),
             .dynamic(targetFolders),
             .dynamic(targetSubfolders),
+            .dynamic(awaitedPackageFolders),
         ],
         outputPorts: [formulaOutput, infoLog]
     )
@@ -234,7 +243,8 @@ struct SwiftFormulaConverter: Node {
         guard missing.isEmpty else {
             return try pendingOutput(
                 reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
-                externalSpecs: specs)
+                externalSpecs: specs,
+                awaitedPackageFolderSpecs: Dictionary(uniqueKeysWithValues: missing.map { ($0, .folderManifest(at: $0)) }))
         }
 
         // ── every compilable target's folder, to tell C targets from Swift ones ──
@@ -319,7 +329,8 @@ struct SwiftFormulaConverter: Node {
                            Self.infoLog: .value("")],
             inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs,
                                                      Self.targetFolders: targetFolderSpecs,
-                                                     Self.targetSubfolders: subfolderSpecs]) { _, new in new })
+                                                     Self.targetSubfolders: subfolderSpecs,
+                                                     Self.awaitedPackageFolders: [:]]) { _, new in new })
     }
 
     // Returns a noValue output that still carries the current specs — the node's own
@@ -328,12 +339,14 @@ struct SwiftFormulaConverter: Node {
     private func pendingOutput(reason: String,
                                externalSpecs: [String: GraphSpecNode],
                                targetFolderSpecs: [String: GraphSpecNode] = [:],
-                               targetSubfolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
+                               targetSubfolderSpecs: [String: GraphSpecNode] = [:],
+                               awaitedPackageFolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
               inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs,
                                                        Self.targetFolders: targetFolderSpecs,
-                                                       Self.targetSubfolders: targetSubfolderSpecs]) { _, new in new })
+                                                       Self.targetSubfolders: targetSubfolderSpecs,
+                                                       Self.awaitedPackageFolders: awaitedPackageFolderSpecs]) { _, new in new })
     }
 
     // MARK: - Stalls
@@ -367,6 +380,8 @@ struct SwiftFormulaConverter: Node {
     /// The machine's, beside it: the tools and SDK, written by `semel-clang` or
     /// `semel-swift prepare` and laid under the project's (B-109).
     static let machineConfigFileName = "semel.machine.config"
+    /// The folder under the root where `semel-swift` puts every checkout.
+    static let dependenciesFolderName = "Dependencies"
 
     /// The settings a package is configured by: the project's `semel.config` laid over the
     /// machine's `semel.machine.config`, both beside the root, and this namespace's slice
@@ -554,7 +569,7 @@ struct SwiftFormulaConverter: Node {
             case .local(_, let path):
                 return resolve(path, declaringPackage)
             case .vendored(_, let name, _):
-                return "\(root)/\(Self.dependenciesFolderName)/\(name)"
+                return "\(root)/\(SwiftFormulaConverter.dependenciesFolderName)/\(name)"
             }
         }
 
@@ -569,9 +584,6 @@ struct SwiftFormulaConverter: Node {
             if case .vendored(_, _, let origin) = self { return origin }
             return nil
         }
-
-        /// The folder under the root package where `semel-swift` puts every checkout.
-        static let dependenciesFolderName = "Dependencies"
     }
 
     private struct SPMRegistryDependency: Decodable {

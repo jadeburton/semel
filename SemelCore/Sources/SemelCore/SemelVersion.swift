@@ -67,11 +67,16 @@ public enum Semel {
     /// output merged from it that nothing would ever recompute, a source never being
     /// scheduled. The same reason as 0.1.7: what a stored node's wiring means has moved.
     ///
+    /// 0.1.11: `ProjectFinder` publishes the project files a formula has to include on a
+    /// new `includableProjects` port (B-10). The reason 0.1.6 was a bump: a node is given
+    /// one row per declared port when it is created, so the finder in a stored graph has
+    /// none for this one, and the idle report would read nothing until the next push.
+    ///
     /// *Not* a bump: the `ArtifactSnapshot` table (B-50). A table is a schema change, and
     /// a schema change usually stops the launch — but this one is derived state that
     /// starts empty, `createTables` is `IF NOT EXISTS`, and a database opened without it
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.10"
+    public static let version = "0.1.11"
 }

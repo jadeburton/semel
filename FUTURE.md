@@ -320,23 +320,29 @@ whoever does: the fold is a stated text format with a version tag on its first l
 format moved under; and a `contentRoot` wire is a real dependency, so the node that checks
 the lock re-runs whenever anything under the vendored folder changes, which is the point.
 
-**B-10** `open` `For Fable Only` — **Packages are named by a formula, not discovered — two residuals.**
+**B-10** `open` `For Fable Only` — **Packages are named by a formula, not discovered — one residual.**
 Done 2026-09-12: `Package.swift` creates no builder; a `.fmla` says
 `include SwiftFormulaConverter(path: <.>).formula` — `include` merges the formula text any
 node produces, and knows nothing about packages; the converter wires its own reader from
 the path — only the formula's products are published and they land beside the formula,
 included names may not clash with the formula's own, and every node of the build reads its
 settings from one config — beside the named package, or at the converter's `root:` when the
-formula gives one (B-56) — so this tree keeps one `semel.config`, not six. What remains:
+formula gives one (B-56) — so this tree keeps one `semel.config`, not six. Done
+2026-09-28, discoverability: a plugin registers an `IncludableProjectPlugin` saying what an
+`include` would build a file with — SemelSwift claims a pushed `Package.swift` not under a
+`Dependencies` folder — `ProjectFinder` publishes the files claimed on its
+`includableProjects` port, and after a settle with no errors the engine gives one notice
+per file that no node reads: `input:/Packages/Foo/Package.swift is not named by any
+formula; a formula's include SwiftFormulaConverter(path: <Foo>).formula builds it`, spelled
+from the nearest folder above that holds a formula (`Semel.version` 0.1.11, for the new
+port). Not claimed yet: an `.xcodeproj`, which a formula names the same way; and a
+`Package.swift` nested in a package the user owns — a test fixture — is reported like any
+other. What remains:
 
 1. **Dependency overrides in the formula.** The converter resolves a git dependency to
    `<root>/Dependencies/<name>` (the `semel-swift` rule) and stalls when nothing is there;
    a formula cannot yet say "this URL is at that path". Needed the day a dependency has to
    come from somewhere the rule does not reach.
-2. **Discoverability.** A pushed `Package.swift` that no formula names now builds nothing,
-   silently. `ProjectFinder` sees every manifest and could report at idle the ones no
-   builder's `includes` port reaches — as a `notice`, the channel the unused-config-key
-   warning already takes.
 
 Granularity is per package, not per product: a dependency that also vends an executable
 loses it. Acceptable until a real case shows up. The inferred-roots plan (converter

@@ -31,6 +31,14 @@ public struct ProjectFinder: Node {
     static let rootFolderManifestInputPort = "folderManifest"
     static let watchedFolderManifestInputPort = "watchedFolders"
     static let projectBuildersInputPort = "projectBuilders"
+    /// Every project file a plugin says builds nothing until a formula includes it, as
+    /// `[IncludableProject]` sorted by path (B-10). Published rather than worked out at idle:
+    /// this node already reads every folder's listing when one changes, and the report
+    /// reads one port instead of every listing on every settle.
+    static let includableProjectsOutputPort = "includableProjects"
+
+    /// A new output port, `includableProjects` (B-10).
+    public static let implementationVersion = 2
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
     public static let descriptor = NodeDescriptor(
@@ -39,7 +47,7 @@ public struct ProjectFinder: Node {
             .dynamic(watchedFolderManifestInputPort),
             .dynamic(projectBuildersInputPort),
         ],
-        outputPorts: []
+        outputPorts: [includableProjectsOutputPort]
     )
 
     public var thisNode: NodeRecord
@@ -120,9 +128,81 @@ public struct ProjectFinder: Node {
             watchedFolderSpecs[watchedPath] = .folderManifest(at: watchedPath)
         }
 
-        return .init(outputValues: [:],
+        let includable = try Self.includableProjects(in: allFolderManifests).toSortedJSON()
+
+        return .init(outputValues: [Self.includableProjectsOutputPort: .value(try includable.intern())],
                      inputWireSpecs: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: .folderManifest(at: Folder.inputFileSystemName)],
                                              Self.watchedFolderManifestInputPort: watchedFolderSpecs,
                                              Self.projectBuildersInputPort: projectBuildersSpecs])
+    }
+}
+
+// MARK: - Projects a formula has to name (B-10)
+
+/// A project file that builds nothing until a formula includes the node a plugin names for
+/// it — a `Package.swift` — as `ProjectFinder` publishes it for the idle report.
+struct IncludableProject: Codable, Equatable {
+    /// The file, as the input file system names it.
+    let path: String
+    /// What a formula's `include` names to build it.
+    let include: GraphSpecNode
+    /// Where the formula that includes it would be: the nearest folder at or above the
+    /// file's own that holds a formula, or the file's folder when none does. The include
+    /// is spelled from there, so the line the report prints can be pasted as it stands.
+    let formulaFolder: String
+}
+
+extension ProjectFinder {
+
+    /// Every entry an includable-project plugin claims, among the listings this node reads.
+    static func includableProjects(in folderManifests: [(String, FolderManifest)]) -> [IncludableProject] {
+        // The folders that hold a formula: an entry a builder plugin claims is one.
+        var formulaFolders: Set<String> = []
+        for (folderPath, folderManifest) in folderManifests {
+            let holdsAFormula = folderManifest.entries.contains { entry in
+                ProjectDiscovery.plugins.contains { $0.spec(forEntry: entry, inFolder: folderPath) != nil }
+            }
+            if holdsAFormula {
+                formulaFolders.insert(Path(folderPath).string)
+            }
+        }
+
+        var result: [IncludableProject] = []
+        for (folderPath, folderManifest) in folderManifests {
+            for entry in folderManifest.entries {
+                let includes = ProjectDiscovery.includablePlugins.lazy.compactMap {
+                    $0.includeSpec(forEntry: entry, inFolder: folderPath)
+                }
+                guard let include = includes.first else {
+                    continue
+                }
+                result.append(IncludableProject(path: (Path(folderPath) / entry.name).string,
+                                                include: include,
+                                                formulaFolder: nearestFormulaFolder(from: Path(folderPath),
+                                                                                    among: formulaFolders)))
+            }
+        }
+        return result.sorted { $0.path < $1.path }
+    }
+
+    /// `folder` or the nearest folder above it in `formulaFolders`; `folder` when none is.
+    private static func nearestFormulaFolder(from folder: Path, among formulaFolders: Set<String>) -> String {
+        var candidate: Path? = folder
+        while let current = candidate {
+            if formulaFolders.contains(current.string) {
+                return current.string
+            }
+            candidate = current.deletingLastComponent
+        }
+        return folder.string
+    }
+}
+
+extension Array where Element == IncludableProject {
+    /// The text the port holds: keys sorted, so equal lists intern to one hash.
+    func toSortedJSON() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(self), as: UTF8.self)
     }
 }
