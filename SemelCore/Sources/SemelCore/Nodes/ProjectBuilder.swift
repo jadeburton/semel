@@ -11,7 +11,7 @@ public struct ProjectBuilder: Node {
     /// after a `**` reads the file's own name (B-108).
     /// 3: every node that asks for its files' modes has them wired beside the files
     /// (`wiringFileMetadata`), a pushed file among the sources that publish one.
-    public static let implementationVersion = 3
+    public static let implementationVersion = 4
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"

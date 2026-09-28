@@ -74,7 +74,7 @@ struct SwiftFormulaConverter: Node {
     /// and its public headers follow `publicHeadersPath` (B-55); at 5, a stall demands the
     /// folder of each package it waits for (B-110); at 6, it demands the lock and the
     /// content root of every vendored package, and a mismatch is its error (B-06).
-    public static let implementationVersion = 6
+    public static let implementationVersion = 7
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -1498,7 +1498,7 @@ struct SwiftFormulaConverter: Node {
         var wires: [String] = []
         var copiedFiles: [String] = []
         for (index, resource) in target.resources.enumerated() {
-            let fullPath = "\(targetFolder)/\(resource.path)"
+            let fullPath = PackageResources.fullPath(targetFolder: targetFolder, relative: resource.path)
             let name     = (resource.path as NSString).lastPathComponent
             switch resource.kind {
             case .assetCatalog:

@@ -918,6 +918,77 @@ references" — a **GC root**. `isRooted` is more accurate only to a reader alre
 collector terms, and would read as "the root of the file system" to everyone else. Revisit
 only if a real collector lands.
 
+**B-124** `done` — **Reading a node's inputs cost one select per wire.**
+Found 2026-09-28, when the nightly's cold build of the IceCubes app went from 340 s to
+more than 1500 s over one night of merges. A `sample` of the server showed most of its
+time under `Node.buildProcessInput`: `readFromInputPort` read the wires at a port and then
+selected each wire's source port on its own, and every select is a round trip through the
+serialised database — a queue hop, a savepoint and a statement of its own. The cost
+follows the fan, and the widest fan in the graph is `ProjectFinder`'s: it watches the
+manifest of every pinned folder of the tree, 1670 under IceCubes, and it is re-evaluated
+every time the builder below it writes — which, with the converters demanding target
+subfolders level by level (B-108) and locks and content roots (B-06), was 650 times in the
+first sixteen minutes of that build. That is over a million port selects for one node
+that produced its output 110 times, on a database every compute thread waits on; the
+compilers did not start in earnest until then.
+Now `OutputPortDataAccess.selectArriving(atNodeID:toSymbolID:)` answers a port in one
+query, the wires joined with the ports they come from, and `readFromInputPort` reads that.
+`InputPortReadScaleTests` pins one select per read at fans of 100 and 400, checks the
+plan searches both tables through their indexes, and that a wire from a port with no row
+is left out as before. `OutputPortDataAccess.selectCount` is the observable, beside
+`WireDataAccess.selectCount` and `rowsRead`.
+Seen beside it: that build created some 20,000 nodes and kept 10,000, which turned out to
+be the loop B-125 describes, and `ProjectFinder` decodes 1670 manifests on each of its
+real evaluations, a cost that follows the passes and is left for another day.
+
+**B-125** `done` — **An include that cannot be read cut every include after it, and a
+`..` in a resource rule made a file nothing could push.**
+Found 2026-09-28 under B-124: with the reads made cheap, the IceCubes app build still did
+not end. `semel check` named a compiler whose stored identity was not the one its wires
+gave, a node that was gone a minute later; the converter for purchases-ios-spm had run 300
+times and failed its lock check each time (B-06) with the same "found" root; fourteen of
+the builder's seventeen includes were made, collected and made again every few seconds,
+their compilers and settings chains with them. The loop, in order:
+1. The manifest of purchases-ios declares `.copy("../Sources/PrivacyInfo.xcprivacy")` from
+   a target at `Sources`. `PackageResources` joined it as spelled, so every converter that
+   emitted RevenueCat's bundle asked for `StaticFile(path: '…/Sources/../Sources/
+   PrivacyInfo.xcprivacy')`: the engine made a folder called `..` under `Sources` and a
+   file in it nothing could push. A ghost, `not-produced` in the fold, so the package
+   folder's content root was not the root `prepare` had recorded from the disk, and the
+   lock check failed.
+2. `FormulaFile.parse` returned at the first include whose text it could not read — the
+   failed one is third of seventeen in the Xcode project's formula — so the builder's
+   output named four includes, and `applySpecs` unwired the other thirteen. Nothing
+   referred to their converters any more; the idle collector took them and everything
+   below them, the ghost included.
+3. With the ghost gone the root was the lock's again, the converter passed, the parse
+   reached all seventeen includes, the thirteen were made again and emitted the ghost
+   again — and round.
+Fixed both. The parser goes on past an include it cannot read, so every include the texts
+name is asked for and stays wired, and the products wait for all of them as before
+(`FormulaParserTests.test_anIncludeNotYetAvailableStillAsksForTheIncludesAfterIt`;
+`ProjectBuilder` v4). `PackageResources.fullPath` resolves a declared resource's dot
+segments where it is joined to the target folder, so no `..` reaches a formula
+(`PackageResourcesTests`, two cases; `SwiftFormulaConverter` v7). Either fix alone ends
+the loop; the first is the one that matters, because any include that alternates
+between a value and an error — a converter waiting on a folder, a lock that fails — would
+have torn the graph down the same way.
+With the loop gone the same build ended in 147 s and failed on four `TreeMerger`s: the
+app merges `bundles_Account()` and `bundles_AppAccount()`, and each carries
+`DesignSystem_DesignSystem.bundle/Assets.car`, because a product's tree of bundles
+carries its dependencies' (B-77) and two products share one. The merger now places the
+same entry — one path, one hash, one mode — from two trees once, and still refuses one
+path with two contents or two modes (`TreeMergerTests`; `TreeMerger` v2). The cold build
+then ended in 151 s with no errors and a clean `check`, and the second build in 17 s —
+failing its export, because a vendored resource leaves read-only (B-108) and a write over
+it is refused: `export` now replaces what an earlier export left, whatever its mode
+(`ExportCommandTests`).
+What remains: an include in error still leaves the build without products, which is
+right, but the report names the converter's error and not that the project waited on
+it; and the collector's tearing down of a subgraph a builder will demand again on its
+next pass is a cost the builder could avoid by keeping the wires of includes it has
+already named.
+
 ### End-to-end roster
 
 Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for something IceCubes

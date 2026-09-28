@@ -109,6 +109,22 @@ final class ExportCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 0)
     }
 
+    /// A second export into the same folder replaces what the first left there, a file it
+    /// left read-only included: a vendored resource is pushed read-only and leaves so, and
+    /// `build --into` the same folder twice failed on every such file (B-125).
+    func test_aSecondExportReplacesAReadOnlyFileTheFirstLeft() throws {
+        try publish("Packages/libModels.a", contents: "models")
+        interpreter.handleCommand("export Packages --into \(destination.path)")
+        let exportedPath = destination.appendingPathComponent("libModels.a").path
+        chmod(exportedPath, 0o444)
+        XCTAssertEqual(try exportedMode("libModels.a"), 0o444)
+
+        interpreter.handleCommand("export Packages --into \(destination.path)")
+
+        XCTAssertEqual(try exported("libModels.a"), "models")
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
     private func exportedMode(_ relativePath: String) throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent(relativePath).path)
         return (attributes[.posixPermissions] as? Int ?? 0) & 0o777

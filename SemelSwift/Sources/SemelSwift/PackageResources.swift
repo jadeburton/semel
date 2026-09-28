@@ -129,7 +129,7 @@ enum PackageResources {
         // The manifest's rules first: a copy keeps its shape, a processed folder is
         // flattened to the bundle's root except for what is recognised by type.
         for declared in target.declared {
-            let isFolder = manifests["\(targetFolder)/\(declared.path)"] != nil
+            let isFolder = manifests[fullPath(targetFolder: targetFolder, relative: declared.path)] != nil
             let name = (declared.path as NSString).lastPathComponent
             if declared.isCopy {
                 claim(PackageResource(kind: isFolder ? .folder : .file, path: declared.path, bundlePath: name))
@@ -164,6 +164,18 @@ enum PackageResources {
         }
 
         return found.sorted { $0.path < $1.path }
+    }
+
+    /// Where a resource declared relative to the target folder is, with its dot segments
+    /// resolved. A manifest may declare `.copy("../Sources/PrivacyInfo.xcprivacy")` from a
+    /// target at `Sources` (purchases-ios does); spelled into a formula as it stands, that
+    /// path made the engine a folder called `..` under `Sources` and a file in it nothing
+    /// could ever push — a ghost that moved the package folder's content root off its lock
+    /// (B-125). A path that climbs above the file system's root names nothing, and is left
+    /// as it stands for the report to show.
+    static func fullPath(targetFolder: String, relative: String) -> String {
+        let joined = Path("\(targetFolder)/\(relative)")
+        return (joined.resolvingDotSegments ?? joined).string
     }
 
     private static func isExcluded(_ relative: String, by target: Rules) -> Bool {

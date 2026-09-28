@@ -302,18 +302,21 @@ extension NodeRecord {
     }
 
     func readFromInputPort(_ inputPort: String) throws -> [String: NodeValue] {
-        let inputSymbolID = inputPort.asSymbolID()
-
-        let wiresOnThisInput = try database.wire.select(goingToNodeID: (try requireID()), toSymbolID: inputSymbolID)
+        // One query for the port, whatever arrives at it: the wires joined with the ports
+        // they come from. A select per wire cost a wide consumer the width of its fan on
+        // every evaluation (B-124).
+        let arrivals = try database.outputPort.selectArriving(atNodeID: try requireID(),
+                                                              toSymbolID: inputPort.asSymbolID())
 
         var result = [String: NodeValue]()
 
-        for wire in wiresOnThisInput {
-            let wireName = wire.name.resolveSymbol()
-            if let port = try database.outputPort.select(nodeID: wire.fromNodeID, nameSymbolID: wire.fromSymbolID) {
-                assert(result[wireName] == nil)
-                try result[wireName] = port.asNodeValue()
+        for arrival in arrivals {
+            guard let port = arrival.port else {
+                continue
             }
+            let wireName = arrival.wireName.resolveSymbol()
+            assert(result[wireName] == nil)
+            try result[wireName] = port.asNodeValue()
         }
 
         return result
