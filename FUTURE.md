@@ -918,6 +918,31 @@ references" — a **GC root**. `isRooted` is more accurate only to a reader alre
 collector terms, and would read as "the root of the file system" to everyone else. Revisit
 only if a real collector lands.
 
+**B-124** `done` — **Reading a node's inputs cost one select per wire.**
+Found 2026-09-28, when the nightly's cold build of the IceCubes app went from 340 s to
+more than 1500 s over one night of merges. A `sample` of the server showed most of its
+time under `Node.buildProcessInput`: `readFromInputPort` read the wires at a port and then
+selected each wire's source port on its own, and every select is a round trip through the
+serialised database — a queue hop, a savepoint and a statement of its own. The cost
+follows the fan, and the widest fan in the graph is `ProjectFinder`'s: it watches the
+manifest of every pinned folder of the tree, 1670 under IceCubes, and it is re-evaluated
+every time the builder below it writes — which, with the converters demanding target
+subfolders level by level (B-108) and locks and content roots (B-06), was 650 times in the
+first sixteen minutes of that build. That is over a million port selects for one node
+that produced its output 110 times, on a database every compute thread waits on; the
+compilers did not start in earnest until then.
+Now `OutputPortDataAccess.selectArriving(atNodeID:toSymbolID:)` answers a port in one
+query, the wires joined with the ports they come from, and `readFromInputPort` reads that.
+`InputPortReadScaleTests` pins one select per read at fans of 100 and 400, checks the
+plan searches both tables through their indexes, and that a wire from a port with no row
+is left out as before. `OutputPortDataAccess.selectCount` is the observable, beside
+`WireDataAccess.selectCount` and `rowsRead`.
+Seen beside it and left for another day: that build created some 20,000 nodes and kept
+10,000 — nodes made, collected and made again while the converters and the builder
+settled — and `ProjectFinder` decodes 1670 manifests on each of its real evaluations. Both
+are costs that follow the passes, not the fan, and the number of passes a cold build takes
+is B-108's and B-06's to answer.
+
 ### End-to-end roster
 
 Real-world projects for `EndToEnd/Tests/Projects.swift`, each chosen for something IceCubes

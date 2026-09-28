@@ -52,6 +52,18 @@ public struct OutputPort: Codable, FetchableRecord, PersistableRecord, Equatable
     }
 }
 
+/// One wire into an input port, with what its source port holds: the row, or nil where the
+/// source has no row for the port it is wired from.
+public struct ArrivingValue: Equatable {
+    public let wireName: ObjectID
+    public let port:     OutputPort?
+
+    public init(wireName: ObjectID, port: OutputPort?) {
+        self.wireName = wireName
+        self.port     = port
+    }
+}
+
 public struct OutputPortDataAccess: DataAccessType {
     public weak var databaseLayer: DatabaseLayer?
 
@@ -79,10 +91,52 @@ public struct OutputPortDataAccess: DataAccessType {
         }
     }
 
+    /// How many port selects this process has issued through `select` and
+    /// `selectArriving`. A test observable, of a piece with `WireDataAccess.selectCount`:
+    /// reading a node's inputs is done on every evaluation of the node, and a read that
+    /// costs a select per wire arriving is a cost that follows the fan (B-124). Not read by
+    /// the engine.
+    public static var selectCount = 0
+
     public func select(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
-        try read { db in
+        Self.selectCount += 1
+        return try read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
                                   OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
+        }
+    }
+
+    /// What arrives on every wire into one input port, in one query: each wire's name with
+    /// the row of the source port it comes from, or no row where that source has never
+    /// written the port.
+    ///
+    /// One query, not the wires and then a select per wire. A node reads every input port
+    /// on every evaluation, and each select is a round trip through the serialised
+    /// database — its own queue hop, savepoint and statement — so a consumer of a wide fan
+    /// paid the width of the fan per evaluation: the project finder, wired to the manifest
+    /// of every folder of a tree, read some seventeen hundred ports each time a builder
+    /// below it wrote, and a cold build of a large app spent most of its time there (B-124).
+    /// The wire rows the join hands back are counted into `WireDataAccess.rowsRead` as any
+    /// read of the wire table is, so the scale tests see them.
+    public func selectArriving(atNodeID toNodeID: ObjectID, toSymbolID: ObjectID) throws -> [ArrivingValue] {
+        Self.selectCount += 1
+        WireDataAccess.selectCount += 1
+        let rows = try read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT w.name AS wireName, p.nodeID, p.nameSymbolID, p.valueKind, p.dataObjectHash
+                FROM Wire w
+                LEFT JOIN OutputPort p ON p.nodeID = w.fromNodeID AND p.nameSymbolID = w.fromSymbolID
+                WHERE w.toNodeID = ? AND w.toSymbolID = ?
+                """, arguments: [toNodeID, toSymbolID])
+        }
+        WireDataAccess.rowsRead += rows.count
+        return try rows.map { row in
+            let wireName: ObjectID = row["wireName"]
+            // A source without a row for the port leaves the joined columns null.
+            guard (row["nodeID"] as ObjectID?) != nil else {
+                return ArrivingValue(wireName: wireName, port: nil)
+            }
+            return ArrivingValue(wireName: wireName, port: try OutputPort(row: row))
         }
     }
 
