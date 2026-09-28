@@ -1,5 +1,11 @@
 // At the top of the target, beside the folders the rest sit in.
 #include <clib.h>
+// Found only by cSettings' .headerSearchPath("core/detail").
+#include <constants.h>
+
+#ifndef CLIB_ANSWER_CONSTANT
+#error "constants.h by .headerSearchPath was not the one included"
+#endif
 
 #ifndef CLIB_ANSWER
 #error "cSettings' .define(\"CLIB_ANSWER\") did not reach the preprocessor"

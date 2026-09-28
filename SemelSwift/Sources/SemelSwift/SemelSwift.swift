@@ -71,11 +71,21 @@ public enum SemelSwift {
 
     /// Whether a target folder holding these files — every one at any depth, as paths
     /// relative to it — is one the converter compiles through clang: C-family sources and
-    /// no `.swift`, the converter's own rule (B-55). The manifest's `sources:` and
-    /// `exclude:` are not read here, so a `.swift` file only an exclusion leaves out still
-    /// counts, and such a tree is written the Swift settings alone.
-    public static func isCFamilyTargetFolder(holding fileNames: [String]) -> Bool {
-        let extensions = Set(fileNames.compactMap { name -> String? in
+    /// no `.swift` within the scope the manifest's `sources:` and `exclude:` draw (empty
+    /// `sources` for the whole folder), the converter's own rule (B-55). The scope is what
+    /// keeps a target at its package's root — PLCrashReporter's — from counting the
+    /// package's own `Package.swift` and its tests' Swift (B-134).
+    public static func isCFamilyTargetFolder(holding relativePaths: [String],
+                                             sources: [String] = [],
+                                             exclude: [String] = []) -> Bool {
+        let scopes     = sources.map(PackageClangTarget.normalized)
+        let exclusions = exclude.map(PackageClangTarget.normalized)
+        let inScope = relativePaths.filter { path in
+            (scopes.isEmpty || scopes.contains { PackageResources.isAtOrUnder(path, $0) })
+                && !exclusions.contains { PackageResources.isAtOrUnder(path, $0) }
+        }
+        let extensions = Set(inScope.compactMap { path -> String? in
+            let name = path.split(separator: "/").last.map(String.init) ?? path
             guard let dot = name.lastIndex(of: "."), dot != name.startIndex else {
                 return nil
             }

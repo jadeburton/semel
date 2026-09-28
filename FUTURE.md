@@ -419,18 +419,40 @@ sources `#error` and whose sources `#error` without their define:
    alone. What was missing was that a product's *own* C target — a C executable's
    `main.c`, a library vending a C target — was never compiled: the walk started from
    the target's dependencies.
+6. **A target at its package's root** (B-134, PLCrashReporter 1.12.2, NetNewsWire's pin
+   `0254f94`): `path: ""`, `"."` or a path ending in `/` is the plain folder
+   (`SPMTarget.folder(in:)`), where the converter asked for `…/plcrashreporter/` — a
+   second node for the package folder's name, which the applier refused. `prepare`
+   reads a target's `sources:` and `exclude:` too (`PackageSummary.Target`), where the
+   whole root — its `Package.swift`, its tests' Swift — made the target Swift and the
+   clang settings were never written.
+7. **`.headerSearchPath`**, unconditional, is one more `headerFolders` folder of the
+   target's own preprocessor, relative to the target; one naming no folder is left out,
+   as clang passes over it. The fixture includes a header by it alone.
+8. **A C target's resources** are a bundle as a Swift target's are,
+   `<Package>_<Target>.bundle` in the product's `bundles_` tree (PLCrashReporter's
+   `.process("Resources/PrivacyInfo.xcprivacy")`).
+
+With these, all 58 of PLCrashReporter's C, C++, Objective-C and Objective-C++ sources
+preprocess and compile inside a Swift package's graph (`sources:` two folders,
+`exclude:`, `.headerSearchPath("Dependencies/protobuf-c")`, a define with an empty
+value). What stops it is below: from Swift, 4; at link, 1, 2 and 5; and 7 at run time.
 
 Left, each for the package that needs it (swift-nio and BoringSSL in B-78 are the likely
 first):
 
 1. **Conditional and other settings.** A `.when(platforms:)` or `.when(configuration:)`
-   setting is not carried, nor `headerSearchPath`, `unsafeFlags`, `linkedLibrary`,
-   `linkedFramework` or any `linkerSettings`. A define whose value holds a comma splits in
-   two and one holding a quote ends the formula's string.
+   setting is not carried, nor `unsafeFlags`, `linkedLibrary`, `linkedFramework` or any
+   `linkerSettings`. A define whose value holds a comma splits in two and one holding a
+   quote ends the formula's string. PLCrashReporter's `.linkedFramework("Foundation")`
+   is what its link lacks first: `NSError`, `NSFileManager` and the `CFUUID` functions
+   undefined (`SwiftFormulaConverter.swift`, `SPMSetting` reads no linker setting;
+   `SwiftLinker` has no key for a framework).
 2. **C++ in a linked product.** SwiftPM adds `-lc++` when a product reaches a C++ source;
    `SwiftLinker` is not told, so a dylib or executable with a C++ target fails at link
    with the standard library's symbols undefined. It wants a linker key of its own, for
-   the reason `defines` is one.
+   the reason `defines` is one. PLCrashReporter's `.cpp` and `.mm` leave
+   `___gxx_personality_v0` and `___cxa_guard_*` undefined.
 3. **Nested public headers for Swift.** `SwiftCompiler`'s `inputModuleMapFolders` places
    one level of the header folder (the product's module tree, a `FolderTreeBuilder`, is
    whole), so a module map naming `header "sub/x.h"` or an umbrella directory with
@@ -438,10 +460,29 @@ first):
 4. **No generated module map.** SwiftPM writes one for a C target whose public headers
    have none — an umbrella `<Target>.h`, or the folder as an umbrella directory; the
    converter wires the folder as it is, so such a target is not importable from Swift.
+   PLCrashReporter's `include/` is symlinks to its headers with `CrashReporter.h` as the
+   umbrella and no module map, so `import CrashReporter` fails with `no such module`. It
+   wants a node that writes the map beside the header folder's tree, which
+   `inputModuleMapFolders` (a `Folder` manifest) cannot take today.
 5. **Assembly.** `.s` and `.S` sources are not compiled (BoringSSL).
+   PLCrashReporter's `Source/PLCrashAsyncThread_current.S` defines
+   `plcrash_async_thread_state_current`, undefined at its link.
 6. **Cost.** A preprocessor node takes every file under its target's folder, an excluded
    folder included, and every source of the target has one; a large excluded `Tests`
-   costs wires, not correctness.
+   costs wires, not correctness. A target at its package's root makes that the whole
+   package: PLCrashReporter's preprocessors take its tests, tools, documentation and
+   `.xcodeproj`, and the converter walks all of them for resources.
+7. **Objective-C without ARC.** SwiftPM compiles a C-family target's Objective-C with
+   `-fobjc-arc`; `ClangCompiler` passes no such flag (`SemelClang/.../ClangCompiler.swift`),
+   so ARC code compiles as manual reference counting and leaks — PLCrashReporter's `.m`
+   send no `release` at all. Wants the flag for `.m` and `.mm`, and a bump.
+8. **No `SWIFTPM_MODULE_BUNDLE` for Objective-C.** SwiftPM generates a bundle accessor
+   for a C-family target with resources; the converter builds the bundle (done 8) but
+   generates no accessor, so a target that reads its bundle through the macro does not
+   compile. PLCrashReporter does not use it.
+9. **A search path above the target.** `.headerSearchPath("../Shared")` names a folder
+   the converter's walk of the target never reaches, and `PackageClangTarget` leaves it
+   out as it would a missing one.
 
 **B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
 Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before
@@ -1120,13 +1161,10 @@ application target, simulator only, all library code in packages. In suggested o
       binary targets are not supported at all: `prepare` would vendor the artifact
       Xcode's resolution already downloads, and the app would link
       `Sparkle.framework` and embed it under `Contents/Frameworks`.
-   2. **PLCrashReporter's target at the package root** (B-134).
-      `Dependencies/plcrashreporter/Package.swift` declares `CrashReporter` with
-      `path: ""`; `SwiftFormulaConverter.swift` demands the folder
-      `…/plcrashreporter/` with a trailing slash, which collides with the package's own
-      `Folder` node (`is already taken by a node of kind 1`). Behind it, the target is
-      C and Objective-C with a `sources:` list, `exclude:`, `.headerSearchPath`,
-      `.define(…, to: "")` and a `.process` resource.
+   2. **PLCrashReporter** (`CrashReporter`, C and Objective-C at the package root). The
+      folder collision is fixed and its 58 sources compile (B-134, B-55 done 6–8); what
+      is left is B-55's residuals 1, 2, 4, 5 and 7 — Foundation and `-lc++` at link, no
+      generated module map for `import CrashReporter`, the `.S` source, and ARC.
    3. **The local packages are not found.** Xcode finds the seventeen packages under
       `Modules/` because `Modules` is a synchronized folder holding package folders;
       the product dependencies (`Account`, `RSCore`, …) name no package reference.

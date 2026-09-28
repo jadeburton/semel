@@ -73,8 +73,11 @@ struct SwiftFormulaConverter: Node {
     /// at 4, a C target's sources are one `**` for-each with its exclusions as `except`,
     /// and its public headers follow `publicHeadersPath` (B-55); at 5, a stall demands the
     /// folder of each package it waits for (B-110); at 6, it demands the lock and the
-    /// content root of every vendored package, and a mismatch is its error (B-06).
-    public static let implementationVersion = 7
+    /// content root of every vendored package, and a mismatch is its error (B-06); at 8, a
+    /// target at its package's root demands the package folder by its own name, and a C
+    /// target's `.headerSearchPath` folders are header folders and its resources a bundle
+    /// (B-134).
+    public static let implementationVersion = 8
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -293,7 +296,7 @@ struct SwiftFormulaConverter: Node {
         var targetFolderSpecs: [String: GraphSpecNode] = [:]
         for (packageFolder, manifest) in [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }) {
             for target in manifest.targets where target.isCompilable {
-                let folder = "\(packageFolder)/\(target.sourcesRelativePath)"
+                let folder = target.folder(in: packageFolder)
                 targetFolderSpecs[folder] = .folderManifest(at: folder)
             }
         }
@@ -712,6 +715,10 @@ struct SwiftFormulaConverter: Node {
         /// `.when(configuration: .debug)` — is not carried: whether it holds depends on the
         /// platform and configuration being built, which nothing here decides per target yet.
         let cDefines: [String]
+        /// The target's unconditional `.headerSearchPath` settings from `cSettings` and
+        /// `cxxSettings`, relative to its folder, in manifest order; conditional ones are
+        /// not carried, for the reason conditional defines are not.
+        let cHeaderSearchPaths: [String]
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
         /// Non-decoded. What the target's folder tree said, once it arrived: nil means Swift.
@@ -740,7 +747,8 @@ struct SwiftFormulaConverter: Node {
 
         /// What reading the target as a C target needs of the manifest.
         var clangRules: PackageClangTarget.Rules {
-            .init(sources: sources, exclude: exclude, publicHeadersPath: publicHeadersPath)
+            .init(sources: sources, exclude: exclude, publicHeadersPath: publicHeadersPath,
+                  headerSearchPaths: cHeaderSearchPaths)
         }
 
         var isClangTarget: Bool { clangInfo != nil }
@@ -803,10 +811,20 @@ struct SwiftFormulaConverter: Node {
 
             /// The value of an unconditional `.define` for C or C++, as written.
             var unconditionalDefine: String? {
+                unconditionalClangSetting("define")
+            }
+
+            /// The folder of an unconditional `.headerSearchPath` for C or C++, relative to
+            /// the target's folder.
+            var unconditionalHeaderSearchPath: String? {
+                unconditionalClangSetting("headerSearchPath")
+            }
+
+            private func unconditionalClangSetting(_ name: String) -> String? {
                 guard !isConditional, ["c", "cxx"].contains(tool ?? "") else {
                     return nil
                 }
-                return kind?["define"]?["_0"]
+                return kind?[name]?["_0"]
             }
         }
 
@@ -822,12 +840,21 @@ struct SwiftFormulaConverter: Node {
             let settings = (try? c.decode([SPMSetting].self, forKey: .settings)) ?? []
             languageMode = settings.compactMap { $0.kind?["swiftLanguageMode"]?["_0"] }.first
             cDefines     = settings.compactMap(\.unconditionalDefine)
+            cHeaderSearchPaths = settings.compactMap(\.unconditionalHeaderSearchPath)
             publicHeadersPath = try? c.decode(String.self, forKey: .publicHeadersPath)
             overridePackageFolder = nil
         }
 
         // SPM default: Sources/<TargetName> relative to the package root.
         var sourcesRelativePath: String { path ?? "Sources/\(name)" }
+
+        /// The target's folder under `packageFolder`, spelled as the walk spells a folder.
+        /// A manifest may put a target at the package root — `path: ""` or `"."`
+        /// (PLCrashReporter) — or end its path with a `/`, and each is the plain folder: a
+        /// demand spelled `…/pkg/` is a second node for the package folder's own name.
+        func folder(in packageFolder: String) -> String {
+            PackageClangTarget.joined(packageFolder, PackageClangTarget.normalized(sourcesRelativePath))
+        }
 
         /// The module the target compiles to. A target's name is free text — `semel-clang`,
         /// `swift-markdown` — and a Swift module name is an identifier, so SwiftPM mangles
@@ -954,11 +981,11 @@ struct SwiftFormulaConverter: Node {
         // and the resources its folder holds (B-77), which is what every walk below asks.
         func placed(_ target: SPMTarget, in packageFolder: String?) -> SPMTarget {
             var placed = target
-            let folder = "\(packageFolder ?? rootPackageFolder)/\(target.sourcesRelativePath)"
+            let folder = target.folder(in: packageFolder ?? rootPackageFolder)
             placed.overridePackageFolder = packageFolder
             placed.packageName = packageFolder.flatMap { externalManifests[$0]?.name } ?? rootManifest.name
             placed.clangInfo = clangInfo(target, folder)
-            placed.resources = placed.isClangTarget ? [] : resources(placed, folder)
+            placed.resources = resources(placed, folder)
             return placed
         }
 
@@ -1040,9 +1067,10 @@ struct SwiftFormulaConverter: Node {
 
             // Each target's resource bundle, once, and the product's tree of them (B-77):
             // emitted for every product, empty or not, so an app can name it without
-            // knowing which targets carry resources.
+            // knowing which targets carry resources. A C target's bundle is built as a Swift
+            // one's is, as SwiftPM builds it (PLCrashReporter's privacy manifest).
             var bundleWires: [String] = []
-            for target in allTargets where !target.resources.isEmpty {
+            for target in allTargets + clangTargets where !target.resources.isEmpty {
                 let fn = FormulaIdentifier.bundleFunc(forTarget: target.name)
                 if emittedFuncs.insert(fn).inserted {
                     blocks.append(resourceBundleFuncDef(target: target, rootPackageFolder: rootPackageFolder))
@@ -1104,7 +1132,7 @@ struct SwiftFormulaConverter: Node {
                 for systemLibrary in collectTransitiveSystemLibraries(root: target, lookupAll: allTargetsNamed) {
                     guard wiredSystemLibraries.insert(systemLibrary.name).inserted else { continue }
                     let libraryPkgRoot = systemLibrary.overridePackageFolder ?? rootPackageFolder
-                    let folderPath     = "\(libraryPkgRoot)/\(systemLibrary.sourcesRelativePath)"
+                    let folderPath     = systemLibrary.folder(in: libraryPkgRoot)
                     systemLibraryFolderWires.append("            '\(systemLibrary.name)': Folder(path: '\(folderPath)').manifest")
                 }
             }
@@ -1135,7 +1163,7 @@ struct SwiftFormulaConverter: Node {
             for target in allTargets {
                 for systemLibrary in collectTransitiveSystemLibraries(root: target, lookupAll: allTargetsNamed)
                 where wiredModuleMaps.insert(systemLibrary.name).inserted {
-                    let folder = "\(systemLibrary.overridePackageFolder ?? rootPackageFolder)/\(systemLibrary.sourcesRelativePath)"
+                    let folder = systemLibrary.folder(in: systemLibrary.overridePackageFolder ?? rootPackageFolder)
                     moduleMapTrees.append(Self.folderTreeWire(name: systemLibrary.name, folder: folder))
                 }
                 for clangTarget in collectTransitiveClangTargets(root: target, lookupAll: allTargetsNamed)
@@ -1329,14 +1357,14 @@ struct SwiftFormulaConverter: Node {
     /// The folder holding a C target's public headers and its module map: the manifest's
     /// `publicHeadersPath`, or SwiftPM's `include`, when it exists; else the target folder.
     private func headerFolder(of target: SPMTarget, packageFolder: String) -> String {
-        let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
+        let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         return PackageClangTarget.joined(folder, target.clangInfo?.publicHeadersPath ?? "")
     }
 
     /// The preprocessor for one C target, as a func over the source path, the way the
     /// hand-written C formulas write it. Header folders: the target's own folder, its
-    /// public headers, and the public headers of every C target it reaches — which is what
-    /// SwiftPM puts on its search path. The preprocessor walks each folder to the bottom,
+    /// public headers, its `.headerSearchPath` folders, and the public headers of every C
+    /// target it reaches — which is what SwiftPM puts on its search path. The preprocessor walks each folder to the bottom,
     /// so a header in a subfolder is where an `#include` beside it, or one under a search
     /// path, looks for it. The include finder is not used: these targets include by search
     /// path (`#include <parser.h>`), which it cannot resolve.
@@ -1352,11 +1380,15 @@ struct SwiftFormulaConverter: Node {
     private func buildPreprocessorFuncDef(target: SPMTarget,
                                           packageFolder: String,
                                           lookupAll: (String) -> [SPMTarget]) -> String {
-        let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
+        let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         var folders = [folder]
         let ownHeaders = headerFolder(of: target, packageFolder: packageFolder)
         if ownHeaders != folder {
             folders.append(ownHeaders)
+        }
+        for searchPath in target.clangInfo?.headerSearchPaths ?? [] {
+            let searchFolder = PackageClangTarget.joined(folder, searchPath)
+            if !folders.contains(searchFolder) { folders.append(searchFolder) }
         }
         for dependency in collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
             let dependencyHeaders = headerFolder(of: dependency, packageFolder: packageFolder)
@@ -1384,7 +1416,7 @@ struct SwiftFormulaConverter: Node {
         guard let clangInfo = target.clangInfo else {
             return []
         }
-        let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
+        let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         let configExpr = Self.configurationExpression(namespace: Self.clangCompilerNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
@@ -1405,7 +1437,7 @@ struct SwiftFormulaConverter: Node {
                               packageFolder: String,
                               lookupAll: (String) -> [SPMTarget]) -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
-        let sourcesPath = "\(pkgRoot)/\(target.sourcesRelativePath)"
+        let sourcesPath = target.folder(in: pkgRoot)
         // moduleName is what makes a target itself, and a config file must not be able to
         // rename it -- so it is a literal property, which is what makes it win over the file.
         var derived = ["moduleName": target.moduleName]
@@ -1464,7 +1496,7 @@ struct SwiftFormulaConverter: Node {
             // Place the module.modulemap directory into the sandbox so swiftc can
             // resolve the system module.
             let depPkgRoot    = systemLibrary.overridePackageFolder ?? packageFolder
-            let mapFolderPath = "\(depPkgRoot)/\(systemLibrary.sourcesRelativePath)"
+            let mapFolderPath = systemLibrary.folder(in: depPkgRoot)
             moduleMapFolderWires.append("            '\(systemLibrary.name)': Folder(path: '\(mapFolderPath)').manifest")
         }
         // A C target reached the same way is importable through the module map in its
@@ -1493,7 +1525,7 @@ struct SwiftFormulaConverter: Node {
     /// the root's config, as the Swift tools do.
     private func resourceBundleFuncDef(target: SPMTarget, rootPackageFolder: String) -> String {
         let pkgRoot      = target.overridePackageFolder ?? rootPackageFolder
-        let targetFolder = "\(pkgRoot)/\(target.sourcesRelativePath)"
+        let targetFolder = target.folder(in: pkgRoot)
         let configRoot   = buildRoot(defaultingTo: rootPackageFolder)
         var wires: [String] = []
         var copiedFiles: [String] = []

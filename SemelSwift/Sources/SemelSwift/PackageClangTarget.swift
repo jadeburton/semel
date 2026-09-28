@@ -15,17 +15,21 @@ import SemelNodeKit
 struct PackageClangTarget: Equatable {
 
     /// What the manifest says about a C target's files: its `sources:` and `exclude:`
-    /// lists and its `publicHeadersPath`, each relative to the target's folder.
+    /// lists, its `publicHeadersPath` and its unconditional `.headerSearchPath` settings,
+    /// each relative to the target's folder.
     struct Rules: Equatable {
         let sources: [String]
         let exclude: [String]
         /// nil when the manifest names none, which is SwiftPM's `include`.
         let publicHeadersPath: String?
+        let headerSearchPaths: [String]
 
-        init(sources: [String] = [], exclude: [String] = [], publicHeadersPath: String? = nil) {
+        init(sources: [String] = [], exclude: [String] = [], publicHeadersPath: String? = nil,
+             headerSearchPaths: [String] = []) {
             self.sources           = sources
             self.exclude           = exclude
             self.publicHeadersPath = publicHeadersPath
+            self.headerSearchPaths = headerSearchPaths
         }
     }
 
@@ -48,6 +52,12 @@ struct PackageClangTarget: Equatable {
     /// The public-headers folder relative to the target's folder, "" when it is the folder
     /// itself (`publicHeadersPath: "."`); nil when the folder does not exist.
     let publicHeadersPath: String?
+
+    /// The `.headerSearchPath` folders relative to the target's folder, in manifest order,
+    /// each once: one more header folder for the target's own preprocessor, which is what
+    /// SwiftPM's `-I` for it is. A path naming no folder the walk found is left out, as
+    /// clang passes over a search path that is not there.
+    let headerSearchPaths: [String]
 
     /// nil for a Swift target: one with a `.swift` file anywhere in scope, or with no
     /// C-family source at all.
@@ -143,6 +153,13 @@ struct PackageClangTarget: Equatable {
         sourcePatterns    = patterns.sorted()
         excludedPatterns  = exclusions.sorted()
         publicHeadersPath = manifests[Self.joined(targetFolder, headers)] != nil ? headers : nil
+
+        var searchPaths: [String] = []
+        for searchPath in rules.headerSearchPaths.map(Self.normalized)
+        where manifests[Self.joined(targetFolder, searchPath)] != nil && !searchPaths.contains(searchPath) {
+            searchPaths.append(searchPath)
+        }
+        headerSearchPaths = searchPaths
     }
 
     /// A manifest path as the walk spells it: no `./` in front, no `/` behind, and "" for
