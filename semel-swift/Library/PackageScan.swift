@@ -18,23 +18,39 @@ public struct PackageSummary: Equatable {
     public let pathDependencies: [URL]
     /// Declared deployment versions by SwiftPM platform name: `["ios": "18.0"]`.
     public let platforms: [String: String]
-    /// The folders of the targets the converter compiles — regular and executable ones,
-    /// at the path the manifest names or SwiftPM's `Sources/<name>` — so `prepare` can
-    /// see which languages the tree holds (B-110).
-    public let targetFolders: [URL]
+    /// The targets the converter compiles — regular and executable ones — so `prepare`
+    /// can see which languages the tree holds (B-110).
+    public let targets: [Target]
+
+    /// One compiled target: its folder, at the path the manifest names or SwiftPM's
+    /// `Sources/<name>`, and the scope its `sources:` and `exclude:` draw inside it — a
+    /// target at its package's root (PLCrashReporter) holds far more than it compiles.
+    public struct Target: Equatable {
+        public let folder: URL
+        /// Relative to `folder`; empty for the whole folder.
+        public let sources: [String]
+        /// Relative to `folder`.
+        public let exclude: [String]
+
+        public init(folder: URL, sources: [String] = [], exclude: [String] = []) {
+            self.folder  = PackageSummary.normalized(folder)
+            self.sources = sources
+            self.exclude = exclude
+        }
+    }
 
     public init(name: String, folder: URL, pathDependencies: [URL], platforms: [String: String],
-                targetFolders: [URL] = []) {
+                targets: [Target] = []) {
         self.name             = name
         self.folder           = Self.normalized(folder)
         self.pathDependencies = pathDependencies.map(Self.normalized)
         self.platforms        = platforms
-        self.targetFolders    = targetFolders.map(Self.normalized)
+        self.targets          = targets
     }
 
     /// One spelling per folder, whatever the source: dump-package's absolute string and a
     /// URL built with `isDirectory: true` must compare equal.
-    private static func normalized(_ url: URL) -> URL {
+    fileprivate static func normalized(_ url: URL) -> URL {
         URL(fileURLWithPath: url.standardizedFileURL.path, isDirectory: true)
     }
 }
@@ -117,18 +133,20 @@ public enum PackageScan {
 
         // The targets the converter turns into compilers; a test, plugin, macro, system or
         // binary target is not one, as `isCompilable` says.
-        var targetFolders: [URL] = []
+        var targets: [PackageSummary.Target] = []
         for target in object["targets"] as? [[String: Any]] ?? [] {
             guard let targetName = target["name"] as? String,
                   ["regular", "executable"].contains(target["type"] as? String ?? "regular") else {
                 continue
             }
             let path = target["path"] as? String ?? "Sources/\(targetName)"
-            targetFolders.append(URL(fileURLWithPath: path, relativeTo: folder))
+            targets.append(PackageSummary.Target(folder:  URL(fileURLWithPath: path, relativeTo: folder),
+                                                 sources: target["sources"] as? [String] ?? [],
+                                                 exclude: target["exclude"] as? [String] ?? []))
         }
 
         return PackageSummary(name: name, folder: folder, pathDependencies: pathDependencies,
-                              platforms: platforms, targetFolders: targetFolders)
+                              platforms: platforms, targets: targets)
     }
 
     /// The packages nothing else in the set depends on by path: what a formula has to

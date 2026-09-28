@@ -143,7 +143,23 @@ final class PrepareTests: XCTestCase {
         """
         let summary = try PackageScan.summary(fromDumpPackageJSON: Data(json.utf8), folder: folder("CLib"))
 
-        XCTAssertEqual(summary.targetFolders, [folder("CLib/Sources/CLib"), folder("CLib/Tools/Tool")])
+        XCTAssertEqual(summary.targets, [PackageSummary.Target(folder: folder("CLib/Sources/CLib")),
+                                         PackageSummary.Target(folder: folder("CLib/Tools/Tool"))])
+    }
+
+    /// B-134. A target at its package's root, as PLCrashReporter's is: its folder is the
+    /// package folder, and its `sources:` and `exclude:` come with it.
+    func test_theSummaryCarriesATargetsSourcesAndExclusions() throws {
+        let json = """
+        {"name": "PLCrashReporter", "dependencies": [], "platforms": [], "products": [],
+         "targets": [{"name": "CrashReporter", "type": "regular", "path": "",
+                      "sources": ["Source", "Dependencies/protobuf-c"], "exclude": ["Tools/CrashViewer/"]}]}
+        """
+        let summary = try PackageScan.summary(fromDumpPackageJSON: Data(json.utf8), folder: folder("plcrashreporter"))
+
+        XCTAssertEqual(summary.targets, [PackageSummary.Target(folder:  folder("plcrashreporter"),
+                                                               sources: ["Source", "Dependencies/protobuf-c"],
+                                                               exclude: ["Tools/CrashViewer/"])])
     }
 
     // MARK: - Roots
@@ -313,12 +329,33 @@ final class PrepareTests: XCTestCase {
 
         let summaries = [
             PackageSummary(name: "CLib", folder: folder("Packages/CLib"), pathDependencies: [], platforms: [:],
-                           targetFolders: [folder("Packages/CLib/Sources/CLib")]),
+                           targets: [.init(folder: folder("Packages/CLib/Sources/CLib"))]),
             PackageSummary(name: "Mixed", folder: folder("Packages/Mixed"), pathDependencies: [], platforms: [:],
-                           targetFolders: [folder("Packages/Mixed/Sources/Mixed")]),
+                           targets: [.init(folder: folder("Packages/Mixed/Sources/Mixed"))]),
         ]
         XCTAssertTrue(GeneratedFiles.hasCFamilyTargets(in: [summaries[0]]))
         XCTAssertFalse(GeneratedFiles.hasCFamilyTargets(in: [summaries[1]]))
+    }
+
+    /// B-134. A target at its package's root holds the package's own `Package.swift` and
+    /// its tests' Swift; only what `sources:` names, less `exclude:`, decides its language,
+    /// as it does for the converter.
+    func test_aTargetsSourcesAndExclusionsBoundWhatDecidesItsLanguage() throws {
+        try write("Dependencies/plcrashreporter/Package.swift")
+        try write("Dependencies/plcrashreporter/Source/PLCrashReporter.m", "int reporter;\n")
+        try write("Dependencies/plcrashreporter/Source/Skipped/Shim.swift", "import Foundation\n")
+        try write("Dependencies/plcrashreporter/Tests/ReporterTests.swift", "import XCTest\n")
+        let root = folder("Dependencies/plcrashreporter")
+
+        func package(sources: [String], exclude: [String]) -> PackageSummary {
+            PackageSummary(name: "PLCrashReporter", folder: root, pathDependencies: [], platforms: [:],
+                           targets: [.init(folder: root, sources: sources, exclude: exclude)])
+        }
+        XCTAssertTrue(GeneratedFiles.hasCFamilyTargets(in: [package(sources: ["Source"], exclude: ["Source/Skipped/"])]))
+        XCTAssertFalse(GeneratedFiles.hasCFamilyTargets(in: [package(sources: ["Source"], exclude: [])]),
+                       "a Swift file in scope makes it Swift")
+        XCTAssertFalse(GeneratedFiles.hasCFamilyTargets(in: [package(sources: [], exclude: [])]),
+                       "the whole folder holds the manifest and the tests")
     }
 
     /// B-122. The tree's languages are decided after vendoring: a Swift root whose git
@@ -473,7 +510,7 @@ final class PrepareTests: XCTestCase {
                 // would read it from the manifest.
                 return PackageSummary(name: name, folder: folder, pathDependencies: dependsOn,
                                       platforms: name == "Timeline" ? ["ios": "18.0"] : [:],
-                                      targetFolders: [folder.appendingPathComponent("Sources/\(name)", isDirectory: true)])
+                                      targets: [.init(folder: folder.appendingPathComponent("Sources/\(name)", isDirectory: true))])
             },
             vendor: vendored,
             vendorProject: { project, into in

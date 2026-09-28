@@ -35,7 +35,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                 let name = target["name"] as? String ?? ""
                 let type = target["type"] as? String ?? "regular"
                 guard !["test", "system", "system-target", "plugin", "macro"].contains(type) else { continue }
-                let path = "\(folder)/\(target["path"] as? String ?? "Sources/\(name)")"
+                let relative = PackageClangTarget.normalized(target["path"] as? String ?? "Sources/\(name)")
+                let path = PackageClangTarget.joined(folder, relative)
                 let entries = folderContents[path] ?? [FolderManifestEntry(name: "\(name).swift", isFolder: false, isPinned: true)]
                 manifests[path] = .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
             }
@@ -1516,6 +1517,132 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertTrue(product.contains("linkage: 'executable'"), "got:\n\(product)")
         XCTAssertTrue(product.contains("{f: 'input:/pkg/main/**/*.c'}"), "got:\n\(product)")
         XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.c'}"), "got:\n\(product)")
+    }
+
+    /// `.headerSearchPath` is one more header folder for the target's own preprocessor, at
+    /// its path under the target; one naming no folder is left out, as clang passes over a
+    /// search path that is not there.
+    func test_aCTargetsHeaderSearchPathsAreHeaderFoldersOfItsPreprocessor() throws {
+        let settings = """
+            "settings": [
+              {"kind": {"headerSearchPath": {"_0": "lib"}}, "tool": "c"},
+              {"kind": {"headerSearchPath": {"_0": "./lib/"}}, "tool": "cxx"},
+              {"kind": {"headerSearchPath": {"_0": "missing"}}, "tool": "c"},
+              {"condition": {"platformNames": ["windows"]}, "kind": {"headerSearchPath": {"_0": "docs"}}, "tool": "c"}
+            ]
+            """
+        let result = try formula(json: cLibJSON(settings), folderContents: cLibTree)
+
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertEqual(preprocessor.components(separatedBy: "'input:/pkg/src/lib': Folder(path: 'input:/pkg/src/lib').manifest").count, 2,
+                       "once, however it is spelled, got:\n\(preprocessor)")
+        XCTAssertFalse(preprocessor.contains("missing"), "got:\n\(preprocessor)")
+        XCTAssertFalse(preprocessor.contains("docs"), "a conditional search path is not carried, got:\n\(preprocessor)")
+    }
+
+    // MARK: - A target at its package's root (B-134)
+
+    /// PLCrashReporter as NetNewsWire pins it (1.12.2): one C and Objective-C target at the
+    /// package root, `path: ""`, its sources two folders a `sources:` list names, a header
+    /// folder by `.headerSearchPath`, a define with an empty value, and a processed privacy
+    /// manifest outside the sources.
+    private let crashReporterManifest = """
+        {
+          "name": "PLCrashReporter",
+          "dependencies": [],
+          "products": [{"name": "CrashReporter", "targets": ["CrashReporter"], "type": {"library": ["automatic"]}}],
+          "targets": [
+            {"name": "CrashReporter", "type": "regular", "path": "", "dependencies": [],
+             "sources": ["Source", "Dependencies/protobuf-c"],
+             "exclude": ["Source/dwarf_stack.hpp", "Tools/CrashViewer/", "Dependencies/protobuf-c/generate-pb-c.sh"],
+             "resources": [{"path": "Resources/PrivacyInfo.xcprivacy", "rule": {"process": {}}}],
+             "settings": [
+               {"kind": {"define": {"_0": "PLCR_PRIVATE"}}, "tool": "c"},
+               {"kind": {"define": {"_0": "PLCRASHREPORTER_PREFIX="}}, "tool": "c"},
+               {"kind": {"headerSearchPath": {"_0": "Dependencies/protobuf-c"}}, "tool": "c"},
+               {"kind": {"linkedFramework": {"_0": "Foundation"}}, "tool": "linker"}
+             ]}
+          ]
+        }
+        """
+
+    private var crashReporterTree: [String: [FolderManifestEntry]] {
+        ["input:/pkg":                              [file("Package.swift"), folder("Source"), folder("Dependencies"),
+                                                     folder("include"), folder("Resources"), folder("Tests"), folder("Tools")],
+         "input:/pkg/Source":                       [file("CrashReporter.m"), file("PLCrashAsync.c"), file("PLCrashAsyncDwarfCIE.cpp"),
+                                                     file("PLCrashSignalHandler.mm"), file("dwarf_stack.hpp"), file("PLCrashReport.pb-c.h")],
+         "input:/pkg/Dependencies":                 [folder("protobuf-c")],
+         "input:/pkg/Dependencies/protobuf-c":      [folder("protobuf-c"), file("generate-pb-c.sh")],
+         "input:/pkg/Dependencies/protobuf-c/protobuf-c": [file("protobuf-c.c"), file("protobuf-c.h")],
+         "input:/pkg/include":                      [file("CrashReporter.h")],
+         "input:/pkg/Resources":                    [file("PrivacyInfo.xcprivacy"), file("Info.plist")],
+         "input:/pkg/Tests":                        [file("CrashReporterTests.m"), file("SwiftTests.swift")],
+         "input:/pkg/Tools":                        [folder("CrashViewer")],
+         "input:/pkg/Tools/CrashViewer":            [file("main.m")]]
+    }
+
+    /// The target's folder is the package folder itself, by the name every other demand
+    /// for it uses: spelled `input:/pkg/`, it was a second node for one folder's name.
+    func test_aTargetAtThePackageRootDemandsThePackageFolderItself() throws {
+        for spelling in ["", ".", "./"] {
+            let json = crashReporterManifest.replacingOccurrences(of: "\"path\": \"\"", with: "\"path\": \"\(spelling)\"")
+            let output = try convert(json: json, supplyTargetFolders: false)
+
+            XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered,
+                           ["input:/pkg": "Folder(path: 'input:/pkg').manifest"], "path: \"\(spelling)\"")
+        }
+    }
+
+    /// A target path ending in `/` is the folder without it.
+    func test_aTargetPathWithATrailingSlashDemandsTheFolderWithoutIt() throws {
+        let json = cLibJSON("\"exclude\": []").replacingOccurrences(of: "\"path\": \"src\"", with: "\"path\": \"src/\"")
+        let output = try convert(json: json, supplyTargetFolders: false)
+
+        let demanded = try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]).rendered
+        XCTAssertEqual(demanded["input:/pkg/src"], "Folder(path: 'input:/pkg/src').manifest", "\(demanded)")
+        XCTAssertFalse(demanded.keys.contains { $0.hasSuffix("/") }, "\(demanded)")
+    }
+
+    /// Under the package folder, the target's sources are what its `sources:` list names —
+    /// not the tests beside them, whose Swift would otherwise have made it a Swift target —
+    /// and no path in the formula has an empty segment.
+    func test_aTargetAtThePackageRootTakesItsSourcesFromItsSourcesList() throws {
+        let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
+
+        XCTAssertFalse(result.contains("func compilerCrashReporter"), "a C target, got:\n\(result)")
+        XCTAssertFalse(result.contains("input:/pkg//"), "got:\n\(result)")
+        let product = try productBlock("libCrashReporter.a", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/Dependencies/protobuf-c/**/*.c', 'input:/pkg/Source/**/*.c', "
+                                     + "'input:/pkg/Source/**/*.cpp', 'input:/pkg/Source/**/*.m', 'input:/pkg/Source/**/*.mm'} "),
+                      "got:\n\(product)")
+        XCTAssertFalse(product.contains(" except "), "no exclusion takes out a source, got:\n\(product)")
+    }
+
+    /// Its preprocessor reads the package folder, the public `include` and the
+    /// `.headerSearchPath` folder, with the defines as written.
+    func test_aTargetAtThePackageRootPreprocessesWithItsHeaderSearchPathAndDefines() throws {
+        let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
+
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCrashReporter(path)") },
+                                         "got:\n\(result)")
+        for folder in ["input:/pkg", "input:/pkg/include", "input:/pkg/Dependencies/protobuf-c"] {
+            XCTAssertTrue(preprocessor.contains("'\(folder)': Folder(path: '\(folder)').manifest"), "\(folder), got:\n\(preprocessor)")
+        }
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'PLCR_PRIVATE,PLCRASHREPORTER_PREFIX=')"), "got:\n\(preprocessor)")
+    }
+
+    /// A C target's resources are a bundle as a Swift target's are, named as SwiftPM
+    /// names it, in the product's tree of bundles.
+    func test_aCTargetsProcessedResourceIsItsBundle() throws {
+        let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
+
+        let bundle = try funcDefinition("bundle_CrashReporter", in: result)
+        XCTAssertTrue(bundle.contains("TreeMerger(under: 'PLCrashReporter_CrashReporter.bundle'"), "got:\n\(bundle)")
+        XCTAssertTrue(bundle.contains("'PrivacyInfo.xcprivacy': StaticFile(path: 'input:/pkg/Resources/PrivacyInfo.xcprivacy').output"),
+                      "got:\n\(bundle)")
+        XCTAssertFalse(bundle.contains("Info.plist"), "only what the manifest names, got:\n\(bundle)")
+        XCTAssertTrue(try funcDefinition("bundles_CrashReporter", in: result).contains("'CrashReporter': bundle_CrashReporter().files"),
+                      "got:\n\(result)")
     }
 
     // MARK: - A build root shared by several packages (B-56)
