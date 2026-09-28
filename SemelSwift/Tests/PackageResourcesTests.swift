@@ -70,6 +70,28 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         XCTAssertEqual(found.map(\.path), ["Assets.xcassets"])
     }
 
+    /// purchases-ios declares `.copy("../Sources/PrivacyInfo.xcprivacy")` from a target at
+    /// `Sources`: the rule is kept as declared, and where the file is has the `..`
+    /// resolved, so the formula never names a folder called `..` — which the engine would
+    /// make, with a file in it nothing could push (B-125).
+    func test_aDeclaredResourceWithAParentSegmentIsFoundWhereItResolves() {
+        let sources = "input:/pkg/Sources"
+        let manifests = [sources:            manifest(sources, files: ["Lib.swift", "PrivacyInfo.xcprivacy"], folders: ["Shared"]),
+                         "\(sources)/Shared": manifest("\(sources)/Shared", files: ["a.json"])]
+        let rules = PackageResources.Rules(declared: [.init(path: "../Sources/PrivacyInfo.xcprivacy", isCopy: true),
+                                                      .init(path: "Shared/../Shared", isCopy: true)])
+        let found = PackageResources.detect(rules: rules, targetFolder: sources, manifests: manifests)
+
+        XCTAssertEqual(found, [
+            PackageResource(kind: .file, path: "../Sources/PrivacyInfo.xcprivacy", bundlePath: "PrivacyInfo.xcprivacy"),
+            PackageResource(kind: .folder, path: "Shared/../Shared", bundlePath: "Shared"),
+        ])
+        XCTAssertEqual(PackageResources.fullPath(targetFolder: sources, relative: "../Sources/PrivacyInfo.xcprivacy"),
+                       "input:/pkg/Sources/PrivacyInfo.xcprivacy")
+        XCTAssertEqual(PackageResources.fullPath(targetFolder: sources, relative: "../../../above"),
+                       "input:/pkg/Sources/../../../above", "a path above the file system is left for the report to show")
+    }
+
     func test_aFolderThatIsAResourceWholeIsNotWalked() {
         XCTAssertFalse(PackageResources.isWalked(folderName: "Assets.xcassets"))
         XCTAssertFalse(PackageResources.isWalked(folderName: "en.lproj"))
@@ -90,14 +112,14 @@ final class PackageResourcesTests: SemelSwiftTestCase {
 
     /// Runs the converter until it stops asking for subfolders, answering each demand from
     /// `manifests`; a folder it asks for that is not there is answered empty.
-    private func formula(manifests: [String: FolderManifest]) throws -> String {
+    private func formula(manifests: [String: FolderManifest], packageManifest: String? = nil) throws -> String {
         let packageFolder = "input:/pkg"
         let converter = try SwiftFormulaConverter(thisNode: NodeRecord(id: 1, kind: SwiftFormulaConverter.kind))
         var subfolders: [String: NodeValue] = [:]
         for _ in 0..<6 {
             let output = try converter.process(input: ProcessInput(inputValues: [
                 SwiftFormulaConverter.packageFolder:        ["folder": .value(try FolderManifest(baseFolderPath: packageFolder, entries: []).toJSON().intern())],
-                SwiftFormulaConverter.packageJSON:          ["json":   .value(try libManifest.intern())],
+                SwiftFormulaConverter.packageJSON:          ["json":   .value(try (packageManifest ?? libManifest).intern())],
                 SwiftFormulaConverter.externalPackageJSONs: [:],
                 SwiftFormulaConverter.targetFolders:        [targetFolder: .value(try XCTUnwrap(manifests[targetFolder]).toJSON().intern())],
                 SwiftFormulaConverter.targetSubfolders:     subfolders,
@@ -125,6 +147,17 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         XCTAssertTrue(formula.contains("catalogs: ['Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest]).files"), formula)
         XCTAssertTrue(formula.contains("FolderTreeBuilder(under: 'en.lproj', folder: ['folder': Folder(path: 'input:/pkg/Sources/Lib/Resources/en.lproj').manifest]).files"), formula)
         XCTAssertTrue(formula.contains("func bundles_pkg() =\n    TreeMerger(input: [\n        'Lib': bundle_Lib().files\n    ]).files"), formula)
+    }
+
+    /// The bundle names the copied file where it is, not through a `..` (B-125).
+    func test_aCopiedResourceDeclaredThroughAParentSegmentIsNamedWhereItIs() throws {
+        let declaring = libManifest.replacingOccurrences(of: "\"resources\": []",
+                                                         with: "\"resources\": [{\"path\": \"../Lib/PrivacyInfo.xcprivacy\", \"rule\": {\"copy\": {}}}]")
+        let plain = [targetFolder: manifest(targetFolder, files: ["Kit.swift", "PrivacyInfo.xcprivacy"])]
+        let formula = try formula(manifests: plain, packageManifest: declaring)
+
+        XCTAssertTrue(formula.contains("'PrivacyInfo.xcprivacy': StaticFile(path: 'input:/pkg/Sources/Lib/PrivacyInfo.xcprivacy').output"), formula)
+        XCTAssertFalse(formula.contains("/../"), formula)
     }
 
     /// A target without resources compiles as before, and its product still names an

@@ -114,6 +114,10 @@ extension FormulaFile {
         var broughtProducts: [String: Bool] = [:]
         var namespaceOfSpec: [String: String?] = [:]
         var visible: [String?: Set<String>] = [:]
+        // Whether any included text could not be read. The walk goes on past such an
+        // include, so every include the texts name is asked for — and so stays wired —
+        // whichever of them is still on its way; the products wait for all of them (B-125).
+        var anIncludeIsMissing = false
         while !pending.isEmpty {
             let (include, scope) = pending.removeFirst()
             let includedNode = try own.resolve(include: include.expr)
@@ -127,7 +131,8 @@ extension FormulaFile {
             }
             broughtProducts[spec] = !include.funcsOnly
             guard let includedFormula = try includeReader(includedNode) else {
-                return [:]
+                anIncludeIsMissing = true
+                continue
             }
             // Generated text names every path absolutely, so the base path is nominal.
             var includedParser = FormulaParser(try FormulaLexer.tokenize(includedFormula, basePath: basePath))
@@ -141,6 +146,12 @@ extension FormulaFile {
             pending += includedFile.includes.map {
                 (FormulaInclude(expr: $0.expr, funcsOnly: $0.funcsOnly || include.funcsOnly), parsed.namespace ?? scope)
             }
+        }
+        // Until every included text is on its wire nothing can be resolved — the formula's
+        // own products may call funcs the missing text defines — so the result is empty,
+        // and the caller, having been asked for every node, wires them and returns later.
+        if anIncludeIsMissing {
+            return [:]
         }
         try file.checkNamespaceVisibility(visible)
 

@@ -675,6 +675,29 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
+    /// An include that cannot be read yet does not stop the ones after it from being asked
+    /// for: the caller wires every node the texts name, so none of them is unwired — and
+    /// its subgraph collected — while a sibling is on its way or in error (B-125).
+    func test_anIncludeNotYetAvailableStillAsksForTheIncludesAfterIt() throws {
+        let other = "StaticFile(path: 'input:/repo/other.txt').output"
+        let nested = "StaticFile(path: 'input:/repo/nested.txt').output"
+        var asked: [String] = []
+        let result = try FormulaFile.parse("""
+            include \(source)
+            include \(other)
+            product 'extra' = compilerX()
+            """, basePath: Path("input:/repo"),
+            wildcardExpander: { _ in [] },
+            includeReader: { included in
+                let spec = included.asString(omitOutputPort: false)
+                asked.append(spec)
+                return spec == other ? "include \(nested)\nproduct 'libO.a' = StaticFile(path: 'input:/repo/o').output" : nil
+            })
+
+        XCTAssertEqual(asked, [source, other, nested])
+        XCTAssertTrue(result.isEmpty)
+    }
+
     func test_twoIncludesAreMergedInOrder() throws {
         let other = "StaticFile(path: 'input:/repo/other.txt').output"
         let result = try parse("include \(source)\ninclude \(other)", included: [
