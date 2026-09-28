@@ -73,11 +73,14 @@ struct SwiftFormulaConverter: Node {
     /// at 4, a C target's sources are one `**` for-each with its exclusions as `except`,
     /// and its public headers follow `publicHeadersPath` (B-55); at 5, a stall demands the
     /// folder of each package it waits for (B-110); at 6, it demands the lock and the
-    /// content root of every vendored package, and a mismatch is its error (B-06); at 8, a
-    /// target at its package's root demands the package folder by its own name, and a C
-    /// target's `.headerSearchPath` folders are header folders and its resources a bundle
-    /// (B-134).
-    public static let implementationVersion = 8
+    /// content root of every vendored package, and a mismatch is its error (B-06); at 7, a
+    /// declared resource's dot segments are resolved (B-125); at 8, a target at its
+    /// package's root demands the package folder by its own name, and a C target's
+    /// `.headerSearchPath` folders are header folders and its resources a bundle (B-134);
+    /// at 9, a binary target is named as not built rather than compiled, and the target
+    /// folders are demanded before the lock is compared, on every pass whatever it says
+    /// (B-133).
+    public static let implementationVersion = 9
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -165,16 +168,14 @@ struct SwiftFormulaConverter: Node {
                 throw NodeError.other(message: "SwiftFormulaConverter needs a package: give it path: <folder>, "
                                              + "or wire packageFolder and packageJSON")
             }
-            return try pendingOutput(reason: "SwiftFormulaConverter: waiting for the package folder and manifest",
-                                     externalSpecs: [:])
+            return try pendingOutput(reason: "SwiftFormulaConverter: waiting for the package folder and manifest")
         }
 
         // ── packageFolder ─────────────────────────────────────────────────────
         let manifestJSON = try folderValue.expectValue().resolveAsString()
 
         guard let folderManifest = try? TypeRegistry.decode(encodedJSON: manifestJSON) as? FolderManifest else {
-            return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest",
-                                     externalSpecs: [:])
+            return try pendingOutput(reason: "SwiftFormulaConverter: could not decode FolderManifest")
         }
 
         let rootPackageFolder = folderManifest.baseFolderPath
@@ -187,7 +188,7 @@ struct SwiftFormulaConverter: Node {
         do {
             rootManifest = try SPMManifest.decode(try jsonEntry.resolveAsString())
         } catch {
-            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)", externalSpecs: [:])
+            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)")
         }
 
         // ── already-received external manifests ───────────────────────────────
@@ -257,37 +258,17 @@ struct SwiftFormulaConverter: Node {
             packageFolders: [rootPackageFolder] + Array(specs.keys),
             dependenciesFolder: "\(buildRoot(defaultingTo: rootPackageFolder))/\(Self.dependenciesFolderName)")
         let lockValues = input.inputValues[Self.dependencyLocks] ?? [:]
-        let lockDemands = LockDemands(locks: lockCheck.lockSpecs,
-                                      contentRoots: lockCheck.contentRootSpecs(locks: lockValues))
+        var demands = Demands(packageManifests: specs,
+                              locks: lockCheck.lockSpecs,
+                              contentRoots: lockCheck.contentRootSpecs(locks: lockValues))
 
         // ── wait until every expected manifest has been received ──────────────
         let missing = specs.keys.filter { availableManifests[$0] == nil }
 
         guard missing.isEmpty else {
-            return try pendingOutput(
-                reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
-                externalSpecs: specs,
-                lockDemands: lockDemands,
-                awaitedPackageFolderSpecs: Dictionary(uniqueKeysWithValues: missing.map { ($0, .folderManifest(at: $0)) }))
-        }
-
-        // ── every lock compared with its package's content root ───────────────
-        let unlockedFolders: [String]
-        switch try lockCheck.outcome(locks: lockValues,
-                                     contentRoots: input.inputValues[Self.dependencyContentRoots] ?? [:]) {
-        case .waiting(let folders):
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: waiting for the lock of \(folders.count) vendored package(s):\n"
-                      + folders.map { "  \($0)" }.joined(separator: "\n"),
-                externalSpecs: specs,
-                lockDemands: lockDemands)
-        case .failed(let problems):
-            return try pendingOutput(
-                reason: "SwiftFormulaConverter: " + problems.map(\.description).joined(separator: "\n\n"),
-                externalSpecs: specs,
-                lockDemands: lockDemands)
-        case .passed(let unlocked):
-            unlockedFolders = unlocked
+            demands.awaitedPackageFolders = Dictionary(uniqueKeysWithValues: missing.map { ($0, .folderManifest(at: $0)) })
+            return try pendingOutput(reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
+                                     demands: demands)
         }
 
         // ── every compilable target's folder, to tell C targets from Swift ones ──
@@ -300,6 +281,7 @@ struct SwiftFormulaConverter: Node {
                 targetFolderSpecs[folder] = .folderManifest(at: folder)
             }
         }
+        demands.targetFolders = targetFolderSpecs
 
         var targetFolderManifests: [String: FolderManifest] = [:]
         for (folder, nodeValue) in input.inputValues[Self.targetFolders] ?? [:] {
@@ -315,9 +297,7 @@ struct SwiftFormulaConverter: Node {
             return try pendingOutput(
                 reason: "SwiftFormulaConverter: waiting for \(missingFolders.count) target folder(s):\n"
                       + missingFolders.map { "  \($0)" }.joined(separator: "\n"),
-                externalSpecs: specs,
-                lockDemands: lockDemands,
-                targetFolderSpecs: targetFolderSpecs)
+                demands: demands)
         }
 
         // ── every target folder's subfolders, for the resources a target carries (B-77) ──
@@ -347,28 +327,54 @@ struct SwiftFormulaConverter: Node {
                 walked.append(subfolder)
             }
         }
+        demands.targetSubfolders = subfolderSpecs
         let missingSubfolders = subfolderSpecs.keys.filter { folderManifests[$0] == nil }.sorted()
         guard missingSubfolders.isEmpty else {
             return try pendingOutput(
                 reason: "SwiftFormulaConverter: walking \(missingSubfolders.count) target subfolder(s) for resources",
-                externalSpecs: specs,
-                lockDemands: lockDemands,
-                targetFolderSpecs: targetFolderSpecs,
-                targetSubfolderSpecs: subfolderSpecs)
+                demands: demands)
+        }
+
+        // ── every lock compared with its package's content root ───────────────
+        // Last of the waits, once every folder has been asked for. A demand is a node, and a
+        // path demanded under a vendored package that is not there is a ghost the package's
+        // content root folds; were the demands to hang on the lock's outcome, a failing lock
+        // would withdraw the ghost that failed it, and the two would alternate without end
+        // (B-133). Nothing past this point demands anything, so no outcome here can move the
+        // root it reads.
+        let unlockedFolders: [String]
+        switch try lockCheck.outcome(locks: lockValues,
+                                     contentRoots: input.inputValues[Self.dependencyContentRoots] ?? [:]) {
+        case .waiting(let folders):
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: waiting for the lock of \(folders.count) vendored package(s):\n"
+                      + folders.map { "  \($0)" }.joined(separator: "\n"),
+                demands: demands)
+        case .failed(let problems):
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: " + problems.map(\.description).joined(separator: "\n\n"),
+                demands: demands)
+        case .passed(let unlocked):
+            unlockedFolders = unlocked
         }
 
         // ── all manifests present — generate formula ──────────────────────────
-        let formula = generateFormula(rootManifest: rootManifest,
-                                      externalManifests: availableManifests,
-                                      rootPackageFolder: rootPackageFolder,
-                                      clangInfo: { target, folder in
-                                          PackageClangTarget(targetFolder: folder, rules: target.clangRules,
-                                                             manifests: folderManifests)
-                                      },
-                                      resources: { target, folder in
-                                          PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
-                                                                  manifests: folderManifests)
-                                      })
+        let formula: String
+        do {
+            formula = try generateFormula(rootManifest: rootManifest,
+                                          externalManifests: availableManifests,
+                                          rootPackageFolder: rootPackageFolder,
+                                          clangInfo: { target, folder in
+                                              PackageClangTarget(targetFolder: folder, rules: target.clangRules,
+                                                                 manifests: folderManifests)
+                                          },
+                                          resources: { target, folder in
+                                              PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
+                                                                      manifests: folderManifests)
+                                          })
+        } catch let error as SwiftPackageConversionError {
+            return try pendingOutput(reason: "SwiftFormulaConverter: \(error)", demands: demands)
+        }
         // Said once the formula is made, not on the passes that wait for it, so a
         // conversion says it once.
         if !unlockedFolders.isEmpty {
@@ -377,38 +383,39 @@ struct SwiftFormulaConverter: Node {
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
-            inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs,
-                                                     Self.dependencyLocks: lockDemands.locks,
-                                                     Self.dependencyContentRoots: lockDemands.contentRoots,
-                                                     Self.targetFolders: targetFolderSpecs,
-                                                     Self.targetSubfolders: subfolderSpecs,
-                                                     Self.awaitedPackageFolders: [:]]) { _, new in new })
+            inputWireSpecs: demands.wireSpecs(selfWiring: selfWiringSpecs))
     }
 
-    /// The wires the lock check asks for on every pass, whatever the pass is waiting on:
-    /// a spec left out of an output is unwired.
-    private struct LockDemands {
-        var locks:        [String: GraphSpecNode] = [:]
-        var contentRoots: [String: GraphSpecNode] = [:]
+    /// Everything a pass asks for on the dynamic ports, filled in as the pass gets further.
+    /// Every exit carries all of it — a spec left out of an output is unwired — so what a
+    /// pass demands follows what has arrived, never which check stopped it.
+    private struct Demands {
+        var packageManifests:      [String: GraphSpecNode] = [:]
+        var locks:                 [String: GraphSpecNode] = [:]
+        var contentRoots:          [String: GraphSpecNode] = [:]
+        var awaitedPackageFolders: [String: GraphSpecNode] = [:]
+        var targetFolders:         [String: GraphSpecNode] = [:]
+        var targetSubfolders:      [String: GraphSpecNode] = [:]
+
+        /// The specs by port, with the node's own package wires, which a formula naming
+        /// the package by `path` stands for.
+        func wireSpecs(selfWiring: [String: [String: GraphSpecNode]]) -> [String: [String: GraphSpecNode]] {
+            selfWiring.merging([SwiftFormulaConverter.externalPackageJSONs:   packageManifests,
+                                SwiftFormulaConverter.dependencyLocks:        locks,
+                                SwiftFormulaConverter.dependencyContentRoots: contentRoots,
+                                SwiftFormulaConverter.targetFolders:          targetFolders,
+                                SwiftFormulaConverter.targetSubfolders:       targetSubfolders,
+                                SwiftFormulaConverter.awaitedPackageFolders:  awaitedPackageFolders]) { _, new in new }
+        }
     }
 
     // Returns a noValue output that still carries the current specs — the node's own
     // package wires included, since a spec left out of any output is unwired — so
     // applySpecs keeps (or creates) the needed wires.
-    private func pendingOutput(reason: String,
-                               externalSpecs: [String: GraphSpecNode],
-                               lockDemands: LockDemands = LockDemands(),
-                               targetFolderSpecs: [String: GraphSpecNode] = [:],
-                               targetSubfolderSpecs: [String: GraphSpecNode] = [:],
-                               awaitedPackageFolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
+    private func pendingOutput(reason: String, demands: Demands = Demands()) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
-              inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs,
-                                                       Self.dependencyLocks: lockDemands.locks,
-                                                       Self.dependencyContentRoots: lockDemands.contentRoots,
-                                                       Self.targetFolders: targetFolderSpecs,
-                                                       Self.targetSubfolders: targetSubfolderSpecs,
-                                                       Self.awaitedPackageFolders: awaitedPackageFolderSpecs]) { _, new in new })
+              inputWireSpecs: demands.wireSpecs(selfWiring: selfWiringSpecs))
     }
 
     // MARK: - Stalls
@@ -433,6 +440,54 @@ struct SwiftFormulaConverter: Node {
              + "the input file system at the path above, pushed like any other source. "
              + "`semel-swift prepare <folder>` resolves and copies every git dependency into "
              + "the root's Dependencies folder."
+    }
+
+    // MARK: - What a package declares that is not built
+
+    /// A binary target's artifact, as its manifest declares it.
+    enum BinaryArtifact: Equatable {
+        /// `.binaryTarget(url:checksum:)`: a zip SwiftPM downloads, holding an `.xcframework`.
+        case remote(url: String, checksum: String?)
+        /// `.binaryTarget(path:)`: an `.xcframework` folder or a zip of one, relative to
+        /// the package.
+        case local(path: String)
+    }
+
+    /// A binary target some product reaches, which the conversion does not build.
+    struct UnbuiltBinaryTarget: Equatable {
+        let package:       String
+        let packageFolder: String
+        let target:        String
+        let artifact:      BinaryArtifact
+        /// The products of the converted package that reach it, sorted.
+        let products:      [String]
+    }
+
+    /// Why a conversion that has every input still makes no formula, by case.
+    enum SwiftPackageConversionError: Error, Equatable, CustomStringConvertible {
+        /// A product reaches a binary target (B-133). The formula could leave it out, but
+        /// what links the product would then fail naming a symbol, which explains nothing;
+        /// so the conversion stops and names the target instead. A binary target no product
+        /// reaches is not needed and says nothing.
+        case binaryTargetsNotBuilt([UnbuiltBinaryTarget])
+
+        var description: String {
+            switch self {
+            case .binaryTargetsNotBuilt(let targets):
+                return targets.map { target in
+                    let products = target.products.joined(separator: ", ")
+                    let artifact: String
+                    switch target.artifact {
+                    case .remote(let url, _):
+                        artifact = "an artifact downloaded from \(url), which `semel-swift prepare` does not vendor yet"
+                    case .local(let path):
+                        artifact = "\(target.packageFolder)/\(path), which nothing here links or embeds yet"
+                    }
+                    return "binary target \(target.target) of package \(target.package) is not built (B-133): "
+                         + "it is \(artifact), so what reaches it cannot be built either — product(s) \(products)"
+                }.joined(separator: "\n")
+            }
+        }
     }
 
     // MARK: - semel.config
@@ -754,13 +809,33 @@ struct SwiftFormulaConverter: Node {
         var isClangTarget: Bool { clangInfo != nil }
 
         /// Whether a build compiles this target at all: not a test, a system library, a
-        /// plugin or a macro.
+        /// plugin, a macro or a binary target.
         var isCompilable: Bool {
-            !isSystemLibrary && !["test", "plugin", "macro"].contains(type ?? "")
+            !isSystemLibrary && !isBinary && !["test", "plugin", "macro"].contains(type ?? "")
         }
 
+        /// A `.binaryTarget`: an artifact built elsewhere, with nothing here to compile and
+        /// no source folder to ask for — a remote one has no folder in the package at all.
+        var isBinary: Bool { type == "binary" }
+
+        /// What a binary target's artifact is, as the manifest declares it: downloaded by
+        /// `url:` and checked against `checksum:`, or at `path:` in the package.
+        var binaryArtifact: BinaryArtifact? {
+            guard isBinary else {
+                return nil
+            }
+            if let url {
+                return .remote(url: url, checksum: checksum)
+            }
+            return .local(path: sourcesRelativePath)
+        }
+
+        /// A remote binary target's `url:` and `checksum:`; nil for every other target.
+        let url: String?
+        let checksum: String?
+
         enum CodingKeys: String, CodingKey {
-            case name, type, path, dependencies, sources, exclude, settings, resources, publicHeadersPath
+            case name, type, path, dependencies, sources, exclude, settings, resources, publicHeadersPath, url, checksum
         }
 
         /// One entry of a target's `resources` as `dump-package` emits it:
@@ -842,6 +917,8 @@ struct SwiftFormulaConverter: Node {
             cDefines     = settings.compactMap(\.unconditionalDefine)
             cHeaderSearchPaths = settings.compactMap(\.unconditionalHeaderSearchPath)
             publicHeadersPath = try? c.decode(String.self, forKey: .publicHeadersPath)
+            url          = try? c.decode(String.self, forKey: .url)
+            checksum     = try? c.decode(String.self, forKey: .checksum)
             overridePackageFolder = nil
         }
 
@@ -970,7 +1047,7 @@ struct SwiftFormulaConverter: Node {
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
                                  clangInfo: (SPMTarget, String) -> PackageClangTarget?,
-                                 resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) -> String {
+                                 resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) throws -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
         // iteration order is seeded per process, so walking the dictionary itself let two
         // packages vending the same name resolve differently on every restart — and the
@@ -1019,8 +1096,19 @@ struct SwiftFormulaConverter: Node {
 
         var blocks: [String] = []
         var emittedFuncs = Set<String>()
+        // Every binary target a product reaches, by its folder, with the products reaching it.
+        var binaryTargets: [String: (target: SPMTarget, reachingProducts: Set<String>)] = [:]
 
         for product in productsToBuild(in: rootManifest) {
+
+            for productTargetName in product.targets {
+                for rootTarget in allTargetsNamed(productTargetName) {
+                    for target in collectReachableBinaryTargets(root: rootTarget, lookupAll: allTargetsNamed) {
+                        let key = "\(target.overridePackageFolder ?? rootPackageFolder)/\(target.name)"
+                        binaryTargets[key, default: (target, [])].reachingProducts.insert(product.name)
+                    }
+                }
+            }
 
             // All transitively reachable targets in dependency-first order so each func
             // is defined before any func that references it.  Seeded from *every* target
@@ -1197,6 +1285,17 @@ struct SwiftFormulaConverter: Node {
             blocks.append(block)
         }
 
+        guard binaryTargets.isEmpty else {
+            throw SwiftPackageConversionError.binaryTargetsNotBuilt(binaryTargets.sorted { $0.key < $1.key }.compactMap { _, reached in
+                reached.target.binaryArtifact.map { artifact in
+                    UnbuiltBinaryTarget(package:       reached.target.packageName ?? rootManifest.name,
+                                        packageFolder: reached.target.overridePackageFolder ?? rootPackageFolder,
+                                        target:        reached.target.name,
+                                        artifact:      artifact,
+                                        products:      reached.reachingProducts.sorted())
+                }
+            })
+        }
         return blocks.joined(separator: "\n\n")
     }
 
@@ -1243,8 +1342,9 @@ struct SwiftFormulaConverter: Node {
             // sources.  Skip them here; buildFuncDef handles them separately via
             // inputModuleMapFolders when they appear as a dependency. A C target has
             // none either: its objects come through the clang nodes and its include
-            // folder reaches Swift the same way a system library's does.
-            guard !target.isSystemLibrary, !target.isClangTarget else {
+            // folder reaches Swift the same way a system library's does. Nor has a
+            // binary target, which the conversion names rather than builds (B-133).
+            guard !target.isSystemLibrary, !target.isClangTarget, !target.isBinary else {
                 return
             }
 
@@ -1292,6 +1392,31 @@ struct SwiftFormulaConverter: Node {
                     }
                     guard collected.insert(depTarget.name).inserted else { continue }
                     ordered.append(depTarget)
+                }
+            }
+        }
+
+        visit(root)
+        return ordered
+    }
+
+    /// Every binary target reachable from `root`, `root` included: a product may vend one
+    /// directly — Sparkle's only product is its binary target — or reach one through its
+    /// targets' dependencies.
+    private func collectReachableBinaryTargets(root: SPMTarget, lookupAll: (String) -> [SPMTarget]) -> [SPMTarget] {
+        var ordered: [SPMTarget] = []
+        var visited = Set<String>()
+
+        func visit(_ target: SPMTarget) {
+            guard visited.insert(target.name).inserted else {
+                return
+            }
+            if target.isBinary {
+                ordered.append(target)
+            }
+            for dependency in target.dependencies {
+                for dependencyTarget in dependency.targetName.map(lookupAll) ?? [] {
+                    visit(dependencyTarget)
                 }
             }
         }
