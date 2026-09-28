@@ -54,6 +54,18 @@ enum Projects {
         expectedProducts: ["MyApp"],
         buildTimeout: fixtureTimeout)
 
+    /// A C target inside a Swift package (B-55): nested sources and headers, an excluded
+    /// folder and file that would fail the build if compiled, `publicHeadersPath`, and a
+    /// define the sources `#error` without. The Swift executable imports the C target and
+    /// the C executable, nothing Swift in it, links it through the same linker.
+    static let swiftCPackage = Project(
+        name: "swift-c-package",
+        source: .fixture(folder: "."),
+        buildFolder: "swift/CPackage",
+        platform: "macos",
+        expectedProducts: ["App", "ctool"],
+        buildTimeout: fixtureTimeout)
+
     static let swiftHelloApp = Project(
         name: "swift-hello-app",
         source: .fixture(folder: "."),
@@ -230,7 +242,7 @@ enum Projects {
         mayDiffer: ["Assets.car"],
         onlyUnder: "Food Truck.app")
 
-    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftHelloApp]
+    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, foodTruck, foodTruckMac]
     static let all: [Project] = fixtures + external
 }

@@ -66,8 +66,11 @@ public enum SemelSwift {
         SwiftFormulaConverter.swiftConfigNamespaces + (hasCFamilyTargets ? SwiftFormulaConverter.clangConfigNamespaces : [])
     }
 
-    /// Whether a target folder holding these file names is one the converter compiles
-    /// through clang: C-family sources and no top-level `.swift`, the converter's own rule.
+    /// Whether a target folder holding these files — every one at any depth, as paths
+    /// relative to it — is one the converter compiles through clang: C-family sources and
+    /// no `.swift`, the converter's own rule (B-55). The manifest's `sources:` and
+    /// `exclude:` are not read here, so a `.swift` file only an exclusion leaves out still
+    /// counts, and such a tree is written the Swift settings alone.
     public static func isCFamilyTargetFolder(holding fileNames: [String]) -> Bool {
         let extensions = Set(fileNames.compactMap { name -> String? in
             guard let dot = name.lastIndex(of: "."), dot != name.startIndex else {
@@ -76,7 +79,7 @@ public enum SemelSwift {
             return name[name.index(after: dot)...].lowercased()
         })
         return !extensions.contains("swift")
-            && !extensions.isDisjoint(with: SwiftFormulaConverter.ClangTargetInfo.cFamilyExtensions)
+            && !extensions.isDisjoint(with: PackageClangTarget.cFamilyExtensions)
     }
 
     // MARK: - SDK facts

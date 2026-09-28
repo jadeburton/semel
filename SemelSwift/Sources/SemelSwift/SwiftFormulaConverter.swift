@@ -57,8 +57,10 @@ struct SwiftFormulaConverter: Node {
     /// Emitted formula text changed for the same inputs: every product gained a
     /// `bundles_<Product>()` func and a target with resources a bundle (B-77); at 3, a
     /// target's literals are a `SettingsLiteral` under a `ConfigMerger` where they were a
-    /// `Configuration`'s properties, in the formula and in the reader it demands (B-120).
-    public static let implementationVersion = 3
+    /// `Configuration`'s properties, in the formula and in the reader it demands (B-120);
+    /// at 4, a C target's sources are one `**` for-each with its exclusions as `except`,
+    /// and its public headers follow `publicHeadersPath` (B-55).
+    public static let implementationVersion = 4
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -304,7 +306,10 @@ struct SwiftFormulaConverter: Node {
         let formula = generateFormula(rootManifest: rootManifest,
                                       externalManifests: availableManifests,
                                       rootPackageFolder: rootPackageFolder,
-                                      clangInfo: { ClangTargetInfo(folderManifest: targetFolderManifests[$0]) },
+                                      clangInfo: { target, folder in
+                                          PackageClangTarget(targetFolder: folder, rules: target.clangRules,
+                                                             manifests: folderManifests)
+                                      },
                                       resources: { target, folder in
                                           PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
                                                                   manifests: folderManifests)
@@ -315,38 +320,6 @@ struct SwiftFormulaConverter: Node {
             inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs,
                                                      Self.targetFolders: targetFolderSpecs,
                                                      Self.targetSubfolders: subfolderSpecs]) { _, new in new })
-    }
-
-    /// What a target's folder says about building it with clang: nil for a Swift target.
-    /// C sources and no Swift source at the folder's top level make a C target; a Swift
-    /// target whose sources all sit in subfolders has neither and stays Swift.
-    struct ClangTargetInfo {
-        /// The source extensions present, sorted — one wildcard per extension is generated.
-        let sourceExtensions: [String]
-        /// Whether `include/` exists: SwiftPM's default public-headers folder, where the
-        /// module map lives that makes the target importable from Swift.
-        let hasIncludeFolder: Bool
-
-        static let cFamilyExtensions: Set<String> = ["c", "m", "mm", "cpp", "cc", "cxx"]
-
-        init?(folderManifest: FolderManifest?) {
-            guard let manifest = folderManifest else { return nil }
-            var extensions = Set<String>()
-            var hasSwift = false
-            var hasInclude = false
-            for entry in manifest.entries where entry.isPinned {
-                if entry.isFolder {
-                    if entry.name == "include" { hasInclude = true }
-                    continue
-                }
-                let ext = (entry.name as NSString).pathExtension.lowercased()
-                if ext == "swift" { hasSwift = true }
-                if Self.cFamilyExtensions.contains(ext) { extensions.insert(ext) }
-            }
-            guard !hasSwift, !extensions.isEmpty else { return nil }
-            sourceExtensions = extensions.sorted()
-            hasIncludeFolder = hasInclude
-        }
     }
 
     // Returns a noValue output that still carries the current specs — the node's own
@@ -664,10 +637,20 @@ struct SwiftFormulaConverter: Node {
         /// `.swiftLanguageMode(.v6)` from the target's `swiftSettings`, as the version string
         /// (`"6"`). nil when the target declares none. Other settings kinds are not carried.
         let languageMode: String?
+        /// `publicHeadersPath:`, relative to the target's path; nil means SwiftPM's `include`.
+        let publicHeadersPath: String?
+        /// The target's unconditional `.define` settings from `cSettings` and `cxxSettings`,
+        /// as written — `FOO`, `BAR=2` — in manifest order. SwiftPM applies both lists to
+        /// every file of a C target, whatever its language, so they are read as one.
+        ///
+        /// A conditional one — `.when(platforms: [.windows])`, swift-cmark's only kind, or
+        /// `.when(configuration: .debug)` — is not carried: whether it holds depends on the
+        /// platform and configuration being built, which nothing here decides per target yet.
+        let cDefines: [String]
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
-        /// Non-decoded. What the target's folder said, once it arrived: nil means Swift.
-        var clangInfo: ClangTargetInfo?
+        /// Non-decoded. What the target's folder tree said, once it arrived: nil means Swift.
+        var clangInfo: PackageClangTarget?
 
         /// Non-decoded. The resources the target's folder holds, by the manifest's rules
         /// and SwiftPM's types, once the folder tree has been walked (B-77).
@@ -690,6 +673,11 @@ struct SwiftFormulaConverter: Node {
                   sources: sources, exclude: exclude)
         }
 
+        /// What reading the target as a C target needs of the manifest.
+        var clangRules: PackageClangTarget.Rules {
+            .init(sources: sources, exclude: exclude, publicHeadersPath: publicHeadersPath)
+        }
+
         var isClangTarget: Bool { clangInfo != nil }
 
         /// Whether a build compiles this target at all: not a test, a system library, a
@@ -699,7 +687,7 @@ struct SwiftFormulaConverter: Node {
         }
 
         enum CodingKeys: String, CodingKey {
-            case name, type, path, dependencies, sources, exclude, settings, resources
+            case name, type, path, dependencies, sources, exclude, settings, resources, publicHeadersPath
         }
 
         /// One entry of a target's `resources` as `dump-package` emits it:
@@ -730,17 +718,30 @@ struct SwiftFormulaConverter: Node {
         }
 
         /// One entry of a target's `settings` as `dump-package` emits it:
-        /// `{"kind": {"swiftLanguageMode": {"_0": "6"}}, "tool": "swift"}`. Kinds whose
-        /// payload is not a string (`unsafeFlags` carries an array) decode as nil and are
-        /// ignored, which is what "not carried" means.
+        /// `{"kind": {"swiftLanguageMode": {"_0": "6"}}, "tool": "swift"}`, with a
+        /// `condition` object beside them when it is `.when(…)`. Kinds whose payload is not
+        /// a string (`unsafeFlags` carries an array) decode as nil and are ignored, which is
+        /// what "not carried" means.
         private struct SPMSetting: Decodable {
             let kind: [String: [String: String]]?
+            let tool: String?
+            let isConditional: Bool
 
-            enum CodingKeys: String, CodingKey { case kind }
+            enum CodingKeys: String, CodingKey { case kind, tool, condition }
 
             init(from decoder: Decoder) throws {
-                let c = try decoder.container(keyedBy: CodingKeys.self)
-                kind  = try? c.decode([String: [String: String]].self, forKey: .kind)
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                kind          = try? container.decode([String: [String: String]].self, forKey: .kind)
+                tool          = try? container.decode(String.self, forKey: .tool)
+                isConditional = container.contains(.condition) && !((try? container.decodeNil(forKey: .condition)) ?? false)
+            }
+
+            /// The value of an unconditional `.define` for C or C++, as written.
+            var unconditionalDefine: String? {
+                guard !isConditional, ["c", "cxx"].contains(tool ?? "") else {
+                    return nil
+                }
+                return kind?["define"]?["_0"]
             }
         }
 
@@ -755,6 +756,8 @@ struct SwiftFormulaConverter: Node {
             declaredResources = (try? c.decode([SPMResource].self, forKey: .resources)) ?? []
             let settings = (try? c.decode([SPMSetting].self, forKey: .settings)) ?? []
             languageMode = settings.compactMap { $0.kind?["swiftLanguageMode"]?["_0"] }.first
+            cDefines     = settings.compactMap(\.unconditionalDefine)
+            publicHeadersPath = try? c.decode(String.self, forKey: .publicHeadersPath)
             overridePackageFolder = nil
         }
 
@@ -874,7 +877,7 @@ struct SwiftFormulaConverter: Node {
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
-                                 clangInfo: (String) -> ClangTargetInfo?,
+                                 clangInfo: (SPMTarget, String) -> PackageClangTarget?,
                                  resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
         // iteration order is seeded per process, so walking the dictionary itself let two
@@ -889,7 +892,7 @@ struct SwiftFormulaConverter: Node {
             let folder = "\(packageFolder ?? rootPackageFolder)/\(target.sourcesRelativePath)"
             placed.overridePackageFolder = packageFolder
             placed.packageName = packageFolder.flatMap { externalManifests[$0]?.name } ?? rootManifest.name
-            placed.clangInfo = clangInfo(folder)
+            placed.clangInfo = clangInfo(target, folder)
             placed.resources = placed.isClangTarget ? [] : resources(placed, folder)
             return placed
         }
@@ -943,7 +946,11 @@ struct SwiftFormulaConverter: Node {
                         guard collected.insert(target.name).inserted else { continue }
                         allTargets.append(target)
                     }
-                    for target in collectTransitiveClangTargets(root: rootTarget, lookupAll: allTargetsNamed) {
+                    // The product's own target first when it is a C one — a C executable's
+                    // `main.c`, a library vending a C target — since the walk below starts
+                    // from a target's dependencies and never counts the target itself.
+                    let ownClangTarget = rootTarget.isClangTarget ? [rootTarget] : []
+                    for target in ownClangTarget + collectTransitiveClangTargets(root: rootTarget, lookupAll: allTargetsNamed) {
                         guard collectedClang.insert(target.name).inserted else { continue }
                         clangTargets.append(target)
                     }
@@ -1071,6 +1078,11 @@ struct SwiftFormulaConverter: Node {
                     moduleMapTrees.append(Self.folderTreeWire(name: clangTarget.name,
                                                               folder: headerFolder(of: clangTarget, packageFolder: rootPackageFolder)))
                 }
+            }
+            // And a C target no Swift one reaches: the product's own, for whoever imports it.
+            for clangTarget in clangTargets where wiredModuleMaps.insert(clangTarget.name).inserted {
+                moduleMapTrees.append(Self.folderTreeWire(name: clangTarget.name,
+                                                          folder: headerFolder(of: clangTarget, packageFolder: rootPackageFolder)))
             }
             let swiftModulesTree = "'swift': TreeBuilder(input: [\n" + moduleWires.joined(separator: ",\n") + "\n        ]).files"
             blocks.append(
@@ -1247,27 +1259,39 @@ struct SwiftFormulaConverter: Node {
         FormulaIdentifier.sanitized(name)
     }
 
-    // MARK: - C targets (B-54)
+    // MARK: - C targets (B-54, B-55)
 
-    /// The folder holding a C target's public headers and its module map: `include/`
-    /// when it exists, which is SwiftPM's default, else the target folder itself.
+    /// The folder holding a C target's public headers and its module map: the manifest's
+    /// `publicHeadersPath`, or SwiftPM's `include`, when it exists; else the target folder.
     private func headerFolder(of target: SPMTarget, packageFolder: String) -> String {
         let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
-        return target.clangInfo?.hasIncludeFolder == true ? "\(folder)/include" : folder
+        return PackageClangTarget.joined(folder, target.clangInfo?.publicHeadersPath ?? "")
     }
 
     /// The preprocessor for one C target, as a func over the source path, the way the
     /// hand-written C formulas write it. Header folders: the target's own folder, its
-    /// `include`, and the public headers of every C target it reaches — which is what
-    /// SwiftPM puts on its search path. The include finder is not used: these targets
-    /// include by search path (`#include <parser.h>`), which it cannot resolve.
+    /// public headers, and the public headers of every C target it reaches — which is what
+    /// SwiftPM puts on its search path. The preprocessor walks each folder to the bottom,
+    /// so a header in a subfolder is where an `#include` beside it, or one under a search
+    /// path, looks for it. The include finder is not used: these targets include by search
+    /// path (`#include <parser.h>`), which it cannot resolve.
+    ///
+    /// The target's `.define` settings are the preprocessor's `defines`, a key of their
+    /// own rather than `arguments`: a literal replaces the key it names in the settings it
+    /// is laid over, so a define carried as `arguments` would drop the project's own
+    /// `clang.preprocessor.arguments` for every target that has one. The compiler gets
+    /// none: it reads preprocessed text, where no macro is left to define.
+    ///
+    /// ISSUE: a define whose value holds a comma splits in two, and one holding a quote
+    /// ends the formula's string — the limit `sourcePaths` has on the Swift side.
     private func buildPreprocessorFuncDef(target: SPMTarget,
                                           packageFolder: String,
                                           lookupAll: (String) -> [SPMTarget]) -> String {
         let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
         var folders = [folder]
-        if target.clangInfo?.hasIncludeFolder == true {
-            folders.append("\(folder)/include")
+        let ownHeaders = headerFolder(of: target, packageFolder: packageFolder)
+        if ownHeaders != folder {
+            folders.append(ownHeaders)
         }
         for dependency in collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
             let dependencyHeaders = headerFolder(of: dependency, packageFolder: packageFolder)
@@ -1275,9 +1299,10 @@ struct SwiftFormulaConverter: Node {
         }
         let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
 
+        let literals = target.cDefines.isEmpty ? [:] : ["defines": target.cDefines.joined(separator: ",")]
         let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
-                                                      literals: [:])
+                                                      literals: literals)
         return "func \(preprocessorFuncName(for: target.name))(path) =\n" +
                "    ClangPreprocessor(\n" +
                "        configuration: ['config': \(configExpr)],\n" +
@@ -1286,19 +1311,26 @@ struct SwiftFormulaConverter: Node {
                "    )"
     }
 
-    /// The linker's object entries for one C target: a for-each per source extension over
-    /// the target folder, compiling each preprocessed file. The glob is a plain string,
+    /// The linker's object entries for one C target: one for-each over the target's
+    /// sources at any depth — a `**/*.<ext>` per extension its tree holds — less what its
+    /// `exclude:` names, compiling each preprocessed file. The patterns are plain strings,
     /// so the generated text needs no path literal.
     private func clangObjectEntries(target: SPMTarget, packageFolder: String) -> [String] {
+        guard let clangInfo = target.clangInfo else {
+            return []
+        }
         let folder = "\(target.overridePackageFolder ?? packageFolder)/\(target.sourcesRelativePath)"
         let configExpr = Self.configurationExpression(namespace: Self.clangCompilerNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
-        return (target.clangInfo?.sourceExtensions ?? []).map { ext in
-            "        {f: '\(folder)/*.\(ext)'} \"%%f%%.o\": ClangCompiler(" +
-            "configuration: ['config': \(configExpr)], " +
-            "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)])"
+        func quoted(_ relative: String) -> String { "'\(folder)/\(relative)'" }
+        var items = clangInfo.sourcePatterns.map(quoted).joined(separator: ", ")
+        if !clangInfo.excludedPatterns.isEmpty {
+            items += " except " + clangInfo.excludedPatterns.map(quoted).joined(separator: ", ")
         }
+        return ["        {f: \(items)} \"%%f%%.o\": ClangCompiler(" +
+                "configuration: ['config': \(configExpr)], " +
+                "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)])"]
     }
 
     // Emits a zero-parameter func definition for one compiler node.
