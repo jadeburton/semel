@@ -717,4 +717,78 @@ final class PrepareTests: XCTestCase {
         let formula = try String(contentsOf: root.appendingPathComponent("semel.fmla"), encoding: .utf8)
         XCTAssertTrue(formula.contains("include package(p: <.>)"), "got:\n\(formula)")
     }
+
+    // MARK: - Locks (B-06)
+
+    /// A vendoring step that copies one package, GRDB, the way the live one does, with the
+    /// pin its resolved file gives.
+    private func vendoringGRDB(files: [String: String]) -> ([URL], URL) throws -> [Vendoring.Copied] {
+        { _, into in
+            let destination = into.appendingPathComponent("GRDB.swift", isDirectory: true)
+            for (path, content) in files {
+                try self.write(Preparation.relativePath(of: destination.appendingPathComponent(path), under: self.root), content)
+            }
+            return [Vendoring.Copied(name: "GRDB.swift", source: destination, destination: destination,
+                                     pin: .init(origin: "https://github.com/groue/GRDB.swift.git", version: "7.11.1",
+                                                revision: "b83108d10f42680d78f23fe4d4d80fc88dab3212"))]
+        }
+    }
+
+    func test_writesALockBesideEachVendoredCopy() throws {
+        try write("Packages/App/Package.swift")
+        let vendoring = vendoringGRDB(files: ["Package.swift": "// grdb\n", "GRDB/Database.swift": "class Database {}\n"])
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps(vendored: vendoring))
+
+        let lockFile = folder("Packages/Dependencies").appendingPathComponent("GRDB.swift.semel-lock")
+        XCTAssertEqual(report.locks, [lockFile])
+        let lock = try DependencyLock.parse(try String(contentsOf: lockFile, encoding: .utf8))
+        XCTAssertEqual(lock, DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: folder("Packages/Dependencies/GRDB.swift")),
+                                            fold:        FolderContentRoot.formatTag,
+                                            version:     "7.11.1",
+                                            revision:    "b83108d10f42680d78f23fe4d4d80fc88dab3212",
+                                            origin:      "https://github.com/groue/GRDB.swift.git"))
+    }
+
+    /// A rerun vendors again and locks what it copied, so a lock never describes the copy
+    /// before this one.
+    func test_aRerunRewritesTheLockForWhatItCopied() throws {
+        try write("Packages/App/Package.swift")
+        let lockFile = folder("Packages/Dependencies").appendingPathComponent("GRDB.swift.semel-lock")
+        _ = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                steps: steps(vendored: vendoringGRDB(files: ["Package.swift": "// 7.11.1\n"])))
+        let first = try String(contentsOf: lockFile, encoding: .utf8)
+
+        _ = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                steps: steps(vendored: vendoringGRDB(files: ["Package.swift": "// 7.12.0\n"])))
+
+        let second = try DependencyLock.parse(try String(contentsOf: lockFile, encoding: .utf8))
+        XCTAssertNotEqual(try DependencyLock.parse(first).contentRoot, second.contentRoot)
+        XCTAssertEqual(second.contentRoot, try FolderContentRoot.root(ofFolderAt: folder("Packages/Dependencies/GRDB.swift")))
+    }
+
+    /// Two roots can both resolve one name into the one folder; the later copy stays, and
+    /// the one lock is taken over it with its pin.
+    func test_aNameVendoredTwiceIsLockedOnceWithTheLaterPin() throws {
+        let destination = folder("Packages/Dependencies/Nuke")
+        try write("Packages/Dependencies/Nuke/Package.swift", "// nuke\n")
+        let copies = [Vendoring.Copied(name: "Nuke", source: destination, destination: destination,
+                                       pin: .init(origin: "https://github.com/kean/Nuke.git", version: "12.0.0", revision: "a")),
+                      Vendoring.Copied(name: "Nuke", source: destination, destination: destination,
+                                       pin: .init(origin: "https://github.com/kean/Nuke.git", version: "12.1.0", revision: "b"))]
+
+        let locks = try Preparation.writeLocks(for: copies)
+
+        XCTAssertEqual(locks.count, 1)
+        XCTAssertEqual(try DependencyLock.parse(try String(contentsOf: try XCTUnwrap(locks.first), encoding: .utf8)).version,
+                       "12.1.0")
+    }
+
+    func test_nothingVendoredWritesNoLock() throws {
+        try write("Packages/App/Package.swift")
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
+
+        XCTAssertEqual(report.locks, [])
+    }
 }

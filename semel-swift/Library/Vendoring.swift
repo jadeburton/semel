@@ -7,9 +7,11 @@
 //  (docs/superpowers/specs/2026-09-12-semel-swift-design.md): every source-control
 //  dependency of every package in a graph lives at `<root>/Dependencies/<name>`, where
 //  `<name>` is the repository's last path component minus `.git`. That is SwiftPM's own
-//  checkout layout, so vendoring is: let SwiftPM resolve, then copy.
+//  checkout layout, so vendoring is: let SwiftPM resolve, then copy — and lock each copy
+//  beside it, `<name>.semel-lock`, so a build can tell when it has moved (B-06).
 
 import Foundation
+import SemelNodeKit
 
 public enum Vendoring {
 
@@ -17,6 +19,30 @@ public enum Vendoring {
         public let name: String
         public let source: URL
         public let destination: URL
+        /// What the resolver chose for this checkout, when its resolved file says: recorded
+        /// in the lock written beside the copy, never enforced.
+        public let pin: Pin?
+
+        public init(name: String, source: URL, destination: URL, pin: Pin? = nil) {
+            self.name        = name
+            self.source      = source
+            self.destination = destination
+            self.pin         = pin
+        }
+    }
+
+    /// One entry of a `Package.resolved`: where a package came from and what was chosen.
+    public struct Pin: Equatable {
+        public let origin: String
+        /// Nil for a branch or a revision pin.
+        public let version: String?
+        public let revision: String?
+
+        public init(origin: String, version: String?, revision: String?) {
+            self.origin   = origin
+            self.version  = version
+            self.revision = revision
+        }
     }
 
     public struct Failure: Error, CustomStringConvertible {
@@ -44,7 +70,8 @@ public enum Vendoring {
         for packageRoot in packageRoots {
             try resolve(packageRoot: packageRoot)
             copied += try copyCheckouts(from: packageRoot.appendingPathComponent(".build/checkouts", isDirectory: true),
-                                        into: dependencies)
+                                        into: dependencies,
+                                        pins: pins(inResolvedFileAt: packageRoot.appendingPathComponent("Package.resolved")))
         }
         return copied
     }
@@ -69,7 +96,54 @@ public enum Vendoring {
         guard process.terminationStatus == 0 else {
             throw Failure(description: "xcodebuild -resolvePackageDependencies failed (exit \(process.terminationStatus)) for \(project.path)")
         }
-        return try copyCheckouts(from: clones.appendingPathComponent("checkouts", isDirectory: true), into: dependencies)
+        // Xcode keeps the project's resolved file in the workspace inside the project.
+        let resolvedFile = project.appendingPathComponent("project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
+        return try copyCheckouts(from: clones.appendingPathComponent("checkouts", isDirectory: true), into: dependencies,
+                                 pins: pins(inResolvedFileAt: resolvedFile))
+    }
+
+    /// The pins of a `Package.resolved`, by the folder each package is checked out under —
+    /// the name a checkout has and a copy keeps. Empty when there is no such file, or it is
+    /// in a shape older than `pins` at its top: what a pin says is recorded, not needed.
+    public static func pins(inResolvedFileAt file: URL) -> [String: Pin] {
+        struct ResolvedFile: Decodable {
+            struct Entry: Decodable {
+                struct State: Decodable {
+                    let version: String?
+                    let revision: String?
+                }
+                let location: String
+                let state: State
+            }
+            let pins: [Entry]
+        }
+        guard let data = try? Data(contentsOf: file),
+              let resolved = try? JSONDecoder().decode(ResolvedFile.self, from: data) else {
+            return [:]
+        }
+        var pins: [String: Pin] = [:]
+        for entry in resolved.pins {
+            guard let name = DependencyLock.folderName(forRepositoryURL: entry.location) else {
+                continue
+            }
+            pins[name] = Pin(origin: entry.location, version: entry.state.version, revision: entry.state.revision)
+        }
+        return pins
+    }
+
+    /// Writes the lock beside a copy (B-06): its folder's content root as the engine will
+    /// fold the pushed copy, and what its pin says. Replaces a lock already there, because
+    /// the copy it described was replaced too. Returns the lock file.
+    @discardableResult
+    public static func writeLock(for copied: Copied) throws -> URL {
+        let lock = DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: copied.destination),
+                                  fold:        FolderContentRoot.formatTag,
+                                  version:     copied.pin?.version,
+                                  revision:    copied.pin?.revision,
+                                  origin:      copied.pin?.origin)
+        let file = DependencyLock.lockFile(forDependencyAt: copied.destination)
+        try lock.text.write(to: file, atomically: true, encoding: .utf8)
+        return file
     }
 
     /// SwiftPM does versions, `Package.resolved`, branches, registries and transitive
@@ -89,8 +163,9 @@ public enum Vendoring {
     /// Copies every directory in `checkouts` to `dependencies/<name>`, replacing whatever
     /// was there, and leaves out each checkout's `.git` and `.build`: neither is source,
     /// and a nested `.git` would make the copy look like a repository of its own.
-    /// Returns what was copied, sorted by name.
-    public static func copyCheckouts(from checkouts: URL, into dependencies: URL) throws -> [Copied] {
+    /// Returns what was copied, sorted by name, each with its pin from `pins` when there is one.
+    public static func copyCheckouts(from checkouts: URL, into dependencies: URL,
+                                     pins: [String: Pin] = [:]) throws -> [Copied] {
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: checkouts.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -122,7 +197,7 @@ public enum Vendoring {
                 try fileManager.copyItem(at: source.appendingPathComponent(child),
                                          to: destination.appendingPathComponent(child))
             }
-            copied.append(Copied(name: name, source: source, destination: destination))
+            copied.append(Copied(name: name, source: source, destination: destination, pin: pins[name]))
         }
         return copied
     }

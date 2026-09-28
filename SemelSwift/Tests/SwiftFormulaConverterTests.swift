@@ -47,6 +47,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                          json: String,
                          externalManifests: [String: String] = [:],
                          folderContents: [String: [FolderManifestEntry]] = [:],
+                         locks: [String: String] = [:],
+                         contentRoots: [String: DataObjectHash] = [:],
                          supplyTargetFolders: Bool = true) throws -> ProcessOutput {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         var externalValues = [String: NodeValue]()
@@ -62,25 +64,41 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                                             externalManifests: externalManifests, folderContents: folderContents)
                 : [:],
             SwiftFormulaConverter.targetSubfolders:     [:],
+            SwiftFormulaConverter.dependencyLocks:        [:],
+            SwiftFormulaConverter.dependencyContentRoots: [:],
         ]
         // The converter walks each target's subfolders for its resources (B-77), one level
         // per run: every subfolder it asks for is answered from `folderContents`, or as
-        // empty, until it stops asking.
+        // empty, until it stops asking. Every vendored package's lock (B-06) is answered
+        // from `locks` by its path, or as a file nobody pushed; the content root of each
+        // package whose lock is there, from `contentRoots`.
         let converter = try makeConverter()
         for _ in 0..<8 {
             let output = try converter.process(input: ProcessInput(inputValues: inputValues))
-            let asked = (output.inputWireSpecs[SwiftFormulaConverter.targetSubfolders] ?? [:]).keys
-                .filter { inputValues[SwiftFormulaConverter.targetSubfolders]?[$0] == nil }
-            guard !asked.isEmpty else {
+            func asked(_ port: String) -> [String] {
+                (output.inputWireSpecs[port] ?? [:]).keys.filter { inputValues[port]?[$0] == nil }.sorted()
+            }
+            let subfolders    = asked(SwiftFormulaConverter.targetSubfolders)
+            let lockFiles     = asked(SwiftFormulaConverter.dependencyLocks)
+            let lockedFolders = asked(SwiftFormulaConverter.dependencyContentRoots)
+            guard !subfolders.isEmpty || !lockFiles.isEmpty || !lockedFolders.isEmpty else {
                 return output
             }
-            for folder in asked {
+            for folder in subfolders {
                 let entries = folderContents[folder] ?? []
                 inputValues[SwiftFormulaConverter.targetSubfolders]?[folder] =
                     .value(try FolderManifest(baseFolderPath: folder, entries: entries).toJSON().intern())
             }
+            for lockFile in lockFiles {
+                inputValues[SwiftFormulaConverter.dependencyLocks]?[lockFile] =
+                    try locks[lockFile].map { .value(try $0.intern()) } ?? .noValue(reason: .initializing)
+            }
+            for folder in lockedFolders {
+                inputValues[SwiftFormulaConverter.dependencyContentRoots]?[folder] =
+                    .value(try XCTUnwrap(contentRoots[folder], "the converter asked for the content root of \(folder)"))
+            }
         }
-        XCTFail("the converter kept asking for subfolders")
+        XCTFail("the converter kept asking for subfolders, locks or content roots")
         return try converter.process(input: ProcessInput(inputValues: inputValues))
     }
 
@@ -802,6 +820,135 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         let output = try convert(json: appOverCLib)
 
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.awaitedPackageFolders]?.isEmpty, true)
+    }
+
+    // MARK: - The lock beside a vendored package (B-06)
+
+    private let vendoredGRDB = "input:/repo/DatabaseModels/Dependencies/GRDB.swift"
+    private let grdbLockPath = "input:/repo/DatabaseModels/Dependencies/GRDB.swift.semel-lock"
+
+    private func grdbLock(root: String, fold: String = FolderContentRoot.formatTag) -> String {
+        DependencyLock(contentRoot: root, fold: fold, version: "7.11.1",
+                       origin: "https://github.com/groue/GRDB.swift.git").text
+    }
+
+    /// The conversion of DatabaseModels with GRDB vendored, with `lock` beside it (or none)
+    /// and `root` as what its folder folds to.
+    private func convertWithVendoredGRDB(lock: String?, root: DataObjectHash = "abc123") throws -> ProcessOutput {
+        try convert(packageFolder: "input:/repo/DatabaseModels",
+                    json: sourceControlManifest(),
+                    externalManifests: [vendoredGRDB: grdbShapedManifest],
+                    locks: lock.map { [grdbLockPath: $0] } ?? [:],
+                    contentRoots: [vendoredGRDB: root])
+    }
+
+    /// Every notice the converter posts while `body` runs.
+    private func notices(during body: () throws -> Void) rethrows -> [String] {
+        var posted: [String] = []
+        let saved = NodeNotice.reporter
+        NodeNotice.reporter = { posted.append($0) }
+        defer { NodeNotice.reporter = saved }
+        try body()
+        return posted
+    }
+
+    func test_asksForTheLockBesideEveryVendoredPackageAndNoOther() throws {
+        let output = try convert(packageFolder: "input:/repo/DatabaseModels", json: sourceControlManifest(),
+                                 externalManifests: [vendoredGRDB: grdbShapedManifest])
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.dependencyLocks]).rendered,
+                       [grdbLockPath: "StaticFile(path: '\(grdbLockPath)').output"])
+    }
+
+    func test_aLockThatMatchesTheFoldersContentRootBuilds() throws {
+        let output = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "abc123")
+
+        XCTAssertNoThrow(try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue())
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.dependencyContentRoots]).rendered,
+                       [vendoredGRDB: "Folder(path: '\(vendoredGRDB)').contentRoot"],
+                       "the root is what the lock is compared with, so it is a wire and a change to it re-runs the check")
+    }
+
+    /// The whole point: a dependency that moved stops the build, and the message names the
+    /// package, both roots, what it was vendored as and what to do.
+    func test_aLockThatDoesNotMatchStopsTheConversionNamingBothRoots() throws {
+        let output = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "def456")
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("\(vendoredGRDB) is not the tree its lock records"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("expected: sha256:abc123"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("found:    sha256:def456"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains(grdbLockPath), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("version 7.11.1, from https://github.com/groue/GRDB.swift.git"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("semel-swift prepare"), "should say how to accept the change, got:\n\(reason)")
+    }
+
+    /// A root taken under another fold cannot be compared with this one, and saying the
+    /// tree moved would be a lie: it may be exactly what was vendored.
+    func test_aLockTakenUnderAnotherFoldSaysSoRatherThanThatTheTreeMoved() throws {
+        let output = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123", fold: "semel-folder-content-root 1"),
+                                                 root: "def456")
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("cannot be compared with its lock"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("'semel-folder-content-root 1'"), "got:\n\(reason)")
+        XCTAssertTrue(reason.contains("'\(FolderContentRoot.formatTag)'"), "got:\n\(reason)")
+        XCTAssertFalse(reason.contains("found:"), "got:\n\(reason)")
+    }
+
+    func test_aLockThatCannotBeReadStopsTheConversionNamingTheFile() throws {
+        let output = try convertWithVendoredGRDB(lock: "content sha256:abc123\n")
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("\(grdbLockPath) is not a lock: there is no 'fold' line"), "got:\n\(reason)")
+    }
+
+    /// Every tree vendored before locks existed, and every one vendored by hand, has none:
+    /// the build goes on, says so once, and does not wire the folder's root — so a tree
+    /// with no locks is not woken by every edit below its vendored folders.
+    func test_aVendoredPackageWithNoLockBuildsAndSaysSo() throws {
+        var output: ProcessOutput?
+        let posted = try notices {
+            output = try convertWithVendoredGRDB(lock: nil)
+        }
+
+        let converted = try XCTUnwrap(output)
+        XCTAssertNoThrow(try XCTUnwrap(converted.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue())
+        XCTAssertEqual(converted.inputWireSpecs[SwiftFormulaConverter.dependencyContentRoots]?.isEmpty, true)
+        XCTAssertEqual(posted.count, 1, "said once per conversion, got \(posted)")
+        XCTAssertTrue(posted.first?.contains("GRDB.swift") == true, "got \(posted)")
+        XCTAssertTrue(posted.first?.contains("semel-swift prepare") == true, "got \(posted)")
+    }
+
+    /// The notice is the whole of what a missing lock earns: the error report must not also
+    /// name the lock nobody pushed as a file the build is waiting for.
+    func test_aLockNobodyPushedIsNotAFileTheBuildNeeds() {
+        XCTAssertTrue(SwiftFormulaConverter.descriptor.toleratesAbsentValue(onInputPort: SwiftFormulaConverter.dependencyLocks))
+        XCTAssertFalse(SwiftFormulaConverter.descriptor.toleratesAbsentValue(onInputPort: SwiftFormulaConverter.dependencyContentRoots))
+    }
+
+    func test_aMatchingLockSaysNothing() throws {
+        let posted = try notices {
+            _ = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "abc123")
+        }
+
+        XCTAssertEqual(posted, [])
+    }
+
+    /// An Xcode project's formula names a remote package by its vendored folder —
+    /// `SwiftFormulaConverter(path: '<root>/Dependencies/keychain-swift', root: <root>)` —
+    /// so the package being converted is itself a vendored one, and its lock is checked.
+    func test_aPackageConvertedFromTheDependenciesFolderChecksItsOwnLock() throws {
+        let output = try convert(packageFolder: "input:/app/Dependencies/keychain-swift", root: "input:/app", json: """
+            {
+              "name": "KeychainSwift", "dependencies": [],
+              "products": [{"name": "KeychainSwift", "targets": ["KeychainSwift"], "type": {"library": ["automatic"]}}],
+              "targets": [{"name": "KeychainSwift", "type": "regular", "path": "Sources", "dependencies": []}]
+            }
+            """)
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.dependencyLocks]).keys.sorted(),
+                       ["input:/app/Dependencies/keychain-swift.semel-lock"])
     }
 
     // MARK: - sourceControl dependencies

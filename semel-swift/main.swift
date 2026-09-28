@@ -10,7 +10,7 @@
 //  `<folder>/Dependencies`, and writes `semel.fmla` and `semel.config` beside them unless
 //  they are already there, and `semel.machine.config` — the machine's tools and SDK —
 //  every time. The same command every time: after cloning, and again after changing a
-//  dependency or a toolchain — the copies and the machine file are replaced, the formula
+//  dependency or a toolchain — the copies, the lock beside each and the machine file are replaced, the formula
 //  and the project's config are kept.
 
 import Foundation
@@ -77,6 +77,9 @@ do {
     }
     for entry in report.vendored {
         print("\(entry.name) -> \(entry.destination.path)")
+    }
+    for lock in report.locks {
+        print("Locked: \(lock.path)")
     }
     for copy in report.copiedFromTemplate {
         // The source's values are whoever wrote the source's; the simulator takes them,

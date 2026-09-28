@@ -120,13 +120,7 @@ struct XcodeFormulaEmitter {
     /// "https://github.com/evgenyneu/keychain-swift" -> "keychain-swift", the checkout
     /// name SwiftPM and `semel-swift prepare` use.
     static func repositoryName(forURL urlString: String) -> String? {
-        var name = urlString
-        while name.hasSuffix("/") { name.removeLast() }
-        if let lastSeparator = name.lastIndex(where: { $0 == "/" || $0 == ":" }) {
-            name = String(name[name.index(after: lastSeparator)...])
-        }
-        if name.hasSuffix(".git") { name.removeLast(4) }
-        return name.isEmpty ? nil : name
+        DependencyLock.folderName(forRepositoryURL: urlString)
     }
 
     // MARK: - One target's bundle

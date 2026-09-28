@@ -109,6 +109,9 @@ public final class BuildEngine {
         // The tools the installed toolchains declared, located on this machine now. The
         // engine knows none of them by name; a host registers its toolchains first.
         try ToolDiscovery.registerInstalledTools(into: .instance)
+        // A toolchain node's notice goes where the engine's own go. Read through `shared`
+        // when it is posted, so whichever engine is installed then is the one that says it.
+        NodeNotice.reporter = { BuildEngine.notice($0) }
         self.database = database
         self.jobs = max(1, jobs)
 
