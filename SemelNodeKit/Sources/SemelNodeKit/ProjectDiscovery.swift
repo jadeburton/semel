@@ -48,5 +48,36 @@ public enum ProjectDiscovery {
     /// Drops every registration. For tests that need a known-empty registry.
     public static func removeAll() {
         pluginsByTypeName.removeAll()
+        includablePluginsByTypeName.removeAll()
     }
+
+    // MARK: - Projects a formula names
+
+    // Keyed by type name, for the reason `pluginsByTypeName` is.
+    private static var includablePluginsByTypeName: [String: any IncludableProjectPlugin] = [:]
+
+    public static func register(includable plugin: any IncludableProjectPlugin) {
+        includablePluginsByTypeName[String(describing: type(of: plugin))] = plugin
+    }
+
+    /// Every registered includable-project plugin, in a stable order, for the reason
+    /// `plugins` is sorted.
+    public static var includablePlugins: [any IncludableProjectPlugin] {
+        includablePluginsByTypeName.keys.sorted().compactMap { includablePluginsByTypeName[$0] }
+    }
+}
+
+/// Recognises a project file that builds nothing by itself: a formula has to `include` the
+/// node that converts it — a `Package.swift` is built by
+/// `include SwiftFormulaConverter(path: <.>).formula`, never by being pushed (B-10). The
+/// engine asks this of every file it sees and says so at idle when nothing reads one, which
+/// is the only way a user learns that a pushed package builds nothing.
+///
+/// Separate from `ProjectBuilderPlugin`, which claims a file *as* a project and builds it:
+/// this one claims a file only to say what would build it.
+public protocol IncludableProjectPlugin {
+    /// The node a formula's `include` names to build `entry` inside `folderPath`, or nil
+    /// when the entry is not this plugin's — or is one a formula reaches through another,
+    /// as a package's vendored dependencies are reached through the package.
+    func includeSpec(forEntry entry: FolderManifestEntry, inFolder folderPath: String) -> GraphSpecNode?
 }

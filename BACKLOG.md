@@ -33,21 +33,18 @@ build waits again; `--no-follow` — and the roster's `alsoPush` is gone; produc
 `<base>/semel-out/<folder>` and `push` never sends an export folder back in; nodes of one
 type carrying one report are one entry, printed once; a failed build of a package tree
 with no config names `semel-swift prepare`; `prepare` writes `clang.*` only for a tree with
-a C-family target; `help`, and a typo names its nearest verb. What remains:
+a C-family target; `help`, and a typo names its nearest verb. Done 2026-09-28 ("Residual
+1, as built" in the same document): a package dependency outside the built folder is one
+round — a stalled converter demands the folder of each package it waits for, which the
+settle reports as an unpushed source like any other, and a source under an unpushed folder
+something needs is reported as that folder's detail, so `build` prints `Packages/semel.fmla
+needs ../Helper` and pushes the package whole. What remains:
 
-1. **A package dependency takes three rounds.** The converter's "waiting for a package"
-   error carries no typed path, so `build` follows what the converter *wired* — the
-   manifest, then the target folders — one settle each. A `missingSource` on that error,
-   naming the package folder, would make it one round.
-2. **A changed source outside the built folder is not re-pushed.** `build` follows what is
+1. **A changed source outside the built folder is not re-pushed.** `build` follows what is
    reported missing; a `semel.machine.config` beside the folder that is rewritten after a
    toolchain change is the user's to `push`. Following the inputs the graph already holds
-   outside the folder would close it.
-
-Both are design rather than mechanics. The first needs a node's error to carry a path the
-build can push — a new `NoValueReason` case, persisted and versioned, against deriving the
-path when the report is built or having the client infer the package folder. The second
-needs a decision on how far `build` reaches unasked into sources outside the folder.
+   outside the folder would close it. Design rather than mechanics: it needs a decision on
+   how far `build` reaches unasked into sources outside the folder.
 
 ## Performance
 

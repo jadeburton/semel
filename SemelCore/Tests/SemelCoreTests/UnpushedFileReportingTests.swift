@@ -393,6 +393,27 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
                         ""])
     }
 
+    /// A file under a folder that is itself unpushed and needed is the folder's detail:
+    /// pushing the folder pushes it, so the folder is the one line and the one path a
+    /// build pushes — a converter waiting for a package demands the package's folder and
+    /// the reader of its manifest alike (B-110).
+    func test_anUnpushedFileUnderAnUnpushedFolderSomethingNeedsIsTheFoldersDetail() throws {
+        let folder    = try makeUnpushedFolder(path: "Helper")
+        let manifest  = try makeUnpushedFile(path: "input:/Helper/Package.swift")
+        let converter = try makeDemanding(tag: "converter")
+        let reader    = try makeDemanding(tag: "reader")
+
+        try connect(folder, to: converter, name: "package", fromPort: Folder.folderManifestOutputPort)
+        try connect(manifest, to: reader, name: "manifest")
+        try run(converter)
+        try run(reader)
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["Folder #\(folder) 'input:/Helper'"]])
+        XCTAssertEqual(captured[0][0].items.map(\.missingSource), ["Helper/"])
+    }
+
     /// A folder nobody reads is no more a problem than a file nobody reads.
     func test_anUnpushedFolderNothingReadsIsSilent() throws {
         _ = try makeUnpushedFolder(path: "spare")

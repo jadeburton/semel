@@ -777,6 +777,33 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(reason.contains("http"), "a path dependency has no repository, got:\n\(reason)")
     }
 
+    /// The stall names what it waits for as a demand, not only as a sentence: the folder of
+    /// each package whose manifest has not arrived, which a settle reports by path and a
+    /// `build` pushes whole (B-110). A package that has arrived is not demanded.
+    func test_aStallDemandsTheFolderOfEachPackageItWaitsFor() throws {
+        let output = try convert(packageFolder: "input:/repo/SemelCore", json: """
+            {
+              "name": "SemelCore",
+              "dependencies": [{"fileSystem": [{"identity": "databasemodels", "path": "../DatabaseModels"}]}],
+              "products": [{"name": "SemelCore", "targets": ["SemelCore"], "type": {"library": ["automatic"]}}],
+              "targets": [{"name": "SemelCore", "type": "regular", "path": "Sources/SemelCore",
+                           "dependencies": [{"product": ["DatabaseModels", "databasemodels", null, null]}]}]
+            }
+            """, externalManifests: ["input:/repo/DatabaseModels": sourceControlManifest()])
+
+        let awaited = try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.awaitedPackageFolders]).rendered
+        XCTAssertEqual(awaited, ["input:/repo/SemelCore/Dependencies/GRDB.swift":
+                                    "Folder(path: 'input:/repo/SemelCore/Dependencies/GRDB.swift').manifest"])
+    }
+
+    /// Once nothing is awaited the demand is withdrawn, or the folder would stay wired to a
+    /// converter that no longer reads it.
+    func test_aConversionThatStallsOnNothingDemandsNoPackageFolder() throws {
+        let output = try convert(json: appOverCLib)
+
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.awaitedPackageFolders]?.isEmpty, true)
+    }
+
     // MARK: - sourceControl dependencies
 
     /// This build system never fetches anything, so a git dependency is resolved to a

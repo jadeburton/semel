@@ -330,6 +330,8 @@ public enum ErrorReport {
             }
         }
 
+        var unpushed: [(nodeID: ObjectID, path: Path, isTree: Bool)] = []
+
         for port in ports where port.valueKind == .initializing || port.valueKind == .deleted {
             guard result[port.nodeID] == nil,
                   let record = FatalErrors.attempt({ try database.node.find(nodeID: port.nodeID) }) ?? nil,
@@ -346,7 +348,17 @@ public enum ErrorReport {
             } else if anythingNeeds(port.nodeID) {
                 result[port.nodeID] = SourceMessage(text: unpushedFileMessage(path: path, isTree: isTree),
                                                     missingSource: sourcePath(path, isTree: isTree))
+                unpushed.append((port.nodeID, Path(path), isTree))
             }
+        }
+
+        // A source under a folder that is itself unpushed and needed says nothing the
+        // folder's line does not: pushing the folder pushes it. A converter waiting for a
+        // package demands the package's folder and the reader of its `Package.swift` alike,
+        // and the reader is the detail — one line, and one push, names the package (B-110).
+        let unpushedFolders = unpushed.filter(\.isTree).map(\.path)
+        for source in unpushed where unpushedFolders.contains(where: { source.path.count > $0.count && source.path.hasPrefix($0) }) {
+            result[source.nodeID] = nil
         }
 
         return result

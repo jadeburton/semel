@@ -35,6 +35,9 @@ enum TestGlobals {
         DataObjectStore.shared        = DataObjectStore(storeRoot: makeTemporaryStoreRoot())
         ToolRunnerRegistry.instance = ToolRunnerRegistry()
         FormulaIncludeProviders.removeAll()
+        // Registered again by `registerTypes` below, the engine's own plugin among them; a
+        // test's own project plugins are dropped.
+        ProjectDiscovery.removeAll()
         BuildEngine.shared            = nil
 
         // Formula parsing resolves a node's default output port through the TypeRegistry

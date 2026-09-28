@@ -175,6 +175,7 @@ public final class BuildEngine {
 
             settleTally.errors = reportIdleTimeErrors()
             reportUnclaimedConfigKeys()
+            reportUnnamedProjects(settleHasErrors: settleTally.errors > 0)
             reportSettleSummary()
             // Last of the three: what a settle produced is read against what it broke and
             // against the totals above it, and a list of paths between the failures and
@@ -334,6 +335,11 @@ public final class BuildEngine {
     /// Tracks the last-reported unclaimed-key set per config-file node so an unchanged
     /// result is not printed again on every idle cycle.
     private var lastReportedUnclaimedKeys: [ObjectID: [String]] = [:]
+
+    /// The project files the last report found no formula naming, by path, so a standing
+    /// one is said once rather than on every settle (B-10). Read and written on the loop's
+    /// task only.
+    var lastReportedUnnamedProjects: Set<String> = []
 
     /// `DataObjectStore.bytesStored` when the collector last ran; nil until it has (B-14).
     /// Read and written on the loop's task only.
