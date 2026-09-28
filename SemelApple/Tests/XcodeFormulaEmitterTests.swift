@@ -245,7 +245,8 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("\"CFBundleSupportedPlatforms\":[\"iPhoneSimulator\"]"), formula)
         XCTAssertTrue(formula.contains("\"UIDeviceFamily\":[1,2]"), formula)
         XCTAssertTrue(formula.contains("\"UILaunchScreen\":{}"), formula)
-        XCTAssertTrue(formula.contains("PRODUCT_NAME: 'Ice Cubes'"), formula)
+        XCTAssertTrue(formula.contains("buildSettings: '{") && formula.contains("\"PRODUCT_NAME\":\"Ice Cubes\""), formula)
+        XCTAssertFalse(formula.contains("PRODUCT_NAME: 'Ice Cubes'"), "a build setting is no entry of the plist: \(formula)")
         XCTAssertTrue(formula.contains("base: ['base': StaticFile(path: 'input:/repo/IceCubesApp/Info.plist').output]"), formula)
         XCTAssertTrue(formula.contains("partials: ['assets': assets_IceCubesApp().partialInfoPlist]"), formula)
     }

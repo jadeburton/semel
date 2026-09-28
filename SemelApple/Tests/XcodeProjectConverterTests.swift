@@ -255,11 +255,22 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
 
     // MARK: - NetNewsWire's local packages (B-77)
 
+    /// What one folder of the NetNewsWire clone holds, for the harness to answer with.
+    private struct FolderContents {
+        var files: [String] = []
+        var folders: [String] = []
+    }
+
     /// The converter over NetNewsWire's project file for the Mac, run the way the engine
     /// runs it: every pass's demands are answered, and it runs again, until it demands
-    /// nothing new. An xcconfig comes from the fixture, or is not there; a folder holds
-    /// nothing, except `Modules`, which holds the given packages as the clone lays them out.
-    private func convertNetNewsWire(modules: [String]) throws -> (output: ProcessOutput, demandedFolders: [String]) {
+    /// nothing new. An xcconfig is the text `xcconfigs` gives for its path, or comes from
+    /// the fixture, or is not there; a folder holds what `folders` gives for its path
+    /// relative to the project folder, or nothing — except `Modules`, which holds the
+    /// given packages as the clone lays them out.
+    private func convertNetNewsWire(modules: [String],
+                                    folders folderContents: [String: FolderContents] = [:],
+                                    xcconfigs xcconfigTexts: [String: String] = [:])
+        throws -> (output: ProcessOutput, demandedFolders: [String], demandedXcconfigs: [String]) {
         let projectFolder = "input:/nnw"
         let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
                                                                   properties: ["path": "\(projectFolder)/NetNewsWire.xcodeproj",
@@ -277,23 +288,32 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             var answered = false
             for path in (output.inputWireSpecs[XcodeProjectConverter.xcconfigs] ?? [:]).keys.sorted()
             where inputs[XcodeProjectConverter.xcconfigs]?[path] == nil {
-                let file = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent(String(path.dropFirst(projectFolder.count + 1)))
-                inputs[XcodeProjectConverter.xcconfigs]?[path] = try (try? String(contentsOf: file, encoding: .utf8))
-                    .map { .value(try $0.intern()) } ?? .noValue(reason: .initializing)
+                let text: String?
+                if let given = xcconfigTexts[path] {
+                    text = given
+                } else if path.hasPrefix(projectFolder + "/") {
+                    let file = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent(String(path.dropFirst(projectFolder.count + 1)))
+                    text = try? String(contentsOf: file, encoding: .utf8)
+                } else {
+                    text = nil
+                }
+                inputs[XcodeProjectConverter.xcconfigs]?[path] = try text.map { .value(try $0.intern()) } ?? .noValue(reason: .initializing)
                 answered = true
             }
             for path in (output.inputWireSpecs[XcodeProjectConverter.folders] ?? [:]).keys.sorted()
             where inputs[XcodeProjectConverter.folders]?[path] == nil {
                 let relativePath = String(path.dropFirst(projectFolder.count + 1))
                 let isPackage = relativePath.hasPrefix("Modules/") && modules.contains(String(relativePath.dropFirst("Modules/".count)))
+                let given = folderContents[relativePath] ?? FolderContents()
                 inputs[XcodeProjectConverter.folders]?[path] = try manifestValue(
                     path,
-                    files:   isPackage ? NetNewsWireModules.packageFolderFiles : [],
-                    folders: relativePath == "Modules" ? modules : isPackage ? NetNewsWireModules.packageFolderFolders : [])
+                    files:   isPackage ? NetNewsWireModules.packageFolderFiles : given.files,
+                    folders: relativePath == "Modules" ? modules : isPackage ? NetNewsWireModules.packageFolderFolders : given.folders)
                 answered = true
             }
             guard answered else {
-                return (output, (inputs[XcodeProjectConverter.folders] ?? [:]).keys.sorted())
+                return (output, (inputs[XcodeProjectConverter.folders] ?? [:]).keys.sorted(),
+                        (inputs[XcodeProjectConverter.xcconfigs] ?? [:]).keys.sorted())
             }
         }
         throw XCTSkip("the converter still demanded something new after ten passes")
@@ -306,7 +326,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// calls is one an included formula defines, a local package's or a remote one's.
     func test_findsNetNewsWiresPackagesInItsModulesFolderAndDefinesWhatItCalls() throws {
         let modules = NetNewsWireModules.products.keys.sorted()
-        let (output, demandedFolders) = try convertNetNewsWire(modules: modules)
+        let (output, demandedFolders, _) = try convertNetNewsWire(modules: modules)
 
         XCTAssertTrue(demandedFolders.contains("input:/nnw/Modules"))
         for name in modules {
@@ -345,7 +365,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// With no package anywhere, the products the app links from local packages are named
     /// as the cause, not left as funcs nothing defines.
     func test_aLocalProductWithNoLocalPackageIsNamed() throws {
-        let (output, _) = try convertNetNewsWire(modules: [])
+        let (output, _, _) = try convertNetNewsWire(modules: [])
 
         guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]) else {
             XCTFail("expected the missing packages as the formula's error")
@@ -373,5 +393,144 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         }
         let message = try hash.resolveAsString()
         XCTAssertTrue(message.contains("input:/repo/App.xcconfig is missing"), message)
+    }
+
+    // MARK: - NetNewsWire's bundle (B-77)
+
+    /// The part of the Mac folder these tests need, laid out as the clone has it: a xib
+    /// with its string catalog in `MainMenu`, and the Share extension's sources, icon and
+    /// localized xib in `ShareExtension`.
+    private let netNewsWireMacFolder: [String: FolderContents] = [
+        "Mac":                              FolderContents(files: ["AppDelegate.swift"], folders: ["MainMenu", "ShareExtension"]),
+        "Mac/MainMenu":                     FolderContents(folders: ["Base.lproj", "mul.lproj"]),
+        "Mac/MainMenu/Base.lproj":          FolderContents(files: ["MainMenu.xib"]),
+        "Mac/MainMenu/mul.lproj":           FolderContents(files: ["MainMenu.xcstrings"]),
+        "Mac/ShareExtension":               FolderContents(files: ["Info.plist", "ShareViewController.swift", "icon.icns"],
+                                                           folders: ["Base.lproj"]),
+        "Mac/ShareExtension/Base.lproj":    FolderContents(files: ["ShareViewController.xib"]),
+    ]
+
+    private func netNewsWireFormula() throws -> String {
+        let (output, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: netNewsWireMacFolder)
+        return try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+    }
+
+    private let macResources = "NetNewsWire.app/Contents/Resources"
+    private let shareResources = "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/Resources"
+
+    /// A `.lproj` folder inside a synchronized folder is walked, and what it holds lands
+    /// under its language folder: the main menu's xib at `Base.lproj/MainMenu.xib` —
+    /// copied, not yet compiled — and the catalog localizing it through the string catalog
+    /// compiler, whose tables are placed under their languages.
+    func test_aLocalizedFolderInASynchronizedFolderReachesTheBundleUnderItsLanguage() throws {
+        let formula = try netNewsWireFormula()
+
+        XCTAssertTrue(formula.contains("product '\(macResources)/Base.lproj/MainMenu.xib' = "
+                                       + "StaticFile(path: 'input:/nnw/Mac/MainMenu/Base.lproj/MainMenu.xib').output"), formula)
+        XCTAssertTrue(formula.contains("catalog: ['MainMenu.xcstrings': StaticFile(path: 'input:/nnw/Mac/MainMenu/mul.lproj/MainMenu.xcstrings').output]"),
+                      formula)
+        XCTAssertFalse(formula.contains("product '\(macResources)/MainMenu.xib'"), "not flattened: \(formula)")
+    }
+
+    /// `/Localized/ShareExtension/ShareViewController.xib` is the xib in every language
+    /// folder under `ShareExtension`: the app, which owns `Mac`, leaves it out, and the
+    /// Share extension, which borrows it, has it under `Base.lproj` — never a path with
+    /// `/Localized/` in it.
+    func test_aLocalizedExceptionIsTheFileInEveryLanguageFolderOfItsFolder() throws {
+        let formula = try netNewsWireFormula()
+
+        XCTAssertFalse(formula.contains("/Localized/"), formula)
+        XCTAssertFalse(formula.contains("product '\(macResources)/Base.lproj/ShareViewController.xib'"), formula)
+        XCTAssertTrue(formula.contains("product '\(shareResources)/Base.lproj/ShareViewController.xib' = "
+                                       + "StaticFile(path: 'input:/nnw/Mac/ShareExtension/Base.lproj/ShareViewController.xib').output"), formula)
+        XCTAssertTrue(formula.contains("product '\(shareResources)/icon.icns' = StaticFile(path: 'input:/nnw/Mac/ShareExtension/icon.icns').output"),
+                      formula)
+    }
+
+    /// The eight themes are folder references in the app's resources phase, though the
+    /// app owns synchronized folders: each is copied whole, under its own name, into the
+    /// bundle's resources.
+    func test_aFolderReferenceInTheResourcesPhaseIsCopiedWhole() throws {
+        let formula = try netNewsWireFormula()
+
+        for theme in ["Appanoose", "Biblioteca", "Hyperlegible", "NewsFax", "Promenade", "Sepia", "Tiqoe Dark", "Verdana Revival"] {
+            XCTAssertTrue(formula.contains("FolderTreeBuilder(under: '\(theme).nnwtheme', "
+                                           + "folder: ['folder': Folder(path: 'input:/nnw/Themes/\(theme).nnwtheme').manifest]).files"),
+                          "\(theme)\n\(formula)")
+        }
+        XCTAssertFalse(formula.contains("product '\(macResources)/Sepia.nnwtheme'"), formula)
+    }
+
+    /// Every setting the Mac plists name reaches the builder: run over the project's own
+    /// plists with what the formula hands it, none is undefined, and the values are the
+    /// evaluated ones — the signing team's prefix empty, as no team signs.
+    func test_theInfoPlistBuilderIsHandedEverySettingThePlistsName() throws {
+        let formula = try netNewsWireFormula()
+        let bundles = [("NetNewsWire.app/Contents/Info.plist", "Mac/Resources/Info.plist"),
+                       ("NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/Info.plist", "Mac/ShareExtension/Info.plist"),
+                       ("NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/Info.plist", "Mac/SafariExtension/Info.plist")]
+        var plists: [String: [String: Any]] = [:]
+        for (product, basePath) in bundles {
+            plists[basePath] = try buildInfoPlist(product: product, formula: formula, base: basePath)
+        }
+
+        let app = try XCTUnwrap(plists["Mac/Resources/Info.plist"])
+        XCTAssertEqual(app["OrganizationIdentifier"] as? String, "com.ranchero")
+        XCTAssertEqual(app["AppGroup"] as? String, "group.com.ranchero.NetNewsWire-Evergreen-DEBUG")
+        XCTAssertEqual(app["AppIdentifierPrefix"] as? String, "")
+        XCTAssertEqual(app["DeveloperEntitlements"] as? String, "")
+        XCTAssertNil(app["PRODUCT_NAME"], "a build setting is a variable, not an entry")
+        XCTAssertEqual(try XCTUnwrap(plists["Mac/ShareExtension/Info.plist"])["AppGroup"] as? String, "group.com.ranchero.NetNewsWire-Evergreen")
+    }
+
+    /// The plist the formula's `InfoPlistBuilder` for `product` builds over the fixture's
+    /// copy of the project's plist, failing the test if it reports anything undefined.
+    private func buildInfoPlist(product: String, formula: String, base: String) throws -> [String: Any] {
+        let pattern = "product '" + NSRegularExpression.escapedPattern(for: product) + "' =\\n    InfoPlistBuilder\\(\\n"
+                    + "        keys: '([^']*)',\\n        buildSettings: '([^']*)',"
+        let match = try XCTUnwrap(try NSRegularExpression(pattern: pattern).firstMatch(in: formula, range: NSRange(formula.startIndex..., in: formula)),
+                                  "no InfoPlistBuilder for \(product)")
+        let keys = String(formula[try XCTUnwrap(Range(match.range(at: 1), in: formula))])
+        let settings = String(formula[try XCTUnwrap(Range(match.range(at: 2), in: formula))])
+        let node = try InfoPlistBuilder(thisNode: NodeRecord(id: 1, kind: InfoPlistBuilder.kind, name: nil,
+                                                             properties: [InfoPlistBuilder.keysProperty: keys,
+                                                                          InfoPlistBuilder.buildSettingsProperty: settings],
+                                                             scheduled: false, identity: nil))
+        let baseBytes = try Data(contentsOf: XcodeBuildSettingsTests.netNewsWire.appendingPathComponent(base))
+        let output = try node.process(input: ProcessInput(inputValues: [InfoPlistBuilder.base: ["base": .value(try [UInt8](baseBytes).intern())]]))
+        let plist = try XCTUnwrap(output.outputValues[InfoPlistBuilder.output])
+        guard case .value(let hash) = plist else {
+            if case .noValue(.error(let messageHash)) = plist {
+                XCTFail("\(base): \(try messageHash.resolveAsString())")
+            }
+            return [:]
+        }
+        let bytes = try XCTUnwrap(try DataObjectStore.shared.read(hash: hash))
+        return try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String: Any])
+    }
+
+    /// NetNewsWire's `#include?` of a developer's own settings resolves inside `input:`
+    /// when the clone is pushed under a base above it. A clone without the file converts
+    /// without an error, and the port tolerates the absent value, so the idle report does
+    /// not name it; the file stays demanded, so pushing it later is seen — its
+    /// `ORGANIZATION_IDENTIFIER` then reaches the bundle identifier.
+    func test_anOptionalIncludeNobodyPushedIsNotAnErrorAndAPushOfItIsSeen() throws {
+        let developerSettings = "input:/SharedXcodeSettings/DeveloperSettings.xcconfig"
+        let (absent, _, demanded) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: netNewsWireMacFolder)
+
+        XCTAssertTrue(demanded.contains(developerSettings), "\(demanded)")
+        XCTAssertNotNil(absent.inputWireSpecs[XcodeProjectConverter.xcconfigs]?[developerSettings], "still demanded once known absent")
+        XCTAssertTrue(XcodeProjectConverter.descriptor.toleratesAbsentValue(onInputPort: XcodeProjectConverter.xcconfigs))
+        guard case .value = try XCTUnwrap(absent.outputValues[XcodeProjectConverter.infoLog]) else {
+            XCTFail("an optional include nobody pushed is not an error: \(String(describing: absent.outputValues[XcodeProjectConverter.infoLog]))")
+            return
+        }
+        let absentFormula = try XCTUnwrap(absent.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(absentFormula.contains("\"CFBundleIdentifier\":\"com.ranchero.NetNewsWire-Evergreen-DEBUG\""), absentFormula)
+
+        let (present, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: netNewsWireMacFolder,
+                                                     xcconfigs: [developerSettings: "ORGANIZATION_IDENTIFIER = org.example"])
+        let presentFormula = try XCTUnwrap(present.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(presentFormula.contains("\"CFBundleIdentifier\":\"org.example.NetNewsWire-Evergreen-DEBUG\""), presentFormula)
     }
 }

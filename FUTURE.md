@@ -1266,21 +1266,47 @@ application target, simulator only, all library code in packages. In suggested o
       and passes over the `.m` without a word (only a *listed* non-Swift source is
       refused), and no `-import-objc-header` reaches the compiler
       (`XcodeFormulaEmitter.swift`).
-   7. **Localized folders inside a synchronized folder are dropped.**
-      `XcodeProjectConverter.isCompiledWhole` skips every `.lproj`, so the twenty-four
-      `Base.lproj` xibs under `Mac` — `MainMenu.xib` is the app's main nib — and the twelve
-      `mul.lproj/*.xcstrings` that localize them never reach the bundle.
+   7. ~~**Localized folders inside a synchronized folder are dropped.**~~ Done
+      (2026-09-28). A `.lproj` is no longer compiled whole: the converter walks it like
+      any folder (`LocalPackageSearch` still never looks into one), and the emitter
+      places each file by `XcodeFormulaEmitter.resource(at:)` — a `.xcstrings` anywhere,
+      `mul.lproj` included, through the string catalog compiler, whose tables land
+      under their languages as the root catalog's do; any other resource in a language
+      folder copied under it, `MainMenu/Base.lproj/MainMenu.xib` to
+      `Contents/Resources/Base.lproj/MainMenu.xib`, as Food Truck's variant groups are.
+      On the clone all twenty-four `Base.lproj` xibs reach a bundle (twenty-three in the
+      app, the Share extension's in its own, item 9) and the twelve `mul.lproj` catalogs
+      come out as `es.lproj/<Name>.strings`. Pinned by `XcodeProjectConverterTests`
+      over the NetNewsWire fixture.
    8. **Interface Builder files are copied, not compiled.** Every xib reaches
-      `Contents/Resources` as `.xib`; the app loads `.nib`. An `ibtool` node, like the
-      catalog compilers.
-   9. **A localized membership exception is read as a path.** The Share extension
-      borrows `/Localized/ShareExtension/ShareViewController.xib`, Xcode's spelling for
-      the file in every `*.lproj` under `ShareExtension`; the converter makes it
-      `Mac//Localized/…`, which is not there (`XcodeProject.swift`, `borrowedFiles`).
-   10. **Folder references in the resources phase.** The eight `Themes/*.nnwtheme`
-      folders are listed in the app's resources phase and copied whole by Xcode; the
-      emitter reads the resources phase only for a target that lists its sources, so a
-      target on synchronized folders loses them (`XcodeFormulaEmitter.swift`).
+      `Contents/Resources` as `.xib` — under `Base.lproj/` for a localized one, since
+      item 7 — and the app loads `.nib`. An `ibtool` node, like the catalog compilers;
+      a `TODO` on `XcodeFormulaEmitter.resource(at:)` marks the place.
+   9. ~~**A localized membership exception is read as a path.**~~ Done (2026-09-28). What
+      Xcode means was established by building a project of its own (Xcode 26.6): an
+      exception entry `/Localized/<folder>/<name>` in a synchronized folder's set is a
+      localized resource as the navigator shows one — `<folder>/<lang>.lproj/<name>` in
+      every language folder under `<folder>` of the synchronized folder, and, for an
+      Interface Builder file, the string tables of its name there
+      (`<lang>.lproj/<stem>.strings`, `.xcstrings`, `.stringsdict`); a file of the same
+      stem and another type (`de.lproj/Thing.txt`) is not in it. The owner excluding it
+      loses all of them; a target borrowing it gets all of them, placed as item 7
+      places them. `XcodeProject.MembershipException` reads an entry as `.path` or
+      `.localized(folder:name:)`; a `SynchronizedFolder` answers `excludes(_:)` (a path
+      now also leaves out what is under it) and hands the compiler only its paths, and a
+      target's `borrowed` entries keep their lending folder, so the converter walks
+      `Mac/ShareExtension` for the extension and the emitter matches the entry against
+      that folder's listing. The Share extension gets
+      `Base.lproj/ShareViewController.xib`; the app, which excludes the same entry, does
+      not. Pinned by `XcodeProjectTests` and `XcodeProjectConverterTests`.
+   10. ~~**Folder references in the resources phase.**~~ Done (2026-09-28). A file
+      reference whose type is `folder` is a `BuildFile.isFolderReference`, and the
+      emitter copies it whole into the bundle's resources, under its own name, whatever
+      kind of target lists it: `FolderTreeBuilder(under: 'Sepia.nnwtheme', folder: …)`
+      merged into the resources tree. The rest of a resources phase is read for every
+      target now too, not only one that lists its sources, less a file inside the
+      target's own synchronized folders, which the folder already brings. The eight
+      themes arrive whole (`Info.plist`, `stylesheet.css`, `template.html` each).
    11. **Signing and entitlements.** `CODE_SIGN_ENTITLEMENTS =
       Mac/Resources/NetNewsWire.entitlements` (sandbox, app groups); Semel signs
       nothing, and an arm64 app needs at least an ad-hoc signature to launch — with the
@@ -1291,19 +1317,51 @@ application target, simulator only, all library code in packages. In suggested o
       compiler says `no such module 'Minizip'`. A C target nested in the folder of the
       Swift target that depends on it, and excluded from it, is the case to look at in
       `SwiftFormulaConverter.swift`.
-   13. **An optional include inside the input file system is reported as missing.** With
-      the clone pushed under a base one level up, `#include?
-      "../../SharedXcodeSettings/DeveloperSettings.xcconfig"` resolves inside `input:`,
-      is demanded, and the idle report lists `StaticFile
-      'input:/SharedXcodeSettings/DeveloperSettings.xcconfig' has not been pushed` among
-      the errors, though the include is optional and the converter moves on.
-   14. **An Info.plist file may name any build setting.** The app's and the extensions'
-      `Info.plist` files say `$(ORGANIZATION_IDENTIFIER)`, `$(APP_GROUP_ID)`,
-      `$(DEVELOPER_ENTITLEMENTS)` and `$(AppIdentifierPrefix)`, and `InfoPlistBuilder`
-      reports them undefined: the emitter hands it four settings (`PRODUCT_NAME`,
-      `PRODUCT_BUNDLE_IDENTIFIER`, `PRODUCT_MODULE_NAME`, `TARGET_NAME`), though the
-      settings evaluate every one but `AppIdentifierPrefix`, which Xcode supplies from
-      the signing team (`XcodeFormulaEmitter.swift`, the Info.plist block).
+   13. ~~**An optional include inside the input file system is reported as missing.**~~
+      Done (2026-09-28). The `xcconfigs` port of `XcodeProjectConverter` tolerates an
+      absent value (`inputPortsToleratingAbsentValue`, as the Swift converter's
+      `dependencyLocks`), so the idle report does not name an xcconfig nobody pushed;
+      the converter itself names what is really missing — the root, a plain include
+      found nowhere — as the cause of the settings left undefined, as before. The file
+      stays demanded once known absent rather than dropped: the wire is what wakes the
+      converter when the file is pushed later, and a dropped demand would leave the
+      push unseen until something else re-ran it. The same tolerance covers the first
+      of a plain include's two places when the file is in the second, which the report
+      named too. Pinned by `XcodeProjectConverterTests`: absent, the conversion has no
+      error and keeps the demand; present, its `ORGANIZATION_IDENTIFIER` reaches the
+      bundle identifier.
+   14. ~~**An Info.plist file may name any build setting.**~~ Done (2026-09-28). The
+      emitter hands `InfoPlistBuilder` the target's whole evaluated settings, typed, as
+      one JSON dictionary on a new `buildSettings` property: variables a `$(NAME)`
+      resolves to, never entries — where the four it used to hand over were ordinary
+      properties and so also keys of the plist (`PRODUCT_NAME` among them). Reading the
+      plist's `$(…)` names instead would have meant demanding every target's plist
+      before the formula could be written, for a smaller literal. `AppIdentifierPrefix`
+      and `TeamIdentifierPrefix` default to empty in `XcodeBuildSettings`, with a note:
+      Xcode takes them from the signing team, and an unsigned Xcode build
+      (`CODE_SIGNING_ALLOWED=NO`) gives them empty too. The settings also gained what
+      Xcode provides beneath every level — `DEVELOPMENT_LANGUAGE` from the project's
+      `developmentRegion`, `PRODUCT_BUNDLE_PACKAGE_TYPE` from the product type — and
+      `EXECUTABLE_NAME` as `$(PRODUCT_NAME)`, which the plists name as well. On the
+      clone the three Mac plists build: `AppGroup` is
+      `group.com.ranchero.NetNewsWire-Evergreen-DEBUG`, `AppIdentifierPrefix` empty.
+      Pinned by `XcodeProjectConverterTests`, running the builder the formula names
+      over the three plists, copied into the fixture under `Mac/`.
+   15. **A borrowed asset catalog is dropped.** The iOS Share extension borrows
+      `Resources/Assets.xcassets` from the `iOS` folder; the emitter compiles a
+      target's own folders' catalogs and its resources phase's, not a borrowed one, which
+      it passes over as not a copied resource. Seen reading the exception sets, not met
+      on the Mac build; for the iOS app.
+
+   Checked again (2026-09-28) after 7, 9, 10, 13 and 14, on a fresh clone pushed under
+   its parent, with Sparkle and PLCrashReporter replaced by stub packages as before
+   (their locks' `content` lines rewritten): 329 nodes, and the build stops at 5
+   (`RSCoreObjC` and `RSDatabaseObjC`, `@import` with modules disabled, then no module
+   `RSDatabaseObjC`) and 12 (`no such module 'Minizip'`) and nothing else; 4 and 6 are
+   still behind 5. The report names no unpushed file. Everything the app's bundle
+   needs from its resources is in the output: the Info.plists of the app and both
+   extensions, `Assets.car`, `AppIcon.icns`, the twenty-four `Base.lproj` xibs,
+   the twelve compiled catalogs, the themes, `NetNewsWire.sdef`.
 
    Not in the way: the seventeen `.dynamic` products, which the app embeds as frameworks,
    link statically into the executable as the emitter links every package's objects

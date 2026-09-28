@@ -27,8 +27,11 @@ public struct XcodeProjectConverter: Node {
     /// layers them — includes demanded and followed, a configuration based on a file in a
     /// synchronized folder, an extension's own file, `config=` conditions (B-77); at 5, the
     /// synchronized folders are looked into for local packages, and every package found is
-    /// included (B-77).
-    public static let implementationVersion = 5
+    /// included (B-77); at 6, `.lproj` folders are walked and their files placed under
+    /// their language, a `/Localized/…` exception names a localized resource, a resources
+    /// phase's folder reference is copied whole, and the Info.plist builder is handed every
+    /// evaluated setting (B-77).
+    public static let implementationVersion = 6
 
     // MARK: Ports
 
@@ -64,9 +67,20 @@ public struct XcodeProjectConverter: Node {
 
     /// Every port is dynamic: the node wires them from `path` itself, and a required port
     /// would have to be wired before the node exists.
+    ///
+    /// An xcconfig nobody pushed is a state the converter reads, not a failure of its
+    /// wire: an `#include?` of a developer's own file (NetNewsWire's
+    /// `../../SharedXcodeSettings/DeveloperSettings.xcconfig`, inside `input:` when the
+    /// clone is pushed under a base above it) is expected to be absent, and so is the
+    /// first of the two places a plain include is looked for when it is in the second.
+    /// The converter names what is really missing — the root, a plain include found
+    /// nowhere — as the cause of the settings it leaves undefined, on `infoLog`. The
+    /// absent file is still demanded, not dropped once known absent: the wire is what a
+    /// later push of it wakes the converter through.
     public static let descriptor = NodeDescriptor(
         inputPorts: [.dynamic(projectFile), .dynamic(xcconfigs), .dynamic(folders)],
-        outputPorts: [formulaOutput, infoLog]
+        outputPorts: [formulaOutput, infoLog],
+        inputPortsToleratingAbsentValue: [xcconfigs]
     )
 
     // MARK: Properties
@@ -164,9 +178,26 @@ public struct XcodeProjectConverter: Node {
         let manifests = FolderTreeWalk.manifests(in: input, port: Self.folders)
         let arrived = Dictionary(uniqueKeysWithValues: manifests.map { ($0.key, $0.manifest) })
         // The application's folders and every embedded extension's: each is a bundle
-        // whose resources come from its own folder.
+        // whose resources come from its own folder. A localized resource one of them
+        // borrows (`/Localized/ShareExtension/…`) is found by walking the folder in the
+        // lending folder that holds its language folders, and listed with the lender.
         let sourceFolders = bundleTargets.flatMap(\.synchronizedFolders).map { "\(projectFolder)/\($0.path)" }
-        var demanded: [String] = sourceFolders
+        let borrowedLocalized = bundleTargets.flatMap(\.borrowedLocalizedResources)
+        let lendingFolders = borrowedLocalized.map { "\(projectFolder)/\($0.folder)" }
+        let borrowedWalks = borrowedLocalized.compactMap { borrowed -> String? in
+            guard case .localized(let folder, _) = borrowed.exception else {
+                return nil
+            }
+            return folder.isEmpty ? "\(projectFolder)/\(borrowed.folder)" : "\(projectFolder)/\(borrowed.folder)/\(folder)"
+        }
+        var demanded: [String] = []
+        var seen = Set<String>()
+        func demand(_ folder: String) {
+            if seen.insert(folder).inserted {
+                demanded.append(folder)
+            }
+        }
+        (sourceFolders + borrowedWalks).forEach(demand)
         var index = 0
         while index < demanded.count {
             let folder = demanded[index]
@@ -177,7 +208,7 @@ public struct XcodeProjectConverter: Node {
             }
             // A catalog is compiled whole by its own node, which walks it itself.
             for entry in manifest.entries where entry.isFolder && entry.isPinned && !Self.isCompiledWhole(entry.name) {
-                demanded.append("\(folder)/\(entry.name)")
+                demand("\(folder)/\(entry.name)")
             }
         }
 
@@ -227,7 +258,7 @@ public struct XcodeProjectConverter: Node {
         }
 
         var listings: [String: XcodeFormulaEmitter.FolderListing] = [:]
-        for sourceFolder in sourceFolders {
+        for sourceFolder in Set(sourceFolders + lendingFolders).sorted() {
             var listing = XcodeFormulaEmitter.FolderListing()
             for folder in demanded where folder == sourceFolder || folder.hasPrefix(sourceFolder + "/") {
                 guard let manifest = arrived[folder] else { continue }
@@ -336,10 +367,10 @@ public struct XcodeProjectConverter: Node {
     }
 
     /// Folders whose contents are one compiled unit: never walked, so their files are not
-    /// mistaken for resources of their own.
+    /// mistaken for resources of their own. A `.lproj` is walked: its files are
+    /// resources, each placed under its language folder.
     static func isCompiledWhole(_ folderName: String) -> Bool {
-        folderName.hasSuffix(".xcassets") || folderName.hasSuffix(".icon") || folderName.hasSuffix(".lproj")
-            || folderName.hasSuffix(".xcdatamodeld")
+        folderName.hasSuffix(".xcassets") || folderName.hasSuffix(".icon") || folderName.hasSuffix(".xcdatamodeld")
     }
 
     private func pending(_ reason: String, specs: [String: [String: GraphSpecNode]]) -> ProcessOutput {

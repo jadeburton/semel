@@ -210,7 +210,7 @@ final class XcodeProjectTests: XCTestCase {
         let folders = try app().synchronizedFolders
 
         XCTAssertEqual(folders.map(\.path), ["IceCubesApp"])
-        XCTAssertEqual(folders.first?.exceptions, ["Embeds/glass.wav", "Info.plist"])
+        XCTAssertEqual(folders.first?.exceptions.map(\.spelling), ["Embeds/glass.wav", "Info.plist"])
     }
 
     /// The project's Debug configuration is based on an xcconfig; the target's is not, and
@@ -244,7 +244,7 @@ final class XcodeProjectTests: XCTestCase {
                                              "IceCubesNotifications/NotificationService.swift"],
                        "from another target's folder and from a folder no target owns alike")
         XCTAssertEqual(share.synchronizedFolders.map(\.path), ["IceCubesShareExtension"])
-        XCTAssertEqual(try app().synchronizedFolders.first?.exceptions, ["Embeds/glass.wav", "Info.plist"])
+        XCTAssertEqual(try app().synchronizedFolders.first?.exceptions.map(\.spelling), ["Embeds/glass.wav", "Info.plist"])
     }
 
     /// NetNewsWire's `Shared` folder is owned by both apps, and each names in it the files
@@ -258,12 +258,71 @@ final class XcodeProjectTests: XCTestCase {
         let share = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire Share Extension" })
 
         XCTAssertEqual(mac.borrowedFiles, [])
-        XCTAssertEqual(mac.synchronizedFolders.first { $0.path == "Shared" }?.exceptions,
+        XCTAssertEqual(mac.synchronizedFolders.first { $0.path == "Shared" }?.exceptions.map(\.spelling),
                        ["ShareExtension/SafariExt.js", "ShareExtension/ShareDefaultContainer.swift", "Widget/WidgetData.swift",
                         "Widget/WidgetDataDecoder.swift", "Widget/WidgetDataEncoder.swift", "Widget/WidgetDeepLinks.swift"])
         XCTAssertTrue(share.borrowedFiles.contains("Shared/ShareExtension/ShareDefaultContainer.swift"),
                       "a target that owns neither folder still borrows from both")
         XCTAssertTrue(share.borrowedFiles.contains("Mac/ShareExtension/ShareViewController.swift"))
+    }
+
+    /// An exception with a leading `/Localized/` is no path: it is a localized resource,
+    /// the file in each language folder of the folder it names, and — for an Interface
+    /// Builder file — the string tables that localize it. What Xcode 26.6 built for such
+    /// a set is in `MembershipException`'s comment.
+    func test_aLocalizedExceptionNamesTheFileInEveryLanguageFolderOfItsFolder() {
+        let exception = XcodeProject.MembershipException("/Localized/Sub/Thing.xib")
+
+        XCTAssertEqual(exception, .localized(folder: "Sub", name: "Thing.xib"))
+        XCTAssertEqual(exception.spelling, "/Localized/Sub/Thing.xib")
+        XCTAssertNil(exception.path)
+        XCTAssertTrue(exception.matches("Sub/Base.lproj/Thing.xib"))
+        XCTAssertTrue(exception.matches("Sub/fr.lproj/Thing.xib"))
+        XCTAssertTrue(exception.matches("Sub/mul.lproj/Thing.xcstrings"), "the catalog localizing the xib")
+        XCTAssertTrue(exception.matches("Sub/fr.lproj/Thing.strings"))
+        XCTAssertFalse(exception.matches("Sub/de.lproj/Thing.txt"), "another file of the same name is another resource")
+        XCTAssertFalse(exception.matches("Sub/Base.lproj/Other.xib"))
+        XCTAssertFalse(exception.matches("Sub/Thing.xib"), "in no language folder")
+        XCTAssertFalse(exception.matches("Other/Sub/Base.lproj/Thing.xib"), "in another folder")
+
+        let atTheRoot = XcodeProject.MembershipException("/Localized/Plain.txt")
+        XCTAssertTrue(atTheRoot.matches("en.lproj/Plain.txt"))
+        XCTAssertFalse(atTheRoot.matches("Sub/en.lproj/Plain.txt"))
+        XCTAssertFalse(atTheRoot.matches("en.lproj/Plain.strings"), "only an Interface Builder file has tables of its name")
+
+        XCTAssertEqual(XcodeProject.MembershipException("ShareExtension/icon.icns"), .path("ShareExtension/icon.icns"))
+        XCTAssertTrue(XcodeProject.MembershipException("Resources/Assets.xcassets").matches("Resources/Assets.xcassets/Contents.json"),
+                      "a folder left out leaves out what is in it")
+    }
+
+    /// NetNewsWire's Share extension borrows its xib as a localized resource of the `Mac`
+    /// folder, which the Mac app — the folder's owner — leaves out the same way.
+    func test_readsNetNewsWiresLocalizedExceptionsAsLocalizedResources() throws {
+        let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: pbxproj))
+        let mac = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire" })
+        let share = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire Share Extension" })
+        let macFolder = try XCTUnwrap(mac.synchronizedFolders.first { $0.path == "Mac" })
+
+        XCTAssertEqual(share.borrowedLocalizedResources,
+                       [XcodeProject.Borrowed(folder: "Mac", exception: .localized(folder: "ShareExtension", name: "ShareViewController.xib"))])
+        XCTAssertFalse(share.borrowedFiles.contains { $0.contains("Localized") }, "\(share.borrowedFiles)")
+        XCTAssertTrue(macFolder.excludes("ShareExtension/Base.lproj/ShareViewController.xib"))
+        XCTAssertFalse(macFolder.excludes("MainMenu/Base.lproj/MainMenu.xib"))
+        XCTAssertFalse(macFolder.excludedPaths.contains { $0.contains("Localized") }, "\(macFolder.excludedPaths)")
+    }
+
+    /// The themes are folder references in both apps' resources phases: a folder Xcode
+    /// copies whole, told apart from a file by its type.
+    func test_readsAFolderReferenceInTheResourcesPhase() throws {
+        let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: pbxproj))
+        let mac = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire" })
+
+        XCTAssertEqual(mac.resourceFiles.filter(\.isFolderReference).map(\.path),
+                       ["Themes/Appanoose.nnwtheme", "Themes/Biblioteca.nnwtheme", "Themes/Hyperlegible.nnwtheme", "Themes/NewsFax.nnwtheme",
+                        "Themes/Promenade.nnwtheme", "Themes/Sepia.nnwtheme", "Themes/Tiqoe Dark.nnwtheme", "Themes/Verdana Revival.nnwtheme"])
+        XCTAssertFalse(try app().resourceFiles.contains(where: \.isFolderReference), "a catalog is no folder reference")
     }
 
     func test_readsWhatTheTargetLinksAndEmbeds() throws {
