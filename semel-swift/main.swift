@@ -67,6 +67,9 @@ do {
     let report = try Preparation.run(folder: folder, platform: platform, xcconfigSources: xcconfigSources)
     if let project = report.project {
         print("Project: \(project)")
+        for package in report.localPackages {
+            print("  local package \(package.lastPathComponent) (\(package.path))")
+        }
     } else {
         print("Roots:")
         for root in report.roots {

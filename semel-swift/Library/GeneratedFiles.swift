@@ -105,9 +105,10 @@ public enum GeneratedFiles {
 
     /// The config namespaces the formula for a project selects from: what the project
     /// converter emits for its own targets reads, and what the package formulas it
-    /// includes read.
-    public static var projectNamespaces: [String] {
-        XcodeProjectConverter.configNamespaces + SemelSwift.converterConfigNamespaces
+    /// includes read — the clang ones only when one of those packages has a C-family
+    /// target, as for a tree.
+    public static func projectNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {
+        XcodeProjectConverter.configNamespaces + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
     }
 
     /// The highest deployment version the packages declare for the platform, or nil when

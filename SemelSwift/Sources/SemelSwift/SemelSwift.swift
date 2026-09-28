@@ -57,12 +57,6 @@ public enum SemelSwift {
 
     // MARK: - What a converted package reads
 
-    /// The config namespaces the formula `SwiftFormulaConverter` emits selects from. For
-    /// `semel-swift prepare`, which writes a config block for each and no other.
-    public static var converterConfigNamespaces: [String] {
-        SwiftFormulaConverter.configNamespaces
-    }
-
     /// The namespaces the converter's formula for a tree selects from: the Swift ones, and
     /// the clang ones only when a target is compiled through clang (B-110).
     public static func converterConfigNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {

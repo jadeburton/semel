@@ -1083,10 +1083,11 @@ application target, simulator only, all library code in packages. In suggested o
    least an ad-hoc signature to launch, and Semel writes none, so the bundle is inspected
    rather than run. Left as copies rather than compiled, said here rather than
    silently: a storyboard, a xib, a Core Data model, a Metal file listed among a target's
-   resources; a listed source that is not Swift is refused by name. Two things `prepare`
-   writes for a project that a Swift-only one reports as unused keys on every build —
-   the `clang.*` project blocks, and the string catalog compiler's machine block when no
-   `.xcstrings` exists — are noise worth silencing at the writer. A package *tree* with
+   resources; a listed source that is not Swift is refused by name. `prepare` no longer
+   writes a project the `clang.*` blocks unless one of its local packages or vendored
+   dependencies has a C-family target (with NetNewsWire, below); the string catalog
+   compiler's machine block when no `.xcstrings` exists is still reported as unused
+   keys on every build, noise worth silencing at the writer. A package *tree* with
    resources still wants the `apple.*` namespaces in its config, which `prepare` does
    not write for a tree.
 2. *NetNewsWire* — `open`; the settings are done (2026-09-28), the build is not. Pinned
@@ -1165,14 +1166,38 @@ application target, simulator only, all library code in packages. In suggested o
       folder collision is fixed and its 58 sources compile (B-134, B-55 done 6–8); what
       is left is B-55's residuals 1, 2, 4, 5 and 7 — Foundation and `-lc++` at link, no
       generated module map for `import CrashReporter`, the `.S` source, and ARC.
-   3. **The local packages are not found.** Xcode finds the seventeen packages under
-      `Modules/` because `Modules` is a synchronized folder holding package folders;
-      the product dependencies (`Account`, `RSCore`, …) name no package reference.
-      `XcodeProject.localPackagePaths` reads only `wrapper` file references, so the
-      formula includes the three remote packages and names `modules_Account()` and
-      fourteen more that nothing defines. The converter would walk a synchronized folder
-      for children holding a `Package.swift` (`XcodeProject.swift`,
-      `XcodeProjectConverter.swift`).
+   3. ~~**The local packages are not found.**~~ Done (2026-09-28). Xcode finds the
+      seventeen packages under `Modules/` because `Modules` is a synchronized folder,
+      owned by no target, holding package folders; the fifteen product dependencies
+      (`Account`, `RSCore`, `RSCoreResources`, …) name no package, and Xcode finds each
+      by name among the local packages. `XcodeProject` now reads every way a project
+      declares one — a `wrapper` file reference resolved through its groups, an
+      `XCLocalSwiftPackageReference`'s `relativePath` — and lists every synchronized
+      folder, owned or not. `LocalPackageSearch` looks into each synchronized folder and,
+      a pass later, each folder directly in it (not catalogs, `.lproj`s or hidden
+      folders), and a folder holding a `Package.swift` is a package; the converter asks
+      on its `folders` port, one level per pass, and a folder that is not there holds
+      none. Every package found is included, as Xcode puts every one in the workspace, so
+      a product is found by name among the funcs the included formulas define —
+      `RSCoreResources` in `RSCore`'s. A local product with no local package at all is
+      now the converter's error, naming the products and the folders looked in.
+      `XcodeProjectFacts.localPackagePaths` finds the same packages on the disk for
+      `prepare`, which lists them and decides the clang blocks over them and the vendored
+      packages (a project with none gets none now). XcodeProjectConverter v5. Pinned by
+      `XcodeProjectTests`, `XcodeProjectConverterTests` (the converter run pass by pass
+      over the fixture's project file for the Mac, every `modules_`/`objects_`/`bundles_`
+      call defined by an included package) and `PrepareTests`. The fixture does not copy
+      the seventeen manifests — a `Package.swift` under this repository is one `prepare`
+      would take for Semel's own — so `NetNewsWireModules` in the tests holds their
+      products as `dump-package` read them at the pinned commit. Not looked for: a
+      package deeper in a synchronized folder, a synchronized folder that is itself a
+      package, a package behind a folder reference (`lastKnownFileType = folder`).
+
+      Checked on a clone with Sparkle and PLCrashReporter replaced by stub packages (1
+      and, before B-134 landed, 2 were in the way): `prepare` lists the seventeen, the formula resolves,
+      and the build compiles the local packages (254 nodes, the extensions' bundles and
+      every package resource bundle written) and stops at 5, 9 and three new ones, 12
+      to 14; 4 is behind 5, `Account` never compiling.
    4. **`SecretKey.swift` is generated before the build.**
       `Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb` becomes `SecretKey.swift`
       through the scheme's pre-action, `buildscripts/updateSecrets.sh` (gyb, in Python),
@@ -1181,7 +1206,12 @@ application target, simulator only, all library code in packages. In suggested o
       could generate it.
    5. **Objective-C in the packages.** `RSDatabase` has an Objective-C target
       (`RSDatabaseObjC`, FMDB) and `RSCore` another (`RSCoreObjC`); B-55 compiles C targets and counts
-      `.m` as C-family, but ARC Objective-C through a package has not been built.
+      `.m` as C-family, but ARC Objective-C through a package has not been built. Met
+      now that the packages are found: every header starts `@import Foundation;` (or
+      `AppKit`), and clang says `use of '@import' when modules are disabled`, then knows
+      no `NSString`; SwiftPM compiles such a target with `-fmodules` and `-fobjc-arc`.
+      `RSDatabase`'s Swift target then finds no module `RSDatabaseObjC`. The ARC half is
+      B-55's residual 7; `-fmodules` for an Objective-C target is not yet among them.
    6. **Objective-C in the app.** `Mac/NSOpenPanel+Extras.m` and the bridging header
       `SWIFT_OBJC_BRIDGING_HEADER = Mac/NetNewsWire-Bridging-Header.h`, which imports
       it and `WKPreferencesPrivate.h`. The emitter compiles a synchronized folder's Swift
@@ -1207,6 +1237,25 @@ application target, simulator only, all library code in packages. In suggested o
       Mac/Resources/NetNewsWire.entitlements` (sandbox, app groups); Semel signs
       nothing, and an arm64 app needs at least an ad-hoc signature to launch — with the
       entitlements, for an app-group container.
+   12. **Zip's Swift target does not see its C target.** Zip declares `Minizip` at
+      `path: "Zip/minizip"` — inside the Swift target `Zip`'s folder, which excludes
+      `minizip` — and `Zip.swift` has `@_implementationOnly import Minizip`; the
+      compiler says `no such module 'Minizip'`. A C target nested in the folder of the
+      Swift target that depends on it, and excluded from it, is the case to look at in
+      `SwiftFormulaConverter.swift`.
+   13. **An optional include inside the input file system is reported as missing.** With
+      the clone pushed under a base one level up, `#include?
+      "../../SharedXcodeSettings/DeveloperSettings.xcconfig"` resolves inside `input:`,
+      is demanded, and the idle report lists `StaticFile
+      'input:/SharedXcodeSettings/DeveloperSettings.xcconfig' has not been pushed` among
+      the errors, though the include is optional and the converter moves on.
+   14. **An Info.plist file may name any build setting.** The app's and the extensions'
+      `Info.plist` files say `$(ORGANIZATION_IDENTIFIER)`, `$(APP_GROUP_ID)`,
+      `$(DEVELOPER_ENTITLEMENTS)` and `$(AppIdentifierPrefix)`, and `InfoPlistBuilder`
+      reports them undefined: the emitter hands it four settings (`PRODUCT_NAME`,
+      `PRODUCT_BUNDLE_IDENTIFIER`, `PRODUCT_MODULE_NAME`, `TARGET_NAME`), though the
+      settings evaluate every one but `AppIdentifierPrefix`, which Xcode supplies from
+      the signing team (`XcodeFormulaEmitter.swift`, the Info.plist block).
 
    Not in the way: the seventeen `.dynamic` products, which the app embeds as frameworks,
    link statically into the executable as the emitter links every package's objects

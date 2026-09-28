@@ -6,8 +6,10 @@
 //  package manifest into one: a formula names the project —
 //  `include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>).formula` —
 //  and the node wires what it needs itself: the project file, the xcconfig files it
-//  names and the files they include, and the manifests of the folders that are the targets' sources, walked to
-//  every subfolder so the resources in them are known. No tool runs; the project file is
+//  names and the files they include, the manifests of the folders that are the targets' sources, walked to
+//  every subfolder so the resources in them are known, and those of every synchronized
+//  folder and the folders directly in it, where Xcode finds local packages the project
+//  file does not name (`LocalPackageSearch`). No tool runs; the project file is
 //  a property list. `XcodeProject` reads it, `XcodeBuildSettings` evaluates it, and
 //  `XcodeFormulaEmitter` writes the formula; this node owns the wires and the waiting.
 
@@ -23,8 +25,10 @@ public struct XcodeProjectConverter: Node {
     /// a target's literals are a `SettingsLiteral` under a `ConfigMerger` where they were a
     /// `Configuration`'s properties (B-120); at 4, xcconfig files are read the way Xcode
     /// layers them — includes demanded and followed, a configuration based on a file in a
-    /// synchronized folder, an extension's own file, `config=` conditions (B-77).
-    public static let implementationVersion = 4
+    /// synchronized folder, an extension's own file, `config=` conditions (B-77); at 5, the
+    /// synchronized folders are looked into for local packages, and every package found is
+    /// included (B-77).
+    public static let implementationVersion = 5
 
     // MARK: Ports
 
@@ -34,7 +38,9 @@ public struct XcodeProjectConverter: Node {
     /// include, keyed by path. One the clone does not have arrives without a value: an
     /// `#include?` then moves on, and anything else is read as empty and reported.
     static let xcconfigs = "xcconfigs"
-    /// The targets' synchronized folders and every folder under them, keyed by path.
+    /// The targets' synchronized folders and every folder under them, and every other
+    /// synchronized folder of the project with the folders directly in it — where local
+    /// packages are found — keyed by path.
     static let folders = "folders"
     static let formulaOutput = "formula"
     static let infoLog = "infoLog"
@@ -175,11 +181,49 @@ public struct XcodeProjectConverter: Node {
             }
         }
 
+        // ── the local packages in the synchronized folders ──────────────────
+        // On the same port: a folder a target owns is asked about by both walks and is
+        // one wire. A folder that is not there holds no package, where a target's missing
+        // folder is waited on; the difference is that no target needs this one.
+        let folderValues = input.inputValues[Self.folders] ?? [:]
+        let packageSearch = LocalPackageSearch(project: project) { relativePath in
+            guard let path = Self.inputPath(of: relativePath, in: projectFolder) else {
+                return LocalPackageSearch.Contents()
+            }
+            if let manifest = arrived[path] {
+                return LocalPackageSearch.Contents(manifest)
+            }
+            switch folderValues[path] {
+            case nil, .noValue(.pending):
+                return nil
+            case .value, .noValue:
+                return LocalPackageSearch.Contents()
+            }
+        }
+        for path in packageSearch.asked.compactMap({ Self.inputPath(of: $0, in: projectFolder) }) {
+            specs[Self.folders]?[path] = .folderManifest(at: path)
+        }
+
         guard !expansions.values.contains(where: \.isWaiting) else {
             return pending("waiting for the xcconfig files", specs: specs)
         }
         guard demanded.allSatisfy({ arrived[$0] != nil }) else {
             return pending("walking the target's folders", specs: specs)
+        }
+        guard packageSearch.isComplete else {
+            return pending("looking for local packages in the synchronized folders", specs: specs)
+        }
+        let localProducts = bundleTargets.flatMap(\.packageProducts).compactMap { product -> String? in
+            guard case .local(let name) = product else {
+                return nil
+            }
+            return name
+        }
+        guard localProducts.isEmpty || !packageSearch.packagePaths.isEmpty else {
+            let folders = project.synchronizedFolderPaths.isEmpty ? "none" : project.synchronizedFolderPaths.joined(separator: ", ")
+            return failed("\(application.name) links \(Set(localProducts).sorted().joined(separator: ", ")) from local packages, "
+                          + "and the project has none: it declares no package folder, and no folder directly in a synchronized "
+                          + "folder (\(folders)) holds a \(LocalPackageSearch.manifestName)", specs: specs)
         }
 
         var listings: [String: XcodeFormulaEmitter.FolderListing] = [:]
@@ -202,7 +246,7 @@ public struct XcodeProjectConverter: Node {
         // ── the formula ──────────────────────────────────────────────────────
         let build = XcodeFormulaEmitter.Build(root: try buildRoot, projectFolder: projectFolder,
                                               configuration: configurationName, sdk: sdk)
-        let emitter = XcodeFormulaEmitter(project: project, build: build)
+        let emitter = XcodeFormulaEmitter(project: project, build: build, localPackagePaths: packageSearch.packagePaths)
         let formula = try emitter.formula(
             settings: { target in
                 try XcodeBuildSettings.resolve(project: project, target: target, configuration: self.configurationName, sdk: self.sdk,

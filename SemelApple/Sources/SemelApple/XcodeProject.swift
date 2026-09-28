@@ -30,7 +30,11 @@ struct XcodeProject {
 
     enum PackageProduct: Equatable {
         /// A product of a package in the project's own tree — a `Packages/Timeline`
-        /// wrapper — which the project names by product only.
+        /// wrapper, an `XCLocalSwiftPackageReference`, a package folder in a synchronized
+        /// folder — which the project names by product only. Xcode finds the product by
+        /// name among every local package of the project, and so does the formula: each
+        /// local package's formula is included and defines `modules_<Product>()` for the
+        /// products it vends (`LocalPackageSearch`).
         case local(product: String)
         /// A product of a remote package, with the repository the project declares.
         case remote(product: String, repositoryURL: String)
@@ -119,9 +123,16 @@ struct XcodeProject {
 
     let configurations: [BuildConfiguration]
     let targets: [Target]
-    /// Local packages the project references as folder wrappers, relative to the project
-    /// folder: `Packages/Timeline`.
+    /// Local packages the project declares, relative to the project folder: a folder
+    /// wrapper among its file references (`Packages/Timeline`), or an
+    /// `XCLocalSwiftPackageReference`'s `relativePath`. Not the packages Xcode finds in a
+    /// synchronized folder, which the project file does not name: `LocalPackageSearch`
+    /// adds those from the folders' contents.
     let localPackagePaths: [String]
+    /// Every synchronized folder of the project, relative to the project folder, whether
+    /// or not a target owns it: NetNewsWire's `Modules` belongs to no target and holds its
+    /// seventeen packages.
+    let synchronizedFolderPaths: [String]
     /// Remote packages the project declares, by repository URL.
     let remotePackageURLs: [String]
 
@@ -167,13 +178,24 @@ struct XcodeProject {
 
         configurations = try reader.configurations(listID: root["buildConfigurationList"] as? String)
 
-        // Local packages are folder wrappers among the project's file references; remote
-        // ones are declared objects. Neither says which products it vends — the
-        // package's own manifest does, which the package's converter reads.
-        localPackagePaths = objects.values
-            .filter { $0["isa"] as? String == "PBXFileReference" && $0["lastKnownFileType"] as? String == "wrapper" }
-            .compactMap { $0["path"] as? String }
-            .sorted()
+        // A local package is declared as a folder wrapper among the project's file
+        // references, resolved through its groups, or — Xcode 15 onwards — as a package
+        // reference with a path relative to the project's folder. Remote ones are declared
+        // objects. None says which products it vends — the package's own manifest does,
+        // which the package's converter reads.
+        localPackagePaths = Set(objects.compactMap { id, object -> String? in
+            switch object["isa"] as? String {
+            case "PBXFileReference" where object["lastKnownFileType"] as? String == "wrapper":
+                return reader.path(of: id)
+            case "XCLocalSwiftPackageReference":
+                return object["relativePath"] as? String
+            default:
+                return nil
+            }
+        }).sorted()
+        synchronizedFolderPaths = Set(objects.compactMap { id, object -> String? in
+            object["isa"] as? String == "PBXFileSystemSynchronizedRootGroup" ? reader.path(of: id) : nil
+        }).sorted()
         remotePackageURLs = objects.values
             .filter { $0["isa"] as? String == "XCRemoteSwiftPackageReference" }
             .compactMap { $0["repositoryURL"] as? String }
@@ -201,7 +223,7 @@ struct XcodeProject {
             }
         }
         for (groupID, group) in objects where group["isa"] as? String == "PBXFileSystemSynchronizedRootGroup" {
-            guard let path = group["path"] as? String else {
+            guard let path = reader.path(of: groupID) else {
                 continue
             }
             for exceptionID in group["exceptions"] as? [String] ?? [] {
@@ -386,7 +408,7 @@ struct XcodeProject {
             // listed are left out, and a set naming another target says what that target
             // takes from here, which is not this target's business.
             let synchronizedFolders = (target["fileSystemSynchronizedGroups"] as? [String] ?? []).compactMap { groupID -> SynchronizedFolder? in
-                guard let group = object(groupID), let path = group["path"] as? String else {
+                guard let group = object(groupID), let path = path(of: groupID) else {
                     return nil
                 }
                 let exceptions = (group["exceptions"] as? [String] ?? [])

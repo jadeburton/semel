@@ -4,7 +4,8 @@
 //
 //  What a tool outside the engine needs to know about a project before the build:
 //  `semel-swift prepare` writes a config whose target triple carries the deployment
-//  version, and puts in place the xcconfig files the project names, and asks here rather
+//  version and the settings blocks the project's local packages read, and puts in place
+//  the xcconfig files the project names, and asks here rather
 //  than reading the project itself. The reading and the evaluation are the converter's;
 //  these are the same questions, answered the same way, over the disk rather than over
 //  wires.
@@ -28,6 +29,37 @@ public enum XcodeProjectFacts {
             return []
         }
         return read.xcconfigPaths(for: read.bundleTargets(of: application), configuration: configuration)
+    }
+
+    /// Every local package of the project, relative to the project's folder, as the
+    /// converter finds them: the ones the project declares, and every folder directly in
+    /// one of its synchronized folders that holds a `Package.swift`. Sorted. The packages
+    /// Xcode resolves a product dependency among, so the ones whose languages decide the
+    /// config `prepare` writes.
+    public static func localPackagePaths(ofProjectAt project: URL) throws -> [String] {
+        let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
+        let read = try XcodeProject(pbxproj: data)
+        let folder = project.deletingLastPathComponent()
+        return LocalPackageSearch(project: read) { relativePath in
+            contents(ofFolderAt: folder.appendingPathComponent(relativePath).standardizedFileURL)
+        }.packagePaths
+    }
+
+    /// A folder on disk as the search reads a folder manifest: its files and its
+    /// subfolders by name, hidden ones left out as a push leaves them out. A folder that is
+    /// not there holds nothing.
+    static func contents(ofFolderAt folder: URL) -> LocalPackageSearch.Contents {
+        let children = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey],
+                                                                     options: [.skipsHiddenFiles])) ?? []
+        var contents = LocalPackageSearch.Contents()
+        for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            if (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                contents.folders.append(child.lastPathComponent)
+            } else {
+                contents.files.append(child.lastPathComponent)
+            }
+        }
+        return contents
     }
 
     /// The names the settings of the application and the extensions it embeds still

@@ -16,11 +16,21 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     private let projectPath = "input:/repo/IceCubesApp.xcodeproj"
     private var projectFile: String { "\(projectPath)/project.pbxproj" }
 
+    /// The fixture's synchronized folder that no target owns: the converter looks into it
+    /// for local packages as into every synchronized folder.
+    private let notificationsFolder = "input:/repo/IceCubesNotifications"
+
+    /// `folders` as given, with the unowned folder holding a source and no package unless
+    /// the test says otherwise: a test about something else still has it answered.
     private func process(projectFile: NodeValue? = nil,
                          xcconfigs: [String: NodeValue] = [:],
                          folders: [String: NodeValue] = [:]) throws -> ProcessOutput {
         let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
                                                                   properties: ["path": projectPath], scheduled: false, identity: nil))
+        var folders = folders
+        if folders[notificationsFolder] == nil {
+            folders[notificationsFolder] = try manifestValue(notificationsFolder, files: ["NotificationService.swift"])
+        }
         var inputs: [String: [String: NodeValue]] = [XcodeProjectConverter.xcconfigs: xcconfigs,
                                                      XcodeProjectConverter.folders: folders]
         if let projectFile {
@@ -49,16 +59,20 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     }
 
     /// With the project read, the xcconfig it names and the application's folder are
-    /// demanded together; the formula waits for both.
+    /// demanded together, with every other synchronized folder, where a local package may
+    /// be; the formula waits for all of them.
     func test_demandsTheXcconfigAndTheTargetFolderOnceTheProjectHasArrived() throws {
-        let output = try process(projectFile: try fixtureProject)
+        let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
+                                                                  properties: ["path": projectPath], scheduled: false, identity: nil))
+        let output = try node.process(input: ProcessInput(inputValues: [XcodeProjectConverter.projectFile: [projectFile: try fixtureProject]]))
 
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.xcconfigs]?.rendered,
                        ["input:/repo/App.xcconfig": "StaticFile(path: 'input:/repo/App.xcconfig').output"])
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.rendered,
                        ["input:/repo/IceCubesApp": "Folder(path: 'input:/repo/IceCubesApp').manifest",
-                        "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').manifest"],
-                       "the embedded extension's folder is walked too")
+                        "input:/repo/IceCubesShareExtension": "Folder(path: 'input:/repo/IceCubesShareExtension').manifest",
+                        "input:/repo/IceCubesNotifications": "Folder(path: 'input:/repo/IceCubesNotifications').manifest"],
+                       "the embedded extension's folder is walked too, and the folder no target owns is looked into")
         XCTAssertTrue(isPending(output))
     }
 
@@ -76,7 +90,8 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                                                                                          folders: ["Views", "Assets.xcassets"])])
 
         XCTAssertEqual(output.inputWireSpecs[XcodeProjectConverter.folders]?.keys.sorted(),
-                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesApp/Views", "input:/repo/IceCubesShareExtension"])
+                       ["input:/repo/IceCubesApp", "input:/repo/IceCubesApp/Views", "input:/repo/IceCubesNotifications",
+                        "input:/repo/IceCubesShareExtension"])
         XCTAssertTrue(isPending(output))
     }
 
@@ -236,6 +251,108 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                 }
                 """.intern())
         }
+    }
+
+    // MARK: - NetNewsWire's local packages (B-77)
+
+    /// The converter over NetNewsWire's project file for the Mac, run the way the engine
+    /// runs it: every pass's demands are answered, and it runs again, until it demands
+    /// nothing new. An xcconfig comes from the fixture, or is not there; a folder holds
+    /// nothing, except `Modules`, which holds the given packages as the clone lays them out.
+    private func convertNetNewsWire(modules: [String]) throws -> (output: ProcessOutput, demandedFolders: [String]) {
+        let projectFolder = "input:/nnw"
+        let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
+                                                                  properties: ["path": "\(projectFolder)/NetNewsWire.xcodeproj",
+                                                                               "sdk": "macosx"],
+                                                                  scheduled: false, identity: nil))
+        let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
+        var inputs: [String: [String: NodeValue]] = [
+            XcodeProjectConverter.projectFile: ["\(projectFolder)/NetNewsWire.xcodeproj/project.pbxproj":
+                                                    .value(try String(contentsOf: pbxproj, encoding: .utf8).intern())],
+            XcodeProjectConverter.xcconfigs: [:],
+            XcodeProjectConverter.folders: [:],
+        ]
+        for _ in 0..<10 {
+            let output = try node.process(input: ProcessInput(inputValues: inputs))
+            var answered = false
+            for path in (output.inputWireSpecs[XcodeProjectConverter.xcconfigs] ?? [:]).keys.sorted()
+            where inputs[XcodeProjectConverter.xcconfigs]?[path] == nil {
+                let file = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent(String(path.dropFirst(projectFolder.count + 1)))
+                inputs[XcodeProjectConverter.xcconfigs]?[path] = try (try? String(contentsOf: file, encoding: .utf8))
+                    .map { .value(try $0.intern()) } ?? .noValue(reason: .initializing)
+                answered = true
+            }
+            for path in (output.inputWireSpecs[XcodeProjectConverter.folders] ?? [:]).keys.sorted()
+            where inputs[XcodeProjectConverter.folders]?[path] == nil {
+                let relativePath = String(path.dropFirst(projectFolder.count + 1))
+                let isPackage = relativePath.hasPrefix("Modules/") && modules.contains(String(relativePath.dropFirst("Modules/".count)))
+                inputs[XcodeProjectConverter.folders]?[path] = try manifestValue(
+                    path,
+                    files:   isPackage ? NetNewsWireModules.packageFolderFiles : [],
+                    folders: relativePath == "Modules" ? modules : isPackage ? NetNewsWireModules.packageFolderFolders : [])
+                answered = true
+            }
+            guard answered else {
+                return (output, (inputs[XcodeProjectConverter.folders] ?? [:]).keys.sorted())
+            }
+        }
+        throw XCTSkip("the converter still demanded something new after ten passes")
+    }
+
+    /// NetNewsWire names no package for fifteen of the products its apps link: the
+    /// converter looks into the synchronized `Modules` folder no target owns, and a level
+    /// later into each folder in it, finds the seventeen that hold a `Package.swift`, and
+    /// includes every one — so each `modules_`, `objects_` and `bundles_` func the formula
+    /// calls is one an included formula defines, a local package's or a remote one's.
+    func test_findsNetNewsWiresPackagesInItsModulesFolderAndDefinesWhatItCalls() throws {
+        let modules = NetNewsWireModules.products.keys.sorted()
+        let (output, demandedFolders) = try convertNetNewsWire(modules: modules)
+
+        XCTAssertTrue(demandedFolders.contains("input:/nnw/Modules"))
+        for name in modules {
+            XCTAssertTrue(demandedFolders.contains("input:/nnw/Modules/\(name)"), name)
+        }
+        XCTAssertFalse(demandedFolders.contains("input:/nnw/Modules/Account/Sources"), "a package's own folders are its converter's")
+
+        let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        let includedLocal = modules.filter {
+            formula.contains("include funcs SwiftFormulaConverter(path: 'input:/nnw/Modules/\($0)', root: 'input:/nnw').formula")
+        }
+        XCTAssertEqual(includedLocal, modules, formula)
+
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: XcodeBuildSettingsTests.netNewsWire
+            .appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")))
+        var remoteProducts: Set<String> = []
+        for case .remote(let product, let url) in project.targets.flatMap(\.packageProducts) {
+            let folder = try XCTUnwrap(XcodeFormulaEmitter.repositoryName(forURL: url))
+            XCTAssertTrue(formula.contains("include funcs SwiftFormulaConverter(path: 'input:/nnw/Dependencies/\(folder)', root: 'input:/nnw').formula"),
+                          "\(url)\n\(formula)")
+            remoteProducts.insert(product)
+        }
+
+        let calls = try NSRegularExpression(pattern: "\\b(?:modules|objects|bundles)_(\\w+)\\(\\)")
+        let called = Set(calls.matches(in: formula, range: NSRange(formula.startIndex..., in: formula)).compactMap { match in
+            Range(match.range(at: 1), in: formula).map { String(formula[$0]) }
+        })
+        XCTAssertFalse(called.isEmpty, formula)
+        for product in called.sorted() {
+            let vendor = NetNewsWireModules.package(vending: product, among: modules.map { "Modules/\($0)" })
+            XCTAssertTrue(vendor != nil || remoteProducts.contains(product), "\(product) is called and no included package vends it")
+        }
+        XCTAssertTrue(called.contains("RSCoreResources") && called.contains("Account"), "\(called.sorted())")
+    }
+
+    /// With no package anywhere, the products the app links from local packages are named
+    /// as the cause, not left as funcs nothing defines.
+    func test_aLocalProductWithNoLocalPackageIsNamed() throws {
+        let (output, _) = try convertNetNewsWire(modules: [])
+
+        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]) else {
+            XCTFail("expected the missing packages as the formula's error")
+            return
+        }
+        let message = try messageHash.resolveAsString()
+        XCTAssertTrue(message.contains("links Account, ActivityLog,") && message.contains("Modules"), message)
     }
 
     /// A missing xcconfig that nothing referenced is not a cause of anything: the build is
