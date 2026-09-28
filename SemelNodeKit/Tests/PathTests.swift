@@ -128,6 +128,22 @@ final class PathTests: XCTestCase {
         XCTAssertNil(Path("").deletingFirstComponent)
     }
 
+    // MARK: - resolvingDotSegments
+
+    func test_resolvingDotSegmentsDropsDotsAndClimbsOnDoubleDots() {
+        XCTAssertEqual(Path("input:/src/lib/../hello.h").resolvingDotSegments, Path("input:/src/hello.h"))
+        XCTAssertEqual(Path("input:/src/./lib/./a.h").resolvingDotSegments, Path("input:/src/lib/a.h"))
+        XCTAssertEqual(Path("input:/a/b/../../c.h").resolvingDotSegments, Path("input:/c.h"))
+    }
+
+    /// The first segment is the file system's name: climbing above it is not a path, and
+    /// one more `..` must not land in another file system.
+    func test_resolvingDotSegmentsRefusesToClimbAboveTheFirstSegment() {
+        XCTAssertNil(Path("input:/../hello.h").resolvingDotSegments)
+        XCTAssertNil(Path("input:/src/../../output:/x").resolvingDotSegments)
+        XCTAssertNil(Path("../a").resolvingDotSegments)
+    }
+
     // MARK: - containsWildcard
 
     func testContainsWildcard_star() {

@@ -177,6 +177,40 @@ final class ClangIncludeFinderTests: SemelClangTestCase {
                        ["src/a1.h", "src/a2.h", "src/b1.h", "src/b2.h"])
     }
 
+    // MARK: - Includes that leave the source's folder
+
+    /// A source in a nested folder including its parent's header names the header's own
+    /// node: the preprocessor wires a `StaticFile` at each listed path, and
+    /// `src/lib/../hello.h` is a path nobody ever pushes.
+    func test_anIncludeFromANestedFolderToItsParentNamesTheParentsHeader() throws {
+        let wires: [String: NodeValue] = [
+            "input:/src/lib/greet.c": .value(try "#include \"../hello.h\"\n#include \"./greet.h\"\n".intern()),
+        ]
+
+        let aggregate = try Self.includePathList(of: wires)
+
+        XCTAssertEqual(aggregate, "input:/src/hello.h\ninput:/src/lib/greet.h")
+    }
+
+    /// Above the file system's root there is no node to name, so the include is left out
+    /// and clang reports it as a file it cannot find, which is what it is.
+    func test_anIncludeThatClimbsAboveTheRootIsLeftOut() throws {
+        let wires: [String: NodeValue] = [
+            "input:/main.c": .value(try "#include \"../hello.h\"\n#include \"main.h\"\n".intern()),
+        ]
+
+        let aggregate = try Self.includePathList(of: wires)
+
+        XCTAssertEqual(aggregate, "input:/main.h")
+    }
+
+    private static func includePathList(of wires: [String: NodeValue]) throws -> String {
+        let finder = try ClangIncludeFinder(thisNode: NodeRecord(id: 1, kind: ClangIncludeFinder.kind))
+        let inputs = try ClangIncludeFinder.ClangIncludeFinderInputs(
+            input: ProcessInput(inputValues: [ClangIncludeFinder.sourceFileInputPort: wires]))
+        return try finder.process(inputs: inputs).includePathList.expectValue().resolveAsString()
+    }
+
     // MARK: - A source nobody pushed (B-79)
 
     // The finder reads every quoted include, conditional or not, so the preprocessor asks

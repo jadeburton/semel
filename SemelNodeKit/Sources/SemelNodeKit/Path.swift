@@ -102,6 +102,31 @@ public struct Path {
         return Path(segments: Array(segments.dropFirst(base.segments.count)))
     }
 
+    // MARK: Dot segments
+
+    /// This path with each `.` segment dropped and each `..` taking away the segment
+    /// before it, or nil when a `..` would take away the first segment. The first segment
+    /// of an internal path is its file system's name (`input:`), so a path that climbs
+    /// above it names nothing in any file system — and resolving it anyway would read
+    /// `input:/../output:/x` as `output:/x`.
+    public var resolvingDotSegments: Path? {
+        var resolved: [String] = []
+        for segment in segments {
+            switch segment {
+            case ".":
+                continue
+            case "..":
+                guard resolved.count > 1 else {
+                    return nil
+                }
+                resolved.removeLast()
+            default:
+                resolved.append(segment)
+            }
+        }
+        return Path(segments: resolved)
+    }
+
     // MARK: Subscript
 
     public subscript(index: Int) -> String { segments[index] }

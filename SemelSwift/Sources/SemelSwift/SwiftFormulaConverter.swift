@@ -1431,16 +1431,10 @@ struct SwiftFormulaConverter: Node {
     }
 
     // Resolves a relative path (which may contain "..") against a base path.
-    // Both paths are virtual input-filesystem paths, not real filesystem paths.
+    // Both paths are virtual input-filesystem paths, not real filesystem paths. A path
+    // that climbs above the file system comes back empty, which the caller skips as it
+    // skips any path outside the input file system.
     private func resolveRelativePath(_ relative: String, from base: String) -> String {
-        var components = base.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        for part in relative.split(separator: "/", omittingEmptySubsequences: true).map(String.init) {
-            switch part {
-            case ".":  break
-            case "..": if !components.isEmpty { components.removeLast() }
-            default:   components.append(part)
-            }
-        }
-        return components.joined(separator: "/")
+        (Path(base) / Path(relative)).resolvingDotSegments?.string ?? ""
     }
 }
