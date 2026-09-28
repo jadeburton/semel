@@ -86,7 +86,7 @@ public enum SemelSwift {
             return name[name.index(after: dot)...].lowercased()
         })
         return !extensions.contains("swift")
-            && !extensions.isDisjoint(with: PackageClangTarget.cFamilyExtensions)
+            && !extensions.isDisjoint(with: PackageClangTarget.sourceExtensions)
     }
 
     // MARK: - SDK facts

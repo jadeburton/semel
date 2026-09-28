@@ -432,27 +432,62 @@ sources `#error` and whose sources `#error` without their define:
 8. **A C target's resources** are a bundle as a Swift target's are,
    `<Package>_<Target>.bundle` in the product's `bundles_` tree (PLCrashReporter's
    `.process("Resources/PrivacyInfo.xcprivacy")`).
+9. **What the link needs beyond the objects** (residuals 1 and 2 below, the linker half;
+   2026-09-28). `LinkRequirements` in `SemelNodeKit` is its type — frameworks, libraries,
+   the C++ runtime — written as settings of their own (`frameworks`, `libraries`,
+   `cxxRuntime`), not `arguments`, so a project's `swift.linker.arguments` survives. The
+   converter reads every target's `.linkedFramework` and `.linkedLibrary`, Swift and C
+   alike, and whether a C target's sources hold C++ (`PackageClangTarget.compilesCxx`:
+   `.cpp`, `.cc`, `.cxx`, `.mm`, `.C`); each product gets a `linking_<Product>()` func,
+   a `SettingsLiteral` of the union over the targets it reaches, defined empty too so a
+   consumer can name it. Its own linker is wired to it on a `linkRequirements` port
+   (`SwiftLinker` v3, N settings wires, their union with its own settings), and so is an
+   app's: `XcodeFormulaEmitter` wires `linking_P()` for every package product the target
+   links (XcodeProjectConverter v7), where the product's objects arrive as a tree and say
+   nothing about C++. `SwiftLinker` passes `-framework`, `-l` and one `-lc++`, none of
+   them to an archive, whose requirements are its consumer's as SwiftPM leaves them;
+   `ClangLinker` (v2) reads `frameworks` and `libraries` too, with the SDK's framework
+   folder as `-F` since it links with no sysroot. A `.when(platforms:)` linker setting
+   holds for the platform of `swift.linker.sdk` (default `macosx`), which the converter
+   demands on a `linkerConfiguration` port only when some manifest has such a setting;
+   one conditional on a configuration is not carried. SwiftFormulaConverter v10.
+10. **Assembly** (residual 5, 2026-09-28). `.S` and `.s` count as a C target's sources
+   (`PackageClangTarget.sourceExtensions`, and prepare's rule with it), so a target of
+   assembly alone is a C target as SwiftPM counts it. A `.S` goes through the target's
+   preprocessor with the C, as `assembler-with-cpp` with its defines and no `-std`; a
+   `.s`, which has no preprocessing phase, is a for-each of its own into `ClangCompiler`
+   straight from its `StaticFile`, as `assembler` (ClangPreprocessor v4, ClangCompiler
+   v2). A standard is not asked of an assembly file.
+
+The fixture holds 9 and 10: `CLib` links Foundation and, on macOS only, zlib (its C
+calls `CFStringGetLength` and `zlibVersion`), names a library for Linux that would fail
+the link if it were passed, has a `.cpp` with a function-local `std::string`, and a `.S`
+and a `.s` whose symbols the Swift executable and the C one both call.
 
 With these, all 58 of PLCrashReporter's C, C++, Objective-C and Objective-C++ sources
-preprocess and compile inside a Swift package's graph (`sources:` two folders,
-`exclude:`, `.headerSearchPath("Dependencies/protobuf-c")`, a define with an empty
-value). What stops it is below: from Swift, 4; at link, 1, 2 and 5; and 7 at run time.
+and its `.S` preprocess and compile inside a Swift package's graph (`sources:` two
+folders, `exclude:`, `.headerSearchPath("Dependencies/protobuf-c")`, a define with an
+empty value), and an executable depending on `CrashReporter` links, with Foundation and
+libc++ (checked 2026-09-28 at NetNewsWire's pin `0254f94`, vendored by `prepare` into a
+scratch package). What stops it is below: from Swift, 4 — `import CrashReporter` is `no
+such module` — and 7 at run time.
 
 Left, each for the package that needs it (swift-nio and BoringSSL in B-78 are the likely
 first):
 
-1. **Conditional and other settings.** A `.when(platforms:)` or `.when(configuration:)`
-   setting is not carried, nor `unsafeFlags`, `linkedLibrary`, `linkedFramework` or any
-   `linkerSettings`. A define whose value holds a comma splits in two and one holding a
-   quote ends the formula's string. PLCrashReporter's `.linkedFramework("Foundation")`
-   is what its link lacks first: `NSError`, `NSFileManager` and the `CFUUID` functions
-   undefined (`SwiftFormulaConverter.swift`, `SPMSetting` reads no linker setting;
-   `SwiftLinker` has no key for a framework).
-2. **C++ in a linked product.** SwiftPM adds `-lc++` when a product reaches a C++ source;
-   `SwiftLinker` is not told, so a dylib or executable with a C++ target fails at link
-   with the standard library's symbols undefined. It wants a linker key of its own, for
-   the reason `defines` is one. PLCrashReporter's `.cpp` and `.mm` leave
-   `___gxx_personality_v0` and `___cxa_guard_*` undefined.
+1. **Conditional and other settings.** The linker half is done (9 above:
+   `linkedFramework`, `linkedLibrary`, `.when(platforms:)` on them). Left: a
+   `.when(platforms:)` `cSettings` or `cxxSettings` setting — a define, a header search
+   path — is still not carried, though the platform it wants is now read for the linker's
+   (`SwiftFormulaConverter`'s `linkerConfiguration`); nothing conditional on
+   `.when(configuration:)` is carried, linker settings included, since a package is built
+   in no configuration here; nor is `unsafeFlags`, for C or the linker. A define whose
+   value holds a comma splits in two and one holding a quote ends the formula's string.
+   Mac Catalyst builds against `macosx` and is read as `macos`
+   (`SwiftFormulaConverter.swiftPMPlatformName(forSDK:)`).
+2. ~~**C++ in a linked product.**~~ — done 2026-09-28 (9 above): the converter says a
+   product reaches C++ in its `linking_<Product>()` settings, and `SwiftLinker` adds
+   `-lc++` once. PLCrashReporter's `___gxx_personality_v0` and `___cxa_guard_*` resolve.
 3. **Nested public headers for Swift.** `SwiftCompiler`'s `inputModuleMapFolders` places
    one level of the header folder (the product's module tree, a `FolderTreeBuilder`, is
    whole), so a module map naming `header "sub/x.h"` or an umbrella directory with
@@ -464,9 +499,10 @@ first):
    umbrella and no module map, so `import CrashReporter` fails with `no such module`. It
    wants a node that writes the map beside the header folder's tree, which
    `inputModuleMapFolders` (a `Folder` manifest) cannot take today.
-5. **Assembly.** `.s` and `.S` sources are not compiled (BoringSSL).
-   PLCrashReporter's `Source/PLCrashAsyncThread_current.S` defines
-   `plcrash_async_thread_state_current`, undefined at its link.
+5. ~~**Assembly.**~~ — done 2026-09-28 (10 above): PLCrashReporter's
+   `Source/PLCrashAsyncThread_current.S` compiles and defines
+   `plcrash_async_thread_state_current` for its link. BoringSSL's generated `.S` files
+   are untried.
 6. **Cost.** A preprocessor node takes every file under its target's folder, an excluded
    folder included, and every source of the target has one; a large excluded `Tests`
    costs wires, not correctness. A target at its package's root makes that the whole
@@ -483,6 +519,10 @@ first):
 9. **A search path above the target.** `.headerSearchPath("../Shared")` names a folder
    the converter's walk of the target never reaches, and `PackageClangTarget` leaves it
    out as it would a missing one.
+10. **C++ from Swift.** A product needs the C++ runtime when a C target it reaches has
+   C++ sources (9 above); a Swift target compiled with `.interoperabilityMode(.Cxx)`
+   needs it too, and its `swiftSettings` are not read for it — nor is the mode passed to
+   `swiftc` at all.
 
 **B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
 Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before
@@ -1211,9 +1251,11 @@ application target, simulator only, all library code in packages. In suggested o
         builds with `clang -dynamiclib` and `xcodebuild -create-xcframework`, built into a
         Mac app whose executable `otool -L` shows loading `@rpath/Tiny.framework/Tiny`.
    2. **PLCrashReporter** (`CrashReporter`, C and Objective-C at the package root). The
-      folder collision is fixed and its 58 sources compile (B-134, B-55 done 6–8); what
-      is left is B-55's residuals 1, 2, 4, 5 and 7 — Foundation and `-lc++` at link, no
-      generated module map for `import CrashReporter`, the `.S` source, and ARC.
+      folder collision is fixed, its 58 sources and its `.S` compile, and what depends on
+      it links with Foundation and libc++ (B-134, B-55 done 6–10; checked 2026-09-28 on
+      a scratch package that `prepare` vendored it into). What is left is B-55's
+      residuals 4 and 7 — no generated module map, so `import CrashReporter` is `no such
+      module`, and ARC.
    3. ~~**The local packages are not found.**~~ Done (2026-09-28). Xcode finds the
       seventeen packages under `Modules/` because `Modules` is a synchronized folder,
       owned by no target, holding package folders; the fifteen product dependencies

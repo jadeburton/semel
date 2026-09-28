@@ -50,6 +50,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                          folderContents: [String: [FolderManifestEntry]] = [:],
                          locks: [String: String] = [:],
                          contentRoots: [String: DataObjectHash] = [:],
+                         linkerSettings: String? = nil,
                          supplyTargetFolders: Bool = true) throws -> ProcessOutput {
         let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
         var externalValues = [String: NodeValue]()
@@ -72,7 +73,9 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         // per run: every subfolder it asks for is answered from `folderContents`, or as
         // empty, until it stops asking. Every vendored package's lock (B-06) is answered
         // from `locks` by its path, or as a file nobody pushed; the content root of each
-        // package whose lock is there, from `contentRoots`.
+        // package whose lock is there, from `contentRoots`. The linker's settings, asked for
+        // when a linker setting is conditional on a platform (B-55), from `linkerSettings`,
+        // and left unanswered without it.
         let converter = try makeConverter()
         for _ in 0..<8 {
             let output = try converter.process(input: ProcessInput(inputValues: inputValues))
@@ -82,8 +85,13 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             let subfolders    = asked(SwiftFormulaConverter.targetSubfolders)
             let lockFiles     = asked(SwiftFormulaConverter.dependencyLocks)
             let lockedFolders = asked(SwiftFormulaConverter.dependencyContentRoots)
-            guard !subfolders.isEmpty || !lockFiles.isEmpty || !lockedFolders.isEmpty else {
+            let linkerConfigs = linkerSettings == nil ? [] : asked(SwiftFormulaConverter.linkerConfiguration)
+            guard !subfolders.isEmpty || !lockFiles.isEmpty || !lockedFolders.isEmpty || !linkerConfigs.isEmpty else {
                 return output
+            }
+            for key in linkerConfigs {
+                inputValues[SwiftFormulaConverter.linkerConfiguration, default: [:]][key] =
+                    .value(try XCTUnwrap(linkerSettings).intern())
             }
             for folder in subfolders {
                 let entries = folderContents[folder] ?? []
@@ -106,9 +114,11 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     private func formula(packageFolder: String = "input:/pkg",
                          json: String,
                          externalManifests: [String: String] = [:],
-                         folderContents: [String: [FolderManifestEntry]] = [:]) throws -> String {
+                         folderContents: [String: [FolderManifestEntry]] = [:],
+                         linkerSettings: String? = nil) throws -> String {
         let output = try convert(packageFolder: packageFolder, json: json,
-                                 externalManifests: externalManifests, folderContents: folderContents)
+                                 externalManifests: externalManifests, folderContents: folderContents,
+                                 linkerSettings: linkerSettings)
         return try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
     }
 
@@ -1781,6 +1791,118 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(bundle.contains("Info.plist"), "only what the manifest names, got:\n\(bundle)")
         XCTAssertTrue(try funcDefinition("bundles_CrashReporter", in: result).contains("'CrashReporter': bundle_CrashReporter().files"),
                       "got:\n\(result)")
+    }
+
+    // MARK: - What a product needs from the linker (B-55)
+
+    /// PLCrashReporter's `.linkedFramework("Foundation")`, and its `.cpp` and `.mm`: the
+    /// product's link requirements say both, for whatever links its objects.
+    func test_aProductsLinkRequirementsAreItsTargetsFrameworksAndTheCPlusPlusRuntime() throws {
+        let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
+
+        XCTAssertEqual(try funcDefinition("linking_CrashReporter", in: result),
+                       "func linking_CrashReporter() =\n    SettingsLiteral(cxxRuntime: 'true', frameworks: 'Foundation').output")
+    }
+
+    private let appOverCLibWithLinkerSettings = """
+        {
+          "name": "App",
+          "dependencies": [],
+          "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+          "targets": [
+            {"name": "App",  "type": "executable", "path": "Sources/App", "dependencies": [{"byName": ["CLib", null]}],
+             "settings": [{"kind": {"linkedFramework": {"_0": "Security"}}, "tool": "linker"}]},
+            {"name": "CLib", "type": "regular",    "path": "src",         "dependencies": [],
+             "settings": [
+               {"kind": {"linkedFramework": {"_0": "Foundation"}}, "tool": "linker"},
+               {"kind": {"linkedLibrary": {"_0": "z"}}, "tool": "linker"},
+               {"kind": {"unsafeFlags": {"_0": ["-Xlinker", "-v"]}}, "tool": "linker"},
+               {"condition": {"config": "debug", "platformNames": []}, "kind": {"linkedLibrary": {"_0": "debugonly"}}, "tool": "linker"}
+             ]}
+          ]
+        }
+        """
+
+    /// An executable links every framework and library the targets it reaches name — its
+    /// own Swift target's and its C target's — each once, through its own linker. One
+    /// conditional on a configuration is not carried, and asks for no platform.
+    func test_aProductsLinkerTakesTheUnionOfItsTargetsLinkerSettings() throws {
+        let output = try convert(json: appOverCLibWithLinkerSettings, folderContents: cFolders)
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration] ?? [:], [:])
+        let result = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString()
+
+        XCTAssertEqual(try funcDefinition("linking_App", in: result),
+                       "func linking_App() =\n    SettingsLiteral(frameworks: 'Foundation,Security', libraries: 'z').output")
+        XCTAssertTrue(try productBlock("App", in: result).contains("linkRequirements: ['App': linking_App().output]"),
+                      "got:\n\(result)")
+    }
+
+    /// A product that needs nothing still defines its func, empty, so an app can name it
+    /// without knowing; its own linker is not wired to it.
+    func test_aProductThatNeedsNothingDefinesAnEmptyLinkRequirementsFunc() throws {
+        let result = try formula(json: appOverCLib, folderContents: cFolders)
+
+        XCTAssertEqual(try funcDefinition("linking_App", in: result), "func linking_App() =\n    SettingsLiteral().output")
+        XCTAssertFalse(try productBlock("App", in: result).contains("linkRequirements"), "got:\n\(result)")
+    }
+
+    private var platformConditionalManifest: String {
+        appOverCLibWithLinkerSettings.replacingOccurrences(
+            of: #"{"kind": {"linkedLibrary": {"_0": "z"}}, "tool": "linker"}"#,
+            with: #"{"condition": {"platformNames": ["macos"]}, "kind": {"linkedLibrary": {"_0": "z"}}, "tool": "linker"}, "#
+                + #"{"condition": {"platformNames": ["ios", "tvos"]}, "kind": {"linkedFramework": {"_0": "UIKit"}}, "tool": "linker"}"#)
+    }
+
+    /// A `.when(platforms:)` linker setting is decided for the platform being built: the
+    /// SDK the product's linker links against, read from its settings, which the conversion
+    /// asks for and waits on.
+    func test_aPlatformConditionalLinkerSettingHoldsForTheSDKTheLinkerUses() throws {
+        let waiting = try convert(json: platformConditionalManifest, folderContents: cFolders)
+        let demanded = try XCTUnwrap(waiting.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration]).rendered
+        XCTAssertEqual(Array(demanded.values), [
+            "ConfigFilter(prefix: 'swift.linker', input: [\"config\": ConfigMerger("
+            + "base: [\"machine\": StaticFile(path: 'input:/pkg/semel.machine.config').output], "
+            + "override: [\"project\": StaticFile(path: 'input:/pkg/semel.config').output]).output]).output",
+        ])
+        XCTAssertNotNil(try pendingReason(waiting).range(of: "swift.linker"))
+
+        let forIOS = try formula(json: platformConditionalManifest, folderContents: cFolders,
+                                 linkerSettings: "sdk=iphonesimulator\ntarget=arm64-apple-ios18.0-simulator")
+        XCTAssertEqual(try funcDefinition("linking_App", in: forIOS),
+                       "func linking_App() =\n    SettingsLiteral(frameworks: 'Foundation,Security,UIKit').output")
+
+        // No `sdk` is the linker's own default, the Mac.
+        let forMac = try formula(json: platformConditionalManifest, folderContents: cFolders, linkerSettings: "target=arm64-apple-macosx13.0")
+        XCTAssertEqual(try funcDefinition("linking_App", in: forMac),
+                       "func linking_App() =\n    SettingsLiteral(frameworks: 'Foundation,Security', libraries: 'z').output")
+    }
+
+    /// `.S` and `.s` sources are a C target's sources (PLCrashReporter's
+    /// `PLCrashAsyncThread_current.S`): a `.S` preprocessed with the rest, a `.s` compiled
+    /// as it is, both under the target's exclusions; C alone needs no C++ runtime.
+    func test_aCTargetsAssemblyIsCompiledAndOnlyAPreprocessedOneIsPreprocessed() throws {
+        let json = cLibJSON("\"exclude\": [\"Tests\"]")
+        var tree = cLibTree
+        tree["input:/pkg/src/lib"] = [file("util.c"), file("util.h"), file("thread.S"), file("base.s")]
+        tree["input:/pkg/src/Tests"] = [file("test.c"), file("probe.s")]
+        let result = try formula(json: json, folderContents: tree)
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.S', 'input:/pkg/src/**/*.c' except 'input:/pkg/src/Tests/**'} "
+                                     + "\"%%f%%.o\": ClangCompiler("), "got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.s' except 'input:/pkg/src/Tests/**'} \"%%f%%.o\": ClangCompiler("
+                                     + "configuration: ['config': ConfigFilter(prefix: 'clang.compiler'"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("input: [\"%%f%%\": StaticFile(path: f)])"), "got:\n\(product)")
+        XCTAssertEqual(try funcDefinition("linking_App", in: result), "func linking_App() =\n    SettingsLiteral().output")
+    }
+
+    /// A target of assembly alone is a C target, as SwiftPM counts it.
+    func test_aTargetOfAssemblyAloneIsACTarget() throws {
+        let result = try formula(json: appOverCLib, folderContents: ["input:/pkg/src": [file("answer.S")],
+                                                                     "input:/pkg/extensions": [file("table.c")]])
+
+        XCTAssertFalse(result.contains("func compilerCLib"), "got:\n\(result)")
+        XCTAssertTrue(try productBlock("App", in: result).contains("{f: 'input:/pkg/src/**/*.S'}"), "got:\n\(result)")
     }
 
     // MARK: - A build root shared by several packages (B-56)

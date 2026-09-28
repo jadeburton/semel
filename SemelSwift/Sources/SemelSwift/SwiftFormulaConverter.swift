@@ -54,6 +54,10 @@ struct SwiftFormulaConverter: Node {
     /// package's folder (B-06, `DependencyLockCheck`).
     static let dependencyLocks        = "dependencyLocks"
     static let dependencyContentRoots = "dependencyContentRoots"
+    /// The Swift linker's settings, the root's config as the product's linker reads it,
+    /// asked for only when a manifest has a linker setting conditional on a platform: its
+    /// `sdk` is the platform being built, which says whether the setting holds (B-55).
+    static let linkerConfiguration    = "linkerConfiguration"
 
     /// The clang nodes a C target is built through. Named rather than imported: this
     /// package does not depend on SemelClang, and a formula names a node by type name.
@@ -79,8 +83,11 @@ struct SwiftFormulaConverter: Node {
     /// `.headerSearchPath` folders are header folders and its resources a bundle (B-134);
     /// at 9, a binary target is named as not built rather than compiled, and the target
     /// folders are demanded before the lock is compared, on every pass whatever it says
-    /// (B-133).
-    public static let implementationVersion = 9
+    /// (B-133); at 10, every product has a `linking_<Product>()` func of its link
+    /// requirements, wired to its own linker when it has any, a C target's assembly is
+    /// compiled, and the linker's settings are demanded when a linker setting is
+    /// conditional on a platform (B-55).
+    public static let implementationVersion = 10
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -119,6 +126,7 @@ struct SwiftFormulaConverter: Node {
             .dynamic(awaitedPackageFolders),
             .dynamic(dependencyLocks),
             .dynamic(dependencyContentRoots),
+            .dynamic(linkerConfiguration),
         ],
         outputPorts: [formulaOutput, infoLog],
         // A lock nobody wrote is a state the converter reads — it says so in a notice and
@@ -271,6 +279,21 @@ struct SwiftFormulaConverter: Node {
                                      demands: demands)
         }
 
+        // ── the platform, when a linker setting depends on it (B-55) ─────────
+        // Asked for with the target folders, so it arrives while they do.
+        let everyManifest = [rootManifest] + availableManifests.sorted(by: { $0.key < $1.key }).map(\.value)
+        let asksForPlatform = everyManifest.contains { manifest in
+            manifest.targets.contains(where: \.hasPlatformConditionalLinkerSetting)
+        }
+        if asksForPlatform {
+            demands.linkerConfiguration = [
+                SwiftLinkerConfiguration.settingNamespace: Self.configurationTree(
+                    namespace: SwiftLinkerConfiguration.settingNamespace,
+                    packageFolder: buildRoot(defaultingTo: rootPackageFolder),
+                    literals: [:]),
+            ]
+        }
+
         // ── every compilable target's folder, to tell C targets from Swift ones ──
         // A manifest says nothing about a target's language; its folder does. The
         // folders are asked for once every manifest is in, so this is one more pass.
@@ -335,6 +358,21 @@ struct SwiftFormulaConverter: Node {
                 demands: demands)
         }
 
+        // The platform is the SDK the product's linker links against, by its own default
+        // when the settings name none.
+        var platform: String?
+        if asksForPlatform {
+            guard let settingsValue = input.inputValues[Self.linkerConfiguration]?.values.first,
+                  let settingsText = try? settingsValue.expectValue().resolveAsString() else {
+                return try pendingOutput(
+                    reason: "SwiftFormulaConverter: waiting for the \(SwiftLinkerConfiguration.settingNamespace) settings, "
+                          + "whose sdk is the platform a linker setting's .when(platforms:) is decided for",
+                    demands: demands)
+            }
+            let settings = [String: String](plainText: settingsText)
+            platform = Self.swiftPMPlatformName(forSDK: settings["sdk"] ?? defaultSDKName)
+        }
+
         // ── every lock compared with its package's content root ───────────────
         // Last of the waits, once every folder has been asked for. A demand is a node, and a
         // path demanded under a vendored package that is not there is a ghost the package's
@@ -364,6 +402,7 @@ struct SwiftFormulaConverter: Node {
             formula = try generateFormula(rootManifest: rootManifest,
                                           externalManifests: availableManifests,
                                           rootPackageFolder: rootPackageFolder,
+                                          platform: platform,
                                           clangInfo: { target, folder in
                                               PackageClangTarget(targetFolder: folder, rules: target.clangRules,
                                                                  manifests: folderManifests)
@@ -396,6 +435,7 @@ struct SwiftFormulaConverter: Node {
         var awaitedPackageFolders: [String: GraphSpecNode] = [:]
         var targetFolders:         [String: GraphSpecNode] = [:]
         var targetSubfolders:      [String: GraphSpecNode] = [:]
+        var linkerConfiguration:   [String: GraphSpecNode] = [:]
 
         /// The specs by port, with the node's own package wires, which a formula naming
         /// the package by `path` stands for.
@@ -405,7 +445,8 @@ struct SwiftFormulaConverter: Node {
                                 SwiftFormulaConverter.dependencyContentRoots: contentRoots,
                                 SwiftFormulaConverter.targetFolders:          targetFolders,
                                 SwiftFormulaConverter.targetSubfolders:       targetSubfolders,
-                                SwiftFormulaConverter.awaitedPackageFolders:  awaitedPackageFolders]) { _, new in new }
+                                SwiftFormulaConverter.awaitedPackageFolders:  awaitedPackageFolders,
+                                SwiftFormulaConverter.linkerConfiguration:    linkerConfiguration]) { _, new in new }
         }
     }
 
@@ -768,12 +809,17 @@ struct SwiftFormulaConverter: Node {
         ///
         /// A conditional one — `.when(platforms: [.windows])`, swift-cmark's only kind, or
         /// `.when(configuration: .debug)` — is not carried: whether it holds depends on the
-        /// platform and configuration being built, which nothing here decides per target yet.
+        /// platform and configuration being built, and only a linker setting is decided for
+        /// the platform yet (`linkerSettings`).
         let cDefines: [String]
         /// The target's unconditional `.headerSearchPath` settings from `cSettings` and
         /// `cxxSettings`, relative to its folder, in manifest order; conditional ones are
         /// not carried, for the reason conditional defines are not.
         let cHeaderSearchPaths: [String]
+        /// The target's `.linkedFramework` and `.linkedLibrary` settings, in manifest order,
+        /// with the platforms each is conditional on (B-55). A Swift target's count as a C
+        /// target's do: SwiftPM links them into every product that reaches the target.
+        let linkerSettings: [SPMLinkerSetting]
         /// Non-decoded. Set only on synthetic targets created for external packages.
         var overridePackageFolder: String?
         /// Non-decoded. What the target's folder tree said, once it arrived: nil means Swift.
@@ -807,6 +853,30 @@ struct SwiftFormulaConverter: Node {
         }
 
         var isClangTarget: Bool { clangInfo != nil }
+
+        /// Whether a linker setting holds on some platforms only, so the conversion has to
+        /// know which platform is being built.
+        var hasPlatformConditionalLinkerSetting: Bool {
+            linkerSettings.contains { $0.platforms != nil }
+        }
+
+        /// What linking this target's objects needs on `platform` — SwiftPM's name for
+        /// it, nil when no setting is conditional on one: the frameworks and libraries
+        /// whose condition holds, and the C++ runtime when its sources hold C++.
+        func linkRequirements(platform: String?) -> LinkRequirements {
+            let holding = linkerSettings.filter { setting in
+                guard let platforms = setting.platforms else {
+                    return true
+                }
+                guard let platform else {
+                    return false
+                }
+                return platforms.contains(platform)
+            }
+            return LinkRequirements(frameworks: holding.compactMap(\.frameworkName),
+                                    libraries:  holding.compactMap(\.libraryName),
+                                    cxxRuntime: clangInfo?.compilesCxx ?? false)
+        }
 
         /// Whether a build compiles this target at all: not a test, a system library, a
         /// plugin, a macro or a binary target.
@@ -874,14 +944,48 @@ struct SwiftFormulaConverter: Node {
             let kind: [String: [String: String]]?
             let tool: String?
             let isConditional: Bool
+            /// `.when(platforms:)`, as `dump-package` names them (`macos`, `ios`); empty when
+            /// the setting names none, which is every platform.
+            let platformNames: [String]
+            /// `.when(configuration:)`: `debug` or `release`; nil when it names none.
+            let configuration: String?
 
             enum CodingKeys: String, CodingKey { case kind, tool, condition }
+
+            /// `{"platformNames": ["ios"], "config": "debug"}`.
+            private struct Condition: Decodable {
+                let platformNames: [String]?
+                let config: String?
+            }
 
             init(from decoder: Decoder) throws {
                 let container = try decoder.container(keyedBy: CodingKeys.self)
                 kind          = try? container.decode([String: [String: String]].self, forKey: .kind)
                 tool          = try? container.decode(String.self, forKey: .tool)
                 isConditional = container.contains(.condition) && !((try? container.decodeNil(forKey: .condition)) ?? false)
+                let condition = try? container.decode(Condition.self, forKey: .condition)
+                platformNames = condition?.platformNames ?? []
+                configuration = condition?.config
+            }
+
+            /// A `.linkedFramework` or `.linkedLibrary`, with the platforms it holds for.
+            ///
+            /// One conditional on a configuration is not carried: nothing here builds a
+            /// package in one configuration or the other, so there is no answer to whether
+            /// it holds. `unsafeFlags` is not carried either; its payload is an array, which
+            /// `kind` does not decode.
+            var linkerSetting: SPMLinkerSetting? {
+                guard tool == "linker", configuration == nil else {
+                    return nil
+                }
+                let platforms = platformNames.isEmpty ? nil : platformNames
+                if let framework = kind?["linkedFramework"]?["_0"] {
+                    return .init(item: .framework(framework), platforms: platforms)
+                }
+                if let library = kind?["linkedLibrary"]?["_0"] {
+                    return .init(item: .library(library), platforms: platforms)
+                }
+                return nil
             }
 
             /// The value of an unconditional `.define` for C or C++, as written.
@@ -916,6 +1020,7 @@ struct SwiftFormulaConverter: Node {
             languageMode = settings.compactMap { $0.kind?["swiftLanguageMode"]?["_0"] }.first
             cDefines     = settings.compactMap(\.unconditionalDefine)
             cHeaderSearchPaths = settings.compactMap(\.unconditionalHeaderSearchPath)
+            linkerSettings = settings.compactMap(\.linkerSetting)
             publicHeadersPath = try? c.decode(String.self, forKey: .publicHeadersPath)
             url          = try? c.decode(String.self, forKey: .url)
             checksum     = try? c.decode(String.self, forKey: .checksum)
@@ -945,6 +1050,48 @@ struct SwiftFormulaConverter: Node {
         // via a module.modulemap.  They have no Swift sources and cannot be compiled
         // with SwiftCompiler.
         var isSystemLibrary: Bool { type == "system-target" || type == "system" }
+    }
+
+    /// One `linkerSettings` entry the link carries (B-55).
+    private struct SPMLinkerSetting: Equatable {
+        enum Item: Equatable {
+            /// `.linkedFramework("Foundation")`: `-framework Foundation`.
+            case framework(String)
+            /// `.linkedLibrary("z")`: `-lz`.
+            case library(String)
+        }
+
+        let item: Item
+        /// `.when(platforms:)` as SwiftPM names them (`macos`, `ios`); nil for every one.
+        let platforms: [String]?
+
+        var frameworkName: String? {
+            guard case .framework(let name) = item else { return nil }
+            return name
+        }
+
+        var libraryName: String? {
+            guard case .library(let name) = item else { return nil }
+            return name
+        }
+    }
+
+    /// SwiftPM's name for the platform an SDK builds for, the name a `.when(platforms:)`
+    /// uses: `iphonesimulator` builds for `ios`. nil for an SDK it has no name for, on
+    /// which no platform-conditional setting holds.
+    ///
+    /// ISSUE: Mac Catalyst builds against `macosx` with a `-macabi` triple, and is read
+    /// here as `macos`.
+    static func swiftPMPlatformName(forSDK sdk: String) -> String? {
+        switch sdk {
+        case "macosx":                        return "macos"
+        case "iphoneos", "iphonesimulator":   return "ios"
+        case "appletvos", "appletvsimulator": return "tvos"
+        case "watchos", "watchsimulator":     return "watchos"
+        case "xros", "xrsimulator":           return "visionos"
+        case "driverkit":                     return "driverkit"
+        default:                              return nil
+        }
     }
 
     // Handles the two dependency shapes emitted by different Swift versions:
@@ -1046,6 +1193,7 @@ struct SwiftFormulaConverter: Node {
     private func generateFormula(rootManifest: SPMManifest,
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
+                                 platform: String?,
                                  clangInfo: (SPMTarget, String) -> PackageClangTarget?,
                                  resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) throws -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
@@ -1232,6 +1380,23 @@ struct SwiftFormulaConverter: Node {
                 "        ]"
             if !systemLibraryFolderWires.isEmpty {
                 linkerArgs += ",\n        libraryFolders: [\n" + systemLibraryFolderWires.joined(separator: ",\n") + "\n        ]"
+            }
+
+            // What the product's objects need at link beyond themselves (B-55): every
+            // framework and library a target it reaches names, and the C++ runtime when one
+            // of its C targets has C++. Defined for every product, empty or not, so a
+            // formula linking the product's objects — an app — names it without knowing;
+            // wired to this product's own linker when it says anything.
+            let requirements = (allTargets + clangTargets).reduce(LinkRequirements.none) { union, target in
+                union.union(target.linkRequirements(platform: platform))
+            }
+            let requirementsFunc = FormulaIdentifier.linkRequirementsFunc(forProduct: product.name)
+            let requirementsLiterals = requirements.properties.sorted { $0.key < $1.key }
+                                                              .map { "\($0.key): '\($0.value)'" }
+                                                              .joined(separator: ", ")
+            blocks.append("func \(requirementsFunc)() =\n    SettingsLiteral(\(requirementsLiterals)).output")
+            if !requirements.isEmpty {
+                linkerArgs += ",\n        linkRequirements: ['\(product.name)': \(requirementsFunc)().output]"
             }
 
             // What another formula needs to consume this product — an app that imports and
@@ -1546,13 +1711,26 @@ struct SwiftFormulaConverter: Node {
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: [:])
         func quoted(_ relative: String) -> String { "'\(folder)/\(relative)'" }
-        var items = clangInfo.sourcePatterns.map(quoted).joined(separator: ", ")
-        if !clangInfo.excludedPatterns.isEmpty {
-            items += " except " + clangInfo.excludedPatterns.map(quoted).joined(separator: ", ")
+        func items(_ patterns: [String]) -> String {
+            var items = patterns.map(quoted).joined(separator: ", ")
+            if !clangInfo.excludedPatterns.isEmpty {
+                items += " except " + clangInfo.excludedPatterns.map(quoted).joined(separator: ", ")
+            }
+            return items
         }
-        return ["        {f: \(items)} \"%%f%%.o\": ClangCompiler(" +
-                "configuration: ['config': \(configExpr)], " +
-                "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)])"]
+        var entries: [String] = []
+        if !clangInfo.sourcePatterns.isEmpty {
+            entries.append("        {f: \(items(clangInfo.sourcePatterns))} \"%%f%%.o\": ClangCompiler(" +
+                           "configuration: ['config': \(configExpr)], " +
+                           "input: [\"%%f%%.p\": \(preprocessorFuncName(for: target.name))(path: f)])")
+        }
+        // A `.s` has no preprocessing phase, so the compiler takes the file itself (B-55).
+        if !clangInfo.assemblyPatterns.isEmpty {
+            entries.append("        {f: \(items(clangInfo.assemblyPatterns))} \"%%f%%.o\": ClangCompiler(" +
+                           "configuration: ['config': \(configExpr)], " +
+                           "input: [\"%%f%%\": StaticFile(path: f)])")
+        }
+        return entries
     }
 
     // Emits a zero-parameter func definition for one compiler node.

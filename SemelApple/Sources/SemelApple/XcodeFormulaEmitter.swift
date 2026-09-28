@@ -172,6 +172,11 @@ struct XcodeFormulaEmitter {
         let objectTrees = target.packageProducts.map(\.product).sorted().map {
             "        '\($0)': \(FormulaIdentifier.objectsFunc(forProduct: $0))().files"
         }
+        // What each product's objects need from the linker — its targets' frameworks and
+        // libraries, the C++ runtime — which the linker takes the union of (B-55).
+        let linkRequirements = target.packageProducts.map(\.product).sorted().map {
+            "        '\($0)': \(FormulaIdentifier.linkRequirementsFunc(forProduct: $0))().output"
+        }
         var compilerLiterals = ["moduleName": identity.moduleName,
                                 "target": identity.target]
         if !exceptions.isEmpty {
@@ -225,6 +230,7 @@ struct XcodeFormulaEmitter {
             "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
             "        input: ['\(identity.moduleName).o': compiler_\(name)().object]" +
             (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
+            (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
             "\n    ).output")
 
         // ── resources ────────────────────────────────────────────────────────

@@ -183,6 +183,19 @@ final class ClangCompilerTests: SemelClangTestCase {
         XCTAssertTrue(executor.lastArguments.contains("-std=c17"), "got \(executor.lastArguments)")
     }
 
+    /// Assembly compiles like C, as its own language and with no standard (B-55): a
+    /// preprocessed `.S`, and a `.s` the formula hands over unpreprocessed.
+    func test_assemblesAssemblyWithNoStandard() throws {
+        for (sourcePath, language) in [("src/thread.S.p", "assembler-with-cpp"), ("src/thread.s", "assembler")] {
+            _ = try makeTool().process(input: try makeInput(sourcePath: sourcePath, cStandard: nil))
+
+            let arguments = executor.lastArguments
+            XCTAssertEqual(Array(arguments.prefix(3)), ["-x", language, "-c"], sourcePath)
+            XCTAssertFalse(arguments.contains { $0.hasPrefix("-std=") }, "\(sourcePath): \(arguments)")
+            XCTAssertTrue(arguments.contains("\(sourcePath).o"), "\(sourcePath): \(arguments)")
+        }
+    }
+
     // MARK: - Tool inputs
 
     func test_passesTheSourceFileToTheToolAsAnInput() throws {

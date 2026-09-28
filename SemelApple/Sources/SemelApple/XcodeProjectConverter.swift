@@ -30,8 +30,9 @@ public struct XcodeProjectConverter: Node {
     /// included (B-77); at 6, `.lproj` folders are walked and their files placed under
     /// their language, a `/Localized/…` exception names a localized resource, a resources
     /// phase's folder reference is copied whole, and the Info.plist builder is handed every
-    /// evaluated setting (B-77).
-    public static let implementationVersion = 6
+    /// evaluated setting (B-77); at 7, an executable's linker takes each package product's
+    /// link requirements (B-55).
+    public static let implementationVersion = 7
 
     // MARK: Ports
 

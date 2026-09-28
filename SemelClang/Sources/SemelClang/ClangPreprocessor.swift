@@ -28,13 +28,16 @@ struct ClangLanguageStandards {
         cxx = properties["cxxStandard"]
     }
 
-    /// The `-std` value for `language`.
+    /// The `-std` value for `language`, nil for assembly, which has no standard to state.
     ///
     /// Checked here rather than in `init(properties:)` because the language is not a
     /// setting: it comes from the source file arriving on a wire. A configuration stating
     /// only `cStandard` is complete for every C file and incomplete for the first C++ one,
     /// and the error names the key that file needs, under `namespace`.
-    func standard(forLanguage language: String, namespace: String) throws -> String {
+    func standard(forLanguage language: String, namespace: String) throws -> String? {
+        guard !ClangPreprocessor.assemblyLanguages.contains(language) else {
+            return nil
+        }
         let key   = language.hasSuffix("++") ? "cxxStandard" : "cStandard"
         let value = language.hasSuffix("++") ? cxx : c
 
@@ -99,7 +102,8 @@ public struct ClangPreprocessor: Node {
 
     /// 2: a header nobody pushed is left to clang (B-79), where version 1 failed on it.
     /// 3: a header folder is walked to the bottom, where version 2 took its top level (B-55).
-    public static let implementationVersion = 3
+    /// 4: a `.S` is preprocessed as assembly with no standard, where it was taken for C.
+    public static let implementationVersion = 4
 
     public var thisNode: NodeRecord
 
@@ -248,12 +252,22 @@ public struct ClangPreprocessor: Node {
         try process(inputs: try .init(input: input)).asProcessOutput()
     }
 
+    /// clang's `-x` for a `.S` file: assembly with `#include`s and macros. A preprocessed
+    /// `.S.p` is compiled under the same name, as a preprocessed `.c.p` is compiled as C —
+    /// running the preprocessor again over its output changes nothing.
+    static let assemblyWithPreprocessor = "assembler-with-cpp"
+    /// clang's `-x` for a `.s` file, which has no preprocessing phase: the compiler takes
+    /// it as it is, and a formula does not preprocess it.
+    static let assembly = "assembler"
+    static let assemblyLanguages: Set<String> = [assemblyWithPreprocessor, assembly]
+
     /// Returns the clang `-x` language for `filePath`, handling raw source files (`.cpp`),
     /// preprocessed files (`.cpp.p`) and object files (`.cpp.p.o`): the source suffix is
     /// what is left once the stage suffixes are stripped.
     ///
-    /// Case matters for one suffix: `.C` is C++ by convention on case-sensitive systems, and
-    /// `.c` is C. Every other suffix is matched case-insensitively (`.CPP` is still C++).
+    /// Case matters for three suffixes: `.C` is C++ by convention on case-sensitive systems,
+    /// and `.c` is C; `.S` is assembly the preprocessor runs over, and `.s` assembly as it
+    /// is (B-55). Every other suffix is matched case-insensitively (`.CPP` is still C++).
     static func language(for filePath: String) -> String {
         var name = filePath
         if name.hasSuffix(".o") { name.removeLast(2) }
@@ -261,6 +275,12 @@ public struct ClangPreprocessor: Node {
 
         if name.hasSuffix(".C") {
             return "c++"
+        }
+        if name.hasSuffix(".S") {
+            return assemblyWithPreprocessor
+        }
+        if name.hasSuffix(".s") {
+            return assembly
         }
         let lower = name.lowercased()
         if lower.hasSuffix(".mm") {
@@ -297,10 +317,11 @@ public struct ClangPreprocessor: Node {
             arguments.append("-I"); arguments.append(manifest.baseFolderPath)
         }
 
-        let standard = try inputs.configuration.standards.standard(
+        if let standard = try inputs.configuration.standards.standard(
             forLanguage: language,
-            namespace: ClangPreprocessorConfiguration.settingNamespace)
-        arguments.append("-std=\(standard)")
+            namespace: ClangPreprocessorConfiguration.settingNamespace) {
+            arguments.append("-std=\(standard)")
+        }
 
         if let sdkPath = inputs.configuration.sdkPath {
             // -isysroot locates the SDK without stripping the compiler's own include
