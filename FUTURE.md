@@ -978,7 +978,11 @@ app merges `bundles_Account()` and `bundles_AppAccount()`, and each carries
 `DesignSystem_DesignSystem.bundle/Assets.car`, because a product's tree of bundles
 carries its dependencies' (B-77) and two products share one. The merger now places the
 same entry — one path, one hash, one mode — from two trees once, and still refuses one
-path with two contents or two modes (`TreeMergerTests`; `TreeMerger` v2).
+path with two contents or two modes (`TreeMergerTests`; `TreeMerger` v2). The cold build
+then ended in 151 s with no errors and a clean `check`, and the second build in 17 s —
+failing its export, because a vendored resource leaves read-only (B-108) and a write over
+it is refused: `export` now replaces what an earlier export left, whatever its mode
+(`ExportCommandTests`).
 What remains: an include in error still leaves the build without products, which is
 right, but the report names the converter's error and not that the project waited on
 it; and the collector's tearing down of a subgraph a builder will demand again on its

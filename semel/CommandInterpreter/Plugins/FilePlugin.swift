@@ -430,6 +430,13 @@ final class FilePlugin: CommandPlugin {
         try FileManager.default.createDirectory(
                 at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
                 withIntermediateDirectories: true)
+        // What an earlier export left is replaced, whatever mode it was left with: a
+        // vendored resource arrives read-only and leaves read-only (B-108), and a write
+        // over it would be refused, so a second `build --into` the same folder failed on
+        // every such file (B-125).
+        if FileManager.default.fileExists(atPath: finalPath) {
+            try FileManager.default.removeItem(atPath: finalPath)
+        }
         try (body ?? Data()).write(to: URL(fileURLWithPath: finalPath))
         chmod(finalPath, mode_t(mode))
         return true
