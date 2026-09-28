@@ -2,12 +2,14 @@
 //  XcodeBuildSettings.swift
 //  SemelApple
 //
-//  A target's build settings, evaluated the way Xcode evaluates them: four layers —
+//  A target's build settings, evaluated the way Xcode evaluates them: four levels —
 //  project xcconfig, project configuration, target xcconfig, target configuration — each
-//  overriding the one below, `$(inherited)` reaching down a layer, a conditional setting
-//  (`KEY[sdk=iphonesimulator*]`) applying when its condition matches the platform, and
-//  `$(VAR)` references resolved against the result. Defaults are the few a bundle cannot
-//  do without; Xcode's hundreds of others are not needed to build one.
+//  a run of assignments over the one below, an xcconfig with its includes spliced in
+//  where they are named (`XcconfigExpansion`), `$(inherited)` reaching back to the
+//  assignments before, a conditional setting (`KEY[sdk=macosx*]`, `KEY[config=Debug]`)
+//  applying when its conditions hold, and `$(VAR)` references resolved against the
+//  result. Defaults are the few a bundle cannot do without; Xcode's hundreds of others are
+//  not needed to build one.
 
 import Foundation
 
@@ -20,35 +22,16 @@ struct XcodeBuildSettings {
         values[key]
     }
 
-    /// `KEY = value` lines of an `.xcconfig`; `//` comments and `#include` lines are
-    /// dropped — an included xcconfig is a rarity these projects do not use, and reading
-    /// one would mean another file to wire.
-    static func parseXcconfig(_ text: String) -> [String: String] {
-        var settings: [String: String] = [:]
-        for rawLine in text.components(separatedBy: .newlines) {
-            let line = rawLine.components(separatedBy: "//").first ?? ""
-            guard let equals = line.firstIndex(of: "="), !line.hasPrefix("#") else {
-                continue
-            }
-            let key = line[..<equals].trimmingCharacters(in: .whitespaces)
-            let value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty else {
-                continue
-            }
-            settings[key] = value
-        }
-        return settings
-    }
-
     /// Evaluates the settings of `target` in `configuration` for the SDK named `sdk`
-    /// (`iphonesimulator`), with `xcconfig` mapping each xcconfig path the project names
-    /// to its contents — an absent file is an empty layer — and `extra` as the values the
-    /// converter itself knows (`TARGET_NAME`).
+    /// (`iphonesimulator`), with `xcconfig` giving, for each xcconfig path a configuration
+    /// is based on (relative to the project's folder), its assignments with its includes
+    /// spliced in — nil or empty for a file that is not there, which is then an empty
+    /// level — and `extra` as the values the converter itself knows (`TARGET_NAME`).
     static func resolve(project: XcodeProject,
                         target: XcodeProject.Target,
                         configuration name: String,
                         sdk: String,
-                        xcconfig: (String) -> String?,
+                        xcconfig: (String) -> [XcodeSettingAssignment]?,
                         extra: [String: String]) throws -> XcodeBuildSettings {
         guard let projectConfiguration = project.configuration(named: name) else {
             throw XcodeProjectError.noSuchConfiguration(name, available: project.configurations.map(\.name))
@@ -57,26 +40,48 @@ struct XcodeBuildSettings {
             throw XcodeProjectError.noSuchConfiguration(name, available: target.configurations.map(\.name))
         }
 
-        let layers: [[String: String]] = [
-            defaults,
-            projectConfiguration.xcconfigPath.flatMap(xcconfig).map(parseXcconfig) ?? [:],
-            projectConfiguration.settings,
-            targetConfiguration.xcconfigPath.flatMap(xcconfig).map(parseXcconfig) ?? [:],
-            targetConfiguration.settings,
-            extra,
-        ]
+        // Xcode's levels, lowest first. Each xcconfig is read in its own order; a
+        // configuration's settings are a dictionary, read in key order.
+        var assignments = Self.assignments(from: defaults)
+        assignments += projectConfiguration.xcconfigPath.flatMap(xcconfig) ?? []
+        assignments += Self.assignments(from: projectConfiguration.settings)
+        assignments += targetConfiguration.xcconfigPath.flatMap(xcconfig) ?? []
+        assignments += Self.assignments(from: targetConfiguration.settings)
+        assignments += Self.assignments(from: extra)
 
-        // Layer by layer, so `$(inherited)` in one sees the value the layers below gave.
-        var resolved: [String: String] = [:]
-        for layer in layers {
-            for (rawKey, value) in applyingConditions(layer, sdk: sdk).sorted(by: { $0.key < $1.key }) {
-                let inherited = resolved[rawKey] ?? ""
-                resolved[rawKey] = value.replacingOccurrences(of: "$(inherited)", with: inherited)
-                    .trimmingCharacters(in: .whitespaces)
-            }
+        let context = XcodeSettingContext(sdk: sdk, configuration: name)
+        return XcodeBuildSettings(values: resolveReferences(in: evaluate(assignments, in: context)))
+    }
+
+    /// A level held as a dictionary, as assignments in key order. Sorted, so the result
+    /// does not depend on `Dictionary`'s iteration order, and the order is also the one
+    /// that gives Xcode's answer: `KEY` sorts before `KEY[sdk=…]`, so a matching condition
+    /// overrides the plain key of its level; and of two conditions that both match —
+    /// `KEY[sdk=iphone*]` and `KEY[sdk=iphonesimulator*]` for an `iphonesimulator` build —
+    /// the broader ends `*]`, and `*` sorts below every character an SDK name continues
+    /// with, so the more specific one comes later and has the last word.
+    static func assignments(from level: [String: String]) -> [XcodeSettingAssignment] {
+        level.sorted { $0.key < $1.key }.compactMap { XcodeSettingAssignment(key: $0.key, value: $0.value) }
+    }
+
+    /// Every setting's value after the assignments, lowest level first, each overriding
+    /// what came before it when its conditions hold. That one pass is Xcode's model whole:
+    /// a level is only a run of assignments, so `$(inherited)` means the value the
+    /// assignments before this one gave — in a lower level, earlier in the same file, or
+    /// in a file it includes, which is how NetNewsWire's debug file extends its project
+    /// file's `GCC_PREPROCESSOR_DEFINITIONS` with `DEBUG=1 … $(inherited)`. A setting
+    /// nothing assigned before inherits nothing. Other references wait for the whole
+    /// table (`resolveReferences`): they name the final value, not the one below.
+    static func evaluate(_ assignments: [XcodeSettingAssignment], in context: XcodeSettingContext) -> [String: String] {
+        var values: [String: String] = [:]
+        for assignment in assignments where assignment.applies(in: context) {
+            let inherited = values[assignment.name] ?? ""
+            values[assignment.name] = assignment.value
+                .replacingOccurrences(of: "$(inherited)", with: inherited)
+                .replacingOccurrences(of: "${inherited}", with: inherited)
+                .trimmingCharacters(in: .whitespaces)
         }
-
-        return XcodeBuildSettings(values: resolveReferences(in: resolved))
+        return values
     }
 
     /// References, resolved so that `$(NAME)` never expands before `NAME` itself has:
@@ -112,42 +117,6 @@ struct XcodeBuildSettings {
             resolved[key] = value(for: key, raw: raw)
         }
         return resolved
-    }
-
-    /// The layer with conditional keys folded in: `KEY[sdk=iphonesimulator*]` replaces
-    /// `KEY` when the SDK matches, and is dropped otherwise. Only the SDK condition is
-    /// honoured; arch and config conditions are rare in a project file, and a wrong
-    /// guess there is quieter than a wrong SDK.
-    private static func applyingConditions(_ layer: [String: String], sdk: String) -> [String: String] {
-        var result: [String: String] = [:]
-        var conditional: [String: String] = [:]
-        // Sorted: two conditions on one key can both match — `KEY[sdk=iphone*]` and
-        // `KEY[sdk=iphonesimulator*]` for an `iphonesimulator` build — and the last one
-        // written wins. A Dictionary's iteration order is seeded per process, so an
-        // unsorted walk would give the key a different value from one run to the next,
-        // and that value reaches the command line the formula states (B-04).
-        //
-        // Lexical order also picks the winner Xcode picks. Two patterns that both match
-        // one SDK are prefix-nested, and the broader of them ends `*]`; `*` sorts below
-        // every character an SDK name continues with, so the broader pattern is written
-        // first and the more specific one has the last word.
-        for (key, value) in layer.sorted(by: { $0.key < $1.key }) {
-            guard let bracket = key.firstIndex(of: "[") else {
-                result[key] = value
-                continue
-            }
-            let base = String(key[..<bracket])
-            let condition = key[key.index(after: bracket)...].dropLast()
-            guard condition.hasPrefix("sdk=") else {
-                continue
-            }
-            let pattern = condition.dropFirst("sdk=".count)
-            let matches = pattern.hasSuffix("*") ? sdk.hasPrefix(pattern.dropLast()) : sdk == pattern
-            if matches {
-                conditional[base] = value
-            }
-        }
-        return result.merging(conditional) { _, matched in matched }
     }
 
     /// `$(NAME)` and `${NAME}`, each replaced by `lookup(NAME)`, with the two operators a

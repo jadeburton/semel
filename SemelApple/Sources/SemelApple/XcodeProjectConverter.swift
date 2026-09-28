@@ -6,7 +6,7 @@
 //  package manifest into one: a formula names the project —
 //  `include XcodeProjectConverter(path: <IceCubesApp.xcodeproj>, root: <.>).formula` —
 //  and the node wires what it needs itself: the project file, the xcconfig files it
-//  names, and the manifests of the folders that are the targets' sources, walked to
+//  names and the files they include, and the manifests of the folders that are the targets' sources, walked to
 //  every subfolder so the resources in them are known. No tool runs; the project file is
 //  a property list. `XcodeProject` reads it, `XcodeBuildSettings` evaluates it, and
 //  `XcodeFormulaEmitter` writes the formula; this node owns the wires and the waiting.
@@ -21,15 +21,18 @@ public struct XcodeProjectConverter: Node {
     /// Emitted formula text changed for the same inputs: a target that lists its files,
     /// localized resources, and the package resource bundles in the app's tree (B-77); at 3,
     /// a target's literals are a `SettingsLiteral` under a `ConfigMerger` where they were a
-    /// `Configuration`'s properties (B-120).
-    public static let implementationVersion = 3
+    /// `Configuration`'s properties (B-120); at 4, xcconfig files are read the way Xcode
+    /// layers them — includes demanded and followed, a configuration based on a file in a
+    /// synchronized folder, an extension's own file, `config=` conditions (B-77).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
     /// `project.pbxproj`, one wire.
     static let projectFile = "projectFile"
-    /// The `.xcconfig` files the project and the target name, keyed by path. One the
-    /// clone does not have arrives without a value, and is then an empty layer.
+    /// The `.xcconfig` files the project and the targets name, and every file those
+    /// include, keyed by path. One the clone does not have arrives without a value: an
+    /// `#include?` then moves on, and anything else is read as empty and reported.
     static let xcconfigs = "xcconfigs"
     /// The targets' synchronized folders and every folder under them, keyed by path.
     static let folders = "folders"
@@ -127,23 +130,36 @@ public struct XcodeProjectConverter: Node {
             return failed("the project has no application target", specs: specs)
         }
 
-        // ── the xcconfig files the project and the target name ──────────────
+        // ── the xcconfig files the project and the targets name, and theirs ──
+        // Each file's includes are known only once it has arrived, so the files are
+        // demanded a level at a time, the way a folder is walked.
         let projectFolder = try projectFolder
-        let xcconfigPaths = project.xcconfigPaths(for: application, configuration: configurationName)
-            .map { "\(projectFolder)/\($0)" }
-        for path in xcconfigPaths {
-            specs[Self.xcconfigs]?[path] = .staticFile(at: path)
+        let bundleTargets = project.bundleTargets(of: application)
+        let embedded = Array(bundleTargets.dropFirst())
+        let xcconfigValues = input.inputValues[Self.xcconfigs] ?? [:]
+        var expansions: [String: XcconfigExpansion] = [:]
+        for root in project.xcconfigPaths(for: bundleTargets, configuration: configurationName) {
+            let expansion: XcconfigExpansion
+            do {
+                expansion = try XcconfigExpansion(root: root) { relativePath in
+                    Self.xcconfigFile(at: Self.inputPath(of: relativePath, in: projectFolder), values: xcconfigValues)
+                }
+            } catch let failure as XcconfigExpansion.Failure {
+                return failed(failure.description, specs: specs)
+            }
+            expansions[root] = expansion
+            for path in expansion.files.compactMap({ Self.inputPath(of: $0, in: projectFolder) }) {
+                specs[Self.xcconfigs]?[path] = .staticFile(at: path)
+            }
         }
+
         // ── the target's folders, walked ─────────────────────────────────────
         // Demanded alongside the xcconfig files, so the two waits overlap.
         let manifests = FolderTreeWalk.manifests(in: input, port: Self.folders)
         let arrived = Dictionary(uniqueKeysWithValues: manifests.map { ($0.key, $0.manifest) })
         // The application's folders and every embedded extension's: each is a bundle
         // whose resources come from its own folder.
-        let embedded = application.embeddedExtensions.compactMap { name in
-            project.targets.first { $0.productFileName == name && $0.isExtension }
-        }
-        let sourceFolders = ([application] + embedded).flatMap(\.synchronizedFolders).map { "\(projectFolder)/\($0.path)" }
+        let sourceFolders = bundleTargets.flatMap(\.synchronizedFolders).map { "\(projectFolder)/\($0.path)" }
         var demanded: [String] = sourceFolders
         var index = 0
         while index < demanded.count {
@@ -159,15 +175,8 @@ public struct XcodeProjectConverter: Node {
             }
         }
 
-        let xcconfigValues = input.inputValues[Self.xcconfigs] ?? [:]
-        guard xcconfigPaths.allSatisfy({ xcconfigValues[$0] != nil }) else {
+        guard !expansions.values.contains(where: \.isWaiting) else {
             return pending("waiting for the xcconfig files", specs: specs)
-        }
-        var xcconfigTexts: [String: String] = [:]
-        for (path, value) in xcconfigValues {
-            if case .value(let hash) = value, let text = try? hash.resolveAsString() {
-                xcconfigTexts[path] = text
-            }
         }
         guard demanded.allSatisfy({ arrived[$0] != nil }) else {
             return pending("walking the target's folders", specs: specs)
@@ -197,20 +206,49 @@ public struct XcodeProjectConverter: Node {
         let formula = try emitter.formula(
             settings: { target in
                 try XcodeBuildSettings.resolve(project: project, target: target, configuration: self.configurationName, sdk: self.sdk,
-                                               xcconfig: { xcconfigTexts["\(projectFolder)/\($0)"] },
+                                               xcconfig: { expansions[$0]?.assignments },
                                                extra: ["TARGET_NAME": target.name])
             },
             listing: { listings[$0] })
 
         return .init(outputValues: [Self.formulaOutput: .value(try formula.intern()),
                                     Self.infoLog: try infoLogValue(application: application, embedded: embedded, project: project,
-                                                                   projectFolder: projectFolder, xcconfigPaths: xcconfigPaths,
-                                                                   xcconfigTexts: xcconfigTexts)],
+                                                                   projectFolder: projectFolder, expansions: expansions)],
                      inputWireSpecs: specs)
     }
 
-    /// The success message, or — once an xcconfig the project names has no value — the
-    /// cause: which file is missing and which settings it would have defined. Reported as
+    /// A path relative to the project's folder as a path in the input file system; nil
+    /// for one outside it — absolute, or climbing above `input:` — which no push can have
+    /// filled, so it is not there without being asked for.
+    static func inputPath(of relativePath: String, in projectFolder: String) -> String? {
+        guard !relativePath.hasPrefix("/") else {
+            return nil
+        }
+        return Path("\(projectFolder)/\(relativePath)").resolvingDotSegments?.string
+    }
+
+    /// What has arrived for one xcconfig file. A wire with no answer yet, or a pending one,
+    /// is waited on; any other absence of a value is a file nobody pushed.
+    static func xcconfigFile(at path: String?, values: [String: NodeValue]) -> XcconfigFile {
+        guard let path else {
+            return .absent
+        }
+        switch values[path] {
+        case nil, .noValue(.pending):
+            return .pending
+        case .value(let hash):
+            guard let text = try? hash.resolveAsString() else {
+                return .absent
+            }
+            return .present(Xcconfig(parsing: text))
+        case .noValue:
+            return .absent
+        }
+    }
+
+    /// The success message, or — once an xcconfig the project names, or one a plain
+    /// `#include` names, has no value — the cause: which file is missing and which
+    /// settings it would have defined. Reported as
     /// an error only when that set is not empty; a missing file nothing referenced is not
     /// a broken build, so it is folded into the ordinary success message instead. An error
     /// here, not just the info it replaces, is what lets a real cause reach the idle error
@@ -220,9 +258,15 @@ public struct XcodeProjectConverter: Node {
     /// `XcodeFormulaEmitter` already ran per target — so the message names exactly what the
     /// missing file would have to define.
     private func infoLogValue(application: XcodeProject.Target, embedded: [XcodeProject.Target], project: XcodeProject,
-                              projectFolder: String, xcconfigPaths: [String], xcconfigTexts: [String: String]) throws -> NodeValue {
+                              projectFolder: String, expansions: [String: XcconfigExpansion]) throws -> NodeValue {
         let converted = "converted \(application.name) for \(sdk), \(configurationName)"
-        let missing = xcconfigPaths.filter { xcconfigTexts[$0] == nil }
+        var missing: [String] = []
+        for relativePath in expansions.keys.sorted().flatMap({ expansions[$0]?.missing ?? [] }) {
+            let path = Self.inputPath(of: relativePath, in: projectFolder) ?? relativePath
+            if !missing.contains(path) {
+                missing.append(path)
+            }
+        }
         guard !missing.isEmpty else {
             return .value(try converted.intern())
         }
@@ -230,7 +274,7 @@ public struct XcodeProjectConverter: Node {
         var undefinedNames = Set<String>()
         for target in [application] + embedded {
             let settings = try XcodeBuildSettings.resolve(project: project, target: target, configuration: configurationName, sdk: sdk,
-                                                           xcconfig: { xcconfigTexts["\(projectFolder)/\($0)"] },
+                                                           xcconfig: { expansions[$0]?.assignments },
                                                            extra: ["TARGET_NAME": target.name])
             undefinedNames.formUnion(settings.unresolvedReferences)
         }

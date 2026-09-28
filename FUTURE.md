@@ -1048,10 +1048,134 @@ application target, simulator only, all library code in packages. In suggested o
    `.xcstrings` exists — are noise worth silencing at the writer. A package *tree* with
    resources still wants the `apple.*` namespaces in its config, which `prepare` does
    not write for a tree.
-2. *NetNewsWire* — nearly every build setting lives in layered xcconfig files, so it is the
-   hard test of evaluating settings the way Xcode layers them. Mac and iOS apps, framework
-   targets, group-based file references rather than synchronized folders, some
-   Objective-C, many local packages.
+2. *NetNewsWire* — `open`; the settings are done (2026-09-28), the build is not. Pinned
+   at `b4361413fc1850110f9f42652f0f84e7a51e9d64` (main, 2026-09-23). The clone is not what
+   this entry said from memory: there are no framework targets and no group-listed
+   sources — the Mac and iOS apps, two Mac extensions (Share, and the Safari extension
+   *Subscribe to Feed*), two iOS extensions and two test bundles, all on synchronized
+   folders (`Mac`, `iOS`, `Shared`, `Widget`, `Tests`) with exception sets, and
+   seventeen local packages under `Modules/`, most of them `.dynamic` library products.
+   Three remote packages: Sparkle, Zip, PLCrashReporter (Tidemark comes transitively).
+
+   *How its settings layer.* Every configuration — the project's and each target's — is
+   based on a file in the synchronized `xcconfig` folder, written in Xcode 16's anchor
+   form: `baseConfigurationReferenceAnchor` names the folder, `…RelativePath` the file;
+   no configuration sets anything in `buildSettings`. The project's Debug file is
+   `NetNewsWire_project_debug.xcconfig`, which includes `NetNewsWire_project.xcconfig`
+   (the warnings, `SWIFT_VERSION = 6.2`, both deployment targets, and `#include?
+   "../../SharedXcodeSettings/ProjectSettings.xcconfig"`, a developer's own file beside
+   the clone) and then `common/NetNewsWire_debug_identifiers.xcconfig`
+   (`BUNDLE_ID_SUFFIX = -DEBUG`), then extends: `GCC_PREPROCESSOR_DEFINITIONS = DEBUG=1
+   SKIP_APP_GROUP_ACCESS=1 $(inherited)`, and replaces `OTHER_SWIFT_FLAGS` without
+   `$(inherited)`, so the project file's upcoming-feature flags are overridden in both
+   configurations, in Xcode too. The Mac app's `NetNewsWire_macapp_target.xcconfig`
+   includes `common/NetNewsWire_codesigning_common.xcconfig` (the
+   `CODE_SIGN_IDENTITY[sdk=macosx*]`/`[sdk=iphoneos*]`/`[sdk=iphonesimulator*]` triple,
+   `ORGANIZATION_IDENTIFIER`, an empty `DEVELOPER_ENTITLEMENTS`, and `#include?
+   "../../../SharedXcodeSettings/DeveloperSettings.xcconfig"`) and
+   `common/NetNewsWire_macapp_target_common.xcconfig`, which includes
+   `…mac_target_common`, which includes `…version` — three deep. The iOS app's and every
+   extension's files have the same shape through `…ios_target_common`,
+   `…macextension_common` and `…iOSextension_common`. Values end in `;` in places
+   (`SDKROOT = macosx;`) and settings defined empty matter
+   (`PRODUCT_BUNDLE_IDENTIFIER = $(ORGANIZATION_IDENTIFIER).NetNewsWire-Evergreen$(BUNDLE_ID_SUFFIX)`).
+   No `[config=…]` or `[arch=…]` condition is used; only `[sdk=…]`.
+
+   *As built.* `Xcconfig` parses a file into its lines in order — assignments with their
+   conditions, in `[a=x][b=y]` or `[a=x,b=y]` form, and `#include`/`#include?` —
+   dropping `//` comments and a trailing `;`. `XcconfigExpansion` follows the includes,
+   beside the including file and then under the project folder, each file spliced in
+   where it is named; it records every file it looked for, waits on one still pending
+   while still finding the others, names a plain include found nowhere, and refuses a
+   cycle. `XcodeBuildSettings` evaluates one ordered run of assignments — defaults,
+   project xcconfig, project configuration, target xcconfig, target configuration — in
+   which a later assignment overrides, `$(inherited)` is what the assignments before it
+   gave (in the same file too), and `sdk`, `config`, `arch` (`arm64`) and `variant`
+   (`normal`) conditions hold or not; `$(VAR)` references are resolved over the result as
+   before. `XcodeProject` reads the anchor form and resolves a file reference through its
+   groups. The converter demands each included file as one more `StaticFile` on its
+   `xcconfigs` port, a level per pass, and the embedded extensions' files as well as the
+   application's; a missing plain include is reported as a missing root is.
+   `XcodeProjectFacts` answers `prepare`'s questions the same way from the disk, so
+   `prepare --platform macos` now writes `arm64-apple-macosx15.0`. Pinned by
+   `XcodeBuildSettingsTests` over copies of the project file and the whole `xcconfig`
+   folder under `SemelApple/Tests/Fixtures/NetNewsWire`: the Mac app's bundle identifier
+   `com.ranchero.NetNewsWire-Evergreen-DEBUG`, `MACOSX_DEPLOYMENT_TARGET` 15.0, the
+   preprocessor definitions, the signing identity per SDK, Release, the iOS app for the
+   simulator, and the Safari extension. Fixed on the way, because the Mac app would have
+   compiled the widget's sources twice: a synchronized folder owned by several targets
+   (`Shared`) lends nothing to its owners — an exception set naming an owner is that
+   owner's exclusions.
+
+   *What stops it*, in the order a `build --platform macos` from a fresh clone meets it.
+   `prepare` vendors the four remote packages and writes the formula; the converter
+   then converts the project (`converted NetNewsWire for macosx, Debug`, every value
+   above in the plists), and the build stops at:
+
+   1. **Sparkle never settles** (B-133). `Dependencies/Sparkle/Package.swift` has one
+      target, a `.binaryTarget(url:checksum:)` for an xcframework. Its
+      `SwiftFormulaConverter` is processed thousands of times, a node is deleted every
+      round, the project's `ProjectBuilder` alternates between pending and a cache hit,
+      and `build` does not return (stopped after ten minutes). Past the livelock,
+      binary targets are not supported at all: `prepare` would vendor the artifact
+      Xcode's resolution already downloads, and the app would link
+      `Sparkle.framework` and embed it under `Contents/Frameworks`.
+   2. **PLCrashReporter's target at the package root** (B-134).
+      `Dependencies/plcrashreporter/Package.swift` declares `CrashReporter` with
+      `path: ""`; `SwiftFormulaConverter.swift` demands the folder
+      `…/plcrashreporter/` with a trailing slash, which collides with the package's own
+      `Folder` node (`is already taken by a node of kind 1`). Behind it, the target is
+      C and Objective-C with a `sources:` list, `exclude:`, `.headerSearchPath`,
+      `.define(…, to: "")` and a `.process` resource.
+   3. **The local packages are not found.** Xcode finds the seventeen packages under
+      `Modules/` because `Modules` is a synchronized folder holding package folders;
+      the product dependencies (`Account`, `RSCore`, …) name no package reference.
+      `XcodeProject.localPackagePaths` reads only `wrapper` file references, so the
+      formula includes the three remote packages and names `modules_Account()` and
+      fourteen more that nothing defines. The converter would walk a synchronized folder
+      for children holding a `Package.swift` (`XcodeProject.swift`,
+      `XcodeProjectConverter.swift`).
+   4. **`SecretKey.swift` is generated before the build.**
+      `Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb` becomes `SecretKey.swift`
+      through the scheme's pre-action, `buildscripts/updateSecrets.sh` (gyb, in Python),
+      not a build phase; `Account` and `Shared/Article Extractor` reference `SecretKey`.
+      Nothing here reads schemes: `prepare` could run the pre-action, or a gyb node
+      could generate it.
+   5. **Objective-C in the packages.** `RSDatabase` has an Objective-C target
+      (`RSDatabaseObjC`, FMDB) and `RSCore` another (`RSCoreObjC`); B-55 compiles C targets and counts
+      `.m` as C-family, but ARC Objective-C through a package has not been built.
+   6. **Objective-C in the app.** `Mac/NSOpenPanel+Extras.m` and the bridging header
+      `SWIFT_OBJC_BRIDGING_HEADER = Mac/NetNewsWire-Bridging-Header.h`, which imports
+      it and `WKPreferencesPrivate.h`. The emitter compiles a synchronized folder's Swift
+      and passes over the `.m` without a word (only a *listed* non-Swift source is
+      refused), and no `-import-objc-header` reaches the compiler
+      (`XcodeFormulaEmitter.swift`).
+   7. **Localized folders inside a synchronized folder are dropped.**
+      `XcodeProjectConverter.isCompiledWhole` skips every `.lproj`, so the twenty-four
+      `Base.lproj` xibs under `Mac` — `MainMenu.xib` is the app's main nib — and the twelve
+      `mul.lproj/*.xcstrings` that localize them never reach the bundle.
+   8. **Interface Builder files are copied, not compiled.** Every xib reaches
+      `Contents/Resources` as `.xib`; the app loads `.nib`. An `ibtool` node, like the
+      catalog compilers.
+   9. **A localized membership exception is read as a path.** The Share extension
+      borrows `/Localized/ShareExtension/ShareViewController.xib`, Xcode's spelling for
+      the file in every `*.lproj` under `ShareExtension`; the converter makes it
+      `Mac//Localized/…`, which is not there (`XcodeProject.swift`, `borrowedFiles`).
+   10. **Folder references in the resources phase.** The eight `Themes/*.nnwtheme`
+      folders are listed in the app's resources phase and copied whole by Xcode; the
+      emitter reads the resources phase only for a target that lists its sources, so a
+      target on synchronized folders loses them (`XcodeFormulaEmitter.swift`).
+   11. **Signing and entitlements.** `CODE_SIGN_ENTITLEMENTS =
+      Mac/Resources/NetNewsWire.entitlements` (sandbox, app groups); Semel signs
+      nothing, and an arm64 app needs at least an ad-hoc signature to launch — with the
+      entitlements, for an app-group container.
+
+   Not in the way: the seventeen `.dynamic` products, which the app embeds as frameworks,
+   link statically into the executable as the emitter links every package's objects
+   (only Sparkle's framework must be embedded); the script phases, of which the build
+   numbers one is all comments, *Delete Unnecessary Frameworks* runs for Release only,
+   and *Verify No Build Settings* checks the project file; `NetNewsWire.sdef`, which
+   Xcode copies too. NetNewsWire joins the roster, as `netnewswire-mac`, when it builds.
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.

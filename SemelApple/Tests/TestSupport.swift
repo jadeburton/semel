@@ -108,3 +108,16 @@ extension Dictionary where Key == String, Value == GraphSpecNode {
     /// The trees as the spec text they render to, for assertions written against text.
     var rendered: [String: String] { mapValues { $0.asString(omitOutputPort: false) } }
 }
+
+extension Xcconfig {
+    /// The assignments written in the file itself, its includes not followed: what a test
+    /// hands the settings evaluation for an xcconfig that includes nothing.
+    static func assignments(_ text: String) -> [XcodeSettingAssignment] {
+        Xcconfig(parsing: text).lines.compactMap { line in
+            guard case .assignment(let assignment) = line else {
+                return nil
+            }
+            return assignment
+        }
+    }
+}

@@ -72,6 +72,28 @@ manifest and only the bytes the server lacks would remove (B-132).
 
 ## Design, correctness and code quality
 
+**B-133** `open` `For Fable Only` — **A package whose only target is a binary target never
+settles, and the build never returns.**
+Found 2026-09-28 building NetNewsWire for the Mac (B-77 item 2): `Dependencies/Sparkle`
+declares one `.binaryTarget(url:checksum:)`. Its `SwiftFormulaConverter` was processed
+6,497 times in ten minutes, `processPendingDeletions` removed a node every round, the
+project's `ProjectBuilder` went from `pending on ["includes"]` to a cache hit and back, and
+`semel build` never printed a result. Two things wrong: the converter does not know binary
+targets, and a subgraph that keeps rewiring itself without converging is indistinguishable,
+from the prompt, from one still working. The first wants a decision on what a binary
+target becomes (the artifact `xcodebuild -resolvePackageDependencies` downloads, vendored
+by `prepare`; a framework linked and embedded); the second, whether the engine notices a
+node reprocessed without its inputs settling and reports it as the build's error.
+
+**B-134** `open` — **A package target at the package root collides with the package's
+folder.** Found 2026-09-28 building NetNewsWire (B-77 item 2):
+`Dependencies/plcrashreporter/Package.swift` declares `CrashReporter` with `path: ""`, and
+`SwiftFormulaConverter` demands `Folder(path: '…/plcrashreporter/')` — the package folder
+with a trailing slash — which the applier refuses as a second node of that name
+(`is already taken by a node of kind 1`). The converter's folder demands want the empty
+relative path joined without a separator; what follows it is the target itself, C and
+Objective-C with `sources:`, `exclude:` and `.headerSearchPath`.
+
 **B-130** `open` `For Fable Only` — **A node of a kind this server no longer links stops a push and the
 build says `No errors.`**
 Found 2026-09-28 while refreshing the tutorial (B-129). The tutorial removes its
