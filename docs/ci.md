@@ -64,8 +64,11 @@ pull-request run, so a backlog of stale runs does not form.
   when the `main` ruleset began requiring `build-and-test` and `lint` to pass — a check
   that never reports on a docs-only change leaves that change unmergeable by anyone
   without bypass.
-- A newer push to the same branch cancels the run in flight (`concurrency` with
-  `cancel-in-progress`); the nightly never cancels itself.
+- A newer push to a pull request's branch cancels the run in flight (`concurrency` with
+  `cancel-in-progress`, which is off for `main`): only the newest head can be merged, so
+  the older verdict is worth nothing. A run on `main` is never cancelled — every merged
+  commit gets a verdict of its own, where a cancelled one left a commit with none and a
+  mark that reads as a failure in the commit list — and the nightly never cancels itself.
 - Each run starts from a clean checkout. `.build` is not carried between runs on purpose:
   a stale plan there produces the failures AGENTS.md's build notes describe, and a clean
   release build on Apple silicon is a few minutes.
