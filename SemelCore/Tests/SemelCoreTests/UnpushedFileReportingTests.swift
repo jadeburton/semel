@@ -443,6 +443,99 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
                         ""])
     }
 
+    // MARK: - A machine file nobody has written (B-109)
+
+    /// A prelude's settings: `machine` laid under a pushed project file by a `ConfigMerger`,
+    /// and a `ConfigFilter` per namespace selecting out of the merge. Returns the file.
+    private func makeSettings(machinePath: String, prefixes: [String]) throws -> ObjectID {
+        let machine = try makeUnpushedFile(path: machinePath)
+        let folder  = Path(machinePath).deletingLastComponent ?? Path("input:")
+        let project = try makeUnpushedFile(path: (folder / "semel.config").string)
+        _ = try staticFile(project).replaceContent(try "sample.compiler.target=x".intern())
+        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
+                                               properties: [:], identity: nil).requireID()
+        try connect(machine, to: merger, name: "machine", toPort: ConfigMerger.basePort)
+        try connect(project, to: merger, name: "project", toPort: ConfigMerger.overridePort)
+        for prefix in prefixes {
+            let filter = try NodeRecord.createNode(database: database, kind: ConfigFilter.kind,
+                                                   properties: [ConfigFilter.prefixProperty: prefix],
+                                                   identity: nil).requireID()
+            try connect(merger, to: filter, name: "settings", fromPort: ConfigMerger.outputPort, toPort: ConfigFilter.inputPort)
+        }
+        try run(merger)
+        return machine
+    }
+
+    private func registerWriters() {
+        ToolNamespaceRegistry.register(.init(namespace: "sample.compiler", toolName: "clang",
+                                             machineFileWriter: .init(command: "semel-clang", rewriteFlags: ["--force"])))
+        ToolNamespaceRegistry.register(.init(namespace: "sample.linker", toolName: "swiftc",
+                                             machineFileWriter: .init(command: "semel-swift prepare")))
+        ToolNamespaceRegistry.register(.init(namespace: "sample.reader", toolName: "swift",
+                                             machineFileWriter: .init(command: "semel-swift prepare")))
+        ToolNamespaceRegistry.register(.init(namespace: "sample.plister", toolName: "none"))
+    }
+
+    /// `build` cannot push a file that is not on disk, and the tools below say what they
+    /// lack rather than what writes it: the file's line names the command, found from the
+    /// namespaces selected out of it, in the folder it sits in, as a reader types it.
+    func test_anUnpushedMachineFileNamesTheCommandThatWritesIt() throws {
+        registerWriters()
+        let file = try makeSettings(machinePath: "input:/semel.machine.config", prefixes: ["sample.compiler"])
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0][0].items,
+                       [ErrorReport.Item(ports: ["output"], message: "semel.machine.config has not been pushed",
+                                         missingSource: "semel.machine.config",
+                                         writers: [.init(command: "semel-clang", folder: ".")])])
+        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
+                       ["❌ StaticFile #\(file) 'input:/semel.machine.config'",
+                        "   · semel.machine.config has not been pushed",
+                        "   · run semel-clang . to write it",
+                        ""])
+    }
+
+    /// Two toolchains' namespaces read out of one file are two writers, each once, on one
+    /// line; a namespace whose toolchain registered no writer adds none.
+    func test_aMachineFileTwoToolchainsReadNamesBothWriters() throws {
+        registerWriters()
+        let file = try makeSettings(machinePath: "input:/app/semel.machine.config",
+                                    prefixes: ["sample.compiler", "sample.linker", "sample.reader", "sample.plister"])
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(ErrorReport.lines(for: captured[0][0]),
+                       ["❌ StaticFile #\(file) 'input:/app/semel.machine.config'",
+                        "   · app/semel.machine.config has not been pushed",
+                        "   · run semel-clang app and semel-swift prepare app to write it",
+                        ""])
+    }
+
+    /// A writer writes `semel.machine.config` and nothing else, so a file of another name
+    /// is not one it answers, whatever reads it. It is still the path `build` pushes once
+    /// it is there.
+    func test_anUnpushedFileOfAnotherNameNamesNoWriter() throws {
+        registerWriters()
+        _ = try makeSettings(machinePath: "input:/clang.cfg", prefixes: ["sample.compiler"])
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0].flatMap(\.items),
+                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
+    }
+
+    /// Nor does a machine file whose namespaces no toolchain registered a writer for.
+    func test_aMachineFileNoToolchainWritesNamesNoWriter() throws {
+        registerWriters()
+        _ = try makeSettings(machinePath: "input:/other/semel.machine.config", prefixes: ["sample.plister"])
+
+        engine.reportIdleTimeErrors()
+
+        XCTAssertEqual(captured[0].flatMap(\.items).map(\.writers), [[]])
+        XCTAssertEqual(captured[0].flatMap(\.items).map(\.missingSource), ["other/semel.machine.config"])
+    }
+
     /// A file that has been pushed is no one's problem, however many nodes read it.
     func test_aPushedFileIsSilent() throws {
         let file     = try makeUnpushedFile(path: "input:/main.c")

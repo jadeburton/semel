@@ -26,11 +26,13 @@ public enum SemelApple {
         AppleToolDiscovery.finders.forEach(ToolDiscovery.register)
 
         // What `tools` prints under each namespace, and the machine file `semel-swift
-        // prepare` writes for an app (B-119). The plist builder runs no tool.
+        // prepare` writes for an app (B-119). The plist builder runs no tool. Prepare
+        // rewrites its own namespaces on every run, so it takes no flag to rewrite them.
+        let prepare = MachineFileWriter(command: "semel-swift prepare")
         ToolNamespaceRegistry.register(.init(namespace: AssetCatalogCompilerConfiguration.settingNamespace,
-                                             toolName: "actool", machineFileCommand: "semel-swift prepare <folder>"))
+                                             toolName: "actool", machineFileWriter: prepare))
         ToolNamespaceRegistry.register(.init(namespace: StringCatalogCompilerConfiguration.settingNamespace,
-                                             toolName: "xcstringstool", machineFileCommand: "semel-swift prepare <folder>"))
+                                             toolName: "xcstringstool", machineFileWriter: prepare))
 
         // `include 'apple'`: an app bundle's resources and Info.plist (B-108).
         FormulaIncludeProviders.register(includeProvider)

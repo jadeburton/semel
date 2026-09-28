@@ -260,7 +260,8 @@ struct SwiftLinker: Node {
         arguments.append("-o"); arguments.append(outputName)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
+                                                        namespace:  SwiftLinkerConfiguration.settingNamespace)
 
         var inputFiles: [FileNameAndContent] = []
         inputFiles.append(contentsOf: inputs.objectFiles)

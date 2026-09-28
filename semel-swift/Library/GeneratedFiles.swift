@@ -132,10 +132,20 @@ public enum GeneratedFiles {
     /// from, and no other, because the engine reports a key no filter claims as unused on
     /// every build. Written by the one writer `semel-clang` uses too (B-119).
     public static func machineConfig(platform: Platform, facts: ToolchainFacts, namespaces: [String]) -> String {
-        let wanted = Set(namespaces)
-        return MachineFile.text(writtenBy: "semel-swift prepare", platform: platform, descriptors: facts.descriptors,
-                                namespaces: facts.namespaces.filter { wanted.contains($0.namespace) })
+        MachineFile.text(of: [machineSection(platform: platform, facts: facts, namespaces: namespaces)])
     }
+
+    /// Prepare's part of the machine file, to lay into one another writer may have written
+    /// (B-109): `semel-clang` writes the clang namespaces beside a formula of its own.
+    public static func machineSection(platform: Platform, facts: ToolchainFacts, namespaces: [String]) -> MachineFile.Section {
+        let wanted = Set(namespaces)
+        return MachineFile.section(writtenBy: machineFileWriter, platform: platform, descriptors: facts.descriptors,
+                                   namespaces: facts.namespaces.filter { wanted.contains($0.namespace) })
+    }
+
+    /// Who the machine file says wrote prepare's part: the command the Swift namespaces
+    /// register as their writer.
+    static let machineFileWriter = "semel-swift prepare"
 
     /// The project's half: what prepare derives from the manifests and the platform — the
     /// target triple at the deployment version, and what actool needs to know about the

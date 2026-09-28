@@ -12,7 +12,8 @@ import SemelNodeKit
 public enum SemelClang {
 
     /// The command, outside Semel, that writes this toolchain's machine settings (B-119).
-    public static let machineFileCommand = "semel-clang <folder>"
+    /// It leaves a file that already holds its namespaces as it is, unless told `--force`.
+    public static let machineFileWriter = MachineFileWriter(command: "semel-clang", rewriteFlags: ["--force"])
 
     /// Where the platform's SDK is on this machine, as `xcrun` answers, or nil when it has
     /// none. Asked when `tools` asks, not at registration.
@@ -48,16 +49,16 @@ public enum SemelClang {
         // as one (B-109); the compiler takes the preprocessed source and the archiver takes
         // objects, and neither reads an SDK.
         ToolNamespaceRegistry.register(.init(namespace: ClangCompilerConfiguration.settingNamespace, toolName: "clang",
-                                             machineFileCommand: machineFileCommand))
+                                             machineFileWriter: machineFileWriter))
         ToolNamespaceRegistry.register(.init(namespace: ClangArchiverConfiguration.settingNamespace, toolName: "libtool",
-                                             machineFileCommand: machineFileCommand))
+                                             machineFileWriter: machineFileWriter))
         for namespace in [ClangPreprocessorConfiguration.settingNamespace, ClangLinkerConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang",
                                                  machineSettingKeys: ["sdkPath"],
                                                  machineSettings: { platform in
                                                      sdkPath(forPlatform: platform).map { ["sdkPath": $0] } ?? [:]
                                                  },
-                                                 machineFileCommand: machineFileCommand))
+                                                 machineFileWriter: machineFileWriter))
         }
 
         // `include 'clang'`: executables, dylibs and archives from a folder of sources (B-108).

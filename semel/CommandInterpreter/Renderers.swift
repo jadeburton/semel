@@ -137,6 +137,12 @@ enum ErrorRecordRenderer {
                 result.append("   · \(body[0])")
                 result.append(contentsOf: body.dropFirst().map { "     \($0)" })
             }
+
+            // What writes a machine file nobody has written, once, under the line naming it.
+            if !entry.writers.isEmpty {
+                let commands = entry.writers.map { "\($0.command) \($0.folder)" }.joined(separator: " and ")
+                result.append("   · run \(commands) to write it")
+            }
         }
 
         // The cascade under the failure, as a count rather than a line per node carrying it.

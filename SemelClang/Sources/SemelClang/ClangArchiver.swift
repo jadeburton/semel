@@ -108,7 +108,8 @@ public struct ClangArchiver: Node {
             arguments.append(objectFile.filePath)
         }
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
+                                                        namespace:  ClangArchiverConfiguration.settingNamespace)
 
         let result = try tool.execute(
             arguments: arguments,

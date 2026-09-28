@@ -27,19 +27,45 @@ public enum ErrorReport {
         /// takes it — relative to the input file system, a folder ending in `/`. Typed so
         /// a client acts on the path rather than on the sentence (B-110).
         public let missingSource: String?
+        /// When the source nobody has pushed is a machine file: the commands that write it,
+        /// outside Semel, each with the folder it goes in (B-109). `build` cannot push a
+        /// file that is not there, and the tools' own paragraphs say what they lack rather
+        /// than where the file is; this is the line that closes the loop.
+        public let writers: [SourceWriter]
 
-        public init(ports: [String], message: String, missingSource: String? = nil) {
+        public init(ports: [String], message: String, missingSource: String? = nil, writers: [SourceWriter] = []) {
             self.ports         = ports
             self.message       = message
             self.missingSource = missingSource
+            self.writers       = writers
+        }
+    }
+
+    /// A command outside Semel that writes a source, and the folder to run it on: the
+    /// folder the source sits in, relative to the input file system — the base directory —
+    /// so a reader types it as the report prints it, `.` for the base itself.
+    public struct SourceWriter: Hashable {
+        public let command: String
+        public let folder:  String
+
+        public init(command: String, folder: String) {
+            self.command = command
+            self.folder  = folder
         }
     }
 
     /// What a source's state reads as, with the source itself when the state is that
-    /// nobody has pushed it.
+    /// nobody has pushed it, and what writes it when that is a tool's to do.
     public struct SourceMessage: Equatable {
         public let text:          String
         public let missingSource: String?
+        public let writers:       [SourceWriter]
+
+        init(text: String, missingSource: String?, writers: [SourceWriter] = []) {
+            self.text          = text
+            self.missingSource = missingSource
+            self.writers       = writers
+        }
     }
 
     /// One node's errors, gathered but not yet rendered. The engine hands these to its
@@ -115,8 +141,9 @@ public enum ErrorReport {
                 .filter { self.message(of: $0, sourceMessages: sourceMessages) == message }
                 .map { $0.nameSymbolID.resolveSymbol() }
                 .sorted()
-            let source = sourceMessages[nodeID].flatMap { $0.text == message ? $0.missingSource : nil }
-            return Item(ports: portNames, message: message, missingSource: source)
+            let sourced = sourceMessages[nodeID].flatMap { $0.text == message ? $0 : nil }
+            return Item(ports: portNames, message: message, missingSource: sourced?.missingSource,
+                        writers: sourced?.writers ?? [])
         }
         return Entry(label: label(forNodeID: nodeID, database: database),
                      items: items,
@@ -142,27 +169,9 @@ public enum ErrorReport {
         let namesPorts = !(entry.items.count == 1 && entry.items[0].ports.count == 1)
 
         for item in entry.items {
-            let prefix = namesPorts ? "\(item.ports.joined(separator: ", ")): " : ""
-
-            let body = item.message
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-
-            guard !body.isEmpty else {
-                result.append("   · \(prefix)(no details)")
-                continue
-            }
-
-            if body.count == 1 {
-                result.append("   · \(prefix)\(body[0])")
-            } else if namesPorts {
-                result.append("   · \(item.ports.joined(separator: ", ")):")
-                result.append(contentsOf: body.map { "     \($0)" })
-            } else {
-                result.append("   · \(body[0])")
-                result.append(contentsOf: body.dropFirst().map { "     \($0)" })
+            result.append(contentsOf: lines(for: item, namesPorts: namesPorts))
+            if let writers = writersLine(item.writers) {
+                result.append("   · \(writers)")
             }
         }
 
@@ -172,6 +181,38 @@ public enum ErrorReport {
 
         result.append("")
         return result
+    }
+
+    private static func lines(for item: Item, namesPorts: Bool) -> [String] {
+        let prefix = namesPorts ? "\(item.ports.joined(separator: ", ")): " : ""
+
+        let body = item.message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard !body.isEmpty else {
+            return ["   · \(prefix)(no details)"]
+        }
+        if body.count == 1 {
+            return ["   · \(prefix)\(body[0])"]
+        }
+        if namesPorts {
+            return ["   · \(item.ports.joined(separator: ", ")):"] + body.map { "     \($0)" }
+        }
+        return ["   · \(body[0])"] + body.dropFirst().map { "     \($0)" }
+    }
+
+    /// The one line under a machine file nobody has written that says what writes it —
+    /// `run semel-clang . to write it` — or nil when no tool does. Every writer the file's
+    /// readers need, since each writes its own namespaces and keeps the others' (B-109).
+    /// `semel`'s `ErrorRecordRenderer` has a twin of this.
+    public static func writersLine(_ writers: [SourceWriter]) -> String? {
+        guard !writers.isEmpty else {
+            return nil
+        }
+        return "run \(writers.map { "\($0.command) \($0.folder)" }.joined(separator: " and ")) to write it"
     }
 
     /// The one line a whole cascade reads as, or nil when nothing is downstream. `semel`'s
@@ -346,8 +387,12 @@ public enum ErrorReport {
                 result[port.nodeID] = SourceMessage(text: deletedSourceMessage(path: path, isTree: isTree),
                                                     missingSource: nil)
             } else if anythingNeeds(port.nodeID) {
+                let writers = record.kind == StaticFile.kind
+                    ? machineFileWriters(ofFileAt: path, nodeID: port.nodeID, database: database)
+                    : []
                 result[port.nodeID] = SourceMessage(text: unpushedFileMessage(path: path, isTree: isTree),
-                                                    missingSource: sourcePath(path, isTree: isTree))
+                                                    missingSource: sourcePath(path, isTree: isTree),
+                                                    writers: writers)
                 unpushed.append((port.nodeID, Path(path), isTree))
             }
         }
@@ -362,6 +407,58 @@ public enum ErrorReport {
         }
 
         return result
+    }
+
+    /// What writes a machine file nobody has pushed: the command each namespace selected
+    /// out of it registered (B-109), with the folder the file sits in. Empty for a file of
+    /// any other name — a writer writes `semel.machine.config` and nothing else, so it is
+    /// no answer to a project's `semel.config` or a machine file a formula names otherwise.
+    ///
+    /// The namespaces are the prefixes of the `ConfigFilter`s the file's text reaches, down
+    /// the wires through the `ConfigMerger`s between — a prelude lays the project's file
+    /// over this one — which is the walk `unclaimedConfigKeys` makes. The engine names no
+    /// toolchain: which command writes a namespace is what its plugin registered.
+    static func machineFileWriters(ofFileAt path: String, nodeID: ObjectID, database: DatabaseLayer) -> [SourceWriter] {
+        let relative = Path(sourcePath(path, isTree: false))
+        guard relative.lastComponent == MachineFileWriter.fileName else {
+            return []
+        }
+
+        var prefixes: Set<String> = []
+        var pending:  [(producerID: ObjectID, port: String)] = [(nodeID, StaticFile.outputPort)]
+        var seen:     Set<ObjectID> = [nodeID]
+
+        while let (producerID, port) = pending.popLast() {
+            // Best effort, as the rest of a report is: wires the database cannot hand over
+            // leave the line out rather than name a wrong command.
+            let wires = FatalErrors.attempt({
+                try database.wire.select(comingFromNodeID: producerID, fromSymbolID: port.asSymbolID())
+            }) ?? []
+            for wire in wires where seen.insert(wire.toNodeID).inserted {
+                guard let consumer = FatalErrors.attempt({ try database.node.find(nodeID: wire.toNodeID) }) ?? nil else {
+                    continue
+                }
+                switch consumer.kind {
+                case ConfigFilter.kind:
+                    if let prefix = consumer.properties[ConfigFilter.prefixProperty] {
+                        prefixes.insert(prefix)
+                    }
+                case ConfigMerger.kind:
+                    pending.append((wire.toNodeID, ConfigMerger.outputPort))
+                default:
+                    continue
+                }
+            }
+        }
+
+        let folder = relative.deletingLastComponent?.string ?? "."
+        var found: [MachineFileWriter] = []
+        for prefix in prefixes.sorted() {
+            if let writer = ToolNamespaceRegistry.entry(forNamespace: prefix)?.machineFileWriter, !found.contains(writer) {
+                found.append(writer)
+            }
+        }
+        return found.sorted().map { SourceWriter(command: $0.command, folder: folder) }
     }
 
     /// The message a port carries, with what the sources say already worked out.

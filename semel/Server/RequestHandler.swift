@@ -285,7 +285,8 @@ extension ErrorRecord {
     init(_ entry: ErrorReport.Entry) {
         self.init(label:   entry.label,
                   entries: entry.items.map {
-                      ErrorEntry(ports: $0.ports, message: $0.message, missingSource: $0.missingSource)
+                      ErrorEntry(ports: $0.ports, message: $0.message, missingSource: $0.missingSource,
+                                 writers: $0.writers.map { SourceWriter(command: $0.command, folder: $0.folder) })
                   },
                   downstreamCarrierCount: entry.downstreamCarrierCount,
                   nodeCount: entry.nodeCount)

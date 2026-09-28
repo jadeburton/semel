@@ -8,9 +8,10 @@
 //  packages and `semel 'build <folder>'`. It finds the packages, takes as roots the ones
 //  nothing there depends on by path, vendors the roots' dependencies into
 //  `<folder>/Dependencies`, and writes `semel.fmla` and `semel.config` beside them unless
-//  they are already there, and `semel.machine.config` — the machine's tools and SDK —
-//  every time. The same command every time: after cloning, and again after changing a
-//  dependency or a toolchain — the copies, the lock beside each and the machine file are replaced, the formula
+//  they are already there, and its part of `semel.machine.config` — the machine's tools
+//  and SDK — every time, keeping what `semel-clang` wrote there. The same command every
+//  time: after cloning, and again after changing a dependency or a toolchain — the copies,
+//  the lock beside each and prepare's part of the machine file are replaced, the formula
 //  and the project's config are kept.
 
 import Foundation
@@ -97,6 +98,11 @@ do {
     }
     for file in report.written {
         print("Written: \(file.path)")
+    }
+    for kept in report.machineFileKept {
+        // Another writer's part of the machine file, left in place (B-109).
+        let writer = kept.writer.map { " from \($0)" } ?? ""
+        print("  kept in \(GeneratedFiles.machineConfigFileName): \(kept.namespaces.joined(separator: ", "))\(writer)")
     }
     for file in report.kept {
         // A config already there is the one the build reads; a platform named on this

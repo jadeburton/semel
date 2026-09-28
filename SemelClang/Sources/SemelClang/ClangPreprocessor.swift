@@ -318,7 +318,8 @@ public struct ClangPreprocessor: Node {
         arguments.append(contentsOf: inputs.configuration.defines.map { "-D\($0)" })
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
+                                                        namespace:  ClangPreprocessorConfiguration.settingNamespace)
 
         var inputFiles: [FileNameAndContent] = [.init(filePath: inputs.inputSourceFile.filePath, hash: inputs.inputSourceFile.hash)]
 

@@ -4,11 +4,12 @@
 //
 //  semel-clang [<folder>] [--platform macos|ios-simulator] [--force]
 //
-//  The C and C++ counterpart of semel-swift, outside Semel (B-119): writes
+//  The C and C++ counterpart of semel-swift, outside Semel (B-119): writes the clang part of
 //  `semel.machine.config` — the clang this machine has and the SDK for the platform — into
 //  the folder, the current one by default: the namespaces the formulas reading it select,
-//  or every clang namespace when none does. Only when there is none: `--force` rewrites it,
-//  after a toolchain update, say. Nobody edits the file, and nobody commits it.
+//  or every clang namespace when none does. Another writer's namespaces in the file are
+//  kept. A file already holding what it would write is left as it is: `--force` rewrites
+//  it, after a toolchain update, say. Nobody edits the file, and nobody commits it.
 
 import Foundation
 import SemelClangTool
@@ -17,8 +18,8 @@ import SemelNodeKit
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
         usage: semel-clang [<folder>] [--platform \(Platform.allCases.map(\.rawValue).joined(separator: "|"))] [--force]
-          writes semel.machine.config for the clang tools into <folder>, the current folder by default,
-          unless one is there; --force rewrites it
+          writes the clang tools into <folder>/semel.machine.config, the current folder by default,
+          keeping another tool's; unless the file holds them already, which --force rewrites
 
         """.utf8))
     exit(64) // EX_USAGE
@@ -42,21 +43,7 @@ guard arguments.count <= 1, !(arguments.first?.hasPrefix("-") ?? false) else {
 let folder = URL(fileURLWithPath: arguments.first ?? ".", isDirectory: true).standardizedFileURL
 
 do {
-    switch try ClangMachineFile.write(into: folder, platform: platform, force: force) {
-    case .written(let file, let namespaces, let notInstalled, let selectedBy):
-        print("Wrote \(file.path): \(namespaces.joined(separator: ", "))")
-        if selectedBy.count == 1 {
-            print("Those \(selectedBy[0]) selects; when it selects another, --force rewrites the file.")
-        }
-        if selectedBy.count > 1 {
-            print("Those \(selectedBy.joined(separator: ", ")) select; when one selects another, --force rewrites the file.")
-        }
-        if !notInstalled.isEmpty {
-            print("No \(notInstalled.joined(separator: ", ")) is installed here; those blocks are comments.")
-        }
-    case .kept(let file):
-        print("Kept \(file.path): it is already there; --force rewrites it")
-    }
+    try ClangMachineFile.write(into: folder, platform: platform, force: force).lines.forEach { print($0) }
 } catch {
     FileHandle.standardError.write(Data("semel-clang: \(error)\n".utf8))
     exit(1)

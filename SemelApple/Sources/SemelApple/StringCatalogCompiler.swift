@@ -77,7 +77,8 @@ public struct StringCatalogCompiler: Node {
         let catalogName = Path(catalogWire.key).lastComponent ?? catalogWire.key
         let catalogFile = FileNameAndContent(filePath: catalogName, hash: try catalogWire.value.expectValue())
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor,
+                                                        namespace:  StringCatalogCompilerConfiguration.settingNamespace)
         let result = try tool.execute(arguments: ["compile", catalogName, "--output-directory", Self.outputFolder],
                                       environment: [:],
                                       inputFiles: [catalogFile],

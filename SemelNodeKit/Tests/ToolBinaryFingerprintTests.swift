@@ -147,7 +147,7 @@ final class ToolBinaryFingerprintTests: XCTestCase {
         let registry = ToolRunnerRegistry()
         registry.registerTool(descriptor: descriptor(recursiveHash: "fingerprint"), toolExecutor: NoTool())
 
-        XCTAssertNoThrow(try registry.tool(descriptor: descriptor(recursiveHash: nil)))
+        XCTAssertNoThrow(try registry.tool(descriptor: descriptor(recursiveHash: nil), namespace: "fake.tool"))
     }
 
     /// And a stale fingerprint in a config file does not un-select it either: the four
@@ -156,7 +156,8 @@ final class ToolBinaryFingerprintTests: XCTestCase {
         let registry = ToolRunnerRegistry()
         registry.registerTool(descriptor: descriptor(recursiveHash: "fingerprint"), toolExecutor: NoTool())
 
-        XCTAssertNoThrow(try registry.tool(descriptor: descriptor(recursiveHash: "a fingerprint of something else")))
+        XCTAssertNoThrow(try registry.tool(descriptor: descriptor(recursiveHash: "a fingerprint of something else"),
+                                           namespace:  "fake.tool"))
     }
 
     /// What a node's cache key reads: the identity it asked for, answered with the whole

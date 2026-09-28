@@ -438,7 +438,7 @@ struct SwiftFormulaConverter: Node {
     static let configFileName = "semel.config"
     /// The machine's, beside it: the tools and SDK, written by `semel-clang` or
     /// `semel-swift prepare` and laid under the project's (B-109).
-    static let machineConfigFileName = "semel.machine.config"
+    static let machineConfigFileName = MachineFileWriter.fileName
     /// The folder under the root where `semel-swift` puts every checkout.
     static let dependenciesFolderName = "Dependencies"
 

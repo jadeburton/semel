@@ -183,7 +183,8 @@ public struct ClangLinker: Node {
         arguments.append("-o"); arguments.append("output.dylib")
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
+                                                        namespace:  ClangLinkerConfiguration.settingNamespace)
 
         var inputFiles: [FileNameAndContent] = []
         inputFiles.append(contentsOf: inputs.libraryFiles)

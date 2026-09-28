@@ -107,7 +107,8 @@ struct SwiftPackageReader: Node {
     }
 
     func process(inputs: SwiftPackageReaderInputs) throws -> SwiftPackageReaderOutputs {
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
+                                                        namespace:  SwiftPackageReaderConfiguration.settingNamespace)
 
         var jsonOutput   = ""
         var stderrOutput = ""
