@@ -83,40 +83,43 @@ public final class CommandInterpreter: CommandContext {
         set { errorsLock.withLock { printsErrorEventsStorage = newValue } }
     }
 
-    /// The totals of the settles a `build` has seen so far, held rather than printed while
-    /// the build runs: a settle the follow loop answers by pushing what it named would
-    /// otherwise print a failing line just before the push that fixes it (B-110). The
-    /// build prints one line at its end — the work summed over its settles, the errors of
-    /// the last, which is the verdict. Nil when no build is holding. Under `errorsLock`:
-    /// events arrive on the connection's thread.
-    private var heldSettleStorage: (scheduled: Int, computed: Int, fromCache: Int, errors: Int)?
+    /// The settles a `build` has seen so far, held rather than printed while the build
+    /// runs, and printed at its end as one summary with the artifact diff under it (see
+    /// `HeldSettles`). Nil when no build is holding. Under `errorsLock`: events arrive on
+    /// the connection's thread.
+    private var heldSettlesStorage: HeldSettles?
 
-    /// Starts holding settle summaries, with nothing held yet.
-    private func holdSettleSummaries() {
-        errorsLock.withLock { heldSettleStorage = (0, 0, 0, 0) }
+    /// Starts holding settles, with nothing held yet.
+    private func holdSettles() {
+        errorsLock.withLock { heldSettlesStorage = HeldSettles() }
     }
 
-    /// Stops holding, and returns the one line the held settles come to, if any did work.
-    private func releaseSettleSummaries() -> String? {
-        let held = errorsLock.withLock { () -> (scheduled: Int, computed: Int, fromCache: Int, errors: Int)? in
-            defer { heldSettleStorage = nil }
-            return heldSettleStorage
+    /// Stops holding, and returns the lines the held settles come to.
+    private func releaseSettles() -> [String] {
+        errorsLock.withLock {
+            defer { heldSettlesStorage = nil }
+            return heldSettlesStorage?.lines ?? []
         }
-        guard let held else {
-            return nil
-        }
-        return SettleSummaryRenderer.line(scheduled: held.scheduled, computed: held.computed,
-                                          fromCache: held.fromCache, errors: held.errors)
     }
 
-    /// Adds one settle to what a build holds, and says whether it was held.
+    /// Adds one settle's summary to what a build holds, and says whether it was held.
     private func holdSettle(scheduled: Int, computed: Int, fromCache: Int, errors: Int) -> Bool {
         errorsLock.withLock {
-            guard let held = heldSettleStorage else {
+            guard heldSettlesStorage != nil else {
                 return false
             }
-            heldSettleStorage = (held.scheduled + scheduled, held.computed + computed,
-                                 held.fromCache + fromCache, errors)
+            heldSettlesStorage?.add(scheduled: scheduled, computed: computed, fromCache: fromCache, errors: errors)
+            return true
+        }
+    }
+
+    /// Adds one settle's artifact diff to what a build holds, and says whether it was held.
+    private func holdArtifacts(appeared: [String], changed: [String], disappeared: [String]) -> Bool {
+        errorsLock.withLock {
+            guard heldSettlesStorage != nil else {
+                return false
+            }
+            heldSettlesStorage?.add(appeared: appeared, changed: changed, disappeared: disappeared)
             return true
         }
     }
@@ -244,6 +247,9 @@ public final class CommandInterpreter: CommandContext {
             }
             outputMessage(line)
         case .daemon(.artifacts(let appeared, let changed, let disappeared)):
+            guard !holdArtifacts(appeared: appeared, changed: changed, disappeared: disappeared) else {
+                return
+            }
             ArtifactChangeRenderer.lines(appeared: appeared, changed: changed, disappeared: disappeared)
                 .forEach { outputMessage($0) }
         case .daemon(.progress(let record)):
@@ -336,17 +342,17 @@ public final class CommandInterpreter: CommandContext {
             let errorsBefore = errorsReported
             printsErrorEvents = false
             defer { printsErrorEvents = true }
-            holdSettleSummaries()
-            defer { _ = releaseSettleSummaries() }
+            holdSettles()
+            defer { _ = releaseSettles() }
             try run("push \(folder)")
             let errorsBeforeSettle = errorsReported
             try run("wait")
             if follows {
                 try followSources(neededBy: folder, errorsBeforeSettle: errorsBeforeSettle)
             }
-            if let summary = releaseSettleSummaries() {
-                outputMessage(summary)
-            }
+            // After the last `Settled.`, which says only that the waiting is over: this is
+            // what the build did, read with the report under it.
+            releaseSettles().forEach { outputMessage($0) }
             try run("errors")
             let exportFolder = destination
                 ?? (baseDirectory as NSString).appendingPathComponent("\(Self.defaultExportFolder)/\(folder)")

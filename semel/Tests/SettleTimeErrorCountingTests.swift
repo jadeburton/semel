@@ -109,6 +109,32 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 0, lines.joined(separator: "\n"))
     }
 
+    /// B-129. What a build prints once its waits are over: `Settled.` ends the last wait,
+    /// then the summary says what the build did, with the artifact diff under it, then the
+    /// report. The diff is held with the summary, not printed as its settle ends, where it
+    /// would land under the last push rather than under the line it belongs to. The
+    /// tutorial's transcripts show this order.
+    func test_aBuildPrintsItsSummaryAfterTheLastSettledWithTheArtifactDiffUnderIt() throws {
+        try "product 'copy.txt' = StaticFile(path: <../side.txt>).output"
+            .write(to: externalRoot.appendingPathComponent("src/semel.fmla"), atomically: true, encoding: .utf8)
+        try "beside the folder".write(to: externalRoot.appendingPathComponent("side.txt"),
+                                     atomically: true, encoding: .utf8)
+        var lines: [String] = []
+        interpreter.output = { lines.append($0) }
+
+        interpreter.handleCommand("build src")
+
+        let transcript = lines.joined(separator: "\n")
+        guard let summary = lines.firstIndex(where: { $0.contains(" scheduled, ") }),
+              let lastSettled = lines.lastIndex(of: "Settled.") else {
+            return XCTFail(transcript)
+        }
+        XCTAssertEqual(lastSettled + 1, summary, transcript)
+        XCTAssertEqual(Array(lines[summary...].dropFirst().prefix(2)),
+                       ["   appeared: output:/src/copy.txt", "No errors."], transcript)
+        XCTAssertEqual(lines.filter { $0.hasPrefix("   appeared:") }.count, 1, transcript)
+    }
+
     /// `build --into` is what ships a product: an error surfacing only at settle must
     /// still fail the build and withhold the export.
     func test_buildWithASettleTimeErrorExportsNothingAndReportsFailure() throws {
