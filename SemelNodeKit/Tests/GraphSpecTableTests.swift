@@ -224,6 +224,70 @@ final class GraphSpecTableTests: XCTestCase {
         XCTAssertFalse(unlinked.namesOnlyRegisteredTypes())
     }
 
+    /// A reference to a row the table does not hold — a demand's or a row's own wire — is
+    /// damaged, and a reader can say so with a lookup per reference, unfolding nothing.
+    func test_aTableNamingARowItDoesNotHoldIsDamaged() throws {
+        let folded = try GraphSpecTable(trees: demands(sources: 3))
+        XCTAssertTrue(folded.referencesOnlyHeldRows())
+
+        let missing = String(repeating: "d", count: 64)
+        let danglingDemand = GraphSpecTable(
+            inputWireSpecs: ["objects": ["extra": .init(identity: missing, outputPort: "object")]],
+            rows: folded.rows)
+        XCTAssertFalse(danglingDemand.referencesOnlyHeldRows())
+
+        var rows = folded.rows
+        rows[String(repeating: "f", count: 64)] = GraphSpecTable.Row(typeName: "SpecTableFilter", properties: [], inputs: [
+            .init(portName: "input", wires: [.init(name: "settings", source: .init(identity: missing, outputPort: "output"))]),
+        ])
+        XCTAssertFalse(GraphSpecTable(inputWireSpecs: folded.inputWireSpecs, rows: rows).referencesOnlyHeldRows())
+    }
+
+    // MARK: - A row's own identity
+
+    /// Each row, hashed one level over the identities its wires name, gives the identity
+    /// it is filed under — which is what lets an applier check a stored row against its
+    /// key for one hash, however deep the table is.
+    func test_everyRowGivesItselfTheIdentityItIsFiledUnder() throws {
+        let table = try GraphSpecTable(trees: demands(sources: 4))
+
+        for (identity, row) in table.rows.sorted(by: { $0.key < $1.key }) {
+            XCTAssertEqual(try table.identity(of: try table.row(identity: identity)), identity, row.typeName)
+        }
+    }
+
+    /// A row filed under a key its content does not give is told apart by the same hash.
+    func test_aRowFiledUnderAnotherIdentityIsToldApart() throws {
+        let forged = String(repeating: "e", count: 64)
+        let row = GraphSpecTable.Row(typeName: "SpecTableSource", properties: [GraphSpecProperty(key: "path", value: "a")], inputs: [])
+        let table = GraphSpecTable(inputWireSpecs: [:], rows: [forged: row])
+
+        XCTAssertNotEqual(try table.identity(of: row), forged)
+        XCTAssertEqual(try table.identity(of: row),
+                       try GraphSpecNode(SpecTableSource.self, properties: ["path": "a"]).identity())
+    }
+
+    /// One tree folds to the rows it reaches and a reference to its root, demanding nothing.
+    func test_oneTreeFoldsToItsRowsAndARootReference() throws {
+        let tree = compile("input:/Sources/Main.swift")
+        let (table, root) = try GraphSpecTable.folding(tree: tree)
+
+        XCTAssertEqual(root, GraphSpecTable.Reference(identity: try tree.identity(), outputPort: "object"))
+        XCTAssertEqual(table.inputWireSpecs, [:])
+        XCTAssertEqual(table.rows.count, 1 + 1 + 1 + settingsLayers + 1, "the compile, its source, its filter, the settings chain")
+    }
+
+    /// A row that is not held is the error a damaged table raises when unfolded.
+    func test_aRowNotHeldIsAMissingRow() {
+        let missing = String(repeating: "a", count: 64)
+
+        XCTAssertThrowsError(try GraphSpecTable(inputWireSpecs: [:], rows: [:]).row(identity: missing)) { error in
+            guard case GraphSpecTableError.missingRow(missing) = error else {
+                return XCTFail("got \(error)")
+            }
+        }
+    }
+
     // MARK: - Encoding
 
     /// The table is stored as JSON with sorted keys, so two folds of equal trees are the

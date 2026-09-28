@@ -132,10 +132,8 @@ final class DictionaryOrderTests: XCTestCase {
             "each property is one plist entry under its own key, and a plist serialises its keys sorted",
         "SemelNodeKit/Sources/SemelNodeKit/LocalFileSystemTool.swift: environment":
             "lays the node's environment over the sandbox's, by name",
-        "SemelCore/Sources/SemelCore/Node.swift: output.outputValues":
+        "SemelCore/Sources/SemelCore/Node.swift: outputValues":
             "writes each value to the port it is keyed by",
-        "SemelCore/Sources/SemelCore/Node.swift: output.inputWireSpecs":
-            "applies each port's specs to that port, and applySpecs sorts the wires within it",
         "SemelNodeKit/Sources/SemelNodeKit/TypeRegistry.swift: kindCache.values":
             "hands the registered types to a caller with a question to ask of each; the one caller collects the kinds that answer it into an `IN (…)` list, which has no order",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: byNode.values":

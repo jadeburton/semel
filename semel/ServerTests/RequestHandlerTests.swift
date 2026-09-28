@@ -144,7 +144,8 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         let material = try node.buildCacheKeyMaterial(input: input)
         try node.saveCacheForAllInputsAndOutputs(
             keyMaterial: material, processingDuration: 0.1,
-            output: ProcessOutput(outputValues: ["output": .value(try "key=1".intern())], inputWireSpecs: [:]))
+            output: AppliedOutput(outputValues: ["output": .value(try "key=1".intern())],
+                                  specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:])))
         return try material.cacheKey()
     }
 

@@ -61,7 +61,8 @@ final class BuildEngineResetTests: SemelCoreTestCase {
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1,
+                                                 output: AppliedOutput(folding: output))
         XCTAssertNotNil(try tool.loadCachedOutputs(cacheKey: key), "precondition: the build is cached")
         return key
     }

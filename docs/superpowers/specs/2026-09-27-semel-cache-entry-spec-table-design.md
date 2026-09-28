@@ -157,8 +157,112 @@ Residuals:
 - **The applier does not walk the table.** A hit unfolds it into trees and `applySpecs`
   hashes each again to find the identities the table is keyed by. Walking it means handing
   `writeToOutputs` a table rather than a `ProcessOutput` on both hit paths and a
-  find-or-create over rows; marked `TODO` in `loadCachedOutputs`.
+  find-or-create over rows; marked `TODO` in `loadCachedOutputs`. Done 2026-09-28 — see
+  "The table applier" below.
 - **Small entries grew by a third.** A reference is a 64-character identity, which costs
   more than the one- or two-node tree most entries demand. The total is still an eighth of
   what it was; a shorter reference — an index into the rows — would give up the property
   that a row's key is the graph's identity.
+
+## The table applier (2026-09-28)
+
+The first residual. A hit unfolded its table into `GraphSpecNode` trees, and `applySpecs`
+hashed those trees again, node by node, to find the identities the table was keyed by —
+more than once: a demanded tree was hashed whole to compare with an existing wire, again
+by `findMatchingNode`, again by `createNode` for the identity it stored, and every child
+again inside its own find-or-create, so a node deep in a tree was hashed once per level
+above it. The table already holds every one of those identities.
+
+### Decisions
+
+- **One applier, over tables.** A run's output carries trees; `writeToOutputs` folds them
+  into a table once (`AppliedOutput(folding:)`) and applies the table, as a hit applies
+  its stored one. The fold is one hash per occurrence, children first — less than the
+  tree applier spent on the same trees — and the table it makes is the one the cache
+  entry stores, handed to `saveCacheForAllInputsAndOutputs` rather than folded a second
+  time. So the fresh path costs nothing extra; it gets cheaper (below). A tree handed to
+  `findOrCreateMatchingNode` — a formula's product, a file-system root — is folded with
+  `GraphSpecTable.folding(tree:)` and applied the same way, so the tree applier is gone
+  and `findMatchingNode` with it; there is no second way for a demand to reach the graph.
+- **What a hit hands the writer.** `loadCachedOutputs` returns an `AppliedOutput` — the
+  values and the table — and a computation hands the writer a `ComputedOutput`,
+  `.processed(ProcessOutput)` or `.cached(AppliedOutput)`, in place of a `ProcessOutput`
+  and a `fromCache` flag. Both hit paths — `processWithPreCheck` and the engine's
+  `write` — apply the table as it was stored; a run's output is folded as it is written.
+- **The lookup is `NodeRecord.select(identity:)` of the row's key, as it stands.** Finding
+  a node hashes nothing. `GraphSpecTableApplier` keeps what it found or made by identity
+  for the length of one application — one node's demands, or one tree — so a node many
+  rows reach is looked up once. Nothing it holds can be rolled back without a throw that
+  ends the application, which is what makes the memory sound. The find is asked first
+  outside a transaction and again inside the one that creates, as the tree applier did.
+- **A row becomes a node through `NodeRecord.createNode(kind:properties:identity:)`**, with
+  the row's key as the identity. The kind is `TypeRegistry.kind(forTypeName:)` of the
+  row's type name, asked before the graph is: a type this Semel does not link is
+  `GraphSpecApplierError.unknownTypeName`, the error a tree naming one raised, whether or
+  not something carries the identity. A fold translates `GraphSpecIdentityError`'s case
+  to the same error (`GraphSpecTable.applied(trees:)`), as `appliedIdentity()` did. Then
+  the node's wires, port by port and in the row's order, each from its source found or
+  made in turn, depth first: the order the tree applier created and wired in.
+- **A row is checked against its key before a node is made from it.** One hash, one level,
+  over the identities its wires name (`GraphSpecTable.identity(of:)`), never over a tree
+  and never for a node that is found. A stored table is read as it stands; a node made
+  from a row filed under the wrong identity would be matched by the wrong demand for as
+  long as it lived, where the check makes it `GraphSpecApplierError.identityMismatch`,
+  which fails the write, and both hit paths reprocess. It also rules out a cycle: a row
+  among its own sources would need a hash that contains itself.
+- **Wire names and ports are the references'.** A demand is a wire name mapped to
+  `(identity, output port)`; a row's wire carries its name and its source's
+  `(identity, output port)`. A demanded wire that already exists is kept when its source's
+  stored identity is the reference's and its source port is the reference's, and is
+  otherwise disconnected and made again — what `applySpecs` did, now comparing two stored
+  values instead of hashing the demand. A port with no references removes every wire on
+  it; a reference with no port finds or makes its node and wires nothing, with a warning.
+  Ports are applied in sorted order, where the tree applier walked a dictionary.
+- **A hit refuses a damaged table without unfolding it.** `referencesOnlyHeldRows()` asks
+  that every reference — each demand and each row's wires — names a row the table holds:
+  a lookup per reference. `trees()` stays in `SemelNodeKit` as a reader's view of a table
+  and as the round trip that shows a fold loses nothing a tree said; the engine never
+  calls it.
+- **`GraphCheck`'s `staleIdentity` is the invariant**: a node made from a row recomputes,
+  from its row and its wires, to the row's key. A test runs `check` after a table-driven
+  creation.
+
+### Tests
+
+- `SemelNodeKit` (`GraphSpecTableTests`): every row gives itself the identity it is filed
+  under; a row filed under another identity is told apart; one tree folds to its rows and
+  a root reference; a reference to a row not held — a demand's or a row's wire — is
+  damaged; `row(identity:)` of a missing row is `missingRow`.
+- `SemelCore` (`CacheTests`): a hit wires what its stored table demands, the merger three
+  rows reach made once; a hit finds its nodes by the identities its table names without
+  hashing them — a row forged to describe one literal while filed under the identity of
+  another already in the graph wires the one in the graph and makes nothing from the
+  description, which an applier that rebuilt and hashed the tree would have made; a hit
+  makes no node from a row filed under another identity; nodes made from a stored table
+  recompute to their identities under `check`.
+- `SemelCore` (`GraphSpecApplierTests`): a table row naming an unknown type is rejected as
+  a tree is; a node a tree reaches twice is made once and wired twice, and `check` finds
+  nothing stale.
+
+The "no tree is built" assertion is the forged row rather than a counter on `trees()`: a
+counter says the function was not called, where the forged row shows that nothing on the
+path hashed the row's content, which is the claim.
+
+### As built (2026-09-28)
+
+As designed. Measured on a copy of the IceCubes packages tree (the one B-115 and the table
+were measured on; 177 nodes now where it was 180, after the main branch's changes since),
+a cold build in a fresh home, then a `reset` that keeps the cache and a second build, each
+twice:
+
+| | before | after |
+|---|---|---|
+| cold build | 83.6 s, 81.4 s | 70.1 s, 65.9 s |
+| second build after `reset` | 32.7 s, 29.8 s | 13.2 s, 11.7 s |
+| answered from the cache, second build | 155, 156 of 177 | 156, 155 of 177 |
+
+The five archives are byte-identical before and after and across each run's two builds,
+and `check` finds nothing after the second build. The second build is where a hit applies
+a table: the project builder's two entries hold 218 rows each, which the applier now finds
+by key where it had unfolded them and hashed the trees level by level. The cold build gains
+too, because the tree applier's repeated hashing was on every run's demands as well.

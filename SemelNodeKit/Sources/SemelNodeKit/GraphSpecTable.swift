@@ -9,7 +9,9 @@
 // graph stores for the node (B-115), so a row's key is the node's `Node.identity` — and
 // each row names the sources of its wires by identity and output port, as the graph's
 // wires do. The demanded wires are references into the table. Folding and unfolding are
-// pure: no database, only the type registry the identity needs for a kind.
+// pure: no database, only the type registry the identity needs for a kind. The engine's
+// applier walks the rows by identity (`GraphSpecTableApplier`), so a table is how every
+// demand reaches the graph, a fresh one as well as a cached one.
 
 import Foundation
 
@@ -128,11 +130,35 @@ extension GraphSpecTable {
         self.init(inputWireSpecs: references, rows: folder.rows)
     }
 
+    /// One tree folded on its own — a formula's product, a root the engine makes — as the
+    /// rows it reaches and the reference to its root. The table demands nothing: there is
+    /// no port for the tree to be wired to, only a node to find or create.
+    public static func folding(tree specNode: GraphSpecNode) throws -> (table: GraphSpecTable, root: Reference) {
+        var folder = GraphSpecFolder()
+        let root = Reference(identity: try folder.fold(specNode), outputPort: specNode.outputPort)
+        return (GraphSpecTable(inputWireSpecs: [:], rows: folder.rows), root)
+    }
+
     /// Whether every row names a node type this Semel links — the question a reader of a
     /// stored table asks before acting on it, asked once per distinct node rather than
     /// once per occurrence.
     public func namesOnlyRegisteredTypes() -> Bool {
         rows.values.allSatisfy { (try? TypeRegistry.kind(forTypeName: $0.typeName)) != nil }
+    }
+
+    /// Whether every reference — each demand and each row's wires — names a row the table
+    /// holds. A fold writes no other kind, so a table that fails this is damaged; asked
+    /// with one lookup per reference and no hash, which is what lets a reader refuse a
+    /// damaged table without unfolding it.
+    public func referencesOnlyHeldRows() -> Bool {
+        let demands = inputWireSpecs.values.allSatisfy { references in
+            references.values.allSatisfy { rows[$0.identity] != nil }
+        }
+        return demands && rows.values.allSatisfy { row in
+            row.inputs.allSatisfy { port in
+                port.wires.allSatisfy { rows[$0.source.identity] != nil }
+            }
+        }
     }
 }
 
@@ -147,32 +173,72 @@ private struct GraphSpecFolder {
         guard let kind = try? TypeRegistry.kind(forTypeName: specNode.typeName) else {
             throw GraphSpecIdentityError.unknownTypeName(specNode.typeName)
         }
-        var rowPorts:      [GraphSpecTable.Port] = []
-        var identityPorts: [NodeIdentity.Port]   = []
+        var rowPorts: [GraphSpecTable.Port] = []
         for port in specNode.inputs {
-            var rowWires:      [GraphSpecTable.Wire] = []
-            var identityWires: [NodeIdentity.Wire]   = []
+            var rowWires: [GraphSpecTable.Wire] = []
             for wire in port.wires {
+                // Asked before the source is folded, so the error names the tree's own
+                // node rather than whatever lies below it.
                 guard let sourcePort = wire.node.outputPort else {
                     throw GraphSpecIdentityError.wireWithoutOutputPort(wire: wire.name, typeName: wire.node.typeName)
                 }
-                let sourceIdentity = try fold(wire.node)
                 rowWires.append(GraphSpecTable.Wire(name: wire.name,
-                                                    source: .init(identity: sourceIdentity, outputPort: sourcePort)))
-                identityWires.append(NodeIdentity.Wire(name: wire.name, sourceIdentity: sourceIdentity, sourcePort: sourcePort))
+                                                    source: .init(identity: try fold(wire.node), outputPort: sourcePort)))
             }
             rowPorts.append(GraphSpecTable.Port(portName: port.portName, wires: rowWires))
-            identityPorts.append(NodeIdentity.Port(name: port.portName, wires: identityWires))
         }
-        let identity = NodeIdentity.hash(kind: kind,
-                                         properties: specNode.properties.map { ($0.key, $0.value) },
-                                         ports: identityPorts)
+        let row = GraphSpecTable.Row(typeName: specNode.typeName, properties: specNode.properties, inputs: rowPorts)
+        let identity = try row.identity(kind: kind, sourceTypeName: { rows[$0]?.typeName })
         if rows[identity] == nil {
-            rows[identity] = GraphSpecTable.Row(typeName: specNode.typeName,
-                                                properties: specNode.properties,
-                                                inputs: rowPorts)
+            rows[identity] = row
         }
         return identity
+    }
+}
+
+// MARK: - A row's own identity
+
+extension GraphSpecTable {
+
+    /// The row filed under `identity`: what the applier reads for a node it has to make.
+    public func row(identity: String) throws -> Row {
+        guard let row = rows[identity] else {
+            throw GraphSpecTableError.missingRow(identity: identity)
+        }
+        return row
+    }
+
+    /// The identity `row` gives itself: its kind, its properties and, per port and wire,
+    /// the identity and port of the source — the identity the row names, not one computed
+    /// from the row below it. One level, as `NodeRecord.recomputedIdentity` is, so it costs
+    /// one hash however deep the table is; a fold files a row under this, and the applier
+    /// asks it of a row before making a node from it, because a stored table's keys are
+    /// read as they stand.
+    public func identity(of row: Row) throws -> String {
+        guard let kind = try? TypeRegistry.kind(forTypeName: row.typeName) else {
+            throw GraphSpecIdentityError.unknownTypeName(row.typeName)
+        }
+        return try row.identity(kind: kind, sourceTypeName: { rows[$0]?.typeName })
+    }
+}
+
+extension GraphSpecTable.Row {
+
+    /// The hash itself, over a kind the caller has already looked up. A wire whose source
+    /// names no port has nothing to hash, as in a tree; `sourceTypeName` names that source
+    /// for the error, when the table holds it.
+    func identity(kind: UInt, sourceTypeName: (String) -> String?) throws -> String {
+        let ports = try inputs.map { port in
+            NodeIdentity.Port(name: port.portName, wires: try port.wires.map { wire in
+                guard let sourcePort = wire.source.outputPort else {
+                    throw GraphSpecIdentityError.wireWithoutOutputPort(
+                        wire: wire.name,
+                        typeName: sourceTypeName(wire.source.identity) ?? NodeIdentity.shown(wire.source.identity))
+                }
+                return NodeIdentity.Wire(name: wire.name, sourceIdentity: wire.source.identity, sourcePort: sourcePort)
+            })
+        }
+        return NodeIdentity.hash(kind: kind, properties: properties.map { ($0.key, $0.value) }, ports: ports)
     }
 }
 
@@ -181,6 +247,10 @@ private struct GraphSpecFolder {
 extension GraphSpecTable {
 
     /// The demanded trees back, one per wire.
+    ///
+    /// The engine never asks for them: its applier walks the rows by identity and builds
+    /// no tree. This is the reader's view of a table, and what shows that a fold loses
+    /// nothing a tree said — the property that lets the applier read the table instead.
     ///
     /// Each distinct node is built once and shared by every tree that reaches it: a tree's
     /// arrays are copy-on-write, so the thousand occurrences of one settings chain are one

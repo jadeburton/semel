@@ -754,10 +754,16 @@ public final class BuildEngine {
 
     private struct ComputeResult {
         let nodeRecord: NodeRecord
-        let output: ProcessOutput
+        let output: ComputedOutput
         let keyMaterial: CacheKeyMaterial?
         let computeStart: Date
-        let fromCache: Bool
+
+        var fromCache: Bool {
+            if case .cached = output {
+                return true
+            }
+            return false
+        }
     }
 
     /// Runs scheduled nodes until none is scheduled and none is running, in two roles.
@@ -909,8 +915,7 @@ public final class BuildEngine {
                 continuation.resume(returning: (nodeRecord, ComputeResult(nodeRecord: nodeRecord,
                                                                           output: result.output,
                                                                           keyMaterial: result.keyMaterial,
-                                                                          computeStart: result.computeStart,
-                                                                          fromCache: result.fromCache)))
+                                                                          computeStart: result.computeStart)))
             }
             thread.name = "semel.compute"
             thread.qualityOfService = .userInitiated
@@ -945,16 +950,18 @@ public final class BuildEngine {
             }
 
             do {
-                try node.writeToOutputs(output: result.output)
-
-                if !result.fromCache {
+                switch result.output {
+                case .cached(let cached):
+                    try node.writeToOutputs(output: cached)
+                case .processed(let processed):
+                    let applied = try node.writeToOutputs(output: processed)
                     // Failing to save a cache entry must not fail a build — unless the
                     // failure is the machine's, which no later node will survive either.
                     do {
                         try node.saveCacheForAllInputsAndOutputs(
                             keyMaterial: result.keyMaterial,
                             processingDuration: Date.now.timeIntervalSince(result.computeStart),
-                            output: result.output
+                            output: applied
                         )
                     } catch {
                         FatalErrors.check(error)
