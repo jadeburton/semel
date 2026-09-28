@@ -75,6 +75,19 @@ jobs:
       - name: Test the CLI, the server and the end-to-end fixtures
         run: scripts/build.sh test
 
+      # A test process that dies of a signal leaves its stack in a crash report, which a
+      # hosted runner discards with the machine. Kept when the job fails, so the next
+      # unexplained crash has a report to read; nothing is uploaded from a green run.
+      - name: Keep crash reports on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crash-reports-${{ github.run_id }}
+          path: |
+            ~/Library/Logs/DiagnosticReports/*.ips
+            ~/Library/Logs/DiagnosticReports/*.crash
+          if-no-files-found: ignore
+
   # A separate job so a lint finding and a test failure show up as two red marks, not one.
   # `--strict` because the rule set in .swiftlint.yml is small and curated: every finding is
   # a real defect of the kind that has cost this codebase before, so it fails the build
