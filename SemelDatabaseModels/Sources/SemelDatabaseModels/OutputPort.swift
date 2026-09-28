@@ -96,10 +96,10 @@ public struct OutputPortDataAccess: DataAccessType {
     /// reading a node's inputs is done on every evaluation of the node, and a read that
     /// costs a select per wire arriving is a cost that follows the fan (B-124). Not read by
     /// the engine.
-    public static var selectCount = 0
+    public static let selectCount = SharedCounter()
 
     public func select(nodeID: ObjectID, nameSymbolID: ObjectID) throws -> OutputPort? {
-        Self.selectCount += 1
+        Self.selectCount.increment()
         return try read { db in
             try OutputPort.filter(OutputPort.Columns.nodeID == nodeID &&
                                   OutputPort.Columns.nameSymbolID == nameSymbolID).fetchOne(db)
@@ -119,8 +119,8 @@ public struct OutputPortDataAccess: DataAccessType {
     /// The wire rows the join hands back are counted into `WireDataAccess.rowsRead` as any
     /// read of the wire table is, so the scale tests see them.
     public func selectArriving(atNodeID toNodeID: ObjectID, toSymbolID: ObjectID) throws -> [ArrivingValue] {
-        Self.selectCount += 1
-        WireDataAccess.selectCount += 1
+        Self.selectCount.increment()
+        WireDataAccess.selectCount.increment()
         let rows = try read { db in
             try Row.fetchAll(db, sql: """
                 SELECT w.name AS wireName, p.nodeID, p.nameSymbolID, p.valueKind, p.dataObjectHash
@@ -129,7 +129,7 @@ public struct OutputPortDataAccess: DataAccessType {
                 WHERE w.toNodeID = ? AND w.toSymbolID = ?
                 """, arguments: [toNodeID, toSymbolID])
         }
-        WireDataAccess.rowsRead += rows.count
+        WireDataAccess.rowsRead.add(rows.count)
         return try rows.map { row in
             let wireName: ObjectID = row["wireName"]
             // A source without a row for the port leaves the joined columns null.

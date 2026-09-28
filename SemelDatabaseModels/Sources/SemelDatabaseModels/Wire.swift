@@ -81,13 +81,13 @@ public struct WireDataAccess: DataAccessType {
     /// no index for reads the table and returns one row, and it takes `EXPLAIN QUERY PLAN`
     /// to tell those apart. Named for what it counts, so a counter of statements can sit
     /// beside it under a name of its own.
-    public static var rowsRead = 0
+    public static let rowsRead = SharedCounter()
 
     /// Fetches rows, counting the select into `selectCount` and the rows into `rowsRead`.
     /// Every read of the table that can hand back more than one row goes through here.
     private func read(countingRows fetch: (Database) throws -> [Wire]) throws -> [Wire] {
         let rows = try counted { try read(fetch) }
-        Self.rowsRead += rows.count
+        Self.rowsRead.add(rows.count)
         return rows
     }
 
@@ -100,12 +100,12 @@ public struct WireDataAccess: DataAccessType {
     /// before the defect stops mattering. Every `select` below counts one, whatever it
     /// returns. Not read by the engine; `CascadeReportScaleTests` reads it around the
     /// error report's upstream walk.
-    static var selectCount = 0
+    static let selectCount = SharedCounter()
 
     /// Counts one query against `selectCount` and runs it, so that a select added here
     /// cannot quietly escape the measurement.
     private func counted<T>(_ query: () throws -> T) rethrows -> T {
-        Self.selectCount += 1
+        Self.selectCount.increment()
         return try query()
     }
 
@@ -169,7 +169,7 @@ public struct WireDataAccess: DataAccessType {
                                 Wire.Columns.name == name).fetchOne(db)
             }
         }
-        Self.rowsRead += wire == nil ? 0 : 1
+        Self.rowsRead.add(wire == nil ? 0 : 1)
         return wire
     }
 

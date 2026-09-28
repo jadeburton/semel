@@ -32,8 +32,9 @@ final class ConcurrencyTests: SemelCoreTestCase {
     }
 
     private func start(jobs: Int) throws {
-        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: true, jobs: jobs)
+        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false, jobs: jobs)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
     }
 
     /// `count` independent nodes of `seconds` each. Their inputs settle first, so each

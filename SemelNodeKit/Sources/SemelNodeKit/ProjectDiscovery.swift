@@ -11,6 +11,8 @@
 // protocols do: a toolchain package has to be able to contribute one without depending on
 // the engine, which is the dependency direction that makes the engine toolchain-agnostic.
 
+import Foundation
+
 /// Recognises one kind of project file and says how to build it.
 public protocol ProjectBuilderPlugin {
     /// The `ProjectBuilder` tree for `entry` inside `folderPath`, or nil if
@@ -25,13 +27,17 @@ public protocol ProjectBuilderPlugin {
 /// is what keeps it testable.
 public enum ProjectDiscovery {
 
+    /// Guards both registries: a host registers while an engine's compute threads walk
+    /// them, and a Dictionary read concurrent with a write is undefined, not merely stale.
+    private static let lock = NSLock()
+
     // Keyed by type name so registering the same plugin twice replaces rather than
     // duplicates. Tests re-run registration for every case, and a growing array would
     // leave each test asking the same plugin more times than the last.
     private static var pluginsByTypeName: [String: any ProjectBuilderPlugin] = [:]
 
     public static func register(_ plugin: any ProjectBuilderPlugin) {
-        pluginsByTypeName[String(describing: type(of: plugin))] = plugin
+        lock.withLock { pluginsByTypeName[String(describing: type(of: plugin))] = plugin }
     }
 
     /// Every registered plugin, in a stable order.
@@ -42,13 +48,15 @@ public enum ProjectDiscovery {
     /// No two plugins should claim the same entry, but relying on that silently is how the
     /// non-deterministic bug gets written later.
     public static var plugins: [any ProjectBuilderPlugin] {
-        pluginsByTypeName.keys.sorted().compactMap { pluginsByTypeName[$0] }
+        lock.withLock { pluginsByTypeName.keys.sorted().compactMap { pluginsByTypeName[$0] } }
     }
 
     /// Drops every registration. For tests that need a known-empty registry.
     public static func removeAll() {
-        pluginsByTypeName.removeAll()
-        includablePluginsByTypeName.removeAll()
+        lock.withLock {
+            pluginsByTypeName.removeAll()
+            includablePluginsByTypeName.removeAll()
+        }
     }
 
     // MARK: - Projects a formula names
@@ -57,13 +65,13 @@ public enum ProjectDiscovery {
     private static var includablePluginsByTypeName: [String: any IncludableProjectPlugin] = [:]
 
     public static func register(includable plugin: any IncludableProjectPlugin) {
-        includablePluginsByTypeName[String(describing: type(of: plugin))] = plugin
+        lock.withLock { includablePluginsByTypeName[String(describing: type(of: plugin))] = plugin }
     }
 
     /// Every registered includable-project plugin, in a stable order, for the reason
     /// `plugins` is sorted.
     public static var includablePlugins: [any IncludableProjectPlugin] {
-        includablePluginsByTypeName.keys.sorted().compactMap { includablePluginsByTypeName[$0] }
+        lock.withLock { includablePluginsByTypeName.keys.sorted().compactMap { includablePluginsByTypeName[$0] } }
     }
 }
 

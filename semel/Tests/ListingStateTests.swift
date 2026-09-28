@@ -45,8 +45,9 @@ final class ListingStateTests: XCTestCase {
                    atomically: true, encoding: .utf8)
 
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
         let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
         connection  = InProcessConnection(handler: handler)
         interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)

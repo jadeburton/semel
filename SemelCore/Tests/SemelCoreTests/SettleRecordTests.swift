@@ -22,10 +22,11 @@ final class SettleRecordTests: SemelCoreTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: true)
+        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
         BuildEngine.shared = engine
         // Above the cache's floor, so the first build stores what the later ones hit.
         SampleTool.processingDurationForTests = 0.02
+        engine.startProcessingLoop()
     }
 
     override func tearDown() {
@@ -87,6 +88,8 @@ final class SettleRecordTests: SemelCoreTestCase {
 
     /// What a restarted server has: a graph, and no settle to explain.
     func test_anEngineThatHasNotSettledHasNoRecord() throws {
+        // A new database installs itself as the shared one, which the running loop reads.
+        engine.waitUntilIdleBlocking()
         let fresh = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
 
         XCTAssertNil(fresh.lastSettleRecord)

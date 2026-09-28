@@ -21,8 +21,9 @@ final class SchedulingTests: SemelCoreTestCase {
         try super.setUpWithError()
         try TypeRegistry.register(types: [TimedNode.self])
         TimedNode.finished.clear()
-        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: true)
+        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
     }
 
     override func tearDown() {

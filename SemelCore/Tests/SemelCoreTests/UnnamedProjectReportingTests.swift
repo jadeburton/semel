@@ -49,9 +49,10 @@ final class UnnamedProjectReportingTests: SemelCoreTestCase {
         try super.setUpWithError()
         ProjectDiscovery.register(includable: SampleProjectPlugin())
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.noticeReporter = { [notices] line in notices.append(line) }
+        engine.startProcessingLoop()
         engine.waitUntilIdleBlocking()
     }
 

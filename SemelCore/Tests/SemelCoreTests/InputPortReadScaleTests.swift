@@ -149,8 +149,8 @@ final class InputPortReadScaleTests: SemelCoreTestCase {
                                  name: "wire\(index)".asSymbolID())
         }
 
-        OutputPortDataAccess.selectCount = 0
-        WireDataAccess.rowsRead = 0
+        OutputPortDataAccess.selectCount.reset()
+        WireDataAccess.rowsRead.reset()
         let start  = Date.now
         let values = try consumer.readFromInputPort("input")
 
@@ -158,8 +158,8 @@ final class InputPortReadScaleTests: SemelCoreTestCase {
                        wires: width,
                        sourceHashes: sourceHashes,
                        values: values,
-                       portSelects: OutputPortDataAccess.selectCount,
-                       wireRowsRead: WireDataAccess.rowsRead,
+                       portSelects: OutputPortDataAccess.selectCount.value,
+                       wireRowsRead: WireDataAccess.rowsRead.value,
                        seconds: Date.now.timeIntervalSince(start))
     }
 

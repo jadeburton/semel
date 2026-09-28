@@ -93,13 +93,13 @@ final class FolderDeletabilityScaleTests: SemelCoreTestCase {
     private func costOfCheckingDeletability(of rootPath: String) throws -> CheckCost {
         let root = try folder(rootPath)
 
-        let instantiatedBefore = Folder.instantiationCount
+        let instantiatedBefore = Folder.instantiationCount.value
         let start = Date.now
         let deletable = try root.canBeDeleted()
         let seconds = Date.now.timeIntervalSince(start)
 
         return CheckCost(shape: rootPath,
-                         instantiations: Folder.instantiationCount - instantiatedBefore,
+                         instantiations: Folder.instantiationCount.value - instantiatedBefore,
                          deletable: deletable,
                          seconds: seconds)
     }

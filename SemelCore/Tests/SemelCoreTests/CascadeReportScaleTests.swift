@@ -91,13 +91,13 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
         let byNode  = Dictionary(grouping: ports, by: \.nodeID)
         let sourced = ErrorReport.sourceMessages(amongPorts: ports, database: database)
 
-        let queriesBefore = WireDataAccess.selectCount
+        let queriesBefore = WireDataAccess.selectCount.value
         let start  = Date.now
         let counts = ErrorReport.causes(amongErrorPorts: byNode,
                                         database: database,
                                         sourceMessages: sourced)
         let seconds = Date.now.timeIntervalSince(start)
-        let queries = WireDataAccess.selectCount - queriesBefore
+        let queries = WireDataAccess.selectCount.value - queriesBefore
 
         // The report the walk feeds, built outside the measured window: a record per cause,
         // which is what the reader is handed.

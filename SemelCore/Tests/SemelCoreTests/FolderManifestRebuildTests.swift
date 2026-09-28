@@ -79,18 +79,18 @@ final class FolderManifestRebuildTests: SemelCoreTestCase {
     /// which is the only other rebuild in the count.
     func test_pushingManyFilesRebuildsTheManifestOnceNotTwicePerFile() throws {
         _ = try engine.inputFileSystem   // the root's own creation builds its first manifest
-        let before = Folder.manifestRebuildCount
+        let before = Folder.manifestRebuildCount.value
 
         try pushFiles(50, into: "many")
-        let duringPushes = Folder.manifestRebuildCount - before
+        let duringPushes = Folder.manifestRebuildCount.value - before
         XCTAssertEqual(duringPushes, 1, "only the folder's creation should build a manifest while pushing")
 
         let entries = try manifest(of: "many").entries
         XCTAssertEqual(entries.count, 50)
-        XCTAssertEqual(Folder.manifestRebuildCount - before, 2, "the read rebuilds exactly once")
+        XCTAssertEqual(Folder.manifestRebuildCount.value - before, 2, "the read rebuilds exactly once")
 
         _ = try manifest(of: "many")
-        XCTAssertEqual(Folder.manifestRebuildCount - before, 2, "a second read of a clean manifest rebuilds nothing")
+        XCTAssertEqual(Folder.manifestRebuildCount.value - before, 2, "a second read of a clean manifest rebuilds nothing")
     }
 
     /// The growth has to be linear now. 800 files against 200 is four times the work; the
@@ -206,9 +206,9 @@ final class FolderManifestRebuildTests: SemelCoreTestCase {
     /// sizes so the growth can be read off. Run by hand with `--filter`.
     func test_measurePushCost() throws {
         for count in [200, 1000, 3000] {
-            let before = Folder.manifestRebuildCount
+            let before = Folder.manifestRebuildCount.value
             let seconds = try pushFiles(count, into: "bench\(count)")
-            let rebuilds = Folder.manifestRebuildCount - before
+            let rebuilds = Folder.manifestRebuildCount.value - before
             print("B-25 measure: \(count) files in \(String(format: "%.3f", seconds))s, \(rebuilds) manifest rebuilds")
         }
     }
