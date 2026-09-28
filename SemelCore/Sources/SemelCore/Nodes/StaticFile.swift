@@ -44,7 +44,7 @@ public protocol UserDeletable {
 // StaticFile only exists within the input file system hierarchy. It provides a connection to the outside world,
 // allowing users to push files into the build system and have them be used as inputs to other Nodes. It is a leaf
 // node and cannot have inputs.
-public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
+public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, FileMetadataProvider {
     public static let kind: UInt = 3
 
     /// A source's own port, which is also the one it is pinned by. Having no inputs, it is
@@ -59,6 +59,8 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
 
     public static let pathProperty = "path"
     static let outputPort = "output"
+    /// The mode the file was pushed with, so a tree or a product built from it keeps it.
+    static let fileMetadataOutputPort = FileMetadata.portName
 
     public var thisNode: NodeRecord
 
@@ -72,7 +74,7 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
         try placeInFileSystem()
     }
 
-    public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [outputPort])
+    public static let descriptor = NodeDescriptor(inputPorts: [], outputPorts: [outputPort, fileMetadataOutputPort])
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled,
     /// so nothing asks it to process. An ordinary error rather than a trap — a node is not
@@ -94,20 +96,52 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable {
         try thisNode.readFromOutputPort(Self.outputPort)
     }
 
+    /// Content with the default mode, or the removal of the file when `content` is nil.
     public func replaceContent(_ content: DataObjectHash?) throws -> Bool {
-        let changed: Bool
-
-        if let content {
-            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .value(content))
-        } else {
-            changed = try thisNode.writeToOutputPort(Self.outputPort, value: .noValue(reason: .deleted))
+        guard let content else {
+            return try replaceContentWith(.noValue(reason: .deleted))
         }
+        return try replaceContent(content, mode: FileMetadata.defaultMode)
+    }
 
+    /// The bytes on `output` and the mode on `fileMetadata`. Returns whether either
+    /// changed: a file made executable under the same bytes is a push that changes what a
+    /// tree or a product built from it holds.
+    public func replaceContent(_ content: DataObjectHash, mode: UInt16) throws -> Bool {
+        let metadataChanged = try thisNode.writeToOutputPort(Self.fileMetadataOutputPort,
+                                                             value: try Self.metadataValue(mode: mode))
+        return try replaceContentWith(.value(content)) || metadataChanged
+    }
+
+    /// The bytes alone. Only they are the folder's business: a content root folds content
+    /// and not modes.
+    private func replaceContentWith(_ value: NodeValue) throws -> Bool {
+        let changed = try thisNode.writeToOutputPort(Self.outputPort, value: value)
         if changed {
             try notifyParentOfChildContentChange()
         }
-
         return changed
+    }
+
+    static func metadataValue(mode: UInt16) throws -> NodeValue {
+        .value(try FileMetadata(mode: mode).jsonString().intern())
+    }
+
+    /// A file nobody has pushed yet says so on `output` alone, and has the default mode on
+    /// `fileMetadata`. Its state is one thing to report, not one per port; and a removed
+    /// file keeps the mode it was last pushed with for the same reason. What reads a mode
+    /// reads it beside the bytes, whose state is the one that stops it.
+    public func didCreate() throws -> ProcessOutput? {
+        .init(outputValues: [Self.outputPort:             .noValue(reason: .initializing),
+                             Self.fileMetadataOutputPort: try Self.metadataValue(mode: FileMetadata.defaultMode)],
+              inputWireSpecs: [:])
+    }
+
+    public func readFileMetadata() throws -> FileMetadata? {
+        guard case .value(let hash) = try thisNode.readFromOutputPort(Self.fileMetadataOutputPort) else {
+            return nil
+        }
+        return FileMetadata.decode(from: try hash.resolveAsString())
     }
 
     public func deleteInInputFileSystem() throws {

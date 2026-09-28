@@ -67,6 +67,9 @@ struct Project {
     /// When set, every exported file lies under this folder: an app's build root holds the
     /// app, and not the archives of the packages it links (B-67).
     var onlyUnder: String?
+    /// Expected products that must be exported executable, mode 0755: a linked program on
+    /// its own, or one inside a bundle tree, which carries the mode per entry (B-108).
+    var executables: [String] = []
 }
 
 extension Project.Source {

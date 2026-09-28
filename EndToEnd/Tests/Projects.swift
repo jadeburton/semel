@@ -19,7 +19,8 @@ enum Projects {
         buildFolder: "c",
         platform: nil,
         expectedProducts: ["hello", "hello.dylib", "config.txt"],
-        buildTimeout: fixtureTimeout)
+        buildTimeout: fixtureTimeout,
+        executables: ["hello"])
 
     /// The state docs/tutorial/first-node.md ends in: the C hello sources, and a formula
     /// that also counts their lines with `LineCounter` from SemelExamples. Reads the
@@ -73,7 +74,8 @@ enum Projects {
         platform: "ios-simulator",
         expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car"],
         buildTimeout: fixtureTimeout,
-        onlyUnder: "Hello.app")
+        onlyUnder: "Hello.app",
+        executables: ["Hello.app/Hello"])
 
     static let icecubes = Project(
         name: "icecubes",

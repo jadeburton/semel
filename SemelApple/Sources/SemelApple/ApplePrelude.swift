@@ -2,10 +2,9 @@
 // SemelApple
 //
 // The funcs a formula gets from `include 'apple'` (B-108): an app bundle's compiled
-// resources and its Info.plist. The executable comes from `include 'swift'`, and the
-// bundle stays a set of products under one folder name: a tree entry is written with the
-// default file mode, so an executable put into the bundle's tree would lose the bit that
-// lets it launch.
+// resources, its Info.plist, and the bundle itself as one tree. The executable comes from
+// `include 'swift'`; a tree entry carries the mode of the file it was made from, so the
+// executable keeps the bit that lets it launch.
 
 import SemelNodeKit
 
@@ -21,6 +20,10 @@ extension SemelApple {
     /// `infoPlist` takes the catalog rather than the compiled assets because a func cannot
     /// pick a port off a value it was handed; building the compiler again from the same
     /// arguments names the same node, so nothing is compiled twice.
+    ///
+    /// `bundle` is a flat bundle, an iOS one: the executable under `name`, `Info.plist`
+    /// and `PkgInfo` at the root, and the resources tree merged beside them. `pkgInfo` is
+    /// a path, as `base` is to `infoPlist`; the others are what the funcs above return.
     static let prelude = """
         func settings(project, machine) = ConfigMerger(base: ['machine': StaticFile(path: machine).output], override: ['project': StaticFile(path: project).output]).output
 
@@ -43,5 +46,14 @@ extension SemelApple {
             base: ['base': StaticFile(path: base).output],
             partials: ['assets': assets(catalog: catalog, appIcon: appIcon, settings: settings).partialInfoPlist]
         ).plist
+
+        func bundle(executable, name, infoPlist, pkgInfo, resources) = TreeMerger(input: [
+            'files': TreeBuilder(input: [
+                '%%name%%': executable,
+                'Info.plist': infoPlist,
+                'PkgInfo': StaticFile(path: pkgInfo).output
+            ]).files,
+            'resources': resources
+        ]).files
         """
 }

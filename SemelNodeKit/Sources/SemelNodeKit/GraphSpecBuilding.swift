@@ -25,6 +25,41 @@ public extension GraphSpecNode {
     func port(_ port: String) -> GraphSpecNode {
         GraphSpecNode(typeName: typeName, properties: properties, inputs: inputs, outputs: outputs, outputPort: port)
     }
+
+    /// This node with the modes of its files wired beside them, where its type asks for
+    /// them (`NodeDescriptor.fileMetadataInputPorts`): each wire on a file port whose source
+    /// publishes `fileMetadata`, and is read at the port that metadata describes, gains a
+    /// wire of the same name on the metadata port, from that source's `fileMetadata`.
+    ///
+    /// A wire rather than a read of the source when the node processes: the mode is then an
+    /// input like the bytes, so it is in the node's cache key and a mode that changes under
+    /// the same bytes wakes the node. Filled here, where a spec is built, because a formula
+    /// cannot pick a port off a value a func was handed, and a spec built in code should
+    /// not have to remember. A metadata port the spec already wires is left as it is. One
+    /// level: the formula resolver calls this on every node it builds.
+    func wiringFileMetadata() -> GraphSpecNode {
+        guard let nodeType = TypeRegistry.nodeType(forTypeName: typeName) as? any Node.Type else {
+            return self
+        }
+        var wiredInputs = inputs
+        for (filePort, metadataPort) in nodeType.descriptor.fileMetadataInputPorts.sorted(by: { $0.key < $1.key })
+            where !wiredInputs.contains(where: { $0.portName == metadataPort }) {
+            let fileWires = wiredInputs.first { $0.portName == filePort }?.wires ?? []
+            let metadataWires = fileWires.compactMap { wire -> GraphSpecWire? in
+                guard wire.node.outputPort == FileMetadata.describedPortName,
+                      let sourceType = TypeRegistry.nodeType(forTypeName: wire.node.typeName) as? any Node.Type,
+                      sourceType.descriptor.outputPorts.contains(FileMetadata.portName) else {
+                    return nil
+                }
+                return GraphSpecWire(name: wire.name, node: wire.node.port(FileMetadata.portName))
+            }
+            if !metadataWires.isEmpty {
+                wiredInputs.append(GraphSpecInputPort(portName: metadataPort, wires: metadataWires))
+            }
+        }
+        return GraphSpecNode(typeName: typeName, properties: properties, inputs: wiredInputs,
+                             outputs: outputs, outputPort: outputPort)
+    }
 }
 
 /// The two file-system nodes every toolchain asks for, by the names the engine registers

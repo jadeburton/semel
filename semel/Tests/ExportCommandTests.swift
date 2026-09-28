@@ -77,6 +77,43 @@ final class ExportCommandTests: XCTestCase {
         XCTAssertEqual(interpreter.errorsReported, 0)
     }
 
+    /// B-108. An entry of a tree product leaves with the mode its tree carries: the
+    /// executable of an app bundle is exported executable, and the plist beside it is not.
+    /// The products are wired as `ProjectBuilder` wires a tree product's entries.
+    func test_aTreeEntryIsExportedWithTheModeItsTreeCarries() throws {
+        let tree = TreeManifest(entries: [
+            TreeManifestEntry(path: "Hello",      hash: try "binary".intern(), mode: FileMetadata.executableMode),
+            TreeManifestEntry(path: "Info.plist", hash: try "plist".intern(),  mode: FileMetadata.defaultMode),
+        ])
+        let treeSource = GraphSpecNode.staticFile(at: "input:/sources/bundle-tree")
+        let (source, _) = try treeSource.findOrCreateMatchingNode()
+        _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try tree.toJSON().intern())
+        for entry in tree.entries {
+            let entryFile = GraphSpecNode(TreeFile.self,
+                                          properties: [TreeFile.nameProperty: entry.path],
+                                          inputs: [TreeFile.treeInputPort: ["tree": treeSource]])
+            let (entryNode, _) = try entryFile.findOrCreateMatchingNode()
+            try BuildEngine.shared.processOneNode(entryNode)
+            _ = try GraphSpecNode(OutputFile.self,
+                                  properties: [OutputFile.pathProperty: "output:/Hello.app/\(entry.path)"],
+                                  inputs: [OutputFile.inputPort: ["product": entryFile.port(TreeFile.outputPort)]])
+                .wiringFileMetadata()
+                .findOrCreateMatchingNode()
+        }
+
+        interpreter.handleCommand("export Hello.app --into \(destination.path)")
+
+        XCTAssertEqual(try exported("Hello"), "binary")
+        XCTAssertEqual(try exportedMode("Hello"), 0o755)
+        XCTAssertEqual(try exportedMode("Info.plist"), 0o644)
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
+    private func exportedMode(_ relativePath: String) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent(relativePath).path)
+        return (attributes[.posixPermissions] as? Int ?? 0) & 0o777
+    }
+
     func test_theDestinationIsRequired() throws {
         try publish("Packages/libModels.a", contents: "models")
 

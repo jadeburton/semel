@@ -349,6 +349,11 @@ Where the implementation departs from the design above, and why:
   default mode, so an executable placed in the bundle's tree would lose the bit that lets
   it launch. `apple` provides `assets`, `resources` (the asset catalog plus every
   `*.xcstrings` in a folder) and `infoPlist`; the executable is `swift.executableUsing`.
+  *Lifted 2026-09-28 (B-108 residual 2):* a tree entry carries the mode of the file it came
+  from, and `apple.bundle(executable:, name:, infoPlist:, pkgInfo:, resources:)` is the
+  whole bundle as one tree — HelloApp's formula is one product. It takes the parts rather
+  than building them, unlike the `app` sketched above, so a target that imports a package
+  passes `swift.executableUsing` where one that does not passes `swift.executable`.
 - **A target that imports a package is its own func** — `swift.moduleUsing`,
   `swift.executableUsing` — since the language has no optional parameters.
 - **`infoPlist` takes the catalog folder**, not the compiled assets: a func cannot pick a

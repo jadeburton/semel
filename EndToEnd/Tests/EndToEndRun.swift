@@ -269,6 +269,10 @@ final class EndToEndRun {
             if (attributes[.size] as? UInt64 ?? 0) == 0 {
                 problems.append("empty: \(product)")
             }
+            let mode = (attributes[.posixPermissions] as? Int ?? 0) & 0o777
+            if project.executables.contains(product), mode != 0o755 {
+                problems.append("not executable: \(product) (\(String(mode, radix: 8)))")
+            }
         }
         if let folder = project.onlyUnder {
             for path in try TreeDiff.relativePaths(under: out) where !path.hasPrefix(folder + "/") {

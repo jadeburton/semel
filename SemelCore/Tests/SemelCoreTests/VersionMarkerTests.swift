@@ -271,6 +271,28 @@ final class VersionMarkerTests: SemelCoreTestCase {
         XCTAssertTrue(above.contains("folder\thash \(try folded.intern())\t3\tsrc\n"), above)
     }
 
+    // MARK: - The mode port, added to `StaticFile` after graphs existed
+
+    /// B-108, the case 0.1.6 was for a folder: a preserved file holds only the ports of the
+    /// release that made it, and a file is never scheduled, so the rebuild writes the row —
+    /// the default mode, which is what a file created now holds until it is pushed.
+    func test_aPreservedFileIsGivenItsModeRowByTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let (file, _) = try GraphSpecNode.staticFile(at: "input:/run.sh").findOrCreateMatchingNode()
+        _ = try XCTUnwrap(file.nodeAsAny() as? StaticFile).replaceContent(try "echo".intern())
+        _ = try engine.database.outputPort.delete(nodeID: try file.requireID(),
+                                                  nameSymbolID: StaticFile.fileMetadataOutputPort.asSymbolID())
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.11")
+
+        try engine.reconcileVersionMarkers()
+
+        let metadata = try XCTUnwrap(XCTUnwrap(file.nodeAsAny() as? StaticFile).readFileMetadata())
+        XCTAssertEqual(metadata.mode, FileMetadata.defaultMode)
+        XCTAssertFalse(GraphCheck.run(database: engine.database)
+                        .findings.contains { $0.kind == .missingOutputPort },
+                       "and the graph reports no node missing a port row")
+    }
+
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
     /// the restating above cannot cost a cache hit or a re-push.
     func test_aPushedFilesContentSurvivesTheRebuild() throws {

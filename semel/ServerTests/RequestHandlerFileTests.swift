@@ -34,6 +34,17 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
         XCTAssertEqual(response, .pushFile(didChange: false))
     }
 
+    /// B-108. The mode is stored beside the bytes, so a tree or a product built from the
+    /// file keeps it — and a file made executable is a change even when its bytes are not.
+    func test_pushKeepsTheModeAndAChangedModeIsAChange() throws {
+        try daemon(.pushFile(path: "run.sh", mode: 0o644), body: Data("echo".utf8))
+
+        let (response, _) = try daemon(.pushFile(path: "run.sh", mode: 0o755), body: Data("echo".utf8))
+
+        XCTAssertEqual(response, .pushFile(didChange: true))
+        XCTAssertEqual(try daemon(.fetch(fileSystem: .input, path: "run.sh")).0, .fetch(mode: 0o755))
+    }
+
     func test_pushFolderCreatesAPinnedFolder() throws {
         let (response, _) = try daemon(.pushFolder(path: "src/lib"))
 
