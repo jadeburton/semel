@@ -34,7 +34,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             for target in (object?["targets"] as? [[String: Any]]) ?? [] {
                 let name = target["name"] as? String ?? ""
                 let type = target["type"] as? String ?? "regular"
-                guard !["test", "system", "system-target", "plugin", "macro"].contains(type) else { continue }
+                guard !["test", "system", "system-target", "plugin", "macro", "binary"].contains(type) else { continue }
                 let relative = PackageClangTarget.normalized(target["path"] as? String ?? "Sources/\(name)")
                 let path = PackageClangTarget.joined(folder, relative)
                 let entries = folderContents[path] ?? [FolderManifestEntry(name: "\(name).swift", isFolder: false, isPinned: true)]
@@ -950,6 +950,144 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
 
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[SwiftFormulaConverter.dependencyLocks]).keys.sorted(),
                        ["input:/app/Dependencies/keychain-swift.semel-lock"])
+    }
+
+    /// What a pass asks for follows what has arrived, never whether the lock matched. A
+    /// demand is a node, and a demanded path that is not in the vendored folder is a ghost
+    /// its content root folds: asked for only once the lock passed, it failed the lock, the
+    /// failed pass withdrew it, the ghost was collected and the lock passed again — round
+    /// and round, a build that never ended (B-133).
+    func test_whatAPassAsksForDoesNotDependOnWhetherTheLockMatches() throws {
+        let passing = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "abc123")
+        let failing = try convertWithVendoredGRDB(lock: grdbLock(root: "abc123"), root: "def456")
+
+        XCTAssertFalse(try pendingReason(failing).isEmpty)
+        XCTAssertEqual(failing.inputWireSpecs.mapValues(\.rendered), passing.inputWireSpecs.mapValues(\.rendered))
+        XCTAssertEqual(failing.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.keys.sorted(),
+                       ["\(vendoredGRDB)/GRDB", "input:/repo/DatabaseModels/Sources/DatabaseModels"])
+    }
+
+    // MARK: - Binary targets (B-133)
+
+    /// Sparkle's manifest as NetNewsWire vendors it: one product, vending one binary target
+    /// SwiftPM downloads by URL. There is no folder for it in the package.
+    private let remoteBinaryTarget = """
+        {"name": "Sparkle", "type": "binary", "dependencies": [], "exclude": [], "resources": [], "settings": [],
+         "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-for-Swift-Package-Manager.zip",
+         "checksum": "4d5de3d3b4ff9b3d1d7c5b1ad1b0a5a1bd6bc7ba7e1d1b2b8b3d0c4b6e2b2d6c"}
+        """
+
+    /// The same target by `path:`, an `.xcframework` in the package.
+    private let localBinaryTarget = """
+        {"name": "Sparkle", "type": "binary", "dependencies": [], "exclude": [], "resources": [], "settings": [],
+         "path": "Sparkle.xcframework"}
+        """
+
+    private func sparkle(targets: [String], products: String = #"{"name": "Sparkle", "targets": ["Sparkle"], "type": {"library": ["automatic"]}}"#) -> String {
+        """
+        {
+          "name": "Sparkle",
+          "dependencies": [],
+          "products": [\(products)],
+          "targets": [\(targets.joined(separator: ",\n"))]
+        }
+        """
+    }
+
+    /// What a pass published on the formula port, as text: the formula, or the error.
+    private func outcome(_ output: ProcessOutput) throws -> String {
+        let value = try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput])
+        switch value {
+        case .value(let hash):
+            return "formula: " + (try hash.resolveAsString())
+        case .noValue(.error(let hash)):
+            return "error: " + (try hash.resolveAsString())
+        case .noValue(let reason):
+            return "no value: \(reason)"
+        }
+    }
+
+    /// The conversion from the converter's side of the engine: each pass is given what the
+    /// pass before it asked for — every folder answered as the engine answers a path nobody
+    /// pushed, an empty folder — until one asks for nothing new. The pass after that must
+    /// publish what it did and ask for what it did: a fixed point, which is what lets the
+    /// engine settle.
+    private func assertSettles(json: String, file: StaticString = #filePath, line: UInt = #line) throws -> ProcessOutput {
+        let converter = try makeConverter()
+        var inputValues: [String: [String: NodeValue]] = [
+            SwiftFormulaConverter.packageFolder: ["folder": .value(try FolderManifest(baseFolderPath: "input:/pkg", entries: []).toJSON().intern())],
+            SwiftFormulaConverter.packageJSON:   ["json":   .value(try json.intern())],
+        ]
+        var output = try converter.process(input: ProcessInput(inputValues: inputValues))
+        for _ in 0..<8 {
+            var askedForMore = false
+            for port in [SwiftFormulaConverter.targetFolders, SwiftFormulaConverter.targetSubfolders] {
+                for folder in (output.inputWireSpecs[port] ?? [:]).keys where inputValues[port]?[folder] == nil {
+                    inputValues[port, default: [:]][folder] =
+                        .value(try FolderManifest(baseFolderPath: folder, entries: []).toJSON().intern())
+                    askedForMore = true
+                }
+            }
+            guard askedForMore else {
+                break
+            }
+            output = try converter.process(input: ProcessInput(inputValues: inputValues))
+        }
+        let again = try converter.process(input: ProcessInput(inputValues: inputValues))
+
+        XCTAssertEqual(try outcome(again), try outcome(output), file: file, line: line)
+        XCTAssertEqual(again.inputWireSpecs.mapValues(\.rendered), output.inputWireSpecs.mapValues(\.rendered),
+                       file: file, line: line)
+        return again
+    }
+
+    func test_aPackageWhoseOnlyTargetIsARemoteBinaryTargetSaysSoOnEveryPass() throws {
+        let output = try assertSettles(json: sparkle(targets: [remoteBinaryTarget]))
+
+        XCTAssertEqual(try pendingReason(output),
+                       "SwiftFormulaConverter: binary target Sparkle of package Sparkle is not built (B-133): it is an "
+                     + "artifact downloaded from https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/"
+                     + "Sparkle-for-Swift-Package-Manager.zip, which `semel-swift prepare` does not vendor yet, so what "
+                     + "reaches it cannot be built either — product(s) Sparkle")
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty, true,
+                       "a remote binary target has no folder to ask for")
+    }
+
+    func test_aPackageWhoseOnlyTargetIsALocalBinaryTargetSaysSoOnEveryPass() throws {
+        let output = try assertSettles(json: sparkle(targets: [localBinaryTarget]))
+
+        let reason = try pendingReason(output)
+        XCTAssertTrue(reason.contains("binary target Sparkle of package Sparkle is not built (B-133): "
+                                    + "it is input:/pkg/Sparkle.xcframework, which nothing here links or embeds yet"),
+                      "got:\n\(reason)")
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty, true,
+                       "an .xcframework is not a source folder")
+    }
+
+    /// A Swift target depending on a binary one cannot link without it, so its product is
+    /// named too.
+    func test_aProductReachingABinaryTargetThroughItsTargetsIsNamed() throws {
+        let json = sparkle(targets: [#"{"name": "Updater", "type": "regular", "path": "Sources/Updater", "dependencies": [{"byName": ["Sparkle", null]}]}"#,
+                                     remoteBinaryTarget],
+                           products: #"{"name": "Updater", "targets": ["Updater"], "type": {"library": ["automatic"]}}"#)
+
+        let reason = try pendingReason(try assertSettles(json: json))
+
+        XCTAssertTrue(reason.contains("binary target Sparkle of package Sparkle is not built (B-133)"), "got:\n\(reason)")
+        XCTAssertTrue(reason.hasSuffix("product(s) Updater"), "got:\n\(reason)")
+    }
+
+    /// A binary target no product reaches is not needed: the formula is made, and nothing
+    /// is compiled from it.
+    func test_aBinaryTargetNoProductReachesIsLeftOut() throws {
+        let json = sparkle(targets: [#"{"name": "Updater", "type": "regular", "path": "Sources/Updater", "dependencies": []}"#,
+                                     localBinaryTarget],
+                           products: #"{"name": "Updater", "targets": ["Updater"], "type": {"library": ["automatic"]}}"#)
+
+        let result = try formula(json: json)
+
+        XCTAssertTrue(result.contains("func compilerUpdater()"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("Sparkle"), "got:\n\(result)")
     }
 
     // MARK: - sourceControl dependencies

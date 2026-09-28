@@ -1154,14 +1154,62 @@ application target, simulator only, all library code in packages. In suggested o
    then converts the project (`converted NetNewsWire for macosx, Debug`, every value
    above in the plists), and the build stops at:
 
-   1. **Sparkle never settles** (B-133). `Dependencies/Sparkle/Package.swift` has one
-      target, a `.binaryTarget(url:checksum:)` for an xcframework. Its
-      `SwiftFormulaConverter` is processed thousands of times, a node is deleted every
-      round, the project's `ProjectBuilder` alternates between pending and a cache hit,
-      and `build` does not return (stopped after ten minutes). Past the livelock,
-      binary targets are not supported at all: `prepare` would vendor the artifact
-      Xcode's resolution already downloads, and the app would link
-      `Sparkle.framework` and embed it under `Contents/Frameworks`.
+   1. **Sparkle is a binary target** (B-133). `Dependencies/Sparkle/Package.swift` has
+      one target, a `.binaryTarget(url:checksum:)` for an xcframework. It no longer
+      loops (the converter demanded its missing source folder only once the package's
+      lock had passed; see B-133): the conversion ends on `binary target Sparkle of
+      package Sparkle is not built (B-133)`, naming the URL and the products that reach
+      it, and a binary target by `path:` is named the same way rather than compiled as
+      Swift. A binary target no product reaches says nothing. What building one takes,
+      as designed and not yet written:
+
+      - *`prepare` vendors the artifact.* Resolution already downloads it and checks the
+        manifest's `checksum` against the zip: `xcodebuild -resolvePackageDependencies`
+        leaves it extracted under `<clones>/artifacts/<identity>/<Target>/`, SwiftPM's
+        `resolve` under `.build/artifacts/<identity>/<Target>/`. `copyCheckouts` copies
+        that folder into the package's copy as `Dependencies/<Name>/semel-artifacts/<Target>/`
+        — inside the package, so the lock `prepare` writes after the copy covers it, and
+        not a dot-name, which a push leaves out — and records the checksum on the lock
+        beside `origin`. `prepare` downloads nothing itself; a `path:` target is in the
+        checkout already, and a `path:` zip is unzipped the same way into
+        `semel-artifacts/<Target>/`.
+      - *The converter reads the xcframework.* A remote target resolves to the folder
+        `<package>/semel-artifacts/<Target>`, a local one to its `path:`; either is
+        demanded as a folder like a target folder (on every pass, never after the lock),
+        and a remote one whose folder is empty is a stall naming `prepare`, as a missing
+        vendored package is. Its `Info.plist` names a slice per platform
+        (`AvailableLibraries`: `LibraryIdentifier`, `LibraryPath`, `SupportedPlatform`,
+        `SupportedPlatformVariant`); choosing one is a node, `XCFrameworkSliceSelector`
+        in `SemelApple`, reading the plist through a `StaticFile` and the platform from
+        the config, so the converter stays platform-blind. Each product gains
+        `frameworks_<Product>()`: a tree of every binary target it reaches, each slice
+        under its `LibraryPath` (`Sparkle.framework/…`), empty when there are none, as
+        `bundles_<Product>()` is. A static library slice (`libX.a` and `Headers`) goes to
+        the linker's `libraries` instead and is not embedded.
+      - *Compile and link.* A Swift target that reaches a binary one is compiled with
+        `-F` over the slice's folder (a `frameworkTrees` port on `SwiftCompiler`, beside
+        `moduleTrees`), so `import Sparkle` finds `Sparkle.framework/Modules`; the
+        linker takes the same tree and passes `-F … -framework Sparkle`, plus
+        `-rpath @executable_path/../Frameworks` on the Mac and
+        `@executable_path/Frameworks` on iOS.
+      - *The emitter embeds.* `XcodeFormulaEmitter` names `frameworks_<Product>()` for
+        every package product the app links, wires the tree to the app's compiler and
+        linker, and lays it into the bundle under `Contents/Frameworks/` on the Mac and
+        `Frameworks/` on iOS — the bundle layout's `frameworksPath` beside `plugInsPath`.
+        Unsigned, like the rest of the bundle (item 1 above).
+      - *The tests that would pin it.* In `SwiftFormulaConverterTests`, a local binary
+        target over a hand-written xcframework manifest (an `Info.plist` and one
+        `macos-arm64` slice) makes `frameworks_Sparkle()` over that slice and no
+        compiler; a remote one with its `semel-artifacts` folder does the same, and
+        without it stalls naming `prepare`. In `PrepareTests`, a package whose
+        `.binaryTarget(path:)` is a zip vendors it unzipped under `semel-artifacts` and
+        the lock covers it (a remote URL needs HTTPS, which a test cannot serve, so the
+        remote copy is pinned by the artifacts layout rather than a download). In
+        `XcodeFormulaEmitterTests`, an app linking a product that reaches a binary target
+        passes `-framework` and places `Contents/Frameworks/Tiny.framework`. End to end,
+        a fixture `EndToEnd/Fixtures/swift/BinaryTargetApp` whose xcframework the test
+        builds with `clang -dynamiclib` and `xcodebuild -create-xcframework`, built into a
+        Mac app whose executable `otool -L` shows loading `@rpath/Tiny.framework/Tiny`.
    2. **PLCrashReporter** (`CrashReporter`, C and Objective-C at the package root). The
       folder collision is fixed and its 58 sources compile (B-134, B-55 done 6–8); what
       is left is B-55's residuals 1, 2, 4, 5 and 7 — Foundation and `-lc++` at link, no

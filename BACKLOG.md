@@ -72,18 +72,30 @@ manifest and only the bytes the server lacks would remove (B-132).
 
 ## Design, correctness and code quality
 
-**B-133** `open` `For Fable Only` — **A package whose only target is a binary target never
-settles, and the build never returns.**
+**B-133** `open` `For Fable Only` — **A subgraph that rewires itself without converging looks,
+from the prompt, like one still working; and a path a vendored package lacks reads as a
+lock mismatch.**
 Found 2026-09-28 building NetNewsWire for the Mac (B-77 item 2): `Dependencies/Sparkle`
-declares one `.binaryTarget(url:checksum:)`. Its `SwiftFormulaConverter` was processed
-6,497 times in ten minutes, `processPendingDeletions` removed a node every round, the
-project's `ProjectBuilder` went from `pending on ["includes"]` to a cache hit and back, and
-`semel build` never printed a result. Two things wrong: the converter does not know binary
-targets, and a subgraph that keeps rewiring itself without converging is indistinguishable,
-from the prompt, from one still working. The first wants a decision on what a binary
-target becomes (the artifact `xcodebuild -resolvePackageDependencies` downloads, vendored
-by `prepare`; a framework linked and embedded); the second, whether the engine notices a
-node reprocessed without its inputs settling and reports it as the build's error.
+declares one `.binaryTarget(url:checksum:)`, its `SwiftFormulaConverter` was processed
+6,497 times in ten minutes with a node collected every round, and `semel build` never
+printed a result. The loop itself is fixed (2026-09-28): the converter asked for a
+target's folder only once the package's lock had passed, the remote binary target has no
+folder, the demand made a ghost the package's content root folds, the lock failed, the
+failed pass withdrew the demand, the collector took the ghost and the lock passed again.
+The converter now demands the target folders before it compares the lock and on every
+pass whatever the lock says, and a binary target is not compiled but named — `binary
+target Sparkle of package Sparkle is not built (B-133)` — for the feature in B-77 item 2
+(`SwiftFormulaConverterTests`, `VendoredPackageSettleTests`; converter v9). What remains:
+
+1. **Non-convergence is silent.** Any node whose demands alternate with what they cause
+   loops the same way, and `build` waits for ever. Whether the engine notices a node
+   reprocessed over inputs it has seen before within one settle, and reports it as the
+   build's error naming the node and what it keeps demanding, wants a decision on what
+   "seen before" costs to keep.
+2. **A folder a vendored package's manifest names and the package lacks** — a target whose
+   `path:` is wrong — is a ghost under the package, and the build ends on the lock:
+   `is not the tree its lock records`, naming two roots and not the path. The converter,
+   or the lock check, could name the demanded paths under the folder that nothing pushed.
 
 **B-130** `open` `For Fable Only` — **A node of a kind this server no longer links stops a push and the
 build says `No errors.`**
