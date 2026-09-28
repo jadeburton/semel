@@ -58,6 +58,23 @@ once a whole batch has (B-113), 85 s.
 
 ## Design, correctness and code quality
 
+**B-130** `open` `For Fable Only` — **A node of a kind this server no longer links stops a push and the
+build says `No errors.`**
+Found 2026-09-28 while refreshing the tutorial (B-129). The tutorial removes its
+`MyLineCounter` type and builds again: a stale row of that kind stays in the graph, and the
+first push that wakes it prints `The operation couldn't be completed.
+(SemelNodeKit.TypeRegistryError error 1.)` where a `Push file:` line should be. The
+folder push stops at that file — the files after it show no push line — and the build
+then prints `No errors.` and exports nothing, because the failure happened in the push,
+not in a node the error report reads. `check` names it (`kind 39 #51: its kind 39 is a
+type this server does not link`) and `reset` clears it, but nothing at the prompt says so.
+Two things wrong: a push that hits a node it cannot make should report the file and go
+on to the next, as it does for a file it cannot read; and a graph holding a kind the
+server does not link should be said at launch or at the first settle — as the B-29
+schema check refuses a database it cannot read — with `reset` named as the way out,
+rather than surfacing as a Cocoa sentence in the middle of a push. Which of the two
+(refuse at launch, or carry the node as an error the report shows) is the decision.
+
 **B-47** `open` `For Fable Only` — **The SDK is declared but not a graph input.**
 Closed so far (2026-09-12): the declared identity is version *and* build, `26.5 (25F70)`,
 checked against the machine; and the Swift compiler and linker put a fingerprint of the SDK
