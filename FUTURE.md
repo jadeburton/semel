@@ -269,7 +269,38 @@ tested directly, and not applied to a cache key. What remains:
 
 ### Swift package conversion
 
-**B-06** `open` — **Lock vendored dependencies by content hash.**
+**B-06** `done` — **Lock vendored dependencies by content hash.**
+Done 2026-09-28 (design: `docs/superpowers/specs/2026-09-28-semel-dependency-lock-design.md`).
+
+*As built.* One lock per dependency, beside it — `Dependencies/GRDB.swift.semel-lock` —
+so an update's diff touches the one file of the package that moved. The text is the one
+sketched below plus a `fold` line naming the `FolderContentRoot` format the root was taken
+under, so a lock the fold moved under reads as "cannot be compared" and not as "the tree
+moved"; `content` and `fold` are required, `version`, `revision` and `origin` recorded when
+the resolver said them. Reader, writer and a disk fold of a folder's content root live in
+`SemelNodeKit` (`DependencyLock`, `FolderContentRoot.root(ofFolderAt:)`), where the converter
+and `semel-swift` both reach them. `SwiftFormulaConverter` checks every package it reads
+directly under `<root>/Dependencies` — the dependencies it reaches, and the package it
+converts when an Xcode project's formula names one by its vendored folder: it demands the
+lock `StaticFile` beside the manifest readers, and the folder's `contentRoot` once the lock
+is there, on two dynamic ports; `DependencyLockCheck` compares them into a typed outcome, and
+a mismatch is the converter's error naming the package, the lock, what it records, the
+expected and the found root, and that `semel-swift prepare` rewrites the lock. A missing lock
+is a notice, not an error — every tree vendored before this, and every one vendored by hand,
+is in that state — posted once per conversion through `NodeNotice`, a hook in the node kit
+the engine points at its own notices; an unlocked folder's root is not wired, so a tree
+without locks is not woken by edits below its vendored folders. `prepare` writes the lock
+beside each copy once all are in place, folding the copy on disk over what a push pushes —
+`push`'s own lister, so no dot-names, and no folder without a file below it —
+(`DependencyLockFoldTests` pushes such a tree through the engine and compares the roots),
+with the version, revision and origin of the checkout's pin in `Package.resolved`. What
+remains: a file removed from disk stays in `input:` (a push only adds), so the root then
+differs from a fresh lock with no word on which file; a lock `rm`'d from `input:` is named
+as a deleted source on every report while the converter still wires it, as any removed
+source a build reads is; and the version is recorded, never checked against the manifest's
+requirement (the converter's `ISSUE:`).
+
+The entry as it was filed:
 `ISSUE:` in `SwiftFormulaConverter`'s dependency resolution. A `sourceControl` or registry
 dependency resolves to `<root>/Dependencies/<name>` with nothing checking that what is
 there is what was meant.
@@ -462,7 +493,7 @@ not, so two copies of one tree are comparable wherever they stand. What remains:
    a folder of 3,000 children, but the collector removes every document no port refers to
    at idle, so the growth is bounded by the collection threshold rather than by edits ×
    depth. Related, and still open: during a flush a folder can publish an
-   intermediate root and then the settled one, so once B-06 wires a `contentRoot` consumer
+   intermediate root and then the settled one, so now that B-06 wires a `contentRoot` consumer
    that consumer is woken twice for one edit — correct, because the flush drains before the
    pass selects, but twice.
 

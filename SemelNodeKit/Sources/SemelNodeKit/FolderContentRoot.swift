@@ -7,6 +7,7 @@
 // edited.
 //
 
+import Foundation
 import SemelDatabaseModels
 
 /// What one child contributes to its folder's content root.
@@ -143,5 +144,71 @@ public enum FolderContentRoot {
             text += "\(child.kind.rawValue)\t\(child.content.token)\t\(child.name.utf8.count)\t\(child.name)\n"
         }
         return text
+    }
+}
+
+// MARK: - The same fold over a folder on disk
+
+extension FolderContentRoot {
+
+    /// The root the engine will publish for `folder` once it has been pushed, computed from
+    /// the disk: what `semel-swift prepare` records in a dependency's lock (B-06), so that
+    /// a build compares the tree it was given with the tree that was vendored.
+    ///
+    /// Folded by `document(of:)` and hashed by `Sha256`, as the engine folds and interns,
+    /// so the two cannot differ in the format. They could still differ in *what* is folded,
+    /// so this walks what a push pushes and nothing else: the listing is
+    /// `ExternalFileSystemLister`'s, the one `push` matches with, which leaves out every
+    /// name starting with a dot — a checkout's `.github`, `.swiftpm`, `.gitignore` — and
+    /// follows a link unless it points at a folder above it. And a subfolder holding no file
+    /// at any depth is left out, because a push creates a folder only on the way to a file
+    /// it pushes, so the engine never has a node for it.
+    ///
+    /// What a push does that this cannot see: a file removed from disk since an earlier push
+    /// is still in the graph, because a push only adds. The engine's root then differs from
+    /// this one, which is right — the build is reading a tree the lock does not describe.
+    public static func root(ofFolderAt folder: URL) throws -> DataObjectHash {
+        try walk(folder) ?? Sha256.hash(Data(document(of: []).utf8))
+    }
+
+    /// The fold over `folder`, or nil when nothing below it would be pushed.
+    private static func walk(_ folder: URL) throws -> DataObjectHash? {
+        let lister = ExternalFileSystemLister(rootDirectoryPath: folder.path)
+        var lines: [(name: String, kind: FolderChildKind, content: FolderChildContent)] = []
+        for entry in lister.allFiles(inDirectoryPath: folder.path) {
+            let name  = entry.path.string
+            let child = folder.appendingPathComponent(name)
+            switch entry.kind {
+            case .file:
+                let bytes: Data
+                do {
+                    bytes = try Data(contentsOf: child, options: .mappedIfSafe)
+                } catch {
+                    throw FolderContentRootError.unreadable(path: child.path, reason: error.localizedDescription)
+                }
+                lines.append((name, .file, .hash(Sha256.hash(bytes))))
+            case .folder:
+                guard let subfolderRoot = try walk(child) else {
+                    continue
+                }
+                lines.append((name, .folder, .hash(subfolderRoot)))
+            }
+        }
+        guard !lines.isEmpty else {
+            return nil
+        }
+        return Sha256.hash(Data(document(of: lines).utf8))
+    }
+}
+
+/// Why a folder on disk could not be folded.
+public enum FolderContentRootError: Error, CustomStringConvertible {
+    case unreadable(path: String, reason: String)
+
+    public var description: String {
+        switch self {
+        case .unreadable(let path, let reason):
+            return "cannot read \(path) to fold its folder's content root: \(reason)"
+        }
     }
 }

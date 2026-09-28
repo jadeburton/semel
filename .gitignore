@@ -41,4 +41,6 @@ semel.machine.config
 
 # What `semel-swift prepare` vendors at the root when Semel builds itself in place (B-78):
 # GRDB at the commit Package.resolved pins. The roster builds a copy and vendors there.
-/Dependencies/
+# The lock `prepare` writes beside the copy is meant to be checked in (B-06).
+/Dependencies/*
+!/Dependencies/*.semel-lock

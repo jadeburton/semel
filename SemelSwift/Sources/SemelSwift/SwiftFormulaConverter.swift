@@ -49,6 +49,11 @@ struct SwiftFormulaConverter: Node {
     /// whole package in one round rather than the reader's `Package.swift` and then each
     /// target folder, a settle apiece (B-110).
     static let awaitedPackageFolders = "awaitedPackageFolders"
+    /// The lock beside every package read from the root's `Dependencies` folder, keyed by
+    /// the lock's path, and the content root of each whose lock is there, keyed by the
+    /// package's folder (B-06, `DependencyLockCheck`).
+    static let dependencyLocks        = "dependencyLocks"
+    static let dependencyContentRoots = "dependencyContentRoots"
 
     /// The clang nodes a C target is built through. Named rather than imported: this
     /// package does not depend on SemelClang, and a formula names a node by type name.
@@ -67,8 +72,9 @@ struct SwiftFormulaConverter: Node {
     /// `Configuration`'s properties, in the formula and in the reader it demands (B-120);
     /// at 4, a C target's sources are one `**` for-each with its exclusions as `except`,
     /// and its public headers follow `publicHeadersPath` (B-55); at 5, a stall demands the
-    /// folder of each package it waits for (B-110).
-    public static let implementationVersion = 5
+    /// folder of each package it waits for (B-110); at 6, it demands the lock and the
+    /// content root of every vendored package, and a mismatch is its error (B-06).
+    public static let implementationVersion = 6
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -105,8 +111,13 @@ struct SwiftFormulaConverter: Node {
             .dynamic(targetFolders),
             .dynamic(targetSubfolders),
             .dynamic(awaitedPackageFolders),
+            .dynamic(dependencyLocks),
+            .dynamic(dependencyContentRoots),
         ],
-        outputPorts: [formulaOutput, infoLog]
+        outputPorts: [formulaOutput, infoLog],
+        // A lock nobody wrote is a state the converter reads — it says so in a notice and
+        // builds — so the report does not name the unpushed file as a failure.
+        inputPortsToleratingAbsentValue: [dependencyLocks]
     )
 
     /// The wires a `path` property stands for: the package folder's manifest, and a reader
@@ -237,6 +248,15 @@ struct SwiftFormulaConverter: Node {
             }
         }
 
+        // ── the lock beside every vendored package (B-06) ────────────────────
+        // Asked for alongside the manifests, so the locks arrive while they do.
+        let lockCheck = DependencyLockCheck(
+            packageFolders: [rootPackageFolder] + Array(specs.keys),
+            dependenciesFolder: "\(buildRoot(defaultingTo: rootPackageFolder))/\(Self.dependenciesFolderName)")
+        let lockValues = input.inputValues[Self.dependencyLocks] ?? [:]
+        let lockDemands = LockDemands(locks: lockCheck.lockSpecs,
+                                      contentRoots: lockCheck.contentRootSpecs(locks: lockValues))
+
         // ── wait until every expected manifest has been received ──────────────
         let missing = specs.keys.filter { availableManifests[$0] == nil }
 
@@ -244,7 +264,27 @@ struct SwiftFormulaConverter: Node {
             return try pendingOutput(
                 reason: describeStall(missingPaths: missing.sorted(), origins: originOfExpectedPath),
                 externalSpecs: specs,
+                lockDemands: lockDemands,
                 awaitedPackageFolderSpecs: Dictionary(uniqueKeysWithValues: missing.map { ($0, .folderManifest(at: $0)) }))
+        }
+
+        // ── every lock compared with its package's content root ───────────────
+        let unlockedFolders: [String]
+        switch try lockCheck.outcome(locks: lockValues,
+                                     contentRoots: input.inputValues[Self.dependencyContentRoots] ?? [:]) {
+        case .waiting(let folders):
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: waiting for the lock of \(folders.count) vendored package(s):\n"
+                      + folders.map { "  \($0)" }.joined(separator: "\n"),
+                externalSpecs: specs,
+                lockDemands: lockDemands)
+        case .failed(let problems):
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: " + problems.map(\.description).joined(separator: "\n\n"),
+                externalSpecs: specs,
+                lockDemands: lockDemands)
+        case .passed(let unlocked):
+            unlockedFolders = unlocked
         }
 
         // ── every compilable target's folder, to tell C targets from Swift ones ──
@@ -273,6 +313,7 @@ struct SwiftFormulaConverter: Node {
                 reason: "SwiftFormulaConverter: waiting for \(missingFolders.count) target folder(s):\n"
                       + missingFolders.map { "  \($0)" }.joined(separator: "\n"),
                 externalSpecs: specs,
+                lockDemands: lockDemands,
                 targetFolderSpecs: targetFolderSpecs)
         }
 
@@ -308,6 +349,7 @@ struct SwiftFormulaConverter: Node {
             return try pendingOutput(
                 reason: "SwiftFormulaConverter: walking \(missingSubfolders.count) target subfolder(s) for resources",
                 externalSpecs: specs,
+                lockDemands: lockDemands,
                 targetFolderSpecs: targetFolderSpecs,
                 targetSubfolderSpecs: subfolderSpecs)
         }
@@ -324,13 +366,27 @@ struct SwiftFormulaConverter: Node {
                                           PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
                                                                   manifests: folderManifests)
                                       })
+        // Said once the formula is made, not on the passes that wait for it, so a
+        // conversion says it once.
+        if !unlockedFolders.isEmpty {
+            NodeNotice.post(DependencyLockCheck.notice(unlocked: unlockedFolders))
+        }
         return .init(
             outputValues: [Self.formulaOutput: .value(try formula.intern()),
                            Self.infoLog: .value("")],
             inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: specs,
+                                                     Self.dependencyLocks: lockDemands.locks,
+                                                     Self.dependencyContentRoots: lockDemands.contentRoots,
                                                      Self.targetFolders: targetFolderSpecs,
                                                      Self.targetSubfolders: subfolderSpecs,
                                                      Self.awaitedPackageFolders: [:]]) { _, new in new })
+    }
+
+    /// The wires the lock check asks for on every pass, whatever the pass is waiting on:
+    /// a spec left out of an output is unwired.
+    private struct LockDemands {
+        var locks:        [String: GraphSpecNode] = [:]
+        var contentRoots: [String: GraphSpecNode] = [:]
     }
 
     // Returns a noValue output that still carries the current specs — the node's own
@@ -338,12 +394,15 @@ struct SwiftFormulaConverter: Node {
     // applySpecs keeps (or creates) the needed wires.
     private func pendingOutput(reason: String,
                                externalSpecs: [String: GraphSpecNode],
+                               lockDemands: LockDemands = LockDemands(),
                                targetFolderSpecs: [String: GraphSpecNode] = [:],
                                targetSubfolderSpecs: [String: GraphSpecNode] = [:],
                                awaitedPackageFolderSpecs: [String: GraphSpecNode] = [:]) throws -> ProcessOutput {
         .init(outputValues: [Self.formulaOutput: .noValue(reason: .error(messageDataObjectHash: try reason.intern())),
                              Self.infoLog: .value("")],
               inputWireSpecs: selfWiringSpecs.merging([Self.externalPackageJSONs: externalSpecs,
+                                                       Self.dependencyLocks: lockDemands.locks,
+                                                       Self.dependencyContentRoots: lockDemands.contentRoots,
                                                        Self.targetFolders: targetFolderSpecs,
                                                        Self.targetSubfolders: targetSubfolderSpecs,
                                                        Self.awaitedPackageFolders: awaitedPackageFolderSpecs]) { _, new in new })
@@ -522,11 +581,15 @@ struct SwiftFormulaConverter: Node {
     // A registry identity keeps its case ("mona.LinkedList"), unlike a git identity, so
     // it can name a directory directly.
     //
+    // What *is* checked is that the copy has not moved since it was vendored: the lock
+    // beside it records the folder's content root, and a copy folding to anything else
+    // stops the build (B-06, `DependencyLockCheck`).
+    //
     // ISSUE: a sourceControl or registry dependency's version requirement is not checked
     // against the vendored copy.  Nothing here can read a version out of a bare source
-    // tree, so a manifest asking for `from: "7.11.1"` builds against whatever happens to
-    // be vendored.  Enforcing that needs a version marker in the tree; until then it is on
-    // the person doing the vendoring.
+    // tree, so a manifest asking for `from: "7.11.1"` builds against whatever was vendored.
+    // The lock records the version `prepare` resolved, but only records it: SwiftPM chose
+    // it against the requirement, and a lock written by hand says whatever its writer said.
     private struct AnySPMDependency: Decodable {
         let dependencies: [SPMPackageDependency]
 
@@ -619,20 +682,10 @@ struct SwiftFormulaConverter: Node {
             repositoryName = url.flatMap { Self.directoryName(forRepositoryURL: $0) }
         }
 
-        /// "https://github.com/groue/GRDB.swift.git" -> "GRDB.swift".
-        ///
-        /// Derived from the URL rather than from SPM's `identity`, which is lowercased
-        /// ("grdb.swift") and so cannot name a directory on a case-sensitive filesystem.
-        /// Splits on ":" as well as "/" so scp-style remotes (git@host:owner/repo.git)
-        /// resolve the same way.
+        /// "https://github.com/groue/GRDB.swift.git" -> "GRDB.swift": the name
+        /// `semel-swift prepare` vendors it under, by the one rule both read.
         static func directoryName(forRepositoryURL urlString: String) -> String? {
-            var name = urlString
-            while name.hasSuffix("/") { name.removeLast() }
-            if let lastSeparator = name.lastIndex(where: { $0 == "/" || $0 == ":" }) {
-                name = String(name[name.index(after: lastSeparator)...])
-            }
-            if name.hasSuffix(".git") { name.removeLast(4) }
-            return name.isEmpty ? nil : name
+            DependencyLock.folderName(forRepositoryURL: urlString)
         }
     }
 

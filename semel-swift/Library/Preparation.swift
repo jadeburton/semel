@@ -19,6 +19,8 @@ public struct PrepareReport: Equatable {
     public var project: String?
     public var roots: [PackageSummary] = []
     public var vendored: [Vendoring.Copied] = []
+    /// The lock written beside each vendored copy (B-06), one per copy.
+    public var locks: [URL] = []
     public var written: [URL] = []
     public var kept: [URL] = []
     /// An xcconfig the project names that was not there, now in place as a copy of
@@ -122,6 +124,8 @@ public enum Preparation {
                 forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
         }
 
+        report.locks = try writeLocks(for: report.vendored)
+
         // A formula already there is kept, and it may select namespaces the one written
         // here would not — a hand-written app formula compiles catalogs. What it selects
         // joins the config, so the file is not the one thing prepare left it to write.
@@ -156,6 +160,19 @@ public enum Preparation {
             .write(to: machineFile, atomically: true, encoding: .utf8)
         report.written.append(machineFile)
         return report
+    }
+
+    /// A lock beside every copy, once every copy is in place (B-06): several roots vendor
+    /// into one folder and a name two of them resolve is copied by the later one, so the
+    /// lock is taken over the copy that stayed, with the pin of the root that copied it.
+    static func writeLocks(for vendored: [Vendoring.Copied]) throws -> [URL] {
+        var lastCopy: [URL: Vendoring.Copied] = [:]
+        for copied in vendored {
+            lastCopy[copied.destination.standardizedFileURL] = copied
+        }
+        return try lastCopy.keys.sorted { $0.path < $1.path }.compactMap { destination in
+            try lastCopy[destination].map(Vendoring.writeLock(for:))
+        }
     }
 
     /// The one `.xcodeproj` directly in `folder`, if there is one; two is a question the

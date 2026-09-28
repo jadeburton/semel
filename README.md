@@ -189,6 +189,8 @@ Semel never fetches anything: every file a build needs has to be inside the inpu
 cd path/to && semel 'build Packages'        # products land in path/to/semel-out/Packages
 ```
 
+Beside each copy, `prepare` writes a lock — `Dependencies/GRDB.swift.semel-lock` — to check in with it. Its `content` line is the Merkle root of the vendored folder as Semel sees it once pushed, and every build compares the two: a dependency that has moved since it was vendored stops the build, naming the expected and the found hash, rather than being quietly rebuilt against. The `version`, `revision` and `origin` lines are recorded for the reader and never enforced. To accept a change, run `prepare` again, or put the found hash on the `content` line. A vendored folder with no lock beside it builds, with a notice saying nothing checks it.
+
 ## Architecture
 
 ```

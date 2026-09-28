@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import SemelNodeKit
 import SemelSwiftTool
 import XCTest
 
@@ -96,6 +97,68 @@ final class VendoringTests: XCTestCase {
         XCTAssertEqual(fromB.map(\.name), ["Bodega", "Nuke"])
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: shared.path).sorted(),
                        ["Bodega", "Nuke", "SwiftSoup"])
+    }
+
+    // MARK: - What the resolver chose (B-06)
+
+    /// The pins a lock records come from SwiftPM's resolved file, by the folder each
+    /// checkout is under — the repository's name, not SwiftPM's lowercased identity.
+    func test_readsThePinsOfAResolvedFileByCheckoutName() throws {
+        try write("Package.resolved", """
+            {
+              "originHash" : "0f3e",
+              "pins" : [
+                {
+                  "identity" : "grdb.swift",
+                  "kind" : "remoteSourceControl",
+                  "location" : "https://github.com/groue/GRDB.swift.git",
+                  "state" : { "revision" : "b83108d10f42680d78f23fe4d4d80fc88dab3212", "version" : "7.11.1" }
+                },
+                {
+                  "identity" : "nuke",
+                  "kind" : "remoteSourceControl",
+                  "location" : "https://github.com/kean/Nuke",
+                  "state" : { "branch" : "main", "revision" : "0123abcd" }
+                }
+              ],
+              "version" : 3
+            }
+            """)
+
+        let pins = Vendoring.pins(inResolvedFileAt: root.appendingPathComponent("Package.resolved"))
+
+        XCTAssertEqual(pins["GRDB.swift"], .init(origin: "https://github.com/groue/GRDB.swift.git", version: "7.11.1",
+                                                 revision: "b83108d10f42680d78f23fe4d4d80fc88dab3212"))
+        XCTAssertEqual(pins["Nuke"], .init(origin: "https://github.com/kean/Nuke", version: nil, revision: "0123abcd"),
+                       "a branch pin has a revision and no version")
+    }
+
+    func test_noResolvedFileIsNoPins() {
+        XCTAssertEqual(Vendoring.pins(inResolvedFileAt: root.appendingPathComponent("Package.resolved")), [:])
+    }
+
+    func test_eachCopyCarriesItsPin() throws {
+        try write(".build/checkouts/GRDB.swift/Package.swift")
+        try write(".build/checkouts/Unpinned/Package.swift")
+        let grdb = Vendoring.Pin(origin: "https://github.com/groue/GRDB.swift.git", version: "7.11.1", revision: "b831")
+
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies, pins: ["GRDB.swift": grdb])
+
+        XCTAssertEqual(copied.map(\.pin), [grdb, nil])
+    }
+
+    /// The lock is beside the copy, not in it: in it, it would be a child the root folds.
+    func test_theLockIsWrittenBesideTheCopyWithItsRoot() throws {
+        try write(".build/checkouts/Nuke/Package.swift", "// nuke\n")
+        let copied = try Vendoring.copyCheckouts(from: checkouts, into: dependencies)
+
+        let lockFile = try Vendoring.writeLock(for: try XCTUnwrap(copied.first))
+
+        XCTAssertEqual(lockFile.path, dependencies.appendingPathComponent("Nuke.semel-lock").path)
+        let lock = try DependencyLock.parse(try String(contentsOf: lockFile, encoding: .utf8))
+        XCTAssertEqual(lock.contentRoot, try FolderContentRoot.root(ofFolderAt: dependencies.appendingPathComponent("Nuke")))
+        XCTAssertNil(lock.version)
+        XCTAssertFalse(exists("Dependencies/Nuke/Nuke.semel-lock"))
     }
 
     func test_saysWhenNothingWasResolved() {

@@ -35,6 +35,7 @@ public enum FileSystemNodes {
     public static let staticFileOutputPort = "output"
     public static let folderTypeName = "Folder"
     public static let folderManifestPort = "manifest"
+    public static let folderContentRootPort = "contentRoot"
 }
 
 /// The three settings nodes a toolchain wires its tools' configuration through, by the
@@ -116,5 +117,15 @@ public extension GraphSpecNode {
         GraphSpecNode(typeName: FileSystemNodes.folderTypeName,
                       properties: [GraphSpecProperty(key: "path", value: path)],
                       outputPort: FileSystemNodes.folderManifestPort)
+    }
+
+    /// A pushed folder's content root — the Merkle root of everything under it (B-26) —
+    /// read at its content-root port. The same folder node as `folderManifest(at:)`; a
+    /// wire to this port re-runs its consumer on any change below the folder, which is
+    /// what a consumer asking for it wants and what one asking for names does not.
+    static func folderContentRoot(at path: String) -> GraphSpecNode {
+        GraphSpecNode(typeName: FileSystemNodes.folderTypeName,
+                      properties: [GraphSpecProperty(key: "path", value: path)],
+                      outputPort: FileSystemNodes.folderContentRootPort)
     }
 }
