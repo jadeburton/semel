@@ -408,6 +408,37 @@ final class ServerTests: RequestHandlerTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: socketPath))
     }
 
+    /// The socket file is there from the bind, a moment before the server watches it, and
+    /// a client waiting for it can remove it — or the whole home it is in — inside that
+    /// moment. Either way it is gone, and the server stops as though it had been watching.
+    func test_aSocketFileRemovedBeforeTheWatchBeginsStillStopsTheServer() throws {
+        let removals: [(String, (URL) throws -> Void)] = [
+            ("the socket file", { home in try FileManager.default.removeItem(at: home.appendingPathComponent("early.sock")) }),
+            ("its directory",   { home in try FileManager.default.removeItem(at: home) }),
+        ]
+        for (what, remove) in removals {
+            let home = directory.appendingPathComponent("early", isDirectory: true)
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let earlyHandler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
+            let early = Server(handler: earlyHandler, socketPath: home.appendingPathComponent("early.sock").path)
+            let reported = expectation(description: "removal of \(what) reported")
+            early.onSocketFileRemoved = { reported.fulfill() }
+            early.socketFileWatchWillStart = {
+                do {
+                    try remove(home)
+                } catch {
+                    XCTFail("removing \(what): \(error)")
+                }
+            }
+
+            try early.start()
+
+            wait(for: [reported], timeout: 5)
+            early.stop()
+            try? FileManager.default.removeItem(at: home)
+        }
+    }
+
     /// The server's own stop removes the file too; that removal must not come back as a
     /// second stop.
     func test_stopDoesNotReportItsOwnRemovalOfTheSocketFile() {

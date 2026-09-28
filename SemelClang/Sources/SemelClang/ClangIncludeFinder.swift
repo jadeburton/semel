@@ -13,7 +13,8 @@ public struct ClangIncludeFinder: Node {
     public static let kind: UInt = 15
 
     /// 2: a source nobody pushed lists no includes (B-79), where version 1 failed on it.
-    public static let implementationVersion = 2
+    /// 3: `.` and `..` in a quoted include are resolved against the source's folder.
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -124,8 +125,11 @@ public struct ClangIncludeFinder: Node {
             let containingFolderOfSourceFile = Path(sourceFileValue.filePath).deletingLastComponent ?? .empty
             let sourceContent = (try? sourceFileValue.contentAsString) ?? ""
 
+            // Resolved, so `../hello.h` from `src/lib/` names the node `src/hello.h`. An
+            // include that climbs above the file system names no node and is left out:
+            // clang, not finding it beside the source, reports it as its own error.
             aggregatedIncludePaths += Self.extractIncludePaths(sourceFileContent: sourceContent)
-                .map { (containingFolderOfSourceFile / $0).string }
+                .compactMap { (containingFolderOfSourceFile / Path($0)).resolvingDotSegments?.string }
         }
 
         // One path per line throughout, including at the seam between two sources: the

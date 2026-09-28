@@ -575,9 +575,11 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
    full path, so a nested file's object carries its subpath and the flat fixtures build the
    nodes they built (`ClangPreludeTests`). Tried by hand on the `c` fixture with two
    sources moved to `src/lib/` and `src/lib/deep/`: all four hermeticity builds passed.
-   The same try found a gap next door: `ClangIncludeFinder` joins a quoted include to the
+   The same try found a gap next door: `ClangIncludeFinder` joined a quoted include to the
    source's folder without resolving `..`, so `#include "../hello.h"` from `src/lib/`
-   names `src/lib/../hello.h`, which is never a node, and the preprocessor fails.
+   named `src/lib/../hello.h`, which is never a node, and the preprocessor failed. Fixed
+   2026-09-28: the joined path goes through `Path.resolvingDotSegments`, and an include
+   that climbs above `input:` is left out for clang to report (finder version 3).
 2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 
@@ -622,7 +624,12 @@ Shipped: the configuration is two files. `semel.machine.config` holds the tool d
 and the machine settings each plugin declares (`ToolNamespace.machineSettingKeys`, answered
 per `Platform`), written outside Semel by the toolchain's own tool (B-119) — `semel-clang`
 for the clang namespaces, when the folder has none or with `--force`, and `semel-swift
-prepare` for a Swift tree — through one writer, `SemelMachineFile`; it is in `.gitignore`. `semel.config` holds the project's choices, typed
+prepare` for a Swift tree — through one writer, `SemelMachineFile`; it is in `.gitignore`.
+Each writes only the namespaces its formula selects (2026-09-28 for `semel-clang`: the
+formulas below its folder that name the file, all four clang namespaces when none does),
+read by `MachineFile.namespaces(selectedIn:)`, which follows a prelude func by func from
+the calls a formula makes — `clang.executable` reaches no archiver — so a project that
+archives nothing is not told on every build that the archiver's keys are unused. `semel.config` holds the project's choices, typed
 once or written by prepare with the C standard under a comment naming it a choice, and
 checked in. Every prelude func takes `settings` as a node and provides
 `settings(project:machine:)`; `Configuration`'s port is `base` (`Semel.version` 0.1.7); the

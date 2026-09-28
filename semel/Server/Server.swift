@@ -54,6 +54,11 @@ public final class Server {
     /// the executable sets it so the stop is the same one its signals take.
     public var onSocketFileRemoved: (() -> Void)?
 
+    /// Run on the starting thread after the listener has created the socket file and
+    /// before the watch on it begins: the window a test has to reach to remove the file
+    /// the way a quick client can.
+    var socketFileWatchWillStart: (() -> Void)?
+
     public init(handler: RequestHandler, socketPath: String) {
         self.handler    = handler
         self.socketPath = socketPath
@@ -181,13 +186,23 @@ public final class Server {
     /// and `.delete` when the directory itself goes, which covers every way the file can
     /// disappear without a timer. Each event is only a hint to look again; the file is
     /// gone when nothing is at the path or something else is.
+    ///
+    /// The file exists from the moment the listener binds, before this watch does, and
+    /// whoever was waiting for it — a client, a test — may remove it, or its whole
+    /// directory, at once. A file already gone when the watch would begin, or gone before
+    /// the watch could report it, is gone all the same, so each case is looked at once
+    /// the watch is on rather than waiting for an event that already happened.
     private func watchSocketFile() {
-        guard let identity = FileIdentity(path: socketPath) else {
-            return
-        }
+        socketFileWatchWillStart?()
         let directoryPath = URL(fileURLWithPath: socketPath).deletingLastPathComponent().path
         let directory     = open(directoryPath, O_EVTONLY)
         guard directory >= 0 else {
+            queue.async { [weak self] in self?.socketFileRemoved() }
+            return
+        }
+        guard let identity = FileIdentity(path: socketPath) else {
+            close(directory)
+            queue.async { [weak self] in self?.socketFileRemoved() }
             return
         }
         let watch = DispatchSource.makeFileSystemObjectSource(fileDescriptor: directory,
@@ -200,11 +215,20 @@ public final class Server {
             socketWatch    = watch
         }
         watch.resume()
+        // A removal between reading the identity and the resume raised no event.
+        queue.async { [weak self] in self?.socketDirectoryChanged() }
     }
 
     private func socketDirectoryChanged() {
-        let (alreadyStopping, identity) = lock.withLock { (stopping, socketIdentity) }
-        guard !alreadyStopping, FileIdentity(path: socketPath) != identity else {
+        let identity = lock.withLock { socketIdentity }
+        guard FileIdentity(path: socketPath) != identity else {
+            return
+        }
+        socketFileRemoved()
+    }
+
+    private func socketFileRemoved() {
+        guard !isStopping else {
             return
         }
         if let onSocketFileRemoved {

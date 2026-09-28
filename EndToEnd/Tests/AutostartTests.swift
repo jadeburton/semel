@@ -47,8 +47,9 @@ final class AutostartTests: XCTestCase {
 
     /// B-109, B-119. The loop the missing-settings report describes, end to end: a build
     /// with no machine file fails naming `semel-clang`; that tool, run outside Semel on the
-    /// folder the formula looks in, writes the four clang namespaces and no other tool's;
-    /// and the next build follows the file in and succeeds.
+    /// folder the formula looks in, writes the three clang namespaces the formula selects
+    /// and no other tool's; and the next build follows the file in and succeeds, with no
+    /// key in the file left unused.
     func test_theMissingSettingsLoopIsBuildWriteBuild() throws {
         let tree = home.appendingPathComponent("tree", isDirectory: true)
         try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
@@ -64,12 +65,14 @@ final class AutostartTests: XCTestCase {
         XCTAssertTrue(failed.contains("Run 'semel-clang <folder>'"), failed)
 
         let wrote = try EndToEndRun.run("semel-clang", arguments: [tree.path], timeout: 60, step: "semel-clang").output
-        XCTAssertTrue(wrote.contains("Wrote \(machineFile): clang.archiver, clang.compiler, clang.linker, clang.preprocessor"), wrote)
+        XCTAssertTrue(wrote.contains("Wrote \(machineFile): clang.compiler, clang.linker, clang.preprocessor\n"
+                                     + "Those c/hello.fmla selects;"), wrote)
         XCTAssertFalse(try String(contentsOfFile: machineFile, encoding: .utf8).contains("swift."), wrote)
 
         let built = try semel("base \(tree.path)", "build c --into \(out)", step: "build with the machine file")
         XCTAssertTrue(built.contains("Push file: semel.machine.config"), built)
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: "\(out)/hello"), built)
+        XCTAssertFalse(built.contains("unused configuration key"), built)
     }
 
     /// A run whose non-zero exit is the point: the output comes back either way, and the
