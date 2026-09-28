@@ -564,9 +564,11 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
    full path, so a nested file's object carries its subpath and the flat fixtures build the
    nodes they built (`ClangPreludeTests`). Tried by hand on the `c` fixture with two
    sources moved to `src/lib/` and `src/lib/deep/`: all four hermeticity builds passed.
-   The same try found a gap next door: `ClangIncludeFinder` joins a quoted include to the
+   The same try found a gap next door: `ClangIncludeFinder` joined a quoted include to the
    source's folder without resolving `..`, so `#include "../hello.h"` from `src/lib/`
-   names `src/lib/../hello.h`, which is never a node, and the preprocessor fails.
+   named `src/lib/../hello.h`, which is never a node, and the preprocessor failed. Fixed
+   2026-09-28: the joined path goes through `Path.resolvingDotSegments`, and an include
+   that climbs above `input:` is left out for clang to report (finder version 3).
 2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 
