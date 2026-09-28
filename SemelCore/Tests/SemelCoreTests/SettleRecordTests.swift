@@ -22,10 +22,11 @@ final class SettleRecordTests: SemelCoreTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: true)
+        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
         BuildEngine.shared = engine
         // Above the cache's floor, so the first build stores what the later ones hit.
         SampleTool.processingDurationForTests = 0.02
+        engine.startProcessingLoop()
     }
 
     override func tearDown() {
@@ -68,13 +69,26 @@ final class SettleRecordTests: SemelCoreTestCase {
     }
 
     /// Built once and settled: every node new and run.
+    ///
+    /// Built inside one batch, as a push of several files is: the loop is running, and
+    /// without the batch it could settle between two of the nodes — or run a tool, then
+    /// answer it again from the entry that run had just stored, which the record reports
+    /// as a cache hit. One batch, one settle, one record of every node.
     private func buildGraph() async throws -> Graph {
-        try push("a.x=1\nb.y=1\n")
-        let graph = Graph(file:    try nodeID("StaticFile(path: '\(configPath)').output"),
+        engine.beginBatch()
+        let graph: Graph
+        do {
+            try push("a.x=1\nb.y=1\n")
+            graph = Graph(file:    try nodeID("StaticFile(path: '\(configPath)').output"),
                           filterA: try nodeID(filterSpec("a")),
                           filterB: try nodeID(filterSpec("b")),
                           toolA:   try nodeID("SampleTool(configuration: ['cfg': \(filterSpec("a"))]).output"),
                           toolB:   try nodeID("SampleTool(configuration: ['cfg': \(filterSpec("b"))]).output"))
+        } catch {
+            engine.endBatch()
+            throw error
+        }
+        engine.endBatch()
         await settle()
         return graph
     }
@@ -87,6 +101,8 @@ final class SettleRecordTests: SemelCoreTestCase {
 
     /// What a restarted server has: a graph, and no settle to explain.
     func test_anEngineThatHasNotSettledHasNoRecord() throws {
+        // A new database installs itself as the shared one, which the running loop reads.
+        engine.waitUntilIdleBlocking()
         let fresh = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false)
 
         XCTAssertNil(fresh.lastSettleRecord)

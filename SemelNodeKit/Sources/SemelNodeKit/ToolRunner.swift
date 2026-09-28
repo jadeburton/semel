@@ -207,25 +207,31 @@ public class ToolRunnerRegistry {
     /// node asking for a tool the registry holds and cannot hand over.
     private var toolsByIdentity: [ToolDescriptor.Identity: (descriptor: ToolDescriptor, runner: ToolRunner)] = [:]
 
+    /// A host registers tools while an engine's compute threads look them up, and a
+    /// Dictionary read concurrent with a write is undefined, not merely stale.
+    private let lock = NSLock()
+
     /// Every tool currently available to build with.  This is what a formula has to name.
-    public var registeredDescriptors: [ToolDescriptor] { toolsByIdentity.values.map(\.descriptor) }
+    public var registeredDescriptors: [ToolDescriptor] {
+        lock.withLock { toolsByIdentity.values.map(\.descriptor) }
+    }
 
     public func registerTool(descriptor: ToolDescriptor, toolExecutor: ToolRunner) {
-        toolsByIdentity[descriptor.identity] = (descriptor, toolExecutor)
+        lock.withLock { toolsByIdentity[descriptor.identity] = (descriptor, toolExecutor) }
     }
 
     /// The registered descriptor for an identity a configuration names — the whole one,
     /// fingerprint included, which is how a node's cache key learns which binary answers
     /// to the version it asked for.
     public func registeredDescriptor(matching identity: ToolDescriptor.Identity) -> ToolDescriptor? {
-        toolsByIdentity[identity]?.descriptor
+        lock.withLock { toolsByIdentity[identity]?.descriptor }
     }
 
     /// The runner for the tool a node's settings name. `namespace` is where those settings
     /// live, so a tool that is not installed is reported with the command that writes the
     /// machine file for that namespace.
     public func tool(descriptor: ToolDescriptor, namespace: String) throws -> ToolRunner {
-        guard let tool = toolsByIdentity[descriptor.identity]?.runner else {
+        guard let tool = lock.withLock({ toolsByIdentity[descriptor.identity]?.runner }) else {
             throw ToolError.noMatchingToolFound(requested: descriptor,
                                                 available: registeredDescriptors,
                                                 namespace: namespace,

@@ -30,8 +30,9 @@ final class ExplainRequestTests: XCTestCase {
             .appendingPathComponent("semel-server-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true))
         let database = try DatabaseLayer()
-        engine  = try BuildEngine(database: database, startProcessingLoop: true)
+        engine  = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
         handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
         engine.waitUntilIdleBlocking()
     }

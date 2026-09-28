@@ -32,8 +32,9 @@ final class WaitEventsTests: XCTestCase {
         try TypeRegistry.register(types: [SlowNode.self])
 
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
         handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
         server  = Server(handler: handler, socketPath: directory.appendingPathComponent("semelserv.sock").path)
         try server.start()

@@ -221,8 +221,9 @@ final class ServerTests: RequestHandlerTestCase {
         let fixtureEngine   = BuildEngine.shared
         let fixtureDatabase = DatabaseLayer.shared
         let liveDatabase    = try DatabaseLayer()
-        let liveEngine      = try BuildEngine(database: liveDatabase, startProcessingLoop: true)
+        let liveEngine      = try BuildEngine(database: liveDatabase, startProcessingLoop: false)
         BuildEngine.shared = liveEngine
+        liveEngine.startProcessingLoop()
         defer {
             liveEngine.stopProcessingLoop()
             BuildEngine.shared   = fixtureEngine

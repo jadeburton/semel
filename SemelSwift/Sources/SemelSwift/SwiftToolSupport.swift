@@ -34,11 +34,11 @@ private final class SDKQueries {
     private var identities: [String: String?] = [:]
 
     func path(sdk: String) -> String? {
-        memoized(&paths, sdk) { xcrun(["--show-sdk-path", "--sdk", sdk]) }
+        memoized(\.paths, sdk) { xcrun(["--show-sdk-path", "--sdk", sdk]) }
     }
 
     func identity(sdk: String) -> String? {
-        memoized(&identities, sdk) {
+        memoized(\.identities, sdk) {
             guard let version = xcrun(["--show-sdk-version", "--sdk", sdk]),
                   let build   = xcrun(["--show-sdk-build-version", "--sdk", sdk]) else {
                 return nil
@@ -47,13 +47,16 @@ private final class SDKQueries {
         }
     }
 
-    private func memoized(_ table: inout [String: String?], _ sdk: String, _ query: () -> String?) -> String? {
+    /// Takes the table by key path rather than `inout`: an `inout` argument's access begins
+    /// at the call, before the lock is taken, and writes back after it is released.
+    private func memoized(_ table: ReferenceWritableKeyPath<SDKQueries, [String: String?]>, _ sdk: String,
+                          _ query: () -> String?) -> String? {
         lock.lock(); defer { lock.unlock() }
-        if let known = table[sdk] {
+        if let known = self[keyPath: table][sdk] {
             return known
         }
         let answer = query()
-        table[sdk] = answer
+        self[keyPath: table][sdk] = answer
         return answer
     }
 }

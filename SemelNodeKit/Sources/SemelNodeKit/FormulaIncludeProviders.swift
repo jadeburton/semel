@@ -8,6 +8,8 @@
 //  agnostic of every plugin: a plugin registers here from its `register()`, the same way
 //  it registers its node types, and the engine never names it.
 
+import Foundation
+
 /// What a plugin says about an include name it claims.
 public enum FormulaIncludeAnswer: Equatable, Sendable {
     /// Funcs for the formula to call as `namespace.func(…)`. `text` holds `func`
@@ -66,22 +68,25 @@ public enum FormulaIncludeResolution: Equatable, Sendable {
 
 public enum FormulaIncludeProviders {
 
+    /// A plugin registers while an engine's compute threads may be resolving includes, and
+    /// a Dictionary read concurrent with a write is undefined, not merely stale.
+    private static let lock = NSLock()
     private static var byPlugin: [String: any FormulaIncludeProvider] = [:]
 
     /// Idempotent per plugin, because every plugin's `register()` is.
     public static func register(_ provider: any FormulaIncludeProvider) {
-        byPlugin[provider.pluginName] = provider
+        lock.withLock { byPlugin[provider.pluginName] = provider }
     }
 
     /// Every registered provider, by plugin name — the registry is a dictionary, and the
     /// order of anything printed has to be imposed.
     public static var all: [any FormulaIncludeProvider] {
-        byPlugin.values.sorted { $0.pluginName < $1.pluginName }
+        lock.withLock { byPlugin.values.sorted { $0.pluginName < $1.pluginName } }
     }
 
     /// Forgets every provider. For tests, which register their own.
     public static func removeAll() {
-        byPlugin.removeAll()
+        lock.withLock { byPlugin.removeAll() }
     }
 
     /// Asks every provider about `name`.

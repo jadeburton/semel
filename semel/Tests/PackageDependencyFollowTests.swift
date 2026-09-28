@@ -37,10 +37,12 @@ final class PackageDependencyFollowTests: XCTestCase {
         try writeTree()
 
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         try SemelSwift.register()
         ToolRunnerRegistry.instance.registerTool(descriptor: readerDescriptor, toolExecutor: ManifestEchoTool())
+        // Installed and registered first: the loop's first pass reads all of it.
+        engine.startProcessingLoop()
 
         let handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
         connection  = WaitCountingConnection(wrapping: InProcessConnection(handler: handler))

@@ -23,6 +23,11 @@ public protocol PolySerializable: Codable, WithKind {
 /// Creates and serializes `PolySerializable` objects using a kind-based type registry.
 public enum TypeRegistry {
 
+    /// Guards both caches. A composition root or a test registers while an engine's loop
+    /// and compute threads are already looking types up, and a Dictionary read concurrent
+    /// with a write is undefined, not merely stale: the reader can follow storage the
+    /// writer has just freed.
+    private static let lock = NSLock()
     private static var kindCache = [UInt: WithKind.Type]()
     private static var nameCache = [String: WithKind.Type]()
 
@@ -33,30 +38,32 @@ public enum TypeRegistry {
     /// otherwise surface much later as a wrong-type decode somewhere unrelated.
     /// Re-registering the identical type is idempotent.
     public static func register(types: [WithKind.Type]) throws {
-        for type in types {
-            if let existing = kindCache[type.kind], existing != type {
-                throw TypeRegistryError.duplicateKind(kind: type.kind,
-                                                     existing: String(describing: existing),
-                                                     duplicate: String(describing: type))
+        try lock.withLock {
+            for type in types {
+                if let existing = kindCache[type.kind], existing != type {
+                    throw TypeRegistryError.duplicateKind(kind: type.kind,
+                                                         existing: String(describing: existing),
+                                                         duplicate: String(describing: type))
+                }
+                kindCache[type.kind] = type
+                nameCache[String(describing: type)] = type
             }
-            kindCache[type.kind] = type
-            nameCache[String(describing: type)] = type
         }
     }
 
     public static func nodeType(forTypeName typeName: String) -> (any WithKind.Type)? {
-        nameCache[typeName]
+        lock.withLock { nameCache[typeName] }
     }
 
     /// Every registered type, for a caller with a question to ask of all of them rather
     /// than of one. The registry is a few dozen entries, so asking is cheap; what is not
     /// cheap is a caller keeping its own list, which goes stale the day a type is added.
     public static var registeredTypes: [any WithKind.Type] {
-        Array(kindCache.values)
+        lock.withLock { Array(kindCache.values) }
     }
 
     public static func type(kind: UInt) throws -> WithKind.Type {
-        guard let type = kindCache[kind] else {
+        guard let type = lock.withLock({ kindCache[kind] }) else {
             throw TypeRegistryError.unknownKind(kind)
         }
         return type
@@ -72,7 +79,7 @@ public enum TypeRegistry {
     /// Look up the `kind` discriminator for a type identified by its Swift type name.
     /// Used when reconstructing a node from a `GraphSpecNode` string.
     public static func kind(forTypeName typeName: String) throws -> UInt {
-        guard let type = nameCache[typeName] else {
+        guard let type = lock.withLock({ nameCache[typeName] }) else {
             throw TypeRegistryError.unknownTypeName(typeName)
         }
         return type.kind

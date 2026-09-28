@@ -31,8 +31,9 @@ final class SettleTimeErrorCountingTests: XCTestCase {
         try FileManager.default.createDirectory(at: externalRoot.appendingPathComponent("src"),
                                                 withIntermediateDirectories: true)
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
         handler = RequestHandler(engine: engine, database: database, databasePath: "/tmp/test-graph.sqlite")
         let connection = InProcessConnection(handler: handler)
         interpreter = CommandInterpreter(connection: connection, baseDirectory: externalRoot.path)

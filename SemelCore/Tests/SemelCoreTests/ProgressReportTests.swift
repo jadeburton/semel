@@ -53,10 +53,11 @@ final class ProgressReportTests: SemelCoreTestCase {
         try TypeRegistry.register(types: [TimedNode.self])
         TimedNode.finished.clear()
         TimedNode.running.reset()
-        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: true, jobs: 2)
+        engine = try BuildEngine(database: try DatabaseLayer(), startProcessingLoop: false, jobs: 2)
         BuildEngine.shared = engine
         engine.progressReporter = { [log] report in log.append(.progress(report)) }
         engine.settleReporter   = { [log] summary in log.append(.settled(summary)) }
+        engine.startProcessingLoop()
     }
 
     override func tearDown() {

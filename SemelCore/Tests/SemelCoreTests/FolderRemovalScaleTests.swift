@@ -178,14 +178,14 @@ final class FolderRemovalScaleTests: SemelCoreTestCase {
         try pushFiles(count, into: folder)
         _ = try manifest(of: folder)
 
-        let rebuiltBefore = Folder.manifestRebuildCount
+        let rebuiltBefore = Folder.manifestRebuildCount.value
         let start = Date.now
         try remove(pattern: pattern(folder))
         try collect()
         try Folder.flushDirtyManifests()
 
         return RemovalCost(files: count,
-                           rebuilds: Folder.manifestRebuildCount - rebuiltBefore,
+                           rebuilds: Folder.manifestRebuildCount.value - rebuiltBefore,
                            seconds: Date.now.timeIntervalSince(start))
     }
 

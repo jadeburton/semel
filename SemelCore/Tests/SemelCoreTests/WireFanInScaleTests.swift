@@ -134,7 +134,7 @@ final class WireFanInScaleTests: SemelCoreTestCase {
         let consumer = try makeNode(role: "consumer-of-\(width)")
         let sources  = try (0..<width).map { try makeNode(role: "source-\(width)-\($0)") }
 
-        WireDataAccess.rowsRead = 0
+        WireDataAccess.rowsRead.reset()
         let start = Date.now
         for (index, source) in sources.enumerated() {
             try connect(source, to: consumer, name: "wire\(index)")
@@ -142,7 +142,7 @@ final class WireFanInScaleTests: SemelCoreTestCase {
 
         return FanCost(consumer: consumer,
                        wires: width,
-                       rowsRead: WireDataAccess.rowsRead,
+                       rowsRead: WireDataAccess.rowsRead.value,
                        seconds: Date.now.timeIntervalSince(start))
     }
 

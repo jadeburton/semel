@@ -35,12 +35,13 @@ final class SettleSummaryTests: SemelCoreTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
         engine.settleReporter = { [summaries] summary in summaries.append(summary) }
         // Above the cache's floor, so the tool's result is stored and the second build has
         // something to hit.
         SampleTool.processingDurationForTests = 0.02
+        engine.startProcessingLoop()
     }
 
     override func tearDown() {

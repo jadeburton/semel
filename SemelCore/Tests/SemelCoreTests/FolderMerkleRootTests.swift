@@ -271,12 +271,12 @@ final class FolderMerkleRootTests: SemelCoreTestCase {
         try push("wide/deep/mid/leaf/f.c", contents: "start")
         try Folder.flushDirtyManifests()
 
-        let manifestsBefore = Folder.manifestRebuildCount
-        let rootsBefore     = Folder.contentRootRebuildCount
+        let manifestsBefore = Folder.manifestRebuildCount.value
+        let rootsBefore     = Folder.contentRootRebuildCount.value
         try push("wide/deep/mid/leaf/f.c", contents: "changed")
         try Folder.flushDirtyManifests()
-        let manifests = Folder.manifestRebuildCount - manifestsBefore
-        let roots     = Folder.contentRootRebuildCount - rootsBefore
+        let manifests = Folder.manifestRebuildCount.value - manifestsBefore
+        let roots     = Folder.contentRootRebuildCount.value - rootsBefore
 
         // input: / wide / deep / mid / leaf — five folders on the path, and nothing else.
         XCTAssertEqual(roots, 5, "folded \(roots) roots for one file in a tree of 41 folders")
@@ -292,15 +292,15 @@ final class FolderMerkleRootTests: SemelCoreTestCase {
         }
         try Folder.flushDirtyManifests()
 
-        let manifestsBefore = Folder.manifestRebuildCount
-        let rootsBefore     = Folder.contentRootRebuildCount
+        let manifestsBefore = Folder.manifestRebuildCount.value
+        let rootsBefore     = Folder.contentRootRebuildCount.value
         let start = Date.now
         try push("scale/dir0/file0.c", contents: "changed")
         try Folder.flushDirtyManifests()
         let seconds = Date.now.timeIntervalSince(start)
 
-        print("B-26 measure: 3000 files, one edit rebuilt \(Folder.manifestRebuildCount - manifestsBefore)"
-              + " manifests and folded \(Folder.contentRootRebuildCount - rootsBefore) roots"
+        print("B-26 measure: 3000 files, one edit rebuilt \(Folder.manifestRebuildCount.value - manifestsBefore)"
+              + " manifests and folded \(Folder.contentRootRebuildCount.value - rootsBefore) roots"
               + " in \(String(format: "%.4f", seconds))s")
     }
 

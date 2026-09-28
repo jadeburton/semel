@@ -20,7 +20,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public var thisNode: NodeRecord
 
     public init(thisNode: NodeRecord) throws {
-        Self.instantiationCount += 1
+        Self.instantiationCount.increment()
         self.thisNode = thisNode
         try placeInFileSystem()
     }
@@ -33,7 +33,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// deletability of a tree costs a node per subfolder in it, and whether that count
     /// follows a tree's depth or something worse is what `FolderDeletabilityScaleTests`
     /// reads this for. Not read by the engine.
-    static var instantiationCount = 0
+    static let instantiationCount = SharedCounter()
 
     var inputFileSystem: NodeRecord {
         get throws {
@@ -400,16 +400,16 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// How many manifests have been built in this process. Read by tests that pin the cost
     /// of a push in rebuilds rather than in seconds, which a timing assertion cannot do
     /// reliably.
-    static var manifestRebuildCount = 0
+    static let manifestRebuildCount = SharedCounter()
 
     /// How many content roots have been folded in this process, the same measurement for
     /// the other value a folder publishes. Separate, because the two are rebuilt for
     /// different reasons and a test pins each against what moves it: a manifest against
     /// this folder's children, a root against the depth of the tree below the change.
-    static var contentRootRebuildCount = 0
+    static let contentRootRebuildCount = SharedCounter()
 
     private func buildManifest() throws -> FolderManifest {
-        Self.manifestRebuildCount += 1
+        Self.manifestRebuildCount.increment()
         // Summaries rather than whole nodes: a manifest entry is a name and two flags, and
         // decoding every child's properties to produce that was most of the rebuild cost.
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
@@ -430,7 +430,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// hash comes to stand for a whole tree. `FolderContentRoot` states the format and the
     /// order; this supplies the lines.
     private func buildContentRootDocument() throws -> String {
-        Self.contentRootRebuildCount += 1
+        Self.contentRootRebuildCount.increment()
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let content  = try contentStates(of: children)
 

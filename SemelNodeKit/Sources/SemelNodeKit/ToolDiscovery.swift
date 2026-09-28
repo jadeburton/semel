@@ -13,6 +13,8 @@
 //  The engine then registers whatever those finders actually find.
 //
 
+import Foundation
+
 /// One tool a toolchain knows how to find: its registered name, where it is on this
 /// machine, and the version the binary there reports.
 public struct ToolFinder {
@@ -32,16 +34,19 @@ public struct ToolFinder {
 
 public enum ToolDiscovery {
 
+    /// A toolchain registers while another engine may be starting, and a Dictionary read
+    /// concurrent with a write is undefined, not merely stale.
+    private static let lock = NSLock()
     private static var byName: [String: ToolFinder] = [:]
 
     /// Idempotent per name, because every toolchain's `register()` is.
     public static func register(_ finder: ToolFinder) {
-        byName[finder.name] = finder
+        lock.withLock { byName[finder.name] = finder }
     }
 
     /// Every declared finder, alphabetical by name.
     public static var all: [ToolFinder] {
-        byName.values.sorted { $0.name < $1.name }
+        lock.withLock { byName.values.sorted { $0.name < $1.name } }
     }
 
     /// Registers whatever is actually installed: each declared tool that its finder

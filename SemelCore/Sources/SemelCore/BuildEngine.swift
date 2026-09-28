@@ -101,7 +101,10 @@ public final class BuildEngine {
     /// Creates the engine and optionally starts the background processing loop.
     ///
     /// Pass `startProcessingLoop: false` in unit and integration tests to prevent the
-    /// background Task from starting — this keeps tests synchronous and avoids races.
+    /// background Task from starting — this keeps tests synchronous and avoids races. A
+    /// test that wants the loop passes false too, and calls `startProcessingLoop()` once
+    /// `shared`, its toolchains and its reporters are installed: the loop's first pass
+    /// starts at once, on another thread, and reads all of them.
     /// `jobs` is how many nodes compute at once; the environment's, unless a test says.
     init(database: DatabaseLayer, startProcessingLoop: Bool = true, jobs: Int = Jobs.resolve().count) throws {
         try Self.registerTypes()
@@ -351,12 +354,12 @@ public final class BuildEngine {
     /// Where `reportUnclaimedConfigKeys` sends its lines. A closure rather than a bare
     /// `print` call so a test can capture what would be printed instead of scraping stdout —
     /// the same shape as `FatalErrors.handler`.
-    var unclaimedConfigKeyReporter: (String) -> Void = { BuildEngine.notice($0) }
+    @Locked var unclaimedConfigKeyReporter: (String) -> Void = { BuildEngine.notice($0) }
 
     /// Where the idle-time error report goes. Structured entries rather than lines, so a
     /// server can carry them to a client as records; the default renders and prints, so
     /// an engine with no server still reports to its own terminal.
-    public var errorReporter: ([ErrorReport.Entry]) -> Void = { entries in
+    @Locked public var errorReporter: ([ErrorReport.Entry]) -> Void = { entries in
         entries.flatMap(ErrorReport.lines(for:)).forEach { print($0) }
     }
 
@@ -365,12 +368,12 @@ public final class BuildEngine {
     /// terminal is reading, and pinning them in one renderer is what keeps them from
     /// drifting per command. An engine with no server has the per-batch `Debug.log` line
     /// and needs nothing here, so the default is silence.
-    public var settleReporter: (SettleSummary) -> Void = { _ in }
+    @Locked public var settleReporter: (SettleSummary) -> Void = { _ in }
 
     /// Where one-line status notices go — an artifact written, a product deleted. Nodes
     /// reach it through `notice(_:)`, because a node has the process-wide engine and
     /// nothing else to hand a line to.
-    public var noticeReporter: (String) -> Void = { print($0) }
+    @Locked public var noticeReporter: (String) -> Void = { print($0) }
 
     /// The one call a node makes to say something to the user. Falls back to printing when
     /// no engine is installed, which is only the case in tests that build nodes by hand.
@@ -382,13 +385,13 @@ public final class BuildEngine {
     /// away, as paths rather than lines, for the reason the error reporter hands over
     /// entries: the wording and the cap belong to whatever terminal is reading. An engine
     /// with no server has nobody to tell, so the default is silence.
-    public var artifactReporter: (ArtifactChanges) -> Void = { _ in }
+    @Locked public var artifactReporter: (ArtifactChanges) -> Void = { _ in }
 
     /// Where a settle's progress goes as the pass changes state — after a round of
     /// scheduling starts nodes and after a result is written (B-95). The tally's running
     /// totals rather than a batch's, for the reason the summary carries them. An engine
     /// with no server has nobody waiting at a terminal, so the default is silence.
-    public var progressReporter: (ProgressReport) -> Void = { _ in }
+    @Locked public var progressReporter: (ProgressReport) -> Void = { _ in }
 
     // MARK: - Artifact change tracking
 

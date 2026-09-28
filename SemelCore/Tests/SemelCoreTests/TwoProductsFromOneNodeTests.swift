@@ -21,8 +21,9 @@ final class TwoProductsFromOneNodeTests: SemelCoreTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         let database = try DatabaseLayer()
-        engine = try BuildEngine(database: database, startProcessingLoop: true)
+        engine = try BuildEngine(database: database, startProcessingLoop: false)
         BuildEngine.shared = engine
+        engine.startProcessingLoop()
     }
 
     override func tearDown() {

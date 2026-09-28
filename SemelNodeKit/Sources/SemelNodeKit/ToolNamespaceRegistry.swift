@@ -8,6 +8,8 @@
 //  installed under the prefix a config file needs has to know which prefix that is. Each
 //  toolchain package declares its namespaces here when it registers its node types.
 
+import Foundation
+
 /// One config namespace and the tool it names.
 public struct ToolNamespace {
     /// `swift.compiler`, `clang.linker`, …
@@ -83,21 +85,24 @@ public struct MachineFileWriter: Hashable, Comparable {
 
 public enum ToolNamespaceRegistry {
 
+    /// A toolchain registers while an engine's compute threads may be reading, and a
+    /// Dictionary read concurrent with a write is undefined, not merely stale.
+    private static let lock = NSLock()
     private static var byNamespace: [String: ToolNamespace] = [:]
 
     /// Idempotent per namespace, because every toolchain's `register()` is.
     public static func register(_ entry: ToolNamespace) {
-        byNamespace[entry.namespace] = entry
+        lock.withLock { byNamespace[entry.namespace] = entry }
     }
 
     /// The entry for one namespace, or nil when no plugin declared it.
     public static func entry(forNamespace namespace: String) -> ToolNamespace? {
-        byNamespace[namespace]
+        lock.withLock { byNamespace[namespace] }
     }
 
     /// Every declared namespace, alphabetical — the registry is a dictionary, and order in
     /// anything printed has to be imposed.
     public static var all: [ToolNamespace] {
-        byNamespace.values.sorted { $0.namespace < $1.namespace }
+        lock.withLock { byNamespace.values.sorted { $0.namespace < $1.namespace } }
     }
 }
