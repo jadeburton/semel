@@ -599,9 +599,10 @@ One binary, three modes, sharing a wire protocol:
 Designed 2026-09-28: `docs/superpowers/specs/2026-09-28-semel-file-watcher-design.md`.
 `semel-watch <base> [<folder> ...]`, a fourth client of `semelserv` in its own executable
 target, observes a tree with FSEvents and runs the commands a person runs, in process
-through `SemelCLI`: after a quiet moment, one batch of `push` for every changed path that
-exists and `rm` for every one that does not, then `commit`, so a save is a settle and a
-`git checkout` is one batch. What it watches is what a push would push (the lister's
+through `SemelCLI`: after two quiet seconds, one batch of `push` for every changed path
+that exists and `rm` for every one that does not, then `commit`, so a save is a settle and
+a `git checkout` is one batch. The prompt starts one with `watch <folder>` — `watch` alone
+keeps B-95's meaning — and `unwatch` or `quit` stops it. What it watches is what a push would push (the lister's
 rule), narrowed by `--only` and `--except` spelled as the for-each spells items (B-123),
 with the export destination and `semel-out` always excepted so an export never becomes a
 push. Starts with one full push; `--into` exports after each clean settle as `build`

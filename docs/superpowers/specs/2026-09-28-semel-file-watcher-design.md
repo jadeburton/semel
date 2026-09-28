@@ -51,14 +51,18 @@ settle runs. What is missing is the thing that watches the disk and issues them.
   check exists to notice (B-06) — and a rule file is not read; the flags are the rule,
   and a project that wants them kept writes them in its own script. Reconsidered when a
   second project needs the same flags.
-- **Changes are coalesced into one batch, after a quiet moment.** An editor saves through
-  a temporary file and a rename, a `git checkout` touches hundreds of files, a generator
-  writes a folder; each arrives as a burst. The watcher waits until the disk has been
-  quiet for a short interval (250 ms, `--settle-after` to change it) and then issues one
+- **Changes are coalesced into one batch, after two quiet seconds.** An editor saves
+  through a temporary file and a rename, a `git checkout` touches hundreds of files, a
+  generator writes a folder; each arrives as a burst. The watcher waits until the disk has
+  been quiet for two seconds (`--settle-after <ms>` to change it) and then issues one
   batch: `begin`, a `push` per file that exists, an `rm` per path that does not, `commit`.
   The engine settles once, the summary prints once, and a file saved twice in the burst is
   pushed once with its final bytes. A change that arrives while a batch is being pushed
-  starts the next quiet interval; nothing is dropped.
+  starts the next quiet interval; nothing is dropped. Two seconds rather than the few
+  hundred milliseconds a debounce usually takes: a save that lands mid-checkout, or a
+  format-on-save that rewrites the file just saved, is one batch and one settle instead of
+  two, and a person who has just saved is reading the editor, not the summary — the
+  seconds are paid once per burst, not once per file.
 - **A deletion is an `rm`.** A push only adds (B-06's "what remains"), and `rm` is what
   takes a file out. The watcher is the first client that turns the two into a mirror: a
   path that disappears from the disk is removed from `input:` in the same batch, and a
@@ -109,6 +113,20 @@ settle runs. What is missing is the thing that watches the disk and issues them.
   Two watchers on one base push the same files twice, harmlessly; the launch line names
   the base so the mistake is visible.
 
+- **The prompt can start one: `watch <folder>`.** `watch` alone keeps its meaning from
+  B-95 — the progress line until a key is pressed — and `watch <folder>` starts a
+  `semel-watch` for the session's base and that folder, with the flags `build` takes
+  (`--into`, and `--only`/`--except` passed through), as a child of the prompt whose
+  output is interleaved with the prompt's the way the subscription's events already are.
+  `watch` with no watcher running and no folder is the progress line; `unwatch` stops the
+  watcher; `quit` stops it too. One watcher per session: a second `watch <folder>` replaces
+  the first, and the reply says so. The prompt spawns the executable beside its own, as it
+  spawns `semelserv`; it does not link the watcher, so the two stay separately testable
+  and a watcher started from a script is the same program as one started from the prompt.
+  The two spellings of `watch` share a verb because they share a subject — what the engine
+  is doing to this tree, now — and a folder argument is unambiguous; a verb of its own
+  would be a second word to learn for the same thing.
+
 ## The shape
 
 ```
@@ -119,7 +137,8 @@ semel-watch <base> [<folder> ...] [--only <pattern>]... [--except <pattern>]...
 `<base>` is the directory `push` would take as `base`; `<folder>`s are the folders under
 it to watch and push, `.` when none is given — the same argument `build` takes, so a
 project built as `build Packages --into ./out` is watched as
-`semel-watch . Packages --into ./out`.
+`semel-watch . Packages --into ./out`, or, at the prompt of a session whose base is the
+tree, as `watch Packages --into ./out`.
 
 ```
 semel-watch/                     the executable: arguments, signals, the FSEvents adapter
@@ -140,7 +159,7 @@ wildcard matcher and nothing from the engine.
 
 1. FSEvents reports `Sources/App/View.swift` (and, from the editor's temporary file, a
    path the lister would not list, which the filter drops).
-2. 250 ms pass with no further event. The coalescer hands the planner one batch of one path.
+2. Two seconds pass with no further event. The coalescer hands the planner one batch of one path.
 3. The planner reads the disk: the file exists and matches `--only`; the command is
    `push Sources/App/View.swift`.
 4. The interpreter runs `begin`, the push, `commit`. The push answers `didChange: true`;
@@ -165,6 +184,10 @@ exist and become `rm`s, and one batch in step 4.
   directory; a file written then reported reaches `input:` with its bytes and mode; a file
   removed then reported is gone from `input:`; two settles for two batches; the launch line
   names what is watched.
+- `WatchVerbTests` (root package): `watch` alone is the progress line as before; `watch
+  <folder>` spawns the executable with the session's base, the folder and the flags, and
+  says so; a second replaces the first; `unwatch` and `quit` stop it. The spawn is behind
+  a protocol the test fills with a recorder, so no process is started.
 - One end-to-end run in `SemelEndToEndTests` over a fixture: `semel-watch` as a process,
   a real FSEvents stream, a file edited on disk, the product changed within the harness's
   timeout. The one place the adapter is exercised.
@@ -182,12 +205,9 @@ exist and become `rm`s, and one batch in step 4.
   running anything, and it does not restart a program that the export replaced. That is a
   runner, and a runner is a different program.
 
-## Open questions
+## Decided on review (2026-09-28)
 
-- Should the engine start the watcher — a `watch <folder>` verb at the prompt that spawns
-  `semel-watch` for the session's base and stops it on `quit` — or is a second terminal
-  the honest interface? The design keeps them separate; the verb can come later and would
-  change nothing here.
-- Is 250 ms the right quiet interval? Xcode writes a save as several events over about
-  100 ms; a `git checkout` of a large branch spreads over seconds and is fine as several
-  batches. Measured once the adapter exists.
+- The prompt starts it: `watch <folder>`, above. The verb spawns the program and does not
+  absorb it, so a second terminal remains the other honest interface.
+- The quiet interval is two seconds, above, and `--settle-after` is for measuring
+  another; the default is not to be tuned per project.
