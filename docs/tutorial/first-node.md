@@ -147,11 +147,14 @@ formula looks in:
 ```
 
 ```
-Wrote /Users/you/semel-playground/semel.machine.config: clang.archiver, clang.compiler, clang.linker, clang.preprocessor
+Wrote /Users/you/semel-playground/semel.machine.config: clang.compiler, clang.linker, clang.preprocessor
+Those hello/hello.fmla selects; when it selects another, --force rewrites the file.
 ```
 
-The four clang namespaces, the ones `include 'clang'` reads — this formula selects three
-of them; the archiver's is for a static library. Open the file if you like —
+Three clang namespaces, the ones this formula selects: `semel-clang` read every formula
+below the folder that names the file it writes — here `hello/hello.fmla` — and left out
+the archiver's, which is for a static library; a block nothing selects would be reported
+as unused keys on every build. Open the file if you like —
 the clang version string, the SDK path, once per tool — but do not edit it, and do not
 commit it: it is this machine's, and the next machine writes its own. Run the command again
 and it leaves the file as it is; after installing a new Xcode, `--force` rewrites it.

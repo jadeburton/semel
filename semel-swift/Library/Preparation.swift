@@ -11,6 +11,7 @@
 
 import Foundation
 import SemelApple
+import SemelMachineFile
 import SemelNodeKit
 
 public struct PrepareReport: Equatable {
@@ -126,7 +127,7 @@ public enum Preparation {
         // joins the config, so the file is not the one thing prepare left it to write.
         let formulaFile = folder.appendingPathComponent(GeneratedFiles.formulaFileName)
         if let kept = try? String(contentsOf: formulaFile, encoding: .utf8) {
-            namespaces = Array(Set(namespaces).union(GeneratedFiles.namespaces(selectedIn: kept))).sorted()
+            namespaces = Array(Set(namespaces).union(MachineFile.namespaces(selectedIn: kept))).sorted()
         }
 
         // No SDK for the platform is no build, whatever the manifests declare: said here,

@@ -611,7 +611,12 @@ Shipped: the configuration is two files. `semel.machine.config` holds the tool d
 and the machine settings each plugin declares (`ToolNamespace.machineSettingKeys`, answered
 per `Platform`), written outside Semel by the toolchain's own tool (B-119) — `semel-clang`
 for the clang namespaces, when the folder has none or with `--force`, and `semel-swift
-prepare` for a Swift tree — through one writer, `SemelMachineFile`; it is in `.gitignore`. `semel.config` holds the project's choices, typed
+prepare` for a Swift tree — through one writer, `SemelMachineFile`; it is in `.gitignore`.
+Each writes only the namespaces its formula selects (2026-09-28 for `semel-clang`: the
+formulas below its folder that name the file, all four clang namespaces when none does),
+read by `MachineFile.namespaces(selectedIn:)`, which follows a prelude func by func from
+the calls a formula makes — `clang.executable` reaches no archiver — so a project that
+archives nothing is not told on every build that the archiver's keys are unused. `semel.config` holds the project's choices, typed
 once or written by prepare with the C standard under a comment naming it a choice, and
 checked in. Every prelude func takes `settings` as a node and provides
 `settings(project:machine:)`; `Configuration`'s port is `base` (`Semel.version` 0.1.7); the

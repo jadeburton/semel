@@ -98,38 +98,6 @@ public enum GeneratedFiles {
         XcodeProjectConverter.configNamespaces + SemelSwift.converterConfigNamespaces
     }
 
-    /// The namespaces a formula's text selects, from its `prefix: '…'` literals: what a
-    /// hand-written formula names in `ConfigFilter(prefix: 'swift.compiler', …)` or through
-    /// a func of its own, `settings(prefix: 'apple.assetCatalogCompiler')`. A prefix passed
-    /// as a parameter is not a literal and does not count. Sorted, each once.
-    ///
-    /// A formula that says `include 'apple'` selects what that plugin's prelude selects
-    /// (B-108) — its prefixes are in the prelude's text, not the formula's — so each
-    /// included prelude is read too, and the preludes it includes in turn.
-    public static func namespaces(selectedIn formula: String) -> [String] {
-        var selected = Set<String>()
-        var pending  = [formula]
-        var read     = Set<String>()
-        while let text = pending.popLast() {
-            selected.formUnion(captures(of: #"prefix:\s*'([A-Za-z][A-Za-z0-9.]*)'"#, in: text))
-            for name in captures(of: #"include\s+'([^']+)'"#, in: text) where read.insert(name).inserted {
-                if case .prelude(_, let prelude) = FormulaIncludeProviders.resolve(includeNamed: name) {
-                    pending.append(prelude)
-                }
-            }
-        }
-        return selected.sorted()
-    }
-
-    /// The first capture group of every match of `pattern` in `text`.
-    private static func captures(of pattern: String, in text: String) -> [String] {
-        guard let expression = try? NSRegularExpression(pattern: pattern) else {
-            return []
-        }
-        let matches = expression.matches(in: text, range: NSRange(text.startIndex..., in: text))
-        return matches.compactMap { Range($0.range(at: 1), in: text).map { String(text[$0]) } }
-    }
-
     /// The highest deployment version the packages declare for the platform, or nil when
     /// none does. Highest, because a root that declares 18.0 cannot be built for 17.0
     /// whatever its dependencies allow.

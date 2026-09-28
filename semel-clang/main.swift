@@ -6,7 +6,8 @@
 //
 //  The C and C++ counterpart of semel-swift, outside Semel (B-119): writes
 //  `semel.machine.config` — the clang this machine has and the SDK for the platform — into
-//  the folder, the current one by default. Only when there is none: `--force` rewrites it,
+//  the folder, the current one by default: the namespaces the formulas reading it select,
+//  or every clang namespace when none does. Only when there is none: `--force` rewrites it,
 //  after a toolchain update, say. Nobody edits the file, and nobody commits it.
 
 import Foundation
@@ -42,8 +43,14 @@ let folder = URL(fileURLWithPath: arguments.first ?? ".", isDirectory: true).sta
 
 do {
     switch try ClangMachineFile.write(into: folder, platform: platform, force: force) {
-    case .written(let file, let namespaces, let notInstalled):
+    case .written(let file, let namespaces, let notInstalled, let selectedBy):
         print("Wrote \(file.path): \(namespaces.joined(separator: ", "))")
+        if selectedBy.count == 1 {
+            print("Those \(selectedBy[0]) selects; when it selects another, --force rewrites the file.")
+        }
+        if selectedBy.count > 1 {
+            print("Those \(selectedBy.joined(separator: ", ")) select; when one selects another, --force rewrites the file.")
+        }
         if !notInstalled.isEmpty {
             print("No \(notInstalled.joined(separator: ", ")) is installed here; those blocks are comments.")
         }

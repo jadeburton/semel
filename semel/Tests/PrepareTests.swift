@@ -6,6 +6,7 @@
 import Foundation
 import SemelApple
 import SemelClang
+import SemelMachineFile
 import SemelNodeKit
 import SemelSwift
 @testable import SemelSwiftTool
@@ -332,17 +333,29 @@ final class PrepareTests: XCTestCase {
     func test_namespacesSelectedInFormulaTextAreTheDistinctPrefixLiterals() {
         let formula = "a(prefix: 'swift.compiler') b(prefix: 'clang.linker') c(prefix: 'swift.compiler') ConfigFilter(prefix: prefix, x)"
 
-        XCTAssertEqual(GeneratedFiles.namespaces(selectedIn: formula), ["clang.linker", "swift.compiler"])
+        XCTAssertEqual(MachineFile.namespaces(selectedIn: formula), ["clang.linker", "swift.compiler"])
     }
 
-    /// B-108. A formula that includes a prelude names no prefix itself; the prelude does.
-    func test_aFormulaSelectsWhatTheIncludedPreludesSelect() throws {
+    /// B-108. A formula that includes a prelude names no prefix itself; the prelude funcs
+    /// it calls do, and the funcs those call. A prelude included and never called selects
+    /// nothing.
+    func test_aFormulaSelectsWhatThePreludeFuncsItCallsSelect() throws {
         try SemelSwift.register()
         try SemelApple.register()
         let formula = "include 'swift'\ninclude 'apple'\nproduct 'x' = swift.executable(sources: <S>, name: 'X', settings: <c>)"
 
-        XCTAssertEqual(GeneratedFiles.namespaces(selectedIn: formula),
-                       ["apple.assetCatalogCompiler", "apple.stringCatalogCompiler", "swift.compiler", "swift.linker"])
+        XCTAssertEqual(MachineFile.namespaces(selectedIn: formula), ["swift.compiler", "swift.linker"])
+    }
+
+    /// The HelloApp fixture's calls: `apple.infoPlist` reaches the asset catalog compiler
+    /// through `assets`, and `apple.resources` the string catalog compiler as well.
+    func test_aPreludeFuncReachesTheFuncsItCalls() throws {
+        try SemelApple.register()
+        let formula = "include 'apple'\nproduct 'x' = apple.infoPlist(base: <I>, catalog: <A>, appIcon: 'I', settings: <c>)"
+        let both    = formula + "\nproduct 'y/' = apple.resources(catalog: <A>, appIcon: 'I', strings: <R>, settings: <c>)"
+
+        XCTAssertEqual(MachineFile.namespaces(selectedIn: formula), ["apple.assetCatalogCompiler"])
+        XCTAssertEqual(MachineFile.namespaces(selectedIn: both), ["apple.assetCatalogCompiler", "apple.stringCatalogCompiler"])
     }
 
     func test_theConfigForMacOSNamesTheMacOSSDK() throws {
