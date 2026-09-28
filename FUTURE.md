@@ -940,7 +940,10 @@ Non-synchronized groups surfaced with item 1 and are read.
    swift-collections at the same commits) — what cross-project cache hits look like, for
    the local-engines-plus-cache-server design.
 
-**B-79** `open` — **Real C and C++ projects.** The clang fixtures are a hello-world (twice:
+**B-79** `open` — **Real C and C++ projects — one residual: `c-hello`.** The three projects
+are in the roster (items below, all done 2026-09-27 to 2026-09-28): Lua, the SQLite
+amalgamation and simdjson, each from a pinned clone with a formula laid over it (B-76).
+What is left is the note that follows. The clang fixtures are a hello-world (twice:
 `c` and `tutorial`) and an emulator of three `.cpp` files and eight headers. Needed B-76,
 done. `c-hello` is subsumed by `tutorial` — identical sources, the same products plus
 `lines.txt` — so when a real C project is pinned it is `c-hello` that goes, not the tutorial
@@ -998,7 +1001,36 @@ fixture tier.
    runs no clang, took 72 ms and so crossed the 15 ms floor and wrote an entry for the
    waiting state; harmless, since the key holds the absent lists, but a "not yet" pass
    is not work worth a row.
-3. *fmt* or *simdjson* — C++ beyond the emulator; few sources, heavy templates.
+3. *simdjson* — done (2026-09-28): in the roster as `simdjson`, simdjson 4.6.11 from
+   `simdjson/simdjson` at the commit its `v4.6.11` tag names, Apache-2.0 or MIT at the
+   user's choice. The repository carries the single-header amalgamation in
+   `singleheader/`, so that folder is the `.git` source's `subfolder` and the build folder:
+   the checkout is copied whole, `Fixtures/external/simdjson` is laid over `singleheader`,
+   and the machine file lands at the checkout's root, the formula's `../`.
+   `libsimdjson.a` is archived from `simdjson.cpp` alone (2.76 MB, the library as one
+   translation unit that inlines the header rather than including it) and
+   `amalgamate_demo`, the folder's own demo, is linked against it from
+   `amalgamate_demo.cpp`, which includes the 7.7 MB `simdjson.h`; C++17, no defines, no
+   optimisation flag. Both match across all four hermeticity builds, and the demo parses
+   the repository's `twitter.json` and finds the 793 documents in
+   `amazon_cellphones.ndjson`. It surfaced no gap. The linker already adds `-lc++` for an
+   object compiled from C++, so the linker's settings name no standard; the finder strips
+   comments before it matches, so the `#include "simdjson.h"` in the header's own doc
+   comment names nothing. The heavy templates cost little at `-O0`: a header's inline
+   templates are instantiated only where used, so the library's object is 162 KB from a
+   4.49 MB preprocessed file and the demo's, which instantiates the on-demand parser,
+   294 KB from 5.10 MB; the archive is 178 KB and the demo 427 KB. Recorded costs on an
+   M4: the compiles 285 and 420 ms, the preprocessors 140 ms each (227 ms in the first
+   of the four builds), the include finder over the 7.7 MB header 132 ms, the link 30 ms;
+   the archiver's run fell under the 15 ms floor and wrote no entry. The whole test, four
+   cold builds, 11.1 s with the clone cached and 15.5 s with the fetch. The largest cache
+   entry is again the `ProjectBuilder`'s, 8,986 bytes; a compiler's is about 660. One
+   thing for the push: the build folder is pushed whole, so `singleheader.zip` (10.5 MB,
+   the release download) and the amalgamation report are interned into the object store
+   although no node reads them — a third of the home's 31 MB. Harmless here, and worth
+   knowing for a folder that ships release archives. *fmt* was the alternative and would
+   add nothing simdjson does not: a C++ library and a program over it through the same
+   four nodes.
 
 **B-80** `open` — **Projects that need macros.** The converter skips `macro` and `plugin`
 targets (`SwiftFormulaConverter.swift:594`). These are the acceptance tests for the day

@@ -1,0 +1,29 @@
+// simdjson 4.6.11 from its `singleheader` folder, built as that folder's README builds it
+// (B-79): `simdjson.cpp`, the whole library as one C++ translation unit, archived alone,
+// and `amalgamate_demo`, which parses the JSON file named on its command line, linked
+// against the archive. Laid over the checkout's `singleheader` with semel.config by the
+// end-to-end harness (B-76).
+//
+// One file per chain rather than `clang.staticLibrary`, as for SQLite: the folder holds
+// both sources, and the library is one of them. `simdjson.cpp` includes nothing quoted —
+// the amalgamation inlines the header it would include — and the demo includes
+// `simdjson.h`, the 7.7 MB header, beside it.
+//
+// No `-lc++` to ask for: the linker adds it for an object compiled from C++.
+
+include 'clang'
+
+func settings() = clang.settings(project: <semel.config>, machine: <../semel.machine.config>)
+
+func library() = ClangArchiver(
+  configuration: [clang.selected(settings: settings(), prefix: 'clang.archiver')],
+  objectFiles: [{source: <simdjson.cpp>} "%%source%%.o": clang.compiled(file: source, settings: settings())]
+)
+
+product "libsimdjson.a" = library()
+
+product "amalgamate_demo" = ClangLinker(
+  configuration: [ConfigMerger(base: [clang.selected(settings: settings(), prefix: 'clang.linker')], override: [SettingsLiteral(dynamicLibrary: 'false')])],
+  objectFiles: [{source: <amalgamate_demo.cpp>} "%%source%%.o": clang.compiled(file: source, settings: settings())],
+  libraries: ["libsimdjson.a": library()]
+)
