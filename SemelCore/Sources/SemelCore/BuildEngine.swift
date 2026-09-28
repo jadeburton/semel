@@ -885,13 +885,31 @@ public final class BuildEngine {
                                         running:   running))
     }
 
-    /// The type name and the name a report gives the node, taken as it starts: one read
-    /// per node start, which is one per tool process.
+    /// The type name and the name a report gives the node, taken as it starts: a read or
+    /// two per node start, which is one per tool process.
     private func describeForProgress(_ nodeRecord: NodeRecord) -> ActiveNodeDescription {
         let typeName = (try? TypeRegistry.type(kind: nodeRecord.kind)).map { String(describing: $0) }
             ?? "kind \(nodeRecord.kind)"
-        return ActiveNodeDescription(typeName: typeName,
-                                     name: ErrorReport.path(of: nodeRecord, database: database) ?? "")
+        return ActiveNodeDescription(typeName: typeName, name: progressName(of: nodeRecord))
+    }
+
+    /// The name a report gives the node, else the file on its `input` port. A compiler
+    /// has no path of its own, and on a dashboard of ten running compilers the file each
+    /// one compiles is the only thing that tells them apart. A wire named anything but a
+    /// path — a configuration's `wire0` — names nothing.
+    private func progressName(of nodeRecord: NodeRecord) -> String {
+        if let path = ErrorReport.path(of: nodeRecord, database: database) {
+            return path
+        }
+        guard let nodeID = nodeRecord.id else {
+            return ""
+        }
+        let wires = FatalErrors.attempt({
+            try database.wire.select(goingToNodeID: nodeID, toSymbolID: "input".asSymbolID())
+        }) ?? []
+        return wires.map { $0.name.resolveSymbol() }
+            .filter { $0.hasPrefix(FileSystemName.input) || $0.hasPrefix(FileSystemName.output) }
+            .min() ?? ""
     }
 
     /// What a pass waits on: a node's result, or a signal that something was scheduled.

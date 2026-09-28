@@ -2,9 +2,9 @@
 //  ProgressIndicatorTests.swift
 //  SemelCLITests
 //
-//  B-95. The progress line: what it says, when it is drawn, and — the part a transcript
-//  depends on — that it is erased before anything else prints and is never drawn at all
-//  when the terminal is not one.
+//  B-95. The progress line and the dashboard: what they say, when they are drawn, and —
+//  the part a transcript depends on — that they are erased before anything else prints and
+//  are never drawn at all when the terminal is not one.
 //
 
 @testable import SemelCLI
@@ -29,6 +29,27 @@ final class ProgressPolicyTests: XCTestCase {
     func test_aDumbTerminalIsNotDrawnOn() {
         XCTAssertFalse(ProgressPolicy.shows(environment: ["TERM": "dumb"], standardOutputIsTerminal: true))
     }
+
+    /// The dashboard is a size of the one setting: `full` asks for it, `0` for nothing,
+    /// and unset, `1` or anything unknown keeps the line.
+    func test_theModeIsTheSettingsSize() {
+        func mode(_ value: String?) -> ProgressPolicy.Mode {
+            ProgressPolicy.mode(environment: value.map { ["SEMEL_PROGRESS": $0] } ?? [:], standardOutputIsTerminal: true)
+        }
+        XCTAssertEqual(mode(nil), .line)
+        XCTAssertEqual(mode("1"), .line)
+        XCTAssertEqual(mode("yes"), .line)
+        XCTAssertEqual(mode("full"), .dashboard)
+        XCTAssertEqual(mode("0"), .off)
+    }
+
+    /// Asking for the dashboard does not reach a pipe or a dumb terminal either.
+    func test_theDashboardIsNeverDrawnWhereTheLineIsNot() {
+        XCTAssertEqual(ProgressPolicy.mode(environment: ["SEMEL_PROGRESS": "full"], standardOutputIsTerminal: false), .off)
+        XCTAssertEqual(ProgressPolicy.mode(environment: ["SEMEL_PROGRESS": "full", "TERM": "dumb"],
+                                           standardOutputIsTerminal: true),
+                       .off)
+    }
 }
 
 final class ProgressLineRendererTests: XCTestCase {
@@ -45,6 +66,18 @@ final class ProgressLineRendererTests: XCTestCase {
                                                     running: 10),
                                              elapsed: 92)
         XCTAssertEqual(line, "⏳ 10 running, 340 pending · 1,204 done: 1,100 computed, 104 from cache · 1m 32s")
+    }
+
+    /// Too wide for the terminal, the line gives up the split of what is done before it
+    /// gives up the clock, and is cut only when even that does not fit.
+    func test_aLineTooWideDropsTheSplitBeforeTheClock() {
+        let large = record(scheduled: 1_614, computed: 1_100, fromCache: 104, pending: 340, running: 10)
+
+        XCTAssertEqual(ProgressLineRenderer.line(large, elapsed: 92, fitting: 80),
+                       "⏳ 10 running, 340 pending · 1,204 done: 1,100 computed, 104 from cache · 1m 32s")
+        XCTAssertEqual(ProgressLineRenderer.line(large, elapsed: 92, fitting: 79),
+                       "⏳ 10 running, 340 pending · 1,204 done · 1m 32s")
+        XCTAssertEqual(ProgressLineRenderer.line(large, elapsed: 92, fitting: 20), "⏳ 10 running, 340 …")
     }
 
     /// The last record of a settle: nothing running, nothing pending, the counts the
@@ -95,9 +128,10 @@ final class IndicatorLineTests: XCTestCase {
     override func setUp() {
         super.setUp()
         terminal  = Terminal()
-        indicator = IndicatorLine(enabled: true,
-                                  write: { [terminal] text in terminal!.writes.append(text) },
-                                  now:   { [terminal] in terminal!.now })
+        indicator = IndicatorLine(mode: .line,
+                                  write:        { [terminal] text in terminal!.writes.append(text) },
+                                  now:          { [terminal] in terminal!.now },
+                                  terminalSize: { .fallback })
     }
 
     override func tearDown() {
@@ -171,7 +205,7 @@ final class IndicatorLineTests: XCTestCase {
     /// Disabled — a pipe, `SEMEL_PROGRESS=0` — nothing is ever written but what the
     /// interrupting body writes itself.
     func test_aDisabledIndicatorWritesNothing() {
-        let quiet = IndicatorLine(enabled: false, write: { [terminal] text in terminal!.writes.append(text) })
+        let quiet = IndicatorLine(mode: .off, write: { [terminal] text in terminal!.writes.append(text) })
         quiet.begin()
         quiet.update(record(running: 3, pending: 3))
         quiet.tick()
@@ -199,6 +233,226 @@ final class IndicatorLineTests: XCTestCase {
         terminal.advance(by: 1)
         indicator.tick()
         XCTAssertEqual(terminal.writes.last, erase + line(running: 4, pending: 12, elapsed: 1))
+    }
+
+    /// A line wider than the terminal would wrap onto a second row the erase does not
+    /// reach, and every redraw would leave its first row behind; it is cut to fit instead.
+    func test_theLineIsCutToTheTerminalsWidth() {
+        let narrow = IndicatorLine(mode: .line,
+                                   write:        { [terminal] text in terminal!.writes.append(text) },
+                                   now:          { [terminal] in terminal!.now },
+                                   terminalSize: { TerminalSize(columns: 30, rows: 24) })
+        narrow.begin(showing: record(running: 10, pending: 340))
+        narrow.end()
+
+        XCTAssertEqual(terminal.writes.count, 2)
+        let drawn = String(terminal.writes[0].dropFirst(erase.count))
+        XCTAssertTrue(drawn.hasPrefix("⏳ 10 running"), drawn)
+        XCTAssertTrue(drawn.hasSuffix("…"), drawn)
+        XCTAssertLessThanOrEqual(TerminalText.displayWidth(drawn), 29, drawn)
+    }
+}
+
+final class ProgressDashboardRendererTests: XCTestCase {
+
+    private let compiler = ActiveNode(type: "ClangCompiler", name: "input:/lua/lbaselib.c")
+    private let linker   = ActiveNode(type: "Linker", name: "output:/lua")
+
+    /// Type padded to the longest type shown, name padded to the longest name, elapsed
+    /// right-aligned: one column each, whatever the lengths.
+    func test_theNodesAreLaidOutInColumns() {
+        let lines = ProgressDashboardRenderer.nodeLines([compiler, linker], elapsed: [4.29, 12], width: 79)
+
+        XCTAssertEqual(lines, ["   ClangCompiler  input:/lua/lbaselib.c   4.2 s",
+                               "   Linker         output:/lua            12.0 s"])
+    }
+
+    /// Too wide, a name loses its start — the end is what tells two compiles apart — and
+    /// the line is exactly the width.
+    func test_aNameTooWideIsCutFromTheLeft() {
+        let lines = ProgressDashboardRenderer.nodeLines([compiler, linker], elapsed: [4.29, 12], width: 40)
+
+        XCTAssertEqual(lines, ["   ClangCompiler  …ua/lbaselib.c   4.2 s",
+                               "   Linker         output:/lua     12.0 s"])
+        XCTAssertEqual(lines.map { TerminalText.displayWidth($0) }, [40, 40])
+    }
+
+    /// The frame is the totals line and then the nodes, in the order they started.
+    func test_theFrameIsTheTotalsThenTheNodes() {
+        let record = ProgressRecord(scheduled: 9, computed: 4, fromCache: 1, pending: 3, running: [compiler, linker])
+
+        let lines = ProgressDashboardRenderer.lines(record, elapsed: 7, nodeElapsed: [4.29, 12], size: .fallback)
+
+        XCTAssertEqual(lines, ["⏳ 2 running, 3 pending · 5 done: 4 computed, 1 from cache · 7s",
+                               "   ClangCompiler  input:/lua/lbaselib.c   4.2 s",
+                               "   Linker         output:/lua            12.0 s"])
+    }
+
+    /// Nothing running, the dashboard is the line alone.
+    func test_nothingRunningIsTheTotalsAlone() {
+        let record = ProgressRecord(scheduled: 9, computed: 4, fromCache: 5, pending: 0, running: [])
+
+        XCTAssertEqual(ProgressDashboardRenderer.lines(record, elapsed: 3, nodeElapsed: [], size: .fallback),
+                       ["⏳ 0 running, 0 pending · 9 done: 4 computed, 5 from cache · 3s"])
+    }
+
+    /// Taller than the terminal less two rows, the nodes that do not fit are counted
+    /// on a line of their own, so the frame never scrolls out of the erase's reach.
+    func test_moreNodesThanRowsAreCounted() {
+        let running = (0..<6).map { ActiveNode(type: "SampleTool", name: "input:/n\($0)") }
+        let record  = ProgressRecord(scheduled: 6, computed: 0, fromCache: 0, pending: 0, running: running)
+
+        let lines = ProgressDashboardRenderer.lines(record, elapsed: 0, nodeElapsed: Array(repeating: 1, count: 6),
+                                                    size: TerminalSize(columns: 80, rows: 7))
+
+        XCTAssertEqual(lines.count, 5, "the rows less two")
+        XCTAssertEqual(Array(lines.dropFirst()), ["   SampleTool  input:/n0  1.0 s",
+                                                  "   SampleTool  input:/n1  1.0 s",
+                                                  "   SampleTool  input:/n2  1.0 s",
+                                                  "   and 3 more"])
+    }
+
+    func test_aNodesTimeIsTenthsUnderAMinute() {
+        XCTAssertEqual(ProgressDashboardRenderer.nodeDuration(0), "0.0 s")
+        XCTAssertEqual(ProgressDashboardRenderer.nodeDuration(4.29), "4.2 s")
+        XCTAssertEqual(ProgressDashboardRenderer.nodeDuration(59.99), "59.9 s")
+        XCTAssertEqual(ProgressDashboardRenderer.nodeDuration(92), "1m 32s")
+    }
+
+    /// The `⏳` takes two columns, and the width counts it so.
+    func test_widthsAreTheTerminalsColumns() {
+        XCTAssertEqual(TerminalText.displayWidth("⏳ 1"), 4)
+        XCTAssertEqual(TerminalText.truncatedFromLeft("input:/lua/lbaselib.c", toWidth: 8), "…selib.c")
+        XCTAssertEqual(TerminalText.truncatedFromRight("⏳ 10 running", toWidth: 6), "⏳ 10…")
+        XCTAssertEqual(TerminalText.truncatedFromLeft("short", toWidth: 8), "short")
+    }
+}
+
+final class ActiveNodeClockTests: XCTestCase {
+
+    private let start   = Date(timeIntervalSince1970: 1_000)
+    private let first   = ActiveNode(type: "SampleTool", name: "input:/a")
+    private let second  = ActiveNode(type: "SampleTool", name: "input:/b")
+    private let third   = ActiveNode(type: "Linker", name: "output:/app")
+
+    private func at(_ seconds: TimeInterval) -> Date { start.addingTimeInterval(seconds) }
+
+    /// A node's clock starts at the first record it is in and runs across the records
+    /// after; a node new in a later record starts then.
+    func test_aNodeIsTimedFromTheFirstRecordItAppearsIn() {
+        var clock = ActiveNodeClock()
+        clock.observe([first, second], at: at(0))
+        XCTAssertEqual(clock.elapsed(of: [first, second], at: at(3)), [3, 3])
+
+        clock.observe([second, third], at: at(2))
+        XCTAssertEqual(clock.elapsed(of: [second, third], at: at(5)), [5, 3])
+    }
+
+    /// A node that leaves the list is forgotten: back in a later record, it is a new run.
+    func test_aNodeThatDisappearsDropsItsStamp() {
+        var clock = ActiveNodeClock()
+        clock.observe([first, second], at: at(0))
+        clock.observe([second], at: at(2))
+        clock.observe([first, second], at: at(6))
+
+        XCTAssertEqual(clock.elapsed(of: [first, second], at: at(7)), [1, 7])
+    }
+
+    /// Two nodes of one type and one name — unnamed, say — are two clocks.
+    func test_twinsAreTimedApart() {
+        let unnamed = ActiveNode(type: "ConfigFilter", name: "")
+        var clock   = ActiveNodeClock()
+        clock.observe([unnamed], at: at(0))
+        clock.observe([unnamed, unnamed], at: at(4))
+
+        XCTAssertEqual(clock.elapsed(of: [unnamed, unnamed], at: at(5)), [5, 1])
+    }
+}
+
+/// The dashboard on the terminal: several rows redrawn in place, each redraw one write
+/// that goes up over every row the last frame drew.
+final class DashboardIndicatorTests: XCTestCase {
+
+    private final class Terminal {
+        var writes: [String] = []
+        var now = Date(timeIntervalSince1970: 1_000)
+        func advance(by seconds: TimeInterval) { now = now.addingTimeInterval(seconds) }
+    }
+
+    private var terminal: Terminal!
+    private var indicator: IndicatorLine!
+
+    private let first  = ActiveNode(type: "SampleTool", name: "input:/a.c")
+    private let second = ActiveNode(type: "SampleTool", name: "input:/b.c")
+
+    override func setUp() {
+        super.setUp()
+        terminal  = Terminal()
+        indicator = IndicatorLine(mode: .dashboard,
+                                  write:        { [terminal] text in terminal!.writes.append(text) },
+                                  now:          { [terminal] in terminal!.now },
+                                  terminalSize: { .fallback })
+    }
+
+    override func tearDown() {
+        indicator.end()
+        indicator = nil
+        terminal  = nil
+        super.tearDown()
+    }
+
+    private func record(_ running: [ActiveNode], pending: Int) -> ProgressRecord {
+        ProgressRecord(scheduled: 0, computed: 0, fromCache: 0, pending: pending, running: running)
+    }
+
+    private let threeRowFrame = "⏳ 2 running, 3 pending · 0 done: 0 computed, 0 from cache · 0s\n"
+                              + "   SampleTool  input:/a.c  0.0 s\n"
+                              + "   SampleTool  input:/b.c  0.0 s"
+
+    /// Three rows drawn, the next frame goes back to the first of them — erase the row
+    /// the cursor is on, then up and erase twice — and draws two, in the same write; the
+    /// end erases those two.
+    func test_aRedrawErasesEveryRowItDrewInOneWrite() {
+        indicator.begin()
+        indicator.update(record([first, second], pending: 3))
+        terminal.advance(by: 1)
+        indicator.update(record([second], pending: 2))
+        indicator.end()
+
+        XCTAssertEqual(terminal.writes, [
+            "\r\u{1B}[2K" + threeRowFrame,
+            "\r\u{1B}[2K\u{1B}[1A\u{1B}[2K\u{1B}[1A\u{1B}[2K"
+                + "⏳ 1 running, 2 pending · 0 done: 0 computed, 0 from cache · 1s\n"
+                + "   SampleTool  input:/b.c  1.0 s",
+            "\r\u{1B}[2K\u{1B}[1A\u{1B}[2K",
+        ])
+    }
+
+    /// A line printed with the dashboard up: every row erased first, the line printed on
+    /// the clean row, and the dashboard drawn again beneath it.
+    func test_anInterruptionErasesTheWholeDashboard() {
+        indicator.begin()
+        indicator.update(record([first, second], pending: 3))
+        indicator.interrupting { terminal.writes.append("Collected 3 objects\n") }
+
+        XCTAssertEqual(terminal.writes, ["\r\u{1B}[2K" + threeRowFrame,
+                                         "\r\u{1B}[2K\u{1B}[1A\u{1B}[2K\u{1B}[1A\u{1B}[2K",
+                                         "Collected 3 objects\n",
+                                         "\r\u{1B}[2K" + threeRowFrame])
+    }
+
+    /// A node that started before the wait began shows the time it has really been
+    /// running: the stamps are taken from every record, not only those during a wait.
+    func test_aNodeStartedBeforeTheWaitKeepsItsClock() {
+        let running = record([first], pending: 0)
+        indicator.update(running)
+        XCTAssertEqual(terminal.writes, [], "no wait, nothing drawn")
+
+        terminal.advance(by: 5)
+        indicator.begin(showing: running)
+
+        XCTAssertEqual(terminal.writes, ["\r\u{1B}[2K⏳ 1 running, 0 pending · 0 done: 0 computed, 0 from cache · 0s\n"
+                                         + "   SampleTool  input:/a.c  5.0 s"])
     }
 }
 
