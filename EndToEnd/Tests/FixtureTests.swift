@@ -28,11 +28,12 @@ final class FixtureTests: XCTestCase {
     func test_tutorial() throws        { try build(Projects.tutorial) }
     func test_cppEmu6502() throws      { try build(Projects.cppEmu6502) }
     func test_swiftMyApp() throws      { try build(Projects.swiftMyApp) }
+    func test_swiftCPackage() throws   { try build(Projects.swiftCPackage) }
     func test_swiftHelloApp() throws   { try build(Projects.swiftHelloApp) }
 
     /// The roster and the tests above must not drift apart.
     func test_everyFixtureInTheRosterHasATestHere() {
-        let tested: Set<String> = ["c-hello", "tutorial", "cpp-emu6502", "swift-my-app", "swift-hello-app"]
+        let tested: Set<String> = ["c-hello", "tutorial", "cpp-emu6502", "swift-my-app", "swift-c-package", "swift-hello-app"]
         XCTAssertEqual(Set(Projects.fixtures.map(\.name)), tested)
     }
 }

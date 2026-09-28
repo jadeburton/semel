@@ -41,7 +41,8 @@ final class ClangPreprocessorTests: SemelClangTestCase {
                            sdkPath: String? = nil,
                            cStandard: String? = "c17",
                            cxxStandard: String? = nil,
-                           arguments: String? = nil) throws -> ProcessInput {
+                           arguments: String? = nil,
+                           defines: String? = nil) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -53,6 +54,7 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         if let arguments   { configuration += "\narguments=\(arguments)" }
+        if let defines     { configuration += "\ndefines=\(defines)" }
         return ProcessInput(inputValues: [
             ClangPreprocessor.configuration:    ["configuration": .value(try configuration.intern())],
             ClangPreprocessor.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
@@ -90,6 +92,18 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
         _ = try makeTool().process(input: try makeInput(arguments: nil))
         XCTAssertFalse(executor.lastArguments.contains("-DNDEBUG"))
+    }
+
+    /// A package target's `.define` settings arrive as `defines` (B-55), a key of their
+    /// own so that stating them does not replace the project's `arguments`: each is a `-D`,
+    /// and they come before `arguments`, where a project's own flag can still undo one.
+    func test_eachDefineIsADashDBeforeTheArguments() throws {
+        _ = try makeTool().process(input: try makeInput(arguments: "-UFOO", defines: "FOO,BAR=2"))
+
+        XCTAssertEqual(Array(executor.lastArguments.suffix(3)), ["-DFOO", "-DBAR=2", "-UFOO"])
+
+        _ = try makeTool().process(input: try makeInput())
+        XCTAssertFalse(executor.lastArguments.contains { $0.hasPrefix("-D") }, "\(executor.lastArguments)")
     }
 
     // MARK: - A header nobody pushed (B-79)
@@ -314,5 +328,68 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertEqual(includeFlags, [".", "input:/pkg/src", "input:/pkg/src/include"], "got \(arguments)")
         XCTAssertTrue(try XCTUnwrap(executor.invocations.last).inputFileNames.contains("input:/pkg/src/include/cmark.h"),
                       "every file of every folder is placed in the sandbox")
+    }
+
+    // MARK: - Nested header folders (B-55)
+
+    // A header folder is walked to the bottom: `include/openssl/ssl.h` is reached by
+    // `#include <openssl/ssl.h>` under the `include` search path, and a source in
+    // `src/lib/` includes its sibling `"lib.h"` from beside it. Both need the file placed
+    // at its input-file-system path, which is where every header input goes already, so
+    // the walk is what is new: one level per pass, on a port of its own.
+
+    private func nestedFolderInput(subfolders: [String: NodeValue], headerFiles: [String: NodeValue]) throws -> ProcessInput {
+        var inputValues = try makeFolderInput(headerFiles: headerFiles).inputValues
+        inputValues[ClangPreprocessor.headerFolders] = [
+            "input:/pkg/src":         try folderManifest("input:/pkg/src", files: ["blocks.c"], folders: ["include", "lib", ".git"]),
+            "input:/pkg/src/include": try folderManifest("input:/pkg/src/include", files: ["cmark.h"], folders: ["cmark"]),
+        ]
+        inputValues[ClangPreprocessor.headerSubfolders] = subfolders
+        return ProcessInput(inputValues: inputValues)
+    }
+
+    private var nestedSubfolders: [String: NodeValue] {
+        get throws {
+            ["input:/pkg/src/lib":           try folderManifest("input:/pkg/src/lib", files: ["lib.h", "lib.c"]),
+             "input:/pkg/src/include/cmark": try folderManifest("input:/pkg/src/include/cmark", files: ["node.h"])]
+        }
+    }
+
+    private let nestedHeaderPaths = ["input:/pkg/src/include/cmark.h", "input:/pkg/src/include/cmark/node.h",
+                                     "input:/pkg/src/lib/lib.c", "input:/pkg/src/lib/lib.h"]
+
+    /// The first pass asks for the subfolders the manifests show, never a hidden one and
+    /// never a folder already on `headerFolders`, and runs nothing.
+    func test_aHeaderFoldersSubfoldersAreAskedForBeforeAnythingRuns() throws {
+        let output = try makeTool().process(input: try nestedFolderInput(subfolders: [:], headerFiles: [:]))
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerSubfolders]).keys.sorted(),
+                       ["input:/pkg/src/include/cmark", "input:/pkg/src/lib"])
+        XCTAssertTrue(executor.invocations.isEmpty, "the walk has not arrived")
+    }
+
+    /// Once the subfolders are in, every file below them is a header input too.
+    func test_everyFileBelowAHeaderFolderIsAskedFor() throws {
+        let output = try makeTool().process(input: try nestedFolderInput(subfolders: try nestedSubfolders, headerFiles: [:]))
+
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerInputFiles]).keys.sorted(), nestedHeaderPaths)
+        XCTAssertTrue(executor.invocations.isEmpty, "nothing runs until the headers are on the wire")
+    }
+
+    /// With every file on its wire the run places the nested ones at their paths, and
+    /// only the folders on `headerFolders` are search paths.
+    func test_nestedHeadersArePlacedAtTheirPathsAndOnlyTheGivenFoldersAreSearchPaths() throws {
+        var wires: [String: NodeValue] = [:]
+        for path in nestedHeaderPaths {
+            wires[path] = .value(try "// \(path)".intern())
+        }
+        _ = try makeTool().process(input: try nestedFolderInput(subfolders: try nestedSubfolders, headerFiles: wires))
+
+        let invocation = try XCTUnwrap(executor.invocations.last, "the walk and the files have arrived")
+        XCTAssertTrue(invocation.inputFileNames.contains("input:/pkg/src/include/cmark/node.h"), "\(invocation.inputFileNames)")
+        XCTAssertTrue(invocation.inputFileNames.contains("input:/pkg/src/lib/lib.h"), "\(invocation.inputFileNames)")
+        let arguments = executor.lastArguments
+        let includeFlags = zip(arguments, arguments.dropFirst()).filter { $0.0 == "-I" }.map(\.1)
+        XCTAssertEqual(includeFlags, [".", "input:/pkg/src", "input:/pkg/src/include"], "got \(arguments)")
     }
 }

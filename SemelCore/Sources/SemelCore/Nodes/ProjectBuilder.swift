@@ -130,11 +130,23 @@ public struct ProjectBuilder: Node {
             return try hash.resolveAsString()
         }
 
-        let products = try FormulaFile.parse(projectFileContent,
+        // An `except` that removes every item is an error only once the walk has arrived:
+        // midway, a pattern has matched the files near the top and not yet those below, so
+        // `{f: <src/**/*.c> except <src/gen.c>}` over a `src` whose only top-level source
+        // is `gen.c` removes all it has so far. Thrown then, the pass would return no
+        // specs, the walk would never be demanded further, and the error would stand for
+        // good; the specs the pass did record carry the walk on instead (B-55).
+        let products: [String: GraphSpecNode]
+        do {
+            products = try FormulaFile.parse(projectFileContent,
                                              basePath: parentFolder,
                                              wildcardExpander: wildcardExpander,
                                              fileReader: fileReader,
                                              includeReader: includeReader)
+        } catch FormulaParseError.forEachExceptLeavesNothing
+                    where !record.folderPaths.union(Set(record.subfolderSpecs.keys)).isSubset(of: Set(folderManifests.keys)) {
+            products = [:]
+        }
 
         // There are two kinds of Formula files: those without wildcardExpander wildcards, and
         // those with. Files with wildcards require multiple passes — the initial passes

@@ -1128,7 +1128,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertTrue(preprocessor.contains("'input:/pkg/src/include': Folder(path: 'input:/pkg/src/include').manifest"), "got:\n\(preprocessor)")
 
         let product = try productBlock("App", in: result)
-        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/*.c'} \"%%f%%.o\": ClangCompiler("), "got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.c'} \"%%f%%.o\": ClangCompiler("), "got:\n\(product)")
         XCTAssertTrue(product.contains("preprocessCLib(path: f)"), "got:\n\(product)")
         XCTAssertTrue(product.contains("ConfigFilter(prefix: 'clang.compiler'"), "got:\n\(product)")
         XCTAssertTrue(product.contains("'App.o': compilerApp().object"), "the Swift objects still link, got:\n\(product)")
@@ -1177,8 +1177,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(preprocessor.contains("'input:/pkg/src': Folder"), "not its dependency's private folder, got:\n\(preprocessor)")
 
         let product = try productBlock("App", in: result)
-        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/*.c'}"), "objects of a C target reached through a C target, got:\n\(product)")
-        XCTAssertTrue(product.contains("{f: 'input:/pkg/extensions/*.c'}"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.c'}"), "objects of a C target reached through a C target, got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/extensions/**/*.c'}"), "got:\n\(product)")
     }
 
     /// A Swift target whose sources all sit in subfolders has no `.swift` at the top of
@@ -1189,6 +1189,159 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                                      .merging(cFolders) { _, new in new })
 
         XCTAssertTrue(result.contains("func compilerApp()"), "got:\n\(result)")
+    }
+
+    // MARK: - C targets: what the first case did not need (B-55)
+
+    /// The whole tree decides, as it does for SwiftPM: a `.swift` anywhere makes a Swift
+    /// target, even beside a stray `.c` at the top.
+    func test_aSwiftFileInASubfolderMakesASwiftTargetDespiteATopLevelCSource() throws {
+        let result = try formula(json: appOverCLib,
+                                 folderContents: ["input:/pkg/Sources/App":       [file("shim.c"), folder("Views")],
+                                                  "input:/pkg/Sources/App/Views": [file("Main.swift")]]
+                                     .merging(cFolders) { _, new in new })
+
+        XCTAssertTrue(result.contains("func compilerApp()"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("func preprocessApp("), "got:\n\(result)")
+    }
+
+    /// A C target whose sources all sit in subfolders is a C target, every extension its
+    /// tree holds taken at any depth by one for-each.
+    func test_aCTargetsSourcesAreTakenAtAnyDepthForEveryExtensionItsTreeHolds() throws {
+        let result = try formula(json: appOverCLib,
+                                 folderContents: ["input:/pkg/src":          [folder("include"), folder("core")],
+                                                  "input:/pkg/src/core":     [file("parser.c"), folder("deep")],
+                                                  "input:/pkg/src/core/deep": [file("table.cpp"), file("table.h")]]
+                                     .merging(["input:/pkg/extensions": [file("table.c")]]) { _, new in new })
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.c', 'input:/pkg/src/**/*.cpp'} \"%%f%%.o\": ClangCompiler("),
+                      "got:\n\(product)")
+        XCTAssertFalse(result.contains("func compilerCLib"), "got:\n\(result)")
+    }
+
+    private func cLibJSON(_ fields: String) -> String {
+        appOverCLib.replacingOccurrences(of: "{\"name\": \"CLib\", \"type\": \"regular\",    \"path\": \"src\",         \"dependencies\": []}",
+                                         with: "{\"name\": \"CLib\", \"type\": \"regular\", \"path\": \"src\", \"dependencies\": [], \(fields)}")
+    }
+
+    private var cLibTree: [String: [FolderManifestEntry]] {
+        ["input:/pkg/src":            [file("blocks.c"), file("skip.c"), file("scanners.re"), file("CMakeLists.txt"),
+                                       folder("include"), folder("Tests"), folder("docs"), folder("lib")],
+         "input:/pkg/src/Tests":      [file("test.c")],
+         "input:/pkg/src/docs":       [file("index.md")],
+         "input:/pkg/src/lib":        [file("util.c"), file("util.h")],
+         "input:/pkg/extensions":     [file("table.c")]]
+    }
+
+    /// `exclude:` is the for-each's `except`, relative to the target folder as the
+    /// manifest writes it: a folder as everything under it, a file as itself. An exclusion
+    /// that takes out no source the patterns would take is left out of the formula.
+    func test_aCTargetsExclusionsAreTheForEachsExcept() throws {
+        let json = cLibJSON("\"exclude\": [\"skip.c\", \"Tests\", \"docs\", \"CMakeLists.txt\", \"scanners.re\"]")
+        let result = try formula(json: json, folderContents: cLibTree)
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.c' except 'input:/pkg/src/Tests/**', 'input:/pkg/src/skip.c'} "),
+                      "got:\n\(product)")
+    }
+
+    /// Without an `exclude:`, no `except`.
+    func test_aCTargetWithNoExclusionsHasNoExcept() throws {
+        let result = try formula(json: appOverCLib, folderContents: cLibTree)
+
+        XCTAssertFalse(try productBlock("App", in: result).contains(" except "), "got:\n\(result)")
+    }
+
+    /// `sources:` narrows the for-each: a listed folder is taken at any depth, a listed
+    /// file by name, and nothing outside them.
+    func test_aCTargetsSourcesListNarrowsTheForEach() throws {
+        let json = cLibJSON("\"sources\": [\"lib\", \"blocks.c\"]")
+        let result = try formula(json: json, folderContents: cLibTree)
+
+        let product = try productBlock("App", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/blocks.c', 'input:/pkg/src/lib/**/*.c'} "), "got:\n\(product)")
+    }
+
+    /// `publicHeadersPath` names the folder the module map is in, for a Swift importer and
+    /// for the C target's own preprocessor; `include` is only its default.
+    func test_aCTargetsPublicHeadersPathIsItsHeaderFolder() throws {
+        let json = cLibJSON("\"publicHeadersPath\": \"api/public\"")
+        var tree = cLibTree
+        tree["input:/pkg/src"]?.append(folder("api"))
+        tree["input:/pkg/src/api"] = [folder("public")]
+        tree["input:/pkg/src/api/public"] = [file("module.modulemap"), file("clib.h")]
+        let result = try formula(json: json, folderContents: tree)
+
+        let compiler = try funcDefinition("compilerApp", in: result)
+        XCTAssertTrue(compiler.contains("'CLib': Folder(path: 'input:/pkg/src/api/public').manifest"), "got:\n\(compiler)")
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertTrue(preprocessor.contains("'input:/pkg/src/api/public': Folder"), "got:\n\(preprocessor)")
+        XCTAssertFalse(preprocessor.contains("'input:/pkg/src/include': Folder"), "not the default once one is named, got:\n\(preprocessor)")
+        XCTAssertTrue(try productBlock("App", in: result).contains("'CLib': FolderTreeBuilder(under: 'CLib', folder: ['folder': Folder(path: 'input:/pkg/src/api/public')")
+                      || result.contains("FolderTreeBuilder(under: 'CLib', folder: ['folder': Folder(path: 'input:/pkg/src/api/public')"),
+                      "the module tree carries the named folder, got:\n\(result)")
+    }
+
+    /// `publicHeadersPath: "."` is the target folder itself, which is then one header
+    /// folder, not two.
+    func test_aPublicHeadersPathOfDotIsTheTargetFolder() throws {
+        let result = try formula(json: cLibJSON("\"publicHeadersPath\": \".\""), folderContents: cLibTree)
+
+        XCTAssertTrue(try funcDefinition("compilerApp", in: result).contains("'CLib': Folder(path: 'input:/pkg/src').manifest"),
+                      "got:\n\(result)")
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertEqual(preprocessor.components(separatedBy: "'input:/pkg/src': Folder").count, 2, "once, got:\n\(preprocessor)")
+    }
+
+    private let defineSettings = """
+        "settings": [
+          {"kind": {"define": {"_0": "FOO"}}, "tool": "c"},
+          {"kind": {"define": {"_0": "BAR=2"}}, "tool": "c"},
+          {"condition": {"platformNames": ["windows"]}, "kind": {"define": {"_0": "WIN"}}, "tool": "c"},
+          {"kind": {"headerSearchPath": {"_0": "lib"}}, "tool": "c"},
+          {"kind": {"define": {"_0": "CXXONLY=yes"}}, "tool": "cxx"}
+        ]
+        """
+
+    /// Unconditional `.define` settings, from `cSettings` and `cxxSettings` alike, are the
+    /// preprocessor's `defines`, laid over the config as a literal; a conditional one is
+    /// not carried, and the compiler, reading preprocessed text, has none.
+    func test_aCTargetsUnconditionalDefinesAreThePreprocessorsDefines() throws {
+        let result = try formula(json: cLibJSON(defineSettings), folderContents: cLibTree)
+
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'FOO,BAR=2,CXXONLY=yes')"), "got:\n\(preprocessor)")
+        XCTAssertFalse(preprocessor.contains("WIN"), "a conditional define is not carried, got:\n\(preprocessor)")
+        let compilerEntry = try XCTUnwrap(try productBlock("App", in: result).components(separatedBy: "\n").first { $0.contains("preprocessCLib") })
+        XCTAssertFalse(compilerEntry.contains("defines"), "got:\n\(compilerEntry)")
+    }
+
+    /// A package vending an executable whose targets are all C links it through the Swift
+    /// linker, as it links a Swift executable's C objects: `swiftc` drives `ld` for C
+    /// objects as well, so there is no `clang.linker` block to read.
+    func test_anExecutableOfCTargetsAloneLinksTheirObjectsThroughTheSwiftLinker() throws {
+        let json = """
+            {
+              "name": "Tool",
+              "dependencies": [],
+              "products": [{"name": "tool", "targets": ["CMain"], "type": {"executable": null}}],
+              "targets": [
+                {"name": "CMain", "type": "executable", "path": "main", "dependencies": [{"byName": ["CLib", null]}]},
+                {"name": "CLib",  "type": "regular",    "path": "src",  "dependencies": []}
+              ]
+            }
+            """
+        let result = try formula(json: json, folderContents: ["input:/pkg/main": [file("main.c")],
+                                                              "input:/pkg/src":  [file("blocks.c"), folder("include")]])
+
+        XCTAssertFalse(result.contains("SwiftCompiler("), "no Swift to compile, got:\n\(result)")
+        XCTAssertFalse(result.contains("ClangLinker"), "got:\n\(result)")
+        let product = try productBlock("tool", in: result)
+        XCTAssertTrue(product.contains("SwiftLinker("), "got:\n\(product)")
+        XCTAssertTrue(product.contains("linkage: 'executable'"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/main/**/*.c'}"), "got:\n\(product)")
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/src/**/*.c'}"), "got:\n\(product)")
     }
 
     // MARK: - A build root shared by several packages (B-56)

@@ -1,0 +1,6 @@
+#ifndef CLIB_CONSTANTS_H
+#define CLIB_CONSTANTS_H
+
+#define CLIB_ANSWER_CONSTANT CLIB_ANSWER
+
+#endif

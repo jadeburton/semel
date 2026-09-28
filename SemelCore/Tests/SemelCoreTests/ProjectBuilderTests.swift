@@ -291,6 +291,29 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertEqual(try sourcePaths(output), ["input:/repo/src/lib/util.c", "input:/repo/src/main.c"])
     }
 
+    /// Midway through a walk an `except` can remove everything a pattern has matched so
+    /// far — the only `.c` at the top is the excluded one — while the sources are further
+    /// down (B-55). That is not yet the error it would be once the walk has arrived: the
+    /// pass demands the next level and publishes nothing, and the walk goes on.
+    func test_anExceptThatEmptiesAPartialWalkDemandsTheNextLevelInsteadOfFailing() throws {
+        let formula = recursiveFormula.replacingOccurrences(of: "<src/**/*.c>", with: "<src/**/*.c> except <src/main.c>")
+
+        let partial = try process(formula: formula, folders: ["input:/repo/src": try XCTUnwrap(try sourceTree()["input:/repo/src"])])
+        XCTAssertEqual(partial.inputWireSpecs[ProjectBuilder.foldersInputPort]?.keys.sorted(),
+                       ["input:/repo/src", "input:/repo/src/lib"])
+        XCTAssertEqual(partial.inputWireSpecs[ProjectBuilder.productInputPort], [:])
+
+        let whole = try process(formula: formula, folders: try sourceTree())
+        XCTAssertEqual(try sourcePaths(whole), ["input:/repo/src/lib/deep/core.c", "input:/repo/src/lib/util.c"])
+    }
+
+    /// Once the walk has arrived, an `except` that removes everything is the formula's error.
+    func test_anExceptThatEmptiesAFinishedWalkIsStillAnError() throws {
+        let formula = recursiveFormula.replacingOccurrences(of: "<src/**/*.c>", with: "<src/**/*.c> except <src/**>")
+
+        XCTAssertThrowsError(try process(formula: formula, folders: try sourceTree()))
+    }
+
     // MARK: - Tree products (B-63)
 
     /// The tree-valued node here is a TreeMerger, so the spec parses without a real

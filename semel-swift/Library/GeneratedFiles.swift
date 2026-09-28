@@ -84,10 +84,14 @@ public enum GeneratedFiles {
     }
 
     /// Whether any of a tree's targets is compiled through clang, read from the target
-    /// folders on disk by the converter's own rule.
+    /// folders on disk by the converter's own rule: every file at any depth, hidden
+    /// folders left out as the converter's walk leaves them.
     public static func hasCFamilyTargets(in summaries: [PackageSummary]) -> Bool {
         summaries.flatMap(\.targetFolders).contains { folder in
-            SemelSwift.isCFamilyTargetFolder(holding: (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+            let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil,
+                                                            options: [.skipsHiddenFiles])
+            let files = (enumerator?.allObjects as? [URL] ?? []).map(\.lastPathComponent)
+            return SemelSwift.isCFamilyTargetFolder(holding: files)
         }
     }
 

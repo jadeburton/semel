@@ -345,19 +345,66 @@ hiding the flap) was declined the same day: a port, a protocol parameter, a prop
 ordering constraint to approximate what one line of formula states.
 
 **B-55** `open` — **C targets in a Swift package: what the first case did not need.**
-B-54 builds swift-cmark and CAtomic inside IceCubesApp's graph (39f27b1): a target whose
-folder holds C-family sources and no top-level `.swift` gets a preprocessor and compiler
-per file, its `include` folder goes on every dependent Swift target's `inputModuleMapFolders`,
-and the objects link into the product's archive. Left for a package that needs them:
-`cSettings` `.define` values are not carried (cmark's are Windows-only); source files in
-nested folders are not compiled — the formula can now say `**` (B-108 residual 1), but the
-converter still emits `'<target>/*.c'` from the extensions at the folder's top level, and
-switching it wants two things with it: the target's `exclude:` as an `except` clause (not
-read for a C target today, and `**` would reach excluded subfolders), and each nested
-folder on the preprocessor's `headerFolders`, since a header folder is materialized one
-level deep and a nested source's sibling header would be missing; a `publicHeadersPath` other than
-`include` is not honoured; and a package vending an *executable* with C targets would
-need a `clang.linker` block, which the archive case never reads.
+B-54 builds swift-cmark and CAtomic inside IceCubesApp's graph (39f27b1): a target with
+C-family sources and no Swift gets a preprocessor and compiler per file, its public
+headers go on every dependent Swift target's `inputModuleMapFolders`, and the objects link
+into the product. Done 2026-09-28, held by the `swift-c-package` fixture, whose excluded
+sources `#error` and whose sources `#error` without their define:
+
+1. **Nested sources.** A target's language is read from its whole walked tree, SwiftPM's
+   own rule (`PackageClangTarget`): a `.swift` anywhere in scope makes it Swift, else a
+   C-family source anywhere makes it C. The top level alone got both directions wrong —
+   a C target with its sources in subfolders went to `swiftc` with nothing to compile.
+   `prepare` reads the tree the same way. Its objects are one for-each per target,
+   `{f: '<t>/**/*.c', '<t>/**/*.cpp' except '<t>/Tests/**', '<t>/skip.c'}`: a `**/*.<ext>`
+   per extension found under each source folder — the target, or the folders `sources:`
+   lists, a listed file taken by name — and `exclude:` as the `except`, a folder as
+   everything under it and a file as itself; an exclusion that removes no C-family
+   source (`CMakeLists.txt`, cmark's `.re` grammars) is left out. `ProjectBuilder` no
+   longer fails an `except` that empties a walk still on its way down, which stalled the
+   walk for good when the only top-level source was an excluded one.
+2. **Nested headers.** The preprocessor walks each `headerFolders` folder to the bottom on
+   a `headerSubfolders` port of its own, as `SwiftCompiler` walks its sources (version 3):
+   a header input is already placed at its input-file-system path, so the walk was all
+   that was missing, and only the folders given stay `-I`s. Wiring every nested folder
+   from the converter instead would have made each an `-I` — a search path SwiftPM does not
+   give — and a second walk beside the one the converter already does.
+3. **`publicHeadersPath`** names the header folder, `include` only its default, for the
+   Swift importer's module map folder, the product's module tree and the preprocessor;
+   `"."` is the target folder itself.
+4. **`.define`**: unconditional ones from `cSettings` and `cxxSettings` are the
+   preprocessor's `defines`, one `-D` each before `arguments`. A key of their own and not
+   `arguments`, because a literal replaces the key it names in the settings under it, so
+   the project's own `clang.preprocessor.arguments` would have vanished for every target
+   with a define. The compiler gets none: it reads preprocessed text.
+5. **Executables.** No `clang.linker` block: `swiftc` drives `ld` for C objects as for
+   Swift ones, and a pure-C executable linked by `SwiftLinker` references `libSystem`
+   alone. What was missing was that a product's *own* C target — a C executable's
+   `main.c`, a library vending a C target — was never compiled: the walk started from
+   the target's dependencies.
+
+Left, each for the package that needs it (swift-nio and BoringSSL in B-78 are the likely
+first):
+
+1. **Conditional and other settings.** A `.when(platforms:)` or `.when(configuration:)`
+   setting is not carried, nor `headerSearchPath`, `unsafeFlags`, `linkedLibrary`,
+   `linkedFramework` or any `linkerSettings`. A define whose value holds a comma splits in
+   two and one holding a quote ends the formula's string.
+2. **C++ in a linked product.** SwiftPM adds `-lc++` when a product reaches a C++ source;
+   `SwiftLinker` is not told, so a dylib or executable with a C++ target fails at link
+   with the standard library's symbols undefined. It wants a linker key of its own, for
+   the reason `defines` is one.
+3. **Nested public headers for Swift.** `SwiftCompiler`'s `inputModuleMapFolders` places
+   one level of the header folder (the product's module tree, a `FolderTreeBuilder`, is
+   whole), so a module map naming `header "sub/x.h"` or an umbrella directory with
+   subfolders fails from Swift while the C side builds.
+4. **No generated module map.** SwiftPM writes one for a C target whose public headers
+   have none — an umbrella `<Target>.h`, or the folder as an umbrella directory; the
+   converter wires the folder as it is, so such a target is not importable from Swift.
+5. **Assembly.** `.s` and `.S` sources are not compiled (BoringSSL).
+6. **Cost.** A preprocessor node takes every file under its target's folder, an excluded
+   folder included, and every source of the target has one; a large excluded `Tests`
+   costs wires, not correctness.
 
 **B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
 Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before
@@ -880,10 +927,11 @@ Non-synchronized groups surfaced with item 1 and are read.
    as SwiftPM does (`semel-clang` compiles as `semel_clang`), and the root `semel.config`
    is the project's half only (B-109 residual 1). External rather than a fixture only
    because vendoring fetches GRDB.
-2. *swift-nio* — every residual of B-55 at once: `cSettings` `.define` values that matter,
+2. *swift-nio* — what B-55 did first, at scale: `cSettings` `.define` values that matter,
    C sources in nested folders, header paths other than `include`, and executables
-   (`NIOEchoServer` and the like) linking C targets, which need the `clang.linker` block.
-   macOS, no macros. Should fail today in exactly the ways B-55 predicts.
+   (`NIOEchoServer` and the like) linking C targets. macOS, no macros. What B-55 leaves —
+   conditional settings, `headerSearchPath`, a generated module map — is where it should
+   fail now, if anywhere.
 3. *swift-crypto*, or *Vapor* which brings it — BoringSSL is C, C++ and `.S` assembly in
    deep folders, the hardest C-in-a-package there is; Vapor adds a transitive graph of
    some thirty git dependencies, which tests the `Dependencies/<name>` rule and B-10

@@ -274,6 +274,27 @@ final class PrepareTests: XCTestCase {
         XCTAssertFalse(config.contains("clang.linker"), "got:\n\(config)")
     }
 
+    /// B-55. The whole tree decides, as it does for the converter: a C target whose
+    /// sources all sit in subfolders is still one, and a `.swift` in a subfolder makes a
+    /// Swift target of a folder with a C source at its top.
+    func test_aTargetFoldersNestedFilesDecideItsLanguage() throws {
+        try write("Packages/CLib/Package.swift")
+        try write("Packages/CLib/Sources/CLib/core/lib.c", "int lib(void) { return 1; }\n")
+        try write("Packages/CLib/Sources/CLib/include/lib.h", "int lib(void);\n")
+        try write("Packages/Mixed/Package.swift")
+        try write("Packages/Mixed/Sources/Mixed/shim.c", "int shim(void) { return 1; }\n")
+        try write("Packages/Mixed/Sources/Mixed/Views/Main.swift", "import Foundation\n")
+
+        let summaries = [
+            PackageSummary(name: "CLib", folder: folder("Packages/CLib"), pathDependencies: [], platforms: [:],
+                           targetFolders: [folder("Packages/CLib/Sources/CLib")]),
+            PackageSummary(name: "Mixed", folder: folder("Packages/Mixed"), pathDependencies: [], platforms: [:],
+                           targetFolders: [folder("Packages/Mixed/Sources/Mixed")]),
+        ]
+        XCTAssertTrue(GeneratedFiles.hasCFamilyTargets(in: [summaries[0]]))
+        XCTAssertFalse(GeneratedFiles.hasCFamilyTargets(in: [summaries[1]]))
+    }
+
     /// B-122. The tree's languages are decided after vendoring: a Swift root whose git
     /// dependency brings a C target — swift-cmark under IceCubes — reads the clang
     /// settings like a tree with a C target of its own, and a scan taken before the copy
