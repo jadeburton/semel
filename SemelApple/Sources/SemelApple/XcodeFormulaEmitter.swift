@@ -165,7 +165,7 @@ struct XcodeFormulaEmitter {
         let folderWires = sourceFolders.enumerated().map { index, folder in
             "        'folder\(index)': Folder(path: '\(folder.1)').manifest"
         }
-        let exceptions = sourceFolders.flatMap { $0.0.exceptions }.sorted()
+        let exceptions = sourceFolders.flatMap { $0.0.excludedPaths }.sorted()
         let moduleTrees = target.packageProducts.map(\.product).sorted().map {
             "        '\($0)': \(FormulaIdentifier.modulesFunc(forProduct: $0))().files"
         }
@@ -228,43 +228,52 @@ struct XcodeFormulaEmitter {
             "\n    ).output")
 
         // ── resources ────────────────────────────────────────────────────────
-        // Each folder's listing, with the paths of what it holds, less its exceptions.
-        // `bundlePath` is where the file lands in the bundle: flat, as Xcode flattens a
-        // folder's files, except a localized file, which keeps its `<lang>.lproj/`.
+        // Each folder's listing, with the paths of what it holds, less its exceptions,
+        // each file placed by `resource(at:)`: flat, as Xcode flattens a folder's files,
+        // except a localized file, which keeps its `<lang>.lproj/`, and a string catalog,
+        // which its compiler places.
         struct ResourceFile { let folderPath: String; let relativePath: String; let bundlePath: String }
         var catalogs: [String] = []
         var stringCatalogs: [ResourceFile] = []
         var plainResources: [ResourceFile] = []
-        for (folder, folderPath) in sourceFolders {
-            let contents = listing(folderPath) ?? FolderListing()
-            let excluded = Set(folder.exceptions)
-            catalogs += contents.folders.filter { ($0.hasSuffix(".xcassets") || $0.hasSuffix(".icon")) && !excluded.contains($0) }
-                .map { "\(folderPath)/\($0)" }
-            for file in contents.files.sorted() where !excluded.contains(file) {
-                if file.hasSuffix(".xcstrings") && !Self.isInsideCatalog(file) {
-                    stringCatalogs.append(ResourceFile(folderPath: folderPath, relativePath: file,
-                                                       bundlePath: (file as NSString).lastPathComponent))
-                } else if Self.isPlainResource(file) {
-                    plainResources.append(ResourceFile(folderPath: folderPath, relativePath: file,
-                                                       bundlePath: (file as NSString).lastPathComponent))
-                }
+        func add(_ relativePath: String, in folderPath: String) {
+            switch Self.resource(at: relativePath) {
+            case .stringCatalog:
+                stringCatalogs.append(ResourceFile(folderPath: folderPath, relativePath: relativePath,
+                                                   bundlePath: (relativePath as NSString).lastPathComponent))
+            case .copied(let bundlePath):
+                plainResources.append(ResourceFile(folderPath: folderPath, relativePath: relativePath, bundlePath: bundlePath))
+            case .ignored:
+                break
             }
         }
-        // The resources phase's own files: catalogs from a folder-owning target too, and
-        // for a target that lists its files (B-77) everything else it copies.
-        let resourcePaths = target.resourcePaths(forSDK: build.sdk)
-        catalogs += resourcePaths.filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
+        for (folder, folderPath) in sourceFolders {
+            let contents = listing(folderPath) ?? FolderListing()
+            catalogs += contents.folders.filter { ($0.hasSuffix(".xcassets") || $0.hasSuffix(".icon")) && !folder.excludes($0) }
+                .map { "\(folderPath)/\($0)" }
+            for file in contents.files.sorted() where !folder.excludes(file) {
+                add(file, in: folderPath)
+            }
+        }
+        // The resources phase's own files, whatever kind of target lists them: catalogs,
+        // folder references copied whole, and every other file. One inside the target's
+        // own folders is already among that folder's files.
+        let resourceFiles = target.resourceFiles.filter { $0.isBuilt(forSDK: build.sdk) }
+        catalogs += resourceFiles.map(\.path).filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
             .map { "\(build.projectFolder)/\($0)" }
-        let listedResources = target.sourceFiles.isEmpty ? [] : resourcePaths
+        let folderReferences = resourceFiles.filter(\.isFolderReference).map(\.path)
+        let listedResources = resourceFiles.filter { !$0.isFolderReference }.map(\.path).filter { path in
+            !target.synchronizedFolders.contains { path.hasPrefix($0.path + "/") }
+        }
         for file in listedResources + target.borrowedFiles where !file.hasSuffix(".swift") {
-            if let localized = Self.localizedBundlePath(file) {
-                plainResources.append(ResourceFile(folderPath: build.projectFolder, relativePath: file, bundlePath: localized))
-            } else if file.hasSuffix(".xcstrings") {
-                stringCatalogs.append(ResourceFile(folderPath: build.projectFolder, relativePath: file,
-                                                   bundlePath: (file as NSString).lastPathComponent))
-            } else if Self.isPlainResource(file) {
-                plainResources.append(ResourceFile(folderPath: build.projectFolder, relativePath: file,
-                                                   bundlePath: (file as NSString).lastPathComponent))
+            add(file, in: build.projectFolder)
+        }
+        // A localized resource borrowed as `/Localized/…` is the files in the lending
+        // folder it names, which the lending folder's listing holds.
+        for borrowed in target.borrowedLocalizedResources {
+            let folderPath = "\(build.projectFolder)/\(borrowed.folder)"
+            for file in (listing(folderPath) ?? FolderListing()).files.sorted() where borrowed.exception.matches(file) {
+                add(file, in: folderPath)
             }
         }
         var partials: [String] = []
@@ -297,6 +306,14 @@ struct XcodeFormulaEmitter {
             bundleTrees.append("'strings\(index)': strings_\(name)_\(index)().files")
         }
 
+        // A folder reference is copied whole, under its own name, wherever it is in the
+        // project: its files travel as one tree into the bundle's resources.
+        for (index, folder) in folderReferences.sorted().enumerated() {
+            let folderName = (folder as NSString).lastPathComponent
+            bundleTrees.append("'folder\(index)': FolderTreeBuilder(under: \(Self.quoted(folderName)), "
+                             + "folder: ['folder': Folder(path: \(Self.quoted("\(build.projectFolder)/\(folder)"))).manifest]).files")
+        }
+
         // Plain resources: what is neither source nor compiled, flattened into the bundle
         // root as Xcode flattens a synchronized folder's files — a localized one under
         // its `.lproj`.
@@ -309,25 +326,25 @@ struct XcodeFormulaEmitter {
         // The generated keys travel as one JSON dictionary: a plist key such as
         // `UISupportedInterfaceOrientations~ipad` is no formula identifier, and JSON
         // carries the arrays, dictionaries and booleans a plist has. The build settings a
-        // `$(VAR)` may name are ordinary properties beside it.
+        // `$(VAR)` may name travel the same way, every one the target evaluated: the
+        // project's plist may name any of them, and the formula cannot read the plist.
         let keysJSON = try Self.json(identity.generatedInfoPlistKeys(settings: settings))
-        let variables = ["PRODUCT_NAME": identity.productName,
-                         "PRODUCT_BUNDLE_IDENTIFIER": identity.bundleIdentifier,
-                         "PRODUCT_MODULE_NAME": identity.moduleName,
-                         "TARGET_NAME": target.name]
+        let identityValues = ["PRODUCT_NAME": identity.productName,
+                              "PRODUCT_BUNDLE_IDENTIFIER": identity.bundleIdentifier,
+                              "PRODUCT_MODULE_NAME": identity.moduleName,
+                              "TARGET_NAME": target.name]
+        let settingsJSON = try Self.json(settings.values.merging(identityValues) { _, identityValue in identityValue })
         let base: String
         if let infoPlist = settings["INFOPLIST_FILE"], !infoPlist.isEmpty {
             base = "        base: ['base': StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(infoPlist)"))).output],\n"
         } else {
             base = ""
         }
-        let variableText = variables.sorted { $0.key < $1.key }
-            .map { "\($0.key): \(Self.quoted($0.value))" }.joined(separator: ",\n        ")
         products.append(
             "product '\(layout.infoPlist(in: bundlePath))' =\n" +
             "    InfoPlistBuilder(\n" +
             "        keys: '\(keysJSON)',\n" +
-            "        \(variableText),\n" +
+            "        \(InfoPlistBuilder.buildSettingsProperty): '\(settingsJSON)',\n" +
             base +
             "        partials: [\(partials.joined(separator: ", "))]\n" +
             "    ).plist")
@@ -389,7 +406,39 @@ struct XcodeFormulaEmitter {
     }
 
     static func isInsideCatalog(_ relativePath: String) -> Bool {
-        relativePath.contains(".xcassets/") || relativePath.contains(".icon/") || relativePath.contains(".lproj/")
+        relativePath.contains(".xcassets/") || relativePath.contains(".icon/")
+    }
+
+    /// What becomes of a file of a target's resources in its bundle.
+    enum Resource: Equatable {
+        /// Compiled by the string catalog compiler, whose tables are placed under their
+        /// languages' folders: `Localizable.xcstrings` at the folder's root, or
+        /// `mul.lproj/MainMenu.xcstrings`, the catalog localizing `Base.lproj/MainMenu.xib`.
+        case stringCatalog
+        /// Copied as it is to this path under the bundle's resources.
+        case copied(bundlePath: String)
+        /// Not a resource: a source, a file inside a catalog, a plist read as an input.
+        case ignored
+    }
+
+    /// Where a file of a target's resources goes, by its path relative to the folder that
+    /// holds it. A localized one keeps its language folder — `MainMenu/Base.lproj/MainMenu.xib`
+    /// lands at `Base.lproj/MainMenu.xib` — and anything else is flattened.
+    ///
+    /// TODO: an Interface Builder file is copied as `.xib` or `.storyboard` rather than
+    /// compiled with `ibtool` to the `.nib` an app loads (B-77 NetNewsWire item 8).
+    static func resource(at relativePath: String) -> Resource {
+        let name = (relativePath as NSString).lastPathComponent
+        guard !name.hasPrefix("."), !isInsideCatalog(relativePath) else {
+            return .ignored
+        }
+        if (name as NSString).pathExtension == "xcstrings" {
+            return .stringCatalog
+        }
+        guard isPlainResource(relativePath) else {
+            return .ignored
+        }
+        return .copied(bundlePath: localizedBundlePath(relativePath) ?? name)
     }
 
     /// Where a localized file lands in the bundle: `App/ar.lproj/Localizable.strings` is
@@ -439,7 +488,7 @@ struct TargetIdentity {
         bundleIdentifier = settings["PRODUCT_BUNDLE_IDENTIFIER"] ?? "$(PRODUCT_BUNDLE_IDENTIFIER)"
         bundleName = target.productFileName
         self.sdk = sdk
-        packageType = target.isExtension ? "XPC!" : "APPL"
+        packageType = settings["PRODUCT_BUNDLE_PACKAGE_TYPE"] ?? (target.isExtension ? "XPC!" : "APPL")
 
         let deploymentKey = sdk.hasPrefix("macosx") ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET"
         let deployment = settings[deploymentKey] ?? "17.0"
@@ -476,7 +525,7 @@ struct TargetIdentity {
     /// typed as a plist types them, for the emitter to write as JSON.
     func generatedInfoPlistKeys(settings: XcodeBuildSettings) -> [String: Any] {
         var keys: [String: Any] = [
-            "CFBundleDevelopmentRegion": "en",
+            "CFBundleDevelopmentRegion": settings["DEVELOPMENT_LANGUAGE"] ?? "en",
             "CFBundleExecutable": productName,
             "CFBundleIdentifier": bundleIdentifier,
             "CFBundleInfoDictionaryVersion": "6.0",

@@ -61,7 +61,8 @@ struct LocalPackageSearch {
     /// Only a folder *directly* in a synchronized folder is looked into, which is where
     /// Xcode shows a package and where NetNewsWire's are; a package deeper down, or a
     /// synchronized folder that is itself a package, is not looked for. A folder that is
-    /// compiled whole — a catalog, a `.lproj` — is never a package and is not asked about.
+    /// compiled whole — a catalog — or a language folder is never a package and is not
+    /// asked about.
     init(project: XcodeProject, contents: (String) -> Contents?) {
         var found = Set(project.localPackagePaths)
         for folder in project.synchronizedFolderPaths {
@@ -86,6 +87,6 @@ struct LocalPackageSearch {
     }
 
     static func cannotBeAPackage(_ folderName: String) -> Bool {
-        folderName.hasPrefix(".") || XcodeProjectConverter.isCompiledWhole(folderName)
+        folderName.hasPrefix(".") || folderName.hasSuffix(".lproj") || XcodeProjectConverter.isCompiledWhole(folderName)
     }
 }

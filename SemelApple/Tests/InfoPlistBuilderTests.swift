@@ -105,4 +105,21 @@ final class InfoPlistBuilderTests: SemelAppleTestCase {
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "Hello")
         XCTAssertNil(plist["keys"], "the dictionary is its entries, not an entry")
     }
+
+    /// A target's build settings arrive as one JSON dictionary of variables: each is what
+    /// a `$(NAME)` resolves to, none is an entry, and an ordinary property still has the
+    /// last word.
+    func test_buildSettingsAreVariablesAndNeverEntries() throws {
+        let plist = try process(properties: [
+            "buildSettings": #"{"ORGANIZATION_IDENTIFIER": "com.example", "AppIdentifierPrefix": "", "PRODUCT_NAME": "Setting"}"#,
+            "PRODUCT_NAME": "Property",
+        ], base: try plistValue(["AppGroup": "group.$(ORGANIZATION_IDENTIFIER).app", "Prefix": "$(AppIdentifierPrefix)",
+                                 "CFBundleName": "$(PRODUCT_NAME)"]))
+
+        XCTAssertEqual(plist["AppGroup"] as? String, "group.com.example.app")
+        XCTAssertEqual(plist["Prefix"] as? String, "")
+        XCTAssertEqual(plist["CFBundleName"] as? String, "Property")
+        XCTAssertNil(plist["ORGANIZATION_IDENTIFIER"])
+        XCTAssertNil(plist["buildSettings"])
+    }
 }

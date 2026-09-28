@@ -22,10 +22,106 @@ struct XcodeProject {
     }
 
     /// A Xcode 16 synchronized folder: the folder is the target's sources and resources,
-    /// less the exceptions, which are paths relative to it.
+    /// less the exceptions, which are relative to it.
     struct SynchronizedFolder {
         let path: String
-        let exceptions: [String]
+        let exceptions: [MembershipException]
+
+        /// Whether the file or folder at `relativePath` in the folder is left out.
+        func excludes(_ relativePath: String) -> Bool {
+            exceptions.contains { $0.matches(relativePath) }
+        }
+
+        /// The exceptions that name a path, for a reader that walks the folder itself and
+        /// wants only its sources left out: a localized resource is never a source.
+        var excludedPaths: [String] {
+            exceptions.compactMap(\.path)
+        }
+    }
+
+    /// One entry of a synchronized folder's exception set, relative to the folder: a file
+    /// the owning target leaves out, or one a target that does not own the folder takes.
+    ///
+    /// Most entries are a path. One that begins `/Localized/` is not: it names a localized
+    /// resource, the way Xcode shows one in its navigator — one item standing for the file
+    /// in every language folder beside it. `/Localized/ShareExtension/ShareViewController.xib`
+    /// is `ShareExtension/<language>.lproj/ShareViewController.xib` in each `.lproj` folder
+    /// there, and — since the resource is an Interface Builder file — the string tables
+    /// that localize it, `ShareExtension/<language>.lproj/ShareViewController.strings` or
+    /// `.xcstrings`. Established by building a project whose owner excludes
+    /// `/Localized/Sub/Thing.xib` while a second target takes it and
+    /// `/Localized/Sub/Plain.txt`: the owner lost `Base.lproj/Thing.xib` and
+    /// `mul.lproj/Thing.xcstrings` and kept `de.lproj/Thing.txt` and `Base.lproj/Other.xib`;
+    /// the second got `Base.lproj/Thing.nib`, the catalog's `es.lproj/Thing.strings`, and
+    /// `Plain.txt` from both `en.lproj` and `de.lproj` (Xcode 26.6).
+    enum MembershipException: Hashable {
+        case path(String)
+        /// The folder holding the `.lproj` folders, relative to the synchronized folder
+        /// (empty for the synchronized folder itself), and the file's name.
+        case localized(folder: String, name: String)
+
+        static let localizedPrefix = "/Localized/"
+
+        init(_ entry: String) {
+            guard entry.hasPrefix(Self.localizedPrefix) else {
+                self = .path(entry)
+                return
+            }
+            var components = entry.dropFirst(Self.localizedPrefix.count).split(separator: "/").map(String.init)
+            let name = components.popLast() ?? ""
+            self = .localized(folder: components.joined(separator: "/"), name: name)
+        }
+
+        /// The entry as the project file spells it.
+        var spelling: String {
+            switch self {
+            case .path(let path):
+                return path
+            case .localized(let folder, let name):
+                return Self.localizedPrefix + (folder.isEmpty ? name : "\(folder)/\(name)")
+            }
+        }
+
+        var path: String? {
+            guard case .path(let path) = self else {
+                return nil
+            }
+            return path
+        }
+
+        /// Whether the file or folder at `relativePath`, relative to the synchronized
+        /// folder, is one this entry names. A path names what is under it too: a folder
+        /// left out leaves out everything in it.
+        func matches(_ relativePath: String) -> Bool {
+            switch self {
+            case .path(let path):
+                return relativePath == path || relativePath.hasPrefix(path + "/")
+            case .localized(let folder, let name):
+                var components = relativePath.split(separator: "/").map(String.init)
+                guard components.count >= 2, let fileName = components.popLast(), let language = components.popLast(),
+                      language.hasSuffix(".lproj"), components.joined(separator: "/") == folder else {
+                    return false
+                }
+                return fileName == name || Self.localizes(fileName, interfaceFile: name)
+            }
+        }
+
+        /// A string table localizing an Interface Builder file carries its name with the
+        /// table's extension: `MainMenu.xcstrings` beside `MainMenu.xib`.
+        private static func localizes(_ fileName: String, interfaceFile: String) -> Bool {
+            let interface = interfaceFile as NSString
+            let file = fileName as NSString
+            return ["xib", "storyboard"].contains(interface.pathExtension)
+                && ["strings", "xcstrings", "stringsdict"].contains(file.pathExtension)
+                && file.deletingPathExtension == interface.deletingPathExtension
+        }
+    }
+
+    /// What a target takes from a synchronized folder that is not its own: the folder,
+    /// relative to the project folder, and the entry naming what it takes.
+    struct Borrowed: Hashable {
+        let folder: String
+        let exception: MembershipException
     }
 
     enum PackageProduct: Equatable {
@@ -53,10 +149,14 @@ struct XcodeProject {
     struct BuildFile: Equatable {
         let path: String
         let platformFilters: Set<String>
+        /// A folder reference (`lastKnownFileType = folder`): a folder the resources phase
+        /// copies whole, under its own name — NetNewsWire's `Themes/Sepia.nnwtheme`.
+        let isFolderReference: Bool
 
-        init(path: String, platformFilters: Set<String> = []) {
+        init(path: String, platformFilters: Set<String> = [], isFolderReference: Bool = false) {
             self.path = path
             self.platformFilters = platformFilters
+            self.isFolderReference = isFolderReference
         }
 
         /// Whether the file is built for the SDK named, by Xcode's platform names.
@@ -92,11 +192,22 @@ struct XcodeProject {
         /// File references in the resources phase, relative to the project folder, each
         /// with the platforms it is limited to.
         let resourceFiles: [BuildFile]
-        /// Files this target takes from another target's synchronized folder — an
-        /// exception set in that folder naming this target — relative to the project
-        /// folder: a widget's sounds and strings from the app's folder, an intents
-        /// extension's entities from the app's.
-        var borrowedFiles: [String] = []
+        /// What this target takes from another target's synchronized folder — an
+        /// exception set in that folder naming this target: a widget's sounds and strings
+        /// from the app's folder, an intents extension's entities from the app's, a share
+        /// extension's localized xib.
+        var borrowed: [Borrowed] = []
+
+        /// The borrowed entries that are paths, relative to the project folder.
+        var borrowedFiles: [String] {
+            borrowed.compactMap { entry in entry.exception.path.map { "\(entry.folder)/\($0)" } }
+        }
+
+        /// The borrowed entries that name a localized resource (`/Localized/…`), which only
+        /// the lending folder's contents can turn into files.
+        var borrowedLocalizedResources: [Borrowed] {
+            borrowed.filter { $0.exception.path == nil }
+        }
         /// The files in the sources phase, relative to the project folder, for a target
         /// that lists its files through groups rather than owning a synchronized folder
         /// (B-77), each with the platforms it is limited to. Empty for a folder-owning
@@ -123,6 +234,9 @@ struct XcodeProject {
 
     let configurations: [BuildConfiguration]
     let targets: [Target]
+    /// The project's development language, `en` when it names none: what Xcode gives a
+    /// build as `DEVELOPMENT_LANGUAGE`.
+    let developmentRegion: String
     /// Local packages the project declares, relative to the project folder: a folder
     /// wrapper among its file references (`Packages/Timeline`), or an
     /// `XCLocalSwiftPackageReference`'s `relativePath`. Not the packages Xcode finds in a
@@ -177,6 +291,7 @@ struct XcodeProject {
         let reader = Reader(objects: objects)
 
         configurations = try reader.configurations(listID: root["buildConfigurationList"] as? String)
+        developmentRegion = root["developmentRegion"] as? String ?? "en"
 
         // A local package is declared as a folder wrapper among the project's file
         // references, resolved through its groups, or — Xcode 15 onwards — as a package
@@ -232,13 +347,13 @@ struct XcodeProject {
                       let borrowerIndex = targetIDs.firstIndex(of: borrowerID) else {
                     continue
                 }
-                for file in exceptions["membershipExceptions"] as? [String] ?? [] {
-                    targets[borrowerIndex].borrowedFiles.append("\(path)/\(file)")
+                for entry in exceptions["membershipExceptions"] as? [String] ?? [] {
+                    targets[borrowerIndex].borrowed.append(Borrowed(folder: path, exception: MembershipException(entry)))
                 }
             }
         }
         for index in targets.indices {
-            targets[index].borrowedFiles.sort()
+            targets[index].borrowed.sort { ($0.folder, $0.exception.spelling) < ($1.folder, $1.exception.spelling) }
         }
         self.targets = targets
     }
@@ -298,6 +413,16 @@ struct XcodeProject {
                 return (reference["children"] as? [String] ?? []).compactMap { path(of: $0) }
             }
             return path(of: id).map { [$0] } ?? []
+        }
+
+        /// A file reference to a plain folder, which Xcode copies whole: `folder` is the
+        /// type of one, where a catalog is `folder.assetcatalog` and a group is no file
+        /// reference at all.
+        func isFolderReference(_ id: String) -> Bool {
+            guard let reference = objects[id], reference["isa"] as? String == "PBXFileReference" else {
+                return false
+            }
+            return (reference["lastKnownFileType"] as? String ?? reference["explicitFileType"] as? String) == "folder"
         }
 
         func configurations(listID: String?) throws -> [BuildConfiguration] {
@@ -379,7 +504,10 @@ struct XcodeProject {
                     if let single = buildFile["platformFilter"] as? String {
                         filters.insert(single)
                     }
-                    return paths(ofFileReference: fileRefID).map { BuildFile(path: $0, platformFilters: filters) }
+                    let isFolderReference = isFolderReference(fileRefID)
+                    return paths(ofFileReference: fileRefID).map {
+                        BuildFile(path: $0, platformFilters: filters, isFolderReference: isFolderReference)
+                    }
                 }
                 switch isa {
                 case "PBXFrameworksBuildPhase":
@@ -416,7 +544,7 @@ struct XcodeProject {
                     .filter { ($0["target"] as? String).map { $0 == id } ?? true }
                     .compactMap { $0["membershipExceptions"] as? [String] }
                     .flatMap { $0 }
-                return SynchronizedFolder(path: path, exceptions: exceptions.sorted())
+                return SynchronizedFolder(path: path, exceptions: exceptions.sorted().map(MembershipException.init))
             }
 
             return Target(name: name,

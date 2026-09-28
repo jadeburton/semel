@@ -4,7 +4,8 @@
 //
 //  Settings evaluated the way Xcode layers them (B-77), pinned on NetNewsWire's own files:
 //  `Fixtures/NetNewsWire` holds its project file and its `xcconfig` folder as they are at
-//  b4361413fc1850110f9f42652f0f84e7a51e9d64, under its MIT licence. Nearly every setting
+//  b4361413fc1850110f9f42652f0f84e7a51e9d64, under its MIT licence, and the Mac app's and
+//  Mac extensions' `Info.plist` files, which name the settings. Nearly every setting
 //  that project has lives in those files — includes three deep, `$(inherited)` inside one
 //  file's chain, SDK conditions, `#include?` of a developer's file outside the clone — so
 //  what it evaluates to is the answer to whether the layering is Xcode's.

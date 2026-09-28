@@ -43,6 +43,7 @@ struct XcodeBuildSettings {
         // Xcode's levels, lowest first. Each xcconfig is read in its own order; a
         // configuration's settings are a dictionary, read in key order.
         var assignments = Self.assignments(from: defaults)
+        assignments += Self.assignments(from: providedByXcode(project: project, target: target))
         assignments += projectConfiguration.xcconfigPath.flatMap(xcconfig) ?? []
         assignments += Self.assignments(from: projectConfiguration.settings)
         assignments += targetConfiguration.xcconfigPath.flatMap(xcconfig) ?? []
@@ -188,12 +189,30 @@ struct XcodeBuildSettings {
 
     /// What a target has when its project says nothing: the values a bundle cannot do
     /// without, and no more.
+    ///
+    /// `AppIdentifierPrefix` and `TeamIdentifierPrefix` are the signing team's identifier
+    /// and a dot, which Xcode takes from the team the target signs with; an Info.plist or
+    /// an entitlements file names them (`$(AppIdentifierPrefix)$(APP_GROUP_ID)`). Semel
+    /// signs nothing (B-77 item 11), so there is no team to take them from, and empty is
+    /// what Xcode gives them too when it does not sign: `CODE_SIGNING_ALLOWED=NO` turns
+    /// `[$(AppIdentifierPrefix)][$(TeamIdentifierPrefix)]` in a plist into `[][]` (26.6).
     private static let defaults: [String: String] = [
         "PRODUCT_NAME": "$(TARGET_NAME)",
         "PRODUCT_MODULE_NAME": "$(PRODUCT_NAME:c99extidentifier)",
+        "EXECUTABLE_NAME": "$(PRODUCT_NAME)",
         "SWIFT_VERSION": "5",
         "MARKETING_VERSION": "1.0",
         "CURRENT_PROJECT_VERSION": "1",
         "TARGETED_DEVICE_FAMILY": "1,2",
+        "AppIdentifierPrefix": "",
+        "TeamIdentifierPrefix": "",
     ]
+
+    /// What Xcode itself sets from the project and the kind of target, beneath every level
+    /// the project writes: the development language, and the package type a product type
+    /// carries — `APPL` for an application, `XPC!` for an extension.
+    private static func providedByXcode(project: XcodeProject, target: XcodeProject.Target) -> [String: String] {
+        ["DEVELOPMENT_LANGUAGE": project.developmentRegion,
+         "PRODUCT_BUNDLE_PACKAGE_TYPE": target.isExtension ? "XPC!" : "APPL"]
+    }
 }

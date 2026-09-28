@@ -26,6 +26,12 @@ public struct InfoPlistBuilder: Node {
     /// A JSON dictionary of entries, for keys no formula identifier can spell and values
     /// no string can carry.
     static let keysProperty = "keys"
+    /// A JSON dictionary of build settings, name to value: variables a `$(NAME)` may
+    /// name, and never entries. A converter hands over a target's whole evaluated settings
+    /// this way, since a project's Info.plist may name any of them — NetNewsWire's name
+    /// `$(ORGANIZATION_IDENTIFIER)` and `$(APP_GROUP_ID)` — and a property would put each
+    /// one in the plist as a key of its own.
+    static let buildSettingsProperty = "buildSettings"
 
     public var thisNode: NodeRecord
 
@@ -44,7 +50,8 @@ public struct InfoPlistBuilder: Node {
     /// `$(NAME)` reference can name. Both are the same thing in Xcode — `PRODUCT_NAME` is
     /// a build setting and `$(PRODUCT_NAME)` its reference — so the formula writes them
     /// once: `InfoPlistBuilder(CFBundleName: '$(PRODUCT_NAME)', PRODUCT_NAME: 'Hello')`.
-    /// Precedence: base, then partials, then properties.
+    /// Precedence: base, then partials, then properties. The `buildSettings` dictionary
+    /// is variables only, beneath the properties.
     public func process(input: ProcessInput) throws -> ProcessOutput {
         var merged: [String: Any] = [:]
 
@@ -63,12 +70,20 @@ public struct InfoPlistBuilder: Node {
             }
             merged.merge(keys) { _, key in key }
         }
-        for (key, value) in thisNode.properties where key != Self.keysProperty {
+        var variables: [String: String] = [:]
+        if let settingsJSON = thisNode.properties[Self.buildSettingsProperty] {
+            guard let settings = try? JSONSerialization.jsonObject(with: Data(settingsJSON.utf8)) as? [String: String] else {
+                throw NodeError.other(message: "InfoPlistBuilder: `buildSettings` is not a JSON dictionary of strings")
+            }
+            variables = settings
+        }
+        for (key, value) in thisNode.properties where key != Self.keysProperty && key != Self.buildSettingsProperty {
             merged[key] = Self.typed(value)
+            variables[key] = value
         }
 
         var unresolved = Set<String>()
-        let resolved = Self.substitute(merged, variables: thisNode.properties, unresolved: &unresolved)
+        let resolved = Self.substitute(merged, variables: variables, unresolved: &unresolved)
         guard unresolved.isEmpty else {
             let message = "Info.plist references undefined variables: " + unresolved.sorted().joined(separator: ", ")
             return .init(outputValues: [Self.output: .noValue(reason: .error(messageDataObjectHash: try message.intern()))],
