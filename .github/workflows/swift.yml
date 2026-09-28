@@ -1,11 +1,13 @@
 name: Swift
 
-# Runs on a self-hosted macOS runner (docs/ci.md): the machine's own Xcode, simulator
-# runtimes and SwiftLint, and no billed minutes. A change that touches only documentation
-# or the backlog runs nothing. A newer push to the same branch cancels the run in flight.
-# Every push and pull request, documentation included: the `main` ruleset requires
-# `build-and-test` and `lint` to pass, and a check that never reports on a docs-only
-# change would leave that change unmergeable by anyone without bypass.
+# Every push and pull request, documentation included (docs/ci.md): the `main` ruleset
+# requires `build-and-test` and `lint` to pass, and a check that never reports on a
+# docs-only change would leave that change unmergeable by anyone without bypass.
+#
+# A newer push to a pull request's branch cancels the run in flight: only the newest
+# head can be merged, so the older run's verdict is worth nothing. On `main` nothing is
+# cancelled: every merged commit gets a verdict of its own, where a cancelled run left a
+# commit with none and a mark that reads as a failure in the commit list.
 on:
   push:
     branches: [ main ]
@@ -15,7 +17,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # GitHub's hosted macOS image, not the project's own Mac: this workflow runs a pull
 # request's code, and on a public repository that is a stranger's code. Hosted runners
