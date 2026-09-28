@@ -11,9 +11,11 @@ ports, wires, specs, and a value that is nothing — is drawn out in
 [Nodes and wires](nodes-and-wires.md), eight pictures to read before Part 3 or whenever a
 term stops making sense.
 
-Last walked through at commit `d5cc9f1`, and Parts 1 and 2 again when the prompt learned to
-print a settle summary. The commits in between change documents, comments, tests and the
-shape of the reference node's loop — not what anything prints.
+Last walked through at commit `d5cc9f1`, Parts 1 and 2 again when the prompt learned to
+print a settle summary, and every transcript again when a build learned to print its
+summary once, after its last settle, with the artifact diff under it. The commits in
+between change documents, comments, tests and the shape of the reference node's loop — not
+what anything prints.
 
 ## Part 1 — Build something
 
@@ -50,9 +52,10 @@ terminal, start it and leave it running:
 ```
 
 ```
-Semel server 0.1.2
+Semel server 0.1.12
 Graph:  /Users/you/Library/Application Support/semel/graph.sqlite
 Socket: /Users/you/Library/Application Support/semel/semelserv.sock
+Jobs:   10
 ```
 
 In the **shell** terminal, make a copy of one of the test fixtures to work in. Everything
@@ -118,8 +121,8 @@ Push file: hello/src/hello.c
 Push file: hello/src/hello.h
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c
-❌ 19 nodes scheduled, 19 computed, 0 from cache, 25 errors
 Settled.
+❌ 19 nodes scheduled, 19 computed, 0 from cache, 25 errors
 25 errors across 9 nodes:
 
 ❌ ClangCompiler ×3 (#24, #28, #30)
@@ -182,11 +185,11 @@ Push file: hello/src/main.c [no change]
 Settled.
 hello/hello.fmla needs ../semel.machine.config
 Push file: semel.machine.config
+Settled.
 ✅ 24 nodes scheduled, 24 computed, 0 from cache, 0 errors
    appeared: output:/hello/config.txt
    appeared: output:/hello/hello
    appeared: output:/hello/hello.dylib
-Settled.
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
@@ -200,19 +203,21 @@ tree*. It never pushes anything the formula did not name, and never anything out
 base directory, which is where you ran `semel` unless `base` says otherwise. `--no-follow`
 turns it off.
 
-The line with the tick is the *settle summary*: one line per settle, saying what the engine
-did. Every number counts nodes, each one once, however many times the engine came back to
-it. Nothing came from the cache, because there was no cache to come from — this graph had
-never been built. Part 2 is about that column. The counts are from one walk-through and
+The line with the tick is the *settle summary*, saying what the engine did. A `build` prints
+one, after its last `Settled.` — which says only that the waiting is over — with the work
+of all its settles added up and the errors of the last, which is the verdict. Within a
+settle every number counts nodes, each one once, however many times the engine came back
+to it. Nothing came from the cache, because there was no cache to come from — this graph
+had never been built. Part 2 is about that column. The counts are from one walk-through and
 yours will differ a little; the two right-hand numbers usually add up to the first, and
 fall short of it when a node is woken, found to be waiting on something, and never gets as
 far as producing anything before the graph settles.
 
-The indented lines under it are the *artifact diff*: what this settle did to the products,
-as the difference between this settle and the last. Three verbs and no others — `appeared`,
-`changed`, `disappeared`. A product that failed is not among them; that is what the error
-report is for, and saying it twice in two vocabularies is what these lines were designed to
-avoid. Nothing is said about the steps in between: a product republished with the bytes it
+The indented lines under it are the *artifact diff*: what the build did to the products,
+as the difference between what they were before it and what they are after. Three verbs
+and no others — `appeared`, `changed`, `disappeared`. A product that failed is not among
+them; that is what the error report is for, and saying it twice in two vocabularies is what
+these lines were designed to avoid. Nothing is said about the steps in between: a product republished with the bytes it
 already had says nothing at all, which is what the next section is about.
 
 `--into` expands the `~` the same way `base` does, and the products land beside your
@@ -229,11 +234,12 @@ Hello, World 1!
 `push` copied your files into Semel's own input file system — the engine never reads your
 disk during a build, only what was pushed. `build` is `push`, wait until the graph settles,
 report errors, and copy the products out. While it waits, a line at the bottom of the
-terminal counts the nodes running, pending and done; it is erased when the summary prints,
-which is why it is not in the transcripts above. `semel.machine.config` needs its own `push`
-because `build` pushes the folder you name and that file is not in it — which is what you
-watched: the report named the file itself, `semel.machine.config has not been pushed`,
-under the missing-setting errors from the tools that then had nothing to read.
+terminal counts the nodes running, pending and done; it is erased when the wait ends, just
+before `Settled.` prints, which is why it is not in the transcripts above.
+`semel.machine.config` needs its own `push` because `build` pushes the folder you name and
+that file is not in it — which is what you watched: the report named the file itself,
+`semel.machine.config has not been pushed`, under the missing-setting errors from the tools
+that then had nothing to read.
 
 ### What you just ran
 
@@ -351,35 +357,37 @@ Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c
 Push file: hello/src/main.c [no change]
-✅ 9 nodes scheduled, 8 computed, 1 from cache, 0 errors
+Settled.
+✅ 9 nodes scheduled, 9 computed, 0 from cache, 0 errors
    changed: output:/hello/hello
    changed: output:/hello/hello.dylib
-Settled.
 No errors.
+Exported 3 files into /Users/you/semel-playground/out
 ```
 
 One file pushed without `[no change]`; two of the three products republished, and
-`config.txt` not. Nine nodes woken out of the forty in this graph, and eight of them
-ran: the project finder and the include finder, then one preprocessor and one compiler —
+`config.txt` not. Nine nodes woken out of the forty in this graph, and all nine ran: the
+project finder and the include finder, then one preprocessor and one compiler —
 `hello.c` and `main.c` were not touched, so two of each stayed asleep — then both linkers,
 because both products take that object, then the two output files. The ninth is the node
-that reads `hello.fmla`, which did not change: one hit, in a settle that otherwise did
-everything.
+that reads `hello.fmla`, which did not change and ran anyway: reading it takes less time
+than the engine thinks worth a cache entry, which Part 4 comes back to, so there was no
+answer stored to hit.
 
 **3. Put it back.** Undo the edit and build. The prompt prints exactly what it printed
 last time, line for line — the same file pushed, the same two products republished — with
 one line different:
 
 ```
-✅ 9 nodes scheduled, 4 computed, 5 from cache, 0 errors
+✅ 9 nodes scheduled, 5 computed, 4 from cache, 0 errors
 ```
 
-The same nine nodes were woken. Four ran; five did not, and those five are the preprocessor,
-the compiler, both linkers and the formula reader — the entire chain that had just been
-rebuilt, cache hits from end to end. A *cache entry* is keyed on the node's type, its
+The same nine nodes were woken. Five ran; four did not, and those four are the
+preprocessor, the compiler and both linkers — the entire chain that had just been rebuilt,
+cache hits from end to end. A *cache entry* is keyed on the node's type, its
 properties and the name and content of everything wired to it; time appears nowhere, so a
 file restored to what it was asks the same question as before and gets the stored answer.
-`scheduled` did not move and `computed` halved: that gap is the whole idea.
+`scheduled` did not move and `computed` nearly halved: that gap is the whole idea.
 
 **4. Change a setting only the linker reads.** Add a line to
 `~/semel-playground/hello/semel.config`:
@@ -401,17 +409,18 @@ Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
-✅ 18 nodes scheduled, 11 computed, 7 from cache, 0 errors
 Settled.
+✅ 18 nodes scheduled, 12 computed, 6 from cache, 0 errors
 No errors.
+Exported 3 files into /Users/you/semel-playground/out
 ```
 
 Not one C file changed, and both programs were relinked — the linkers' settings really did
 change, even if the linker reads no such key, and the same bytes came out, which is why no
 `changed:` line follows. What did not happen is the interesting part. Eighteen nodes woken,
 against nine for a one-character edit to a source file: the settings feed every tool in the
-build, so touching them wakes nearly the whole graph. Seven of those were answered from the
-cache, and those seven are all six preprocessors and compilers plus the formula reader.
+build, so touching them wakes nearly the whole graph. Six of those were answered from the
+cache, and those six are all the preprocessors and compilers.
 
 The summary counts; `explain` names. Ask it about the program:
 
@@ -451,8 +460,8 @@ this story in full, and the whole file is seventy-five lines — read it now; it
 of the node you are about to write.
 
 `errors` shows what is wrong when a build fails; after a good build it says `No errors.`
-`debug` dumps the whole graph — forty nodes here, two thousand lines. It is a lot,
-and worth seeing once.
+`debug` dumps the whole graph — forty nodes here, over four hundred lines. It is a lot, and
+worth seeing once.
 
 ## Part 3 — Write a node
 
@@ -476,12 +485,12 @@ import SemelDatabaseModels
 import SemelNodeKit
 
 public struct MyLineCounter: Node {
-    public static let kind: UInt = 37
+    public static let kind: UInt = 39
 ```
 
 `kind` is how a node stored in the database finds its Swift type again. It is a number you
 assign by hand: the next one above the highest in the repository
-([how to find it](../../AGENTS.md#choosing-a-kind)). If `37` is taken by the time you read
+([how to find it](../../AGENTS.md#choosing-a-kind)). If `39` is taken by the time you read
 this, take the next.
 
 ```swift
@@ -584,12 +593,15 @@ build hello --into ~/semel-playground/out
 ```
 Push folder: hello
 Push file: hello/hello.fmla
+Push file: hello/semel.config [no change]
 Push file: hello/src/common.h [no change]
 Push file: hello/src/hello.c [no change]
 Push file: hello/src/hello.h [no change]
 Push file: hello/src/hello2.c [no change]
 Push file: hello/src/main.c [no change]
 Settled.
+✅ 4 nodes scheduled, 4 computed, 0 from cache, 0 errors
+   appeared: output:/hello/lines.txt
 No errors.
 Exported 4 files into /Users/you/semel-playground/out
 ```
@@ -611,10 +623,10 @@ main.c: 16
 Now the experiments from Part 2, on your own node:
 
 - Add a line to `hello2.c`, build: `hello2.c: 13`, and the other two lines are the same
-  bytes. The server shows `processWithCatch(input:): MyLineCounter, nodeID 37`, and that
+  bytes. The server shows `processWithCatch(input:): MyLineCounter, nodeID 42`, and that
   file's compile chain beside it; nothing else.
 - Undo it, build: the clang chain around your node hits cache, and your node does not —
-  `processWithCatch(input:): MyLineCounter, nodeID 37` again. Nothing is wrong. The engine
+  `processWithCatch(input:): MyLineCounter, nodeID 42` again. Nothing is wrong. The engine
   only stores a cache entry for work that took more than fifteen milliseconds
   (`saveCacheForAllInputsAndOutputs` in
   [`Cache.swift`](../../SemelCore/Sources/SemelCore/Cache.swift)), and counting three files
@@ -640,8 +652,17 @@ build hello --into ~/semel-playground/out
 ```
 
 ```
+Push folder: hello
 Push file: hello/hello.fmla
+Push file: hello/semel.config [no change]
+Push file: hello/src/common.h [no change]
+Push file: hello/src/hello.c [no change]
+Push file: hello/src/hello.h [no change]
+Push file: hello/src/hello2.c [no change]
+Push file: hello/src/main.c [no change]
 Settled.
+✅ 2 nodes scheduled, 2 computed, 0 from cache, 0 errors
+   disappeared: output:/hello/lines.txt
 No errors.
 Exported 3 files into /Users/you/semel-playground/out
 ```
@@ -665,18 +686,19 @@ Do it the other way round — remove the type first — and the next build that 
 says so:
 
 ```
-❌ ProjectBuilder #3 'input:/hello/hello.fmla'
-   · products, status: no type is registered for kind 37
+❌ ProjectBuilder #13 'input:/hello/hello.fmla'
+   · no node type is registered under the name 'MyLineCounter'
 ```
 
 The number after `#` is the node's row in the graph, the same one `check` names it by;
 yours depends on what the home held before, so it may differ.
 
 The way out is the same step you skipped: delete the `lines.txt` line from the formula and
-build again. That clears the error, though the server may keep printing a bare
-`The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` while a
-stale row survives. `reset` clears that. It is not scoped to this tutorial — what you
-pushed is kept, and everything built from it is discarded and rebuilt: every product and
+build again. That clears the error, though while a stale row survives a build that wakes
+it may stop pushing at a bare
+`The operation couldn’t be completed. (SemelNodeKit.TypeRegistryError error 1.)` and
+export nothing; `check` names the row. `reset` clears that. It is not scoped to this
+tutorial — what you pushed is kept, and everything built from it is discarded and rebuilt: every product and
 intermediate of every project in this home, not only of `hello`. The cached builds are
 kept, so that rebuild is a pass of cache lookups rather than a cold build. The graph it
 discards is copied aside first, and the reply says where:
