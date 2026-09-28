@@ -105,11 +105,30 @@ final class PrepareTests: XCTestCase {
         try write("Packages/Dependencies/Nuke/Package.swift")
         try write("Packages/Timeline/.build/checkouts/Nuke/Package.swift")
         try write("Packages/Timeline/Sources/Timeline/Timeline.swift")
+        try write("Packages/Timeline/Sources/Timeline/Package.swift", "struct Package {}\n")
 
         let found = try PackageScan.manifestFolders(under: root)
 
         XCTAssertEqual(found.map { Preparation.relativePath(of: $0, under: root) },
                        [".", "Packages/Models", "Packages/Timeline"])
+    }
+
+    /// A file named `Package.swift` deeper in a package is a source, not a manifest:
+    /// purchases-ios keeps its `Package` model at `Sources/Purchasing/Package.swift`, and
+    /// running dump-package on that folder failed the whole prepare of the IceCubes app
+    /// once the project's vendored packages were summarised (2026-09-28). A manifest opens
+    /// with the tools-version line SwiftPM requires.
+    func test_aSourceFileNamedPackageSwiftIsNotAManifest() throws {
+        try write("Dependencies/purchases-ios-spm/Package.swift")
+        try write("Dependencies/purchases-ios-spm/Sources/Purchasing/Package.swift",
+                  "import Foundation\n\npublic struct Package: Sendable {}\n")
+        try write("Dependencies/Nuke/Package.swift", "// swift-tools-version:5.5\nimport PackageDescription\n")
+        try write("Dependencies/Empty/Package.swift", "")
+
+        let found = try PackageScan.manifestFolders(under: folder("Dependencies"))
+
+        XCTAssertEqual(found.map { Preparation.relativePath(of: $0, under: root) },
+                       ["Dependencies/Nuke", "Dependencies/purchases-ios-spm"])
     }
 
     /// dump-package's shape: `dependencies` is a list of one-key objects, `platforms` a
