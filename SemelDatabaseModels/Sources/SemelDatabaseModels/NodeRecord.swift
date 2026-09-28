@@ -133,6 +133,16 @@ public struct NodeRecord: Identifiable, FetchableRecord, PersistableRecord {
                 t.column("identity", .text).unique()
                 t.column("pendingDeletion", .integer).notNull().defaults(to: false)
             }
+
+            // The file-system tree is walked by name — a push resolves every folder on the
+            // way to its file, `childNode` follows a path — and a folder can hold thousands
+            // of children, so a step of the walk has to be a lookup rather than a read of
+            // every sibling the index on `parentNodeID` alone would hand back (B-131).
+            // Outside the table's own `ifNotExists` for the reason the wire index is: an
+            // existing database gains it on open and then presents a fresh one's fingerprint.
+            try db.create(indexOn: "Node",
+                          columns: ["parentNodeID", "name"],
+                          options: .ifNotExists)
         }
     }
 }
@@ -150,6 +160,21 @@ public struct NodeChildSummary {
     }
 }
 
+/// One node on a path walked by `selectPath`: how far below the starting node it stands,
+/// its row, and its rows for the ports the walk was asked to bring, by port symbol. A port
+/// the node holds no row for is absent.
+public struct NodePathStep {
+    public let depth: Int
+    public let node:  NodeRecord
+    public var ports: [ObjectID: OutputPort]
+
+    public init(depth: Int, node: NodeRecord, ports: [ObjectID: OutputPort]) {
+        self.depth = depth
+        self.node  = node
+        self.ports = ports
+    }
+}
+
 public struct NodeDataAccess: DataAccessType {
     public weak var databaseLayer: DatabaseLayer?
 
@@ -157,10 +182,24 @@ public struct NodeDataAccess: DataAccessType {
         self.databaseLayer = databaseLayer
     }
 
+    /// How many node selects this process has issued. A test observable, of a piece with
+    /// `OutputPortDataAccess.selectCount` and `WireDataAccess.selectCount`: each select is a
+    /// round trip through the serialised database — a queue hop, a savepoint and a
+    /// statement — so a lookup made once per path component is a cost that follows the
+    /// depth of the tree, and a count is what pins it (B-131). Not read by the engine.
+    public static let selectCount = SharedCounter()
+
+    /// Counts one query against `selectCount` and runs it, so that a select added here
+    /// cannot quietly escape the measurement.
+    private func selecting<T>(_ block: (Database) throws -> T) throws -> T {
+        Self.selectCount.increment()
+        return try read(block)
+    }
+
     /// At most `limit` scheduled nodes, leaving out `excluding` — the nodes the caller is
     /// already running — in id order.
     public func selectScheduled(limit: Int, excluding: Set<ObjectID> = []) throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord
                 .filter(NodeRecord.Columns.scheduled == true && !excluding.contains(Column("id")))
                 .order(Column("id"))
@@ -172,13 +211,13 @@ public struct NodeDataAccess: DataAccessType {
     /// How many nodes are scheduled: the queue ahead of a pass, which a running node has
     /// already left (B-95).
     public func countScheduled() throws -> Int {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.scheduled == true).fetchCount(db)
         }
     }
 
     public func selectAllPendingDeletion() throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.pendingDeletion == true).fetchAll(db)
         }
     }
@@ -193,7 +232,7 @@ public struct NodeDataAccess: DataAccessType {
     }
 
     public func selectChildSummaries(parentNodeID: ObjectID) throws -> [NodeChildSummary] {
-        try read { db in
+        try selecting { db in
             try Row.fetchAll(db,
                              sql: "SELECT id, kind, name FROM Node WHERE parentNodeID = ?",
                              arguments: [parentNodeID])
@@ -211,7 +250,7 @@ public struct NodeDataAccess: DataAccessType {
     /// the hash comes back in the row the kind was already read from.
     public func selectChildPorts(parentNodeID: ObjectID,
                                  nameSymbolID: ObjectID) throws -> [ObjectID: OutputPort] {
-        try read { db in
+        try selecting { db in
             var result: [ObjectID: OutputPort] = [:]
             let rows = try Row.fetchAll(db, sql: """
                 SELECT p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
@@ -236,7 +275,7 @@ public struct NodeDataAccess: DataAccessType {
 
     public func selectAll() throws -> [NodeRecord] {
         Debug.warn("expensive selectAllNodes call")
-        return try read { db in try NodeRecord.fetchAll(db) }
+        return try selecting { db in try NodeRecord.fetchAll(db) }
     }
 
     public func select(nodeID: ObjectID) throws -> NodeRecord {
@@ -251,30 +290,118 @@ public struct NodeDataAccess: DataAccessType {
     /// a failure of the database itself still throws, so `try?` is never the right way to
     /// ask this question.
     public func find(nodeID: ObjectID) throws -> NodeRecord? {
-        try read { db in try NodeRecord.fetchOne(db, id: nodeID) }
+        try selecting { db in try NodeRecord.fetchOne(db, id: nodeID) }
     }
 
     public func select(parentNodeID: ObjectID) throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
     public func select(named name: String, parentNodeID: ObjectID?) throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.name == name &&
                             NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
         }
     }
 
+    /// Every node on the path `names` below `ancestorNodeID`, in one query: the ancestor's
+    /// own row at depth 0, its children named `names[0]` at depth 1, their children named
+    /// `names[1]`, and so on, each with its rows for the ports in `portSymbolIDs`. Ordered by
+    /// depth; the walk stops where a name is missing, so a path that exists only in part
+    /// comes back as the part that exists, and an ancestor with no row as nothing. An empty
+    /// path reads nothing and returns nothing.
+    ///
+    /// The ancestor comes back so that a caller holding its id from a cache can check the
+    /// id still names the node it thinks, in the same query rather than a select of its own.
+    ///
+    /// One query rather than a select per component, because a push resolves a file's
+    /// folders on every file it sends: six folders deep, a lookup and a pin read per folder
+    /// was a dozen round trips through the serialised database for a file that had not
+    /// changed, and most of an unchanged push of a large tree (B-131). The ports ride along
+    /// for the same reason — what a caller asks of a folder on the way down is its pin.
+    ///
+    /// Every row with a matching name comes back, not the first: a folder holding two
+    /// children of one name is a graph the caller has to refuse, and it cannot refuse what
+    /// it was not shown. Below such a pair the walk continues under both.
+    public func selectPath(below ancestorNodeID: ObjectID,
+                           names: [String],
+                           portSymbolIDs: [ObjectID]) throws -> [NodePathStep] {
+        guard !names.isEmpty else {
+            return []
+        }
+
+        var arguments: [DatabaseValueConvertible] = []
+        for (index, name) in names.enumerated() {
+            arguments.append(index + 1)
+            arguments.append(name)
+        }
+        arguments.append(ancestorNodeID)
+
+        // An empty `IN ()` is not SQL, and no port asked for is no port joined.
+        var portFilter = "0"
+        if !portSymbolIDs.isEmpty {
+            portFilter = "p.nameSymbolID IN (\(portSymbolIDs.map { _ in "?" }.joined(separator: ", ")))"
+            arguments.append(contentsOf: portSymbolIDs)
+        }
+
+        // Not a cached statement, though the text depends only on the depth: tried on a
+        // push, a cached one was prepared again on every use (`sqlite3Reprepare` under
+        // `sqlite3_step`) — each read through `DatabaseQueue` runs statements of its own
+        // around the block, and the cached one did not survive them — so it saved nothing.
+        let segmentValues = names.map { _ in "(?, ?)" }.joined(separator: ", ")
+        let rows = try selecting { db in
+            try Row.fetchAll(db, sql: """
+                WITH RECURSIVE
+                    segment(depth, name) AS (VALUES \(segmentValues)),
+                    chain(depth, nodeID) AS (
+                        SELECT 0, ?
+                        UNION ALL
+                        SELECT segment.depth, child.id
+                        FROM chain
+                        JOIN segment ON segment.depth = chain.depth + 1
+                        JOIN Node child ON child.parentNodeID = chain.nodeID AND child.name = segment.name
+                    )
+                SELECT chain.depth AS pathDepth, n.*,
+                       p.nodeID AS portNodeID, p.nameSymbolID AS portSymbolID,
+                       p.valueKind AS portValueKind, p.dataObjectHash AS portDataObjectHash
+                FROM chain
+                JOIN Node n ON n.id = chain.nodeID
+                LEFT JOIN OutputPort p ON p.nodeID = n.id AND \(portFilter)
+                ORDER BY chain.depth, n.id
+                """, arguments: StatementArguments(arguments))
+        }
+
+        // A node comes back once per port it has a row for, consecutively by the ordering.
+        var steps: [NodePathStep] = []
+        for row in rows {
+            let nodeID: ObjectID = row["id"]
+            if steps.last?.node.id != nodeID {
+                steps.append(NodePathStep(depth: row["pathDepth"], node: try NodeRecord(row: row), ports: [:]))
+            }
+            guard let portNodeID: ObjectID = row["portNodeID"],
+                  let rawValueKind: UInt8 = row["portValueKind"],
+                  let valueKind = OutputPort.ValueKind(rawValue: rawValueKind) else {
+                continue
+            }
+            let portSymbolID: ObjectID = row["portSymbolID"]
+            steps[steps.count - 1].ports[portSymbolID] = OutputPort(nodeID: portNodeID,
+                                                                    nameSymbolID: portSymbolID,
+                                                                    valueKind: valueKind,
+                                                                    dataObjectHash: row["portDataObjectHash"])
+        }
+        return steps
+    }
+
     public func select(identity: String) throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.identity == identity).fetchAll(db)
         }
     }
 
     public func select(kind: UInt, named name: String, parentNodeID: ObjectID?) throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.kind == kind &&
                             NodeRecord.Columns.name == name &&
                             NodeRecord.Columns.parentNodeID == parentNodeID).fetchAll(db)
@@ -286,7 +413,7 @@ public struct NodeDataAccess: DataAccessType {
     /// `kind` is indexed, so unlike `selectAll()` this does not scan the whole table —
     /// safe to call for a common kind as well as a rare one.
     public func select(kind: UInt) throws -> [NodeRecord] {
-        try read { db in
+        try selecting { db in
             try NodeRecord.filter(NodeRecord.Columns.kind == kind).fetchAll(db)
         }
     }

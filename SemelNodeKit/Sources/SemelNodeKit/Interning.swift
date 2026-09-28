@@ -31,20 +31,31 @@ extension [UInt8] {
     ///
     /// The cost is a `try` at every call site, which is real. It buys the message.
     public func intern() throws -> DataObjectHash {
-        if isEmpty {
-            return ""
+        let hash = internedHash
+        if !hash.isEmpty {
+            // Write bytes to the filesystem store (idempotent).
+            try DataObjectStore.shared.store(hash: hash, content: self)
         }
-
-        let hash = Sha256.hash(self)
-        // Write bytes to the filesystem store (idempotent).
-        try DataObjectStore.shared.store(hash: hash, content: self)
         return hash
+    }
+
+    /// The hash `intern()` names these bytes by, without storing them. For a caller that
+    /// only asks whether a port already holds these bytes — a push of a file that has not
+    /// changed — where storing them would be a write and a touch of a file on disk for an
+    /// object the port already keeps alive (B-131).
+    public var internedHash: DataObjectHash {
+        isEmpty ? "" : Sha256.hash(self)
     }
 }
 
 extension String {
     public func intern() throws -> DataObjectHash {
         try [UInt8](Data(utf8)).intern()
+    }
+
+    /// `[UInt8].internedHash` of this string's UTF-8.
+    public var internedHash: DataObjectHash {
+        [UInt8](Data(utf8)).internedHash
     }
 }
 

@@ -605,6 +605,30 @@ extension Folder {
         cachedRootIDs[name] = id
     }
 
+    /// The id the cache holds for the input file system's root, unread and so unverified:
+    /// for a caller that reads the root's row anyway and checks it with `isRoot` in the
+    /// same query, instead of paying the select `inputFileSystem` verifies with. Nil when
+    /// the cache is empty, which sends that caller to `inputFileSystem`, the path that may
+    /// create.
+    static var cachedInputFileSystemID: ObjectID? {
+        cachedRootID(named: inputFileSystemName)
+    }
+
+    /// Whether `nodeRecord` is the root of the file system `name` — the check that makes a
+    /// cached id safe to use, for the reasons `root(named:)` gives.
+    static func isRoot(_ nodeRecord: NodeRecord, named name: String) -> Bool {
+        nodeRecord.kind == Folder.kind && nodeRecord.properties[Folder.pathProperty] == name
+    }
+
+    private static func knownRoot(named name: String) -> NodeRecord? {
+        guard let cachedID = cachedRootID(named: name),
+              let cached = try? DatabaseLayer.shared.node.select(nodeID: cachedID),
+              isRoot(cached, named: name) else {
+            return nil
+        }
+        return cached
+    }
+
     private static func root(named name: String) throws -> NodeRecord {
         // Verified, not trusted, because a cached ID can be wrong in two ways.
         //
@@ -620,10 +644,7 @@ extension Folder {
         // dictionary lookup on a row already fetched, and makes the cache correct without
         // depending on every test target remembering to clear it — which the CLI target,
         // having no TestGlobals of its own, would not have done.
-        if let cachedID = cachedRootID(named: name),
-           let cached = try? DatabaseLayer.shared.node.select(nodeID: cachedID),
-           cached.kind == Folder.kind,
-           cached.properties[Folder.pathProperty] == name {
+        if let cached = knownRoot(named: name) {
             return cached
         }
 

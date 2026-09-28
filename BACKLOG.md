@@ -55,6 +55,20 @@ neither broken down yet. With a compiler that compiles once its folder walk has 
 (B-112), the cold build took 93 s; with results written as each node finishes rather than
 once a whole batch has (B-113), 85 s.
 
+Measured 2026-09-28 on the IceCubes app tree (`icecubes-app`, 8039 files pushed, a fresh
+home, debug build): a cold build of 146 s; a second build with nothing changed 17 s, of which
+`push icecubes-app` alone was 14.9 s, the export 0.9 s and the settle 0.01 s; a one-file edit
+rebuilt in 19.9 s, the push again about 15 s. The push cost about a dozen serialised
+database reads per file, a lookup and a pin read per folder on the way to it. With the root,
+the path, its pins and the file's ports read in one query, and an unchanged file hashed
+rather than stored (B-131), an unchanged push of the same tree took 5.0 s against 15.7 s
+measured before on the same machine, a one-file edit's push 5.0 s against 15.6 s, and a
+build with nothing changed 10.2 s against 17.3 s; the cold build was 142 s against 148 s.
+A `sample` of the server puts about two thirds of the remaining push in the request handler,
+most of it that one query — parsing it is a third of its cost — and the rest in the round
+trip each file makes. What remains is one request per file, which a push that sends a
+manifest and only the bytes the server lacks would remove (B-132).
+
 
 ## Design, correctness and code quality
 
