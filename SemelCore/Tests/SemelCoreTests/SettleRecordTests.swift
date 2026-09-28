@@ -69,13 +69,26 @@ final class SettleRecordTests: SemelCoreTestCase {
     }
 
     /// Built once and settled: every node new and run.
+    ///
+    /// Built inside one batch, as a push of several files is: the loop is running, and
+    /// without the batch it could settle between two of the nodes — or run a tool, then
+    /// answer it again from the entry that run had just stored, which the record reports
+    /// as a cache hit. One batch, one settle, one record of every node.
     private func buildGraph() async throws -> Graph {
-        try push("a.x=1\nb.y=1\n")
-        let graph = Graph(file:    try nodeID("StaticFile(path: '\(configPath)').output"),
+        engine.beginBatch()
+        let graph: Graph
+        do {
+            try push("a.x=1\nb.y=1\n")
+            graph = Graph(file:    try nodeID("StaticFile(path: '\(configPath)').output"),
                           filterA: try nodeID(filterSpec("a")),
                           filterB: try nodeID(filterSpec("b")),
                           toolA:   try nodeID("SampleTool(configuration: ['cfg': \(filterSpec("a"))]).output"),
                           toolB:   try nodeID("SampleTool(configuration: ['cfg': \(filterSpec("b"))]).output"))
+        } catch {
+            engine.endBatch()
+            throw error
+        }
+        engine.endBatch()
         await settle()
         return graph
     }
