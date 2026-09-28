@@ -9,7 +9,9 @@ public struct ProjectBuilder: Node {
     public static let kind: UInt = 6
     /// 2: a `**` pattern walks down and demands the subfolders it reaches, and a capture
     /// after a `**` reads the file's own name (B-108).
-    public static let implementationVersion = 2
+    /// 3: every node that asks for its files' modes has them wired beside the files
+    /// (`wiringFileMetadata`), a pushed file among the sources that publish one.
+    public static let implementationVersion = 3
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
@@ -173,12 +175,10 @@ public struct ProjectBuilder: Node {
         func outputFileSpec(fullPath: Path, shapeNode: GraphSpecNode) -> GraphSpecNode {
             let shapeNode = shapeNode.adding(property: Self.projectRootProperty, value: outputFolder.string,
                                              where: Self.isCacheable)
-            var inputs: [String: [String: GraphSpecNode]] = [OutputFile.inputPort: ["product": shapeNode]]
-            if let nodeType = TypeRegistry.nodeType(forTypeName: shapeNode.typeName) as? Node.Type,
-               nodeType.descriptor.outputPorts.contains(FileMetadata.portName) {
-                inputs[OutputFile.fileMetadataInputPort] = ["metadata": shapeNode.port(FileMetadata.portName)]
-            }
-            return GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: fullPath.string], inputs: inputs)
+            return GraphSpecNode(OutputFile.self,
+                                 properties: [OutputFile.pathProperty: fullPath.string],
+                                 inputs: [OutputFile.inputPort: ["product": shapeNode]])
+                .wiringFileMetadata()
                 .port(OutputFile.statusOutputPort)
         }
 

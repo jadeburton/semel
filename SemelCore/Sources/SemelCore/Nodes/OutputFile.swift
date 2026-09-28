@@ -95,7 +95,8 @@ struct OutputFile: Node, FileType, HasPath, Pinnable, FileMetadataProvider {
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [.required(inputPort), .optional(fileMetadataInputPort)],
-        outputPorts: [statusOutputPort]
+        outputPorts: [statusOutputPort],
+        fileMetadataInputPorts: [inputPort: fileMetadataInputPort]
     )
 
     /// An artifact is pinned by the port it reads its bytes from, which is its *input* — so

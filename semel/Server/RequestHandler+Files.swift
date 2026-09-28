@@ -86,11 +86,9 @@ extension RequestHandler {
 
     // MARK: - push
 
-    /// Interns the bytes and stores them at `path` in the input file system, creating the
-    /// folders on the way. Returns whether the content changed.
-    ///
-    /// TODO: `mode` is carried on the wire but not stored — `StaticFile` has no metadata
-    /// port, and push has never preserved modes. Wire it through when it gains one.
+    /// Interns the bytes and stores them at `path` in the input file system, with the mode
+    /// beside them, creating the folders on the way. Returns whether the bytes or the mode
+    /// changed.
     func pushFile(path: String, mode: UInt16, body: Data) throws -> DaemonResponse {
         let relativePath = Path(path)
         let root         = try engine.inputFileSystem
@@ -105,7 +103,7 @@ extension RequestHandler {
             throw HandlerFailure.node(description: "push: \(path): the graph holds a non-file node at this path")
         }
 
-        let didChange = try staticFile.replaceContent([UInt8](body).intern())
+        let didChange = try staticFile.replaceContent([UInt8](body).intern(), mode: mode)
         return .pushFile(didChange: didChange)
     }
 

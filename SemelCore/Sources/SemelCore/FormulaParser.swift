@@ -1414,7 +1414,9 @@ private struct FormulaResolver {
             }
         }
 
-        return .node(GraphSpecNode(typeName: typeName, properties: nodeProps, inputs: inputPorts))
+        // The modes of the files a node takes, where its type asks for them, wired here and
+        // never in the formula: a func handed a file cannot pick another port off it.
+        return .node(GraphSpecNode(typeName: typeName, properties: nodeProps, inputs: inputPorts).wiringFileMetadata())
     }
 
     // MARK: Output port resolution

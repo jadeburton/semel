@@ -2,9 +2,10 @@
 //  AppPreludeTests.swift
 //  SemelCLITests
 //
-//  B-108. HelloApp through `include 'swift'` and `include 'apple'`: the executable and the
-//  Info.plist are the nodes the hand-written formula built, and the resources tree holds
-//  the same compilers — found by pattern now, so its wires are named after each table.
+//  B-108. HelloApp through `include 'swift'` and `include 'apple'`: one tree product, the
+//  bundle, whose executable and Info.plist are the nodes the hand-written formula built as
+//  products of their own, and whose resources tree holds the same compilers — found by
+//  pattern now, so its wires are named after each table.
 //
 
 @testable import SemelApple
@@ -16,6 +17,14 @@ import XCTest
 final class AppPreludeTests: XCTestCase {
 
     private let basePath = Path("input:/app")
+
+    /// The parser wires a file's mode where the file's source publishes one, which it
+    /// learns from the registered types — the engine's and the linker's.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try BuildEngine.registerTypes()
+        try SemelSwift.register()
+    }
 
     /// What the converter's formula for HelloKit provides: the product's trees.
     private let converterSpec = "SwiftFormulaConverter(path: 'input:/app/HelloKit', root: 'input:/app').formula"
@@ -78,19 +87,55 @@ final class AppPreludeTests: XCTestCase {
         }
     }
 
+    /// The bundle is one product, a merger of the single files' tree and the resources'.
+    private var bundle: GraphSpecNode {
+        get throws {
+            let products = try parse(try withPreludes)
+            XCTAssertEqual(products.keys.sorted(), ["Hello.app/"], "the whole bundle is one tree product")
+            return try XCTUnwrap(products["Hello.app/"])
+        }
+    }
+
+    private func wire(_ name: String, of node: GraphSpecNode, port: String = "input") throws -> GraphSpecNode {
+        try XCTUnwrap(node.inputs.first { $0.portName == port }?.wires.first { $0.name == name }?.node,
+                      "\(node.typeName) has no wire '\(name)' on '\(port)'")
+    }
+
     func test_theExecutableAndInfoPlistAreTheNodesTheHandWrittenFormulaBuilt() throws {
         let expected = try parse(handWritten)
-        let actual   = try parse(try withPreludes)
+        let files    = try wire("files", of: try bundle)
 
-        for product in ["Hello.app/Hello", "Hello.app/Info.plist"] {
-            XCTAssertEqual(try XCTUnwrap(actual[product]).asString(omitOutputPort: false),
+        for (entry, product) in [("Hello", "Hello.app/Hello"), ("Info.plist", "Hello.app/Info.plist")] {
+            XCTAssertEqual(try wire(entry, of: files).asString(omitOutputPort: false),
                            try XCTUnwrap(expected[product]).asString(omitOutputPort: false),
                            product)
         }
     }
 
+    /// B-108. `apple.bundle`'s rendered spec: the executable, `Info.plist` and `PkgInfo`
+    /// named as bundle entries, each file whose source publishes a mode wired to it — the
+    /// linker's, which is what keeps the executable launchable, and the pushed `PkgInfo`'s
+    /// — and the resources merged beside them at the root.
+    func test_theBundleIsTheSingleFilesAndTheResourcesAsOneTree() throws {
+        let bundle = try bundle
+
+        XCTAssertEqual(bundle.typeName, "TreeMerger")
+        XCTAssertEqual(bundle.inputs.first?.wires.map(\.name), ["files", "resources"])
+        let files = try wire("files", of: bundle)
+        XCTAssertEqual(files.typeName, "TreeBuilder")
+        XCTAssertEqual(files.inputs.first { $0.portName == "input" }?.wires.map(\.name), ["Hello", "Info.plist", "PkgInfo"])
+        XCTAssertEqual(try wire("PkgInfo", of: files).asString(omitOutputPort: false),
+                       "StaticFile(path: 'input:/app/PkgInfo').output")
+
+        let modes = try XCTUnwrap(files.inputs.first { $0.portName == FileMetadata.portName })
+        XCTAssertEqual(modes.wires.map(\.name), ["Hello", "PkgInfo"], "a plist builder publishes no mode")
+        XCTAssertEqual(try wire("Hello", of: files, port: FileMetadata.portName),
+                       try wire("Hello", of: files).port(FileMetadata.portName))
+        XCTAssertEqual(try wire("Hello", of: files).typeName, "SwiftLinker")
+    }
+
     func test_theResourcesTreeCompilesEachStringCatalogInTheFolder() throws {
-        let resources = try XCTUnwrap(try parse(try withPreludes)["Hello.app/"])
+        let resources = try wire("resources", of: try bundle)
 
         XCTAssertEqual(resources.typeName, "TreeMerger")
         let wires = try XCTUnwrap(resources.inputs.first?.wires)

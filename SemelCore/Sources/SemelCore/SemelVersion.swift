@@ -78,5 +78,10 @@ public enum Semel {
     /// gains it before the fingerprint is taken. The first settle of a launch reconciles
     /// it against the graph, which is what a rebuild would have achieved at the price of
     /// discarding every derived node. Nothing a stored graph holds means anything else.
-    public static let version = "0.1.11"
+    ///
+    /// 0.1.12: a `StaticFile` publishes the mode it was pushed with on a new `fileMetadata`
+    /// port (B-108). The reason 0.1.6 was a bump, for a type that is never scheduled: the
+    /// rebuild gives every preserved file the row, with the default mode until the next
+    /// push states the real one.
+    public static let version = "0.1.12"
 }

@@ -9,6 +9,7 @@
 //  trigger, not merely compare.
 
 import SemelDatabaseModels
+import SemelNodeKit
 
 /// The database was created by a Semel whose tables looked different. `reset` cannot help:
 /// it preserves the input file system, and those rows live in the old tables. The only
@@ -68,6 +69,7 @@ extension BuildEngine {
             // After the restating, which changes what a source's port says and so what the
             // fold reads.
             try foldTheContentRootOfEveryPreservedFolder()
+            try giveEveryPreservedFileItsMode()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
             // in the home unexplained. This runs from `BuildEngine.start()`, before a
             // server installs its reporter and before any client can be listening, so the
@@ -166,5 +168,21 @@ extension BuildEngine {
             try Folder.markContentRootDirty(nodeID: nodeID)
         }
         try Folder.flushDirtyManifests()
+    }
+
+    /// Gives every preserved `StaticFile` the `fileMetadata` row it would have had from its
+    /// creation (B-108): the default mode, which is what a file created now holds until it
+    /// is pushed. The pushed mode was never stored, so the next push is what states it —
+    /// and, the row then changing, wakes whatever reads it.
+    private func giveEveryPreservedFileItsMode() throws {
+        let portSymbolID = StaticFile.fileMetadataOutputPort.asSymbolID()
+        for node in try database.node.selectAll() where node.kind == StaticFile.kind {
+            guard let nodeID = node.id,
+                  try database.outputPort.select(nodeID: nodeID, nameSymbolID: portSymbolID) == nil else {
+                continue
+            }
+            try node.writeToOutputPort(StaticFile.fileMetadataOutputPort,
+                                       value: try StaticFile.metadataValue(mode: FileMetadata.defaultMode))
+        }
     }
 }

@@ -161,7 +161,7 @@ include package(p: <Explore>)
 
 ### Products that are folders
 
-A product name may contain slashes, so a bundle is a set of products under one folder name: `product 'Hello.app/Hello'`, `product 'Hello.app/Info.plist'`. When a tool decides the file set itself — an asset catalog compiles to `Assets.car` plus one PNG per icon size — its node puts a *tree* on one port, a manifest of files with their content and modes, and a product named with a trailing `/` publishes every entry of it:
+A product name may contain slashes, so a folder can be a set of products under one name: `product 'Hello.app/Hello'`, `product 'Hello.app/Info.plist'`. When a tool decides the file set itself — an asset catalog compiles to `Assets.car` plus one PNG per icon size — its node puts a *tree* on one port, a manifest of files with their content and modes, and a product named with a trailing `/` publishes every entry of it:
 
 ```
 product 'Hello.app/' = AssetCatalogCompiler(...).files
@@ -171,6 +171,18 @@ The files appear once the tree has, the way a wildcard's matches appear once the
 
 ```
 product 'Hello.app/' = TreeMerger(input: ['assets': assets().files, 'strings': strings().files]).files
+```
+
+Files a formula names are put into a tree with `TreeBuilder`, each under its wire's name and with the mode of the file it came from — a linked executable stays executable, a pushed file keeps the mode it was pushed with — so a whole app bundle is one tree product. `include 'apple'` spells it:
+
+```
+product 'Hello.app/' = apple.bundle(
+    executable: swift.executable(sources: <Sources>, name: 'Hello', settings: settings()),
+    name: 'Hello',
+    infoPlist: apple.infoPlist(base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: settings()),
+    pkgInfo: <PkgInfo>,
+    resources: apple.resources(catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings())
+)
 ```
 
 ### Building an Xcode project

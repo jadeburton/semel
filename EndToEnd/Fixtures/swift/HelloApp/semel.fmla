@@ -1,7 +1,8 @@
-// A SwiftUI app for the iOS simulator: the bundle is a set of products under one folder
-// name. The executable is a Swift target that imports a package; the resources and the
-// Info.plist come from `include 'apple'`, which compiles the asset and string catalogs and
-// merges actool's partial Info.plist into the project's.
+// A SwiftUI app for the iOS simulator: the bundle is one tree product. The executable is a
+// Swift target that imports a package; the resources, the Info.plist and the bundle come
+// from `include 'apple'`, which compiles the asset and string catalogs, merges actool's
+// partial Info.plist into the project's, and puts every file where the bundle wants it —
+// the executable keeping the mode that lets it launch.
 
 include 'swift'
 include 'apple'
@@ -16,17 +17,17 @@ include funcs SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 // commits. One node, so every tool below selects from the same settings.
 func settings() = swift.settings(project: <semel.config>, machine: <semel.machine.config>)
 
-product 'Hello.app/Hello' = swift.executableUsing(
-    sources: <Sources>, name: 'Hello', settings: settings(),
-    package: 'HelloKit', modules: modules_HelloKit().files, objects: objects_HelloKit().files
-)
-
-product 'Hello.app/Info.plist' = apple.infoPlist(
-    base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: settings()
-)
-
-product 'Hello.app/PkgInfo' = StaticFile(path: <PkgInfo>).output
-
-product 'Hello.app/' = apple.resources(
-    catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
+product 'Hello.app/' = apple.bundle(
+    executable: swift.executableUsing(
+        sources: <Sources>, name: 'Hello', settings: settings(),
+        package: 'HelloKit', modules: modules_HelloKit().files, objects: objects_HelloKit().files
+    ),
+    name: 'Hello',
+    infoPlist: apple.infoPlist(
+        base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: settings()
+    ),
+    pkgInfo: <PkgInfo>,
+    resources: apple.resources(
+        catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
+    )
 )

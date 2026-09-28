@@ -665,8 +665,34 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
    named `src/lib/../hello.h`, which is never a node, and the preprocessor failed. Fixed
    2026-09-28: the joined path goes through `Path.resolvingDotSegments`, and an include
    that climbs above `input:` is left out for clang to report (finder version 3).
-2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
-   carrying each entry's mode would let `apple` build the whole bundle as one tree.
+2. **An app bundle as one product** — done 2026-09-28. `TreeBuilder` wrote every entry
+   with the default mode, so an executable in a tree lost the bit that lets it launch, and
+   HelloApp spelled its bundle as four products. A tree entry now carries the mode of the
+   file it came from, read from a second wire: a node type names, on its descriptor, the
+   port that carries the modes of the files on another (`fileMetadataInputPorts`,
+   `input` → `fileMetadata` on `TreeBuilder` and `OutputFile`), and the spec is given one
+   mode wire per file whose source publishes `fileMetadata` and is read at `output`
+   (`GraphSpecNode.wiringFileMetadata()`, called by the formula resolver on every node it
+   builds and by `ProjectBuilder` on each product). A wire and not a read of the source at
+   process time, because the mode is then in the cache key and wakes the node like the
+   bytes do; filled where the spec is built and not in the formula, because a func cannot
+   pick a port off a value it was handed. `StaticFile` publishes the mode it was pushed
+   with (push carried it and dropped it), so `FolderTreeBuilder` demands each file's mode
+   beside its bytes (version 2) and a pushed file kept as a product keeps its mode
+   (`Semel.version` 0.1.12, whose rebuild gives every preserved file the row). Export
+   already applied an entry's mode through `TreeFile` and `OutputFile`. `apple.bundle(
+   executable:, name:, infoPlist:, pkgInfo:, resources:)` merges a `TreeBuilder` over the
+   single files with the resources tree, and HelloApp is one `product 'Hello.app/'`:
+   byte-identical exports, `Hello.app/Hello` still 0755, which the harness now checks
+   (`Project.executables`).
+3. **An Xcode project's bundle as one product.** `XcodeFormulaEmitter` still writes a
+   target's bundle as several products: the executable, the Info.plist and each plain
+   resource on their own, the compiled resources as a tree, and an embedded extension as
+   products under the app's `PlugIns/`. One tree is now possible — a `TreeBuilder` over the
+   single files at their layout paths, the trees merged `under` `Contents/Resources` on
+   macOS, each extension's tree merged `under` its `PlugIns/` path — but it rewrites most
+   of the emitter's product text and its tests, and only the external IceCubes build
+   proves it, so it was not folded into residual 2.
 
 **B-123** `done` — **A for-each that says `except`.**
 The for-each takes literal paths and wildcard patterns and nothing else, so "every `.c`

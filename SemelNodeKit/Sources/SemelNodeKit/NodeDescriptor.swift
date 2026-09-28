@@ -40,12 +40,23 @@ public struct NodeDescriptor {
     /// and the report learns that without being taught any node's type.
     public let inputPortsToleratingAbsentValue: Set<String>
 
+    /// Per input port that carries files, the static port beside it that carries their
+    /// modes: `input` → `fileMetadata` on `OutputFile` and `TreeBuilder`.
+    ///
+    /// A formula names only the files. The mode wires are filled where a spec is built
+    /// (`GraphSpecNode.wiringFileMetadata()`), one per file wire whose source publishes a
+    /// `fileMetadata` port, so a formula never spells them and a func handed a file — which
+    /// cannot pick another port off it — still passes its mode on.
+    public let fileMetadataInputPorts: [String: String]
+
     public init(inputPorts: [InputPort] = [],
                 outputPorts: [String],
-                inputPortsToleratingAbsentValue: Set<String> = []) {
+                inputPortsToleratingAbsentValue: Set<String> = [],
+                fileMetadataInputPorts: [String: String] = [:]) {
         self.inputPorts = inputPorts
         self.outputPorts = outputPorts
         self.inputPortsToleratingAbsentValue = inputPortsToleratingAbsentValue
+        self.fileMetadataInputPorts = fileMetadataInputPorts
     }
 
     /// Whether a value that will never arrive on this port is something the node minds.
