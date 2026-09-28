@@ -58,7 +58,11 @@ enum Projects {
     /// A C target inside a Swift package (B-55): nested sources and headers, an excluded
     /// folder and file that would fail the build if compiled, `publicHeadersPath`, and a
     /// define the sources `#error` without. The Swift executable imports the C target and
-    /// the C executable, nothing Swift in it, links it through the same linker.
+    /// the C executable, nothing Swift in it, links it through the same linker. The Swift
+    /// executable also imports what NetNewsWire's packages need (B-77): an Objective-C
+    /// target that `@import`s Foundation and compiles only under ARC, and C targets with an
+    /// umbrella header or an umbrella directory and no module map — one of them nested in
+    /// the folder of the Swift target that excludes and imports it, as Zip's Minizip is.
     static let swiftCPackage = Project(
         name: "swift-c-package",
         source: .fixture(folder: "."),

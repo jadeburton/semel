@@ -14,7 +14,8 @@ public struct ClangIncludeFinder: Node {
 
     /// 2: a source nobody pushed lists no includes (B-79), where version 1 failed on it.
     /// 3: `.` and `..` in a quoted include are resolved against the source's folder.
-    public static let implementationVersion = 3
+    /// 4: a quoted `#import` is listed as a quoted `#include` is (B-77).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -55,8 +56,10 @@ public struct ClangIncludeFinder: Node {
                 in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
         }
 
-        // Match:  #include "file.h"  (quoted only; angle-bracket includes are ignored)
-        let pattern = #"(?m)^[ \t]*#[ \t]*include[ \t]*"([^"]+)""#
+        // Match:  #include "file.h"  and Objective-C's  #import "file.h"  (quoted only;
+        // angle-bracket includes are ignored). An `@import Foundation;` names a module, not
+        // a file: nothing here can push it, and the preprocessor loads it from the SDK.
+        let pattern = #"(?m)^[ \t]*#[ \t]*(?:include|import)[ \t]*"([^"]+)""#
 
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return []

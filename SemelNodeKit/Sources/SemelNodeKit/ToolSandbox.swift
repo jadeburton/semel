@@ -24,4 +24,11 @@ public enum ToolSandbox {
     /// names the build rather than the directory this run happened to get. Never a real
     /// directory: nothing resolves it, nothing creates it, and the tool never opens it.
     public static let canonicalRootName = "/semel"
+
+    /// A folder below the root for state a tool derives from its inputs while it runs — a
+    /// clang module cache — named relative to the root like every other path. It is never
+    /// an input and never an output, and it goes with the sandbox, so what one run builds
+    /// there cannot reach another run's result. A name no wire key takes: every input sits
+    /// below a file-system name such as `input:`, and no node names an output this way.
+    public static let derivedStateFolderName = ".semel-derived"
 }

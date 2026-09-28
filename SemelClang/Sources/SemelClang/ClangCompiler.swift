@@ -17,6 +17,13 @@ struct ClangCompilerConfiguration {
     /// which `ClangLanguageStandards.standard(forLanguage:namespace:)` decides once the
     /// file itself is known.
     let standards: ClangLanguageStandards
+    /// `modules` and `objectiveCARC` (B-77).
+    let features: ClangLanguageFeatures
+    /// The SDK the modules a preprocessed source imports come from, `-isysroot`. A machine
+    /// setting, written by `semel-clang` as `clang.compiler.sdkPath`: preprocessed text
+    /// needs no header, but with `modules` it still names the modules to load, and they are
+    /// found in the SDK. Required when a source loads modules, which the language decides.
+    let sdkPath: String?
     let target: String  // e.g. "arm64-apple-macos14.0"
 
     init(properties: [String: String]) throws {
@@ -28,6 +35,21 @@ struct ClangCompilerConfiguration {
         arguments = clangArguments(properties)
         environment = [:]
         standards = .init(properties: properties)
+        features  = try .init(properties: properties, namespace: Self.settingNamespace, readsModuleName: false)
+        sdkPath   = properties["sdkPath"]
+    }
+
+    /// `sdkPath` for a source in `language`: required when it loads modules, which fail
+    /// without the SDK as `module 'Foundation' not found`; absent otherwise, as ever.
+    func sdkPath(forLanguage language: String) throws -> String? {
+        guard features.loadsModules(forLanguage: language) else {
+            return sdkPath
+        }
+        var required = RequiredSettings(properties: sdkPath.map { ["sdkPath": $0] } ?? [:],
+                                        namespace: Self.settingNamespace)
+        let path = required.value("sdkPath")
+        try required.check()
+        return path
     }
 
     /// Where this node's settings live in a config file: `clang.compiler.<key>`.
@@ -41,7 +63,8 @@ public struct ClangCompiler: Node {
 
     /// 2: assembly — a preprocessed `.S`, a `.s` — is assembled as such with no standard,
     /// where it was compiled as C (B-55).
-    public static let implementationVersion = 2
+    /// 3: `sdkPath`, `modules` and `objectiveCARC` reach the command line (B-77).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -130,6 +153,12 @@ public struct ClangCompiler: Node {
         arguments.append("-target"); arguments.append(inputs.configuration.target)
         settings.append(.clangTarget(key: "\(ClangCompilerConfiguration.settingNamespace).target",
                                      value: inputs.configuration.target))
+
+        if let sdkPath = try inputs.configuration.sdkPath(forLanguage: language) {
+            arguments.append("-isysroot"); arguments.append(sdkPath)
+            settings.append(.clangSysroot(key: "\(ClangCompilerConfiguration.settingNamespace).sdkPath", value: sdkPath))
+        }
+        arguments.append(contentsOf: inputs.configuration.features.arguments(forLanguage: language))
 
         arguments.append(contentsOf: inputs.configuration.arguments)
 

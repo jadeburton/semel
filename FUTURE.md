@@ -488,17 +488,35 @@ first):
 2. ~~**C++ in a linked product.**~~ — done 2026-09-28 (9 above): the converter says a
    product reaches C++ in its `linking_<Product>()` settings, and `SwiftLinker` adds
    `-lc++` once. PLCrashReporter's `___gxx_personality_v0` and `___cxa_guard_*` resolve.
-3. **Nested public headers for Swift.** `SwiftCompiler`'s `inputModuleMapFolders` places
-   one level of the header folder (the product's module tree, a `FolderTreeBuilder`, is
-   whole), so a module map naming `header "sub/x.h"` or an umbrella directory with
-   subfolders fails from Swift while the C side builds.
-4. **No generated module map.** SwiftPM writes one for a C target whose public headers
-   have none — an umbrella `<Target>.h`, or the folder as an umbrella directory; the
-   converter wires the folder as it is, so such a target is not importable from Swift.
-   PLCrashReporter's `include/` is symlinks to its headers with `CrashReporter.h` as the
-   umbrella and no module map, so `import CrashReporter` fails with `no such module`. It
-   wants a node that writes the map beside the header folder's tree, which
-   `inputModuleMapFolders` (a `Folder` manifest) cannot take today.
+3. ~~**Nested public headers for Swift.**~~ Done (2026-09-28), with 4: a C target reaches
+   a Swift one as a tree of its headers at every depth, where `inputModuleMapFolders`
+   placed one level of the public folder.
+4. ~~**No generated module map.**~~ Done (2026-09-28). A C target reaches every Swift
+   target that depends on it, and its product's `modules_` tree, as one value:
+   `headers<Target>()`, a `TreeBuilder` of every header of the target that `exclude:`
+   leaves, at its path in the target under the target's name, with the public folder's
+   module map beside them (`SwiftCompiler`'s `moduleTrees`, which puts each folder of the
+   tree holding a `module.modulemap` on the import path). The whole target's headers and
+   not the public folder's alone, because a public header may reach back into the target
+   — NetNewsWire's `include/RSDatabaseObjC.h` is `#import "../FMDatabase.h"` — and
+   `exclude:` is honoured because Zip's excluded `minizip/module/module.modulemap` would
+   otherwise declare `Minizip` a second time. When the public folder holds no map, the one
+   SwiftPM writes is a `ModuleMapWriter` (`SemelSwift`, kind 39): a source like
+   `SettingsLiteral`, its properties the module's c99 name and `umbrellaHeader` or
+   `umbrellaDirectory`, relative to the folder it sits in. Which one follows SwiftPM's
+   `determineModuleMapType` over the folder's listing, which the converter already has
+   (`PackageClangTarget.moduleMap`): the folder's own `module.modulemap`; `<Module>.h`
+   with no folder beside it; `<Module>/<Module>.h` alone in the folder; else the folder
+   as an umbrella directory. SwiftPM's two refusals — an umbrella header with folders
+   beside it, a `<Module>` folder with company — get no map, and so no module, as there.
+   SwiftFormulaConverter v11. Pinned by `SwiftFormulaConverterTests` (the rule case by
+   case, PLCrashReporter's `CrashReporter.h`, Zip's `Minizip.h` under the Swift target
+   that excludes it, a `publicHeadersPath` with an umbrella, a map of the target's own)
+   and `ModuleMapWriterTests`; end to end by the `swift-c-package` fixture, whose `App`
+   imports `ObjCKit` (an umbrella in `include` reaching back with `../`), `Shapes` (an
+   umbrella in `publicHeadersPath: "public"`) and, through `Zipper`, `Squeeze` (an
+   umbrella directory, nested in `Zipper`'s folder, beside an excluded module map that
+   would break the build were it read).
 5. ~~**Assembly.**~~ — done 2026-09-28 (10 above): PLCrashReporter's
    `Source/PLCrashAsyncThread_current.S` compiles and defines
    `plcrash_async_thread_state_current` for its link. BoringSSL's generated `.S` files
@@ -508,10 +526,30 @@ first):
    costs wires, not correctness. A target at its package's root makes that the whole
    package: PLCrashReporter's preprocessors take its tests, tools, documentation and
    `.xcodeproj`, and the converter walks all of them for resources.
-7. **Objective-C without ARC.** SwiftPM compiles a C-family target's Objective-C with
-   `-fobjc-arc`; `ClangCompiler` passes no such flag (`SemelClang/.../ClangCompiler.swift`),
-   so ARC code compiles as manual reference counting and leaks — PLCrashReporter's `.m`
-   send no `release` at all. Wants the flag for `.m` and `.mm`, and a bump.
+7. ~~**Objective-C without ARC.**~~ Done (2026-09-28), with clang modules, which every
+   header of NetNewsWire's Objective-C targets needs (`@import Foundation;`). Both clang
+   stages read `objectiveCARC` and `modules` (`ClangLanguageFeatures`), and the
+   preprocessor `moduleName`; the node decides per file what each means, as it picks
+   `cStandard` or `cxxStandard`: `-fobjc-arc` for Objective-C and Objective-C++, and
+   `-fmodules` with `-fmodules-cache-path=.semel-derived/clang-module-cache` for every
+   language but C++ (SwiftPM's rule; the Darwin SDKs do not fully support modules in C++
+   mode), with `-fmodule-name` in the preprocessor so the target's own headers stay text.
+   Both stages need both: the preprocessor evaluates `__has_feature(objc_arc)` (FMDB's
+   retain macros) and loads the modules an `@import` names for their macros, and its
+   output keeps each import, so the compiler loads the modules again — from the SDK,
+   which is why `clang.compiler.sdkPath` is now a machine setting and is required when a
+   source loads modules. The module cache is a folder of the sandbox
+   (`ToolSandbox.derivedStateFolderName`): derived state that goes with the run, never an
+   input or an output, and the objects are byte-identical at two sandbox paths with `-g`.
+   The converter states the three as literals for a C target whose sources hold `.m` or
+   `.mm`, never a plain C one (11). With modules the objects autolink the frameworks they
+   import (`LC_LINKER_OPTION -framework Foundation`). ClangPreprocessor v4, ClangCompiler
+   v2, ClangIncludeFinder v4 (a quoted `#import` is listed as an `#include` is; an
+   `@import` names a module and is passed over). Pinned by `ClangPreprocessorTests`,
+   `ClangCompilerTests`, `ClangIncludeFinderTests` and `SwiftFormulaConverterTests`; end
+   to end by `swift-c-package`'s `ObjCKit`, whose header opens `@import Foundation;`,
+   whose source `#error`s without `__has_feature(objc_arc)` and synthesizes a `weak`
+   property, which only ARC can; its `App` says a weak reference clears when run.
 8. **No `SWIFTPM_MODULE_BUNDLE` for Objective-C.** SwiftPM generates a bundle accessor
    for a C-family target with resources; the converter builds the bundle (done 8) but
    generates no accessor, so a target that reads its bundle through the macro does not
@@ -523,6 +561,16 @@ first):
    C++ sources (9 above); a Swift target compiled with `.interoperabilityMode(.Cxx)`
    needs it too, and its `swiftSettings` are not read for it — nor is the mode passed to
    `swiftc` at all.
+11. **Modules for a target without Objective-C, and a dependency's module.** SwiftPM
+   enables clang modules for every C-family target on Darwin but C++ ones; the converter
+   enables them only for a target with Objective-C. With modules, `-E` turns an include of
+   a header another module map covers into `#pragma clang module import`, and the
+   compiler, which takes the preprocessed text alone, has no module map to load it from:
+   a plain C target including a dependency's public header (cmark-gfm-extensions over
+   cmark-gfm, whose `include` has a map) would stop compiling, and an Objective-C target
+   that includes a C dependency's header already would. NetNewsWire's two Objective-C
+   targets depend on nothing. Wants the compiler given the header trees the preprocessor
+   saw, or the two stages joined for a target with modules.
 
 **B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
 Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before

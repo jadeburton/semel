@@ -199,7 +199,7 @@ final class PrepareTests: XCTestCase {
 
     /// B-109. The machine file: every namespace's tool descriptor, and the machine settings
     /// the plugin declares for it — the compiler's SDK by name and identity, clang's by
-    /// path where the preprocessor and linker read it — and nothing of the project's.
+    /// path where the preprocessor, compiler and linker read it — and nothing of the project's.
     func test_theMachineConfigStatesTheToolsAndTheSDKFactsEachToolDeclares() throws {
         let config = lines(GeneratedFiles.machineConfig(platform: .iosSimulator, facts: facts(), namespaces: everyNamespace))
 
@@ -211,12 +211,13 @@ final class PrepareTests: XCTestCase {
         }
         XCTAssertTrue(config.contains("swift.packageReader.toolDescriptor.name=swift"), "got:\n\(config)")
         XCTAssertFalse(config.contains { $0.hasPrefix("swift.packageReader.sdk") }, "the reader declares no SDK")
-        for namespace in ["clang.linker", "clang.preprocessor"] {
+        // The compiler too: with modules it loads, from the SDK, the modules its
+        // preprocessed Objective-C still imports (B-77).
+        for namespace in ["clang.linker", "clang.preprocessor", "clang.compiler"] {
             XCTAssertTrue(config.contains("\(namespace).toolDescriptor.name=clang"), "got:\n\(config)")
             XCTAssertTrue(config.contains("\(namespace).sdkPath=/SDKs/iphonesimulator.sdk"), "got:\n\(config)")
         }
-        XCTAssertTrue(config.contains("clang.compiler.toolDescriptor.name=clang"), "got:\n\(config)")
-        XCTAssertFalse(config.contains { $0.hasPrefix("clang.compiler.sdkPath") }, "the compiler reads no SDK")
+        XCTAssertFalse(config.contains { $0.hasPrefix("clang.archiver.sdkPath") }, "the archiver reads no SDK")
         XCTAssertTrue(config.contains("apple.assetCatalogCompiler.toolDescriptor.name=actool"), "got:\n\(config)")
         XCTAssertTrue(config.contains("apple.stringCatalogCompiler.toolDescriptor.name=xcstringstool"), "got:\n\(config)")
         XCTAssertFalse(config.contains { $0.contains(".target=") || $0.contains("Standard=") },

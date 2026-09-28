@@ -46,13 +46,14 @@ public enum SemelClang {
         // compiler, preprocessor and linker run the one clang binary and the archiver runs
         // libtool; the include finder runs no tool. The preprocessor and the linker read
         // the SDK at `sdkPath`, a fact about the machine for a platform, so they declare it
-        // as one (B-109); the compiler takes the preprocessed source and the archiver takes
-        // objects, and neither reads an SDK.
-        ToolNamespaceRegistry.register(.init(namespace: ClangCompilerConfiguration.settingNamespace, toolName: "clang",
-                                             machineFileWriter: machineFileWriter))
+        // as one (B-109); so does the compiler, which takes preprocessed text but, with
+        // `modules`, loads the modules that text imports from the SDK (B-77). The archiver
+        // takes objects and reads no SDK.
         ToolNamespaceRegistry.register(.init(namespace: ClangArchiverConfiguration.settingNamespace, toolName: "libtool",
                                              machineFileWriter: machineFileWriter))
-        for namespace in [ClangPreprocessorConfiguration.settingNamespace, ClangLinkerConfiguration.settingNamespace] {
+        for namespace in [ClangPreprocessorConfiguration.settingNamespace,
+                          ClangCompilerConfiguration.settingNamespace,
+                          ClangLinkerConfiguration.settingNamespace] {
             ToolNamespaceRegistry.register(.init(namespace: namespace, toolName: "clang",
                                                  machineSettingKeys: ["sdkPath"],
                                                  machineSettings: { platform in

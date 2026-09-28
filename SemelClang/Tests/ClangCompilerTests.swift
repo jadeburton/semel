@@ -37,7 +37,8 @@ final class ClangCompilerTests: SemelClangTestCase {
                            target: String = "arm64-apple-macos14.0",
                            cStandard: String? = "c17",
                            cxxStandard: String? = nil,
-                           arguments: String? = nil) throws -> ProcessInput {
+                           arguments: String? = nil,
+                           otherSettings: [String: String] = [:]) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -48,6 +49,9 @@ final class ClangCompilerTests: SemelClangTestCase {
         if let cStandard   { configuration += "\ncStandard=\(cStandard)" }
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         if let arguments   { configuration += "\narguments=\(arguments)" }
+        for (key, value) in otherSettings.sorted(by: { $0.key < $1.key }) {
+            configuration += "\n\(key)=\(value)"
+        }
         return ProcessInput(inputValues: [
             ClangCompiler.configuration: ["configuration": .value(try configuration.intern())],
             ClangCompiler.input: [sourcePath: .value(try contents.intern())],
@@ -96,6 +100,49 @@ final class ClangCompilerTests: SemelClangTestCase {
 
         XCTAssertTrue(executor.lastArguments.contains("-fdebug-compilation-dir=\(ToolSandbox.canonicalRootName)"),
                       "\(executor.lastArguments)")
+    }
+
+    // MARK: - Modules and ARC (B-77)
+
+    // Preprocessed Objective-C with modules still says `@import Foundation;`: the imports
+    // survive `-E`, so the compiler loads the modules again, from the SDK, into a cache of
+    // its own inside the sandbox. ARC is a property of code generation, so the compiler
+    // needs it as much as the preprocessor does.
+
+    func test_anObjectiveCSourceWithModulesIsCompiledAgainstTheSDKWithARC() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m.p",
+                                                        otherSettings: ["modules": "true", "objectiveCARC": "true",
+                                                                        "sdkPath": "/SDKs/MacOSX.sdk"]))
+
+        let arguments = executor.lastArguments
+        XCTAssertTrue(arguments.contains("-fobjc-arc"), "\(arguments)")
+        XCTAssertTrue(arguments.contains("-fmodules"), "\(arguments)")
+        XCTAssertTrue(arguments.contains("-fmodules-cache-path=\(ToolSandbox.derivedStateFolderName)/clang-module-cache"),
+                      "\(arguments)")
+        XCTAssertEqual(arguments.firstIndex(of: "-isysroot").map { arguments[$0 + 1] }, "/SDKs/MacOSX.sdk")
+        // The target's own headers are already text in what the preprocessor handed on.
+        XCTAssertFalse(arguments.contains { $0.hasPrefix("-fmodule-name") }, "\(arguments)")
+    }
+
+    /// Without the SDK the compile would fail as `module 'Foundation' not found`, far from
+    /// the cause; a missing machine setting names itself and the command that writes it.
+    func test_modulesWithoutAnSDKPathFailNamingTheMachineSetting() throws {
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m.p",
+                                                                        otherSettings: ["modules": "true"]))) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("clang.compiler.sdkPath"), message)
+            XCTAssertTrue(message.contains("semel-clang"), message)
+        }
+    }
+
+    /// A C++ source loads no modules, so it needs no SDK, as ever.
+    func test_aCPlusPlusSourceLoadsNoModulesAndNeedsNoSDK() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/bridge.mm.p", cxxStandard: "c++17",
+                                                        otherSettings: ["modules": "true", "objectiveCARC": "true"]))
+
+        XCTAssertTrue(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-isysroot"), "\(executor.lastArguments)")
     }
 
     // MARK: - The language standard
