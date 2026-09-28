@@ -135,4 +135,26 @@ final class ProgressReportTests: SemelCoreTestCase {
 
         XCTAssertEqual(log.progress, [])
     }
+
+    /// A node with no path of its own is named by the file on its `input` port, as a
+    /// compiler is by the source it compiles; a wire named anything else names nothing.
+    func test_aNodeWithNoPathIsNamedByItsInputFile() async throws {
+        let input = "SettingsLiteral(role: 'source').output"
+        _ = try GraphSpecNode.parse(input).findOrCreateMatchingNode()
+        engine.signalWorkAvailable()
+        await engine.waitUntilIdle()
+        log.clear()
+
+        engine.beginBatch()
+        _ = try GraphSpecNode.parse("TimedNode(label: 'named', seconds: '0.05', input: ['input:/src/a.c': \(input)]).output")
+            .findOrCreateMatchingNode()
+        _ = try GraphSpecNode.parse("TimedNode(label: 'unnamed', seconds: '0.05', input: ['in': \(input)]).output")
+            .findOrCreateMatchingNode()
+        engine.signalWorkAvailable()
+        engine.endBatch()
+        await engine.waitUntilIdle()
+
+        let names = Set(log.progress.flatMap(\.running).map(\.name))
+        XCTAssertEqual(names, ["input:/src/a.c", ""])
+    }
 }

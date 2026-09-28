@@ -37,9 +37,10 @@ func main() throws {
         FileHandle.standardError.write(Data("semel: \(error)\n".utf8))
         exit(1)
     }
-    // The progress line is the terminal's: drawn while a command waits for a settle when
-    // standard output is one, never into a pipe (B-95).
-    let interpreter = CommandInterpreter(connection: connection, showsProgress: ProgressPolicy.showsInThisProcess())
+    // The progress indicator is the terminal's: drawn while a command waits for a settle
+    // when standard output is one, never into a pipe; the dashboard at `SEMEL_PROGRESS=full`
+    // (B-95).
+    let interpreter = CommandInterpreter(connection: connection, progress: ProgressPolicy.modeInThisProcess())
 
     let server: (serverVersion: String, databasePath: String)
     do {

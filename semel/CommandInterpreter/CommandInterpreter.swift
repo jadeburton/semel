@@ -42,7 +42,8 @@ public final class CommandInterpreter: CommandContext {
     /// Where lines go: the terminal, unless a test wants to read them.
     public var output: (String) -> Void = { print($0) }
 
-    /// The progress line, drawn while a command of this client waits for a settle (B-95).
+    /// The progress line, or the dashboard, drawn while a command of this client waits for
+    /// a settle (B-95).
     /// Every line the interpreter prints steps around it, so a notice or an error report
     /// arriving mid-wait lands above it rather than through it.
     private let indicator: IndicatorLine
@@ -175,26 +176,26 @@ public final class CommandInterpreter: CommandContext {
         return map
     }()
 
-    /// `showsProgress` is the terminal's decision, made by `main` from
-    /// `ProgressPolicy.showsInThisProcess()`; false by default so that a test's output is
-    /// the lines and nothing else.
+    /// `progress` is the terminal's decision, made by `main` from
+    /// `ProgressPolicy.modeInThisProcess()`; off by default so that a test's output is the
+    /// lines and nothing else.
     public convenience init(connection: any SemelConnection,
                             baseDirectory: String = FileManager.default.currentDirectoryPath,
-                            showsProgress: Bool = false) {
+                            progress: ProgressPolicy.Mode = .off) {
         self.init(connection: connection,
                   baseDirectory: baseDirectory,
                   plugins: [NavigationPlugin(), FilePlugin(), EnginePlugin(), SessionPlugin()],
-                  showsProgress: showsProgress)
+                  progress: progress)
     }
 
     required init(connection: any SemelConnection,
                   baseDirectory: String,
                   plugins: [any CommandPlugin],
-                  showsProgress: Bool = false) {
+                  progress: ProgressPolicy.Mode = .off) {
         self.connection    = connection
         self.baseDirectory = baseDirectory
         self.plugins       = plugins
-        self.indicator     = IndicatorLine(enabled: showsProgress)
+        self.indicator     = IndicatorLine(mode: progress)
     }
 
     // MARK: - Handshake
@@ -401,7 +402,9 @@ public final class CommandInterpreter: CommandContext {
             HelpEntry(verbs: ["build"], usage: "build <folder> [--into <dir>] [--no-follow]",
                       description: "push the folder, wait, report; push what its formula needs from the tree; "
                                  + "export the products, to semel-out/<folder> under the base unless --into says where"),
-            HelpEntry(verbs: ["wait"], usage: "wait", description: "block until the build has settled"),
+            HelpEntry(verbs: ["wait"], usage: "wait",
+                      description: "block until the build has settled; at a terminal a line shows where it stands, "
+                                 + "and SEMEL_PROGRESS=full lists the running nodes under it"),
             HelpEntry(verbs: ["watch"], usage: "watch",
                       description: "show where the settle stands until a key is pressed or the settle ends; "
                                  + "a key leaves it running and says where it stood"),

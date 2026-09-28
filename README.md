@@ -56,7 +56,9 @@ once — every running tool is a process — and is the core count unless set. T
 prints all three. While `wait`, `build` or `commit` blocks at a terminal, one line shows
 where the settle stands — nodes running, nodes pending, nodes done — redrawn in place and
 erased before the settle summary prints; `watch` shows it after a bare `push` until a
-key is pressed. A pipe never sees it, and `SEMEL_PROGRESS=0` turns it off at a terminal. `help` lists the commands at the prompt:
+key is pressed. `SEMEL_PROGRESS=full` makes it a dashboard: the same line, then one line
+per node computing now — its type, its name, how long it has been running.
+A pipe never sees either, and `SEMEL_PROGRESS=0` turns it off at a terminal. `help` lists the commands at the prompt:
 
 ### Navigation
 

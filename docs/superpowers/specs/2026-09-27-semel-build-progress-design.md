@@ -263,5 +263,48 @@ Built as designed, with these particulars:
   `settled`, which `settleWaitBegan` now hands the line so that a `wait` or a `watch`
   begun mid-settle draws at once rather than at the next node's start or finish. No
   one-letter alias: `w` is as much `wait` as `watch`.
-- **Not built:** the dashboard and a status line at an idle prompt, as the *Later*
-  section says. B-95's residual in `FUTURE.md` names both.
+- **The dashboard** (2026-09-28) is a size of the one setting, not a setting of its own:
+  `SEMEL_PROGRESS=full` selects it, unset or `1` (or anything unknown) keeps the line,
+  `0` turns both off; `ProgressPolicy.Mode` is `off`, `line` or `dashboard`, decided by
+  `modeInThisProcess()` over the same terminal test as before. The frame is the totals
+  line and then one line per node in `running`, in start order:
+  `   ClangCompiler  input:/cpp/main.cpp.p  4.2 s` — the type padded to the longest type
+  shown, the name padded to the longest name and cut from the left with `…` to fit (a
+  path's end is what tells two compiles apart), the elapsed time right-aligned, tenths
+  under a minute and the line's `1m 32s` above. `ProgressDashboardRenderer` is pure over
+  a record, the per-node times and a `TerminalSize`, which is `ioctl(TIOCGWINSZ)` read
+  once per drawing, 80 by 24 when standard output will not say.
+- **Each node's time is the client's.** The record carries no start times and no ids, so
+  `ActiveNodeClock` stamps a node with the time of the first record naming it, keyed by
+  type, name and how many of that type and name precede it in the list (two unnamed
+  twins are two clocks), and drops the stamp of a node a record no longer names. The
+  stamps are taken from every record, waiting or not, so a node already running when a
+  `wait` or a `watch` begins shows its real time; line mode keeps none.
+- **N lines in place.** The indicator counts the rows its last frame drew. Every redraw
+  is one write: carriage return and erase the row the cursor is on, then up-and-erase
+  (`ESC[1A ESC[2K`) once for each further row, then the new frame, rows joined by
+  newlines and no newline after the last, so a smaller frame leaves nothing of a larger
+  one. `interrupting` and `end` erase every row the same way. With one row the sequence
+  is the line's `\r ESC[2K`, so the line is the dashboard's one-row case, not a second
+  code path. Two things would break the count, and both are prevented: a row wider than
+  the terminal wraps into two, so every row is cut to the width less one column (the
+  last column leaves some terminals with a wrap pending), counting `⏳` as the two
+  columns it takes; and a frame taller than the screen scrolls its first rows out of the
+  cursor-up's reach, so the frame is at most the height less two rows, the last node
+  line giving way to `and N more`. The totals line, too wide, drops the split of what is
+  done before it drops the clock — at 80 columns a large build's line needs it — which
+  the line mode now shares, since a wrapped line there left a row behind on every redraw.
+- **A name for a node with no path.** Most running nodes had none: a report names a node
+  by its `path` or its project file, and a compiler has neither, so the first dashboard
+  was a column of `ClangCompiler`s with nothing after them. The engine's progress name
+  now falls back to the path-named wire on the node's `input` port — the source a
+  preprocessor reads, the `.p` a compiler compiles — as the event section above first
+  proposed; a node whose inputs are named otherwise (`ClangIncludeFinder`'s
+  `sourceFile`, a linker's object files, a Swift compiler's folder) still has none.
+  Error labels are unchanged.
+- **Tried by hand** under `script` on `EndToEnd/Fixtures/cpp`, 80 by 24 and 46 by 6: the
+  log holds frames of up to nine rows erased with the matching run of up-and-erase
+  sequences, the small terminal's frames stop at four rows with `and 5 more`, and the
+  final screen, replayed through a minimal terminal, is byte for byte the piped output.
+- **Not built:** a status line at an idle prompt, as the *Later* section says. B-95's
+  residual in `FUTURE.md` names it.

@@ -564,7 +564,7 @@ One binary, three modes, sharing a wire protocol:
 
 ### Command line
 
-**B-95** `open` `For Fable Only` — **Build progress: the dashboard, and a line at the prompt.**
+**B-95** `open` `For Fable Only` — **Build progress: a line at the prompt.**
 Shipped: a `progress` event from the engine — the settle tally's running totals, the
 pending count, the nodes computing now by type and name — drawn by the client as one
 line redrawn in place while it is blocked in `wait`, `build` or the `commit` that ends a
@@ -572,13 +572,14 @@ batch, erased before the command prints. On at a terminal unless `SEMEL_PROGRESS
 never into a pipe. Design and particulars:
 `docs/superpowers/specs/2026-09-27-semel-build-progress-design.md`. What remains:
 
-1. **The dashboard.** The active nodes listed, one line per job, each with its elapsed
-   time. The event already carries the list, so this is a renderer that owns N lines —
-   which is where terminal drawing goes wrong, and why the one line went first.
+1. ~~**The dashboard**~~ — done 2026-09-28: `SEMEL_PROGRESS=full` draws the line and
+   under it one line per running node — type, name cut from the left to fit, elapsed
+   time stamped by the client from the first record naming the node — erasing every
+   row it drew before each redraw, in one write, and capped at the terminal's height
+   less two with an `and N more`; see the design's "As built". Item 3 remains.
 2. ~~**A `watch` verb**~~ — done 2026-09-28: `watch` shows the line until a key is
    pressed, which leaves the settle running and says where it stood, or until the settle
-   ends, which prints as a `wait` would; see the design's "As built". Items 1 and 3
-   remain.
+   ends, which prints as a `wait` would; see the design's "As built".
 3. **A status line at an idle prompt**, as `cargo` and `ninja` draw above nothing. The
    prompt is `readLine()` with no line editor, so this needs the client to own its input
    line — raw mode, cursor save and restore, a width to track — a project of its own.
