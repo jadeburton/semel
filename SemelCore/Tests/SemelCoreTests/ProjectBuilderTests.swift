@@ -189,6 +189,108 @@ final class ProjectBuilderTests: SemelCoreTestCase {
         XCTAssertTrue(spec.contains("OutputFile(path: 'output:/repo/x', input: ["), spec)
     }
 
+    // MARK: - Nested source folders (B-108)
+
+    private func manifest(_ path: String, files: [String] = [], folders: [String] = []) throws -> NodeValue {
+        let entries = files.map { FolderManifestEntry(name: $0, isFolder: false, isPinned: true) }
+                    + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true) }
+        return .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
+    }
+
+    private func process(formula: String, folders: [String: NodeValue]) throws -> ProcessOutput {
+        let node = try makeBuilderNode(properties: ["outputFolder": "input:/repo"])
+        return try ProjectBuilder(thisNode: node).process(input: ProcessInput(inputValues: [
+            ProjectBuilder.projectFileInputPort:  ["input:/repo/semel.fmla": .value(try formula.intern())],
+            ProjectBuilder.productInputPort:      [:],
+            ProjectBuilder.foldersInputPort:      folders,
+            ProjectBuilder.graphImportsInputPort: [:],
+            ProjectBuilder.includesInputPort:     [:],
+        ]))
+    }
+
+    /// The paths a product's for-each reached, read back from the `StaticFile`s it wired.
+    private func sourcePaths(_ output: ProcessOutput) throws -> [String] {
+        let spec = try XCTUnwrap(output.inputWireSpecs[ProjectBuilder.productInputPort]?["output:/repo/x"])
+        return (spec.inputs.first?.wires.first?.node.inputs.first?.wires ?? []).map(\.name)
+    }
+
+    private let recursiveFormula = """
+        product 'x' = SampleTool(configuration: [{f: <src/**/*.c>} "%%f%%": StaticFile(path: f).output]).output
+        """
+
+    /// The tree the builder walks: `src` holds a file and two folders, one of them hidden;
+    /// `src/lib` holds a file and a folder, which holds one more.
+    private func sourceTree() throws -> [String: NodeValue] {
+        [
+            "input:/repo/src":          try manifest("input:/repo/src", files: ["main.c", "notes.txt"], folders: ["lib", ".cache"]),
+            "input:/repo/src/lib":      try manifest("input:/repo/src/lib", files: ["util.c", ".hidden.c"], folders: ["deep"]),
+            "input:/repo/src/lib/deep": try manifest("input:/repo/src/lib/deep", files: ["core.c"]),
+        ]
+    }
+
+    /// Level by level: each pass demands the subfolders the manifests so far reveal and
+    /// publishes nothing while any of them is on its way, so a product never links a
+    /// partial file set. A hidden folder is not entered.
+    func test_aDoubleStarPatternDemandsItsSubfoldersLevelByLevel() throws {
+        let tree = try sourceTree()
+
+        let first = try process(formula: recursiveFormula, folders: [:])
+        XCTAssertEqual(first.inputWireSpecs[ProjectBuilder.foldersInputPort]?.keys.sorted(), ["input:/repo/src"])
+        XCTAssertEqual(first.inputWireSpecs[ProjectBuilder.productInputPort], [:])
+
+        let second = try process(formula: recursiveFormula, folders: ["input:/repo/src": try XCTUnwrap(tree["input:/repo/src"])])
+        XCTAssertEqual(second.inputWireSpecs[ProjectBuilder.foldersInputPort]?.rendered,
+                       ["input:/repo/src":     "Folder(path: 'input:/repo/src').manifest",
+                        "input:/repo/src/lib": "Folder(path: 'input:/repo/src/lib').manifest"])
+        XCTAssertEqual(second.inputWireSpecs[ProjectBuilder.productInputPort], [:], "src/lib is still on its way")
+
+        let third = try process(formula: recursiveFormula, folders: tree.filter { $0.key != "input:/repo/src/lib/deep" })
+        XCTAssertEqual(third.inputWireSpecs[ProjectBuilder.foldersInputPort]?.keys.sorted(),
+                       ["input:/repo/src", "input:/repo/src/lib", "input:/repo/src/lib/deep"])
+        XCTAssertEqual(third.inputWireSpecs[ProjectBuilder.productInputPort], [:], "src/lib/deep is still on its way")
+    }
+
+    /// Once the walk has arrived: every `.c` at any depth, `src` itself included, sorted,
+    /// and no hidden file or anything in a hidden folder.
+    func test_aDoubleStarPatternExpandsOverTheWholeTreeOnceItHasArrived() throws {
+        let output = try process(formula: recursiveFormula, folders: try sourceTree())
+
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.foldersInputPort]?.keys.sorted(),
+                       ["input:/repo/src", "input:/repo/src/lib", "input:/repo/src/lib/deep"])
+        XCTAssertEqual(try sourcePaths(output),
+                       ["input:/repo/src/lib/deep/core.c", "input:/repo/src/lib/util.c", "input:/repo/src/main.c"])
+    }
+
+    /// `*` stays one level: the same tree under `src/*.c` is `src`'s own `.c` files, and
+    /// no subfolder is demanded.
+    func test_aSingleStarPatternReadsOneFolderAndDemandsNoOther() throws {
+        let output = try process(formula: recursiveFormula.replacingOccurrences(of: "src/**/*.c", with: "src/*.c"),
+                                 folders: try sourceTree())
+
+        XCTAssertEqual(output.inputWireSpecs[ProjectBuilder.foldersInputPort]?.keys.sorted(), ["input:/repo/src"])
+        XCTAssertEqual(try sourcePaths(output), ["input:/repo/src/main.c"])
+    }
+
+    /// A trailing `**` is every file below, whatever its name.
+    func test_aTrailingDoubleStarIsEveryFileBelow() throws {
+        let output = try process(formula: recursiveFormula.replacingOccurrences(of: "src/**/*.c", with: "src/**"),
+                                 folders: try sourceTree())
+
+        XCTAssertEqual(try sourcePaths(output),
+                       ["input:/repo/src/lib/deep/core.c", "input:/repo/src/lib/util.c",
+                        "input:/repo/src/main.c", "input:/repo/src/notes.txt"])
+    }
+
+    /// `except` goes through the same expander, walk included: a subfolder left out by a
+    /// pattern of its own.
+    func test_exceptWithADoubleStarLeavesOutASubfolder() throws {
+        let output = try process(formula: recursiveFormula.replacingOccurrences(of: "<src/**/*.c>",
+                                                                                with: "<src/**/*.c> except <src/lib/deep/**>"),
+                                 folders: try sourceTree())
+
+        XCTAssertEqual(try sourcePaths(output), ["input:/repo/src/lib/util.c", "input:/repo/src/main.c"])
+    }
+
     // MARK: - Tree products (B-63)
 
     /// The tree-valued node here is a TreeMerger, so the spec parses without a real

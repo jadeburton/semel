@@ -7,6 +7,9 @@ import SemelNodeKit
 
 public struct ProjectBuilder: Node {
     public static let kind: UInt = 6
+    /// 2: a `**` pattern walks down and demands the subfolders it reaches, and a capture
+    /// after a `**` reads the file's own name (B-108).
+    public static let implementationVersion = 2
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
@@ -69,27 +72,35 @@ public struct ProjectBuilder: Node {
         // folder needed — two children of one folder with the same name.
         let outputFolder = thisNode.properties[Self.outputFolderProperty].map { Path($0) } ?? parentFolder
 
-        // Decode any folder manifests already wired to our 'folders' port.
+        // The folder manifests already wired to our 'folders' port, keyed by folder path:
+        // each pattern's own folder and every subfolder a `**` walk has demanded below it.
         // On the first run these are empty; subsequent runs have real data.
-        let folderManifests = decodeFolderManifests(input.inputValues[Self.foldersInputPort] ?? [:])
+        let folderManifests = Dictionary(uniqueKeysWithValues: FolderTreeWalk
+            .manifests(in: input, port: Self.foldersInputPort)
+            .map { ($0.key, $0.manifest) })
         let treeManifests   = decodeTreeManifests(input.inputValues[Self.treesInputPort] ?? [:])
 
-        // Record every folder path the formula references via a wildcard and every file
-        // path it references via import(), so we can wire them and be rescheduled
-        // whenever their contents change.
-        final class GlobRecord   { var folderPaths = Set<String>() }
+        // Record every folder path the formula references via a wildcard, every subfolder
+        // a pattern reaches below one, and every file path it references via import(), so
+        // we can wire them and be rescheduled whenever their contents change.
+        final class GlobRecord {
+            var folderPaths    = Set<String>()
+            var subfolderSpecs = [String: GraphSpecNode]()
+        }
         final class ImportRecord { var filePaths = Set<String>(); var anyMissing = false }
 
         let record       = GlobRecord()
         let importRecord = ImportRecord()
-        let capture      = self   // value-type copy for use inside @escaping closures
 
         let wildcardExpander: (String) throws -> [String] = { pattern in
-            let folder = capture.extractFolderPath(fromGlobPattern: pattern)
-            if !folder.isEmpty { record.folderPaths.insert(folder) }
-            return capture.wildcardMatch(pattern: pattern,
-                                     folderPath: folder,
-                                     manifests: folderManifests)
+            let folder = Self.extractFolderPath(fromGlobPattern: pattern)
+            guard !folder.isEmpty else {
+                return []
+            }
+            record.folderPaths.insert(folder)
+            let expansion = Self.wildcardMatch(pattern: pattern, folderPath: folder, manifests: folderManifests)
+            record.subfolderSpecs.merge(expansion.subfolderSpecs) { existing, _ in existing }
+            return expansion.paths
         }
 
         let fileReader: (String) throws -> String? = { path in
@@ -138,7 +149,10 @@ public struct ProjectBuilder: Node {
         // The tree-valued expressions behind tree products, keyed by the product folder.
         var treeSpecs = [String: GraphSpecNode]()
 
-        let wildcardsReady   = record.folderPaths.isEmpty || !folderManifests.isEmpty
+        // A `**` walk is finished when every subfolder it demanded has arrived: until then a
+        // pattern's expansion is missing the files below the folders still on their way.
+        let walksFinished  = record.subfolderSpecs.keys.allSatisfy { folderManifests[$0] != nil }
+        let wildcardsReady = (record.folderPaths.isEmpty || !folderManifests.isEmpty) && walksFinished
         let importsReady = !importRecord.anyMissing
         let includesReady = !includeRecord.anyMissing
 
@@ -199,9 +213,10 @@ public struct ProjectBuilder: Node {
             }
         }
 
-        // Wire each wildcard-referenced folder's manifest into our 'folders' port so we
-        // are automatically rescheduled whenever the folder's contents change.
-        var folderSpecs = [String: GraphSpecNode]()
+        // Wire each wildcard-referenced folder's manifest, and each subfolder's a `**` walk
+        // reached below one, into our 'folders' port so we are automatically rescheduled
+        // whenever a folder's contents change.
+        var folderSpecs = record.subfolderSpecs
         for folderPath in record.folderPaths {
             folderSpecs[folderPath] = .folderManifest(at: folderPath)
         }
@@ -240,32 +255,15 @@ public struct ProjectBuilder: Node {
     /// first wildcard character, trimmed to the last '/'.
     /// e.g.  "input:/src/*.c"  →  "input:/src"
     ///        "input:/**/*.c"  →  "input:"
-    private func extractFolderPath(fromGlobPattern pattern: String) -> String {
-        guard let wildcardIdx = pattern.firstIndex(where: { $0 == "*" || $0 == "?" }) else {
+    static func extractFolderPath(fromGlobPattern pattern: String) -> String {
+        guard let wildcardIndex = pattern.firstIndex(where: { $0 == "*" || $0 == "?" }) else {
             return ""
         }
-        let prefix = String(pattern[..<wildcardIdx])
+        let prefix = String(pattern[..<wildcardIndex])
         if let lastSlash = prefix.lastIndex(of: "/") {
             return String(prefix[..<lastSlash])
         }
         return ""
-    }
-
-    /// Decode the `FolderManifest` values arriving on the 'folders' dynamic port.
-    private func decodeFolderManifests(_ inputs: [String: NodeValue]) -> [String: FolderManifest] {
-        var result: [String: FolderManifest] = [:]
-
-        for (folderPath, nodeValue) in inputs {
-
-            guard let json = try? nodeValue.expectValue().resolveAsString(),
-                  let manifest: FolderManifest = try? TypeRegistry.decodeAndCast(encodedJSON: json) else {
-
-                continue
-            }
-
-            result[folderPath] = manifest
-        }
-        return result
     }
 
     /// Decode the `TreeManifest` values arriving on the 'trees' dynamic port. A tree that
@@ -287,28 +285,51 @@ public struct ProjectBuilder: Node {
         return result
     }
 
-    /// Return the sorted list of logical paths that satisfy `pattern`, matched
-    /// against the immediate pinned-file children of the relevant folder manifest.
-    private func wildcardMatch(
-        pattern: String,
-        folderPath: String,
-        manifests: [String: FolderManifest]
-    ) -> [String] {
-        guard !folderPath.isEmpty, let manifest = manifests[folderPath] else {
-            return []
+    /// What one pattern expands to on this pass: the paths it matched, and the subfolders
+    /// below its folder that it can reach, whose manifests it needs before the paths are
+    /// the whole answer.
+    struct WildcardExpansion {
+        let paths:          [String]
+        let subfolderSpecs: [String: GraphSpecNode]
+    }
+
+    /// The pinned files below `folderPath` whose path relative to it matches the rest of
+    /// `pattern`, as full paths, sorted.
+    ///
+    /// What follows `folderPath` is matched segment by segment (`WildcardPath`): `*` and
+    /// `?` stay inside one name, and a `**` segment stands for zero or more folders, so
+    /// `src/**/*.c` matches `src/a.c` and `src/lib/a.c` and `src/**` every file below
+    /// `src`. A pattern whose rest is one name — `src/*.c` — reads `src`'s manifest and no
+    /// other; one that goes deeper walks down, one level per pass, into the subfolders it
+    /// can reach, never into a hidden one, as a hidden file is never matched either. The
+    /// folder the pattern names before its first wildcard is taken as written, hidden or not.
+    static func wildcardMatch(pattern: String,
+                              folderPath: String,
+                              manifests: [String: FolderManifest]) -> WildcardExpansion {
+        let base         = Path(folderPath)
+        let restSegments = Path(String(pattern.dropFirst(folderPath.count + 1))).segments
+
+        let subfolderSpecs = FolderTreeWalk.subfolderSpecs(below: folderPath, arrived: manifests) { subfolder in
+            guard let relative = Path(subfolder).relative(to: base),
+                  relative.lastComponent?.hasPrefix(".") == false else {
+                return false
+            }
+            return WildcardPath.canMatchBelow(pattern: restSegments, folder: relative.segments)
         }
 
-        // The segment pattern is whatever follows "folderPath/" in the full pattern.
-        let tailPattern = String(pattern.dropFirst(folderPath.count + 1))
-
-        return manifest.entries
-            .filter { entry in
-                !entry.name.hasPrefix(".")
-                    && !entry.isFolder
-                    && entry.isPinned
-                    && WildcardSegment.matches(pattern: tailPattern, name: entry.name)
+        var paths: [String] = []
+        for folder in [folderPath] + subfolderSpecs.keys.sorted() {
+            guard let manifest = manifests[folder],
+                  let relativeFolder = Path(folder).relative(to: base) else {
+                continue
             }
-            .map { "\(folderPath)/\($0.name)" }
-            .sorted()
+            for entry in manifest.entries where !entry.isFolder && entry.isPinned && !entry.name.hasPrefix(".") {
+                let relative = relativeFolder / entry.name
+                if WildcardPath.matches(pattern: restSegments, path: relative.segments) {
+                    paths.append((Path(folder) / entry.name).string)
+                }
+            }
+        }
+        return WildcardExpansion(paths: paths.sorted(), subfolderSpecs: subfolderSpecs)
     }
 }
