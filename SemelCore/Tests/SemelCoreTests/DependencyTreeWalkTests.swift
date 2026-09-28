@@ -35,25 +35,26 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     private var database: DatabaseLayer { engine.database }
 
     /// A node with no file system behind it, so a test graph is exactly the nodes it asks
-    /// for.
-    private func makeNode(_ role: String) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                  properties: ["role": role], identity: nil).requireID()
+    /// for, reading `inputs` by wire name.
+    private func node(_ role: String, reading inputs: [String: GraphSpecNode] = [:]) -> GraphSpecNode {
+        GraphSpecNode(TreeMerger.self, properties: ["role": role],
+                      inputs: inputs.isEmpty ? [:] : [TreeMerger.inputPort: inputs]).port(TreeMerger.outputPort)
     }
 
-    private func connect(_ from: ObjectID, to consumer: ObjectID, name: String) throws {
-        try Wire.connectWire(database: database,
-                             fromNodeID: from,
-                             fromSymbolID: TreeMerger.outputPort.asSymbolID(),
-                             toNodeID: consumer,
-                             toSymbolID: TreeMerger.inputPort.asSymbolID(),
-                             name: name.asSymbolID())
+    /// The node a tree describes, made as the engine makes it, with every node below it.
+    private func make(_ specNode: GraphSpecNode) throws -> ObjectID {
+        try specNode.findOrCreateMatchingNode().fromNode.requireID()
     }
 
     /// The graph's root for the walk: `debug` starts at the project finder, so a test
     /// graph reaches it by wiring its sink there.
     private func attachToProjectFinder(_ nodeID: ObjectID, name: String) throws {
-        try connect(nodeID, to: try engine.projectFinder.requireID(), name: name)
+        try Wire.connectWire(database: database,
+                             fromNodeID: nodeID,
+                             fromSymbolID: TreeMerger.outputPort.asSymbolID(),
+                             toNodeID: try engine.projectFinder.requireID(),
+                             toSymbolID: TreeMerger.inputPort.asSymbolID(),
+                             name: name.asSymbolID())
     }
 
     private func walkTheTree() -> (lines: [String], walk: DependencyTreeWalk) {
@@ -72,14 +73,13 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     /// once; the other 199 encounters are references to it.
     func test_aSharedDependencyIsRenderedOnceAndReferencedAfterwards() throws {
         let consumerCount = 200
-        let shared = try makeNode("shared")
-        let sink   = try makeNode("sink")
-
+        let sharedTree = node("shared")
+        var consumers: [String: GraphSpecNode] = [:]
         for index in 0..<consumerCount {
-            let consumer = try makeNode("consumer\(index)")
-            try connect(shared, to: consumer, name: "shared\(index)")
-            try connect(consumer, to: sink, name: "consumer\(index)")
+            consumers["consumer\(index)"] = node("consumer\(index)", reading: ["shared\(index)": sharedTree])
         }
+        let sink   = try make(node("sink", reading: consumers))
+        let shared = try make(sharedTree)
         try attachToProjectFinder(sink, name: "sink")
 
         let (lines, walk) = walkTheTree()
@@ -101,23 +101,18 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     /// levels, which is what a prepared app's graph looks like.
     func test_theWalkCostsNodesAndWiresRatherThanPaths() throws {
         let levels = 10
-        var current = try makeNode("level0")
+        var current = node("level0")
         var nodeCount = 1
         var wireCount = 0
 
         for level in 1...levels {
-            let left  = try makeNode("left\(level)")
-            let right = try makeNode("right\(level)")
-            let join  = try makeNode("join\(level)")
-            try connect(current, to: left,  name: "left\(level)")
-            try connect(current, to: right, name: "right\(level)")
-            try connect(left,  to: join, name: "joinLeft\(level)")
-            try connect(right, to: join, name: "joinRight\(level)")
-            current    = join
+            let left  = node("left\(level)", reading: ["left\(level)": current])
+            let right = node("right\(level)", reading: ["right\(level)": current])
+            current    = node("join\(level)", reading: ["joinLeft\(level)": left, "joinRight\(level)": right])
             nodeCount += 3
             wireCount += 4
         }
-        try attachToProjectFinder(current, name: "top")
+        try attachToProjectFinder(try make(current), name: "top")
         wireCount += 1
 
         let (lines, walk) = walkTheTree()
@@ -140,29 +135,25 @@ final class DependencyTreeWalkTests: SemelCoreTestCase {
     func test_describesAThousandNodeGraphInATimeAPromptCanWaitFor() throws {
         let width  = 113
         let layers = 9
-        let shared = try makeNode("sharedHeader")
+        let shared = node("sharedHeader")
 
-        var previousLayer = [ObjectID]()
+        var previousLayer = [GraphSpecNode]()
         for layer in 0..<layers {
-            var thisLayer = [ObjectID]()
+            var thisLayer = [GraphSpecNode]()
             for index in 0..<width {
-                let node = try makeNode("layer\(layer)-\(index)")
-                if layer == 0 {
-                    try connect(shared, to: node, name: "header")
-                } else {
-                    try connect(previousLayer[index], to: node, name: "left")
-                    try connect(previousLayer[(index + 1) % width], to: node, name: "right")
-                }
-                thisLayer.append(node)
+                let inputs = layer == 0
+                    ? ["header": shared]
+                    : ["left": previousLayer[index], "right": previousLayer[(index + 1) % width]]
+                thisLayer.append(node("layer\(layer)-\(index)", reading: inputs))
             }
             previousLayer = thisLayer
         }
 
-        let sink = try makeNode("sink")
-        for (index, node) in previousLayer.enumerated() {
-            try connect(node, to: sink, name: "top\(index)")
+        var top: [String: GraphSpecNode] = [:]
+        for (index, layerNode) in previousLayer.enumerated() {
+            top["top\(index)"] = layerNode
         }
-        try attachToProjectFinder(sink, name: "sink")
+        try attachToProjectFinder(try make(node("sink", reading: top)), name: "sink")
 
         let nodeCount = try database.node.selectAll().count
         let wireCount = try database.wire.selectAll().count

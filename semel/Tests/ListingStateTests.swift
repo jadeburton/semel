@@ -78,25 +78,19 @@ final class ListingStateTests: XCTestCase {
         return context.messages
     }
 
-    private func connect(_ from: NodeRecord, _ fromPort: String,
-                         to: NodeRecord, _ toPort: String, named name: String) throws {
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try from.requireID(),
-                             fromSymbolID: fromPort.asSymbolID(),
-                             toNodeID: try to.requireID(),
-                             toSymbolID: toPort.asSymbolID(),
-                             name: name.asSymbolID())
+    /// `OutputFile(path:, input: ['product': <input>])`.
+    private func product(at path: String, reading input: GraphSpecNode) -> GraphSpecNode {
+        GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: path],
+                      inputs: [OutputFile.inputPort: ["product": input]])
     }
 
     /// A product under `output:/made` reading one source, and the source it reads. Left as a
     /// source nobody has pushed, which is the state a formula naming a file leaves behind.
     @discardableResult
     private func wireProduct(_ name: String) throws -> NodeRecord {
-        let (source, _)  = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')")
-            .findOrCreateMatchingNode()
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/made/\(name)')")
-            .findOrCreateMatchingNode()
-        try connect(source, StaticFile.outputPort, to: product, OutputFile.inputPort, named: "product")
+        let sourceTree  = GraphSpecNode.staticFile(at: "input:/stand-in/\(name)")
+        let (source, _) = try sourceTree.findOrCreateMatchingNode()
+        _ = try product(at: "output:/made/\(name)", reading: sourceTree).findOrCreateMatchingNode()
         engine.waitUntilIdleBlocking()
         return source
     }
@@ -142,13 +136,9 @@ final class ListingStateTests: XCTestCase {
     /// it is wired straight to the source. One user action, one word, whatever the distance.
     func test_aProductBehindABuilderWhoseSourceWasRemovedIsListedAsFailed() throws {
         interpreter.handleCommand("push src")
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/src/main.c')")
-            .findOrCreateMatchingNode()
-        let (builder, _) = try GraphSpecNode.parse("TreeBuilder()").findOrCreateMatchingNode()
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/made/bundle.tree')")
-            .findOrCreateMatchingNode()
-        try connect(source, StaticFile.outputPort, to: builder, TreeBuilder.inputPort, named: "main.c")
-        try connect(builder, TreeBuilder.outputPort, to: product, OutputFile.inputPort, named: "product")
+        let builder = GraphSpecNode(TreeBuilder.self, inputs: [TreeBuilder.inputPort: ["main.c": .staticFile(at: "input:/src/main.c")]])
+            .port(TreeBuilder.outputPort)
+        _ = try product(at: "output:/made/bundle.tree", reading: builder).findOrCreateMatchingNode()
         engine.waitUntilIdleBlocking()
 
         interpreter.handleCommand("rm src/main.c")

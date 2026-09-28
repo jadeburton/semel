@@ -48,15 +48,11 @@ final class ExportCommandTests: XCTestCase {
     /// static file stands in for the builder.
     private func publish(_ outputPath: String, contents: String) throws {
         let sourcePath = "input:/sources/" + outputPath.replacingOccurrences(of: "/", with: "_")
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: '\(sourcePath)')").findOrCreateMatchingNode()
+        let (source, _) = try GraphSpecNode.staticFile(at: sourcePath).findOrCreateMatchingNode()
         _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/\(outputPath)')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: BuildEngine.shared.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
+        _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/\(outputPath)"],
+                              inputs: [OutputFile.inputPort: ["product": .staticFile(at: sourcePath)]])
+            .findOrCreateMatchingNode()
     }
 
     private func exported(_ relativePath: String) throws -> String {

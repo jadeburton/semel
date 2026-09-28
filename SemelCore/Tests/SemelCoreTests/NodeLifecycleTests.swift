@@ -170,9 +170,9 @@ final class NodeLifecycleTests: SemelCoreTestCase {
         return file
     }
 
+    /// A node whose `input` is dynamic, so a test can wire it after making it.
     private func makeNode(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("ConfigFilter(prefix: '\(role)').output")
-        let (node, _) = try spec.findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode(SampleTool.self, properties: ["role": role]).findOrCreateMatchingNode()
         return node
     }
 
@@ -181,7 +181,7 @@ final class NodeLifecycleTests: SemelCoreTestCase {
                              fromNodeID: try source.requireID(),
                              fromSymbolID: "output".asSymbolID(),
                              toNodeID: try consumer.requireID(),
-                             toSymbolID: "input".asSymbolID(),
+                             toSymbolID: SampleTool.input.asSymbolID(),
                              name: name.asSymbolID())
     }
 

@@ -35,21 +35,20 @@ final class CascadeDeletionTests: SemelCoreTestCase {
         super.tearDown()
     }
 
-    // Creates a TreeMerger with the given role as its folder, so tests can build
-    // distinguishable nodes that both take wires and give them, without the
-    // file-system plumbing that StaticFile requires.
+    // Creates a SampleTool with the given role, so tests can build distinguishable nodes
+    // that both take wires and give them, without the file-system plumbing that StaticFile
+    // requires. Its `input` is dynamic, the one kind of port wired after a node is made.
     private func makeNode(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
-        let (node, _) = try spec.findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode(SampleTool.self, properties: ["role": role]).findOrCreateMatchingNode()
         return node
     }
 
     private func wire(_ source: NodeRecord, to consumer: NodeRecord, name: String) throws {
         try Wire.connectWire(database: engine.database,
-                             fromNodeID: source.id!,
-                             fromSymbolID: "files".asSymbolID(),
-                             toNodeID:   consumer.id!,
-                             toSymbolID: "input".asSymbolID(),
+                             fromNodeID: try source.requireID(),
+                             fromSymbolID: SampleTool.output.asSymbolID(),
+                             toNodeID:   try consumer.requireID(),
+                             toSymbolID: SampleTool.input.asSymbolID(),
                              name: name.asSymbolID())
     }
 

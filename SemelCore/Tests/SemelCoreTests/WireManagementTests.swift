@@ -30,9 +30,10 @@ final class WireManagementTests: SemelCoreTestCase {
 
     private var database: DatabaseLayer { engine.database }
 
+    /// A node whose `input` is dynamic: wires the node demands of itself, which is all
+    /// `connectWire` makes. A static port is wired when its node is made (below).
     private func makeNode(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
-        let (node, _) = try spec.findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode(SampleTool.self, properties: ["role": role]).findOrCreateMatchingNode()
         return node
     }
 
@@ -42,7 +43,7 @@ final class WireManagementTests: SemelCoreTestCase {
         let to   = try consumer.requireID()
         try Wire.connectWire(database: database,
                              fromNodeID: from,
-                             fromSymbolID: "files".asSymbolID(),
+                             fromSymbolID: SampleTool.output.asSymbolID(),
                              toNodeID: to,
                              toSymbolID: "input".asSymbolID(),
                              name: name.asSymbolID())
@@ -125,12 +126,12 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_aCycleIsRefused() throws {
-        let a = try makeNode(role: "a")
-        let b = try makeNode(role: "b")
+        let head = try makeNode(role: "head")
+        let tail = try makeNode(role: "tail")
 
-        try connect(a, to: b, name: "forward")
+        try connect(head, to: tail, name: "forward")
 
-        XCTAssertThrowsError(try connect(b, to: a, name: "backward")) { error in
+        XCTAssertThrowsError(try connect(tail, to: head, name: "backward")) { error in
             guard case WireError.circularReference = error else {
                 return XCTFail("expected a circular reference error, got \(error)")
             }
@@ -138,15 +139,39 @@ final class WireManagementTests: SemelCoreTestCase {
     }
 
     func test_aLongerCycleIsAlsoRefused() throws {
-        let a = try makeNode(role: "a")
-        let b = try makeNode(role: "b")
-        let c = try makeNode(role: "c")
+        let head   = try makeNode(role: "head")
+        let middle = try makeNode(role: "middle")
+        let tail   = try makeNode(role: "tail")
 
-        try connect(a, to: b, name: "ab")
-        try connect(b, to: c, name: "bc")
+        try connect(head, to: middle, name: "headMiddle")
+        try connect(middle, to: tail, name: "middleTail")
 
-        XCTAssertThrowsError(try connect(c, to: a, name: "ca"),
-                             "a → b → c → a is still a cycle")
+        XCTAssertThrowsError(try connect(tail, to: head, name: "tailHead"),
+                             "head → middle → tail → head is still a cycle")
+    }
+
+    /// B-127. A static port's wires are part of its node's identity, taken when the node is
+    /// made; one wired afterwards would leave the node filed under what it was, where the
+    /// next node made to that description collides with it. Refused, and nothing written.
+    func test_aStaticPortIsNotWiredAfterItsNodeIsMade() throws {
+        let source = try makeNode(role: "source")
+        let (filter, _) = try GraphSpecNode(ConfigFilter.self, properties: [ConfigFilter.prefixProperty: "sample"])
+            .findOrCreateMatchingNode()
+        let identity = filter.identity
+
+        XCTAssertThrowsError(try Wire.connectWire(database: database,
+                                                  fromNodeID: try source.requireID(),
+                                                  fromSymbolID: SampleTool.output.asSymbolID(),
+                                                  toNodeID: try filter.requireID(),
+                                                  toSymbolID: ConfigFilter.inputPort.asSymbolID(),
+                                                  name: "late".asSymbolID())) { error in
+            guard case WireError.staticPortWiredAfterCreation(typeName: "ConfigFilter", portName: ConfigFilter.inputPort) = error else {
+                return XCTFail("expected the static port to be refused, got \(error)")
+            }
+        }
+        XCTAssertTrue(try database.wire.select(goingToNodeID: try filter.requireID()).isEmpty)
+        XCTAssertEqual(try database.node.select(nodeID: try filter.requireID()).recomputedIdentity(database: database),
+                       identity, "the node is still what its identity says")
     }
 
     /// `reset()` relies on this: it deliberately leaves pending-deletion marks alone,

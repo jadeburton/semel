@@ -144,15 +144,9 @@ final class GraphCheckTests: SemelCoreTestCase {
     /// nothing produces. The product here is wired and sound, which is what makes the
     /// finding it would otherwise draw a false one.
     func test_anUnreadableWireTableSkipsTheChecksThatRestOnIt() throws {
-        let source = try makeLiteral(role: "source")
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: database,
-                             fromNodeID:   try source.requireID(),
-                             fromSymbolID: SettingsLiteral.outputPort.asSymbolID(),
-                             toNodeID:     try product.requireID(),
-                             toSymbolID:   OutputFile.inputPort.asSymbolID(),
-                             name:         "link".asSymbolID())
-        try refreshIdentity(of: product)
+        _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/app"],
+                              inputs: [OutputFile.inputPort: ["link": .settingsLiteral(["role": "source"])]])
+            .findOrCreateMatchingNode()
         try Folder.flushDirtyManifests()
         XCTAssertEqual(GraphCheck.run(database: database).findings, [], "the graph is sound to begin with")
 
@@ -305,17 +299,18 @@ final class GraphCheckTests: SemelCoreTestCase {
 
     /// The identity is a function of the row and its wires, so `check` can recompute it and
     /// compare: a stored value that no longer matches is a node whose wiring was changed
-    /// behind the applier's back, and the next demand for it makes a second node.
+    /// behind the applier's back — the engine refuses to wire a static port after its node
+    /// is made, so only a table written from outside gets here — and the next demand for it
+    /// makes a second node.
     func test_findsANodeWhoseStaticInputWasRewiredBehindItsIdentity() throws {
         let spec = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
         let wire = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(), toSymbolID: "input".asSymbolID()).first)
         try wire.deleteWire(database: database)
         let (second, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'second').output").findOrCreateMatchingNode()
-        try Wire.connectWire(database: database,
-                             fromNodeID: try second.requireID(), fromSymbolID: "output".asSymbolID(),
-                             toNodeID: try consumer.requireID(), toSymbolID: "input".asSymbolID(),
-                             name: "w".asSymbolID())
+        _ = try database.wire.insert(Wire(fromNodeID: try second.requireID(), fromSymbolID: "output".asSymbolID(),
+                                          toNodeID: try consumer.requireID(), toSymbolID: "input".asSymbolID(),
+                                          name: "w".asSymbolID()))
 
         let findings = GraphCheck.run(database: database).findings.filter { $0.kind == .staleIdentity }
 

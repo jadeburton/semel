@@ -155,30 +155,29 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
     // identity, so different static wiring is a different node. Only dynamic ports are
     // rewired after creation, and they are deliberately outside the identity.
     //
-    // The two tests below reach past the engine and mutate static wiring directly. Nothing
-    // in the engine does this — applySpecs only ever touches ports declared `.dynamic`.
-    // They exist to show what breaks if that invariant is ever violated, so the cost is
-    // visible before someone rewires a static port.
+    // The two tests below reach past the engine and mutate static wiring directly, in the
+    // wire table. The engine cannot: `connectWire` refuses a static port, and only the
+    // applier wires one, as it makes the node. They exist to show what breaks if that
+    // invariant is ever violated, so the cost is visible before someone rewires a static
+    // port.
 
     func test_theStoredIdentityGoesStaleIfAStaticInputIsRewired() throws {
         let originalShape = "ConfigFilter(prefix: 'consumer', input: ['w': SettingsLiteral(role: 'first').output]).output"
         let (consumer, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
         let keyAtCreation = try XCTUnwrap(consumer.identity)
 
-        // Rewire the static input directly. Note the engine never does this — only
-        // dynamic ports are rewired after creation.
+        // Rewire the static input in the table itself.
         let existing = try XCTUnwrap(database.wire.select(goingToNodeID: try consumer.requireID(),
                                                           toSymbolID: "input".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
         let (second, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'second').output")
             .findOrCreateMatchingNode()
-        try Wire.connectWire(database: database,
-                             fromNodeID: try second.requireID(),
-                             fromSymbolID: "output".asSymbolID(),
-                             toNodeID: try consumer.requireID(),
-                             toSymbolID: "input".asSymbolID(),
-                             name: "w".asSymbolID())
+        _ = try database.wire.insert(Wire(fromNodeID: try second.requireID(),
+                                          fromSymbolID: "output".asSymbolID(),
+                                          toNodeID: try consumer.requireID(),
+                                          toSymbolID: "input".asSymbolID(),
+                                          name: "w".asSymbolID()))
 
         let rewired = try database.node.select(nodeID: try consumer.requireID())
 
@@ -202,5 +201,47 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
 
         XCTAssertEqual(try match.requireID(), try consumer.requireID(),
                        "the old spec still finds the node even though that wiring is gone")
+    }
+
+    // MARK: - Nodes alike but for their static wires (B-127)
+
+    /// Two settings chains in one graph, as a project with a subfolder of its own has: a
+    /// merger each, of one type and with no properties, told apart only by the files wired
+    /// into them. Each is made with its wires, so each is filed under an identity of its own
+    /// and recomputes to it.
+    func test_twoNodesAlikeButForTheirStaticWiresAreTwoNodes() throws {
+        let project = GraphSpecNode.staticFile(at: "input:/semel.config")
+        let (first, _) = try GraphSpecNode.configMerger(base: ["machine": .staticFile(at: "input:/semel.machine.config")],
+                                                        override: ["project": project]).findOrCreateMatchingNode()
+        let (second, _) = try GraphSpecNode.configMerger(base: ["machine": .staticFile(at: "input:/other/semel.machine.config")],
+                                                         override: ["project": project]).findOrCreateMatchingNode()
+
+        XCTAssertNotEqual(try first.requireID(), try second.requireID())
+        XCTAssertNotEqual(first.identity, second.identity)
+        for merger in [first, second] {
+            let stored = try database.node.select(nodeID: try merger.requireID())
+            XCTAssertEqual(try stored.recomputedIdentity(database: database), stored.identity)
+        }
+    }
+
+    /// A node that demands wires on one of its static ports asks for the one thing that
+    /// cannot happen after it is made. The demand fails the node; its wiring and identity
+    /// stand, and nothing it demanded is left behind.
+    func test_aDemandOnAStaticPortFailsTheNodeAndLeavesItsWiring() throws {
+        let (tool, _) = try GraphSpecNode(SampleTool.self, properties: ["role": "demander"]).findOrCreateMatchingNode()
+        let output = ProcessOutput(outputValues: [:],
+                                   inputWireSpecs: [SampleTool.configuration: ["late": .settingsLiteral(["role": "late"])]])
+
+        XCTAssertThrowsError(try tool.makeNode().writeToOutputs(output: output)) { error in
+            guard case WireError.staticPortWiredAfterCreation(typeName: "SampleTool", portName: SampleTool.configuration) = error else {
+                return XCTFail("expected the static port to be refused, got \(error)")
+            }
+        }
+
+        XCTAssertTrue(try database.wire.select(goingToNodeID: try tool.requireID()).isEmpty)
+        XCTAssertEqual(try database.node.select(nodeID: try tool.requireID()).recomputedIdentity(database: database),
+                       tool.identity)
+        XCTAssertFalse(try database.node.selectAll().contains { $0.properties["role"] == "late" },
+                       "the literal made for the refused wire goes with it")
     }
 }

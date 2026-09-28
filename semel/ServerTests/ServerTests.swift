@@ -124,8 +124,7 @@ final class ServerTests: RequestHandlerTestCase {
     /// One node carrying an error message of a megabyte and a half: the same volume of
     /// `debug` text a few hundred real nodes produce, without the few hundred nodes.
     private func describeSomethingLargerThanTheJSONCap(marker: String) throws {
-        let node = try NodeRecord.createNode(database: database, kind: SettingsLiteral.kind,
-                                             properties: ["role": "big"], identity: nil)
+        let (node, _) = try GraphSpecNode(SettingsLiteral.self, properties: ["role": "big"]).findOrCreateMatchingNode()
         let message = marker + String(repeating: "x", count: 3 * Int(Frame.maximumJSONLength) / 2)
         try node.writeToOutputPort(SettingsLiteral.outputPort,
                                    value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))

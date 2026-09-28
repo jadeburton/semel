@@ -104,8 +104,7 @@ final class FormulaPreludeTests: SemelCoreTestCase {
     func test_theProvidersAreAskedAgainAtStartAndAChangeWakesTheConsumer() throws {
         FormulaIncludeProviders.register(TestProvider(pluginName: "SemelClang", preludes: ["clang": "func x() = Old()"]))
         let prelude  = try preludeNode(named: "clang")
-        let consumer = try NodeRecord.createNode(database: DatabaseLayer.shared, kind: SampleTool.kind,
-                                                 properties: [:], identity: nil)
+        let (consumer, _) = try GraphSpecNode(SampleTool.self).findOrCreateMatchingNode()
         try Wire.connectWire(database: DatabaseLayer.shared,
                              fromNodeID:   try prelude.requireID(),
                              fromSymbolID: FormulaPrelude.formulaOutputPort.asSymbolID(),

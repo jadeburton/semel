@@ -32,10 +32,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
 
     @discardableResult
     private func makeFailingFile(path: String, message: String) throws -> ObjectID {
-        let nodeRecord = try NodeRecord.createNode(database: engine.database,
-                                                   kind: StaticFile.kind,
-                                                   properties: ["path": path],
-                                                   identity: nil)
+        let (nodeRecord, _) = try GraphSpecNode.staticFile(at: path).findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort("output",
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         return try nodeRecord.requireID()
@@ -75,10 +72,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
     /// Counted per port, which is what the `errors` command calls an error: one node
     /// failing on two ports is two.
     func test_theCountIsPerPortAndNotPerNode() throws {
-        let nodeRecord = try NodeRecord.createNode(database: engine.database,
-                                                   kind: StaticFile.kind,
-                                                   properties: ["path": "input:/a.c"],
-                                                   identity: nil)
+        let (nodeRecord, _) = try GraphSpecNode.staticFile(at: "input:/a.c").findOrCreateMatchingNode()
         for port in ["output", "errorLog"] {
             try nodeRecord.writeToOutputPort(port,
                                              value: .noValue(reason: .error(messageDataObjectHash: try "boom".intern())))
@@ -96,10 +90,7 @@ final class IdleErrorReportingTests: SemelCoreTestCase {
     // MARK: - Nodes of one type carrying one report (B-110)
 
     private func makeFailingMerger(tag: String, message: String) throws -> ObjectID {
-        let nodeRecord = try NodeRecord.createNode(database: engine.database,
-                                                   kind: TreeMerger.kind,
-                                                   properties: ["tag": tag],
-                                                   identity: nil)
+        let (nodeRecord, _) = try GraphSpecNode(TreeMerger.self, properties: ["tag": tag]).findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         return try nodeRecord.requireID()

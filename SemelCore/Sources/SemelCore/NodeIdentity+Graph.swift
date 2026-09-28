@@ -43,8 +43,7 @@ extension NodeRecord {
         return NodeIdentity.hash(kind: kind, properties: properties.map { ($0.key, $0.value) }, ports: ports)
     }
 
-    /// The same, read from the database: for a node created outside any tree, which has
-    /// no wires yet and gets the identity of itself alone.
+    /// The same, read from the database for one node: what `check` recomputes for it.
     func recomputedIdentity(database: DatabaseLayer) throws -> String {
         let node = try makeNode()
         let wires = try database.wire.select(goingToNodeID: try requireID())

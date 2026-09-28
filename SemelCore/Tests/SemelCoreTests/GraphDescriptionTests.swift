@@ -36,8 +36,7 @@ final class GraphDescriptionTests: SemelCoreTestCase {
     }
 
     func test_listsANodeUnderItsTypeName() throws {
-        _ = try NodeRecord.createNode(database: engine.database, kind: StaticFile.kind,
-                                      properties: ["path": "input:/a.c"], identity: nil)
+        _ = try GraphSpecNode.staticFile(at: "input:/a.c").findOrCreateMatchingNode()
 
         let text = try engine.graphDescription()
 

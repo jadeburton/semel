@@ -31,8 +31,8 @@ final class ErrorReportTests: SemelCoreTestCase {
     }
 
     private func makeNode(kind: UInt, properties: [String: String] = [:]) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: kind,
-                            properties: properties, identity: nil).requireID()
+        try GraphSpecNode(try TypeRegistry.type(kind: kind), properties: properties)
+            .findOrCreateMatchingNode().fromNode.requireID()
     }
 
     private func port(_ nodeID: ObjectID, _ name: String, _ message: String) throws -> OutputPort {

@@ -44,27 +44,23 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     // MARK: - Helpers
 
+    /// A node made the way the engine makes every node: from its tree, static wires and
+    /// all, and found rather than made when the graph already holds it.
+    private func make(_ specNode: GraphSpecNode) throws -> ObjectID {
+        try specNode.findOrCreateMatchingNode().fromNode.requireID()
+    }
+
     /// A file the formula names, created the way interpreting a formula creates it: nobody
     /// has pushed it, so its output port holds the initializing state.
     private func makeUnpushedFile(path: String) throws -> ObjectID {
-        let (file, _) = try GraphSpecNode.parse("StaticFile(path: '\(path)')").findOrCreateMatchingNode()
-        return try file.requireID()
+        try make(.staticFile(at: path))
     }
 
-    /// A node that insists on its input's value, the way a tool reads the files it compiles.
-    private func makeDemanding(tag: String) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
-                                  properties: ["tag": tag], identity: nil).requireID()
-    }
-
-    private func connect(_ from: ObjectID, to: ObjectID, name: String,
-                         fromPort: String = "output", toPort: String = "input") throws {
-        try Wire.connectWire(database: database,
-                             fromNodeID: from,
-                             fromSymbolID: fromPort.asSymbolID(),
-                             toNodeID: to,
-                             toSymbolID: toPort.asSymbolID(),
-                             name: name.asSymbolID())
+    /// A node that insists on its input's value, the way a tool reads the files it compiles,
+    /// wired from `inputs` by wire name.
+    private func demanding(tag: String, reading inputs: [String: GraphSpecNode]) -> GraphSpecNode {
+        GraphSpecNode(DemandingSampleTool.self, properties: ["tag": tag],
+                      inputs: [DemandingSampleTool.input: inputs]).port(DemandingSampleTool.output)
     }
 
     private func run(_ nodeID: ObjectID) throws {
@@ -86,12 +82,11 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// needs its value. The file is the one thing a reader can act on, so it is the line the
     /// report writes, and the nodes stopped by it are counted under it.
     func test_anUnpushedFileSomethingNeedsIsNamedByThePathToPush() throws {
-        let file     = try makeUnpushedFile(path: "input:/clang.cfg")
-        let compiler = try makeDemanding(tag: "compiler")
-        let linker   = try makeDemanding(tag: "linker")
+        let file         = try makeUnpushedFile(path: "input:/clang.cfg")
+        let compilerTree = demanding(tag: "compiler", reading: ["config": .staticFile(at: "input:/clang.cfg")])
+        let compiler     = try make(compilerTree)
+        let linker       = try make(demanding(tag: "linker", reading: ["object": compilerTree]))
 
-        try connect(file, to: compiler, name: "config")
-        try connect(compiler, to: linker, name: "object")
         try run(compiler)
         try run(linker)
 
@@ -112,9 +107,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// The line the reader sees, through the engine's own renderer.
     func test_theLineNamesTheFileAndCountsWhatItStopped() throws {
         let file     = try makeUnpushedFile(path: "input:/main.c")
-        let compiler = try makeDemanding(tag: "compiler")
+        let compiler = try make(demanding(tag: "compiler", reading: ["source": .staticFile(at: "input:/main.c")]))
 
-        try connect(file, to: compiler, name: "source")
         try run(compiler)
 
         engine.reportIdleTimeErrors()
@@ -151,9 +145,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// file too, or a build that printed the line once would answer "no errors" when asked.
     func test_theErrorsReplyNamesTheSameFile() throws {
         let file     = try makeUnpushedFile(path: "input:/clang.cfg")
-        let compiler = try makeDemanding(tag: "compiler")
+        let compiler = try make(demanding(tag: "compiler", reading: ["config": .staticFile(at: "input:/clang.cfg")]))
 
-        try connect(file, to: compiler, name: "config")
         try run(compiler)
 
         let entries = ErrorReport.entries(forErrorPorts: try ErrorReport.portsToReport(database: database),
@@ -169,10 +162,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// Asked twice, answered once: a standing absence is reported the first time the engine
     /// settles and not on every settle afterwards, the same as a standing failure.
     func test_theFileIsReportedOnceAndCountedEveryTime() throws {
-        let file     = try makeUnpushedFile(path: "input:/clang.cfg")
-        let compiler = try makeDemanding(tag: "compiler")
+        _            = try makeUnpushedFile(path: "input:/clang.cfg")
+        let compiler = try make(demanding(tag: "compiler", reading: ["config": .staticFile(at: "input:/clang.cfg")]))
 
-        try connect(file, to: compiler, name: "config")
         try run(compiler)
 
         XCTAssertEqual(engine.reportIdleTimeErrors(), 1)
@@ -213,18 +205,20 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     // MARK: - The engine's one port that tolerates an absence
 
+    /// `override.cfg` laid over `base.cfg`.
+    private var overrideOverBase: GraphSpecNode {
+        .configMerger(base: ["base": .staticFile(at: "input:/base.cfg")],
+                      override: ["override": .staticFile(at: "input:/override.cfg")])
+    }
+
     /// An override file nobody wrote means "nothing to add", which is what makes a formula
     /// able to name one at all — `6502emu.fmla` lays a project-local `clang.cfg` over the
     /// shared one. The base beside it is a file that must exist, so the two ports of one
     /// node answer differently and the report reads the port rather than the node's type.
     func test_anUnpushedOverrideIsSilentWhileTheBaseBesideItIsNamed() throws {
-        let override = try makeUnpushedFile(path: "input:/override.cfg")
-        let base     = try makeUnpushedFile(path: "input:/base.cfg")
-        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], identity: nil).requireID()
+        let base   = try makeUnpushedFile(path: "input:/base.cfg")
+        let merger = try make(overrideOverBase)
 
-        try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
-        try connect(override, to: merger, name: "override", toPort: ConfigMerger.overridePort)
         try run(merger)
 
         XCTAssertEqual(try reason(of: merger, port: ConfigMerger.outputPort), .value,
@@ -237,13 +231,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     /// With the base pushed, the override alone leaves nothing to say.
     func test_anUnpushedOverrideOverAPushedBaseIsSilent() throws {
-        let override = try makeUnpushedFile(path: "input:/override.cfg")
-        let base     = try makeUnpushedFile(path: "input:/base.cfg")
-        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], identity: nil).requireID()
+        let base   = try makeUnpushedFile(path: "input:/base.cfg")
+        let merger = try make(overrideOverBase)
 
-        try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
-        try connect(override, to: merger, name: "override", toPort: ConfigMerger.overridePort)
         _ = try staticFile(base).replaceContent(try "clang.compiler.target=x".intern())
         try run(merger)
 
@@ -258,12 +248,9 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// The filter still runs and still publishes an empty selection; only the report
     /// changes.
     func test_anUnpushedConfigReadOnlyByAConfigFilterIsNamed() throws {
-        let file = try makeUnpushedFile(path: "input:/clang.cfg")
-        let filter = try NodeRecord.createNode(database: database, kind: ConfigFilter.kind,
-                                               properties: [ConfigFilter.prefixProperty: "clang.compiler"],
-                                               identity: nil).requireID()
+        let file   = try makeUnpushedFile(path: "input:/clang.cfg")
+        let filter = try make(.configFilter(prefix: "clang.compiler", input: ["config": .staticFile(at: "input:/clang.cfg")]))
 
-        try connect(file, to: filter, name: "config", toPort: ConfigFilter.inputPort)
         try run(filter)
 
         XCTAssertEqual(try reason(of: filter, port: ConfigFilter.outputPort), .value,
@@ -281,15 +268,11 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// One tolerant reader does not excuse an intolerant one: a file laid over a base as an
     /// override and read by a tool besides is named, because the tool needs it.
     func test_aFileOneReaderToleratesAndAnotherNeedsIsStillNamed() throws {
-        let file = try makeUnpushedFile(path: "input:/override.cfg")
-        let base = try makeUnpushedFile(path: "input:/base.cfg")
-        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], identity: nil).requireID()
-        let tool = try makeDemanding(tag: "tool")
+        let file   = try makeUnpushedFile(path: "input:/override.cfg")
+        let base   = try makeUnpushedFile(path: "input:/base.cfg")
+        let merger = try make(overrideOverBase)
+        let tool   = try make(demanding(tag: "tool", reading: ["config": .staticFile(at: "input:/override.cfg")]))
 
-        try connect(base, to: merger, name: "base", toPort: ConfigMerger.basePort)
-        try connect(file, to: merger, name: "override", toPort: ConfigMerger.overridePort)
-        try connect(file, to: tool, name: "config")
         _ = try staticFile(base).replaceContent(try "clang.compiler.target=x".intern())
         try run(merger)
         try run(tool)
@@ -306,9 +289,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// error and fold under it.
     func test_aDeletedFileIsNamedByItsPath() throws {
         let file     = try makeUnpushedFile(path: "input:/gone.c")
-        let compiler = try makeDemanding(tag: "compiler")
+        let compiler = try make(demanding(tag: "compiler", reading: ["source": .staticFile(at: "input:/gone.c")]))
 
-        try connect(file, to: compiler, name: "source")
         _ = try staticFile(file).replaceContent(try "int main(){}".intern())
         _ = try staticFile(file).replaceContent(nil)
         try run(compiler)
@@ -330,9 +312,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     /// A client that pushes what a formula needs acts on the path, not the sentence.
     func test_anUnpushedFileNamesItselfAsThePathToPush() throws {
-        let file     = try makeUnpushedFile(path: "input:/clang.cfg")
-        let compiler = try makeDemanding(tag: "compiler")
-        try connect(file, to: compiler, name: "config")
+        _ = try makeUnpushedFile(path: "input:/clang.cfg")
+        let compiler = try make(demanding(tag: "compiler", reading: ["config": .staticFile(at: "input:/clang.cfg")]))
         try run(compiler)
 
         engine.reportIdleTimeErrors()
@@ -342,9 +323,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
 
     /// A folder is pushed with a trailing slash, the way the sentence spells it.
     func test_anUnpushedFolderNamesItselfWithATrailingSlash() throws {
-        let folder   = try makeUnpushedFolder(path: "src")
-        let compiler = try makeDemanding(tag: "compiler")
-        try connect(folder, to: compiler, name: "sources", fromPort: Folder.folderManifestOutputPort)
+        _ = try makeUnpushedFolder(path: "src")
+        let compiler = try make(demanding(tag: "compiler", reading: ["sources": .folderManifest(at: "input:/src")]))
         try run(compiler)
 
         engine.reportIdleTimeErrors()
@@ -356,8 +336,7 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// would undo that unasked, so it is not offered as one to push.
     func test_aDeletedFileIsNotOfferedAsAPathToPush() throws {
         let file     = try makeUnpushedFile(path: "input:/gone.c")
-        let compiler = try makeDemanding(tag: "compiler")
-        try connect(file, to: compiler, name: "source")
+        let compiler = try make(demanding(tag: "compiler", reading: ["source": .staticFile(at: "input:/gone.c")]))
         _ = try staticFile(file).replaceContent(try "int main(){}".intern())
         _ = try staticFile(file).replaceContent(nil)
         try run(compiler)
@@ -379,9 +358,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// does: the path to push, not a word about the port that carries the state.
     func test_anUnpushedFolderSomethingNeedsIsNamedByThePathToPush() throws {
         let folder   = try makeUnpushedFolder(path: "src")
-        let compiler = try makeDemanding(tag: "compiler")
+        let compiler = try make(demanding(tag: "compiler", reading: ["sources": .folderManifest(at: "input:/src")]))
 
-        try connect(folder, to: compiler, name: "sources", fromPort: Folder.folderManifestOutputPort)
         try run(compiler)
 
         engine.reportIdleTimeErrors()
@@ -399,12 +377,10 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// the reader of its manifest alike (B-110).
     func test_anUnpushedFileUnderAnUnpushedFolderSomethingNeedsIsTheFoldersDetail() throws {
         let folder    = try makeUnpushedFolder(path: "Helper")
-        let manifest  = try makeUnpushedFile(path: "input:/Helper/Package.swift")
-        let converter = try makeDemanding(tag: "converter")
-        let reader    = try makeDemanding(tag: "reader")
+        _             = try makeUnpushedFile(path: "input:/Helper/Package.swift")
+        let converter = try make(demanding(tag: "converter", reading: ["package": .folderManifest(at: "input:/Helper")]))
+        let reader    = try make(demanding(tag: "reader", reading: ["manifest": .staticFile(at: "input:/Helper/Package.swift")]))
 
-        try connect(folder, to: converter, name: "package", fromPort: Folder.folderManifestOutputPort)
-        try connect(manifest, to: reader, name: "manifest")
         try run(converter)
         try run(reader)
 
@@ -427,10 +403,8 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// ever pushed, and reads as a different sentence.
     func test_aRemovedFolderIsNamedAsDeleted() throws {
         let folderRecord = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
-        let compiler     = try makeDemanding(tag: "compiler")
+        let compiler     = try make(demanding(tag: "compiler", reading: ["sources": .folderManifest(at: "input:/src")]))
 
-        try connect(try folderRecord.requireID(), to: compiler, name: "sources",
-                    fromPort: Folder.folderManifestOutputPort)
         try run(compiler)
         try XCTUnwrap(folderRecord.makeNode() as? Folder).setPinned(false)
 
@@ -448,21 +422,17 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     /// A prelude's settings: `machine` laid under a pushed project file by a `ConfigMerger`,
     /// and a `ConfigFilter` per namespace selecting out of the merge. Returns the file.
     private func makeSettings(machinePath: String, prefixes: [String]) throws -> ObjectID {
-        let machine = try makeUnpushedFile(path: machinePath)
-        let folder  = Path(machinePath).deletingLastComponent ?? Path("input:")
-        let project = try makeUnpushedFile(path: (folder / "semel.config").string)
+        let machine     = try makeUnpushedFile(path: machinePath)
+        let folder      = Path(machinePath).deletingLastComponent ?? Path("input:")
+        let projectPath = (folder / "semel.config").string
+        let project     = try makeUnpushedFile(path: projectPath)
         _ = try staticFile(project).replaceContent(try "sample.compiler.target=x".intern())
-        let merger = try NodeRecord.createNode(database: database, kind: ConfigMerger.kind,
-                                               properties: [:], identity: nil).requireID()
-        try connect(machine, to: merger, name: "machine", toPort: ConfigMerger.basePort)
-        try connect(project, to: merger, name: "project", toPort: ConfigMerger.overridePort)
+        let mergerTree = GraphSpecNode.configMerger(base: ["machine": .staticFile(at: machinePath)],
+                                                    override: ["project": .staticFile(at: projectPath)])
         for prefix in prefixes {
-            let filter = try NodeRecord.createNode(database: database, kind: ConfigFilter.kind,
-                                                   properties: [ConfigFilter.prefixProperty: prefix],
-                                                   identity: nil).requireID()
-            try connect(merger, to: filter, name: "settings", fromPort: ConfigMerger.outputPort, toPort: ConfigFilter.inputPort)
+            _ = try make(.configFilter(prefix: prefix, input: ["settings": mergerTree]))
         }
-        try run(merger)
+        try run(try make(mergerTree))
         return machine
     }
 
@@ -513,35 +483,27 @@ final class UnpushedFileReportingTests: SemelCoreTestCase {
     }
 
     /// A writer writes `semel.machine.config` and nothing else, so a file of another name
-    /// is not one it answers, whatever reads it. It is still the path `build` pushes once
-    /// it is there.
-    func test_anUnpushedFileOfAnotherNameNamesNoWriter() throws {
+    /// is not one it answers, whatever reads it; nor is a machine file whose namespaces no
+    /// toolchain registered a writer for. Two settings chains in one graph, as a project
+    /// with a subfolder of its own has.
+    func test_anUnpushedFileNoWriterWritesNamesNone() throws {
         registerWriters()
         _ = try makeSettings(machinePath: "input:/clang.cfg", prefixes: ["sample.compiler"])
-
-        engine.reportIdleTimeErrors()
-
-        XCTAssertEqual(captured[0].flatMap(\.items),
-                       [ErrorReport.Item(ports: ["output"], message: "clang.cfg has not been pushed", missingSource: "clang.cfg")])
-    }
-
-    /// Nor does a machine file whose namespaces no toolchain registered a writer for.
-    func test_aMachineFileNoToolchainWritesNamesNoWriter() throws {
-        registerWriters()
         _ = try makeSettings(machinePath: "input:/other/semel.machine.config", prefixes: ["sample.plister"])
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured[0].flatMap(\.items).map(\.writers), [[]])
-        XCTAssertEqual(captured[0].flatMap(\.items).map(\.missingSource), ["other/semel.machine.config"])
+        XCTAssertEqual(captured[0].count, 2, "\(captured)")
+        XCTAssertEqual(captured[0].flatMap(\.items).flatMap(\.writers), [])
+        XCTAssertEqual(captured[0].flatMap(\.items).compactMap(\.missingSource).sorted(), ["clang.cfg", "other/semel.machine.config"],
+                       "each is still the path build pushes once it is there")
     }
 
     /// A file that has been pushed is no one's problem, however many nodes read it.
     func test_aPushedFileIsSilent() throws {
         let file     = try makeUnpushedFile(path: "input:/main.c")
-        let compiler = try makeDemanding(tag: "compiler")
+        let compiler = try make(demanding(tag: "compiler", reading: ["source": .staticFile(at: "input:/main.c")]))
 
-        try connect(file, to: compiler, name: "source")
         _ = try staticFile(file).replaceContent(try "int main(){}".intern())
         try run(compiler)
 

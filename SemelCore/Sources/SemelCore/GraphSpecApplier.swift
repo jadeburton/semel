@@ -196,12 +196,12 @@ struct GraphSpecTableApplier {
                     throw GraphSpecApplierError.emtpyStringWireName
                 }
 
-                try Wire.connectWire(database: database,
-                                     fromNodeID: (try fromNode.requireID()),
-                                     fromSymbolID: fromSymbolID,
-                                     toNodeID: newNodeID,
-                                     toSymbolID: toSymbolID,
-                                     name: wire.name.asSymbolID())
+                try Wire.connectWireAtCreation(database: database,
+                                               fromNodeID: (try fromNode.requireID()),
+                                               fromSymbolID: fromSymbolID,
+                                               toNodeID: newNodeID,
+                                               toSymbolID: toSymbolID,
+                                               name: wire.name.asSymbolID())
             }
         }
 
@@ -222,5 +222,116 @@ struct GraphSpecTableApplier {
         }
 
         return newNode
+    }
+}
+
+// MARK: - Inserting a node
+
+private extension NodeRecord {
+
+    /// Inserts a node under `identity`, the identity of the row the applier is making it
+    /// from, which the applier has just looked for and not found.
+    ///
+    /// Private to the applier, because the lookup is what keeps `Node.identity` unique: a
+    /// second way in would insert without it, and a node made that way to the description
+    /// of one already in the graph is the constraint failing rather than the node found
+    /// (B-127). A node is made from a tree, `GraphSpecNode.findOrCreateMatchingNode()`,
+    /// wherever it comes from — a formula, a demand, a push, a test.
+    static func createNode(database: DatabaseLayer, kind: UInt, properties: [String: String], identity: String) throws -> NodeRecord {
+
+        var nodeRecord = NodeRecord(parentNodeID: nil,
+                                    kind: kind,
+                                    name: nil,
+                                    properties: properties,
+                                    scheduled: false,
+                                    identity: identity)
+
+        nodeRecord.id = try database.node.insert(nodeRecord)
+        if let nodeID = nodeRecord.id {
+            BuildEngine.shared?.settleRecorder.noteCreated(nodeID: nodeID)
+        }
+
+        let node = try nodeRecord.makeNode()
+
+        nodeRecord.name = node.thisNode.name
+        nodeRecord.parentNodeID = node.thisNode.parentNodeID
+
+        let nodeID = try nodeRecord.requireID()
+        assert(nodeRecord.parentNodeID != nodeID, "a node cannot be its own parent")
+
+        // Saved now, not with the rest below: collecting a stale sibling deletes it from
+        // its folder, and a folder that finds itself childless deletes itself. This node
+        // is the folder's child from here on, so the folder stays.
+        try database.node.update(nodeRecord)
+
+        // The row was inserted above before the node could report its name, so the
+        // uniqueness check can only happen here — and a rejection has to back that
+        // row out, or a failed creation leaves an unreachable orphan behind.
+        if let name = nodeRecord.name, let parentNodeID = nodeRecord.parentNodeID {
+            let siblings = try database.node.select(named: name, parentNodeID: parentNodeID)
+            if let existing = siblings.first(where: { $0.id != nodeID }) {
+                // A sibling nothing references any more is not a collision, it is the
+                // node this one replaces: a product whose definition changed keeps its
+                // path, and the builder that changed it has just unwired the old node in
+                // the same pass, leaving it marked for the idle-time collection. Collect
+                // it now, or the new one can never be created and the builder stays in
+                // error until something else reschedules it.
+                if existing.pendingDeletion, try Self.collectIfUnreferenced(existing, database: database) {
+                    // fall through: the name is free
+                } else {
+                    // The collision is the error worth throwing; backing the row out is
+                    // best effort on the way there, short of the machine itself failing.
+                    FatalErrors.attempt { try database.node.delete(nodeID: nodeID) }
+                    throw NodeError.nameCollision(path: try Self.describePath(database: database,
+                                                                              parentNodeID: parentNodeID,
+                                                                              name: name),
+                                                  existingKind: existing.kind)
+                }
+            }
+        }
+
+        try nodeRecord.writePendingToAllOutputsOfNode()
+
+        // A node that says nothing at creation publishes the state it is in: created, not
+        // yet processed. Not an error, so a report passes over it and a graph of fresh nodes
+        // does not read as a graph of failures.
+        let output = try node.didCreate() ?? node.buildOutput(reason: .initializing)
+
+        try node.writeToOutputs(output: output)
+
+        if type(of: node).descriptor.hasInputs {
+            try nodeRecord.setScheduled(true)
+        }
+
+        try database.node.update(nodeRecord)
+
+        try node.notifyParentThisChildAdded()
+
+        return nodeRecord
+    }
+
+    /// Deletes `record` now if nothing references it and it may go — the same test and the
+    /// same steps as the idle-time pass, for a node that is in the way of its replacement.
+    /// False if it is still held, in which case it stays and the caller has a collision.
+    private static func collectIfUnreferenced(_ record: NodeRecord, database: DatabaseLayer) throws -> Bool {
+        guard let existingID = record.id, let node = try? record.makeNode(),
+              try node.hasNoOutputWires(), try node.canBeDeleted() else {
+            return false
+        }
+        for inputWire in try database.wire.select(goingToNodeID: existingID) {
+            try inputWire.deleteWire(database: database)
+        }
+        try node.delete()
+        return true
+    }
+
+    /// Best-effort full path of a would-be child, for error messages only. Falls back to
+    /// the bare name if the parent cannot be resolved — an error report must never fail.
+    private static func describePath(database: DatabaseLayer, parentNodeID: ObjectID, name: String) throws -> String {
+        guard let parent = FatalErrors.attempt({ try database.node.find(nodeID: parentNodeID) }) ?? nil,
+              let parentPath = try? parent.buildFullPathName(baseNodeID: nil) else {
+            return name
+        }
+        return (parentPath / name).string
     }
 }

@@ -52,29 +52,23 @@ final class BuildCommandTests: XCTestCase {
     private func publishProduct(_ name: String, contents: String) throws {
         // Pinned, as a push would leave it; an unpinned folder is one the graph reports.
         _ = try BuildEngine.shared.inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')").findOrCreateMatchingNode()
+        let (source, _) = try GraphSpecNode.staticFile(at: "input:/stand-in/\(name)").findOrCreateMatchingNode()
         _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: BuildEngine.shared.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
+        _ = try product(name).findOrCreateMatchingNode()
+    }
+
+    /// `OutputFile(path: 'output:/src/<name>', input: ['product': StaticFile(path: 'input:/stand-in/<name>').output])`.
+    private func product(_ name: String) -> GraphSpecNode {
+        GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/src/\(name)"],
+                      inputs: [OutputFile.inputPort: ["product": .staticFile(at: "input:/stand-in/\(name)")]])
     }
 
     /// A product whose source failed: one node with something of its own to say, which is
     /// what a report counts and what a scripted build's exit status rests on.
     private func publishFailedProduct(_ name: String, message: String) throws {
         _ = try BuildEngine.shared.inputFileSystem.ensureEntirePathExistsAsFolders(Path("stand-in"), pinned: true)
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')").findOrCreateMatchingNode()
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: BuildEngine.shared.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
+        let (source, _) = try GraphSpecNode.staticFile(at: "input:/stand-in/\(name)").findOrCreateMatchingNode()
+        _ = try product(name).findOrCreateMatchingNode()
         // Written after the wiring, which puts every output of its target back to pending.
         try source.writeToOutputPort(StaticFile.outputPort,
                                      value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
@@ -125,14 +119,8 @@ final class BuildCommandTests: XCTestCase {
                                     atomically: true, encoding: .utf8)
         try "clang.compiler.target=x".write(to: externalRoot.appendingPathComponent("clang.cfg"),
                                             atomically: true, encoding: .utf8)
-        let (config, _)   = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')").findOrCreateMatchingNode()
-        let (selector, _) = try GraphSpecNode.parse("ConfigFilter(prefix: 'clang.compiler')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: BuildEngine.shared.database,
-                             fromNodeID: try config.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try selector.requireID(),
-                             toSymbolID: ConfigFilter.inputPort.asSymbolID(),
-                             name: "config".asSymbolID())
+        _ = try GraphSpecNode.configFilter(prefix: "clang.compiler", input: ["config": .staticFile(at: "input:/clang.cfg")])
+            .findOrCreateMatchingNode()
     }
 
     private func configIsPushed() throws -> Bool {
