@@ -38,16 +38,26 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
     // MARK: - Helpers
 
+    /// A node made the way the engine makes every node: from its tree, static wires and
+    /// all, and found rather than made when the graph already holds it.
+    private func make(_ specNode: GraphSpecNode) throws -> ObjectID {
+        try specNode.findOrCreateMatchingNode().fromNode.requireID()
+    }
+
     private func makeFile(path: String) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                  properties: ["path": path], identity: nil).requireID()
+        try make(.staticFile(at: path))
     }
 
     /// A node with no path of its own, so the label says only its type — what a compiler
-    /// node in the middle of a cascade looks like in a report.
-    private func makeConsumer(tag: String) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                  properties: ["tag": tag], identity: nil).requireID()
+    /// node in the middle of a cascade looks like in a report — reading `inputs` by wire
+    /// name. Read at `output`, the port the states below are written to.
+    private func consumer(tag: String, reading inputs: [String: GraphSpecNode] = [:]) -> GraphSpecNode {
+        GraphSpecNode(TreeMerger.self, properties: ["tag": tag],
+                      inputs: inputs.isEmpty ? [:] : [TreeMerger.inputPort: inputs]).port("output")
+    }
+
+    private func makeConsumer(tag: String, reading inputs: [String: GraphSpecNode] = [:]) throws -> ObjectID {
+        try make(consumer(tag: tag, reading: inputs))
     }
 
     /// Wiring a node writes pending to every output of its target, so the states are put on
@@ -73,22 +83,18 @@ final class CascadeCollapseTests: SemelCoreTestCase {
                                                            outputSymbolID: "output".asSymbolID())
     }
 
-    private func connect(_ from: ObjectID, to: ObjectID, name: String,
-                         fromPort: String = "output", toPort: String = "input") throws {
-        try Wire.connectWire(database: database,
-                             fromNodeID: from,
-                             fromSymbolID: fromPort.asSymbolID(),
-                             toNodeID: to,
-                             toSymbolID: toPort.asSymbolID(),
-                             name: name.asSymbolID())
-    }
-
     /// A node that reads its input by demanding a value, which is how a tool reads the files
     /// it compiles: what it publishes when there is none to be had is the engine's answer,
     /// not the node's.
-    private func makeDemanding(tag: String) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
-                                  properties: ["tag": tag], identity: nil).requireID()
+    private func demanding(tag: String, reading inputs: [String: GraphSpecNode] = [:]) -> GraphSpecNode {
+        GraphSpecNode(DemandingSampleTool.self, properties: ["tag": tag],
+                      inputs: inputs.isEmpty ? [:] : [DemandingSampleTool.input: inputs]).port(DemandingSampleTool.output)
+    }
+
+    /// The product a chain ends in, reading `input`.
+    private func product(reading input: GraphSpecNode) -> GraphSpecNode {
+        GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/app"],
+                      inputs: [OutputFile.inputPort: ["product": input]])
     }
 
     private func run(_ nodeID: ObjectID) throws {
@@ -101,15 +107,15 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     @discardableResult
     private func makeCascade(consumers: Int) throws -> ObjectID {
         let source = try makeFile(path: "input:/shared.h")
-        let sink   = try makeConsumer(tag: "sink")
 
-        var carriers = [sink]
+        var parts: [String: GraphSpecNode] = [:]
+        var carriers: [ObjectID] = []
         for index in 0 ..< consumers {
-            let consumer = try makeConsumer(tag: "consumer \(index)")
-            try connect(source, to: consumer, name: "header")
-            try connect(consumer, to: sink, name: "part \(index)")
-            carriers.append(consumer)
+            let part = consumer(tag: "consumer \(index)", reading: ["header": .staticFile(at: "input:/shared.h")])
+            parts["part \(index)"] = part
+            carriers.append(try make(part))
         }
+        carriers.append(try makeConsumer(tag: "sink", reading: parts))
 
         try fail(source, with: "the file is gone")
         for carrier in carriers {
@@ -153,8 +159,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
 
     func test_oneNodeDownstreamReadsAsOne() throws {
         let source   = try makeFile(path: "input:/shared.h")
-        let consumer = try makeConsumer(tag: "only")
-        try connect(source, to: consumer, name: "header")
+        let consumer = try makeConsumer(tag: "only", reading: ["header": .staticFile(at: "input:/shared.h")])
         try fail(source, with: "the file is gone")
         try carry(consumer)
 
@@ -168,8 +173,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// names a fix the cause upstream does not.
     func test_aNodeWithAnErrorOfItsOwnIsReportedEvenBelowACause() throws {
         let source   = try makeFile(path: "input:/shared.h")
-        let consumer = try makeConsumer(tag: "consumer")
-        try connect(source, to: consumer, name: "header")
+        let consumer = try makeConsumer(tag: "consumer", reading: ["header": .staticFile(at: "input:/shared.h")])
         try fail(source, with: "the file is gone")
         try fail(consumer, with: "no tool exists at '/usr/bin/nonesuch'")
 
@@ -186,8 +190,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// report, by taking every consumer of a node before the node itself.
     func test_aCarrierWithNothingFailingUpstreamStandsInForItsOwnCause() throws {
         let head = try makeConsumer(tag: "head")
-        let tail = try makeConsumer(tag: "tail")
-        try connect(head, to: tail, name: "part")
+        let tail = try makeConsumer(tag: "tail", reading: ["part": consumer(tag: "head")])
         try carry(head)
         try carry(tail)
 
@@ -203,9 +206,8 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     func test_aCarrierFedByTwoCausesIsCountedUnderEach() throws {
         let first    = try makeFile(path: "input:/first.h")
         let second   = try makeFile(path: "input:/second.h")
-        let consumer = try makeConsumer(tag: "consumer")
-        try connect(first, to: consumer, name: "first")
-        try connect(second, to: consumer, name: "second")
+        let consumer = try makeConsumer(tag: "consumer", reading: ["first":  .staticFile(at: "input:/first.h"),
+                                                                   "second": .staticFile(at: "input:/second.h")])
         try fail(first, with: "the file is gone")
         try fail(second, with: "the file is gone")
         try carry(consumer)
@@ -233,8 +235,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// which is what the node upstream of it being collected makes it.
     func test_aFoldedCarrierIsStillReportedWhenItBecomesTheCause() throws {
         let source   = try makeFile(path: "input:/shared.h")
-        let consumer = try makeConsumer(tag: "consumer")
-        try connect(source, to: consumer, name: "header")
+        let consumer = try makeConsumer(tag: "consumer", reading: ["header": .staticFile(at: "input:/shared.h")])
         try fail(source, with: "the file is gone")
         try carry(consumer)
 
@@ -257,20 +258,17 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// graph writes; the file is what the reader can act on, so the file is the line and the
     /// consumer is counted under it. `UnpushedFileReportingTests` is the rest of that rule.
     func test_anUnpushedFileIsTheLineAndItsConsumerIsCountedUnderIt() throws {
-        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/clang.cfg')")
-            .findOrCreateMatchingNode()
-        let consumer = try NodeRecord.createNode(database: database, kind: DemandingSampleTool.kind,
-                                                 properties: [:], identity: nil)
-        try connect(try file.requireID(), to: try consumer.requireID(), name: "config")
+        let file     = try makeFile(path: "input:/clang.cfg")
+        let consumer = try make(demanding(tag: "consumer", reading: ["config": .staticFile(at: "input:/clang.cfg")]))
 
-        try consumer.makeNode().processWithPreCheck()
+        try run(consumer)
 
-        XCTAssertEqual(try reason(of: try file.requireID()), .initializing)
-        XCTAssertEqual(try reason(of: try consumer.requireID()), .inputNotProduced)
+        XCTAssertEqual(try reason(of: file), .initializing)
+        XCTAssertEqual(try reason(of: consumer), .inputNotProduced)
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(try file.requireID()) 'input:/clang.cfg'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(file) 'input:/clang.cfg'"]])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [1])
     }
 
@@ -285,29 +283,24 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// nobody pushed at the top of it, nothing in the chain has failed — so however deep the
     /// chain runs, the one thing to say about it is the file at the top.
     func test_anUnpushedFileIsNamedOnceHoweverDeepTheChain() throws {
-        let (file, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/main.c')")
-            .findOrCreateMatchingNode()
-        let compiler = try makeDemanding(tag: "compiler")
-        let linker   = try makeDemanding(tag: "linker")
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')")
-            .findOrCreateMatchingNode()
-
-        try connect(try file.requireID(), to: compiler, name: "source")
-        try connect(compiler, to: linker, name: "object")
-        try connect(linker, to: try product.requireID(), name: "product")
+        let file         = try makeFile(path: "input:/main.c")
+        let compilerTree = demanding(tag: "compiler", reading: ["source": .staticFile(at: "input:/main.c")])
+        let linkerTree   = demanding(tag: "linker", reading: ["object": compilerTree])
+        let compiler     = try make(compilerTree)
+        let linker       = try make(linkerTree)
+        let product      = try make(product(reading: linkerTree))
 
         try run(compiler)
         try run(linker)
-        try run(try product.requireID())
+        try run(product)
 
         XCTAssertEqual(try reason(of: compiler), .inputNotProduced)
         XCTAssertEqual(try reason(of: linker), .inputNotProduced, "the state carries down the chain")
-        XCTAssertEqual(try reason(of: try product.requireID(), port: OutputFile.statusOutputPort),
-                       .inputNotProduced)
+        XCTAssertEqual(try reason(of: product, port: OutputFile.statusOutputPort), .inputNotProduced)
 
         engine.reportIdleTimeErrors()
 
-        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(try file.requireID()) 'input:/main.c'"]])
+        XCTAssertEqual(captured.map { $0.map(\.label) }, [["StaticFile #\(file) 'input:/main.c'"]])
         XCTAssertEqual(captured[0].map(\.downstreamCarrierCount), [3],
                        "the compiler, the linker and the product below them")
     }
@@ -315,20 +308,19 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// The same chain with a compile that failed: one node has something to say and the rest
     /// carry it, so the report names the compiler once and counts the two below it.
     func test_aFailedCompileIsNamedOnceWithTheChainCountedUnderIt() throws {
-        let compiler = try makeDemanding(tag: "compiler")
-        let linker   = try makeDemanding(tag: "linker")
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')")
-            .findOrCreateMatchingNode()
+        let compilerTree = demanding(tag: "compiler")
+        let linkerTree   = demanding(tag: "linker", reading: ["object": compilerTree])
+        let compiler     = try make(compilerTree)
+        let linker       = try make(linkerTree)
+        let product      = try make(product(reading: linkerTree))
 
-        try connect(compiler, to: linker, name: "object")
-        try connect(linker, to: try product.requireID(), name: "product")
         try fail(compiler, with: "undefined symbol 'main'")
 
         try run(linker)
-        try run(try product.requireID())
+        try run(product)
 
         XCTAssertEqual(try reason(of: linker), .inputInError)
-        XCTAssertEqual(try reason(of: try product.requireID(), port: OutputFile.statusOutputPort),
+        XCTAssertEqual(try reason(of: product, port: OutputFile.statusOutputPort),
                        .inputInError, "the product carries the failure rather than repeating it")
 
         engine.reportIdleTimeErrors()
@@ -344,20 +336,19 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// of its trees failed says so as a state, rather than repeating the sentence the tool
     /// wrote, and the report still names the tool once.
     func test_aFailureThroughATreeIsNamedOnceWithTheTreeCountedUnderIt() throws {
-        let tool = try makeDemanding(tag: "tool")
-        let (merger, _) = try GraphSpecNode.parse("TreeMerger()").findOrCreateMatchingNode()
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/app')")
-            .findOrCreateMatchingNode()
+        let toolTree   = demanding(tag: "tool")
+        let mergerTree = GraphSpecNode(TreeMerger.self, inputs: [TreeMerger.inputPort: ["assets": toolTree]])
+            .port(TreeMerger.outputPort)
+        let tool       = try make(toolTree)
+        let merger     = try make(mergerTree)
+        let product    = try make(product(reading: mergerTree))
 
-        try connect(tool, to: try merger.requireID(), name: "assets")
-        try connect(try merger.requireID(), to: try product.requireID(), name: "product",
-                    fromPort: TreeMerger.outputPort)
         try fail(tool, with: "xcstringstool failed")
 
-        try run(try merger.requireID())
-        try run(try product.requireID())
+        try run(merger)
+        try run(product)
 
-        XCTAssertEqual(try reason(of: try merger.requireID(), port: TreeMerger.outputPort), .inputInError,
+        XCTAssertEqual(try reason(of: merger, port: TreeMerger.outputPort), .inputInError,
                        "the merger carries the failure rather than repeating its message")
 
         engine.reportIdleTimeErrors()
@@ -409,8 +400,7 @@ final class CascadeCollapseTests: SemelCoreTestCase {
     /// of its own is what a reader can act on.
     func test_aNodeIsACarrierOnlyWhenEveryPortIsCarried() throws {
         let source   = try makeFile(path: "input:/shared.h")
-        let consumer = try makeConsumer(tag: "consumer")
-        try connect(source, to: consumer, name: "header")
+        let consumer = try makeConsumer(tag: "consumer", reading: ["header": .staticFile(at: "input:/shared.h")])
         try fail(source, with: "the file is gone")
         try carry(consumer)
         try database.node.select(nodeID: consumer)

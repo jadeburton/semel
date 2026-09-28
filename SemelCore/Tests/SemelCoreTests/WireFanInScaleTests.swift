@@ -146,16 +146,16 @@ final class WireFanInScaleTests: SemelCoreTestCase {
                        seconds: Date.now.timeIntervalSince(start))
     }
 
+    /// A node whose `input` is dynamic, the kind of port a node fills with a fan it demands.
     private func makeNode(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
-        let (node, _) = try spec.findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode(SampleTool.self, properties: ["role": role]).findOrCreateMatchingNode()
         return node
     }
 
     private func connect(_ source: NodeRecord, to consumer: NodeRecord, name: String) throws {
         try Wire.connectWire(database: database,
                              fromNodeID: try source.requireID(),
-                             fromSymbolID: "files".asSymbolID(),
+                             fromSymbolID: SampleTool.output.asSymbolID(),
                              toNodeID: try consumer.requireID(),
                              toSymbolID: "input".asSymbolID(),
                              name: name.asSymbolID())

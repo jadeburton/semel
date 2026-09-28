@@ -15,6 +15,9 @@ enum WireError: Error, CustomStringConvertible {
     case failedToDeleteWire
     /// Adding this wire would form a cycle in the dependency graph.
     case circularReference(fromNodeID: ObjectID, toNodeID: ObjectID)
+    /// A static port wired after its node was made. Its wires are part of the node's
+    /// identity, which is taken once, when the node is made from its spec (B-115).
+    case staticPortWiredAfterCreation(typeName: String, portName: String)
 
     var description: String {
         switch self {
@@ -24,6 +27,8 @@ enum WireError: Error, CustomStringConvertible {
             return "a wire could not be disconnected"
         case .circularReference(let fromNodeID, let toNodeID):
             return "wiring node \(fromNodeID) into node \(toNodeID) would make the graph circular"
+        case .staticPortWiredAfterCreation(let typeName, let portName):
+            return "\(typeName)'s input '\(portName)' is wired when the node is made, from its spec, and cannot be wired afterwards"
         }
     }
 }
@@ -31,12 +36,47 @@ enum WireError: Error, CustomStringConvertible {
 // Wire management
 extension Wire {
 
+    /// Wires one of a node's dynamic ports: a wire the node demanded of itself.
+    ///
+    /// A static port is refused. Its wires are part of the node's identity, taken once when
+    /// the node is made (B-115), so a static wire added afterwards leaves the node filed
+    /// under the identity of what it was: a demand for that finds a node wired otherwise,
+    /// and a node made later to that description carries the same identity and cannot be
+    /// stored beside it (B-127). The applier wires a node's static ports as it makes it,
+    /// through `connectWireAtCreation`.
     static func connectWire(database: DatabaseLayer,
                             fromNodeID: ObjectID,
                             fromSymbolID: ObjectID,
                             toNodeID: ObjectID,
                             toSymbolID: ObjectID,
                             name: ObjectID) throws {
+        let toNode   = try database.node.select(nodeID: toNodeID).makeNode()
+        let portName = toSymbolID.resolveSymbol()
+        guard !toNode.descriptor.staticInputPorts.contains(portName) else {
+            throw WireError.staticPortWiredAfterCreation(typeName: String(describing: type(of: toNode)), portName: portName)
+        }
+        try insertWire(database: database, fromNodeID: fromNodeID, fromSymbolID: fromSymbolID,
+                       toNodeID: toNodeID, toSymbolID: toSymbolID, name: name)
+    }
+
+    /// Wires a static port of a node the applier is making, from the row its identity was
+    /// taken of: the one moment a static port is wired.
+    static func connectWireAtCreation(database: DatabaseLayer,
+                                      fromNodeID: ObjectID,
+                                      fromSymbolID: ObjectID,
+                                      toNodeID: ObjectID,
+                                      toSymbolID: ObjectID,
+                                      name: ObjectID) throws {
+        try insertWire(database: database, fromNodeID: fromNodeID, fromSymbolID: fromSymbolID,
+                       toNodeID: toNodeID, toSymbolID: toSymbolID, name: name)
+    }
+
+    private static func insertWire(database: DatabaseLayer,
+                                   fromNodeID: ObjectID,
+                                   fromSymbolID: ObjectID,
+                                   toNodeID: ObjectID,
+                                   toSymbolID: ObjectID,
+                                   name: ObjectID) throws {
 
         // The same wire, demanded again: connecting is idempotent. A wire between the same
         // ports under a *different* name is a different wire and is created alongside it.
@@ -57,8 +97,8 @@ extension Wire {
             throw WireError.attemptToCreateWireWithDuplicateName(name.resolveSymbol())
         }
 
-        // connectWire is always called inside database.withTransaction (in
-        // applySpecs and GraphSpecTableApplier.createNode), so
+        // Both ways in are called inside database.withTransaction (connectWire in
+        // applySpecs, connectWireAtCreation in GraphSpecTableApplier.createNode), so
         // the insert, pendingDeletion clear, and writePending are all-or-nothing.
 
         if try wouldCreateCycle(database: database, fromNodeID: fromNodeID, toNodeID: toNodeID) {

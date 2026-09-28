@@ -139,11 +139,11 @@ final class InputPortReadScaleTests: SemelCoreTestCase {
         for index in 0..<width {
             let source = try makeNode(role: "source-\(width)-\(index)")
             let hash   = try "content of source \(width)-\(index)".intern()
-            try source.writeToOutputPort("files", value: .value(hash))
+            try source.writeToOutputPort(SampleTool.output, value: .value(hash))
             sourceHashes.append(hash)
             try Wire.connectWire(database: database,
                                  fromNodeID: try source.requireID(),
-                                 fromSymbolID: "files".asSymbolID(),
+                                 fromSymbolID: SampleTool.output.asSymbolID(),
                                  toNodeID: try consumer.requireID(),
                                  toSymbolID: "input".asSymbolID(),
                                  name: "wire\(index)".asSymbolID())
@@ -163,9 +163,9 @@ final class InputPortReadScaleTests: SemelCoreTestCase {
                        seconds: Date.now.timeIntervalSince(start))
     }
 
+    /// A node whose `input` is dynamic, the kind of port the project finder's fan arrives at.
     private func makeNode(role: String) throws -> NodeRecord {
-        let spec = try GraphSpecNode.parse("TreeMerger(under: '\(role)').files")
-        let (node, _) = try spec.findOrCreateMatchingNode()
+        let (node, _) = try GraphSpecNode(SampleTool.self, properties: ["role": role]).findOrCreateMatchingNode()
         return node
     }
 }

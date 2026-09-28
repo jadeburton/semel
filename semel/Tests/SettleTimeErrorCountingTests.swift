@@ -239,19 +239,14 @@ final class SettleTimeErrorCountingTests: XCTestCase {
     /// A product under `output:/src`, wired to a static file standing in for its builder.
     @discardableResult
     private func publishProduct(_ name: String, contents: String?) throws -> NodeRecord {
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')")
-            .findOrCreateMatchingNode()
+        let sourceTree  = GraphSpecNode.staticFile(at: "input:/stand-in/\(name)")
+        let (source, _) = try sourceTree.findOrCreateMatchingNode()
         if let contents {
             _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
         }
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')")
+        _ = try GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: "output:/src/\(name)"],
+                              inputs: [OutputFile.inputPort: ["product": sourceTree]])
             .findOrCreateMatchingNode()
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
         return source
     }
 

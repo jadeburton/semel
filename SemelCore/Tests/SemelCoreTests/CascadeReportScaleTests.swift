@@ -120,17 +120,17 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
     /// consumer. Everything below the source carries, so the graph holds
     /// `consumers + 2` failing nodes and exactly one cause.
     private func buildCascade(consumers: Int, database: DatabaseLayer) throws {
-        let source = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                               properties: ["path": "input:/shared.h"],
-                                               identity: nil).requireID()
-        let sink = try makeConsumer(tag: "sink", database: database)
-
-        var carriers = [sink]
+        let sourceTree = GraphSpecNode.staticFile(at: "input:/shared.h")
+        var parts: [String: GraphSpecNode] = [:]
         for index in 0 ..< consumers {
-            let consumer = try makeConsumer(tag: "consumer \(index)", database: database)
-            try connect(source, to: consumer, name: "header", database: database)
-            try connect(consumer, to: sink, name: "part \(index)", database: database)
-            carriers.append(consumer)
+            parts["part \(index)"] = consumer(tag: "consumer \(index)", reading: ["header": sourceTree])
+        }
+        let (sink, _) = try consumer(tag: "sink", reading: parts).findOrCreateMatchingNode()
+        let source    = try sourceTree.findOrCreateMatchingNode().fromNode.requireID()
+
+        var carriers = [try sink.requireID()]
+        for wire in try database.wire.select(goingToNodeID: try sink.requireID()) {
+            carriers.append(wire.fromNodeID)
         }
 
         try database.node.select(nodeID: source)
@@ -143,25 +143,9 @@ final class CascadeReportScaleTests: SemelCoreTestCase {
         }
     }
 
-    private func makeConsumer(tag: String, database: DatabaseLayer) throws -> ObjectID {
-        try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                  properties: ["tag": tag], identity: nil).requireID()
-    }
-
-    /// The row, inserted rather than demanded through `Wire.connectWire`.
-    ///
-    /// `connectWire` answers questions this fixture has already settled — is this wire
-    /// here, does the name collide on the target port, would it close a cycle — and two of
-    /// those read every wire already at the sink, so building a four-hundred-wide fan
-    /// through it costs the square of the fan before the measurement starts. The rows it
-    /// would write are the rows written here; the wiring API's own cost is `WireManagement`'s
-    /// to measure, and `CascadeCollapseTests` builds the same shape through it.
-    private func connect(_ from: ObjectID, to: ObjectID, name: String,
-                         database: DatabaseLayer) throws {
-        _ = try database.wire.insert(Wire(fromNodeID: from,
-                                          fromSymbolID: "output".asSymbolID(),
-                                          toNodeID: to,
-                                          toSymbolID: "input".asSymbolID(),
-                                          name: name.asSymbolID()))
+    /// A node with no path of its own reading `inputs` by wire name, read at `output`, the
+    /// port the states above are written to.
+    private func consumer(tag: String, reading inputs: [String: GraphSpecNode]) -> GraphSpecNode {
+        GraphSpecNode(TreeMerger.self, properties: ["tag": tag], inputs: [TreeMerger.inputPort: inputs]).port("output")
     }
 }

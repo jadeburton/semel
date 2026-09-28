@@ -284,7 +284,12 @@ These cost real debugging to learn. Violating one usually compiles fine.
 never recomputed. That is correct: static wiring and args are immutable, so different
 static wiring means a *different node*, not the same node with a new key. Only `.dynamic`
 ports are rewired after creation, and they are deliberately excluded from the spec. Never
-rewire a static port, and never add a recompute pass.
+rewire a static port, and never add a recompute pass. The engine holds you to it: a node
+is made only by the applier, from its tree (`findOrCreateMatchingNode`), which wires its
+static ports as it makes it, and `Wire.connectWire` refuses a static port. A test builds
+its graph the same way — a node made bare and wired by hand afterwards keeps the identity
+of its bare self, and the next one made like it collides with it on `Node.identity`
+(B-127).
 
 **A formula can wire only a static port.** `.required` and `.optional` ports are named in
 a graph spec and so in a formula; `.dynamic` ports hold wires the node itself demands at

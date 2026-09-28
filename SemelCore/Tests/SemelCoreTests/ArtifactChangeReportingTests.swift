@@ -42,32 +42,24 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
     @discardableResult
     private func publishProduct(_ name: String, contents: String) throws -> (source: NodeRecord,
                                                                              product: NodeRecord) {
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(name)')")
-            .findOrCreateMatchingNode()
-        _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/\(name)')")
-            .findOrCreateMatchingNode()
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
-        return (source, product)
+        try publishProductAt("output:/src/\(name)", from: name, contents: contents)
     }
 
     /// The same, at a path of the caller's choosing rather than under `output:/src`.
-    private func publishProductAt(_ path: String, from sourceName: String, contents: String) throws {
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/\(sourceName)')")
-            .findOrCreateMatchingNode()
+    @discardableResult
+    private func publishProductAt(_ path: String, from sourceName: String,
+                                  contents: String) throws -> (source: NodeRecord, product: NodeRecord) {
+        let sourceTree = GraphSpecNode.staticFile(at: "input:/stand-in/\(sourceName)")
+        let (source, _) = try sourceTree.findOrCreateMatchingNode()
         _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try contents.intern())
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: '\(path)')").findOrCreateMatchingNode()
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
+        let (product, _) = try product(at: path, reading: sourceTree).findOrCreateMatchingNode()
+        return (source, product)
+    }
+
+    /// `OutputFile(path:, input: ['product': <input>])`.
+    private func product(at path: String, reading input: GraphSpecNode) -> GraphSpecNode {
+        GraphSpecNode(OutputFile.self, properties: [OutputFile.pathProperty: path],
+                      inputs: [OutputFile.inputPort: ["product": input]])
     }
 
     private func rewrite(_ source: NodeRecord, to contents: String) throws {
@@ -164,16 +156,8 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
 
     /// A product the graph names and nothing has produced has not appeared.
     func test_aProductWithNoValueYetIsNotReported() throws {
-        let (source, _) = try GraphSpecNode.parse("StaticFile(path: 'input:/stand-in/unfed')")
+        _ = try product(at: "output:/src/unfed", reading: .staticFile(at: "input:/stand-in/unfed"))
             .findOrCreateMatchingNode()
-        let (product, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/unfed')")
-            .findOrCreateMatchingNode()
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try product.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
 
         engine.reportArtifactChanges()
 
@@ -297,14 +281,8 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
                                                        pendingDeletion: true)
         try engine.processPendingDeletions()
         // Rebuilt, and not yet fed: exactly the window the flap lived in.
-        let (rebuilt, _) = try GraphSpecNode.parse("OutputFile(path: 'output:/src/lib.a')")
+        _ = try product(at: "output:/src/lib.a", reading: .staticFile(at: "input:/stand-in/lib.a"))
             .findOrCreateMatchingNode()
-        try Wire.connectWire(database: engine.database,
-                             fromNodeID: try published.source.requireID(),
-                             fromSymbolID: StaticFile.outputPort.asSymbolID(),
-                             toNodeID: try rebuilt.requireID(),
-                             toSymbolID: OutputFile.inputPort.asSymbolID(),
-                             name: "product".asSymbolID())
         try published.source.writeToOutputPort(StaticFile.outputPort, value: .noValue(reason: .pending))
 
         engine.reportArtifactChanges()

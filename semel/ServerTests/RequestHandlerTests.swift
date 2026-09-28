@@ -275,19 +275,14 @@ final class RequestHandlerTests: RequestHandlerTestCase {
     /// of them can be fixed; the reply names the file once and counts the rest. The event
     /// says the same, because both are built by `ErrorReport`.
     func test_errorsFoldsACascadeOntoItsCauseInBothTheReplyAndTheEvent() throws {
-        let source = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                               properties: ["path": "input:/shared.h"], identity: nil)
+        let sourceTree  = GraphSpecNode.staticFile(at: "input:/shared.h")
+        let (source, _) = try sourceTree.findOrCreateMatchingNode()
         var carriers: [NodeRecord] = []
         for index in 1...20 {
-            let carrier = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                                    properties: ["tag": "\(index)"], identity: nil)
             // Wired before it fails: connecting writes pending to every output of the target.
-            try Wire.connectWire(database: database,
-                                 fromNodeID: try source.requireID(),
-                                 fromSymbolID: "output".asSymbolID(),
-                                 toNodeID: try carrier.requireID(),
-                                 toSymbolID: "input".asSymbolID(),
-                                 name: "header".asSymbolID())
+            let (carrier, _) = try GraphSpecNode(TreeMerger.self, properties: ["tag": "\(index)"],
+                                                 inputs: [TreeMerger.inputPort: ["header": sourceTree]])
+                .findOrCreateMatchingNode()
             carriers.append(carrier)
         }
         try source.writeToOutputPort("output", value: .noValue(
@@ -361,8 +356,7 @@ final class RequestHandlerTests: RequestHandlerTestCase {
 
     @discardableResult
     private func makeFailingFile(path: String, message: String) throws -> ObjectID {
-        let nodeRecord = try NodeRecord.createNode(database: database, kind: StaticFile.kind,
-                                                   properties: ["path": path], identity: nil)
+        let (nodeRecord, _) = try GraphSpecNode.staticFile(at: path).findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort("output",
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
         return try nodeRecord.requireID()
@@ -377,8 +371,8 @@ final class RequestHandlerTests: RequestHandlerTestCase {
         // A property of its own, because two nodes of one type with the same properties are
         // one node to the graph; `path` is deliberately not it, since that is what a label
         // would be made of.
-        let nodeRecord = try NodeRecord.createNode(database: database, kind: TreeMerger.kind,
-                                                   properties: ["tag": tag ?? message], identity: nil)
+        let (nodeRecord, _) = try GraphSpecNode(TreeMerger.self, properties: ["tag": tag ?? message])
+            .findOrCreateMatchingNode()
         try nodeRecord.writeToOutputPort(TreeMerger.outputPort,
                                          value: .noValue(reason: .error(messageDataObjectHash: try message.intern())))
     }
