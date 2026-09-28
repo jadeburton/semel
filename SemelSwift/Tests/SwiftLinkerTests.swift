@@ -184,6 +184,50 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         }
     }
 
+    // MARK: - Link requirements (B-55)
+
+    private func requirementsInput(linkage: String = "executable",
+                                   configured: [String] = [],
+                                   wired: [String: String]) throws -> ProcessInput {
+        var input = try makeInput(objectFiles: ["App.o"], linkage: linkage, extraConfiguration: configured).inputValues
+        input[SwiftLinker.linkRequirements] = try wired.mapValues { .value(try $0.intern()) }
+        return ProcessInput(inputValues: input)
+    }
+
+    /// An app linking two package products gets every framework and library either
+    /// product's targets name, each once, and the C++ runtime once when one of them has
+    /// C++ — with what the project's own settings add. After the objects, before `-o`.
+    func test_linksTheUnionOfEveryWiredProductsRequirements() throws {
+        _ = try makeTool().process(input: try requirementsInput(
+            configured: ["frameworks=Security"],
+            wired: ["CrashReporter": "frameworks=Foundation\ncxxRuntime=true",
+                    "Database":      "frameworks=Foundation\nlibraries=sqlite3,z"]))
+
+        let arguments = executor.lastArguments
+        let start = try XCTUnwrap(arguments.firstIndex(of: "App.o"))
+        let end   = try XCTUnwrap(arguments.firstIndex(of: "-o"))
+        XCTAssertEqual(Array(arguments[(start + 1)..<end]),
+                       ["-framework", "Foundation", "-framework", "Security", "-lsqlite3", "-lz", "-lc++"])
+    }
+
+    /// No requirement is no argument: a product of Swift alone links as it always has.
+    func test_noRequirementsAddNothing() throws {
+        _ = try makeTool().process(input: try requirementsInput(wired: ["Kit": ""]))
+
+        let arguments = executor.lastArguments
+        XCTAssertFalse(arguments.contains("-framework") || arguments.contains("-lc++"), "\(arguments)")
+    }
+
+    /// An archive is not linked: its requirements are its consumer's to meet, as SwiftPM
+    /// leaves them, and libtool would refuse a framework.
+    func test_aStaticArchivePassesNoRequirement() throws {
+        _ = try makeTool().process(input: try requirementsInput(linkage: "staticArchive",
+                                                                wired: ["Kit": "frameworks=Foundation\ncxxRuntime=true"]))
+
+        let arguments = executor.lastArguments
+        XCTAssertFalse(arguments.contains("-framework") || arguments.contains("-lc++"), "\(arguments)")
+    }
+
     // MARK: - Vendored system libraries
 
     private func file(_ name: String) -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }

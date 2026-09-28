@@ -203,6 +203,16 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("'Timeline': objects_Timeline().files"), formula)
     }
 
+    /// The linker takes what each package product's objects need beyond themselves — its
+    /// targets' frameworks and libraries, the C++ runtime — as the package's formula states
+    /// it, and links their union (B-55).
+    func test_linksWhatEachPackageProductsObjectsNeed() throws {
+        let formula = try formula()
+
+        XCTAssertTrue(formula.contains("linkRequirements: [\n        'KeychainSwift': linking_KeychainSwift().output,\n"
+                                     + "        'Timeline': linking_Timeline().output\n        ]"), formula)
+    }
+
     // MARK: - Resources
 
     func test_compilesTheCatalogsForThePlatformAndMergesThemIntoTheBundle() throws {

@@ -33,6 +33,9 @@ struct SwiftLinkerConfiguration {
     let sdkVersion: String?
     let linkage: SwiftLinkage
     let outputName: String
+    /// `frameworks`, `libraries` and `cxxRuntime`: what the project states its product
+    /// needs from the linker, beside what a package product's `linkRequirements` wire says.
+    let requirements: LinkRequirements
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -51,6 +54,7 @@ struct SwiftLinkerConfiguration {
         // Extra flags a formula states about the product — `-framework QuickLook`,
         // `-e _NSExtensionMain` — comma-joined like every list in a setting.
         arguments = (properties["arguments"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        requirements = LinkRequirements(properties: properties)
 
         // `-emit-library -static` drives `libtool` as a child process, which zeroes a
         // member's timestamp, uid and gid when it inherits ZERO_AR_DATE=1 — otherwise the
@@ -73,7 +77,9 @@ struct SwiftLinker: Node {
 
     /// 2: links with small objc_msgSend selector stubs (B-90), so a link of equal inputs
     /// differs from what version 1 wrote.
-    public static let implementationVersion = 2
+    /// 3: passes the frameworks, libraries and C++ runtime its settings and
+    /// `linkRequirements` state (B-55).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -91,6 +97,13 @@ struct SwiftLinker: Node {
     /// that only knows the product's name. The trees are merged: two products that share
     /// a target share its object, and linking it twice would be a duplicate symbol.
     static let objectTrees = "objectTrees"
+    /// Settings values, one wire each, saying what a package product's objects need from
+    /// the linker — what a package's `linking_P()` carries (`LinkRequirements`): its
+    /// targets' `linkedFramework`s and `linkedLibrary`s, and the C++ runtime when one was
+    /// compiled from C++. A formula linking several products' objects wires each one's, and
+    /// the link takes the union, as SwiftPM gives an executable every framework its
+    /// dependencies name (B-55).
+    static let linkRequirements = "linkRequirements"
     static let output = "output"
     static let infoLog = "infoLog"
     /// Declaring this port is what makes ProjectBuilder wire the linked file's Unix mode
@@ -110,6 +123,7 @@ struct SwiftLinker: Node {
             .required(input),
             .optional(libraryFolders),
             .optional(objectTrees),
+            .optional(linkRequirements),
             .dynamic(libraries),
         ],
         outputPorts: [output, infoLog, fileMetadata]
@@ -123,6 +137,8 @@ struct SwiftLinker: Node {
         let objectFiles: [FileNameAndContent]
         let libraryFiles: [FileNameAndContent]
         let libraryFolderManifests: [(String, FolderManifest)]
+        /// The configuration's requirements with every `linkRequirements` wire's.
+        let requirements: LinkRequirements
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[SwiftLinker.configuration]!.values.first!.expectValue().resolveAsString()
@@ -160,6 +176,13 @@ struct SwiftLinker: Node {
             }
 
             self.libraryFolderManifests = libraryFolderManifests
+
+            var requirements = configuration.requirements
+            for (_, value) in (input.inputValues[SwiftLinker.linkRequirements] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                let text = try value.expectValue().resolveAsString()
+                requirements = requirements.union(LinkRequirements(properties: [String: String](plainText: text)))
+            }
+            self.requirements = requirements
         }
     }
 
@@ -255,6 +278,17 @@ struct SwiftLinker: Node {
 
         for libraryFile in inputs.libraryFiles {
             arguments.append(libraryFile.filePath)
+        }
+
+        // An archive is not linked: libtool takes no framework, and SwiftPM leaves a static
+        // product's requirements to whatever links it — which is what `linking_P()` is for.
+        if inputs.configuration.linkage != .staticArchive {
+            arguments.append(contentsOf: inputs.requirements.frameworkAndLibraryArguments)
+            // swiftc links the Swift runtime and not the C++ one; SwiftPM adds it when a
+            // product reaches a C++ source, once however many there are.
+            if inputs.requirements.cxxRuntime {
+                arguments.append("-lc++")
+            }
         }
 
         arguments.append("-o"); arguments.append(outputName)

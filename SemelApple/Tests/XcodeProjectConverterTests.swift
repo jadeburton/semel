@@ -322,7 +322,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// NetNewsWire names no package for fifteen of the products its apps link: the
     /// converter looks into the synchronized `Modules` folder no target owns, and a level
     /// later into each folder in it, finds the seventeen that hold a `Package.swift`, and
-    /// includes every one — so each `modules_`, `objects_` and `bundles_` func the formula
+    /// includes every one — so each `modules_`, `objects_`, `bundles_` and `linking_` func the formula
     /// calls is one an included formula defines, a local package's or a remote one's.
     func test_findsNetNewsWiresPackagesInItsModulesFolderAndDefinesWhatItCalls() throws {
         let modules = NetNewsWireModules.products.keys.sorted()
@@ -350,7 +350,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             remoteProducts.insert(product)
         }
 
-        let calls = try NSRegularExpression(pattern: "\\b(?:modules|objects|bundles)_(\\w+)\\(\\)")
+        let calls = try NSRegularExpression(pattern: "\\b(?:modules|objects|bundles|linking)_(\\w+)\\(\\)")
         let called = Set(calls.matches(in: formula, range: NSRange(formula.startIndex..., in: formula)).compactMap { match in
             Range(match.range(at: 1), in: formula).map { String(formula[$0]) }
         })

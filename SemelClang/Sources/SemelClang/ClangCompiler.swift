@@ -39,6 +39,10 @@ struct ClangCompilerConfiguration {
 public struct ClangCompiler: Node {
     public static let kind: UInt = 19
 
+    /// 2: assembly — a preprocessed `.S`, a `.s` — is assembled as such with no standard,
+    /// where it was compiled as C (B-55).
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     static let configuration = "configuration"
@@ -111,10 +115,11 @@ public struct ClangCompiler: Node {
         arguments.append("-x");      arguments.append(language)
         arguments.append("-c")
 
-        let standard = try inputs.configuration.standards.standard(
+        if let standard = try inputs.configuration.standards.standard(
             forLanguage: language,
-            namespace: ClangCompilerConfiguration.settingNamespace)
-        arguments.append("-std=\(standard)")
+            namespace: ClangCompilerConfiguration.settingNamespace) {
+            arguments.append("-std=\(standard)")
+        }
 
         // The object records its compilation directory in DWARF. The sandbox's real name
         // would make two builds of one file differ; the canonical name makes them agree.

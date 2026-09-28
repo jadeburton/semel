@@ -130,6 +130,39 @@ final class ClangLinkerTests: SemelClangTestCase {
         XCTAssertFalse(executor.lastArguments.contains("-lc++"), "the old key is gone, got \(executor.lastArguments)")
     }
 
+    /// A C++ runtime a package's link requirements state is linked as a declared standard
+    /// is (B-55).
+    func test_linksTheCPlusPlusRuntimeWhenTheSettingsSayItIsNeeded() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o"],
+                                                    extraConfiguration: ["cxxRuntime": "true"]))
+        XCTAssertTrue(executor.lastArguments.contains("-lc++"), "got \(executor.lastArguments)")
+    }
+
+    // MARK: - Frameworks and libraries (B-55)
+
+    /// `frameworks` and `libraries` are each a `-framework` and an `-l` before the output,
+    /// sorted, with the SDK's framework folder searched since the link has no sysroot.
+    func test_linksTheFrameworksAndLibrariesTheSettingsName() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o"],
+                                                    extraConfiguration: ["frameworks": "Security,Foundation",
+                                                                         "libraries": "z",
+                                                                         "sdkPath": "/sdk"]))
+
+        let arguments = executor.lastArguments
+        let start = try XCTUnwrap(arguments.firstIndex(of: "a.c.p.o"))
+        let end   = try XCTUnwrap(arguments.firstIndex(of: "-o"))
+        XCTAssertEqual(Array(arguments[(start + 1)..<end]),
+                       ["-F", "/sdk/System/Library/Frameworks", "-framework", "Foundation", "-framework", "Security", "-lz"])
+    }
+
+    /// Nothing named, nothing passed: not even the framework search path.
+    func test_linksNoFrameworkWhenNoneIsNamed() throws {
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.c.p.o"], extraConfiguration: ["sdkPath": "/sdk"]))
+
+        let arguments = executor.lastArguments
+        XCTAssertFalse(arguments.contains("-F") || arguments.contains("-framework"), "got \(arguments)")
+    }
+
     // A build must produce the same command line from the same inputs. Object files and
     // libraries arrive in a dictionary, whose iteration order is not stable, so they have
     // to be put into a defined order before they reach the command line.

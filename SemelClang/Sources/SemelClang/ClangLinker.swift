@@ -18,9 +18,12 @@ struct ClangLinkerConfiguration {
     let target: String  // e.g. "arm64-apple-macos14.0"
     let sdkPath: String?
     /// True when the configuration declares `cxxStandard` — the same key the compiler reads
-    /// (B-48) — indicating a C++ link that needs `-lc++` beside `-lSystem` even when no
-    /// object file is recognisably C++, such as C objects linked against a C++ archive.
+    /// (B-48) — or `cxxRuntime`, indicating a C++ link that needs `-lc++` beside `-lSystem`
+    /// even when no object file is recognisably C++, such as C objects linked against a
+    /// C++ archive.
     let cxx: Bool
+    /// `frameworks` and `libraries`, each passed as `-framework` and `-l` (B-55).
+    let requirements: LinkRequirements
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -32,7 +35,8 @@ struct ClangLinkerConfiguration {
         environment = [:]
         dynamicLibrary = properties["dynamicLibrary"] == "true"
         sdkPath = properties["sdkPath"]
-        cxx = properties["cxxStandard"] != nil
+        requirements = LinkRequirements(properties: properties)
+        cxx = properties["cxxStandard"] != nil || requirements.cxxRuntime
     }
 
     /// Where this node's settings live in a config file: `clang.linker.<key>`.
@@ -43,6 +47,9 @@ struct ClangLinkerConfiguration {
 
 public struct ClangLinker: Node {
     public static let kind: UInt = 18
+
+    /// 2: passes the `frameworks` and `libraries` its settings state (B-55).
+    public static let implementationVersion = 2
 
     // MARK: Ports
 
@@ -179,6 +186,15 @@ public struct ClangLinker: Node {
         for libraryFile in inputs.libraryFiles {
             arguments.append(libraryFile.filePath)
         }
+
+        // `-nostdlib` and no sysroot: a framework is found where the SDK keeps it, as
+        // `-lSystem` is found under the SDK's `usr/lib` above.
+        let requirements = inputs.configuration.requirements
+        if let sdkPath = inputs.configuration.sdkPath, !requirements.frameworks.isEmpty {
+            let frameworksPath = sdkPath + "/System/Library/Frameworks"
+            arguments.append("-F"); arguments.append(frameworksPath)
+        }
+        arguments.append(contentsOf: requirements.frameworkAndLibraryArguments)
 
         arguments.append("-o"); arguments.append("output.dylib")
         arguments.append(contentsOf: inputs.configuration.arguments)

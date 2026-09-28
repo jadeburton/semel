@@ -35,6 +35,18 @@ struct PackageClangTarget: Equatable {
 
     static let cFamilyExtensions: Set<String> = ["c", "m", "mm", "cpp", "cc", "cxx"]
 
+    /// `.S`, preprocessed, and `.s`, as it is: SwiftPM compiles both in a C target
+    /// (PLCrashReporter's `PLCrashAsyncThread_current.S`, BoringSSL's generated `.S`), and
+    /// counts them among its sources (B-55). Lowercased, as the extensions above are.
+    static let assemblyExtensions: Set<String> = ["s"]
+
+    /// Every extension a C target compiles.
+    static let sourceExtensions = cFamilyExtensions.union(assemblyExtensions)
+
+    /// The extensions compiled as C++ or Objective-C++, whose objects need the C++ runtime
+    /// at link; `.C` is C++ too, by case, as the compiler reads it.
+    static let cxxExtensions: Set<String> = ["mm", "cpp", "cc", "cxx"]
+
     /// SwiftPM's public-headers folder when the manifest names none.
     static let defaultPublicHeadersPath = "include"
 
@@ -42,6 +54,14 @@ struct PackageClangTarget: Equatable {
     /// sorted: `**/*.c` for each extension found under a source folder — the whole target
     /// when `sources:` lists nothing — and a file `sources:` lists by name as written.
     let sourcePatterns: [String]
+
+    /// The same for `.s` files, which have no preprocessing phase: the compiler takes them
+    /// as they are, so they are a for-each of their own with no preprocessor (B-55).
+    let assemblyPatterns: [String]
+
+    /// Whether any source is C++ or Objective-C++, so a product linking the target's
+    /// objects needs the C++ runtime (B-55).
+    let compilesCxx: Bool
 
     /// The for-each's `except` items, relative to the target's folder and sorted: `Tests/**`
     /// for an excluded folder holding a source the patterns would take, and the path for an
@@ -119,27 +139,30 @@ struct PackageClangTarget: Equatable {
             ? [""]
             : listedFolders.filter { folder in !listedFolders.contains { $0 != folder && PackageResources.isAtOrUnder(folder, $0) } }
         var patterns = Set<String>()
+        var takenExtensions = Set<String>()
         for folder in sourceFolders {
             for file in sourceFiles where folder.isEmpty || PackageResources.isAtOrUnder(file, folder) {
                 let fileExtension = Self.fileExtension(file)
-                guard Self.cFamilyExtensions.contains(fileExtension.lowercased()) else { continue }
+                guard Self.sourceExtensions.contains(fileExtension.lowercased()) else { continue }
                 patterns.insert(Self.joined(folder, "\(WildcardPath.anyFolders)/*.\(fileExtension)"))
+                takenExtensions.insert(fileExtension)
             }
         }
         for listed in rules.sources.map(Self.normalized) where !listedFolders.contains(listed) {
-            guard sourceFiles.contains(listed), Self.cFamilyExtensions.contains(Self.fileExtension(listed).lowercased()) else {
+            guard sourceFiles.contains(listed), Self.sourceExtensions.contains(Self.fileExtension(listed).lowercased()) else {
                 continue
             }
             patterns.insert(listed)
+            takenExtensions.insert(Self.fileExtension(listed))
         }
         guard !patterns.isEmpty else {
             return nil
         }
 
-        // An exclusion matters when it takes out a file a pattern would take: a C-family
-        // file in scope.
+        // An exclusion matters when it takes out a file a pattern would take: a source file
+        // in scope.
         let excludedSources = everyFile.filter { file in
-            isInScope(file) && isExcluded(file) && Self.cFamilyExtensions.contains(Self.fileExtension(file).lowercased())
+            isInScope(file) && isExcluded(file) && Self.sourceExtensions.contains(Self.fileExtension(file).lowercased())
         }
         var exclusions = Set<String>()
         for excluded in rules.exclude.map(Self.normalized) {
@@ -150,7 +173,11 @@ struct PackageClangTarget: Equatable {
 
         let headers = Self.normalized(rules.publicHeadersPath ?? Self.defaultPublicHeadersPath)
 
-        sourcePatterns    = patterns.sorted()
+        let isUnpreprocessedAssembly = { (pattern: String) in Self.fileExtension(pattern) == "s" }
+        let sortedPatterns = patterns.sorted()
+        sourcePatterns    = sortedPatterns.filter { !isUnpreprocessedAssembly($0) }
+        assemblyPatterns  = sortedPatterns.filter(isUnpreprocessedAssembly)
+        compilesCxx       = takenExtensions.contains { $0 == "C" || Self.cxxExtensions.contains($0.lowercased()) }
         excludedPatterns  = exclusions.sorted()
         publicHeadersPath = manifests[Self.joined(targetFolder, headers)] != nil ? headers : nil
 

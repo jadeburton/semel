@@ -25,6 +25,14 @@ public enum FormulaIdentifier {
         "objects_\(sanitized(product))"
     }
 
+    /// The func carrying what linking a package product's objects needs beyond them — its
+    /// targets' frameworks and libraries, and the C++ runtime — as settings
+    /// (`LinkRequirements`). Always defined, empty when nothing is needed, so a consumer
+    /// can name it without knowing (B-55).
+    public static func linkRequirementsFunc(forProduct product: String) -> String {
+        "linking_\(sanitized(product))"
+    }
+
     /// The func carrying the resource bundles of every target behind a package product,
     /// each under its `<Package>_<Target>.bundle/`, as one tree (B-77). Empty when no
     /// target has resources, so a consumer can name it without knowing.

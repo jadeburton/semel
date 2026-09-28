@@ -262,6 +262,23 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         XCTAssertEqual(ClangPreprocessor.language(for: "a.cpp.p"), "c++")
         XCTAssertEqual(ClangPreprocessor.language(for: "a.C.p.o"), "c++")
         XCTAssertEqual(ClangPreprocessor.language(for: "a.mm.p.o"), "objective-c++")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.S"),     "assembler-with-cpp", "uppercase .S is preprocessed")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.S.p"),   "assembler-with-cpp")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.s"),     "assembler")
+        XCTAssertEqual(ClangPreprocessor.language(for: "a.s.o"),   "assembler")
+    }
+
+    /// A `.S` is assembly with macros and `#include`s (PLCrashReporter's
+    /// `PLCrashAsyncThread_current.S`, B-55): preprocessed as such, with the target's
+    /// defines, and with no language standard, which assembly has none of — so a
+    /// configuration naming no standard at all preprocesses it.
+    func test_preprocessesAssemblyAsAssemblyWithNoStandard() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/thread.S", cStandard: nil, defines: "PLCR_PRIVATE"))
+
+        let arguments = executor.lastArguments
+        XCTAssertEqual(Array(arguments.prefix(3)), ["-E", "-x", "assembler-with-cpp"])
+        XCTAssertFalse(arguments.contains { $0.hasPrefix("-std=") }, "got \(arguments)")
+        XCTAssertTrue(arguments.contains("-DPLCR_PRIVATE"), "got \(arguments)")
     }
 
     // MARK: - Header folders (B-54)
