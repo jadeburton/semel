@@ -76,6 +76,8 @@ struct ClangPreprocessorConfiguration {
     /// which `ClangLanguageStandards.standard(forLanguage:namespace:)` decides once the
     /// file itself is known.
     let standards: ClangLanguageStandards
+    /// `modules`, `objectiveCARC` and `moduleName` (B-77).
+    let features: ClangLanguageFeatures
     let target: String  // e.g. "arm64-apple-macos14.0"
 
     init(properties: [String: String]) throws {
@@ -89,6 +91,7 @@ struct ClangPreprocessorConfiguration {
         environment = [:]
         sdkPath   = properties["sdkPath"]
         standards = .init(properties: properties)
+        features  = try .init(properties: properties, namespace: Self.settingNamespace, readsModuleName: true)
     }
 
     /// Where this node's settings live in a config file: `clang.preprocessor.<key>`.
@@ -103,7 +106,8 @@ public struct ClangPreprocessor: Node {
     /// 2: a header nobody pushed is left to clang (B-79), where version 1 failed on it.
     /// 3: a header folder is walked to the bottom, where version 2 took its top level (B-55).
     /// 4: a `.S` is preprocessed as assembly with no standard, where it was taken for C.
-    public static let implementationVersion = 4
+    /// 5: `modules`, `objectiveCARC` and `moduleName` reach the command line (B-77).
+    public static let implementationVersion = 5
 
     public var thisNode: NodeRecord
 
@@ -333,6 +337,7 @@ public struct ClangPreprocessor: Node {
 
         arguments.append("-target"); arguments.append(inputs.configuration.target)
         settings.append(.clangTarget(key: "\(namespace).target", value: inputs.configuration.target))
+        arguments.append(contentsOf: inputs.configuration.features.arguments(forLanguage: language))
         arguments.append(inputs.inputSourceFile.filePath)
         arguments.append("-o"); arguments.append(outputFilename)
         // Before `arguments`, so a project's own flags can still undefine or redefine one.

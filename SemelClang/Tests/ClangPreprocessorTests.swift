@@ -42,7 +42,8 @@ final class ClangPreprocessorTests: SemelClangTestCase {
                            cStandard: String? = "c17",
                            cxxStandard: String? = nil,
                            arguments: String? = nil,
-                           defines: String? = nil) throws -> ProcessInput {
+                           defines: String? = nil,
+                           otherSettings: [String: String] = [:]) throws -> ProcessInput {
         var configuration = """
             toolDescriptor.name=\(descriptor.name)
             toolDescriptor.version=\(descriptor.version)
@@ -55,6 +56,9 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         if let cxxStandard { configuration += "\ncxxStandard=\(cxxStandard)" }
         if let arguments   { configuration += "\narguments=\(arguments)" }
         if let defines     { configuration += "\ndefines=\(defines)" }
+        for (key, value) in otherSettings.sorted(by: { $0.key < $1.key }) {
+            configuration += "\n\(key)=\(value)"
+        }
         return ProcessInput(inputValues: [
             ClangPreprocessor.configuration:    ["configuration": .value(try configuration.intern())],
             ClangPreprocessor.sourceFileInput:   [sourcePath: .value(try "int main(){}".intern())],
@@ -104,6 +108,58 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
         _ = try makeTool().process(input: try makeInput())
         XCTAssertFalse(executor.lastArguments.contains { $0.hasPrefix("-D") }, "\(executor.lastArguments)")
+    }
+
+    // MARK: - Modules and ARC (B-77)
+
+    // An Objective-C target in a Swift package is built as SwiftPM builds it: its headers
+    // open with `@import Foundation;`, which needs modules, and its code assumes ARC, which
+    // the preprocessor sees through `__has_feature(objc_arc)` (FMDB's retain macros). The
+    // converter states both as settings; the node decides per file what they mean.
+
+    private let objectiveCSettings = ["modules": "true", "objectiveCARC": "true", "moduleName": "Kit"]
+
+    func test_anObjectiveCSourceIsPreprocessedWithARCAndModulesCachedInsideTheSandbox() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m", otherSettings: objectiveCSettings))
+
+        let arguments = executor.lastArguments
+        XCTAssertTrue(arguments.contains("-fobjc-arc"), "\(arguments)")
+        XCTAssertTrue(arguments.contains("-fmodules"), "\(arguments)")
+        XCTAssertTrue(arguments.contains("-fmodule-name=Kit"), "\(arguments)")
+        // Relative, so it is below the sandbox and names nothing outside it.
+        XCTAssertTrue(arguments.contains("-fmodules-cache-path=\(ToolSandbox.derivedStateFolderName)/clang-module-cache"),
+                      "\(arguments)")
+    }
+
+    /// ARC is Objective-C's and Objective-C++'s, and modules Objective-C's alone: loaded
+    /// again by the compiler, a module's macros expand a second time in text the
+    /// preprocessor already expanded, and only Objective-C writes `@import`, so only it
+    /// needs them. The SDK's `#define ts_64 uts.ts_64` broke PLCrashReporter's C that way.
+    func test_eachLanguageTakesOnlyTheFlagsThatApplyToIt() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/plain.c", otherSettings: objectiveCSettings))
+        XCTAssertFalse(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
+
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/bridge.mm", cxxStandard: "c++17",
+                                                        otherSettings: objectiveCSettings))
+        XCTAssertTrue(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
+    }
+
+    /// A hand-written formula's Objective-C is compiled as it always was: neither flag is
+    /// Semel's choice to make for it.
+    func test_withoutTheSettingsAnObjectiveCSourceTakesNeitherFlag() throws {
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m"))
+
+        XCTAssertFalse(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains { $0.hasPrefix("-fmodule") }, "\(executor.lastArguments)")
+    }
+
+    func test_aSettingThatIsNeitherTrueNorFalseFailsNamingItsKey() throws {
+        XCTAssertThrowsError(try makeTool().process(input: try makeInput(sourcePath: "src/Kit.m",
+                                                                        otherSettings: ["objectiveCARC": "yes"]))) { error in
+            XCTAssertTrue(String(describing: error).contains("clang.preprocessor.objectiveCARC"), "\(error)")
+        }
     }
 
     // MARK: - A header nobody pushed (B-79)

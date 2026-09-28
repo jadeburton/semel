@@ -1478,12 +1478,160 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         return Set(matches.compactMap { Range($0.range(at: 1), in: formula).map { String(formula[$0]) } })
     }
 
-    func test_aSwiftTargetDependingOnACTargetGetsItsPublicHeadersAsAModuleMapFolder() throws {
+    func test_aSwiftTargetDependingOnACTargetGetsItsHeaderTree() throws {
         let result = try formula(json: appOverCLib, folderContents: cFolders)
 
         let block = try funcDefinition("compilerApp", in: result)
-        XCTAssertTrue(block.contains("'CLib': Folder(path: 'input:/pkg/src/include').manifest"), "got:\n\(block)")
+        XCTAssertTrue(block.contains("moduleTrees: [\n            'CLib': headersCLib().files\n    ]"), "got:\n\(block)")
+        XCTAssertFalse(block.contains("inputModuleMapFolders"), "got:\n\(block)")
         XCTAssertFalse(block.contains("compilerCLib().swiftmodule"), "a C target has no swiftmodule, got:\n\(block)")
+        // The product's module tree carries the same value, so an app and a target beside
+        // the C one in its package import one module.
+        XCTAssertTrue(try funcDefinition("modules_App", in: result).contains("'CLib': headersCLib().files"), "got:\n\(result)")
+        // Defined before the compiler that names it.
+        let headersAt  = try XCTUnwrap(result.range(of: "func headersCLib()")).lowerBound
+        let compilerAt = try XCTUnwrap(result.range(of: "func compilerApp()")).lowerBound
+        XCTAssertLessThan(headersAt, compilerAt)
+    }
+
+    /// The tree holds the headers of the whole target at their paths in it, under the
+    /// target's name, not the public folder's alone: a public header may reach back into
+    /// the target, as NetNewsWire's `include/RSDatabaseObjC.h` does with
+    /// `#import "../FMDatabase.h"`. Sources are not headers and stay out.
+    func test_aCTargetsHeaderTreeHoldsEveryHeaderOfTheTargetAtItsPath() throws {
+        var tree = cFolders
+        tree["input:/pkg/src/include"] = [file("CLib.h")]
+        let headers = try funcDefinition("headersCLib", in: formula(json: appOverCLib, folderContents: tree))
+
+        XCTAssertTrue(headers.contains("'CLib/parser.h': StaticFile(path: 'input:/pkg/src/parser.h').output"), "got:\n\(headers)")
+        XCTAssertTrue(headers.contains("'CLib/include/CLib.h': StaticFile(path: 'input:/pkg/src/include/CLib.h').output"),
+                      "got:\n\(headers)")
+        XCTAssertFalse(headers.contains("blocks.c"), "got:\n\(headers)")
+        XCTAssertFalse(headers.contains("CMakeLists"), "got:\n\(headers)")
+    }
+
+    // MARK: - The module map SwiftPM writes (B-55)
+
+    // A C target whose public-headers folder has no `module.modulemap` is importable from
+    // Swift all the same: SwiftPM writes one. PLCrashReporter's `import CrashReporter` and
+    // Zip's `import Minizip` rest on it.
+
+    func test_anUmbrellaHeaderNamedForTheModuleGetsAModuleMapBesideIt() throws {
+        var tree = cFolders
+        tree["input:/pkg/src/include"] = [file("CLib.h"), file("detail.h")]
+        let headers = try funcDefinition("headersCLib", in: formula(json: appOverCLib, folderContents: tree))
+
+        XCTAssertTrue(headers.contains("'CLib/include/module.modulemap': ModuleMapWriter(moduleName: 'CLib', umbrellaHeader: 'CLib.h').output"),
+                      "got:\n\(headers)")
+    }
+
+    func test_aPublicFolderWithNoUmbrellaHeaderIsAnUmbrellaDirectory() throws {
+        var tree = cFolders
+        tree["input:/pkg/src/include"] = [file("parser.h"), file("render.h")]
+        let headers = try funcDefinition("headersCLib", in: formula(json: appOverCLib, folderContents: tree))
+
+        XCTAssertTrue(headers.contains("'CLib/include/module.modulemap': ModuleMapWriter(moduleName: 'CLib', umbrellaDirectory: '.').output"),
+                      "got:\n\(headers)")
+    }
+
+    /// A module map of the target's own is used as it is, and none is written.
+    func test_aPublicFolderWithItsOwnModuleMapGetsNoneWritten() throws {
+        var tree = cFolders
+        tree["input:/pkg/src/include"] = [file("CLib.h"), file("module.modulemap")]
+        let headers = try funcDefinition("headersCLib", in: formula(json: appOverCLib, folderContents: tree))
+
+        XCTAssertTrue(headers.contains("'CLib/include/module.modulemap': StaticFile(path: 'input:/pkg/src/include/module.modulemap').output"),
+                      "got:\n\(headers)")
+        XCTAssertFalse(headers.contains("ModuleMapWriter"), "got:\n\(headers)")
+    }
+
+    /// SwiftPM's rule, case by case, over the public folder's listing.
+    func test_theModuleMapFollowsSwiftPMsRule() {
+        func manifest(_ path: String, _ entries: [FolderManifestEntry]) -> (String, FolderManifest) {
+            (path, FolderManifest(baseFolderPath: path, entries: entries))
+        }
+        func moduleMap(_ listings: [(String, FolderManifest)]) -> PackageClangTarget.ModuleMap? {
+            PackageClangTarget.moduleMap(moduleName: "Kit", publicHeadersFolder: "input:/include",
+                                         manifests: Dictionary(uniqueKeysWithValues: listings))
+        }
+
+        XCTAssertEqual(moduleMap([manifest("input:/include", [file("Kit.h"), file("module.modulemap")])]), .provided)
+        XCTAssertEqual(moduleMap([manifest("input:/include", [file("Kit.h"), file("Other.h")])]), .umbrellaHeader("Kit.h"))
+        XCTAssertEqual(moduleMap([manifest("input:/include", [folder("Kit")]),
+                                  manifest("input:/include/Kit", [file("Kit.h"), file("Part.h")])]),
+                       .umbrellaHeader("Kit/Kit.h"))
+        XCTAssertEqual(moduleMap([manifest("input:/include", [file("a.h"), folder("sub")])]), .umbrellaDirectory)
+        XCTAssertEqual(moduleMap([manifest("input:/include", [])]), .umbrellaDirectory)
+        // SwiftPM refuses these, and so the target has no module.
+        XCTAssertNil(moduleMap([manifest("input:/include", [file("Kit.h"), folder("sub")])]))
+        XCTAssertNil(moduleMap([manifest("input:/include", [folder("Kit"), file("stray.h")]),
+                                manifest("input:/include/Kit", [file("Kit.h")])]))
+    }
+
+    /// Zip, as NetNewsWire pins it: the C target `Minizip` sits at `Zip/minizip`, inside the
+    /// folder of the Swift target `Zip` that excludes it and imports it. Its public folder
+    /// has `Minizip.h` and no module map; the one at `minizip/module` is excluded, and must
+    /// stay out of the tree, where it would declare `Minizip` a second time on the import path.
+    func test_aCTargetNestedInItsSwiftTargetsFolderReachesItAsAnyDependencyDoes() throws {
+        let json = """
+            {
+              "name": "Zip",
+              "dependencies": [],
+              "products": [{"name": "Zip", "targets": ["Zip"], "type": {"library": ["automatic"]}}],
+              "targets": [
+                {"name": "Minizip", "type": "regular", "path": "Zip/minizip", "dependencies": [], "exclude": ["module"]},
+                {"name": "Zip", "type": "regular", "path": "Zip", "dependencies": [{"byName": ["Minizip", null]}],
+                 "exclude": ["minizip", "zlib"]}
+              ]
+            }
+            """
+        let tree: [String: [FolderManifestEntry]] = [
+            "input:/pkg/Zip":                 [file("Zip.swift"), file("Zip.h"), folder("minizip"), folder("zlib")],
+            "input:/pkg/Zip/zlib":            [file("module.modulemap")],
+            "input:/pkg/Zip/minizip":         [file("zip.c"), file("unzip.c"), folder("include"), folder("module")],
+            "input:/pkg/Zip/minizip/include": [file("Minizip.h"), file("zip.h"), file("unzip.h")],
+            "input:/pkg/Zip/minizip/module":  [file("module.modulemap")],
+        ]
+        let result = try formula(json: json, folderContents: tree)
+
+        let compiler = try funcDefinition("compilerZip", in: result)
+        XCTAssertTrue(compiler.contains("'Minizip': headersMinizip().files"), "got:\n\(compiler)")
+        let headers = try funcDefinition("headersMinizip", in: result)
+        XCTAssertTrue(headers.contains("'Minizip/include/module.modulemap': ModuleMapWriter(moduleName: 'Minizip', umbrellaHeader: 'Minizip.h')"),
+                      "got:\n\(headers)")
+        XCTAssertTrue(headers.contains("'Minizip/include/zip.h'"), "got:\n\(headers)")
+        XCTAssertFalse(headers.contains("minizip/module"), "an excluded module map, got:\n\(headers)")
+        let product = try productBlock("libZip.a", in: result)
+        XCTAssertTrue(product.contains("{f: 'input:/pkg/Zip/minizip/**/*.c'}"), "got:\n\(product)")
+    }
+
+    // MARK: - Objective-C (B-77)
+
+    /// NetNewsWire's `RSDatabaseObjC` (FMDB): Objective-C whose headers open with
+    /// `@import Foundation;` and whose code assumes ARC. SwiftPM builds it with modules and
+    /// ARC, and the converter says so to both clang stages, as literals.
+    func test_aCTargetWithObjectiveCIsPreprocessedAndCompiledWithModulesAndARC() throws {
+        var tree = cFolders
+        tree["input:/pkg/src"] = [file("FMDatabase.m"), file("FMDatabase.h"), folder("include")]
+        tree["input:/pkg/src/include"] = [file("CLib.h")]
+        let result = try formula(json: appOverCLib, folderContents: tree)
+
+        let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(moduleName: 'CLib', modules: 'true', objectiveCARC: 'true')"),
+                      "got:\n\(preprocessor)")
+        let compilerEntry = try XCTUnwrap(try productBlock("App", in: result).components(separatedBy: "\n")
+                                              .first { $0.contains("preprocessCLib") })
+        XCTAssertTrue(compilerEntry.contains("SettingsLiteral(modules: 'true', objectiveCARC: 'true')"), "got:\n\(compilerEntry)")
+    }
+
+    /// A plain C target is left as it was: SwiftPM would enable modules for it too, but its
+    /// preprocessed text would then import its dependencies' modules, which the compiler
+    /// has no module map for.
+    func test_aPlainCTargetTakesNeitherModulesNorARC() throws {
+        let result = try formula(json: appOverCLib, folderContents: cFolders)
+
+        XCTAssertFalse(result.contains("objectiveCARC"), "got:\n\(result)")
+        XCTAssertFalse(result.contains("modules: 'true'"), "got:\n\(result)")
     }
 
     /// cmark-gfm-extensions includes cmark-gfm's headers by search path; SwiftPM puts the
@@ -1596,14 +1744,27 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         tree["input:/pkg/src/api/public"] = [file("module.modulemap"), file("clib.h")]
         let result = try formula(json: json, folderContents: tree)
 
-        let compiler = try funcDefinition("compilerApp", in: result)
-        XCTAssertTrue(compiler.contains("'CLib': Folder(path: 'input:/pkg/src/api/public').manifest"), "got:\n\(compiler)")
+        let headers = try funcDefinition("headersCLib", in: result)
+        XCTAssertTrue(headers.contains("'CLib/api/public/module.modulemap': StaticFile(path: 'input:/pkg/src/api/public/module.modulemap')"),
+                      "the named folder's module map, got:\n\(headers)")
+        XCTAssertTrue(headers.contains("'CLib/api/public/clib.h'"), "got:\n\(headers)")
         let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
         XCTAssertTrue(preprocessor.contains("'input:/pkg/src/api/public': Folder"), "got:\n\(preprocessor)")
         XCTAssertFalse(preprocessor.contains("'input:/pkg/src/include': Folder"), "not the default once one is named, got:\n\(preprocessor)")
-        XCTAssertTrue(try productBlock("App", in: result).contains("'CLib': FolderTreeBuilder(under: 'CLib', folder: ['folder': Folder(path: 'input:/pkg/src/api/public')")
-                      || result.contains("FolderTreeBuilder(under: 'CLib', folder: ['folder': Folder(path: 'input:/pkg/src/api/public')"),
-                      "the module tree carries the named folder, got:\n\(result)")
+    }
+
+    /// A named public folder with an umbrella header and no module map gets the map there,
+    /// not in `include`.
+    func test_aPublicHeadersPathWithAnUmbrellaHeaderGetsItsModuleMapThere() throws {
+        let json = cLibJSON("\"publicHeadersPath\": \"api/public\"")
+        var tree = cLibTree
+        tree["input:/pkg/src"]?.append(folder("api"))
+        tree["input:/pkg/src/api"] = [folder("public")]
+        tree["input:/pkg/src/api/public"] = [file("CLib.h"), file("shapes.h")]
+        let headers = try funcDefinition("headersCLib", in: formula(json: json, folderContents: tree))
+
+        XCTAssertTrue(headers.contains("'CLib/api/public/module.modulemap': ModuleMapWriter(moduleName: 'CLib', umbrellaHeader: 'CLib.h')"),
+                      "got:\n\(headers)")
     }
 
     /// `publicHeadersPath: "."` is the target folder itself, which is then one header
@@ -1611,8 +1772,9 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
     func test_aPublicHeadersPathOfDotIsTheTargetFolder() throws {
         let result = try formula(json: cLibJSON("\"publicHeadersPath\": \".\""), folderContents: cLibTree)
 
-        XCTAssertTrue(try funcDefinition("compilerApp", in: result).contains("'CLib': Folder(path: 'input:/pkg/src').manifest"),
-                      "got:\n\(result)")
+        XCTAssertTrue(try funcDefinition("headersCLib", in: result)
+                        .contains("'CLib/module.modulemap': ModuleMapWriter(moduleName: 'CLib', umbrellaDirectory: '.')"),
+                      "the map in the target folder itself, got:\n\(result)")
         let preprocessor = try XCTUnwrap(result.components(separatedBy: "\n\n").first { $0.hasPrefix("func preprocessCLib(path)") })
         XCTAssertEqual(preprocessor.components(separatedBy: "'input:/pkg/src': Folder").count, 2, "once, got:\n\(preprocessor)")
     }
@@ -1776,7 +1938,23 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         for folder in ["input:/pkg", "input:/pkg/include", "input:/pkg/Dependencies/protobuf-c"] {
             XCTAssertTrue(preprocessor.contains("'\(folder)': Folder(path: '\(folder)').manifest"), "\(folder), got:\n\(preprocessor)")
         }
-        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'PLCR_PRIVATE,PLCRASHREPORTER_PREFIX=')"), "got:\n\(preprocessor)")
+        XCTAssertTrue(preprocessor.contains("SettingsLiteral(defines: 'PLCR_PRIVATE,PLCRASHREPORTER_PREFIX=', "),
+                      "got:\n\(preprocessor)")
+    }
+
+    /// `import CrashReporter`: `include/` holds the umbrella `CrashReporter.h` and no module
+    /// map, so the header tree carries the one SwiftPM writes (B-55).
+    func test_aTargetAtThePackageRootIsImportableThroughItsUmbrellaHeader() throws {
+        let result = try formula(json: crashReporterManifest, folderContents: crashReporterTree)
+
+        let headers = try funcDefinition("headersCrashReporter", in: result)
+        XCTAssertTrue(headers.contains("'CrashReporter/include/module.modulemap': "
+                                     + "ModuleMapWriter(moduleName: 'CrashReporter', umbrellaHeader: 'CrashReporter.h').output"),
+                      "got:\n\(headers)")
+        XCTAssertTrue(headers.contains("'CrashReporter/Source/PLCrashReport.pb-c.h'"), "got:\n\(headers)")
+        XCTAssertFalse(headers.contains("dwarf_stack.hpp"), "excluded, got:\n\(headers)")
+        // Searched in the whole text: an empty Swift module tree puts a blank line in the func.
+        XCTAssertTrue(result.contains("        'CrashReporter': headersCrashReporter().files\n    ]).files"), "got:\n\(result)")
     }
 
     /// A C target's resources are a bundle as a Swift target's are, named as SwiftPM

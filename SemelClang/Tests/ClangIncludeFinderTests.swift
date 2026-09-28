@@ -12,6 +12,20 @@ final class ClangIncludeFinderTests: SemelClangTestCase {
         XCTAssertEqual(result, ["hello.h"])
     }
 
+    /// Objective-C's `#import` names a file as `#include` does; `@import` names a module,
+    /// which is no file anyone pushes, and a line of it is passed over (B-77).
+    func test_extractsQuotedImportAndPassesOverAModuleImport() {
+        let source = """
+            @import Foundation;
+            #import "../FMDatabase.h"
+            # import "FMResultSet.h"
+            #import <sqlite3.h>
+            @import AppKit.NSMenu;
+            """
+        let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: source)
+        XCTAssertEqual(result, ["../FMDatabase.h", "FMResultSet.h"])
+    }
+
     func test_ignoresAngleBracketInclude() {
         let result = ClangIncludeFinder.extractIncludePaths(sourceFileContent: "#include <stdio.h>")
         XCTAssertTrue(result.isEmpty)

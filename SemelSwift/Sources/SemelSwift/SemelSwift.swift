@@ -20,6 +20,7 @@ public enum SemelSwift {
             SwiftLinker.self,
             SwiftPackageReader.self,
             SwiftFormulaConverter.self,
+            ModuleMapWriter.self,
         ])
         // A Package.swift is not discovered as a project of its own. A formula names the
         // package it builds — `include SwiftFormulaConverter(path: <.>).formula` — and the

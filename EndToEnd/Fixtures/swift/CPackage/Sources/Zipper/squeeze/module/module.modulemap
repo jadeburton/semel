@@ -1,0 +1,6 @@
+// Excluded by the manifest, as Zip excludes Minizip's. On an import path it would declare
+// the module a second time, over a header that is not there.
+module Squeeze {
+    header "no-such-header.h"
+    export *
+}

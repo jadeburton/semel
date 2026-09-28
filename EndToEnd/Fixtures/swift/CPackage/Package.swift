@@ -9,6 +9,14 @@ import PackageDescription
 // beyond the objects comes from the manifest and the sources: a framework and a library,
 // one of them on this platform only, the C++ runtime for a `.cpp`, and assembly both
 // preprocessed and not.
+//
+// Beside it, what NetNewsWire's packages need (B-77): an Objective-C target whose
+// headers `@import Foundation;` and whose code compiles only under ARC, imported from
+// Swift through an umbrella header in `include` that reaches back into the target and
+// no module map; a C target whose named public folder has an umbrella header and no
+// module map; and, as Zip lays out Minizip, a C target inside the folder of the Swift
+// target that excludes and imports it, whose own excluded module map would break the
+// build were it used.
 let package = Package(
     name: "CPackage",
     platforms: [
@@ -21,7 +29,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "App",
-            dependencies: ["CLib"]
+            dependencies: ["CLib", "ObjCKit", "Shapes", "Zipper"]
         ),
         .executableTarget(
             name: "CTool",
@@ -42,6 +50,23 @@ let package = Package(
                 // Linked, the link would fail: no such library.
                 .linkedLibrary("clib_linux_only", .when(platforms: [.linux])),
             ]
+        ),
+        .target(
+            name: "ObjCKit"
+        ),
+        .target(
+            name: "Shapes",
+            publicHeadersPath: "public"
+        ),
+        .target(
+            name: "Zipper",
+            dependencies: ["Squeeze"],
+            exclude: ["squeeze"]
+        ),
+        .target(
+            name: "Squeeze",
+            path: "Sources/Zipper/squeeze",
+            exclude: ["module"]
         ),
     ]
 )

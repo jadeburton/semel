@@ -47,6 +47,27 @@ struct PackageClangTarget: Equatable {
     /// at link; `.C` is C++ too, by case, as the compiler reads it.
     static let cxxExtensions: Set<String> = ["mm", "cpp", "cc", "cxx"]
 
+    /// Objective-C and Objective-C++: a target holding one is built with ARC and modules.
+    static let objectiveCExtensions: Set<String> = ["m", "mm"]
+
+    /// What a header is, for the headers a Swift importer is given. `.inc` and `.def` are
+    /// included by headers as often as by sources.
+    static let headerExtensions: Set<String> = ["h", "hh", "hpp", "hxx", "inc", "def"]
+
+    /// The name clang gives a module map in a public-headers folder.
+    static let moduleMapFileName = "module.modulemap"
+
+    /// How Swift imports the target: through the module map its public-headers folder
+    /// holds, or through the one SwiftPM writes when it holds none (B-55).
+    enum ModuleMap: Equatable {
+        /// The folder's own `module.modulemap`.
+        case provided
+        /// `umbrella header`, relative to the public-headers folder: `Kit.h`, or `Kit/Kit.h`.
+        case umbrellaHeader(String)
+        /// `umbrella`, the public-headers folder itself.
+        case umbrellaDirectory
+    }
+
     /// SwiftPM's public-headers folder when the manifest names none.
     static let defaultPublicHeadersPath = "include"
 
@@ -79,6 +100,25 @@ struct PackageClangTarget: Equatable {
     /// clang passes over a search path that is not there.
     let headerSearchPaths: [String]
 
+    /// Whether a source the patterns take is Objective-C or Objective-C++: SwiftPM builds
+    /// such a target with ARC and clang modules, so its headers may `@import Foundation;`
+    /// (B-77).
+    let hasObjectiveC: Bool
+
+    /// Every header under the target folder that `exclude:` leaves, relative to it and
+    /// sorted, and the public-headers folder's own module map when it has one: what a Swift
+    /// target importing this one is given, at the paths they have here. The whole target's,
+    /// not the public folder's alone: a public header may reach back into the target —
+    /// NetNewsWire's `include/RSDatabaseObjC.h` is `#import "../FMDatabase.h"` — and one
+    /// nested below the public folder is as much the module's. `sources:` does not narrow
+    /// it, as a public-headers folder is rarely among the sources; `exclude:` does, so an
+    /// excluded module map (Zip's `minizip/module`) cannot declare the module a second time.
+    let headerFiles: [String]
+
+    /// How Swift imports the target, by SwiftPM's rule over the public-headers folder's
+    /// listing; nil when it has no such folder, and so no module Swift can import.
+    let moduleMap: ModuleMap?
+
     /// nil for a Swift target: one with a `.swift` file anywhere in scope, or with no
     /// C-family source at all.
     ///
@@ -91,7 +131,10 @@ struct PackageClangTarget: Equatable {
     /// `manifests` is every folder the converter walked, keyed by full path. The walk does
     /// not enter a hidden folder or a resource whole (an `.xcassets`), and neither does a
     /// formula's `**`, so the two agree on what the target holds.
-    init?(targetFolder: String, rules: Rules, manifests: [String: FolderManifest]) {
+    ///
+    /// `moduleName` is the target's c99 name, which a module map SwiftPM writes is named
+    /// for and its umbrella header is looked for by.
+    init?(targetFolder: String, moduleName: String, rules: Rules, manifests: [String: FolderManifest]) {
         guard manifests[targetFolder] != nil else {
             return nil
         }
@@ -172,6 +215,8 @@ struct PackageClangTarget: Equatable {
         }
 
         let headers = Self.normalized(rules.publicHeadersPath ?? Self.defaultPublicHeadersPath)
+        let publicFolder = Self.joined(targetFolder, headers)
+        let hasPublicFolder = manifests[publicFolder] != nil
 
         let isUnpreprocessedAssembly = { (pattern: String) in Self.fileExtension(pattern) == "s" }
         let sortedPatterns = patterns.sorted()
@@ -179,7 +224,21 @@ struct PackageClangTarget: Equatable {
         assemblyPatterns  = sortedPatterns.filter(isUnpreprocessedAssembly)
         compilesCxx       = takenExtensions.contains { $0 == "C" || Self.cxxExtensions.contains($0.lowercased()) }
         excludedPatterns  = exclusions.sorted()
-        publicHeadersPath = manifests[Self.joined(targetFolder, headers)] != nil ? headers : nil
+        publicHeadersPath = hasPublicFolder ? headers : nil
+        hasObjectiveC     = patterns.contains { Self.objectiveCExtensions.contains(Self.fileExtension($0).lowercased()) }
+        let map = hasPublicFolder
+            ? Self.moduleMap(moduleName: moduleName, publicHeadersFolder: publicFolder, manifests: manifests)
+            : nil
+        moduleMap = map
+
+        let publicModuleMap = Self.joined(headers, Self.moduleMapFileName)
+        headerFiles = everyFile.filter { file in
+            guard !isExcluded(file) else {
+                return false
+            }
+            return Self.headerExtensions.contains(Self.fileExtension(file).lowercased())
+                || (map == .provided && file == publicModuleMap)
+        }.sorted()
 
         var searchPaths: [String] = []
         for searchPath in rules.headerSearchPaths.map(Self.normalized)
@@ -187,6 +246,35 @@ struct PackageClangTarget: Equatable {
             searchPaths.append(searchPath)
         }
         headerSearchPaths = searchPaths
+    }
+
+    /// SwiftPM's rule (`ModuleMapGenerator.determineModuleMapType`), over the public-headers
+    /// folder's own listing: its `module.modulemap` when it has one; else `<Module>.h` beside
+    /// no folder, as the umbrella header; else `<Module>/<Module>.h` in the one folder there
+    /// with no header beside it; else the folder as an umbrella directory. SwiftPM refuses a
+    /// package where an umbrella header has folders beside it, or its folder has company;
+    /// such a target gets no map here, as it would get no module there. Hidden entries are
+    /// not counted, as the walk does not enter them.
+    static func moduleMap(moduleName: String, publicHeadersFolder: String,
+                          manifests: [String: FolderManifest]) -> ModuleMap? {
+        func listing(_ folder: String) -> (files: Set<String>, folders: [String]) {
+            let entries = (manifests[folder]?.entries ?? []).filter { $0.isPinned && !$0.name.hasPrefix(".") }
+            return (Set(entries.filter { !$0.isFolder }.map(\.name)), entries.filter(\.isFolder).map(\.name))
+        }
+        let (files, folders) = listing(publicHeadersFolder)
+        let umbrellaName = "\(moduleName).h"
+
+        if files.contains(moduleMapFileName) {
+            return .provided
+        }
+        if files.contains(umbrellaName) {
+            return folders.isEmpty ? .umbrellaHeader(umbrellaName) : nil
+        }
+        if listing(joined(publicHeadersFolder, moduleName)).files.contains(umbrellaName) {
+            let headersBeside = files.contains { fileExtension($0).lowercased() == "h" }
+            return folders.count == 1 && !headersBeside ? .umbrellaHeader("\(moduleName)/\(umbrellaName)") : nil
+        }
+        return .umbrellaDirectory
     }
 
     /// A manifest path as the walk spells it: no `./` in front, no `/` behind, and "" for

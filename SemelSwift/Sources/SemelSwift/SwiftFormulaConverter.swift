@@ -86,8 +86,10 @@ struct SwiftFormulaConverter: Node {
     /// (B-133); at 10, every product has a `linking_<Product>()` func of its link
     /// requirements, wired to its own linker when it has any, a C target's assembly is
     /// compiled, and the linker's settings are demanded when a linker setting is
-    /// conditional on a platform (B-55).
-    public static let implementationVersion = 10
+    /// conditional on a platform (B-55); at 11, a C target reaches Swift as a header tree on
+    /// `moduleTrees` with the module map SwiftPM would write when it has none, and a C
+    /// target with Objective-C is preprocessed and compiled with modules and ARC (B-55, B-77).
+    public static let implementationVersion = 11
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -404,8 +406,8 @@ struct SwiftFormulaConverter: Node {
                                           rootPackageFolder: rootPackageFolder,
                                           platform: platform,
                                           clangInfo: { target, folder in
-                                              PackageClangTarget(targetFolder: folder, rules: target.clangRules,
-                                                                 manifests: folderManifests)
+                                              PackageClangTarget(targetFolder: folder, moduleName: target.moduleName,
+                                                                 rules: target.clangRules, manifests: folderManifests)
                                           },
                                           resources: { target, folder in
                                               PackageResources.detect(rules: target.resourceRules, targetFolder: folder,
@@ -1291,6 +1293,14 @@ struct SwiftFormulaConverter: Node {
             // unwired, which fails the entire ProjectBuilder rather than just that product.
             guard !allTargets.isEmpty || !clangTargets.isEmpty else { continue }
 
+            // Each C target's headers as the tree a Swift importer takes, before the compilers
+            // that name it (B-55).
+            for target in clangTargets {
+                let fn = headerTreeFuncName(for: target.name)
+                guard emittedFuncs.insert(fn).inserted else { continue }
+                blocks.append(headerTreeFuncDef(target: target, packageFolder: rootPackageFolder))
+            }
+
             // Emit one func definition per unique target (shared across products).
             for target in allTargets {
                 let fn = compilerFuncName(for: target.name)
@@ -1409,8 +1419,8 @@ struct SwiftFormulaConverter: Node {
             }
             // A .swiftmodule records the Clang modules it was built against, so a consumer
             // loading it needs their module maps on its import path too: every C target
-            // and system library the product reaches travels in the same tree, its header
-            // folder under the target's name.
+            // and system library the product reaches travels in the same tree — a system
+            // library's folder, and a C target's header tree — under the target's name.
             var moduleMapTrees: [String] = []
             var wiredModuleMaps = Set<String>()
             for target in allTargets {
@@ -1421,14 +1431,12 @@ struct SwiftFormulaConverter: Node {
                 }
                 for clangTarget in collectTransitiveClangTargets(root: target, lookupAll: allTargetsNamed)
                 where wiredModuleMaps.insert(clangTarget.name).inserted {
-                    moduleMapTrees.append(Self.folderTreeWire(name: clangTarget.name,
-                                                              folder: headerFolder(of: clangTarget, packageFolder: rootPackageFolder)))
+                    moduleMapTrees.append(headerTreeWire(for: clangTarget.name))
                 }
             }
             // And a C target no Swift one reaches: the product's own, for whoever imports it.
             for clangTarget in clangTargets where wiredModuleMaps.insert(clangTarget.name).inserted {
-                moduleMapTrees.append(Self.folderTreeWire(name: clangTarget.name,
-                                                          folder: headerFolder(of: clangTarget, packageFolder: rootPackageFolder)))
+                moduleMapTrees.append(headerTreeWire(for: clangTarget.name))
             }
             let swiftModulesTree = "'swift': TreeBuilder(input: [\n" + moduleWires.joined(separator: ",\n") + "\n        ]).files"
             blocks.append(
@@ -1464,8 +1472,8 @@ struct SwiftFormulaConverter: Node {
         return blocks.joined(separator: "\n\n")
     }
 
-    /// One folder of headers and a module map as a tree under `name`, for a product's
-    /// module tree: `'CAtomic': FolderTreeBuilder(under: 'CAtomic', folder: [...]).files`.
+    /// A system library's folder, its module map in it, as a tree under `name`, for a
+    /// product's module tree: `'GRDBSQLite': FolderTreeBuilder(under: 'GRDBSQLite', folder: [...]).files`.
     private static func folderTreeWire(name: String, folder: String) -> String {
         "'\(name)': FolderTreeBuilder(under: '\(name)', folder: ['folder': Folder(path: '\(folder)').manifest]).files"
     }
@@ -1506,8 +1514,8 @@ struct SwiftFormulaConverter: Node {
             // System-library targets (module.modulemap wrappers) have no Swift
             // sources.  Skip them here; buildFuncDef handles them separately via
             // inputModuleMapFolders when they appear as a dependency. A C target has
-            // none either: its objects come through the clang nodes and its include
-            // folder reaches Swift the same way a system library's does. Nor has a
+            // none either: its objects come through the clang nodes and its headers
+            // reach Swift as a tree on moduleTrees. Nor has a
             // binary target, which the conversion names rather than builds (B-133).
             guard !target.isSystemLibrary, !target.isClangTarget, !target.isBinary else {
                 return
@@ -1638,6 +1646,15 @@ struct SwiftFormulaConverter: Node {
         "preprocess\(sanitizedIdentifier(targetName))"
     }
 
+    private func headerTreeFuncName(for targetName: String) -> String {
+        "headers\(sanitizedIdentifier(targetName))"
+    }
+
+    /// A C target's header tree on a module-tree port, keyed by the target's name.
+    private func headerTreeWire(for targetName: String) -> String {
+        "'\(targetName)': \(headerTreeFuncName(for: targetName))().files"
+    }
+
     private func sanitizedIdentifier(_ name: String) -> String {
         FormulaIdentifier.sanitized(name)
     }
@@ -1649,6 +1666,59 @@ struct SwiftFormulaConverter: Node {
     private func headerFolder(of target: SPMTarget, packageFolder: String) -> String {
         let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         return PackageClangTarget.joined(folder, target.clangInfo?.publicHeadersPath ?? "")
+    }
+
+    /// What a C target with Objective-C in it tells both clang stages, as SwiftPM builds such
+    /// a target (B-77): `modules` and `objectiveCARC`, and for the preprocessor the module
+    /// the sources belong to, so its own headers stay text. Settings rather than flags,
+    /// because the node decides per file what each means — ARC for Objective-C and
+    /// Objective-C++, modules for Objective-C alone (`ClangLanguageFeatures`) — and
+    /// literals, because like `moduleName` on the Swift side they say what the target is: a
+    /// config file turning ARC off would make ARC code leak.
+    ///
+    /// Only a target with Objective-C, where SwiftPM enables modules for every C-family
+    /// target but C++: split from its compile, a preprocessor with modules hands on text
+    /// that imports again what it already expanded (B-55's residual 11).
+    private func objectiveCLiterals(target: SPMTarget, includingModuleName: Bool) -> [String: String] {
+        guard target.clangInfo?.hasObjectiveC == true else {
+            return [:]
+        }
+        var literals = ["modules": "true", "objectiveCARC": "true"]
+        if includingModuleName {
+            literals["moduleName"] = target.moduleName
+        }
+        return literals
+    }
+
+    /// A C target's headers as the tree a Swift target importing it is given, under the
+    /// target's name at their paths in its folder, with the module map in the public-headers
+    /// folder — its own, or the one SwiftPM would write, from a `ModuleMapWriter` (B-55).
+    /// The compiler puts every folder of the tree that holds a module map on its import
+    /// path, which is the public-headers folder alone. Listed file by file rather than
+    /// walked: the tree leaves out what `exclude:` names, and the converter already has the
+    /// listing and runs again when it changes.
+    ///
+    /// ISSUE: a path holding a quote ends the formula's string, the limit every path here has.
+    private func headerTreeFuncDef(target: SPMTarget, packageFolder: String) -> String {
+        let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
+        let clangInfo = target.clangInfo
+        var entries = (clangInfo?.headerFiles ?? []).map { relative in
+            "        '\(target.name)/\(relative)': StaticFile(path: '\(folder)/\(relative)').output"
+        }
+        if let publicHeaders = clangInfo?.publicHeadersPath, let moduleMap = clangInfo?.moduleMap {
+            let mapPath = PackageClangTarget.joined(PackageClangTarget.joined(target.name, publicHeaders),
+                                                    PackageClangTarget.moduleMapFileName)
+            let umbrella: String? = switch moduleMap {
+                case .provided:                    nil
+                case .umbrellaHeader(let header):  "umbrellaHeader: '\(header)'"
+                case .umbrellaDirectory:           "umbrellaDirectory: '.'"
+            }
+            if let umbrella {
+                entries.append("        '\(mapPath)': ModuleMapWriter(moduleName: '\(target.moduleName)', \(umbrella)).output")
+            }
+        }
+        return "func \(headerTreeFuncName(for: target.name))() =\n" +
+               "    TreeBuilder(input: [" + (entries.isEmpty ? "" : "\n" + entries.sorted().joined(separator: ",\n") + "\n    ") + "]).files"
     }
 
     /// The preprocessor for one C target, as a func over the source path, the way the
@@ -1686,7 +1756,10 @@ struct SwiftFormulaConverter: Node {
         }
         let folderWires = folders.map { "            '\($0)': Folder(path: '\($0)').manifest" }
 
-        let literals = target.cDefines.isEmpty ? [:] : ["defines": target.cDefines.joined(separator: ",")]
+        var literals = objectiveCLiterals(target: target, includingModuleName: true)
+        if !target.cDefines.isEmpty {
+            literals["defines"] = target.cDefines.joined(separator: ",")
+        }
         let configExpr = Self.configurationExpression(namespace: Self.clangPreprocessorNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
                                                       literals: literals)
@@ -1709,7 +1782,7 @@ struct SwiftFormulaConverter: Node {
         let folder = target.folder(in: target.overridePackageFolder ?? packageFolder)
         let configExpr = Self.configurationExpression(namespace: Self.clangCompilerNamespace,
                                                       packageFolder: buildRoot(defaultingTo: packageFolder),
-                                                      literals: [:])
+                                                      literals: objectiveCLiterals(target: target, includingModuleName: false))
         func quoted(_ relative: String) -> String { "'\(folder)/\(relative)'" }
         func items(_ patterns: [String]) -> String {
             var items = patterns.map(quoted).joined(separator: ", ")
@@ -1802,11 +1875,12 @@ struct SwiftFormulaConverter: Node {
             let mapFolderPath = systemLibrary.folder(in: depPkgRoot)
             moduleMapFolderWires.append("            '\(systemLibrary.name)': Folder(path: '\(mapFolderPath)').manifest")
         }
-        // A C target reached the same way is importable through the module map in its
-        // public-headers folder, exactly like a system library (B-54).
-        for clangTarget in collectTransitiveClangTargets(root: target, lookupAll: lookupAll) {
-            let mapFolderPath = headerFolder(of: clangTarget, packageFolder: packageFolder)
-            moduleMapFolderWires.append("            '\(clangTarget.name)': Folder(path: '\(mapFolderPath)').manifest")
+        // A C target reached the same way is importable through its header tree, the module
+        // map in it its own or the one SwiftPM would write (B-54, B-55): the same value a
+        // product's module tree carries it in, so an app importing the product and a target
+        // beside it in the package import one module.
+        let moduleTreeWires = collectTransitiveClangTargets(root: target, lookupAll: lookupAll).map {
+            "            " + headerTreeWire(for: $0.name)
         }
 
         var args =
@@ -1814,6 +1888,9 @@ struct SwiftFormulaConverter: Node {
             "    inputFolder: ['folder0': \(folderExpr)]"
         if !moduleWires.isEmpty {
             args += ",\n    inputModules: [\n" + moduleWires.joined(separator: ",\n") + "\n    ]"
+        }
+        if !moduleTreeWires.isEmpty {
+            args += ",\n    moduleTrees: [\n" + moduleTreeWires.joined(separator: ",\n") + "\n    ]"
         }
         if !moduleMapFolderWires.isEmpty {
             args += ",\n    inputModuleMapFolders: [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"
