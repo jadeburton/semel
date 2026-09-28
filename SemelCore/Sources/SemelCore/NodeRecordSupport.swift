@@ -66,32 +66,52 @@ extension NodeRecord {
 
     /// Walk (creating as needed) the given path of folder nodes beneath `self`.
     /// Returns the deepest folder node.
+    ///
+    /// The part of the path that exists is read in one query, with each folder's pin
+    /// (`selectPath`), so a path whose folders are all there and pinned costs one read
+    /// however deep it is (B-131). Below a folder this creates, the rest is read again from
+    /// that folder: a folder found by its identity rather than made may already hold some.
     @discardableResult
     public func ensureEntirePathExistsAsFolders(_ path: Path, pinned: Bool) throws -> NodeRecord {
         guard kind == Folder.kind else {
             throw NodeError.other(message: "Cannot ensure path exists on a non-folder node")
         }
 
-        var currentFolder = self
-        var pathSoFar = try buildFullPathName(baseNodeID: nil)
+        let names          = path.segments
+        let pinnedSymbolID = Folder.pinnedOutputPort.asSymbolID()
 
-        for name in path.segments {
+        var currentFolder = self
+        var pathSoFar     = try buildFullPathName(baseNodeID: nil)
+        var existingSteps = try database.node.selectPath(below: try requireID(), names: names,
+                                                         portSymbolIDs: [pinnedSymbolID])
+        var depthOffset   = 0
+
+        for (index, name) in names.enumerated() {
             pathSoFar = pathSoFar.isEmpty ? Path(name) : pathSoFar / name
 
-            let existingChildren = try database.node.select(named: name, parentNodeID: (try currentFolder.requireID()))
+            let parentNodeID     = try currentFolder.requireID()
+            let existingChildren = existingSteps.filter {
+                $0.depth + depthOffset == index + 1 && $0.node.parentNodeID == parentNodeID
+            }
 
             if existingChildren.count > 1 {
                 // Can happen when folder and file have same name
                 throw NodeError.other(message: "Multiple children with the same name '\(name)' under folder '\(currentFolder.name ?? "<no name>")'")
             }
 
+            // What the walk read of this folder's pin, or nil when it has to be asked: a
+            // folder made here, or one with no row for the port — which `isPinned` refuses
+            // as a damaged graph, and should go on refusing.
+            var knownPinnedPort: OutputPort?
+
             if let existingChild = existingChildren.first {
-                if existingChild.kind != Folder.kind {
+                if existingChild.node.kind != Folder.kind {
                     // Previously a `break`, which silently returned the last good folder
                     // and left the caller believing a path had been created that had not.
-                    throw NodeError.nameCollision(path: pathSoFar.string, existingKind: existingChild.kind)
+                    throw NodeError.nameCollision(path: pathSoFar.string, existingKind: existingChild.node.kind)
                 }
-                currentFolder = existingChild
+                currentFolder   = existingChild.node
+                knownPinnedPort = existingChild.ports[pinnedSymbolID]
             } else {
                 assert(!pathSoFar.string.hasSuffix("/"))
                 assert(!pathSoFar.string.hasPrefix("/"))
@@ -104,10 +124,17 @@ extension NodeRecord {
 
                 try newFolder.makeNode().notifyParentThisChildAdded()
                 currentFolder = newFolder
+
+                let remainingNames = Array(names[(index + 1)...])
+                existingSteps = try database.node.selectPath(below: try newFolder.requireID(), names: remainingNames,
+                                                             portSymbolIDs: [pinnedSymbolID])
+                depthOffset   = index + 1
             }
 
             if pinned {
-                if let folder = try currentFolder.makeNode() as? Folder, try !folder.isPinned {
+                // `isPinned`'s own reading, of the row the walk already holds.
+                let knownPinned = try knownPinnedPort.map { try !$0.asNodeValue().isNoValue }
+                if let folder = try currentFolder.makeNode() as? Folder, try !(knownPinned ?? folder.isPinned) {
                     // setPinned notifies the parent itself, through onChildContentChanged,
                     // and that is the whole notification this needs. Folder answers both that
                     // and onChildAdded with refreshOutputs, so announcing the pin a second

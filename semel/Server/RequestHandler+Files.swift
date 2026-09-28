@@ -90,21 +90,7 @@ extension RequestHandler {
     /// beside them, creating the folders on the way. Returns whether the bytes or the mode
     /// changed.
     func pushFile(path: String, mode: UInt16, body: Data) throws -> DaemonResponse {
-        let relativePath = Path(path)
-        let root         = try engine.inputFileSystem
-
-        _ = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty, pinned: true)
-
-        let fullPath      = Path(FileSystemName.input) / relativePath
-        let graphSpecNode = GraphSpecNode(StaticFile.self, properties: [StaticFile.pathProperty: fullPath.string])
-        let (fromNode, _) = try graphSpecNode.findOrCreateMatchingNode()
-
-        guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
-            throw HandlerFailure.node(description: "push: \(path): the graph holds a non-file node at this path")
-        }
-
-        let didChange = try staticFile.replaceContent([UInt8](body).intern(), mode: mode)
-        return .pushFile(didChange: didChange)
+        .pushFile(didChange: try StaticFile.push([UInt8](body), mode: mode, at: Path(path)))
     }
 
     func pushFolder(path: String) throws -> DaemonResponse {

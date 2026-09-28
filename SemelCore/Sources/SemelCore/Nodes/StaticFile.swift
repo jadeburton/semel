@@ -124,7 +124,12 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
     }
 
     static func metadataValue(mode: UInt16) throws -> NodeValue {
-        .value(try FileMetadata(mode: mode).jsonString().intern())
+        .value(try metadataDocument(mode: mode).intern())
+    }
+
+    /// What `metadataValue` interns: the document a mode is stored as.
+    private static func metadataDocument(mode: UInt16) throws -> String {
+        try FileMetadata(mode: mode).jsonString()
     }
 
     /// A file nobody has pushed yet says so on `output` alone, and has the default mode on
@@ -156,6 +161,113 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
         if try hasNoOutputWires() {
             try database.node.updatePendingDeletion(nodeID: (try requireID()), pendingDeletion: true)
         }
+    }
+}
+
+// MARK: - Pushing
+
+extension StaticFile {
+
+    /// Stores `content` with `mode` at `relativePath` in the input file system, creating
+    /// the folders on the way to it pinned. Returns whether the bytes or the mode changed.
+    ///
+    /// A push of a tree sends every file in it, and on a tree nobody edited every one of
+    /// them is already there, so that case is answered first, and with one select however
+    /// deep the file is: the root, the path below it with the folders' pins, and the file's
+    /// two ports, in one query (`isHeld`). The bytes are only hashed for it, not stored and
+    /// not touched — the port that holds them already keeps the object alive, and a
+    /// collection sees that port whenever it began. Anything short of that — a folder
+    /// missing or unpinned, a file new or different, a root the cache does not know — takes
+    /// the full path, which is the only one that writes (B-131).
+    public static func push(_ bytes: [UInt8], mode: UInt16, at relativePath: Path) throws -> Bool {
+        let fullPath = Path(Folder.inputFileSystemName) / relativePath
+        let specNode = GraphSpecNode(StaticFile.self, properties: [pathProperty: fullPath.string])
+
+        if let rootID = Folder.cachedInputFileSystemID {
+            let contentHash  = bytes.internedHash
+            let metadataHash = try metadataDocument(mode: mode).internedHash
+            let pushed = PushedFile(identity:         try specNode.identity(),
+                                    content:          .value(contentHash),
+                                    metadata:         .value(metadataHash),
+                                    pinnedSymbolID:   Folder.pinnedOutputPort.asSymbolID(),
+                                    contentSymbolID:  outputPort.asSymbolID(),
+                                    metadataSymbolID: fileMetadataOutputPort.asSymbolID())
+            // The objects are asked after too, a look rather than a write: a store that lost
+            // one the graph still names is mended by pushing the file again, as it always was.
+            if try isHeld(pushed, at: relativePath, belowRootID: rootID),
+               [contentHash, metadataHash].allSatisfy({ $0.isEmpty || DataObjectStore.shared.exists(hash: $0) }) {
+                return false
+            }
+        }
+
+        let root = try Folder.inputFileSystem
+        _ = try root.ensureEntirePathExistsAsFolders(relativePath.deletingLastComponent ?? .empty, pinned: true)
+
+        let (fromNode, _) = try specNode.findOrCreateMatchingNode()
+        guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
+            throw NodeError.nameCollision(path: fullPath.string, existingKind: fromNode.kind)
+        }
+        return try staticFile.replaceContent(try bytes.intern(), mode: mode)
+    }
+
+    /// What one push would leave in the graph, worked out before anything is read.
+    private struct PushedFile {
+        let identity:         String
+        let content:          NodeValue
+        let metadata:         NodeValue
+        let pinnedSymbolID:   ObjectID
+        let contentSymbolID:  ObjectID
+        let metadataSymbolID: ObjectID
+    }
+
+    /// Whether the graph already holds `pushed` at `relativePath`, so that pushing it would
+    /// write nothing: the cached root id still names the input root, every folder on the
+    /// way is there once, is a folder and is pinned, and the file is there once, under the
+    /// identity the full path would find it by, with exactly the rows `replaceContent` would
+    /// write on its two ports. One query (`selectPath`).
+    ///
+    /// Only ever a shortcut to the answer `false`. Each condition is one under which the
+    /// full path would find what it looks for and write nothing — it creates no folder,
+    /// pins none, and `writeToOutputPort` compares the same rows and returns — so taking the
+    /// shortcut skips reads and not work. A condition this cannot prove is left to the full
+    /// path to find out, so a graph this does not understand is never read as unchanged.
+    private static func isHeld(_ pushed: PushedFile, at relativePath: Path, belowRootID rootID: ObjectID) throws -> Bool {
+        let names = relativePath.segments
+        guard !names.isEmpty else {
+            return false
+        }
+
+        let pinnedSymbolID   = pushed.pinnedSymbolID
+        let contentSymbolID  = pushed.contentSymbolID
+        let metadataSymbolID = pushed.metadataSymbolID
+
+        let steps = try DatabaseLayer.shared.node.selectPath(below: rootID, names: names,
+                                                             portSymbolIDs: [pinnedSymbolID, contentSymbolID, metadataSymbolID])
+
+        // The root, then one node per depth, and so one chain: two children of one name
+        // anywhere on the way is a graph the full path refuses, and it should be the one to
+        // say so.
+        guard steps.count == names.count + 1,
+              steps.enumerated().allSatisfy({ $0.element.depth == $0.offset }),
+              let root = steps.first, Folder.isRoot(root.node, named: Folder.inputFileSystemName),
+              let file = steps.last else {
+            return false
+        }
+
+        for folder in steps.dropFirst().dropLast() {
+            guard folder.node.kind == Folder.kind,
+                  let pinned = folder.ports[pinnedSymbolID],
+                  try !pinned.asNodeValue().isNoValue else {
+                return false
+            }
+        }
+
+        guard file.node.kind == StaticFile.kind, file.node.identity == pushed.identity else {
+            return false
+        }
+        let fileNodeID = try file.node.requireID()
+        return try file.ports[contentSymbolID]  == pushed.content.asOutputPort(nodeID: fileNodeID, outputSymbolID: contentSymbolID)
+            && file.ports[metadataSymbolID] == pushed.metadata.asOutputPort(nodeID: fileNodeID, outputSymbolID: metadataSymbolID)
     }
 }
 
