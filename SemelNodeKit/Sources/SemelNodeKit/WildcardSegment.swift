@@ -15,7 +15,8 @@ public enum WildcardSegment {
     /// any run of them.
     ///
     /// A segment, not a path: neither wildcard crosses a `/`, because both callers have
-    /// already split the path and are asking about one component.
+    /// already split the path and are asking about one component. `**` as a whole segment
+    /// is the path-level wildcard, `WildcardPath`'s; inside one name it is two `*`.
     public static func matches(pattern: String, name: String) -> Bool {
         matches(pattern: Array(pattern.unicodeScalars),
                 name:    Array(name.unicodeScalars))

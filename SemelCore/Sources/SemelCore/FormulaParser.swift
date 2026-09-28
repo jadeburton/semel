@@ -40,14 +40,17 @@
 //   {var: 'a', 'b'} "%%var%%": NodeType(param: "%%var%%")
 // expands to two wire entries with var='a' and var='b' substituted.
 // Glob patterns in for-each items (e.g. <src/*.c>) are expanded via the
-// wildcardExpander callback passed to FormulaFile.parse.
+// wildcardExpander callback passed to FormulaFile.parse. `*` and `?` match within one
+// name; a `**` segment matches zero or more folders, so <src/**/*.c> is every .c file
+// at any depth under src, src itself included, and <src/**> every file under it.
 //   {f: <*.c> except <main.c>, <test_*.c>} "%%f%%.o": …
 // expands both lists and iterates the first less every path the second matched.
 // 'except' is a keyword only there — after an item and before another — so a func,
 // parameter or wire named 'except' is still a name everywhere else.
 //
 // %%var%%    — full value of var
-// %%var.N%%  — Nth wildcard capture group (0-based) from a wildcard pattern
+// %%var.N%%  — Nth wildcard capture group (0-based) from a wildcard pattern; a `**`
+//              captures nothing
 // %%var.folder%% — containing directory path with trailing slash
 //
 // Disambiguation:  a call 'name(...)' resolves to a user-function call when
@@ -1056,26 +1059,27 @@ private func expandTemplate(_ s: String, templateEnv: [String: ForEachBinding]) 
 // MARK: - Glob capture-group extraction
 
 /// Given a wildcard `pattern` and a confirmed `match`, extract the text captured by
-/// each `*` wildcard in the pattern (left-to-right), excluding `**` doubleStars.
-/// Use `%%var.folder%%` to access the directory depth captured by `**` instead.
+/// each `*` wildcard in the pattern (left-to-right), excluding `**` segments.
+/// Use `%%var.folder%%` to access the folders a `**` matched instead.
+///
+/// Each pattern segment is read against the segment it matched, which after a `**` is
+/// not the one at the same position: in `src/**/*.c` against `src/lib/a.c`, the `*.c`
+/// matched `a.c`, and `lib` is the `**`'s.
 private func extractCaptureGroups(pattern: String, match: String) -> [String] {
-    let patSegs   = pattern.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-    let matchSegs = match.split(separator:   "/", omittingEmptySubsequences: false).map(String.init)
+    let patternSegments = pattern.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+    let matchSegments   = match.split(separator:   "/", omittingEmptySubsequences: false).map(String.init)
+    guard let alignment = WildcardPath.alignment(pattern: patternSegments, path: matchSegments) else {
+        return []
+    }
 
     var groups: [String] = []
-    var matchIdx = 0
-
-    for patSeg in patSegs {
-        guard matchIdx < matchSegs.count else { break }
-        if patSeg == "**" {
-            // Globstar contributes no capture group; use %%var.folder%% for directory depth.
+    for (patternSegment, matched) in zip(patternSegments, alignment) {
+        guard patternSegment != WildcardPath.anyFolders,
+              patternSegment.contains("*") || patternSegment.contains("?") else {
             continue
         }
-        if patSeg.contains("*") || patSeg.contains("?") {
-            groups.append(contentsOf: extractSegmentCaptures(pattern: patSeg,
-                                                             text: matchSegs[matchIdx]))
-        }
-        matchIdx += 1
+        groups.append(contentsOf: extractSegmentCaptures(pattern: patternSegment,
+                                                         text:    matchSegments[matched.lowerBound]))
     }
     return groups
 }
@@ -1085,34 +1089,40 @@ private func extractCaptureGroups(pattern: String, match: String) -> [String] {
 /// `?` matches one character without contributing a group.
 private func extractSegmentCaptures(pattern: String, text: String) -> [String] {
     var groups: [String] = []
-    let patChars  = Array(pattern)
-    let textChars = Array(text)
-    var pi = 0, ti = 0
+    let patternCharacters = Array(pattern)
+    let textCharacters    = Array(text)
+    var patternIndex = 0
+    var textIndex    = 0
 
-    while pi < patChars.count {
-        switch patChars[pi] {
+    while patternIndex < patternCharacters.count {
+        switch patternCharacters[patternIndex] {
         case "*":
-            pi += 1
+            patternIndex += 1
             // Determine the next literal in the pattern (skip consecutive wildcards).
-            var nextLit: Character?
-            var look = pi
-            while look < patChars.count && (patChars[look] == "*" || patChars[look] == "?") { look += 1 }
-            nextLit = look < patChars.count ? patChars[look] : nil
-            // Greedily consume text until nextLit (or end of text).
+            var lookahead = patternIndex
+            while lookahead < patternCharacters.count
+                    && (patternCharacters[lookahead] == "*" || patternCharacters[lookahead] == "?") {
+                lookahead += 1
+            }
+            let nextLiteral: Character? = lookahead < patternCharacters.count ? patternCharacters[lookahead] : nil
+            // Greedily consume text until nextLiteral (or end of text).
             var captured = ""
-            while ti < textChars.count {
-                if let nl = nextLit, textChars[ti] == nl { break }
-                captured.append(textChars[ti]); ti += 1
+            while textIndex < textCharacters.count {
+                if let nextLiteral, textCharacters[textIndex] == nextLiteral { break }
+                captured.append(textCharacters[textIndex])
+                textIndex += 1
             }
             groups.append(captured)
         case "?":
-            pi += 1; ti += 1
+            patternIndex += 1
+            textIndex    += 1
         default:
-            guard pi < patChars.count && ti < textChars.count,
-                  patChars[pi] == textChars[ti] else {
+            guard textIndex < textCharacters.count,
+                  patternCharacters[patternIndex] == textCharacters[textIndex] else {
                 return groups
             }
-            pi += 1; ti += 1
+            patternIndex += 1
+            textIndex    += 1
         }
     }
     return groups

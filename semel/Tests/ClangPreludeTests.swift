@@ -17,16 +17,26 @@ final class ClangPreludeTests: XCTestCase {
 
     private let basePath = Path("input:/proj")
 
-    /// Two sources and one pattern that matches nothing, as a C-only folder has for `*.cpp`.
-    private func sources(_ pattern: String) -> [String] {
-        pattern == "input:/proj/src/*.c" ? ["input:/proj/src/hello.c", "input:/proj/src/main.c"] : []
-    }
+    /// The source folder as the builder has it once every manifest has arrived: two
+    /// sources and a header, and no `.cpp`, as a C-only folder has.
+    private static let flatSources: [String: FolderManifest] = [
+        "input:/proj/src": FolderManifest(baseFolderPath: "input:/proj/src",
+                                          entries: [.init(name: "hello.c", isFolder: false, isPinned: true),
+                                                    .init(name: "hello.h", isFolder: false, isPinned: true),
+                                                    .init(name: "main.c",  isFolder: false, isPinned: true)]),
+    ]
 
-    private func parse(_ formula: String) throws -> [String: GraphSpecNode] {
+    /// Expanded by the builder's own matcher, so the prelude's `**/*.c` and a hand-written
+    /// `*.c` meet the same folder the way a build meets it.
+    private func parse(_ formula: String, manifests: [String: FolderManifest] = flatSources) throws -> [String: GraphSpecNode] {
         let preludeSpec = FormulaPrelude.spec(forIncludeNamed: "clang").asString(omitOutputPort: false)
         let preludeText = FormulaPrelude.publishedText(namespace: "clang", text: SemelClang.prelude)
         return try FormulaFile.parse(formula, basePath: basePath,
-                                     wildcardExpander: sources,
+                                     wildcardExpander: { pattern in
+                                         ProjectBuilder.wildcardMatch(pattern: pattern,
+                                                                      folderPath: ProjectBuilder.extractFolderPath(fromGlobPattern: pattern),
+                                                                      manifests: manifests).paths
+                                     },
                                      includeReader: { $0.asString(omitOutputPort: false) == preludeSpec ? preludeText : nil })
     }
 
@@ -116,6 +126,39 @@ final class ClangPreludeTests: XCTestCase {
 
         XCTAssertEqual(try XCTUnwrap(try parse(archiveWithPrelude)["libhello.a"]).asString(omitOutputPort: false), expected)
         XCTAssertEqual(try XCTUnwrap(try parse(archiveFromNamedFiles)["libhello.a"]).asString(omitOutputPort: false), expected)
+    }
+
+    // MARK: - Nested source folders (B-108 residual 1)
+
+    /// `src` with a subfolder of its own sources, a deeper one, and a hidden one the walk
+    /// must not enter.
+    private static let nestedSources: [String: FolderManifest] = flatSources.merging([
+        "input:/proj/src": FolderManifest(baseFolderPath: "input:/proj/src",
+                                          entries: [.init(name: "main.c",  isFolder: false, isPinned: true),
+                                                    .init(name: "lib",     isFolder: true,  isPinned: true),
+                                                    .init(name: ".cache",  isFolder: true,  isPinned: true)]),
+        "input:/proj/src/lib": FolderManifest(baseFolderPath: "input:/proj/src/lib",
+                                              entries: [.init(name: "hello.c", isFolder: false, isPinned: true),
+                                                        .init(name: "fmt",     isFolder: true,  isPinned: true)]),
+        "input:/proj/src/lib/fmt": FolderManifest(baseFolderPath: "input:/proj/src/lib/fmt",
+                                                  entries: [.init(name: "hello.c", isFolder: false, isPinned: true)]),
+        "input:/proj/src/.cache": FolderManifest(baseFolderPath: "input:/proj/src/.cache",
+                                                 entries: [.init(name: "stale.c", isFolder: false, isPinned: true)]),
+    ]) { _, nested in nested }
+
+    /// `sources: <src>` compiles every `.c` below `src`, each object named by its source's
+    /// full path — so two `hello.c` in two folders are two objects — and the nodes are
+    /// the ones a hand-written chain over `<src/**/*.c>` builds.
+    func test_thePreludeCompilesSourcesInNestedFolders() throws {
+        let expected = try parse(handWritten.replacingOccurrences(of: "<src/*.c>", with: "<src/**/*.c>"),
+                                 manifests: Self.nestedSources)
+        let actual   = try parse(withPrelude, manifests: Self.nestedSources)
+
+        let linker = try XCTUnwrap(actual["hello"])
+        let objects = try XCTUnwrap(linker.inputs.first { $0.portName == "objectFiles" }).wires.map(\.name)
+        XCTAssertEqual(objects, ["input:/proj/src/lib/fmt/hello.c.o", "input:/proj/src/lib/hello.c.o", "input:/proj/src/main.c.o"])
+        XCTAssertEqual(linker.asString(omitOutputPort: false),
+                       try XCTUnwrap(expected["hello"]).asString(omitOutputPort: false))
     }
 
     func test_registeringSemelClangAnswersTheIncludeName() throws {

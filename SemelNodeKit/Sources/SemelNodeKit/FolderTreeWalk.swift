@@ -7,8 +7,8 @@
 //  demands a manifest for each subfolder on a dynamic port of its own and a file wire for
 //  each file, is rescheduled as they arrive, and repeats until the spec set stops
 //  changing — the walk `SwiftCompiler` does for its sources and `ProjectFinder` for its
-//  watched folders. A resource compiler handed an asset catalog does exactly the same,
-//  so the three functions of it live here.
+//  watched folders. A resource compiler handed an asset catalog does exactly the same, and
+//  so does `ProjectBuilder` for a formula's `**` pattern, so the functions of it live here.
 
 public enum FolderTreeWalk {
 
@@ -42,6 +42,28 @@ public enum FolderTreeWalk {
                 }
                 result[fullPath] = .folderManifest(at: fullPath)
             }
+        }
+        return result
+    }
+
+    /// Every subfolder below `root` the walk reaches through the manifests that have
+    /// arrived, keyed by full path: the subfolders of `root`'s manifest, those of each of
+    /// theirs that has arrived, and so on down, for the subfolders `include` accepts. A
+    /// key whose manifest is not in `arrived` is where the walk stops this pass; the walk
+    /// is finished when every key has arrived.
+    ///
+    /// From the root down, rather than over every manifest on the port, because a
+    /// manifest still on a wire can belong to a folder that has since gone: only what the
+    /// root reaches today is part of the tree.
+    public static func subfolderSpecs(below root: String,
+                                      arrived: [String: FolderManifest],
+                                      include: (String) -> Bool = { _ in true }) -> [String: GraphSpecNode] {
+        var result: [String: GraphSpecNode] = [:]
+        var level = arrived[root].map { [$0] } ?? []
+        while !level.isEmpty {
+            let found = subfolderSpecs(of: level, include: include).filter { result[$0.key] == nil }
+            result.merge(found) { existing, _ in existing }
+            level = found.keys.sorted().compactMap { arrived[$0] }
         }
         return result
     }

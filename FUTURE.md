@@ -350,7 +350,12 @@ folder holds C-family sources and no top-level `.swift` gets a preprocessor and 
 per file, its `include` folder goes on every dependent Swift target's `inputModuleMapFolders`,
 and the objects link into the product's archive. Left for a package that needs them:
 `cSettings` `.define` values are not carried (cmark's are Windows-only); source files in
-nested folders are not compiled (the glob is one level); a `publicHeadersPath` other than
+nested folders are not compiled — the formula can now say `**` (B-108 residual 1), but the
+converter still emits `'<target>/*.c'` from the extensions at the folder's top level, and
+switching it wants two things with it: the target's `exclude:` as an `except` clause (not
+read for a C target today, and `**` would reach excluded subfolders), and each nested
+folder on the preprocessor's `headerFolders`, since a header folder is materialized one
+level deep and a nested source's sibling header would be missing; a `publicHeadersPath` other than
 `include` is not honoured; and a package vending an *executable* with C targets would
 need a `clang.linker` block, which the archive case never reads.
 
@@ -544,8 +549,24 @@ scoped with every parameter bound and usable in templates; dotted calls reach a 
 funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the `c`,
 `tutorial` and `HelloApp` fixtures use them. What remains:
 
-1. **Nested source folders.** Folder patterns match one level, so `sources: <src>` finds
-   `src/*.c` and not `src/lib/*.c`; the fix is `**` in `ProjectBuilder`'s wildcard matcher.
+1. **Nested source folders** — done 2026-09-28. Folder patterns matched one level, so
+   `sources: <src>` found `src/*.c` and not `src/lib/*.c`. A pattern is now matched segment
+   by segment below the folder it names (`WildcardPath` in `SemelNodeKit`): `*` and `?` stay
+   inside one name, and a `**` segment matches zero or more folders, so `<src/**/*.c>` is
+   every `.c` at any depth under `src`, `src` included, and `<src/**>` every file under it.
+   `ProjectBuilder` demands, on its `folders` port, each subfolder a pattern can reach —
+   walked from the pattern's folder down with `FolderTreeWalk`, one level per pass, never
+   into a hidden folder — and publishes no products until every one has arrived, so a
+   linker never sees half a tree; expansions are sorted. `except` goes through the same
+   expander. A capture after a `**` reads the file's own name (it read the folder the `**`
+   took), and the REPL's `**` means the same, a trailing one included. The `clang`
+   prelude's `sources:` is read as `**/*.c`, `**/*.cpp`; objects are named by the source's
+   full path, so a nested file's object carries its subpath and the flat fixtures build the
+   nodes they built (`ClangPreludeTests`). Tried by hand on the `c` fixture with two
+   sources moved to `src/lib/` and `src/lib/deep/`: all four hermeticity builds passed.
+   The same try found a gap next door: `ClangIncludeFinder` joins a quoted include to the
+   source's folder without resolving `..`, so `#include "../hello.h"` from `src/lib/`
+   names `src/lib/../hello.h`, which is never a node, and the preprocessor fails.
 2. **An app bundle as one product.** `TreeBuilder` writes entries with the default mode;
    carrying each entry's mode would let `apple` build the whole bundle as one tree.
 

@@ -47,6 +47,26 @@ final class FolderTreeWalkTests: XCTestCase {
 
         XCTAssertEqual(specs.rendered, ["input:/pkg/Core": "Folder(path: 'input:/pkg/Core').manifest"])
     }
+
+    /// From the root down, as far as the manifests that have arrived reach: a subfolder
+    /// whose manifest is still on its way is where the walk stops, and a manifest the root
+    /// no longer reaches is not walked however long it stays on its wire.
+    func test_subfolderSpecsBelowARootWalksAsFarAsTheArrivedManifestsReach() {
+        let arrived = [
+            "input:/src":           FolderManifest(baseFolderPath: "input:/src", entries: [file("a.c"), folder("lib")]),
+            "input:/src/lib":       FolderManifest(baseFolderPath: "input:/src/lib", entries: [folder("deep"), folder("skip")]),
+            "input:/src/gone":      FolderManifest(baseFolderPath: "input:/src/gone", entries: [folder("stale")]),
+        ]
+
+        let specs = FolderTreeWalk.subfolderSpecs(below: "input:/src", arrived: arrived) { !$0.hasSuffix("/skip") }
+
+        XCTAssertEqual(specs.keys.sorted(), ["input:/src/lib", "input:/src/lib/deep"])
+    }
+
+    /// Nothing below a root whose own manifest has not arrived.
+    func test_subfolderSpecsBelowARootThatHasNotArrivedIsEmpty() {
+        XCTAssertTrue(FolderTreeWalk.subfolderSpecs(below: "input:/src", arrived: [:]).isEmpty)
+    }
 }
 
 extension Dictionary where Key == String, Value == GraphSpecNode {

@@ -316,6 +316,34 @@ final class FormulaParserTests: SemelCoreTestCase {
         XCTAssertEqual(try wireNames(result), ["format.o", "os.o"])
     }
 
+    /// A stand-in for the builder's expander over a tree under `input:/lib`, matching as it
+    /// does: the rest of the pattern against each file's path below the folder.
+    private func parse(_ source: String, tree: [String]) throws -> [String: GraphSpecNode] {
+        try FormulaFile.parse(source, basePath: Path("input:/lib"), wildcardExpander: { pattern in
+            let rest = Path(String(pattern.dropFirst("input:/lib/".count))).segments
+            return tree.filter { WildcardPath.matches(pattern: rest, path: Path($0).segments) }
+                       .map { "input:/lib/\($0)" }
+                       .sorted()
+        })
+    }
+
+    /// A capture after a `**` reads the file's own name, not the folder the `**` took.
+    func test_aCaptureAfterADoubleStarReadsTheFilesName() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <**/*.c>} "%%f.0%%.o": StaticFile(path: f)])
+            """, tree: ["a.c", "core/b.c", "core/deep/c.c", "core/deep/c.h"])
+        XCTAssertEqual(try wireNames(result), ["a.o", "b.o", "c.o"])
+    }
+
+    /// `except` meets `**` as expanded paths: a folder's files by a pattern of its own, one
+    /// file by its path.
+    func test_exceptRemovesFromADoubleStarsMatches() throws {
+        let result = try parse("""
+            product "X" = Linker(input: [{f: <**/*.c> except <tests/**>, <core/main.c>} "%%f%%.o": StaticFile(path: f)])
+            """, tree: ["a.c", "core/b.c", "core/main.c", "tests/t.c", "tests/deep/u.c"])
+        XCTAssertEqual(try wireNames(result), ["input:/lib/a.c.o", "input:/lib/core/b.c.o"])
+    }
+
     func test_exceptSubtractsFromLiteralItems() throws {
         let result = try parse("""
             product "X" = Linker(input: [{f: 'a', 'b', 'c' except 'b'} "%%f%%": StaticFile(path: f)])

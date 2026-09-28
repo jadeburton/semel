@@ -269,7 +269,9 @@ the file once per call rather than once per tool.
 
 - **Flat source folders.** Globs match one level of a folder manifest; `**` does not recurse
   (`ProjectBuilder` matches per segment). A project with nested sources is out of the first
-  cut; the fix belongs in the wildcard matcher, not the preludes.
+  cut; the fix belongs in the wildcard matcher, not the preludes. *Lifted 2026-09-28
+  (B-108 residual 1):* `**` matches zero or more folders, `ProjectBuilder` walks down to
+  the folders a pattern reaches, and `clang`'s `sources:` is read as `**/*.c`, `**/*.cpp`.
 - **A pending include blanks the formula's products** until it arrives
   (`FormulaParser.swift:96`). Prelude nodes are filled at start-up, before any builder runs,
   so this does not bite them; it is worth fixing for converters separately.

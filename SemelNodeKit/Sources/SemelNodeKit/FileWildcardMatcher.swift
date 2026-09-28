@@ -119,7 +119,9 @@ public final class FileWildcardMatcher {
         let isLastSegment = segmentIndex == segments.count - 1
 
         // ── ** (doubleStar) ──────────────────────────────────────────
-        if segment == "**" {
+        // The same meaning as in a formula (`WildcardPath`): zero or more folders, and as
+        // the last segment every entry below, at any depth.
+        if segment == WildcardPath.anyFolders {
             // ** can match zero directories (skip it) …
             try matchSegments(segments: segments, segmentIndex: segmentIndex + 1,
                               currentDirectory: currentDirectory,
@@ -128,8 +130,16 @@ public final class FileWildcardMatcher {
             // … or one-or-more directories (recurse into each child dir).
             let children = try input.allFiles(inDirectoryPath: currentDirectory)
 
-            for child in children where child.kind == .folder {
+            for child in children {
                 let childLogicalPath  = currentLogicalPath / child.path
+                if isLastSegment {
+                    results.append(FileWildcardEntry(path: childLogicalPath, kind: child.kind,
+                                                     state: child.state,
+                                                     isUnreferenced: child.isUnreferenced))
+                }
+                guard child.kind == .folder else {
+                    continue
+                }
                 let childPhysicalPath = (currentDirectory as NSString).appendingPathComponent(child.path.string)
 
                 try matchSegments(segments: segments, segmentIndex: segmentIndex,

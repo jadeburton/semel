@@ -152,6 +152,17 @@ final class FileWildcardMatcherTests: XCTestCase {
         XCTAssertTrue(results.map(\.path.string).contains("a/b/deep.c"))
     }
 
+    /// A trailing `**` is every entry below the folder before it, at any depth — what
+    /// `<src/**>` means in a formula, so `ls src/**` lists what that pattern would take.
+    func test_trailingDoubleStarMatchesEverythingBelow() throws {
+        let wildcardMatcher = matcher(
+            root: [folder("src"), file("top.c")],
+            subdirs: ["/src": [file("a.c"), folder("lib")], "/src/lib": [file("b.h")]]
+        )
+        let results = try wildcardMatcher.findAllMatching(pathOrWildcard: "src/**")
+        XCTAssertEqual(results.map(\.path.string), ["src/a.c", "src/lib", "src/lib/b.h"])
+    }
+
     // MARK: - Result entry properties
 
     func test_resultEntry_preservesKind() throws {

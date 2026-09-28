@@ -23,7 +23,9 @@ extension SemelClang {
     /// builds that node itself — and selects each tool's slice by the namespace its node
     /// type reads, which is the wiring every hand-written formula repeated. `sources` is a
     /// folder: the prelude, not the formula, says which files in it a compiler takes —
-    /// `*.c`, `*.cpp` — one level deep, as folder patterns match.
+    /// `*.c`, `*.cpp` — at any depth (`**/`), so `src/lib/*.c` is compiled with `src/*.c`
+    /// and a hidden folder is not entered. Each object is named by its source's full path,
+    /// which is what keeps `src/a.c` and `src/lib/a.c` two objects rather than one.
     ///
     /// `compiled(file:settings:)` is a func of its own, and not only the body of `linked`,
     /// because a project whose sources are not one folder's worth — Lua's flat root holds
@@ -46,7 +48,7 @@ extension SemelClang {
 
         func linked(sources, settings, dynamicLibrary) = ClangLinker(
           configuration: [ConfigMerger(base: [selected(settings: settings, prefix: '\(ClangLinkerConfiguration.settingNamespace)')], override: [SettingsLiteral(dynamicLibrary: dynamicLibrary)])],
-          objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
+          objectFiles: [{file: '%%sources%%/**/*.c', '%%sources%%/**/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
         )
 
         func executable(sources, settings) = linked(sources: sources, settings: settings, dynamicLibrary: 'false')
@@ -55,7 +57,7 @@ extension SemelClang {
 
         func staticLibrary(sources, settings) = ClangArchiver(
           configuration: [selected(settings: settings, prefix: '\(ClangArchiverConfiguration.settingNamespace)')],
-          objectFiles: [{file: '%%sources%%/*.c', '%%sources%%/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
+          objectFiles: [{file: '%%sources%%/**/*.c', '%%sources%%/**/*.cpp'} "%%file%%.o": compiled(file: file, settings: settings)]
         )
         """
 }
