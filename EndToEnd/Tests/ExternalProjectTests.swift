@@ -72,6 +72,19 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-79: C++ with heavy templates — simdjson's single-header amalgamation — through
+    /// the preprocessor, the compiler and the archiver, with a demo linked against libc++.
+    func test_simdjsonBuildsFromTheAmalgamation() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.simdjson)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("simdjson\n\(error)")
+        }
+    }
+
     /// B-77: Apple's Food Truck sample for the simulator — file lists over groups, a
     /// localized `.strings`, a package with resources, a widget extension.
     func test_foodTruckBuildsTwiceForTheSimulator() throws {
@@ -100,6 +113,6 @@ final class ExternalProjectTests: XCTestCase {
 
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
-                       ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "food-truck", "food-truck-mac"])
+                       ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac"])
     }
 }

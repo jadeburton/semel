@@ -184,6 +184,26 @@ enum Projects {
         expectedProducts: ["libsqlite3.a", "sqlite3"],
         buildTimeout: 5 * 60)
 
+    /// simdjson 4.6.11 (B-79): C++ beyond the emulator, from the `simdjson/simdjson`
+    /// repository at the commit its `v4.6.11` tag names. Licensed Apache-2.0, or MIT at the
+    /// user's choice (`LICENSE`, `LICENSE-MIT`). The repository carries the single-header
+    /// amalgamation in `singleheader/`, which is the subfolder the build folder names — the
+    /// checkout is copied whole and the overlay from `Fixtures/external/simdjson` is laid
+    /// over that folder (B-76), with the machine file at the checkout's root, one level up,
+    /// where the formula reads it. `libsimdjson.a` is archived from `simdjson.cpp`, one
+    /// translation unit that inlines the 7.7 MB header, and `amalgamate_demo` is linked
+    /// against it. Seconds to build, so every hermeticity build runs.
+    static let simdjson = Project(
+        name: "simdjson",
+        source: .git(url: "https://github.com/simdjson/simdjson.git",
+                     commit: "f5de14f09256982933af2849beb43778bd421ca7",
+                     subfolder: "singleheader",
+                     overlay: "external/simdjson"),
+        buildFolder: "singleheader",
+        platform: nil,
+        expectedProducts: ["libsimdjson.a", "amalgamate_demo"],
+        buildTimeout: 5 * 60)
+
     /// Apple's Food Truck sample (B-77): an Xcode project in the older form — targets that
     /// list their files through groups, a localized `.strings` per language as a variant
     /// group — with a local package that carries resources of its own, and a widget
@@ -243,6 +263,6 @@ enum Projects {
         onlyUnder: "Food Truck.app")
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, foodTruck, foodTruckMac]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac]
     static let all: [Project] = fixtures + external
 }
