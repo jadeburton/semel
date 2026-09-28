@@ -469,8 +469,8 @@ and its `.S` preprocess and compile inside a Swift package's graph (`sources:` t
 folders, `exclude:`, `.headerSearchPath("Dependencies/protobuf-c")`, a define with an
 empty value), and an executable depending on `CrashReporter` links, with Foundation and
 libc++ (checked 2026-09-28 at NetNewsWire's pin `0254f94`, vendored by `prepare` into a
-scratch package). What stops it is below: from Swift, 4 — `import CrashReporter` is `no
-such module` — and 7 at run time.
+scratch package). What stopped it from Swift, 4 — `import CrashReporter` was `no such
+module` — and 7 at run time are done since.
 
 Left, each for the package that needs it (swift-nio and BoringSSL in B-78 are the likely
 first):
@@ -531,9 +531,12 @@ first):
    stages read `objectiveCARC` and `modules` (`ClangLanguageFeatures`), and the
    preprocessor `moduleName`; the node decides per file what each means, as it picks
    `cStandard` or `cxxStandard`: `-fobjc-arc` for Objective-C and Objective-C++, and
-   `-fmodules` with `-fmodules-cache-path=.semel-derived/clang-module-cache` for every
-   language but C++ (SwiftPM's rule; the Darwin SDKs do not fully support modules in C++
-   mode), with `-fmodule-name` in the preprocessor so the target's own headers stay text.
+   `-fmodules` with `-fmodules-cache-path=.semel-derived/clang-module-cache` for
+   Objective-C alone, with `-fmodule-name` in the preprocessor so the target's own headers
+   stay text. SwiftPM enables modules for C too; here the compiler loading them again
+   expands a module's self-referential macro a second time (11), which broke
+   PLCrashReporter's C (`#define ts_64 uts.ts_64` made `thread.uts.uts.ts_64`), and only
+   Objective-C can write `@import`, so C keeps the build it had.
    Both stages need both: the preprocessor evaluates `__has_feature(objc_arc)` (FMDB's
    retain macros) and loads the modules an `@import` names for their macros, and its
    output keeps each import, so the compiler loads the modules again — from the SDK,
@@ -542,9 +545,9 @@ first):
    (`ToolSandbox.derivedStateFolderName`): derived state that goes with the run, never an
    input or an output, and the objects are byte-identical at two sandbox paths with `-g`.
    The converter states the three as literals for a C target whose sources hold `.m` or
-   `.mm`, never a plain C one (11). With modules the objects autolink the frameworks they
-   import (`LC_LINKER_OPTION -framework Foundation`). ClangPreprocessor v4, ClangCompiler
-   v2, ClangIncludeFinder v4 (a quoted `#import` is listed as an `#include` is; an
+   `.mm`, never a plain C one (11). With modules the Objective-C objects autolink the
+   frameworks they import (`LC_LINKER_OPTION -framework Foundation`). ClangPreprocessor v5, ClangCompiler
+   v3, ClangIncludeFinder v4 (a quoted `#import` is listed as an `#include` is; an
    `@import` names a module and is passed over). Pinned by `ClangPreprocessorTests`,
    `ClangCompilerTests`, `ClangIncludeFinderTests` and `SwiftFormulaConverterTests`; end
    to end by `swift-c-package`'s `ObjCKit`, whose header opens `@import Foundation;`,
@@ -561,16 +564,23 @@ first):
    C++ sources (9 above); a Swift target compiled with `.interoperabilityMode(.Cxx)`
    needs it too, and its `swiftSettings` are not read for it — nor is the mode passed to
    `swiftc` at all.
-11. **Modules for a target without Objective-C, and a dependency's module.** SwiftPM
-   enables clang modules for every C-family target on Darwin but C++ ones; the converter
-   enables them only for a target with Objective-C. With modules, `-E` turns an include of
-   a header another module map covers into `#pragma clang module import`, and the
-   compiler, which takes the preprocessed text alone, has no module map to load it from:
-   a plain C target including a dependency's public header (cmark-gfm-extensions over
-   cmark-gfm, whose `include` has a map) would stop compiling, and an Objective-C target
-   that includes a C dependency's header already would. NetNewsWire's two Objective-C
-   targets depend on nothing. Wants the compiler given the header trees the preprocessor
-   saw, or the two stages joined for a target with modules.
+11. **Modules across a split preprocess and compile.** With modules, `-E` keeps every
+   module import in its output — `@import`, and `#pragma clang module import` for an
+   include of a header a module map covers — and the compiler imports them again. Two
+   things follow. A module's macros come back to text already expanded, so a macro that
+   names itself expands twice: the SDK's `#define ts_64 uts.ts_64` (`mach/arm/thread_status.h`)
+   turned PLCrashReporter's C into `thread.uts.uts.ts_64` — compiling as
+   `cpp-output` does not stop it — which is why modules are Objective-C's alone, where
+   SwiftPM enables them for every language but C++. And an include of a C dependency's
+   modular header becomes an import the compiler has no module map for (checked by hand:
+   `#include "dep.h"` beside a `module.modulemap` preprocesses to
+   `#pragma clang module import Dep`), so an Objective-C target including a C target's
+   header fails, and a plain C target would if it had modules (cmark-gfm-extensions over
+   cmark-gfm). NetNewsWire's two Objective-C targets depend on nothing and use no such
+   macro. Wants the two stages joined for a source with modules, or the compiler given
+   the header trees the preprocessor saw and the preprocessor handing on text with the
+   includes inlined and the macros unexpanded (`-frewrite-includes`), which then needs
+   the defines at compile time too.
 
 **B-122** `done` — **`prepare` writes no clang settings for a tree with C targets.**
 Fixed 2026-09-27: `prepare` decided the tree's languages from a scan taken before
@@ -1301,9 +1311,10 @@ application target, simulator only, all library code in packages. In suggested o
    2. **PLCrashReporter** (`CrashReporter`, C and Objective-C at the package root). The
       folder collision is fixed, its 58 sources and its `.S` compile, and what depends on
       it links with Foundation and libc++ (B-134, B-55 done 6–10; checked 2026-09-28 on
-      a scratch package that `prepare` vendored it into). What is left is B-55's
-      residuals 4 and 7 — no generated module map, so `import CrashReporter` is `no such
-      module`, and ARC.
+      a scratch package that `prepare` vendored it into). B-55's residuals 4 and 7
+      followed the same day — a generated module map for `import CrashReporter`, and ARC —
+      so nothing of B-55 is known to stand in its way; the app's own `import
+      CrashReporter` is behind 4 below on the clone.
    3. ~~**The local packages are not found.**~~ Done (2026-09-28). Xcode finds the
       seventeen packages under `Modules/` because `Modules` is a synchronized folder,
       owned by no target, holding package folders; the fifteen product dependencies
@@ -1336,20 +1347,19 @@ application target, simulator only, all library code in packages. In suggested o
       and the build compiles the local packages (254 nodes, the extensions' bundles and
       every package resource bundle written) and stops at 5, 9 and three new ones, 12
       to 14; 4 is behind 5, `Account` never compiling.
+
    4. **`SecretKey.swift` is generated before the build.**
       `Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb` becomes `SecretKey.swift`
       through the scheme's pre-action, `buildscripts/updateSecrets.sh` (gyb, in Python),
       not a build phase; `Account` and `Shared/Article Extractor` reference `SecretKey`.
       Nothing here reads schemes: `prepare` could run the pre-action, or a gyb node
       could generate it.
-   5. **Objective-C in the packages.** `RSDatabase` has an Objective-C target
-      (`RSDatabaseObjC`, FMDB) and `RSCore` another (`RSCoreObjC`); B-55 compiles C targets and counts
-      `.m` as C-family, but ARC Objective-C through a package has not been built. Met
-      now that the packages are found: every header starts `@import Foundation;` (or
-      `AppKit`), and clang says `use of '@import' when modules are disabled`, then knows
-      no `NSString`; SwiftPM compiles such a target with `-fmodules` and `-fobjc-arc`.
-      `RSDatabase`'s Swift target then finds no module `RSDatabaseObjC`. The ARC half is
-      B-55's residual 7; `-fmodules` for an Objective-C target is not yet among them.
+   5. ~~**Objective-C in the packages.**~~ Done (2026-09-28). `RSDatabaseObjC` (FMDB) and
+      `RSCoreObjC` open every header with `@import Foundation;` (or `AppKit`) and assume
+      ARC; a C target with Objective-C is now preprocessed and compiled with modules and
+      ARC (B-55's 7), and `RSDatabase` imports `RSDatabaseObjC` through the module map
+      SwiftPM would write for its `include/RSDatabaseObjC.h`, whose `#import "../FMDatabase.h"`
+      resolves because the header tree is the whole target's (B-55's 4).
    6. **Objective-C in the app.** `Mac/NSOpenPanel+Extras.m` and the bridging header
       `SWIFT_OBJC_BRIDGING_HEADER = Mac/NetNewsWire-Bridging-Header.h`, which imports
       it and `WKPreferencesPrivate.h`. The emitter compiles a synchronized folder's Swift
@@ -1401,12 +1411,14 @@ application target, simulator only, all library code in packages. In suggested o
       Mac/Resources/NetNewsWire.entitlements` (sandbox, app groups); Semel signs
       nothing, and an arm64 app needs at least an ad-hoc signature to launch — with the
       entitlements, for an app-group container.
-   12. **Zip's Swift target does not see its C target.** Zip declares `Minizip` at
-      `path: "Zip/minizip"` — inside the Swift target `Zip`'s folder, which excludes
-      `minizip` — and `Zip.swift` has `@_implementationOnly import Minizip`; the
-      compiler says `no such module 'Minizip'`. A C target nested in the folder of the
-      Swift target that depends on it, and excluded from it, is the case to look at in
-      `SwiftFormulaConverter.swift`.
+   12. ~~**Zip's Swift target does not see its C target.**~~ Done (2026-09-28). The
+      nesting was not the cause: `Minizip` (at `Zip/minizip`, inside the Swift target
+      `Zip`'s folder, which excludes it) was already found as `Zip`'s C dependency, but its
+      `include` holds the umbrella `Minizip.h` and no module map, so `no such module
+      'Minizip'` was B-55's 4. With the map written, and the excluded
+      `minizip/module/module.modulemap` kept out of the header tree, `Zip` compiles.
+      `SwiftFormulaConverterTests` holds the layout, and `swift-c-package`'s `Squeeze`
+      inside `Zipper` builds it end to end.
    13. ~~**An optional include inside the input file system is reported as missing.**~~
       Done (2026-09-28). The `xcconfigs` port of `XcodeProjectConverter` tolerates an
       absent value (`inputPortsToleratingAbsentValue`, as the Swift converter's
@@ -1452,6 +1464,16 @@ application target, simulator only, all library code in packages. In suggested o
    needs from its resources is in the output: the Info.plists of the app and both
    extensions, `Assets.car`, `AppIcon.icns`, the twenty-four `Base.lproj` xibs,
    the twelve compiled catalogs, the themes, `NetNewsWire.sdef`.
+
+   Checked again 2026-09-29, once 5 and 12 were done as well as 9, 13, 14 and B-55's
+   1, 2 and 5, on a fresh clone with only Sparkle stubbed (1; its lock removed) and
+   PLCrashReporter real: 497 nodes, one error. All 70 of the C-family preprocessors and
+   compilers — PLCrashReporter's 58 sources and its `.S`, FMDB, `RSCoreObjC`, Minizip —
+   succeed, as do the four `ModuleMapWriter`s (`CrashReporter`, `Minizip`,
+   `RSDatabaseObjC`, `RSCoreObjC`) and 20 of the 21 Swift compilers, `RSDatabase`,
+   `RSCore` and `Zip` among them. The one error is the next stop, 4: `Account` fails on
+   `cannot find 'SecretKey' in scope`, and the app's compiler and link wait behind it,
+   so `import CrashReporter` from the app is not reached yet.
 
    Not in the way: the seventeen `.dynamic` products, which the app embeds as frameworks,
    link statically into the executable as the emitter links every package's objects

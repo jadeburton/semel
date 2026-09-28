@@ -131,12 +131,14 @@ final class ClangPreprocessorTests: SemelClangTestCase {
                       "\(arguments)")
     }
 
-    /// SwiftPM's rule: ARC is Objective-C's, and modules are every language's but C++'s —
-    /// the Darwin SDKs do not fully support clang modules in C++ mode.
+    /// ARC is Objective-C's and Objective-C++'s, and modules Objective-C's alone: loaded
+    /// again by the compiler, a module's macros expand a second time in text the
+    /// preprocessor already expanded, and only Objective-C writes `@import`, so only it
+    /// needs them. The SDK's `#define ts_64 uts.ts_64` broke PLCrashReporter's C that way.
     func test_eachLanguageTakesOnlyTheFlagsThatApplyToIt() throws {
         _ = try makeTool().process(input: try makeInput(sourcePath: "src/plain.c", otherSettings: objectiveCSettings))
         XCTAssertFalse(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
-        XCTAssertTrue(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
 
         _ = try makeTool().process(input: try makeInput(sourcePath: "src/bridge.mm", cxxStandard: "c++17",
                                                         otherSettings: objectiveCSettings))

@@ -1671,14 +1671,14 @@ struct SwiftFormulaConverter: Node {
     /// What a C target with Objective-C in it tells both clang stages, as SwiftPM builds such
     /// a target (B-77): `modules` and `objectiveCARC`, and for the preprocessor the module
     /// the sources belong to, so its own headers stay text. Settings rather than flags,
-    /// because the node decides per file what each means — ARC for Objective-C, modules
-    /// for all but C++ — and literals, because like `moduleName` on the Swift side they say
-    /// what the target is: a config file turning ARC off would make ARC code leak.
+    /// because the node decides per file what each means — ARC for Objective-C and
+    /// Objective-C++, modules for Objective-C alone (`ClangLanguageFeatures`) — and
+    /// literals, because like `moduleName` on the Swift side they say what the target is: a
+    /// config file turning ARC off would make ARC code leak.
     ///
     /// Only a target with Objective-C, where SwiftPM enables modules for every C-family
-    /// target but C++. A plain C target's preprocessed text would then import every
-    /// dependency's module where it now holds its headers' text, and the compiler, which
-    /// takes that text alone, has no module map to load them from (B-55's residual 11).
+    /// target but C++: split from its compile, a preprocessor with modules hands on text
+    /// that imports again what it already expanded (B-55's residual 11).
     private func objectiveCLiterals(target: SPMTarget, includingModuleName: Bool) -> [String: String] {
         guard target.clangInfo?.hasObjectiveC == true else {
             return [:]

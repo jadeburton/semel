@@ -135,12 +135,22 @@ final class ClangCompilerTests: SemelClangTestCase {
         }
     }
 
-    /// A C++ source loads no modules, so it needs no SDK, as ever.
-    func test_aCPlusPlusSourceLoadsNoModulesAndNeedsNoSDK() throws {
+    /// Only Objective-C loads modules; a C++ or C source of the same target needs no SDK,
+    /// as ever. Loaded again here, a module's self-referential macro — the SDK's
+    /// `#define ts_64 uts.ts_64` — would expand a second time in C the preprocessor had
+    /// already expanded, which is how PLCrashReporter's thread code broke.
+    func test_onlyAnObjectiveCSourceLoadsModulesAndNeedsTheSDK() throws {
         _ = try makeTool().process(input: try makeInput(sourcePath: "src/bridge.mm.p", cxxStandard: "c++17",
                                                         otherSettings: ["modules": "true", "objectiveCARC": "true"]))
 
         XCTAssertTrue(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("-isysroot"), "\(executor.lastArguments)")
+
+        _ = try makeTool().process(input: try makeInput(sourcePath: "src/thread.c.p",
+                                                        otherSettings: ["modules": "true", "objectiveCARC": "true"]))
+
+        XCTAssertFalse(executor.lastArguments.contains("-fobjc-arc"), "\(executor.lastArguments)")
         XCTAssertFalse(executor.lastArguments.contains("-fmodules"), "\(executor.lastArguments)")
         XCTAssertFalse(executor.lastArguments.contains("-isysroot"), "\(executor.lastArguments)")
     }

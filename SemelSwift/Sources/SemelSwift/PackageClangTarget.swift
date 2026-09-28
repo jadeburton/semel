@@ -101,8 +101,8 @@ struct PackageClangTarget: Equatable {
     let headerSearchPaths: [String]
 
     /// Whether a source the patterns take is Objective-C or Objective-C++: SwiftPM builds
-    /// such a target with ARC, and with clang modules for every file that is not C++, so
-    /// its headers may `@import Foundation;` (B-77).
+    /// such a target with ARC and clang modules, so its headers may `@import Foundation;`
+    /// (B-77).
     let hasObjectiveC: Bool
 
     /// Every header under the target folder that `exclude:` leaves, relative to it and
