@@ -247,6 +247,25 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertEqual(try app().synchronizedFolders.first?.exceptions, ["Embeds/glass.wav", "Info.plist"])
     }
 
+    /// NetNewsWire's `Shared` folder is owned by both apps, and each names in it the files
+    /// it leaves out. Those are exclusions for whichever owner the set names; read as
+    /// borrowings they would put the files back, and the Mac app would compile the
+    /// widget's sources it had excluded.
+    func test_aFolderWithSeveralOwnersLendsNothingToThem() throws {
+        let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: pbxproj))
+        let mac = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire" })
+        let share = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire Share Extension" })
+
+        XCTAssertEqual(mac.borrowedFiles, [])
+        XCTAssertEqual(mac.synchronizedFolders.first { $0.path == "Shared" }?.exceptions,
+                       ["ShareExtension/SafariExt.js", "ShareExtension/ShareDefaultContainer.swift", "Widget/WidgetData.swift",
+                        "Widget/WidgetDataDecoder.swift", "Widget/WidgetDataEncoder.swift", "Widget/WidgetDeepLinks.swift"])
+        XCTAssertTrue(share.borrowedFiles.contains("Shared/ShareExtension/ShareDefaultContainer.swift"),
+                      "a target that owns neither folder still borrows from both")
+        XCTAssertTrue(share.borrowedFiles.contains("Mac/ShareExtension/ShareViewController.swift"))
+    }
+
     func test_readsWhatTheTargetLinksAndEmbeds() throws {
         let target = try app()
 
@@ -274,7 +293,7 @@ final class XcodeProjectTests: XCTestCase {
                           xcconfig: [String: String] = ["App.xcconfig": "BUNDLE_ID_PREFIX = com.example // mine\nDEVELOPMENT_TEAM = TEAM"],
                           configuration: String = "Debug") throws -> XcodeBuildSettings {
         try XcodeBuildSettings.resolve(project: try project(), target: try app(), configuration: configuration, sdk: sdk,
-                                       xcconfig: { xcconfig[$0] }, extra: ["TARGET_NAME": "IceCubesApp"])
+                                       xcconfig: { xcconfig[$0].map(Xcconfig.assignments) }, extra: ["TARGET_NAME": "IceCubesApp"])
     }
 
     /// Target over project, project over its xcconfig, and `$(inherited)` reaching down.
@@ -422,21 +441,50 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertEqual(project.localPackagePaths.count, 13)
         XCTAssertEqual(project.remotePackageURLs.count, 4)
         let settings = try XcodeBuildSettings.resolve(project: project, target: app, configuration: "Debug", sdk: "iphonesimulator",
-                                                      xcconfig: { _ in "BUNDLE_ID_PREFIX = com.example" },
+                                                      xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
                                                       extra: ["TARGET_NAME": app.name])
         XCTAssertEqual(settings["PRODUCT_BUNDLE_IDENTIFIER"], "com.example.IceCubesApp")
         XCTAssertEqual(settings["IPHONEOS_DEPLOYMENT_TARGET"], "18.5")
         XCTAssertEqual(settings["INFOPLIST_KEY_UILaunchScreen_Generation"], "YES")
     }
 
-    func test_parsesXcconfigLines() {
-        let parsed = XcodeBuildSettings.parseXcconfig("""
-            // comment
-            #include "other.xcconfig"
-            DEVELOPMENT_TEAM = ABC123 // team
-            BUNDLE_ID_PREFIX=com.example
-            """)
+    // MARK: - A configuration based on a file in a synchronized folder (B-77)
 
-        XCTAssertEqual(parsed, ["DEVELOPMENT_TEAM": "ABC123", "BUNDLE_ID_PREFIX": "com.example"])
+    /// Xcode 16 writes a configuration's file as a path relative to an anchor, a
+    /// synchronized folder, when the file has no reference of its own — NetNewsWire's form.
+    /// A file reference is resolved through its groups like any other.
+    static let anchoredFixture = """
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            objectVersion = 77;
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 ); };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1, C2 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReferenceAnchor = SG1;
+                       baseConfigurationReferenceRelativePath = Project_debug.xcconfig; buildSettings = { }; };
+                C2 = { isa = XCBuildConfiguration; name = Release; baseConfigurationReference = XC1; buildSettings = { }; };
+                G1 = { isa = PBXGroup; children = ( SG1, G2 ); sourceTree = "<group>"; };
+                G2 = { isa = PBXGroup; children = ( XC1 ); path = Config; sourceTree = "<group>"; };
+                XC1 = { isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = xcconfig; sourceTree = "<group>"; };
+                T1 = { isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application";
+                       buildConfigurationList = CL2; buildPhases = ( ); };
+                CL2 = { isa = XCConfigurationList; buildConfigurations = ( C3 ); };
+                C3 = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReferenceAnchor = SG1;
+                       baseConfigurationReferenceRelativePath = App_target.xcconfig; buildSettings = { }; };
+            };
+            rootObject = P1;
+        }
+        """
+
+    func test_readsAConfigurationBasedOnAFileInASynchronizedFolder() throws {
+        let project = try XcodeProject(pbxproj: Data(Self.anchoredFixture.utf8))
+        let app = try XCTUnwrap(project.targets.first)
+
+        XCTAssertEqual(project.xcconfigPaths(for: app, configuration: "Debug"),
+                       ["xcconfig/Project_debug.xcconfig", "xcconfig/App_target.xcconfig"])
+        XCTAssertEqual(project.configuration(named: "Release")?.xcconfigPath, "Config/Release.xcconfig",
+                       "a file reference is resolved through its group")
     }
 }

@@ -130,10 +130,28 @@ struct XcodeProject {
     }
 
     /// The `.xcconfig` files the project and then `target` base the named configuration
-    /// on, relative to the project's folder: the layers `XcodeBuildSettings` reads, in
-    /// the order it reads them. Whether a file is there is the caller's question.
+    /// on, relative to the project's folder: the levels `XcodeBuildSettings` reads, in
+    /// the order it reads them. Whether a file is there is the caller's question, and so
+    /// are the files each includes.
     func xcconfigPaths(for target: Target, configuration name: String) -> [String] {
         [configuration(named: name), target.configuration(named: name)].compactMap { $0?.xcconfigPath }
+    }
+
+    /// The same for several targets, each file once, in the order first named.
+    func xcconfigPaths(for targets: [Target], configuration name: String) -> [String] {
+        var paths: [String] = []
+        for path in targets.flatMap({ xcconfigPaths(for: $0, configuration: name) }) where !paths.contains(path) {
+            paths.append(path)
+        }
+        return paths
+    }
+
+    /// The targets one build of `application` builds: the application, and the extensions
+    /// it embeds, in the order it lists them.
+    func bundleTargets(of application: Target) -> [Target] {
+        [application] + application.embeddedExtensions.compactMap { name in
+            targets.first { $0.productFileName == name && $0.isExtension }
+        }
     }
 
     // MARK: - Reading
@@ -173,11 +191,13 @@ struct XcodeProject {
         // exception set in that folder naming the target lists the files it borrows. The
         // folder may belong to another target, or to none — Xcode leaves a folder
         // unowned when every target that uses it names its files this way, which is how
-        // IceCubes' notification and share extensions get their sources.
-        var ownerOfGroup: [String: String] = [:]
+        // IceCubes' notification and share extensions get their sources. It may also have
+        // several owners — NetNewsWire's `Shared` is both apps' — and a set naming any of
+        // them says what that owner leaves out, not what it borrows.
+        var ownersOfGroup: [String: Set<String>] = [:]
         for ownerID in targetIDs {
             for groupID in objects[ownerID]?["fileSystemSynchronizedGroups"] as? [String] ?? [] {
-                ownerOfGroup[groupID] = ownerID
+                ownersOfGroup[groupID, default: []].insert(ownerID)
             }
         }
         for (groupID, group) in objects where group["isa"] as? String == "PBXFileSystemSynchronizedRootGroup" {
@@ -186,7 +206,7 @@ struct XcodeProject {
             }
             for exceptionID in group["exceptions"] as? [String] ?? [] {
                 guard let exceptions = objects[exceptionID],
-                      let borrowerID = exceptions["target"] as? String, borrowerID != ownerOfGroup[groupID],
+                      let borrowerID = exceptions["target"] as? String, ownersOfGroup[groupID]?.contains(borrowerID) != true,
                       let borrowerIndex = targetIDs.firstIndex(of: borrowerID) else {
                     continue
                 }
@@ -268,9 +288,27 @@ struct XcodeProject {
                 }
                 let settings = (configuration["buildSettings"] as? [String: Any] ?? [:])
                     .compactMapValues { Self.settingString($0) }
-                let xcconfig = object(configuration["baseConfigurationReference"] as? String)?["path"] as? String
-                return BuildConfiguration(name: name, settings: settings, xcconfigPath: xcconfig)
+                return BuildConfiguration(name: name, settings: settings, xcconfigPath: xcconfigPath(of: configuration))
             }
+        }
+
+        /// The file a configuration is based on, relative to the project's folder: a file
+        /// reference, resolved through its groups — or, since Xcode 16, a path relative to
+        /// an anchor, a synchronized folder that holds the file without a reference of
+        /// its own. NetNewsWire bases every configuration on a file in its `xcconfig`
+        /// folder this way.
+        func xcconfigPath(of configuration: [String: Any]) -> String? {
+            if let referenceID = configuration["baseConfigurationReference"] as? String {
+                return path(of: referenceID)
+            }
+            guard let anchorID = configuration["baseConfigurationReferenceAnchor"] as? String,
+                  let relativePath = configuration["baseConfigurationReferenceRelativePath"] as? String else {
+                return nil
+            }
+            guard let anchorPath = path(of: anchorID) else {
+                return nil
+            }
+            return "\(anchorPath)/\(relativePath)"
         }
 
         /// A setting is a string, or a list Xcode joins with spaces when it reads it.

@@ -6,7 +6,8 @@
 //  `semel-swift prepare` writes a config whose target triple carries the deployment
 //  version, and puts in place the xcconfig files the project names, and asks here rather
 //  than reading the project itself. The reading and the evaluation are the converter's;
-//  these are two questions, answered the same way.
+//  these are the same questions, answered the same way, over the disk rather than over
+//  wires.
 
 import Foundation
 
@@ -15,16 +16,18 @@ public enum XcodeProjectFacts {
     /// The configuration the converter builds, and so the one whose xcconfig files count.
     static let configuration = "Debug"
 
-    /// The `.xcconfig` files the project and its application target name for the built
-    /// configuration, relative to the project's folder, in the order the converter reads
-    /// them. Empty when the project has no application.
+    /// The `.xcconfig` files the project, its application target and the extensions the
+    /// application embeds name for the built configuration, relative to the project's
+    /// folder, in the order the converter reads them. Not the files those include: a
+    /// file `prepare` has to put in place is one the project names. Empty when the
+    /// project has no application.
     public static func xcconfigPaths(ofProjectAt project: URL) throws -> [String] {
         let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
         let read = try XcodeProject(pbxproj: data)
         guard let application = read.targets.first(where: \.isApplication) else {
             return []
         }
-        return read.xcconfigPaths(for: application, configuration: configuration)
+        return read.xcconfigPaths(for: read.bundleTargets(of: application), configuration: configuration)
     }
 
     /// The names the settings of the application and the extensions it embeds still
@@ -37,14 +40,14 @@ public enum XcodeProjectFacts {
         guard let application = read.targets.first(where: \.isApplication) else {
             return []
         }
-        let folder = project.deletingLastPathComponent()
-        let embedded = Set(application.embeddedExtensions)
-        let targets = [application] + read.targets.filter { embedded.contains($0.productFileName) }
+        let targets = read.bundleTargets(of: application)
+        let expansions = try expansions(of: read.xcconfigPaths(for: targets, configuration: configuration),
+                                        in: project.deletingLastPathComponent())
         var names = Set<String>()
         for target in targets {
             let settings = try XcodeBuildSettings.resolve(
                 project: read, target: target, configuration: configuration, sdk: sdk,
-                xcconfig: { try? String(contentsOf: folder.appendingPathComponent($0), encoding: .utf8) },
+                xcconfig: { expansions[$0]?.assignments },
                 extra: ["TARGET_NAME": target.name])
             names.formUnion(settings.unresolvedReferences)
         }
@@ -61,12 +64,31 @@ public enum XcodeProjectFacts {
         guard let application = read.targets.first(where: \.isApplication) else {
             return nil
         }
-        let folder = project.deletingLastPathComponent()
+        let expansions = try expansions(of: read.xcconfigPaths(for: application, configuration: configuration),
+                                        in: project.deletingLastPathComponent())
         let settings = try XcodeBuildSettings.resolve(
             project: read, target: application, configuration: configuration, sdk: sdk,
-            xcconfig: { try? String(contentsOf: folder.appendingPathComponent($0), encoding: .utf8) },
+            xcconfig: { expansions[$0]?.assignments },
             extra: ["TARGET_NAME": application.name])
         let key = sdk.hasPrefix("macosx") ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET"
         return settings[key]
+    }
+
+    /// Each root xcconfig with its includes followed on disk, by its path relative to
+    /// `folder`, the project's folder. A file that cannot be read is not there.
+    static func expansions(of roots: [String], in folder: URL) throws -> [String: XcconfigExpansion] {
+        var expansions: [String: XcconfigExpansion] = [:]
+        for root in roots {
+            expansions[root] = try XcconfigExpansion(root: root) { relativePath in
+                let file = relativePath.hasPrefix("/")
+                    ? URL(fileURLWithPath: relativePath)
+                    : folder.appendingPathComponent(relativePath).standardizedFileURL
+                guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+                    return .absent
+                }
+                return .present(Xcconfig(parsing: text))
+            }
+        }
+        return expansions
     }
 }

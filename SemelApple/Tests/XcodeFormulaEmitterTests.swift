@@ -26,7 +26,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         return try emitter.formula(
             settings: { target in
                 try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "iphonesimulator",
-                                               xcconfig: { _ in "BUNDLE_ID_PREFIX = com.example" },
+                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
                                                extra: ["TARGET_NAME": target.name])
             },
             listing: { $0 == "input:/repo/IceCubesApp" ? listing : nil })
@@ -97,7 +97,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let formula = try emitter.formula(
             settings: { target in
                 let resolved = try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "macosx",
-                                                              xcconfig: { _ in "BUNDLE_ID_PREFIX = com.example" },
+                                                              xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
                                                               extra: ["TARGET_NAME": target.name])
                 return XcodeBuildSettings(values: resolved.values.merging(["MACOSX_DEPLOYMENT_TARGET": "13.3"]) { _, new in new })
             },

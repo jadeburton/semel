@@ -31,7 +31,10 @@ let package = Package(
         .testTarget(
             name: "SemelAppleTests",
             dependencies: ["SemelApple"],
-            path: "Tests"
+            path: "Tests",
+            // Real projects' files, read from beside the tests by path rather than
+            // bundled: a test compares them with what a clone holds.
+            exclude: ["Fixtures"]
         ),
     ]
 )

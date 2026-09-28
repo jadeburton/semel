@@ -118,8 +118,6 @@ final class DictionaryOrderTests: XCTestCase {
             "collects the manifests into a dictionary by package folder",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: input.inputValues[Self.targetFolders] ?? [:]":
             "collects the manifests into a dictionary by folder",
-        "SemelApple/Sources/SemelApple/XcodeProjectConverter.swift: xcconfigValues":
-            "collects the xcconfig texts into a dictionary by path",
         "SemelCore/Sources/SemelCore/Nodes/ProjectBuilder.swift: inputs":
             "collects the decoded manifests into a dictionary by folder",
         "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: allWatchedFolderManifests ?? [:]":

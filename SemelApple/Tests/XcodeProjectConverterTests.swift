@@ -101,6 +101,49 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertTrue(formula.contains("product 'Ice Cubes.app/' = TreeMerger("), formula)
     }
 
+    /// An include is known only once the file naming it has arrived: it is demanded then,
+    /// as one more `StaticFile` on the same port, and the formula waits for it — the
+    /// value it defines reaches the bundle identifier. An `#include?` of a file outside the
+    /// input file system is not demanded and not missed.
+    func test_demandsWhatAnXcconfigIncludesAndWaitsForIt() throws {
+        let app = "input:/repo/App.xcconfig"
+        let base = "input:/repo/Config/Base.xcconfig"
+        let appText = "#include? \"../../Outside.xcconfig\"\n#include \"Config/Base.xcconfig\"\nDEVELOPMENT_TEAM = TEAM"
+        let folders = ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
+                       try extensionFolder.0: try extensionFolder.1]
+
+        let first = try process(projectFile: try fixtureProject, xcconfigs: [app: .value(try appText.intern())], folders: folders)
+
+        XCTAssertEqual(first.inputWireSpecs[XcodeProjectConverter.xcconfigs]?.keys.sorted(), [app, base])
+        XCTAssertTrue(isPending(first))
+
+        let second = try process(projectFile: try fixtureProject,
+                                 xcconfigs: [app: .value(try appText.intern()),
+                                             base: .value(try "BUNDLE_ID_PREFIX = com.included".intern())],
+                                 folders: folders)
+
+        let formula = try XCTUnwrap(second.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        XCTAssertTrue(formula.contains("\"CFBundleIdentifier\":\"com.included.IceCubesApp\""), formula)
+    }
+
+    /// A plain include with no file is read as empty, and named as the cause of what it
+    /// leaves undefined, the way a missing root is.
+    func test_reportsAMissingIncludeAsTheCauseOfTheUndefinedSettings() throws {
+        let output = try process(
+            projectFile: try fixtureProject,
+            xcconfigs: ["input:/repo/App.xcconfig": .value(try "#include \"Base.xcconfig\"".intern()),
+                        "input:/repo/Base.xcconfig": .noValue(reason: .initializing)],
+            folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"]),
+                      try extensionFolder.0: try extensionFolder.1])
+
+        guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog]) else {
+            XCTFail("expected the missing include on infoLog as an error")
+            return
+        }
+        let message = try messageHash.resolveAsString()
+        XCTAssertTrue(message.contains("input:/repo/Base.xcconfig is missing") && message.contains("BUNDLE_ID_PREFIX"), message)
+    }
+
     /// The xcconfig a fresh clone lacks is an empty layer, not a stall: the formula is
     /// emitted with the reference unresolved for the plist builder to report.
     func test_aMissingXcconfigDoesNotStallTheConversion() throws {
