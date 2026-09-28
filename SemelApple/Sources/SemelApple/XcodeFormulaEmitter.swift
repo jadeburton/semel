@@ -33,6 +33,9 @@ struct XcodeFormulaEmitter {
 
     let project: XcodeProject
     let build: Build
+    /// Every local package of the project, relative to its folder: those it declares and
+    /// those found in its synchronized folders (`LocalPackageSearch`).
+    let localPackagePaths: [String]
 
     /// Where the parts of a bundle go, by platform (B-77). An iOS bundle is flat: the
     /// executable, the Info.plist and every resource at its root, extensions under
@@ -102,11 +105,15 @@ struct XcodeFormulaEmitter {
     // MARK: - Packages
 
     /// One include per package the target links: the package's formula brings the
-    /// `modules_P()` / `objects_P()` funcs the target compiles and links against. Local
-    /// packages are the project's wrappers; a remote one is where the vendoring rule puts
-    /// it, `Dependencies/<repository name>`.
+    /// `modules_P()` / `objects_P()` funcs the target compiles and links against. Every
+    /// local package is included, as Xcode puts every one in the workspace: a product
+    /// dependency names no package, and its product is found by name among the funcs the
+    /// included formulas define — `RSCoreResources` in the `RSCore` package's. A remote
+    /// package is where the vendoring rule puts it, `Dependencies/<repository name>`.
     func includes(for targets: [XcodeProject.Target]) -> [String] {
-        var folders: [String] = project.localPackagePaths.map { "\(build.projectFolder)/\($0)" }
+        var folders: [String] = localPackagePaths.compactMap {
+            XcodeProjectConverter.inputPath(of: $0, in: build.projectFolder)
+        }
         for case .remote(_, let url) in targets.flatMap(\.packageProducts) {
             if let name = Self.repositoryName(forURL: url) {
                 folders.append("\(build.root)/Dependencies/\(name)")

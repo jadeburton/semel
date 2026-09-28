@@ -487,4 +487,119 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertEqual(project.configuration(named: "Release")?.xcconfigPath, "Config/Release.xcconfig",
                        "a file reference is resolved through its group")
     }
+
+    // MARK: - Local packages (B-77)
+
+    /// The three ways a project declares a local package: a folder wrapper, resolved
+    /// through its group like any file reference, and a package reference with a path
+    /// relative to the project's folder, which a product dependency may name.
+    static let declaredPackagesFixture = """
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            objectVersion = 77;
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 );
+                       packageReferences = ( LP1 ); };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { }; };
+                G1 = { isa = PBXGroup; children = ( G2, SG1, SG2 ); sourceTree = "<group>"; };
+                G2 = { isa = PBXGroup; children = ( W1 ); path = Packages; sourceTree = "<group>"; };
+                W1 = { isa = PBXFileReference; lastKnownFileType = wrapper; path = Timeline; sourceTree = "<group>"; };
+                LP1 = { isa = XCLocalSwiftPackageReference; relativePath = ../Shared/Kit; };
+                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = App; sourceTree = "<group>"; };
+                SG2 = { isa = PBXFileSystemSynchronizedRootGroup; path = Modules; sourceTree = "<group>"; };
+                T1 = { isa = PBXNativeTarget; name = App; productType = "com.apple.product-type.application";
+                       buildConfigurationList = CL1; buildPhases = ( ); fileSystemSynchronizedGroups = ( SG1 );
+                       packageProductDependencies = ( PD1, PD2, PD3 ); };
+                PD1 = { isa = XCSwiftPackageProductDependency; package = LP1; productName = Kit; };
+                PD2 = { isa = XCSwiftPackageProductDependency; productName = Timeline; };
+                PD3 = { isa = XCSwiftPackageProductDependency; productName = Networking; };
+            };
+            rootObject = P1;
+        }
+        """
+
+    func test_readsTheLocalPackagesAProjectDeclaresAndEverySynchronizedFolder() throws {
+        let project = try XcodeProject(pbxproj: Data(Self.declaredPackagesFixture.utf8))
+
+        XCTAssertEqual(project.localPackagePaths, ["../Shared/Kit", "Packages/Timeline"],
+                       "a package reference's path, and a wrapper resolved through its group")
+        XCTAssertEqual(project.synchronizedFolderPaths, ["App", "Modules"], "owned by a target or not")
+        XCTAssertEqual(try XCTUnwrap(project.targets.first).packageProducts,
+                       [.local(product: "Kit"), .local(product: "Timeline"), .local(product: "Networking")],
+                       "a product of a local package reference is local; one naming no package is too")
+    }
+
+    /// The search asks about a synchronized folder, then — a pass later — about each folder
+    /// directly in it, and a folder holding a `Package.swift` is a package. Nothing deeper
+    /// is asked about; a catalog and a hidden folder are never packages; and until every
+    /// folder asked about has answered, the search is not complete.
+    func test_theSearchLooksDirectlyInEachSynchronizedFolderALevelAtATime() throws {
+        let project = try XcodeProject(pbxproj: Data(Self.declaredPackagesFixture.utf8))
+        var known: [String: LocalPackageSearch.Contents] = ["App": .init(files: ["App.swift"], folders: ["Views"])]
+
+        let first = LocalPackageSearch(project: project) { known[$0] }
+        XCTAssertEqual(first.asked, ["App", "App/Views", "Modules"])
+        XCTAssertFalse(first.isComplete)
+        XCTAssertEqual(first.packagePaths, ["../Shared/Kit", "Packages/Timeline"], "what the project declares, meanwhile")
+
+        known["Modules"] = .init(files: ["README.md"], folders: ["Networking", "Docs", "Media.xcassets", ".build"])
+        let second = LocalPackageSearch(project: project) { known[$0] }
+        XCTAssertEqual(second.asked, ["App", "App/Views", "Modules", "Modules/Docs", "Modules/Networking"])
+        XCTAssertFalse(second.isComplete)
+
+        known["App/Views"] = .init(files: ["Home.swift"])
+        known["Modules/Docs"] = .init(files: ["Guide.md"], folders: ["Sample"])
+        known["Modules/Networking"] = .init(files: ["Package.swift"], folders: ["Sources"])
+        let third = LocalPackageSearch(project: project) { known[$0] }
+        XCTAssertEqual(third.asked, second.asked, "a package's own folders, and a folder two levels down, are not asked about")
+        XCTAssertTrue(third.isComplete)
+        XCTAssertEqual(third.packagePaths, ["../Shared/Kit", "Modules/Networking", "Packages/Timeline"])
+    }
+
+    /// NetNewsWire's project file names no local package; its synchronized folders are
+    /// where they are, `Modules` among them, which no target owns.
+    func test_netNewsWireDeclaresNoPackageAndHasEightSynchronizedFolders() throws {
+        let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: pbxproj))
+
+        XCTAssertEqual(project.localPackagePaths, [])
+        XCTAssertEqual(project.synchronizedFolderPaths, ["Mac", "Modules", "Shared", "Technotes", "Tests", "Widget", "iOS", "xcconfig"])
+        XCTAssertFalse(project.targets.contains { $0.synchronizedFolders.contains { $0.path == "Modules" } })
+    }
+
+    /// The facts `prepare` reads find NetNewsWire's seventeen packages on the disk, by the
+    /// converter's rule.
+    func test_theFactsFindNetNewsWiresSeventeenPackagesInItsModulesFolder() throws {
+        let folder = try NetNewsWireModules.treeOnDisk()
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let packagePaths = try XcodeProjectFacts.localPackagePaths(ofProjectAt: folder.appendingPathComponent("NetNewsWire.xcodeproj"))
+
+        XCTAssertEqual(packagePaths, NetNewsWireModules.products.keys.sorted().map { "Modules/\($0)" })
+    }
+
+    /// Every product any NetNewsWire target links with no package named — both apps, their
+    /// extensions, the test bundles — is vended by exactly one of the packages found. The
+    /// formula finds it by name the same way, among the funcs each included package's
+    /// formula defines.
+    func test_everyLocalProductNetNewsWireLinksIsVendedByOnePackageFound() throws {
+        let folder = try NetNewsWireModules.treeOnDisk()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let projectURL = folder.appendingPathComponent("NetNewsWire.xcodeproj")
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: projectURL.appendingPathComponent("project.pbxproj")))
+        let packagePaths = try XcodeProjectFacts.localPackagePaths(ofProjectAt: projectURL)
+
+        var resolved: [String: String] = [:]
+        for target in project.targets {
+            for case .local(let product) in target.packageProducts {
+                let vendors = packagePaths.filter { NetNewsWireModules.package(vending: product, among: [$0]) != nil }
+                XCTAssertEqual(vendors.count, 1, "\(target.name) links \(product), vended by \(vendors)")
+                resolved[product] = vendors.first
+            }
+        }
+        XCTAssertEqual(resolved.count, 15, "the local products the targets name: \(resolved.keys.sorted())")
+        XCTAssertEqual(resolved["RSCoreResources"], "Modules/RSCore", "a product named for no folder is found by name")
+    }
 }

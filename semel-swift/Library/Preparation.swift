@@ -18,6 +18,9 @@ import SemelNodeKit
 public struct PrepareReport: Equatable {
     /// The `.xcodeproj` the folder holds, when it is a project rather than packages.
     public var project: String?
+    /// The project's local packages, as its converter finds them: the ones it declares and
+    /// the ones directly in its synchronized folders.
+    public var localPackages: [URL] = []
     public var roots: [PackageSummary] = []
     public var vendored: [Vendoring.Copied] = []
     /// The lock written beside each vendored copy (B-06), one per copy.
@@ -104,7 +107,14 @@ public enum Preparation {
             }
             declaredVersion = try deploymentTarget(ofProjectAt: project, platform: platform)
             formula = GeneratedFiles.formula(project: project.lastPathComponent, platform: platform)
-            namespaces = GeneratedFiles.projectNamespaces
+            // The packages the converter will find and include — the ones the project
+            // declares and the ones in its synchronized folders — and what was vendored for
+            // them decide the languages, by the rule a tree of packages is held to (B-110).
+            report.localPackages = try XcodeProjectFacts.localPackagePaths(ofProjectAt: project)
+                .map { folder.appendingPathComponent($0, isDirectory: true).standardizedFileURL }
+                .filter { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Package.swift").path) }
+            let packageSummaries = try (report.localPackages + vendoredManifestFolders(in: dependencies)).map(steps.summarize)
+            namespaces = GeneratedFiles.projectNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: packageSummaries))
         } else {
             let manifestFolders = try PackageScan.manifestFolders(under: folder)
             guard !manifestFolders.isEmpty else {
@@ -120,9 +130,7 @@ public enum Preparation {
             // IceCubes — is compiled through clang like one of the tree's own, and a scan
             // before the copy could not see it (B-122). The vendored packages are not roots
             // and say nothing about the deployment version; they only add languages.
-            let vendoredSummaries = FileManager.default.fileExists(atPath: dependencies.path)
-                ? try PackageScan.manifestFolders(under: dependencies).map(steps.summarize)
-                : []
+            let vendoredSummaries = try vendoredManifestFolders(in: dependencies).map(steps.summarize)
             namespaces = GeneratedFiles.packageTreeNamespaces(
                 forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
         }
@@ -183,6 +191,11 @@ public enum Preparation {
         return try lastCopy.keys.sorted { $0.path < $1.path }.compactMap { destination in
             try lastCopy[destination].map(Vendoring.writeLock(for:))
         }
+    }
+
+    /// Every package vendored under `dependencies`, none when nothing was.
+    static func vendoredManifestFolders(in dependencies: URL) throws -> [URL] {
+        FileManager.default.fileExists(atPath: dependencies.path) ? try PackageScan.manifestFolders(under: dependencies) : []
     }
 
     /// The one `.xcodeproj` directly in `folder`, if there is one; two is a question the

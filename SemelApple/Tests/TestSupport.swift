@@ -109,6 +109,78 @@ extension Dictionary where Key == String, Value == GraphSpecNode {
     var rendered: [String: String] { mapValues { $0.asString(omitOutputPort: false) } }
 }
 
+/// NetNewsWire's local packages, which the fixture's project file does not name: the
+/// seventeen folders in its synchronized `Modules` folder, each with the library products
+/// its manifest declares at b4361413fc1850110f9f42652f0f84e7a51e9d64, as `swift package
+/// dump-package` reads them. The manifests themselves are not copied into the fixture: a
+/// `Package.swift` under this repository is one `semel-swift prepare` would take for a
+/// package of Semel's own tree.
+enum NetNewsWireModules {
+
+    static let products: [String: [String]] = [
+        "Account":          ["Account"],
+        "ActivityLog":      ["ActivityLog"],
+        "Articles":         ["Articles"],
+        "ArticlesDatabase": ["ArticlesDatabase"],
+        "CloudKitSync":     ["CloudKitSync"],
+        "ErrorLog":         ["ErrorLog"],
+        "FeedFinder":       ["FeedFinder"],
+        "HTMLMetadata":     ["HTMLMetadata"],
+        "Images":           ["Images"],
+        "NewsBlur":         ["NewsBlur"],
+        "RSCore":           ["RSCore", "RSCoreObjC", "RSCoreResources"],
+        "RSDatabase":       ["RSDatabase", "RSDatabaseObjC"],
+        "RSParser":         ["RSParser"],
+        "RSTree":           ["RSTree"],
+        "RSWeb":            ["RSWeb"],
+        "Secrets":          ["Secrets"],
+        "SyncDatabase":     ["SyncDatabase"],
+    ]
+
+    /// What a package folder holds, as far as a search looks: its manifest, and the
+    /// folders every one of these has.
+    static let packageFolderFiles   = ["Package.swift", "README.md"]
+    static let packageFolderFolders = ["Sources", "Tests"]
+
+    /// The package, among the ones given by path relative to the project's folder, whose
+    /// manifest declares `product`, or nil for none.
+    static func package(vending product: String, among packagePaths: [String]) -> String? {
+        packagePaths.first { path in
+            products[(path as NSString).lastPathComponent]?.contains(product) == true
+        }
+    }
+
+    /// A copy of the fixture's project file in a new temporary folder, with `Modules` laid
+    /// out as the clone has it — each package folder holding its manifest — for the facts
+    /// `prepare` reads from the disk. The caller removes the folder.
+    static func treeOnDisk() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("semel-netnewswire-\(UUID().uuidString)", isDirectory: true)
+        let project = folder.appendingPathComponent("NetNewsWire.xcodeproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj"),
+                                         to: project.appendingPathComponent("project.pbxproj"))
+        for name in products.keys.sorted() {
+            let package = folder.appendingPathComponent("Modules/\(name)", isDirectory: true)
+            for subfolder in packageFolderFolders {
+                try FileManager.default.createDirectory(at: package.appendingPathComponent(subfolder), withIntermediateDirectories: true)
+            }
+            for file in packageFolderFiles {
+                try Data("// \(name)\n".utf8).write(to: package.appendingPathComponent(file))
+            }
+        }
+        return folder
+    }
+}
+
+extension XcodeFormulaEmitter {
+    /// An emitter for a project whose local packages are the ones it declares: what the
+    /// converter hands it when no synchronized folder holds a package.
+    init(project: XcodeProject, build: Build) {
+        self.init(project: project, build: build, localPackagePaths: project.localPackagePaths)
+    }
+}
+
 extension Xcconfig {
     /// The assignments written in the file itself, its includes not followed: what a test
     /// hands the settings evaluation for an xcconfig that includes nothing.

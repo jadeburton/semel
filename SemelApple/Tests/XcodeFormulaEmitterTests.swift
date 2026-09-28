@@ -146,6 +146,24 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("include funcs SwiftFormulaConverter(path: 'input:/repo/Dependencies/keychain-swift', root: 'input:/repo').formula"), formula)
     }
 
+    /// The local packages are the ones the converter hands over — found in a synchronized
+    /// folder as well as declared — each included once, at its path with any `..` resolved,
+    /// so a package another one reaches by path is the same node either way.
+    func test_includesEveryLocalPackageItIsGivenAtItsResolvedPath() throws {
+        let project = try XcodeProject(pbxproj: Data(XcodeProjectTests.fixture.utf8))
+        let emitter = XcodeFormulaEmitter(project: project, build: build,
+                                          localPackagePaths: ["../Shared/Kit", "Modules/Networking", "Packages/Timeline"])
+
+        let includes = emitter.includes(for: project.targets)
+
+        XCTAssertEqual(includes, [
+            "include funcs SwiftFormulaConverter(path: 'input:/Shared/Kit', root: 'input:/repo').formula",
+            "include funcs SwiftFormulaConverter(path: 'input:/repo/Dependencies/keychain-swift', root: 'input:/repo').formula",
+            "include funcs SwiftFormulaConverter(path: 'input:/repo/Modules/Networking', root: 'input:/repo').formula",
+            "include funcs SwiftFormulaConverter(path: 'input:/repo/Packages/Timeline', root: 'input:/repo').formula",
+        ])
+    }
+
     // MARK: - Sources and the executable
 
     func test_compilesTheSynchronizedFolderAgainstTheLinkedProductsModules() throws {

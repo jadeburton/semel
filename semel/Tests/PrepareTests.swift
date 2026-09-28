@@ -251,7 +251,7 @@ final class PrepareTests: XCTestCase {
     /// B-68. A block nothing reads is reported as unused keys on every build, so the
     /// config carries the namespaces the formula's converters select from and no other:
     /// a tree of packages never links through clang and compiles no catalogs; a project
-    /// compiles catalogs and still never links through clang.
+    /// compiles catalogs, and with no C target in its packages reads no clang settings.
     func test_theConfigCarriesOnlyTheNamespacesTheFormulaReads() throws {
         try write("Packages/Timeline/Package.swift")
         try write("App/App.xcodeproj/project.pbxproj", projectFixture)
@@ -267,11 +267,30 @@ final class PrepareTests: XCTestCase {
         XCTAssertFalse(packages.contains("apple."), "got:\n\(packages)")
 
         let project = try String(contentsOf: folder("App").appendingPathComponent("semel.machine.config"), encoding: .utf8)
-        for namespace in ["swift.packageReader", "swift.compiler", "swift.linker", "clang.preprocessor", "clang.compiler",
+        for namespace in ["swift.packageReader", "swift.compiler", "swift.linker",
                           "apple.assetCatalogCompiler", "apple.stringCatalogCompiler"] {
             XCTAssertTrue(project.contains("\(namespace).toolDescriptor.name="), "got:\n\(project)")
         }
-        XCTAssertFalse(project.contains("clang.linker"), "got:\n\(project)")
+        XCTAssertFalse(project.contains("clang."), "a project with no C target in its packages reads no clang settings, got:\n\(project)")
+    }
+
+    /// B-77. A project's local packages are found where its converter finds them — here a
+    /// package directly in a synchronized folder no target owns, NetNewsWire's form — and
+    /// their languages decide the config: a C target in one brings the clang blocks.
+    func test_aProjectsPackagesInASynchronizedFolderAreFoundAndDecideTheLanguages() throws {
+        try write("App/App.xcodeproj/project.pbxproj", synchronizedModulesFixture)
+        try write("App/Modules/CLib/Package.swift")
+        try write("App/Modules/CLib/Sources/CLib/lib.c", "int lib(void) { return 1; }\n")
+        try write("App/Modules/Notes/README.md", "Not a package.\n")
+
+        let report = try Preparation.run(folder: folder("App"), platform: .macos, steps: steps())
+
+        XCTAssertEqual(report.localPackages, [folder("App/Modules/CLib")])
+        let machine = try String(contentsOf: folder("App").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        for namespace in ["swift.compiler", "clang.preprocessor", "clang.compiler", "apple.assetCatalogCompiler"] {
+            XCTAssertTrue(machine.contains("\(namespace).toolDescriptor.name="), "got:\n\(machine)")
+        }
+        XCTAssertFalse(machine.contains("clang.linker"), "got:\n\(machine)")
     }
 
     /// B-110. A target folder holding C sources and no Swift is compiled through clang, so
@@ -388,7 +407,8 @@ final class PrepareTests: XCTestCase {
     func test_everyNamespaceAConverterReadsIsDeclaredByAToolchain() {
         let declared = Set(everyNamespace)
 
-        for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true) + GeneratedFiles.projectNamespaces {
+        for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true)
+                         + GeneratedFiles.projectNamespaces(forCFamilyTargets: true) {
             XCTAssertTrue(declared.contains(namespace), "\(namespace) is read but not declared; declared: \(declared.sorted())")
         }
     }
@@ -542,6 +562,15 @@ final class PrepareTests: XCTestCase {
             rootObject = P1;
         }
         """
+
+    /// The fixture above with a synchronized `Modules` folder that no target owns, where
+    /// Xcode finds the packages the project file does not name.
+    private var synchronizedModulesFixture: String {
+        projectFixture
+            .replacingOccurrences(of: "G1 = { isa = PBXGroup; children = ( ); sourceTree = \"<group>\"; };",
+                                  with: "G1 = { isa = PBXGroup; children = ( SG1 ); sourceTree = \"<group>\"; };\n"
+                                      + "SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = Modules; sourceTree = \"<group>\"; };")
+    }
 
     func test_writesTheFormulaAndConfigBesideThePackagesAndVendorsTheRoots() throws {
         try write("Packages/Timeline/Package.swift")
