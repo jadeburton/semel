@@ -137,7 +137,7 @@ final class CascadeDeletionTests: SemelCoreTestCase {
 //
 // The false-positive topology fix in applySpecs relies on a
 // guarantee: parsing the same spec string twice must produce a spec
-// whose findMatchingNode() returns the node that was created the first time.
+// whose identity finds the node that was created the first time.
 // These tests verify that guarantee holds.
 
 final class FindMatchingNodeTests: SemelCoreTestCase {
@@ -155,15 +155,21 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
         super.tearDown()
     }
 
+    /// The node the graph holds for `spec`, looked up as the applier looks one up: by the
+    /// identity the tree hashes to, creating nothing.
+    private func findMatchingNode(_ spec: String) throws -> NodeRecord? {
+        try engine.database.node.select(identity: try GraphSpecNode.parse(spec).identity()).first
+    }
+
     // Parsing the same spec string twice must return the same node.
     func test_findMatchingNode_sameString_returnsSameNode() throws {
         let spec = "SettingsLiteral(env: 'test').output"
         let (node, portID) = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
 
-        let match = try GraphSpecNode.parse(spec).findMatchingNode()
+        let match = try findMatchingNode(spec)
 
-        XCTAssertEqual(match?.fromNodeID,    node.id!, "findMatchingNode must return the same node")
-        XCTAssertEqual(match?.fromSymbolID,  portID,   "output port symbol must match")
+        XCTAssertEqual(match?.id, node.id!, "findMatchingNode must return the same node")
+        XCTAssertEqual(portID, "output".asSymbolID(), "output port symbol must match")
     }
 
     // Two nodes with different args must produce different graph specs and
@@ -174,16 +180,16 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
 
         XCTAssertNotEqual(nodeA.id!, nodeB.id!)
 
-        let matchA = try GraphSpecNode.parse("SettingsLiteral(env: 'debug').output").findMatchingNode()
-        let matchB = try GraphSpecNode.parse("SettingsLiteral(env: 'release').output").findMatchingNode()
+        let matchA = try findMatchingNode("SettingsLiteral(env: 'debug').output")
+        let matchB = try findMatchingNode("SettingsLiteral(env: 'release').output")
 
-        XCTAssertEqual(matchA?.fromNodeID, nodeA.id!)
-        XCTAssertEqual(matchB?.fromNodeID, nodeB.id!)
+        XCTAssertEqual(matchA?.id, nodeA.id!)
+        XCTAssertEqual(matchB?.id, nodeB.id!)
     }
 
     // A node that has not been created yet must not be found.
     func test_findMatchingNode_unknownNode_returnsNil() throws {
-        let match = try GraphSpecNode.parse("SettingsLiteral(env: 'nonexistent').output").findMatchingNode()
+        let match = try findMatchingNode("SettingsLiteral(env: 'nonexistent').output")
         XCTAssertNil(match)
     }
 
@@ -197,7 +203,7 @@ final class FindMatchingNodeTests: SemelCoreTestCase {
         var processed = 0
         repeat { processed = try engine.processPendingDeletions() } while processed > 0
 
-        let match = try GraphSpecNode.parse(spec).findMatchingNode()
+        let match = try findMatchingNode(spec)
         XCTAssertNil(match, "deleted node must not be found by findMatchingNode")
     }
 }

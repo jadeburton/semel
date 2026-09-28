@@ -30,7 +30,7 @@ extension Node {
             }
 
             guard !values.isEmpty else {
-                // GraphSpecApplier.createNode() validates this at creation time (requiredPortUnwired),
+                // GraphSpecTableApplier.createNode() validates this at creation time (requiredPortUnwired),
                 // so reaching here means a wire was removed after the node was built — a real integrity error.
                 throw NodeError.other(message: "Non-optional input port '\(inputPort)' has no connected wires for \(self)")
             }
@@ -110,14 +110,14 @@ extension Node {
 
         if !didWriteCachedOutput {
             let startTime = Date.now
-            let output = processWithCatch(input: input)
-            try writeToOutputs(output: output)
+            let output  = processWithCatch(input: input)
+            let applied = try writeToOutputs(output: output)
             // Failing to save a cache entry must not fail a build — unless the failure is
             // the machine's, which no later node will survive either.
             do {
                 try saveCacheForAllInputsAndOutputs(keyMaterial: keyMaterial,
                                                     processingDuration: Date.now.timeIntervalSince(startTime),
-                                                    output: output)
+                                                    output: applied)
             } catch {
                 FatalErrors.check(error)
             }
@@ -128,8 +128,7 @@ extension Node {
     /// output without making any graph mutations.  Safe to call concurrently with
     /// other nodes.  Returns nil if this node is not ready to process (no input
     /// ports, inputs pending, required wires missing, etc.).
-    func tryComputeOutput() -> (output: ProcessOutput, keyMaterial: CacheKeyMaterial?,
-                                fromCache: Bool, computeStart: Date)? {
+    func tryComputeOutput() -> (output: ComputedOutput, keyMaterial: CacheKeyMaterial?, computeStart: Date)? {
         guard hasInputPorts() else {
             return nil
         }
@@ -157,11 +156,11 @@ extension Node {
         let cacheKey    = keyMaterial.flatMap { try? $0.cacheKey() }
 
         if let cached = try? loadCachedOutputs(cacheKey: cacheKey) {
-            return (cached, keyMaterial, true, .now)
+            return (.cached(cached), keyMaterial, .now)
         }
 
         let computeStart = Date.now
-        return (processWithCatch(input: input), keyMaterial, false, computeStart)
+        return (.processed(processWithCatch(input: input)), keyMaterial, computeStart)
     }
 }
 
@@ -214,29 +213,55 @@ extension Node {
         try database.wire.select(goingToNodeID: (try requireID())).isEmpty
     }
 
-    func writeToOutputs(output: ProcessOutput) throws {
+    /// Writes a run's output: its values on the ports, and its demands wired.
+    ///
+    /// The demands are folded into a table — each node hashed once, children first — and
+    /// applied from it exactly as a hit's stored table is, so there is one applier. The
+    /// applied output is handed back for the cache entry to store, which is the table it
+    /// would otherwise fold a second time.
+    @discardableResult
+    func writeToOutputs(output: ProcessOutput) throws -> AppliedOutput {
+        try writeOutputValues(output.outputValues)
+        return try failingOutputsOnThrow {
+            let applied = try AppliedOutput(folding: output)
+            try applySpecTable(applied.specTable)
+            return applied
+        }
+    }
 
+    /// Writes an output whose demands are a table already — a cache hit's.
+    func writeToOutputs(output: AppliedOutput) throws {
+        try writeOutputValues(output.outputValues)
+        try failingOutputsOnThrow {
+            try applySpecTable(output.specTable)
+        }
+    }
+
+    private func writeOutputValues(_ outputValues: [String: NodeValue]) throws {
         let numberOfOutputPorts = try database.outputPort.selectAll(nodeID: (try requireID())).count
 
-        if numberOfOutputPorts != output.outputValues.count {
-            Debug.warn("mismatch between \(output.outputValues.count) output values and \(numberOfOutputPorts) output ports for node \(thisNode)")
+        if numberOfOutputPorts != outputValues.count {
+            Debug.warn("mismatch between \(outputValues.count) output values and \(numberOfOutputPorts) output ports for node \(thisNode)")
         }
 
         if numberOfOutputPorts != descriptor.outputPorts.count {
             Debug.warn("descriptor declares \(descriptor.outputPorts.count) outputs but the node has \(numberOfOutputPorts) output ports: \(thisNode)")
         }
 
-        for (outputPort, outputValue) in output.outputValues {
+        for (outputPort, outputValue) in outputValues {
             if outputValue.isPending {
                 Debug.warn("output left pending for node \(thisNode): outputPort \(outputPort)")
             }
             try thisNode.writeToOutputPort(outputPort, value: outputValue)
         }
+    }
 
+    /// A demand that cannot be applied fails the node: its error on every output port, in
+    /// place of the values just written, and thrown on to the caller — a hit's caller
+    /// reprocesses.
+    private func failingOutputsOnThrow<Result>(_ work: () throws -> Result) throws -> Result {
         do {
-            for (inputPort, wireSpecs) in output.inputWireSpecs {
-                try applySpecs(inputPort: inputPort, wireSpecs: wireSpecs)
-            }
+            return try work()
         } catch {
             Debug.warn("applySpecs failed: \(error)")
 
@@ -247,13 +272,22 @@ extension Node {
         }
     }
 
-    private func applySpecs(inputPort: String, wireSpecs: [String: GraphSpecNode]) throws {
+    /// Every port a table's demands name, in port order, through one applier: a node the
+    /// demands of two ports share is found or made once.
+    private func applySpecTable(_ specTable: GraphSpecTable) throws {
+        var applier = GraphSpecTableApplier(table: specTable, database: database)
+        for (inputPort, references) in specTable.inputWireSpecs.sorted(by: { $0.key < $1.key }) {
+            try applySpecs(inputPort: inputPort, references: references, applier: &applier)
+        }
+    }
+
+    private func applySpecs(inputPort: String,
+                            references: [String: GraphSpecTable.Reference],
+                            applier: inout GraphSpecTableApplier) throws {
         // 1. remove any wires that exist but are not in the new configuration (by name)
         // 2. add any wires that are in the new configuration but do not exist yet (by name)
-        // 3. update spec on wires that exist in both old and new configuration (by name)
-        //    - obtain the current graph spec and compare against the configured spec
-        //    - if identical, skip — the wire is already correct
-        //    - otherwise, disconnect the wire and treat it like a new connection (2)
+        // 3. keep a wire that exists in both when it already comes from the node and port
+        //    demanded; otherwise disconnect it and treat it like a new connection (2)
 
         let toSymbolID   = inputPort.asSymbolID()
         let existingWires = try database.wire.select(goingToNodeID: (try requireID()), toSymbolID: toSymbolID)
@@ -265,7 +299,7 @@ extension Node {
 
         // Step 1 — delete wires whose name is absent from the new configuration.
         for (wireName, existingWire) in existingWiresByName.sorted(by: { $0.key < $1.key }) {
-            if wireSpecs[wireName] == nil {
+            if references[wireName] == nil {
                 _ = try existingWire.deleteWire(database: database)
             }
         }
@@ -273,18 +307,17 @@ extension Node {
         // Steps 2 & 3 — iterate over the desired configuration. Sorted: the order wires are
         // created in decides the order they are read back in, and a dictionary's is seeded
         // per process (B-04).
-        for (wireName, expected) in wireSpecs.sorted(by: { $0.key < $1.key }) {
+        for (wireName, reference) in references.sorted(by: { $0.key < $1.key }) {
             var needsReconnection = true
 
             if let existingWire = existingWiresByName[wireName] {
                 // Step 3 — the wire exists; it is right when the node it comes from is the
-                // one the tree describes and the port is the one the tree names. The
-                // demand's identity is a pure function of its tree and the wire's source
-                // carries its own, so this is one hash against one row (B-115) — no
-                // rebuild of the current subgraph, and nothing to fall back to.
+                // one demanded and the port is the one named. The reference carries the
+                // demanded node's identity and the wire's source carries its own, so this
+                // compares two stored values (B-115, B-121): nothing is hashed.
                 let source = try database.node.select(nodeID: existingWire.fromNodeID)
-                if source.identity == (try expected.identity()),
-                   existingWire.fromSymbolID == expected.outputPort?.asSymbolID() {
+                if source.identity == reference.identity,
+                   existingWire.fromSymbolID == reference.outputPort?.asSymbolID() {
                     needsReconnection = false
                 } else {
                     _ = try existingWire.deleteWire(database: database)
@@ -298,11 +331,12 @@ extension Node {
             // it from being left as an orphaned zombie in the database.
             let wireNameSymbolID = wireName.asSymbolID()
             try database.withTransaction {
-                let (fromNode, fromSymbolID) = try expected.findOrCreateMatchingNode()
-                // nil when the tree names no output port, which is invalid for wiring — a
-                // demanded tree is a wire's source, and a source is read at a port.
-                guard let fromSymbolID else {
-                    Debug.warn("spec '\(expected.asString(omitOutputPort: false))' has no output port — cannot wire")
+                let fromNode = try applier.node(identity: reference.identity)
+                // nil when the demand names no output port, which is invalid for wiring — a
+                // demanded node is a wire's source, and a source is read at a port.
+                guard let fromSymbolID = reference.outputPort?.asSymbolID() else {
+                    let typeName = (try? applier.table.row(identity: reference.identity))?.typeName ?? "node"
+                    Debug.warn("a demanded \(typeName) \(NodeIdentity.shown(reference.identity))… names no output port — cannot wire")
                     return
                 }
                 try Wire.connectWire(database: database,

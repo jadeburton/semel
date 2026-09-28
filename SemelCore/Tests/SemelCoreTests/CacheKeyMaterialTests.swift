@@ -72,11 +72,11 @@ final class CacheKeyMaterialTests: SemelCoreTestCase {
                                                   cost: 1, timestamp: timestamp))
     }
 
-    private func builtOutput() throws -> ProcessOutput {
-        ProcessOutput(outputValues: [SampleTool.output:   .value(try "OBJECT".intern()),
+    private func builtOutput() throws -> AppliedOutput {
+        AppliedOutput(outputValues: [SampleTool.output:   .value(try "OBJECT".intern()),
                                      SampleTool.errorLog: .value(""),
                                      SampleTool.infoLog:  .value("")],
-                      inputWireSpecs: [:])
+                      specTable: GraphSpecTable(inputWireSpecs: [:], rows: [:]))
     }
 
     /// Stores one entry and answers the key it was stored under.

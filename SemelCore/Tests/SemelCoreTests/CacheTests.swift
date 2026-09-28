@@ -205,9 +205,9 @@ final class CacheTests: SemelCoreTestCase {
         let otherMaterial = try other.buildCacheKeyMaterial(input: input)
         let otherKey      = try otherMaterial.cacheKey()
         try tool.saveCacheForAllInputsAndOutputs(keyMaterial: toolMaterial, processingDuration: 0.1,
-                                                 output: builtOutput())
+                                                 output: AppliedOutput(folding: builtOutput()))
         try other.saveCacheForAllInputsAndOutputs(keyMaterial: otherMaterial, processingDuration: 0.1,
-                                                  output: builtOutput())
+                                                  output: AppliedOutput(folding: builtOutput()))
 
         SampleTool.implementationVersionForTests = 2
 
@@ -295,11 +295,13 @@ final class CacheTests: SemelCoreTestCase {
         let output = ProcessOutput(
             outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
             inputWireSpecs: [SampleTool.input: ["wire0": try GraphSpecNode.parse("StaticFile(path: 'input:/x.c').output")]])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1,
+                                                 output: AppliedOutput(folding: output))
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
-        XCTAssertEqual(loaded.inputWireSpecs[SampleTool.input]?["wire0"]?.asString(omitOutputPort: false),
-                       "StaticFile(path: 'input:/x.c').output")
+        XCTAssertEqual(loaded.specTable.inputWireSpecs[SampleTool.input]?["wire0"],
+                       GraphSpecTable.Reference(identity: try GraphSpecNode.parse("StaticFile(path: 'input:/x.c')").identity(),
+                                                outputPort: "output"))
     }
 
     /// B-121. An entry stores its demands with each distinct node once, and a hit wires the
@@ -318,7 +320,8 @@ final class CacheTests: SemelCoreTestCase {
                                                   SampleTool.errorLog: .value(""),
                                                   SampleTool.infoLog:  .value("")],
                                    inputWireSpecs: [SampleTool.input: demanded])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1,
+                                                 output: AppliedOutput(folding: output))
 
         let row = try XCTUnwrap(engine.database.cacheEntry.select(hash: try material.cacheKey()))
         let stored = try ProcessCacheEntry.fromJSON(String(decoding: row.content, as: UTF8.self))
@@ -327,14 +330,97 @@ final class CacheTests: SemelCoreTestCase {
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
         try tool.writeToOutputs(output: loaded)
 
+        XCTAssertEqual(try sourceIdentities(of: tool), try demanded.mapValues { try $0.identity() })
+        XCTAssertEqual(try engine.database.node.select(identity: try shared.identity()).count, 1)
+        XCTAssertEqual(try engine.database.node.selectAll().filter { $0.kind == ConfigMerger.kind }.count, 1,
+                       "the merger three rows reach is one node")
+    }
+
+    /// The identity of each wire's source on the tool's input port, by wire name.
+    private func sourceIdentities(of tool: SampleTool) throws -> [String: String] {
         let wires = try engine.database.wire.select(goingToNodeID: try tool.requireID(),
                                                     toSymbolID: SampleTool.input.asSymbolID())
-        var sourceIdentities: [String: String] = [:]
+        var identities: [String: String] = [:]
         for wire in wires {
-            sourceIdentities[wire.name.resolveSymbol()] = try engine.database.node.select(nodeID: wire.fromNodeID).identity
+            identities[wire.name.resolveSymbol()] = try engine.database.node.select(nodeID: wire.fromNodeID).identity
         }
-        XCTAssertEqual(sourceIdentities, try demanded.mapValues { try $0.identity() })
-        XCTAssertEqual(try engine.database.node.select(identity: try shared.identity()).count, 1)
+        return identities
+    }
+
+    /// B-121. A hit finds each node by the identity its table files it under, as it stands:
+    /// no tree is built and nothing is hashed on the way. The row here is forged — filed
+    /// under the identity of a literal already in the graph, while it describes another —
+    /// so a hit that rebuilt the tree and hashed it would look for the other literal, and
+    /// make it; one that reads the key wires the literal that is there.
+    func test_aHitFindsItsNodesByTheIdentitiesItsTableNamesWithoutHashingThem() throws {
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let (existing, _) = try GraphSpecNode.parse("SettingsLiteral(role: 'in the graph').output").findOrCreateMatchingNode()
+        let existingIdentity = try XCTUnwrap(existing.identity)
+        let table = GraphSpecTable(
+            inputWireSpecs: [SampleTool.input: ["a.c": .init(identity: existingIdentity, outputPort: "output")]],
+            rows: [existingIdentity: .init(typeName: "SettingsLiteral",
+                                           properties: [GraphSpecProperty(key: "role", value: "described")], inputs: [])])
+        try storeEntry(demanding: table, material: material)
+
+        let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+        try tool.writeToOutputs(output: loaded)
+
+        XCTAssertEqual(try sourceIdentities(of: tool), ["a.c": existingIdentity])
+        XCTAssertFalse(try engine.database.node.selectAll().contains { $0.properties["role"] == "described" },
+                       "nothing was made from the row's content, so nothing was hashed from it")
+    }
+
+    /// The other half: a node the graph does not hold is made from its row, and the row is
+    /// checked against its key first — one hash, one level. A row filed under an identity
+    /// its content does not give is a damaged entry, and a node made from it would be
+    /// matched by the wrong demand for as long as it lived; the write fails instead, which
+    /// both hit paths answer by reprocessing.
+    func test_aHitMakesNoNodeFromARowFiledUnderAnotherIdentity() throws {
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let forged   = String(repeating: "d", count: 64)
+        let table = GraphSpecTable(
+            inputWireSpecs: [SampleTool.input: ["a.c": .init(identity: forged, outputPort: "output")]],
+            rows: [forged: .init(typeName: "SettingsLiteral",
+                                 properties: [GraphSpecProperty(key: "role", value: "forged")], inputs: [])])
+        try storeEntry(demanding: table, material: material)
+
+        let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+        XCTAssertThrowsError(try tool.writeToOutputs(output: loaded)) { error in
+            guard case GraphSpecApplierError.identityMismatch(typeName: "SettingsLiteral", filedUnder: forged, computed: _) = error else {
+                return XCTFail("got \(error)")
+            }
+        }
+        XCTAssertTrue(try engine.database.node.select(identity: forged).isEmpty)
+        XCTAssertFalse(try engine.database.node.selectAll().contains { $0.properties["role"] == "forged" })
+    }
+
+    /// B-115's invariant, for nodes made from a table: each recomputes, from its row and
+    /// its wires, to the identity the table filed it under, so `check` finds nothing stale.
+    func test_nodesMadeFromAStoredTableRecomputeToTheirIdentities() throws {
+        let tool     = try makeCompilerNode()
+        let material = try tool.buildCacheKeyMaterial(input: try makeInput())
+        let shared = GraphSpecNode.literals(["role": "project"], over: .staticFile(at: "input:/semel.config"))
+        let output = ProcessOutput(outputValues: [SampleTool.output: .value(try "OBJECT".intern())],
+                                   inputWireSpecs: [SampleTool.input: [
+                                       "a.c": .configFilter(prefix: "a", input: ["settings": shared]),
+                                       "b.c": .configFilter(prefix: "b", input: ["settings": shared]),
+                                   ]])
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1,
+                                                 output: AppliedOutput(folding: output))
+        let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: try material.cacheKey()))
+        for identity in loaded.specTable.rows.keys.sorted() {
+            XCTAssertTrue(try engine.database.node.select(identity: identity).isEmpty, "precondition: the graph is empty of the table")
+        }
+
+        try tool.writeToOutputs(output: loaded)
+
+        XCTAssertEqual(loaded.specTable.rows.count, 5)
+        for identity in loaded.specTable.rows.keys.sorted() {
+            XCTAssertEqual(try engine.database.node.select(identity: identity).count, 1, "each row is made, once")
+        }
+        XCTAssertEqual(GraphCheck.run(database: engine.database).findings.filter { $0.kind == .staleIdentity }, [])
     }
 
     // MARK: - What a node reads from outside its inputs
@@ -439,7 +525,8 @@ final class CacheTests: SemelCoreTestCase {
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1,
+                                                 output: AppliedOutput(folding: output))
 
         let loaded = try XCTUnwrap(tool.loadCachedOutputs(cacheKey: key))
         XCTAssertEqual(try loaded.outputValues[SampleTool.output]?.expectValue().resolveAsString(),
@@ -455,7 +542,8 @@ final class CacheTests: SemelCoreTestCase {
                            SampleTool.errorLog: .value(""),
                            SampleTool.infoLog: .value("")],
             inputWireSpecs: [:])
-        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1, output: output)
+        try tool.saveCacheForAllInputsAndOutputs(keyMaterial: material, processingDuration: 0.1,
+                                                 output: AppliedOutput(folding: output))
 
         let otherKey = try XCTUnwrap(
             tool.buildCacheKeyFromAllInputs(input: try makeInput(contents: "different source")))

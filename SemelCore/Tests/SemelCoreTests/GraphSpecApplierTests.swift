@@ -81,6 +81,35 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
         }
     }
 
+    /// A table's row naming a type this Semel does not link is the same error a tree
+    /// naming one is — asked before the graph is, so it does not matter whether anything
+    /// carries the identity the row is filed under.
+    func test_aTableRowNamingAnUnknownTypeIsRejectedAsATreeIs() throws {
+        let identity = String(repeating: "e", count: 64)
+        let table = GraphSpecTable(inputWireSpecs: [:],
+                                   rows: [identity: .init(typeName: "NoSuchNodeType", properties: [], inputs: [])])
+        var applier = GraphSpecTableApplier(table: table, database: database)
+
+        XCTAssertThrowsError(try applier.node(identity: identity)) { error in
+            guard case GraphSpecApplierError.unknownTypeName("NoSuchNodeType") = error else {
+                return XCTFail("expected unknownTypeName, got \(error)")
+            }
+        }
+    }
+
+    /// A tree that names a shared node twice makes it once and wires it twice: the tree is
+    /// folded into one row for it, and the applier finds or makes each row once.
+    func test_aNodeATreeReachesTwiceIsMadeOnce() throws {
+        let spec = "ConfigMerger(base: ['a': ConfigFilter(prefix: 'a', input: ['s': SettingsLiteral(role: 'shared').output]).output], "
+                 + "override: ['b': ConfigFilter(prefix: 'b', input: ['s': SettingsLiteral(role: 'shared').output]).output]).output"
+        _ = try GraphSpecNode.parse(spec).findOrCreateMatchingNode()
+
+        let literals = try database.node.selectAll().filter { $0.properties["role"] == "shared" }
+        XCTAssertEqual(literals.count, 1)
+        XCTAssertEqual(try database.wire.select(comingFromNodeID: try XCTUnwrap(literals.first).requireID()).count, 2)
+        XCTAssertEqual(GraphCheck.run(database: database).findings.filter { $0.kind == .staleIdentity }, [])
+    }
+
     func test_aPortTheImplementationDoesNotHaveIsRejected() throws {
         let spec = "SettingsLiteral(role: 'x', noSuchPort: ['w': SettingsLiteral(role: 'y').output]).output"
 
@@ -169,9 +198,9 @@ final class GraphSpecApplierTests: SemelCoreTestCase {
                                                           toSymbolID: "input".asSymbolID()).first)
         try existing.deleteWire(database: database)
 
-        let match = try GraphSpecNode.parse(originalShape).findMatchingNode()
+        let (match, _) = try GraphSpecNode.parse(originalShape).findOrCreateMatchingNode()
 
-        XCTAssertEqual(match?.fromNodeID, try consumer.requireID(),
+        XCTAssertEqual(try match.requireID(), try consumer.requireID(),
                        "the old spec still finds the node even though that wiring is gone")
     }
 }

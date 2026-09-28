@@ -460,10 +460,21 @@ the key does not move. On the IceCubes packages tree: the largest entry 15.6 MB 
 (218 rows), the cache 34.0 MB → 4.2 MB, the compact database 36.1 MB → 6.2 MB; the five
 archives byte-identical; after a `reset` the second build answers 157 of 180 nodes from the
 cache, as before, in 32 s where it took 61. Design and particulars:
-`docs/superpowers/specs/2026-09-27-semel-cache-entry-spec-table-design.md`. Residuals: a hit
-unfolds the table into trees and `applySpecs` hashes them again — an applier that walked the
-table would read the identities instead; and the small entries grew from 2.9 to 3.8 MB
-together, a 64-character identity costing more than the short tree it names.
+`docs/superpowers/specs/2026-09-27-semel-cache-entry-spec-table-design.md`. Residual: the
+small entries grew from 2.9 to 3.8 MB together, a 64-character identity costing more than
+the short tree it names.
+
+Done (2026-09-28), the other residual: the applier walks the table. `GraphSpecTableApplier`
+finds each node by the identity its row is filed under (`select(identity:)`, nothing
+hashed) or makes it from the row — the row checked against its key with one one-level
+hash, its wires' sources found or made depth first — and a hit hands the writer the stored
+table (`AppliedOutput`) where it had unfolded trees. There is one applier: a run's output
+is folded once as it is written and the same table is what its entry stores, and a tree
+given to `findOrCreateMatchingNode` is folded and applied the same way. On the same tree
+(177 nodes now), two runs each: the second build after a `reset` 32.7 and 29.8 s → 13.2 and
+11.7 s, and the cold build 83.6 and 81.4 s → 70.1 and 65.9 s, since a run's demands were
+hashed level by level too; the archives byte-identical. Section "The table applier" in the
+design above.
 
 ### Server
 

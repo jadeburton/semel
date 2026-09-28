@@ -94,7 +94,10 @@ extension Node {
         try buildCacheKeyMaterial(input: input).cacheKey()
     }
 
-    func loadCachedOutputs(cacheKey: String?) throws -> ProcessOutput? {
+    /// The entry stored under `cacheKey`, as the graph applies it: the values, and the
+    /// demands as the stored table, which the applier walks by identity — no tree is built
+    /// and none is hashed (B-121).
+    func loadCachedOutputs(cacheKey: String?) throws -> AppliedOutput? {
 
         guard let cacheKey else {
             return nil
@@ -127,12 +130,10 @@ extension Node {
             return nil
         }
 
-        // A table that does not unfold is damaged, and a damaged entry is a miss.
-        //
-        // TODO: B-121's residual. `applySpecs` hashes each unfolded tree again to find
-        // the identities the table is keyed by; an applier that walked the table would
-        // read them instead.
-        guard let inputWireSpecs = try? decodedCacheEntry.specTable.trees() else {
+        // A table naming a row it does not hold is damaged, and a damaged entry is a miss.
+        // A lookup per reference, nothing hashed: a row filed under the wrong identity is
+        // caught by the applier, which checks a row before making a node from it.
+        guard decodedCacheEntry.specTable.referencesOnlyHeldRows() else {
             return nil
         }
 
@@ -149,17 +150,20 @@ extension Node {
 
         Debug.log("using cache: \(type(of: self)), nodeID \(thisNode.id ?? -1)")
 
-        return ProcessOutput(outputValues: decodedCacheEntry.outputValues,
-                             inputWireSpecs: inputWireSpecs)
+        return AppliedOutput(outputValues: decodedCacheEntry.outputValues,
+                             specTable: decodedCacheEntry.specTable)
     }
 
     /// Stores one build under the key its material takes, and the material with it. The
     /// material rather than the key is what is passed in: an entry whose key nothing can
     /// account for is the state B-13 exists to remove, and taking the key here is what
     /// makes that impossible to reach.
+    ///
+    /// The output is the applied one, whose table is what was wired: the demands are
+    /// folded once per run, for the graph and for the entry both.
     func saveCacheForAllInputsAndOutputs(keyMaterial: CacheKeyMaterial?,
                                          processingDuration: TimeInterval,
-                                         output: ProcessOutput) throws {
+                                         output: AppliedOutput) throws {
         guard let keyMaterial else {
             return
         }
@@ -190,7 +194,7 @@ extension Node {
         //Debug.log("Saving cache entry..")
 
         let cacheEntry = ProcessCacheEntry(outputValues: output.outputValues,
-                                           specTable: try GraphSpecTable(trees: output.inputWireSpecs),
+                                           specTable: output.specTable,
                                            keyMaterial: keyMaterial)
         let cacheEntryData = try cacheEntry.toJSON().data(using: .utf8)!
 
@@ -331,10 +335,36 @@ struct CacheKeyMaterial: Codable {
 ///
 /// The demanded specs are stored as a table, each distinct spec node once (B-121): spelled
 /// out as trees, one entry of a product builder's held the settings chain thousands of
-/// times over and ran to 15 MB. The output's `inputWireSpecs` go in as trees and come back
-/// as trees; the table is only the stored form.
+/// times over and ran to 15 MB. The table is the one the run's output was applied from,
+/// and a hit applies it again as it stands.
 struct ProcessCacheEntry: Codable {
     let outputValues: [String: NodeValue]
     let specTable: GraphSpecTable
     let keyMaterial: CacheKeyMaterial
+}
+
+/// An output as the graph applies it: the values for the node's ports, and its demands as
+/// a table (B-121). What a cache hit hands back, and what a run's output becomes once its
+/// trees are folded — so one applier serves both, and the table a run applies is the one
+/// its entry stores.
+struct AppliedOutput {
+    let outputValues: [String: NodeValue]
+    let specTable: GraphSpecTable
+
+    init(outputValues: [String: NodeValue], specTable: GraphSpecTable) {
+        self.outputValues = outputValues
+        self.specTable    = specTable
+    }
+
+    /// A run's output with its demanded trees folded, each node hashed once.
+    init(folding output: ProcessOutput) throws {
+        self.init(outputValues: output.outputValues, specTable: try GraphSpecTable.applied(trees: output.inputWireSpecs))
+    }
+}
+
+/// What a node's computation hands the writer: a run's output, whose trees are folded as
+/// it is written, or a hit's, whose table is applied as it was stored.
+enum ComputedOutput {
+    case processed(ProcessOutput)
+    case cached(AppliedOutput)
 }

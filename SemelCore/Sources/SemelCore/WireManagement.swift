@@ -58,7 +58,7 @@ extension Wire {
         }
 
         // connectWire is always called inside database.withTransaction (in
-        // applySpecs and GraphSpecApplier.createNode), so
+        // applySpecs and GraphSpecTableApplier.createNode), so
         // the insert, pendingDeletion clear, and writePending are all-or-nothing.
 
         if try wouldCreateCycle(database: database, fromNodeID: fromNodeID, toNodeID: toNodeID) {
