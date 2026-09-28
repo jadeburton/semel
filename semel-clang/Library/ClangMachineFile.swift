@@ -2,16 +2,18 @@
 //  ClangMachineFile.swift
 //  SemelClangTool
 //
-//  What `semel-clang` does: writes `semel.machine.config` for the clang tools into a folder,
-//  outside Semel (B-119), the way `semel-swift prepare` writes it for a Swift tree. The
-//  namespaces are the ones SemelClang registers as its own to write, so the list lives with
-//  the toolchain and not here — narrowed to the ones the formulas reading the file select,
-//  when there are such formulas, as `prepare` narrows its own.
+//  What `semel-clang` does: writes the clang tools' part of `semel.machine.config` into a
+//  folder, outside Semel (B-119), the way `semel-swift prepare` writes it for a Swift tree.
+//  The namespaces are the ones SemelClang registers as its own to write, so the list lives
+//  with the toolchain and not here — narrowed to the ones the formulas reading the file
+//  select, when there are such formulas, as `prepare` narrows its own.
 //
-//  Written only when the folder has no machine file: `semel-swift prepare` writes the
-//  `clang.*` namespaces too, for a tree with a C-family target, and a file it wrote holds
-//  the Swift ones beside them, which this tool would drop. `force` rewrites it anyway — for a
-//  file left behind by a toolchain since updated, or a formula that now selects another.
+//  A file already there may be another writer's: `prepare` writes the Swift namespaces, and
+//  a formula that includes both the `clang` and the `swift` preludes reads both out of one
+//  file. So this adds its namespaces to it and keeps the rest (B-109). A file that already
+//  holds every namespace this would write is left as it is — the same machine gives the
+//  same answer — and `force` rewrites them anyway: for a file left behind by a toolchain
+//  since updated.
 
 import Foundation
 import SemelClang
@@ -21,22 +23,46 @@ import SemelNodeKit
 public enum ClangMachineFile {
 
     public enum Outcome: Equatable {
-        /// Written, with the namespaces it holds, the tools found on no path here, whose
-        /// blocks are comments, and the formulas whose selection chose the namespaces —
-        /// relative to the folder, and empty when every clang namespace was written.
-        case written(URL, namespaces: [String], notInstalled: [String], selectedBy: [String])
-        /// A machine file was already there and was left as it is.
-        case kept(URL)
+        /// Written, with the namespaces this tool wrote, the tools found on no path here,
+        /// whose blocks are comments, and the formulas whose selection chose the namespaces
+        /// — relative to the folder, and empty when every clang namespace was written. `merge`
+        /// is what writing did to a file that was there, nil when there was none.
+        case written(URL, namespaces: [String], notInstalled: [String], selectedBy: [String], merge: MachineFile.Merge?)
+        /// The file already holds every namespace this tool would write, and was left as
+        /// it is.
+        case kept(URL, namespaces: [String])
+
+        /// What `semel-clang` prints about it.
+        public var lines: [String] {
+            switch self {
+            case .written(let file, let namespaces, let notInstalled, let selectedBy, let merge):
+                var lines = [MachineFile.summary(writing: namespaces, into: file.path, merge: merge)]
+                if selectedBy.count == 1 {
+                    lines.append("Those \(selectedBy[0]) selects; when it selects others, run semel-clang again.")
+                }
+                if selectedBy.count > 1 {
+                    lines.append("Those \(selectedBy.joined(separator: ", ")) select; when they select others, run semel-clang again.")
+                }
+                if !notInstalled.isEmpty {
+                    lines.append("No \(notInstalled.joined(separator: ", ")) is installed here; those blocks are comments.")
+                }
+                return lines
+
+            case .kept(let file, let namespaces):
+                return ["Kept \(file.path): it holds \(namespaces.joined(separator: ", ")) already; --force rewrites them"]
+            }
+        }
     }
 
     /// The namespaces `semel-clang` writes: every one SemelClang registers under its command.
     public static func namespaces() throws -> [ToolNamespace] {
         try SemelClang.register()
-        return ToolNamespaceRegistry.all.filter { $0.machineFileCommand == SemelClang.machineFileCommand }
+        return ToolNamespaceRegistry.all.filter { $0.machineFileWriter == SemelClang.machineFileWriter }
     }
 
-    /// Writes the machine file into `folder` unless one is there, or `force` says to.
-    /// `descriptors` is the machine's tools; a test hands in its own.
+    /// Writes the clang namespaces into the machine file in `folder`, keeping what another
+    /// writer put there, unless the file holds them all already and `force` does not say to
+    /// write them again. `descriptors` is the machine's tools; a test hands in its own.
     ///
     /// The namespaces are the ones the formulas that read the file select, because a block
     /// no `ConfigFilter` selects is reported as unused keys on every build — the tutorial's
@@ -45,25 +71,39 @@ public enum ClangMachineFile {
     /// build time — every one is written, since a file that held none would help nobody.
     public static func write(into folder: URL, platform: Platform, force: Bool,
                              descriptors: () throws -> [ToolDescriptor] = MachineFile.installedDescriptors) throws -> Outcome {
-        let file = folder.appendingPathComponent(MachineFile.fileName)
-        if !force, FileManager.default.fileExists(atPath: file.path) {
-            return .kept(file)
-        }
+        let file     = folder.appendingPathComponent(MachineFile.fileName)
+        let existing = FileManager.default.fileExists(atPath: file.path)
+            ? try String(contentsOf: file, encoding: .utf8)
+            : nil
+
         let every    = try namespaces()
         let formulas = formulas(reading: file, under: folder)
         let selected = Set(formulas.flatMap { MachineFile.namespaces(selectedIn: $0.text) })
         let chosen   = every.filter { selected.contains($0.namespace) }
         let written  = chosen.isEmpty ? every : chosen
+        let names    = written.map(\.namespace).sorted()
+
+        // Left as it is when it holds every namespace the formulas select — in this tool's
+        // part or another writer's — and this tool's part holds none they no longer do.
+        if !force, let existing {
+            let sections = MachineFile.sections(in: existing)
+            let present  = Set(sections.flatMap(\.namespaces))
+            let own      = sections.filter { $0.writer == SemelClang.machineFileWriter.command }.flatMap(\.namespaces)
+            if names.allSatisfy(present.contains), own.allSatisfy(names.contains) {
+                return .kept(file, namespaces: names)
+            }
+        }
 
         let installed = try descriptors()
-        let text = MachineFile.text(writtenBy: "semel-clang", platform: platform,
-                                    descriptors: installed, namespaces: written)
+        let section = MachineFile.section(writtenBy: SemelClang.machineFileWriter.command, platform: platform,
+                                          descriptors: installed, namespaces: written)
+        let (text, merge) = MachineFile.merging(section, into: existing)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try text.write(to: file, atomically: true, encoding: .utf8)
         let found = Set(installed.map(\.name))
         let notInstalled = Set(written.map(\.toolName)).subtracting(found).sorted()
-        return .written(file, namespaces: written.map(\.namespace).sorted(), notInstalled: notInstalled,
-                        selectedBy: chosen.isEmpty ? [] : formulas.map(\.relativePath))
+        return .written(file, namespaces: names, notInstalled: notInstalled,
+                        selectedBy: chosen.isEmpty ? [] : formulas.map(\.relativePath), merge: merge)
     }
 
     /// The formulas under `folder` that read `file`: every `.fmla` below it, hidden folders

@@ -158,17 +158,34 @@ extension FileNameAndContent {
 }
 
 public enum ToolError: Error, CustomStringConvertible {
-    case noMatchingToolFound(requested: ToolDescriptor, available: [ToolDescriptor])
+    /// A node's settings name a tool this machine does not have. `namespace` is the
+    /// settings' — `clang.compiler` — and `writer` the command its toolchain registered
+    /// for the machine file, when there is one: after a toolchain update it is the machine
+    /// file that names a tool no longer installed, and the one thing to do is to write it
+    /// again (B-109).
+    case noMatchingToolFound(requested: ToolDescriptor, available: [ToolDescriptor],
+                             namespace: String, writer: MachineFileWriter?)
 
     public var description: String {
         switch self {
-        case .noMatchingToolFound(let requested, let available):
+        case .noMatchingToolFound(let requested, let available, let namespace, let writer):
             let have = available.isEmpty
                 ? "no tools are registered"
                 : available.map { "\($0.name) \($0.version) (\($0.platform)/\($0.architecture))" }
                            .sorted().joined(separator: ", ")
-            return "no tool matches \(requested.name) \(requested.version) "
-                 + "(\(requested.platform)/\(requested.architecture)); registered: \(have)"
+            let unmatched = "no tool matches \(requested.name) \(requested.version) "
+                          + "(\(requested.platform)/\(requested.architecture)); registered: \(have)"
+            // The settings arrive merged, so which file named the tool is not known here:
+            // the machine file is the likely one, and the project's own file may pin a
+            // toolchain on purpose. The writer is named with what makes it replace a file
+            // it wrote before.
+            let named = "\(namespace).toolDescriptor.* names it"
+            guard let writer else {
+                return "\(unmatched)\n\(named)."
+            }
+            let rewrite = writer.rewriteInvocation(folder: MachineFileWriter.folderPlaceholder)
+            return "\(unmatched)\n\(named); when that is \(MachineFileWriter.fileName), written before the toolchain "
+                 + "changed, '\(rewrite)' rewrites it with the tools installed here."
         }
     }
 }
@@ -204,10 +221,15 @@ public class ToolRunnerRegistry {
         toolsByIdentity[identity]?.descriptor
     }
 
-    public func tool(descriptor: ToolDescriptor) throws -> ToolRunner {
+    /// The runner for the tool a node's settings name. `namespace` is where those settings
+    /// live, so a tool that is not installed is reported with the command that writes the
+    /// machine file for that namespace.
+    public func tool(descriptor: ToolDescriptor, namespace: String) throws -> ToolRunner {
         guard let tool = toolsByIdentity[descriptor.identity]?.runner else {
             throw ToolError.noMatchingToolFound(requested: descriptor,
-                                                available: registeredDescriptors)
+                                                available: registeredDescriptors,
+                                                namespace: namespace,
+                                                writer:    ToolNamespaceRegistry.entry(forNamespace: namespace)?.machineFileWriter)
         }
         return tool
     }

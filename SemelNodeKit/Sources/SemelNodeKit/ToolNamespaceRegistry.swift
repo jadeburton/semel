@@ -24,19 +24,60 @@ public struct ToolNamespace {
     /// platform. Evaluated when asked, not when registered, and sorted by key when printed.
     public let machineSettings: (Platform) -> [String: String]
     /// The command, outside Semel, that writes this namespace's machine settings —
-    /// `semel-clang <folder>`, `semel-swift prepare <folder>` — named by the report of a
-    /// missing machine setting. The toolchain supplies it, so the core names no tool (B-119).
-    public let machineFileCommand: String?
+    /// `semel-clang`, `semel-swift prepare` — named by the report of a missing machine
+    /// setting, of a machine file nobody has written, and of a tool the file names that is
+    /// no longer installed. The toolchain supplies it, so the core names no tool (B-119).
+    public let machineFileWriter: MachineFileWriter?
 
     public init(namespace: String, toolName: String,
                 machineSettingKeys: Set<String> = [],
                 machineSettings: @escaping (Platform) -> [String: String] = { _ in [:] },
-                machineFileCommand: String? = nil) {
+                machineFileWriter: MachineFileWriter? = nil) {
         self.namespace          = namespace
         self.toolName           = toolName
         self.machineSettingKeys = machineSettingKeys
         self.machineSettings    = machineSettings
-        self.machineFileCommand = machineFileCommand
+        self.machineFileWriter  = machineFileWriter
+    }
+}
+
+/// A command outside Semel that writes `semel.machine.config` into a folder: the
+/// toolchain's own tool (B-119). Typed rather than a command line with a placeholder in it,
+/// so that the engine can name it with the folder a report is about, and a tool's error
+/// with what rewrites a file already there, without taking a sentence apart.
+public struct MachineFileWriter: Hashable, Comparable {
+
+    /// The file every writer writes, beside the project's `semel.config` (B-109). One name:
+    /// `.gitignore`, the writers, the converter's formula, the tutorial and the fixtures.
+    public static let fileName = "semel.machine.config"
+
+    /// The command up to the folder it writes into: `semel-clang`, `semel-swift prepare`.
+    public let command: String
+    /// What the command takes after the folder to replace the blocks it wrote before —
+    /// `--force` for a writer that otherwise leaves a file holding its namespaces as it is,
+    /// nothing for one that rewrites its own on every run.
+    public let rewriteFlags: [String]
+
+    public init(command: String, rewriteFlags: [String] = []) {
+        self.command      = command
+        self.rewriteFlags = rewriteFlags
+    }
+
+    /// `semel-clang hello`: the command run on one folder.
+    public func invocation(folder: String) -> String {
+        "\(command) \(folder)"
+    }
+
+    /// `semel-clang hello --force`: the command that replaces what it wrote there before.
+    public func rewriteInvocation(folder: String) -> String {
+        ([command, folder] + rewriteFlags).joined(separator: " ")
+    }
+
+    /// The command as a person is told it with no folder in hand: `semel-clang <folder>`.
+    public static let folderPlaceholder = "<folder>"
+
+    public static func < (lhs: MachineFileWriter, rhs: MachineFileWriter) -> Bool {
+        (lhs.command, lhs.rewriteFlags.joined(separator: " ")) < (rhs.command, rhs.rewriteFlags.joined(separator: " "))
     }
 }
 

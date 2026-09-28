@@ -73,11 +73,28 @@ public struct ErrorEntry: Codable, Equatable, Sendable {
     /// it — relative to the input file system, a folder ending in `/`. What lets a client
     /// act on the path instead of recognising the sentence (B-110).
     public let missingSource: String?
+    /// When that source is a machine file: the commands outside Semel that write it, each
+    /// with the folder it goes in (B-109). `build` pushes what is on disk and nothing else,
+    /// so this is what a client says about a file nobody has written yet.
+    public let writers: [SourceWriter]
 
-    public init(ports: [String], message: String, missingSource: String? = nil) {
+    public init(ports: [String], message: String, missingSource: String? = nil, writers: [SourceWriter] = []) {
         self.ports         = ports
         self.message       = message
         self.missingSource = missingSource
+        self.writers       = writers
+    }
+}
+
+/// A command outside Semel that writes a source — `semel-clang` — and the folder to run it
+/// on, relative to the input file system as `missingSource` is: `.` for its root.
+public struct SourceWriter: Codable, Equatable, Hashable, Sendable {
+    public let command: String
+    public let folder:  String
+
+    public init(command: String, folder: String) {
+        self.command = command
+        self.folder  = folder
     }
 }
 

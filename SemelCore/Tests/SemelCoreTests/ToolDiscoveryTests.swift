@@ -92,7 +92,7 @@ final class ToolDiscoveryTests: SemelCoreTestCase {
                                    platform: MachineQuery.hostPlatform,
                                    architecture: MachineQuery.hostArchitecture, recursiveHash: nil)
 
-        XCTAssertThrowsError(try registry.tool(descriptor: stale)) { error in
+        XCTAssertThrowsError(try registry.tool(descriptor: stale, namespace: "fake.tool")) { error in
             let message = String(describing: error)
             XCTAssertTrue(message.contains("Fake tool version 1.0"),
                           "should name what the node asked for: \(message)")

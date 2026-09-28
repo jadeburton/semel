@@ -83,7 +83,7 @@ final class SettingNamespaceTests: XCTestCase {
     /// names the one its namespace registered, and the core names none of its own.
     func test_missingMachineSettingsNameTheCommandTheToolchainRegistered() {
         ToolNamespaceRegistry.register(.init(namespace: "writer.linker", toolName: "clang",
-                                             machineFileCommand: "semel-clang <folder>"))
+                                             machineFileWriter: .init(command: "semel-clang", rewriteFlags: ["--force"])))
         var settings = RequiredSettings(properties: [:], namespace: "writer.linker")
         _ = settings.value("toolDescriptor.name")
 

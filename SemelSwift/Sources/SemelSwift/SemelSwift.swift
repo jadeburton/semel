@@ -38,17 +38,18 @@ public enum SemelSwift {
         let sdk: (Platform) -> [String: String] = { platform in
             resolveSDKVersion(sdk: platform.sdkName).map { ["sdk": platform.sdkName, "sdkVersion": $0] } ?? [:]
         }
-        let writer = "semel-swift prepare <folder>"
+        // Prepare rewrites its own namespaces on every run, so it takes no flag to rewrite them.
+        let writer = MachineFileWriter(command: "semel-swift prepare")
         ToolNamespaceRegistry.register(.init(namespace: SwiftCompilerConfiguration.settingNamespace,
                                              toolName: "swiftc",
                                              machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk,
-                                             machineFileCommand: writer))
+                                             machineFileWriter: writer))
         ToolNamespaceRegistry.register(.init(namespace: SwiftLinkerConfiguration.settingNamespace,
                                              toolName: "swiftc",
                                              machineSettingKeys: ["sdk", "sdkVersion"], machineSettings: sdk,
-                                             machineFileCommand: writer))
+                                             machineFileWriter: writer))
         ToolNamespaceRegistry.register(.init(namespace: SwiftPackageReaderConfiguration.settingNamespace,
-                                             toolName: "swift", machineFileCommand: writer))
+                                             toolName: "swift", machineFileWriter: writer))
 
         // `include 'swift'`: a target outside a package, from a folder of sources (B-108).
         FormulaIncludeProviders.register(includeProvider)

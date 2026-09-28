@@ -6,8 +6,9 @@
 //  Swift packages and `semel 'build <folder>'`. Finds the packages, takes as roots the
 //  ones nothing depends on by path, vendors their closure into one `Dependencies`, and
 //  writes the formula and the two config files beside them. Never overwrites the formula
-//  or the project's config: a project that ships its own has already decided. The
-//  machine's config is rewritten every run: it is generated and nobody edits it.
+//  or the project's config: a project that ships its own has already decided. Its part of
+//  the machine's config is rewritten every run: it is generated and nobody edits it, and
+//  what another writer put there is kept.
 
 import Foundation
 import SemelApple
@@ -23,6 +24,8 @@ public struct PrepareReport: Equatable {
     public var locks: [URL] = []
     public var written: [URL] = []
     public var kept: [URL] = []
+    /// What another writer put in the machine file and prepare kept, by writer (B-109).
+    public var machineFileKept: [MachineFile.Kept] = []
     /// An xcconfig the project names that was not there, now in place as a copy of
     /// `source`: the file named on the command line for it, or a template beside it.
     public struct TemplateCopy: Equatable {
@@ -153,12 +156,19 @@ public enum Preparation {
             }
         }
 
-        // The machine file is rewritten on every run: it is generated, never edited, and
-        // the platform named on this run is what it should say (B-109).
+        // Prepare's part of the machine file is rewritten on every run: it is generated,
+        // never edited, and the platform named on this run is what it should say (B-109).
+        // Another writer's part is kept — `semel-clang` writes the clang namespaces for a
+        // formula that includes both preludes — less any namespace prepare now writes.
         let machineFile = folder.appendingPathComponent(GeneratedFiles.machineConfigFileName)
-        try GeneratedFiles.machineConfig(platform: platform, facts: facts, namespaces: namespaces)
-            .write(to: machineFile, atomically: true, encoding: .utf8)
+        let existing = FileManager.default.fileExists(atPath: machineFile.path)
+            ? try String(contentsOf: machineFile, encoding: .utf8)
+            : nil
+        let section = GeneratedFiles.machineSection(platform: platform, facts: facts, namespaces: namespaces)
+        let (machineText, merge) = MachineFile.merging(section, into: existing)
+        try machineText.write(to: machineFile, atomically: true, encoding: .utf8)
         report.written.append(machineFile)
+        report.machineFileKept = merge?.kept ?? []
         return report
     }
 

@@ -126,8 +126,10 @@ public struct RequiredSettings {
         if !machine.isEmpty {
             // Which command writes them is the toolchain's to say; a namespace that names
             // none still says which file the settings belong in.
-            let writer = entry?.machineFileCommand.map { "Run '\($0)': it writes semel.machine.config with" }
-                ?? "They belong in semel.machine.config, with"
+            let fileName = MachineFileWriter.fileName
+            let writer   = entry?.machineFileWriter
+                .map { "Run '\($0.invocation(folder: MachineFileWriter.folderPlaceholder))': it writes \(fileName) with" }
+                ?? "They belong in \(fileName), with"
             paragraphs.append("Missing machine settings. \(writer) the tool descriptors and SDK facts of the " +
                               "tools installed here, these among them:")
             paragraphs.append(machine.joined(separator: "\n"))

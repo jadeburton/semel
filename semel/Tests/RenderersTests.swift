@@ -141,6 +141,27 @@ final class ErrorRecordRendererMarkTests: XCTestCase {
                         ""])
     }
 
+    /// B-109. A machine file nobody has written names what writes it, once, under its own
+    /// line and above the count of what it stopped — as `ErrorReport.lines` writes it,
+    /// which `UnpushedFileReportingTests` pins.
+    func test_anUnwrittenMachineFileNamesItsWritersThroughThisRenderer() {
+        let writers = [SourceWriter(command: "semel-clang", folder: "."),
+                       SourceWriter(command: "semel-swift prepare", folder: ".")]
+        let record = ErrorRecord(label: "StaticFile #17 'input:/semel.machine.config'",
+                                 entries: [ErrorEntry(ports: ["output"],
+                                                      message: "semel.machine.config has not been pushed",
+                                                      missingSource: "semel.machine.config",
+                                                      writers: writers)],
+                                 downstreamCarrierCount: 1)
+
+        XCTAssertEqual(ErrorRecordRenderer.lines(for: record),
+                       ["❌ StaticFile #17 'input:/semel.machine.config'",
+                        "   · semel.machine.config has not been pushed",
+                        "   · run semel-clang . and semel-swift prepare . to write it",
+                        "   · and 1 node downstream carries it",
+                        ""])
+    }
+
     /// B-104. A folder is a source too, and the state it publishes sits on a port whose
     /// name is the engine's business: the line names the path to push and nothing else.
     /// `UnpushedFileReportingTests` pins the engine's side of this pair.

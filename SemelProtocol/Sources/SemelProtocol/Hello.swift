@@ -53,7 +53,9 @@ public enum ProtocolVersion {
     /// Version 16 adds the `progress` event, where a settle stands (B-95).
     /// Version 15 renames the check finding `unreadableGraphSpec` to `staleIdentity` (B-115).
     /// Version 14 adds the `collect` request and its `collected` reply (B-14).
-    public static let current = 17
+    /// Version 18 gives an error entry the `writers` of a machine file nobody has written
+    /// (B-109).
+    public static let current = 18
 }
 
 public struct Hello: Codable, Equatable, Sendable {

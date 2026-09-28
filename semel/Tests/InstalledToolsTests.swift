@@ -62,7 +62,7 @@ final class InstalledToolsTests: XCTestCase {
                                                    architecture: installed.architecture,
                                                    recursiveHash: nil)
 
-        XCTAssertNoThrow(try registry.tool(descriptor: asAConfigFileSpellsIt))
+        XCTAssertNoThrow(try registry.tool(descriptor: asAConfigFileSpellsIt, namespace: "swift.compiler"))
     }
 
     /// Each version names a build, since the descriptor keys the cache and two builds of

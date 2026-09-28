@@ -133,7 +133,8 @@ public struct AssetCatalogCompiler: Node {
         arguments += ["--output-partial-info-plist", Self.partialInfoPlistFile]
         arguments += ["--output-format", "human-readable-text"]
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: configuration.toolDescriptor,
+                                                        namespace:  AssetCatalogCompilerConfiguration.settingNamespace)
         let result = try tool.execute(arguments: arguments,
                                       environment: [:],
                                       inputFiles: inputFiles,

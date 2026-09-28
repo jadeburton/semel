@@ -39,7 +39,7 @@ final class GlobalStateIsolationTests: SemelCoreTestCase {
 
         try TestGlobals.isolate()
 
-        XCTAssertThrowsError(try ToolRunnerRegistry.instance.tool(descriptor: descriptor),
+        XCTAssertThrowsError(try ToolRunnerRegistry.instance.tool(descriptor: descriptor, namespace: "fake.tool"),
                              "isolate() must hand back a registry with no leftover registrations")
     }
 }

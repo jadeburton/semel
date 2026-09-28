@@ -734,8 +734,8 @@ came out byte-identical to the enumerated formula's.
 Shipped: the configuration is two files. `semel.machine.config` holds the tool descriptors
 and the machine settings each plugin declares (`ToolNamespace.machineSettingKeys`, answered
 per `Platform`), written outside Semel by the toolchain's own tool (B-119) — `semel-clang`
-for the clang namespaces, when the folder has none or with `--force`, and `semel-swift
-prepare` for a Swift tree — through one writer, `SemelMachineFile`; it is in `.gitignore`.
+for the clang namespaces, and `semel-swift prepare` for a Swift tree, each its own part of
+one file (residual 5) — through one writer, `SemelMachineFile`; it is in `.gitignore`.
 Each writes only the namespaces its formula selects (2026-09-28 for `semel-clang`: the
 formulas below its folder that name the file, all four clang namespaces when none does),
 read by `MachineFile.namespaces(selectedIn:)`, which follows a prelude func by func from
@@ -762,20 +762,34 @@ the tutorial's config section is `build`, `semel-clang`, `build`. Design:
    `semel-swift prepare` is one platform per write; a project building for the simulator
    and for macOS wants both blocks, and the writers' answer — several flags, or every SDK
    the machine has — waits for the first project that needs two.
-4. **The missing-source line when the file is not there.** A first build with no machine
-   file reports `semel.machine.config has not been pushed` under the tools' missing
-   settings; `build` could add the one line the loop needs — which tool writes it — where
-   it reports the unpushed source, instead of leaving it to each tool's paragraph.
-5. **Two toolchains, one machine file.** `semel-clang` writes only when the folder has no
-   machine file, because one `semel-swift prepare` wrote holds the Swift namespaces too.
-   A hand-written formula that includes both `clang` and `swift` preludes, with no
-   `prepare`, therefore gets whichever toolchain's namespaces were written first, and the
-   missing-settings report names the rest. A tool that adds its own namespaces to a file
-   that exists, rather than leaving it, would close it.
-6. **A stale file names its fix.** After an Xcode update the file names a clang that is
-   gone; `ToolError.noMatchingToolFound` names what was asked for and what is installed,
-   and could also name the command that rewrites the file (`semel-clang --force`,
-   `semel-swift prepare`), which the namespace registers.
+4. **The missing-source line when the file is not there** — done (2026-09-28). A plugin
+   registers a typed `MachineFileWriter` per namespace (`command`, and the `rewriteFlags`
+   that replace what it wrote: `--force` for `semel-clang`, none for `prepare`), where it
+   registered a command line with a `<folder>` in it. The report of an unpushed
+   `semel.machine.config` walks down from the file through the `ConfigMerger`s to the
+   `ConfigFilter`s it feeds, looks up the writer of each prefix, and carries them typed on
+   the item (`ErrorReport.SourceWriter`, `ErrorEntry.writers` on the wire, protocol 18),
+   each with the file's folder relative to the base; both renderers write one line under
+   the file's — `run semel-clang . to write it`, `… and semel-swift prepare . …` when both
+   toolchains read it. A file of another name gets none: a writer writes that one file.
+   `missingSource` is untouched, so `build` still follows the file once it is on disk.
+5. **Two toolchains, one machine file** — done (2026-09-28). The file is one section per
+   writer, each under the header it always had (`// Written by <writer> for --platform …`);
+   `MachineFile.merging` reads the sections back, replaces the writer's own whole, takes
+   the namespaces it writes out of the others (a namespace is written once), keeps the
+   rest in place, and says what it did — `Added clang.compiler, … to <file>; kept
+   swift.compiler, swift.linker from semel-swift prepare`. `semel-clang` leaves a file
+   that holds every namespace its formulas select and nothing of its own they no longer
+   do (so a formula selecting fewer is rewritten without `--force`, which is left for a
+   toolchain update); `prepare` rewrites its part every run and prints what it kept. No
+   fixture includes both `clang` and `swift`, so the proof is `ClangMachineFileTests` and
+   `PrepareTests`, not an end-to-end run.
+6. **A stale file names its fix** — done (2026-09-28). `ToolRunnerRegistry.tool` takes the
+   node's namespace, and `ToolError.noMatchingToolFound` carries it with its writer: the
+   message adds `clang.compiler.toolDescriptor.* names it; when that is
+   semel.machine.config, written before the toolchain changed, 'semel-clang <folder>
+   --force' rewrites it`. The file is not named for certain: the settings arrive merged,
+   and a project file may pin a toolchain on purpose.
 
 **B-120** `done` — **`Configuration` merges; only `ConfigMerger` should.**
 `Configuration` is two things in one node: the way to put settings inline in a formula, as

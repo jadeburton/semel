@@ -1,8 +1,8 @@
 // ToolNamespaceRendererTests.swift
 // SemelProtocolTests
 //
-// B-109. The machine file both writers produce: pinned to one version, headed, and
-// honest about a tool that is not there.
+// B-109. The pieces both writers build the machine file from: pinned to one version,
+// headed, and honest about a tool that is not there.
 
 import SemelProtocol
 import XCTest
@@ -22,11 +22,17 @@ final class ToolNamespaceRendererTests: XCTestCase {
         XCTAssertTrue(listing.contains("clang.linker.toolDescriptor.version=16.0.0"), listing)
         XCTAssertTrue(listing.contains("clang.linker.toolDescriptor.version=17.0.0"), listing)
 
-        let file = ToolNamespaceRenderer.machineFile(writtenBy: "a test", platformName: "macos", namespaces: [namespace])
-        XCTAssertTrue(file.hasPrefix("// Written by a test for --platform macos"), file)
-        XCTAssertFalse(file.contains("version=16.0.0"), "a file names one version: \(file)")
-        XCTAssertTrue(file.contains("clang.linker.toolDescriptor.version=17.0.0"), file)
-        XCTAssertTrue(file.hasSuffix("\n"), "a file ends in a newline")
+        let pinned = ToolNamespaceRenderer.text(for: ToolNamespaceRenderer.pinnedToNewest([namespace]))
+        XCTAssertFalse(pinned.contains("version=16.0.0"), "a file names one version: \(pinned)")
+        XCTAssertTrue(pinned.contains("clang.linker.toolDescriptor.version=17.0.0"), pinned)
+    }
+
+    func test_theHeaderNamesTheWriterAndThePlatform() {
+        let header = ToolNamespaceRenderer.machineFileHeader(writtenBy: "a test", platformName: "macos")
+
+        XCTAssertTrue(header[0].hasPrefix(ToolNamespaceRenderer.machineFileHeaderOpening), "\(header)")
+        XCTAssertTrue(header[0].hasPrefix("// Written by a test for --platform macos"), "\(header)")
+        XCTAssertTrue(header.allSatisfy { $0.hasPrefix("// ") }, "every line is a comment: \(header)")
     }
 
     func test_machineSettingsFollowTheDescriptorInKeyOrder() {
@@ -42,9 +48,8 @@ final class ToolNamespaceRendererTests: XCTestCase {
     func test_aNamespaceWhoseToolIsMissingIsAComment() {
         let namespace = ToolNamespaceRecord(namespace: "clang.linker", toolName: "clang", descriptors: [])
 
-        let file = ToolNamespaceRenderer.machineFile(writtenBy: "a test", platformName: "macos", namespaces: [namespace])
+        let text = ToolNamespaceRenderer.text(for: ToolNamespaceRenderer.pinnedToNewest([namespace]))
 
-        XCTAssertTrue(file.contains("// clang.linker: no clang is installed on this machine"), file)
-        XCTAssertFalse(file.contains("clang.linker.toolDescriptor"), file)
+        XCTAssertEqual(text, "// clang.linker: no clang is installed on this machine")
     }
 }

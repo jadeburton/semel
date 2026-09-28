@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsSeventeen() {
-        XCTAssertEqual(ProtocolVersion.current, 17)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 17,
+    func test_currentProtocolVersionIsEighteen() {
+        XCTAssertEqual(ProtocolVersion.current, 18)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 18,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -186,6 +186,21 @@ final class MessageJSONTests: XCTestCase {
 
         XCTAssertEqual(decoded, [missing, other])
         XCTAssertEqual(decoded.map(\.missingSource), ["clang.cfg", nil])
+    }
+
+    /// B-109. What writes a machine file nobody has written travels typed too — the
+    /// command and the folder apart, so a client never takes a sentence apart for either.
+    func test_anErrorEntryCarriesTheWritersOfAMachineFile() throws {
+        let writers = [SourceWriter(command: "semel-clang", folder: "."),
+                       SourceWriter(command: "semel-swift prepare", folder: ".")]
+        let missing = ErrorEntry(ports: ["output"], message: "semel.machine.config has not been pushed",
+                                 missingSource: "semel.machine.config", writers: writers)
+
+        let decoded = try JSONDecoder().decode(ErrorEntry.self, from: try JSONEncoder().encode(missing))
+
+        XCTAssertEqual(decoded, missing)
+        XCTAssertEqual(decoded.writers, writers)
+        XCTAssertEqual(ErrorEntry(ports: ["output"], message: "boom").writers, [])
     }
 
     func test_roundTripsEveryDaemonResponse() throws {

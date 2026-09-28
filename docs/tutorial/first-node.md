@@ -132,14 +132,16 @@ Settled.
 …
 ❌ StaticFile #17 'input:/semel.machine.config'
    · semel.machine.config has not been pushed
+   · run semel-clang . to write it
    · and 1 node downstream carries it
 ```
 
 It failed, and it says why: the formula names `<../semel.machine.config>` beside `hello/`,
 nothing is there, and every tool below it lacks the settings that file would hold — and
-each names the command that writes them. That command is not one of Semel's: what this
-machine has is the toolchain's to say, so its own tool writes it, outside Semel, as
-`semel-swift prepare` does for a Swift tree. In the **shell** terminal, on the folder the
+each names the command that writes them. The file's own entry says it once, with the
+folder the file goes in, `.` being the base directory. That command is not one of Semel's:
+what this machine has is the toolchain's to say, so its own tool writes it, outside Semel,
+as `semel-swift prepare` does for a Swift tree. In the **shell** terminal, on the folder the
 formula looks in:
 
 ```sh
@@ -148,7 +150,7 @@ formula looks in:
 
 ```
 Wrote /Users/you/semel-playground/semel.machine.config: clang.compiler, clang.linker, clang.preprocessor
-Those hello/hello.fmla selects; when it selects another, --force rewrites the file.
+Those hello/hello.fmla selects; when it selects others, run semel-clang again.
 ```
 
 Three clang namespaces, the ones this formula selects: `semel-clang` read every formula
@@ -157,7 +159,10 @@ the archiver's, which is for a static library; a block nothing selects would be 
 as unused keys on every build. Open the file if you like —
 the clang version string, the SDK path, once per tool — but do not edit it, and do not
 commit it: it is this machine's, and the next machine writes its own. Run the command again
-and it leaves the file as it is; after installing a new Xcode, `--force` rewrites it.
+and it leaves the file as it is; after installing a new Xcode, `--force` rewrites it — the
+tools' failure then names the command, since the clang the file names is gone. A file
+`semel-swift prepare` wrote first keeps its Swift namespaces: each tool writes its own part,
+under a header of its own, and leaves the other's.
 
 ### The build
 

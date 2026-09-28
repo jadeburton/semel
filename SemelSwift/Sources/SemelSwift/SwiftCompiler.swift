@@ -480,7 +480,8 @@ struct SwiftCompiler: Node {
 
         arguments.append(contentsOf: inputs.configuration.arguments)
 
-        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor)
+        let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
+                                                        namespace:  SwiftCompilerConfiguration.settingNamespace)
 
         let result = try tool.execute(
             arguments: arguments,

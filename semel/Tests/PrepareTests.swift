@@ -274,6 +274,32 @@ final class PrepareTests: XCTestCase {
         XCTAssertFalse(config.contains("clang.linker"), "got:\n\(config)")
     }
 
+    /// B-109. A machine file `semel-clang` wrote there — for a formula that includes both
+    /// preludes — keeps its part: prepare rewrites its own, takes out of the other part the
+    /// namespaces it writes itself (the clang compiler and preprocessor, for a C target),
+    /// and leaves the rest. A second run finds the file as the first left it.
+    func test_theMachineFileKeepsWhatSemelClangWroteThere() throws {
+        try write("Packages/CLib/Package.swift")
+        try write("Packages/CLib/Sources/CLib/lib.c", "int lib(void) { return 1; }\n")
+        let machineFile = folder("Packages").appendingPathComponent("semel.machine.config")
+        let clangPart = ToolNamespaceRegistry.all.filter { ["clang.compiler", "clang.linker"].contains($0.namespace) }
+        try MachineFile.text(writtenBy: "semel-clang", platform: .macos, descriptors: [clang], namespaces: clangPart)
+            .write(to: machineFile, atomically: true, encoding: .utf8)
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
+
+        XCTAssertEqual(report.machineFileKept, [MachineFile.Kept(writer: "semel-clang", namespaces: ["clang.linker"])])
+        let text = try String(contentsOf: machineFile, encoding: .utf8)
+        let sections = MachineFile.sections(in: text)
+        XCTAssertEqual(sections.map(\.writer), ["semel-clang", "semel-swift prepare"], text)
+        XCTAssertEqual(sections.map(\.namespaces), [["clang.linker"],
+                                                     ["clang.compiler", "clang.preprocessor", "swift.compiler",
+                                                      "swift.linker", "swift.packageReader"]], text)
+
+        try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
+        XCTAssertEqual(try String(contentsOf: machineFile, encoding: .utf8), text)
+    }
+
     /// B-55. The whole tree decides, as it does for the converter: a C target whose
     /// sources all sit in subfolders is still one, and a `.swift` in a subfolder makes a
     /// Swift target of a folder with a C source at its top.

@@ -8,11 +8,6 @@
 
 public enum ToolNamespaceRenderer {
 
-    /// The file the machine's half of the configuration is written to, beside the
-    /// project's `semel.config`. One name: `.gitignore`, prepare, the tutorial and the
-    /// fixtures all use it.
-    public static let machineFileName = "semel.machine.config"
-
     /// The installed tools as the settings a config needs — one block per namespace that
     /// names the tool, every installed version of it, so choosing a toolchain version is a
     /// paste. A namespace whose tool is missing prints as a comment, so the whole output is
@@ -43,24 +38,31 @@ public enum ToolNamespaceRenderer {
         return blocks.joined(separator: "\n\n")
     }
 
-    /// The machine file: `text(for:)` with each namespace pinned to the newest installed
-    /// version of its tool — a listing shows every version, a file has to name one — under
-    /// a header saying who wrote it and that nobody edits or commits it. The descriptors
-    /// arrive sorted oldest first, so the newest is the last.
-    public static func machineFile(writtenBy writer: String, platformName: String,
-                                   namespaces: [ToolNamespaceRecord]) -> String {
-        let pinned = namespaces.map { namespace in
+    /// Each namespace pinned to the newest installed version of its tool: a listing shows
+    /// every version, a machine file has to name one. The descriptors arrive sorted oldest
+    /// first, so the newest is the last.
+    public static func pinnedToNewest(_ namespaces: [ToolNamespaceRecord]) -> [ToolNamespaceRecord] {
+        namespaces.map { namespace in
             ToolNamespaceRecord(namespace:   namespace.namespace,
                                 toolName:    namespace.toolName,
                                 descriptors: Array(namespace.descriptors.suffix(1)),
                                 selected:    namespace.selected)
         }
-        let header = """
-            // Written by \(writer) for --platform \(platformName): the tools and SDK this
-            // machine has. Not for editing — write it again after installing a toolchain —
-            // and not for checking in: the project's own choices go in semel.config beside it.
-
-            """
-        return header + text(for: pinned) + "\n"
     }
+
+    /// The lines that open one writer's part of a machine file: who wrote it, for which
+    /// platform, and that nobody edits or commits it. A file two writers wrote has two, one
+    /// above each writer's namespaces (B-109), so each part says whose it is and what
+    /// writes it again.
+    public static func machineFileHeader(writtenBy writer: String, platformName: String) -> [String] {
+        [
+            "\(machineFileHeaderOpening)\(writer) for --platform \(platformName): the tools and SDK this",
+            "// machine has. Not for editing — write it again after installing a toolchain —",
+            "// and not for checking in: the project's own choices go in semel.config beside it.",
+        ]
+    }
+
+    /// How a header's first line starts, which is how a writer reading the file back finds
+    /// where each writer's part begins.
+    public static let machineFileHeaderOpening = "// Written by "
 }
