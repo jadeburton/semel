@@ -25,6 +25,11 @@ public struct PrepareReport: Equatable {
     public var vendored: [Vendoring.Copied] = []
     /// The lock written beside each vendored copy (B-06), one per copy.
     public var locks: [URL] = []
+    /// Every binary target's `path:` zip unzipped into its package's `semel-artifacts`.
+    public var unzippedArtifacts: [URL] = []
+    /// Every binary target's folder in `semel-artifacts` that holds its artifact, copied
+    /// from resolution's download or unzipped (B-77).
+    public var artifacts: [URL] = []
     public var written: [URL] = []
     public var kept: [URL] = []
     /// What another writer put in the machine file and prepare kept, by writer (B-109).
@@ -91,6 +96,8 @@ public enum Preparation {
         let formula: String
         var namespaces: [String]
         var declaredVersion: String?
+        // Every package the build reads, the tree's own and the vendored ones alike.
+        var allSummaries: [PackageSummary] = []
 
         // A folder holding an `.xcodeproj` is a project: the project is the one root, it
         // says which packages it reaches, and its application's deployment target is the
@@ -115,6 +122,7 @@ public enum Preparation {
                 .filter { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Package.swift").path) }
             let packageSummaries = try (report.localPackages + vendoredManifestFolders(in: dependencies)).map(steps.summarize)
             namespaces = GeneratedFiles.projectNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: packageSummaries))
+            allSummaries = packageSummaries
         } else {
             let manifestFolders = try PackageScan.manifestFolders(under: folder)
             guard !manifestFolders.isEmpty else {
@@ -133,9 +141,15 @@ public enum Preparation {
             let vendoredSummaries = try vendoredManifestFolders(in: dependencies).map(steps.summarize)
             namespaces = GeneratedFiles.packageTreeNamespaces(
                 forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: summaries + vendoredSummaries))
+            allSummaries = summaries + vendoredSummaries
         }
 
-        report.locks = try writeLocks(for: report.vendored)
+        // Every package's binary targets in its `semel-artifacts`, before the locks are
+        // taken over the copies that hold them (B-77): a `path:` zip unzipped here; what a
+        // `url:` names was copied from resolution's download with its checkout.
+        report.unzippedArtifacts = try unzipArtifacts(of: allSummaries)
+        report.artifacts = artifactFolders(of: allSummaries)
+        report.locks = try writeLocks(for: report.vendored, summaries: allSummaries)
 
         // A formula already there is kept, and it may select namespaces the one written
         // here would not — a hand-written app formula compiles catalogs. What it selects
@@ -182,15 +196,58 @@ public enum Preparation {
 
     /// A lock beside every copy, once every copy is in place (B-06): several roots vendor
     /// into one folder and a name two of them resolve is copied by the later one, so the
-    /// lock is taken over the copy that stayed, with the pin of the root that copied it.
-    static func writeLocks(for vendored: [Vendoring.Copied]) throws -> [URL] {
+    /// lock is taken over the copy that stayed, with the pin of the root that copied it,
+    /// and each binary target's checksum from the copy's manifest in `summaries` (B-77).
+    static func writeLocks(for vendored: [Vendoring.Copied], summaries: [PackageSummary] = []) throws -> [URL] {
         var lastCopy: [URL: Vendoring.Copied] = [:]
         for copied in vendored {
             lastCopy[copied.destination.standardizedFileURL] = copied
         }
         return try lastCopy.keys.sorted { $0.path < $1.path }.compactMap { destination in
-            try lastCopy[destination].map(Vendoring.writeLock(for:))
+            guard let copied = lastCopy[destination] else {
+                return nil
+            }
+            let summary = summaries.first { $0.folder.standardizedFileURL.path == destination.path }
+            var checksums: [String: String] = [:]
+            for binaryTarget in summary?.binaryTargets ?? [] {
+                checksums[binaryTarget.name] = binaryTarget.checksum
+            }
+            return try Vendoring.writeLock(for: copied, artifacts: checksums)
         }
+    }
+
+    /// Unzips every binary target's `path:` zip into its package's `semel-artifacts`, as
+    /// SwiftPM extracts one before it builds, and returns the zips. A zip that is not
+    /// there is left to the converter to name.
+    static func unzipArtifacts(of summaries: [PackageSummary]) throws -> [URL] {
+        var unzipped: [URL] = []
+        for summary in summaries.sorted(by: { $0.folder.path < $1.folder.path }) {
+            for binaryTarget in summary.binaryTargets {
+                guard let path = binaryTarget.path, path.hasSuffix(".zip") else {
+                    continue
+                }
+                let zip = summary.folder.appendingPathComponent(path)
+                guard FileManager.default.fileExists(atPath: zip.path) else {
+                    continue
+                }
+                try Vendoring.unzipArtifact(zip, target: binaryTarget.name, into: summary.folder)
+                unzipped.append(zip)
+            }
+        }
+        return unzipped
+    }
+
+    /// Every binary target's folder in its package's `semel-artifacts` that holds
+    /// something, sorted: what the build will find.
+    static func artifactFolders(of summaries: [PackageSummary]) -> [URL] {
+        summaries.flatMap { summary in
+            summary.binaryTargets.compactMap { binaryTarget -> URL? in
+                let folder = summary.folder.appendingPathComponent(Vendoring.artifactsFolderName, isDirectory: true)
+                                           .appendingPathComponent(binaryTarget.name, isDirectory: true)
+                let contents = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+                return contents.isEmpty ? nil : folder
+            }
+        }.sorted { $0.path < $1.path }
     }
 
     /// Every package vendored under `dependencies`, none when nothing was.

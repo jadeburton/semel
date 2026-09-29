@@ -96,6 +96,8 @@ final class DictionaryOrderTests: XCTestCase {
             "an array, sorted by package folder so a name conflict resolves the same way twice",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key })":
             "the root package's own pair, then the external manifests sorted by package folder; both halves state their order, and the sort is asked about because it belongs to the second of them",
+        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: packages":
+            "an array of pairs, the root package's and then the external ones sorted by folder, and the walk only fills a dictionary of demands, a set it sorts and a dictionary of locations",
         "SemelSwift/Sources/SemelSwift/SwiftPackageReader.swift: ancestors":
             "an array, built longest path first so the most specific prefix matches",
         "SemelApple/Sources/SemelApple/XcodeFormulaEmitter.swift: sourceFolders":

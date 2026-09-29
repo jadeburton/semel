@@ -69,9 +69,13 @@ public enum Vendoring {
         var copied: [Copied] = []
         for packageRoot in packageRoots {
             try resolve(packageRoot: packageRoot)
+            let artifacts = packageRoot.appendingPathComponent(".build/artifacts", isDirectory: true)
             copied += try copyCheckouts(from: packageRoot.appendingPathComponent(".build/checkouts", isDirectory: true),
                                         into: dependencies,
-                                        pins: pins(inResolvedFileAt: packageRoot.appendingPathComponent("Package.resolved")))
+                                        pins: pins(inResolvedFileAt: packageRoot.appendingPathComponent("Package.resolved")),
+                                        artifacts: artifacts)
+            // The root's own binary targets, which SwiftPM downloads beside its dependencies'.
+            try copyArtifacts(from: artifacts, identity: packageRoot.lastPathComponent, into: packageRoot)
         }
         return copied
     }
@@ -99,7 +103,64 @@ public enum Vendoring {
         // Xcode keeps the project's resolved file in the workspace inside the project.
         let resolvedFile = project.appendingPathComponent("project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
         return try copyCheckouts(from: clones.appendingPathComponent("checkouts", isDirectory: true), into: dependencies,
-                                 pins: pins(inResolvedFileAt: resolvedFile))
+                                 pins: pins(inResolvedFileAt: resolvedFile),
+                                 artifacts: clones.appendingPathComponent("artifacts", isDirectory: true))
+    }
+
+    /// The folder in a package a binary target's artifact is vendored into, one per target.
+    public static let artifactsFolderName = DependencyLock.artifactsFolderName
+
+    /// Copies what SwiftPM downloaded for the package `identity` — every
+    /// `<artifacts>/<identity>/<Target>/`, the `.xcframework` it extracted from the zip a
+    /// binary target's `url:` names, after checking the zip against the manifest's
+    /// `checksum:` — into `<package>/semel-artifacts/<Target>/`, replacing what was there
+    /// (B-77). Nothing is downloaded here: resolution already did it, and a build never
+    /// does. The identity is SwiftPM's, the lowercased repository or folder name.
+    public static func copyArtifacts(from artifacts: URL, identity: String, into package: URL) throws {
+        let fileManager = FileManager.default
+        guard let identities = try? fileManager.contentsOfDirectory(atPath: artifacts.path),
+              let folder = identities.first(where: { $0.lowercased() == identity.lowercased() }) else {
+            return
+        }
+        let source = artifacts.appendingPathComponent(folder, isDirectory: true)
+        for target in try fileManager.contentsOfDirectory(atPath: source.path).sorted() where !target.hasPrefix(".") {
+            var isDirectory: ObjCBool = false
+            let targetSource = source.appendingPathComponent(target, isDirectory: true)
+            guard fileManager.fileExists(atPath: targetSource.path, isDirectory: &isDirectory), isDirectory.boolValue,
+                  !(try fileManager.contentsOfDirectory(atPath: targetSource.path)).isEmpty else {
+                continue
+            }
+            let destination = package.appendingPathComponent(artifactsFolderName, isDirectory: true)
+                                     .appendingPathComponent(target, isDirectory: true)
+            if fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
+            }
+            try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fileManager.copyItem(at: targetSource, to: destination)
+        }
+    }
+
+    /// Unzips a binary target's `path:` zip into `<package>/semel-artifacts/<Target>/`,
+    /// replacing what was there, as SwiftPM extracts one before a build (B-77). `ditto`,
+    /// because it keeps what a framework is made of — its links and its modes — as
+    /// Finder's archiver wrote them.
+    public static func unzipArtifact(_ zip: URL, target: String, into package: URL) throws {
+        let destination = package.appendingPathComponent(artifactsFolderName, isDirectory: true)
+                                 .appendingPathComponent(target, isDirectory: true)
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", zip.path, destination.path]
+        process.standardOutput = FileHandle.standardError
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw Failure(description: "could not unzip \(zip.path) for binary target \(target) (ditto exit \(process.terminationStatus))")
+        }
     }
 
     /// The pins of a `Package.resolved`, by the folder each package is checked out under —
@@ -132,15 +193,17 @@ public enum Vendoring {
     }
 
     /// Writes the lock beside a copy (B-06): its folder's content root as the engine will
-    /// fold the pushed copy, and what its pin says. Replaces a lock already there, because
-    /// the copy it described was replaced too. Returns the lock file.
+    /// fold the pushed copy — its `semel-artifacts` included — what its pin says, and the
+    /// checksum of each binary target's download, by target. Replaces a lock already
+    /// there, because the copy it described was replaced too. Returns the lock file.
     @discardableResult
-    public static func writeLock(for copied: Copied) throws -> URL {
+    public static func writeLock(for copied: Copied, artifacts: [String: String] = [:]) throws -> URL {
         let lock = DependencyLock(contentRoot: try FolderContentRoot.root(ofFolderAt: copied.destination),
                                   fold:        FolderContentRoot.formatTag,
                                   version:     copied.pin?.version,
                                   revision:    copied.pin?.revision,
-                                  origin:      copied.pin?.origin)
+                                  origin:      copied.pin?.origin,
+                                  artifacts:   artifacts)
         let file = DependencyLock.lockFile(forDependencyAt: copied.destination)
         try lock.text.write(to: file, atomically: true, encoding: .utf8)
         return file
@@ -162,10 +225,12 @@ public enum Vendoring {
 
     /// Copies every directory in `checkouts` to `dependencies/<name>`, replacing whatever
     /// was there, and leaves out each checkout's `.git` and `.build`: neither is source,
-    /// and a nested `.git` would make the copy look like a repository of its own.
+    /// and a nested `.git` would make the copy look like a repository of its own. The
+    /// binary artifacts resolution downloaded for a checkout, found in `artifacts` under its
+    /// identity, go into the copy's `semel-artifacts` (B-77).
     /// Returns what was copied, sorted by name, each with its pin from `pins` when there is one.
     public static func copyCheckouts(from checkouts: URL, into dependencies: URL,
-                                     pins: [String: Pin] = [:]) throws -> [Copied] {
+                                     pins: [String: Pin] = [:], artifacts: URL? = nil) throws -> [Copied] {
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: checkouts.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -196,6 +261,9 @@ public enum Vendoring {
             where child != ".git" && child != ".build" {
                 try fileManager.copyItem(at: source.appendingPathComponent(child),
                                          to: destination.appendingPathComponent(child))
+            }
+            if let artifacts {
+                try copyArtifacts(from: artifacts, identity: name, into: destination)
             }
             copied.append(Copied(name: name, source: source, destination: destination, pin: pins[name]))
         }

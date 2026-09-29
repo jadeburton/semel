@@ -85,7 +85,10 @@ failed pass withdrew the demand, the collector took the ghost and the lock passe
 The converter now demands the target folders before it compares the lock and on every
 pass whatever the lock says, and a binary target is not compiled but named — `binary
 target Sparkle of package Sparkle is not built (B-133)` — for the feature in B-77 item 2
-(`SwiftFormulaConverterTests`, `VendoredPackageSettleTests`; converter v9). What remains:
+(`SwiftFormulaConverterTests`, `VendoredPackageSettleTests`; converter v9). Since
+2026-09-29 an `.xcframework` is built (B-77 item 2, map item 1), found through a walk that
+asks for nothing a vendored package does not list; only an artifact that is not one — an
+`.artifactbundle` — is still named as not built. What remains:
 
 1. **Non-convergence is silent.** Any node whose demands alternate with what they cause
    loops the same way, and `build` waits for ever. Whether the engine notices a node

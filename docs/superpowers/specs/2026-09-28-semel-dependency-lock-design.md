@@ -34,7 +34,11 @@ nobody is told their dependency moved. With it the build stops: "expected `abc�
   ```
 
   `content` and `fold` are required; `version`, `revision` and `origin` are written when
-  the resolver said them (a branch pin has no version). The `fold` line is the one addition
+  the resolver said them (a branch pin has no version). A package with binary targets
+  adds `artifacts  Sparkle=<checksum>,…` (B-77, 2026-09-29): each target's `checksum:` from
+  the manifest, for the zip SwiftPM checked before `prepare` copied what it held into the
+  package's `semel-artifacts/<Target>` — recorded only, since that copy is inside the
+  folder and `content` locks it. The key column widens for it only when the line is there. The `fold` line is the one addition
   to the entry's sketch: the root is the hash of a stated format with a version tag
   (`FolderContentRoot.formatTag`), and recording which fold a lock was taken under is what
   lets a lock the format moved under read as "cannot be compared" rather than as "the tree

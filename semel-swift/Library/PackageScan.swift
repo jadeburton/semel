@@ -39,13 +39,33 @@ public struct PackageSummary: Equatable {
         }
     }
 
+    /// The package's binary targets (B-77): what `prepare` puts in `semel-artifacts` —
+    /// a `path:` zip unzipped — and records on the lock — a `url:` one's checksum.
+    public let binaryTargets: [BinaryTarget]
+
+    /// One `.binaryTarget`, as its manifest declares it.
+    public struct BinaryTarget: Equatable {
+        public let name: String
+        /// `path:`, relative to the package; nil for a `url:` one.
+        public let path: String?
+        /// `checksum:` of a `url:` one's zip; nil for a `path:` one.
+        public let checksum: String?
+
+        public init(name: String, path: String? = nil, checksum: String? = nil) {
+            self.name     = name
+            self.path     = path
+            self.checksum = checksum
+        }
+    }
+
     public init(name: String, folder: URL, pathDependencies: [URL], platforms: [String: String],
-                targets: [Target] = []) {
+                targets: [Target] = [], binaryTargets: [BinaryTarget] = []) {
         self.name             = name
         self.folder           = Self.normalized(folder)
         self.pathDependencies = pathDependencies.map(Self.normalized)
         self.platforms        = platforms
         self.targets          = targets
+        self.binaryTargets    = binaryTargets
     }
 
     /// One spelling per folder, whatever the source: dump-package's absolute string and a
@@ -134,7 +154,14 @@ public enum PackageScan {
         // The targets the converter turns into compilers; a test, plugin, macro, system or
         // binary target is not one, as `isCompilable` says.
         var targets: [PackageSummary.Target] = []
+        var binaryTargets: [PackageSummary.BinaryTarget] = []
         for target in object["targets"] as? [[String: Any]] ?? [] {
+            if let targetName = target["name"] as? String, target["type"] as? String == "binary" {
+                binaryTargets.append(.init(name:     targetName,
+                                           path:     target["url"] == nil ? target["path"] as? String : nil,
+                                           checksum: target["checksum"] as? String))
+                continue
+            }
             guard let targetName = target["name"] as? String,
                   ["regular", "executable"].contains(target["type"] as? String ?? "regular") else {
                 continue
@@ -146,7 +173,7 @@ public enum PackageScan {
         }
 
         return PackageSummary(name: name, folder: folder, pathDependencies: pathDependencies,
-                              platforms: platforms, targets: targets)
+                              platforms: platforms, targets: targets, binaryTargets: binaryTargets)
     }
 
     /// The packages nothing else in the set depends on by path: what a formula has to

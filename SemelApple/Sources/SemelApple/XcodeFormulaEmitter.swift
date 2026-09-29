@@ -69,6 +69,18 @@ struct XcodeFormulaEmitter {
         func plugIn(in bundle: String, named name: String) -> String {
             isShallow ? "\(bundle)/PlugIns/\(name)" : "\(bundle)/Contents/PlugIns/\(name)"
         }
+
+        /// The tree product a binary target's frameworks are embedded under, with its
+        /// trailing slash (B-77).
+        func frameworksTree(in bundle: String) -> String {
+            isShallow ? "\(bundle)/Frameworks/" : "\(bundle)/Contents/Frameworks/"
+        }
+
+        /// Where the executable finds those frameworks at run time: the folder above,
+        /// relative to itself, as Xcode's app templates set `LD_RUNPATH_SEARCH_PATHS`.
+        var frameworksRunpath: String {
+            isShallow ? "@executable_path/Frameworks" : "@executable_path/../Frameworks"
+        }
     }
 
     var layout: BundleLayout { BundleLayout(sdk: build.sdk) }
@@ -177,6 +189,11 @@ struct XcodeFormulaEmitter {
         let linkRequirements = target.packageProducts.map(\.product).sorted().map {
             "        '\($0)': \(FormulaIdentifier.linkRequirementsFunc(forProduct: $0))().output"
         }
+        // Each product's binary targets' frameworks, which the target compiles and links
+        // against and the bundle embeds (B-77); empty for a product that reaches none.
+        let frameworkTrees = target.packageProducts.map(\.product).sorted().map {
+            "        '\($0)': \(FormulaIdentifier.frameworksFunc(forProduct: $0))().files"
+        }
         var compilerLiterals = ["moduleName": identity.moduleName,
                                 "target": identity.target]
         if !exceptions.isEmpty {
@@ -211,6 +228,7 @@ struct XcodeFormulaEmitter {
             (folderWires.isEmpty ? "" : ",\n        inputFolder: [\n" + folderWires.joined(separator: ",\n") + "\n        ]") +
             (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
             (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
+            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
             "\n    )")
 
         // ── the executable ───────────────────────────────────────────────────
@@ -224,6 +242,10 @@ struct XcodeFormulaEmitter {
         if !linkerArguments.isEmpty {
             linkerLiterals["arguments"] = linkerArguments.joined(separator: ",")
         }
+        // Passed as an `-rpath` only when the frameworks trees hold a framework.
+        if !frameworkTrees.isEmpty {
+            linkerLiterals["frameworksRunpath"] = layout.frameworksRunpath
+        }
         products.append(
             "product '\(layout.executable(in: bundlePath, named: identity.productName))' =\n" +
             "    SwiftLinker(\n" +
@@ -231,7 +253,14 @@ struct XcodeFormulaEmitter {
             "        input: ['\(identity.moduleName).o': compiler_\(name)().object]" +
             (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
             (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
+            (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
             "\n    ).output")
+        // The same frameworks embedded where the executable's runpath finds them. Unsigned,
+        // like the rest of the bundle.
+        if !frameworkTrees.isEmpty {
+            products.append("product '\(layout.frameworksTree(in: bundlePath))' = TreeMerger(input: [\n"
+                          + frameworkTrees.joined(separator: ",\n") + "\n    ]).files")
+        }
 
         // ── resources ────────────────────────────────────────────────────────
         // Each folder's listing, with the paths of what it holds, less its exceptions,

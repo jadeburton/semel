@@ -82,6 +82,12 @@ do {
     for entry in report.vendored {
         print("\(entry.name) -> \(entry.destination.path)")
     }
+    for zip in report.unzippedArtifacts {
+        print("Unzipped: \(zip.path)")
+    }
+    for artifact in report.artifacts {
+        print("Artifact: \(artifact.path)")
+    }
     for lock in report.locks {
         print("Locked: \(lock.path)")
     }

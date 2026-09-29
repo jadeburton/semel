@@ -228,6 +228,54 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         XCTAssertFalse(arguments.contains("-framework") || arguments.contains("-lc++"), "\(arguments)")
     }
 
+    // MARK: - Frameworks (B-77)
+
+    private func frameworksInput(linkage: String = "executable", configured: [String] = []) throws -> ProcessInput {
+        let sparkle = try TreeManifest(entries: [
+            .init(path: "Sparkle.framework/Sparkle", hash: try "binary".intern(), mode: 0o755),
+            .init(path: "Sparkle.framework/Versions/B/Sparkle", hash: try "binary".intern(), mode: 0o755),
+            .init(path: "Sparkle.framework/Resources/Info.plist", hash: try "plist".intern(), mode: 0o644),
+        ]).toJSON().intern()
+        let empty = try TreeManifest(entries: []).toJSON().intern()
+        var input = try makeInput(objectFiles: ["App.o"], linkage: linkage, extraConfiguration: configured).inputValues
+        input[SwiftLinker.frameworkTrees] = ["Updater": .value(sparkle), "Kit": .value(empty)]
+        return ProcessInput(inputValues: input)
+    }
+
+    /// A binary target's framework is linked by name from the merged trees, and found at
+    /// run time where the literal says the frameworks are laid out.
+    func test_linksEachFrameworkOfTheTreesByNameWithTheRunpath() throws {
+        _ = try makeTool().process(input: try frameworksInput(configured: ["frameworksRunpath=@executable_path/../Frameworks"]))
+
+        let arguments = executor.lastArguments
+        let start = try XCTUnwrap(arguments.firstIndex(of: "App.o"))
+        let end   = try XCTUnwrap(arguments.firstIndex(of: "-o"))
+        XCTAssertEqual(Array(arguments[(start + 1)..<end]),
+                       ["-F", "frameworks", "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
+        XCTAssertTrue(executor.invocations.last?.inputFileNames.contains("frameworks/Sparkle.framework/Versions/B/Sparkle") == true,
+                      "\(executor.invocations.last?.inputFileNames ?? [])")
+    }
+
+    /// Only trees holding no framework, or none at all, add nothing — not even the runpath.
+    func test_emptyFrameworkTreesAddNothing() throws {
+        let empty = try TreeManifest(entries: []).toJSON().intern()
+        var input = try makeInput(objectFiles: ["App.o"], extraConfiguration: ["frameworksRunpath=@loader_path"]).inputValues
+        input[SwiftLinker.frameworkTrees] = ["Kit": .value(empty)]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        XCTAssertFalse(arguments.contains("-F") || arguments.contains("-rpath"), "\(arguments)")
+    }
+
+    /// An archive is not linked, and libtool takes no framework.
+    func test_aStaticArchiveTakesNoFramework() throws {
+        _ = try makeTool().process(input: try frameworksInput(linkage: "staticArchive", configured: ["frameworksRunpath=@loader_path"]))
+
+        XCTAssertFalse(executor.lastArguments.contains("-framework"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.invocations.last?.inputFileNames.contains { $0.hasPrefix("frameworks/") } ?? true)
+    }
+
     // MARK: - Vendored system libraries
 
     private func file(_ name: String) -> FolderManifestEntry { .init(name: name, isFolder: false, isPinned: true) }

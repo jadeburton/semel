@@ -1,0 +1,4 @@
+framework module Tiny {
+    umbrella header "Tiny.h"
+    export *
+}

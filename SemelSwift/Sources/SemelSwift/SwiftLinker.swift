@@ -36,6 +36,11 @@ struct SwiftLinkerConfiguration {
     /// `frameworks`, `libraries` and `cxxRuntime`: what the project states its product
     /// needs from the linker, beside what a package product's `linkRequirements` wire says.
     let requirements: LinkRequirements
+    /// Where the linked file finds the frameworks on `frameworkTrees` at run time —
+    /// `@executable_path/../Frameworks` in a Mac app, `@executable_path/Frameworks` in an
+    /// iOS one, `@loader_path` beside a package's own product — passed as an `-rpath` only
+    /// when there is a framework to find. A literal of whoever lays the frameworks out.
+    let frameworksRunpath: String?
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -55,6 +60,7 @@ struct SwiftLinkerConfiguration {
         // `-e _NSExtensionMain` — comma-joined like every list in a setting.
         arguments = (properties["arguments"] ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
         requirements = LinkRequirements(properties: properties)
+        frameworksRunpath = properties[Self.frameworksRunpathKey].flatMap { $0.isEmpty ? nil : $0 }
 
         // `-emit-library -static` drives `libtool` as a child process, which zeroes a
         // member's timestamp, uid and gid when it inherits ZERO_AR_DATE=1 — otherwise the
@@ -68,6 +74,8 @@ struct SwiftLinkerConfiguration {
 
     /// Where this node's settings live in a config file: `swift.linker.sdkVersion`.
     static let settingNamespace = derivedSettingNamespace(forTypeName: "SwiftLinker")
+
+    static let frameworksRunpathKey = "frameworksRunpath"
 }
 
 // MARK: - Node
@@ -104,6 +112,13 @@ struct SwiftLinker: Node {
     /// the link takes the union, as SwiftPM gives an executable every framework its
     /// dependencies name (B-55).
     static let linkRequirements = "linkRequirements"
+    /// Trees of frameworks, one wire each — what a package's `frameworks_P()` carries: the
+    /// slice of every binary target behind a product, under its own name (B-77). Merged
+    /// into one `frameworks` folder on the framework search path, and each framework at
+    /// its top linked by name.
+    static let frameworkTrees = "frameworkTrees"
+    /// The sandbox folder the framework trees are merged into.
+    static let frameworksFolder = "frameworks"
     static let output = "output"
     static let infoLog = "infoLog"
     /// Declaring this port is what makes ProjectBuilder wire the linked file's Unix mode
@@ -124,6 +139,7 @@ struct SwiftLinker: Node {
             .optional(libraryFolders),
             .optional(objectTrees),
             .optional(linkRequirements),
+            .optional(frameworkTrees),
             .dynamic(libraries),
         ],
         outputPorts: [output, infoLog, fileMetadata]
@@ -139,6 +155,22 @@ struct SwiftLinker: Node {
         let libraryFolderManifests: [(String, FolderManifest)]
         /// The configuration's requirements with every `linkRequirements` wire's.
         let requirements: LinkRequirements
+        /// Every file of every framework tree, merged under `frameworks`.
+        let frameworkFiles: [FileNameAndContent]
+
+        /// `Sparkle` for `frameworks/Sparkle.framework/…`: every framework at the top of the
+        /// merged trees, sorted, each once.
+        var frameworkNames: [String] {
+            let prefix = SwiftLinker.frameworksFolder + "/"
+            let names = frameworkFiles.compactMap { file -> String? in
+                guard file.filePath.hasPrefix(prefix) else {
+                    return nil
+                }
+                let top = file.filePath.dropFirst(prefix.count).split(separator: "/").first.map(String.init) ?? ""
+                return top.hasSuffix(".framework") ? String(top.dropLast(".framework".count)) : nil
+            }
+            return Set(names).sorted()
+        }
 
         init(input: ProcessInput) throws {
             let configurationString = try input.inputValues[SwiftLinker.configuration]!.values.first!.expectValue().resolveAsString()
@@ -183,6 +215,8 @@ struct SwiftLinker: Node {
                 requirements = requirements.union(LinkRequirements(properties: [String: String](plainText: text)))
             }
             self.requirements = requirements
+            frameworkFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftLinker.frameworkTrees,
+                                                               under: SwiftLinker.frameworksFolder)
         }
     }
 
@@ -289,6 +323,16 @@ struct SwiftLinker: Node {
             if inputs.requirements.cxxRuntime {
                 arguments.append("-lc++")
             }
+            // A binary target's framework, linked by name from the merged trees and found
+            // at run time where whoever lays the product out puts it (B-77).
+            let frameworkNames = inputs.frameworkNames
+            if !frameworkNames.isEmpty {
+                arguments.append(contentsOf: ["-F", Self.frameworksFolder])
+                arguments.append(contentsOf: frameworkNames.flatMap { ["-framework", $0] })
+                if let runpath = inputs.configuration.frameworksRunpath {
+                    arguments.append(contentsOf: ["-Xlinker", "-rpath", "-Xlinker", runpath])
+                }
+            }
         }
 
         arguments.append("-o"); arguments.append(outputName)
@@ -300,6 +344,9 @@ struct SwiftLinker: Node {
         var inputFiles: [FileNameAndContent] = []
         inputFiles.append(contentsOf: inputs.objectFiles)
         inputFiles.append(contentsOf: inputs.libraryFiles)
+        if inputs.configuration.linkage != .staticArchive {
+            inputFiles.append(contentsOf: inputs.frameworkFiles)
+        }
 
         let result = try tool.execute(
             arguments: arguments,

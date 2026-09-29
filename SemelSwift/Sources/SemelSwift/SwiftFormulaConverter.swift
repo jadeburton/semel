@@ -58,6 +58,16 @@ struct SwiftFormulaConverter: Node {
     /// asked for only when a manifest has a linker setting conditional on a platform: its
     /// `sdk` is the platform being built, which says whether the setting holds (B-55).
     static let linkerConfiguration    = "linkerConfiguration"
+    /// The folders a binary target's `.xcframework` is found through, keyed by path (B-77):
+    /// a `path:` one's own folder, or for a downloaded or zipped one the package folder,
+    /// its `semel-artifacts` and the target's folder in that, each asked for only once the
+    /// one above lists it — a folder asked for under a vendored package that is not there
+    /// would be a ghost its content root folds, failing the lock (B-133).
+    static let binaryArtifactFolders  = "binaryArtifactFolders"
+
+    /// The folder in a package where `semel-swift prepare` puts a binary target's artifact,
+    /// one folder per target.
+    static let artifactsFolderName    = DependencyLock.artifactsFolderName
 
     /// The clang nodes a C target is built through. Named rather than imported: this
     /// package does not depend on SemelClang, and a formula names a node by type name.
@@ -88,8 +98,12 @@ struct SwiftFormulaConverter: Node {
     /// compiled, and the linker's settings are demanded when a linker setting is
     /// conditional on a platform (B-55); at 11, a C target reaches Swift as a header tree on
     /// `moduleTrees` with the module map SwiftPM would write when it has none, and a C
-    /// target with Objective-C is preprocessed and compiled with modules and ARC (B-55, B-77).
-    public static let implementationVersion = 11
+    /// target with Objective-C is preprocessed and compiled with modules and ARC (B-55, B-77);
+    /// at 12, a binary target's `.xcframework` is found through `binaryArtifactFolders`,
+    /// its slice chosen by an `XCFrameworkSliceSelector`, and every product has a
+    /// `frameworks_<Product>()` func, a product vending only binary targets its funcs and
+    /// no linker (B-77).
+    public static let implementationVersion = 12
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -129,6 +143,7 @@ struct SwiftFormulaConverter: Node {
             .dynamic(dependencyLocks),
             .dynamic(dependencyContentRoots),
             .dynamic(linkerConfiguration),
+            .dynamic(binaryArtifactFolders),
         ],
         outputPorts: [formulaOutput, infoLog],
         // A lock nobody wrote is a state the converter reads — it says so in a notice and
@@ -308,6 +323,16 @@ struct SwiftFormulaConverter: Node {
         }
         demands.targetFolders = targetFolderSpecs
 
+        // ── every binary target's .xcframework (B-77) ─────────────────────────
+        // Asked for with the target folders, one level a pass, only as far as what has
+        // arrived lists.
+        let binaryWalk = BinaryArtifactWalk(
+            packages: [(rootPackageFolder, rootManifest)] + availableManifests.sorted(by: { $0.key < $1.key }).map { ($0.key, $0.value) },
+            rootFolderManifest: folderManifest,
+            arrived: Dictionary(FolderTreeWalk.manifests(in: input, port: Self.binaryArtifactFolders).map { ($0.key, $0.manifest) },
+                                uniquingKeysWith: { first, _ in first }))
+        demands.binaryArtifactFolders = binaryWalk.specs
+
         var targetFolderManifests: [String: FolderManifest] = [:]
         for (folder, nodeValue) in input.inputValues[Self.targetFolders] ?? [:] {
             guard let json = try? nodeValue.expectValue().resolveAsString(),
@@ -322,6 +347,12 @@ struct SwiftFormulaConverter: Node {
             return try pendingOutput(
                 reason: "SwiftFormulaConverter: waiting for \(missingFolders.count) target folder(s):\n"
                       + missingFolders.map { "  \($0)" }.joined(separator: "\n"),
+                demands: demands)
+        }
+        guard binaryWalk.waiting.isEmpty else {
+            return try pendingOutput(
+                reason: "SwiftFormulaConverter: walking \(binaryWalk.waiting.count) folder(s) for binary targets' artifacts:\n"
+                      + binaryWalk.waiting.map { "  \($0)" }.joined(separator: "\n"),
                 demands: demands)
         }
 
@@ -405,6 +436,7 @@ struct SwiftFormulaConverter: Node {
                                           externalManifests: availableManifests,
                                           rootPackageFolder: rootPackageFolder,
                                           platform: platform,
+                                          binaryArtifacts: binaryWalk.locations,
                                           clangInfo: { target, folder in
                                               PackageClangTarget(targetFolder: folder, moduleName: target.moduleName,
                                                                  rules: target.clangRules, manifests: folderManifests)
@@ -438,6 +470,7 @@ struct SwiftFormulaConverter: Node {
         var targetFolders:         [String: GraphSpecNode] = [:]
         var targetSubfolders:      [String: GraphSpecNode] = [:]
         var linkerConfiguration:   [String: GraphSpecNode] = [:]
+        var binaryArtifactFolders: [String: GraphSpecNode] = [:]
 
         /// The specs by port, with the node's own package wires, which a formula naming
         /// the package by `path` stands for.
@@ -448,7 +481,8 @@ struct SwiftFormulaConverter: Node {
                                 SwiftFormulaConverter.targetFolders:          targetFolders,
                                 SwiftFormulaConverter.targetSubfolders:       targetSubfolders,
                                 SwiftFormulaConverter.awaitedPackageFolders:  awaitedPackageFolders,
-                                SwiftFormulaConverter.linkerConfiguration:    linkerConfiguration]) { _, new in new }
+                                SwiftFormulaConverter.linkerConfiguration:    linkerConfiguration,
+                                SwiftFormulaConverter.binaryArtifactFolders:  binaryArtifactFolders]) { _, new in new }
         }
     }
 
@@ -485,7 +519,7 @@ struct SwiftFormulaConverter: Node {
              + "the root's Dependencies folder."
     }
 
-    // MARK: - What a package declares that is not built
+    // MARK: - Binary targets (B-77, B-133)
 
     /// A binary target's artifact, as its manifest declares it.
     enum BinaryArtifact: Equatable {
@@ -494,24 +528,137 @@ struct SwiftFormulaConverter: Node {
         /// `.binaryTarget(path:)`: an `.xcframework` folder or a zip of one, relative to
         /// the package.
         case local(path: String)
+
+        /// Whether the artifact reaches the build through the package's `semel-artifacts`
+        /// folder — downloaded, or a zip unzipped — rather than being the folder it names.
+        var isVendoredIntoArtifactsFolder: Bool {
+            switch self {
+            case .remote:             return true
+            case .local(let path):    return path.hasSuffix(".zip")
+            }
+        }
     }
 
-    /// A binary target some product reaches, which the conversion does not build.
+    /// Where a binary target's `.xcframework` is, as the folders that have arrived say.
+    enum BinaryArtifactLocation: Equatable {
+        /// The `.xcframework` folder, which the slice selector reads.
+        case xcframework(String)
+        /// Nothing is where the artifact should be: the folder named.
+        case missing(String)
+        /// Something is there, and it is not an `.xcframework` — an `.artifactbundle`, an
+        /// executable for a plugin — or the manifest names something that could not be
+        /// one: the path, and what the folder holds when there is a folder.
+        case notAnXCFramework(String, contents: [String])
+    }
+
+    /// The folders every binary target's `.xcframework` is found through, one level a pass,
+    /// and where each one is once the walk is done, keyed `<package folder>/<target>`.
+    ///
+    /// A `path:` `.xcframework` is asked for directly: the manifest names it, as it names a
+    /// target's source folder. A downloaded or zipped one is in `semel-artifacts/<Target>`,
+    /// where `prepare` put it or did not; the walk asks for the package folder, then for
+    /// `semel-artifacts` only if the package lists it, then for the target's folder only if
+    /// that lists it, so nothing it asks for under a vendored package is a ghost that package's
+    /// content root would fold (B-133).
+    private struct BinaryArtifactWalk {
+        var specs: [String: GraphSpecNode] = [:]
+        /// The folders asked for whose manifests have not arrived, sorted.
+        var waiting: [String] = []
+        var locations: [String: BinaryArtifactLocation] = [:]
+
+        init(packages: [(folder: String, manifest: SPMManifest)], rootFolderManifest: FolderManifest,
+             arrived: [String: FolderManifest]) {
+            func lists(_ manifest: FolderManifest, folder name: String) -> Bool {
+                manifest.entries.contains { $0.isFolder && $0.isPinned && $0.name == name }
+            }
+            var unanswered = Set<String>()
+            for (packageFolder, manifest) in packages {
+                for target in manifest.targets {
+                    guard let artifact = target.binaryArtifact else {
+                        continue
+                    }
+                    let key = "\(packageFolder)/\(target.name)"
+                    if case .local(let path) = artifact, !artifact.isVendoredIntoArtifactsFolder {
+                        let folder = target.folder(in: packageFolder)
+                        guard path.hasSuffix(".xcframework") else {
+                            locations[key] = .notAnXCFramework(folder, contents: [])
+                            continue
+                        }
+                        specs[folder] = .folderManifest(at: folder)
+                        guard let xcframework = arrived[folder] else {
+                            unanswered.insert(folder)
+                            continue
+                        }
+                        locations[key] = xcframework.entries.contains(where: \.isPinned) ? .xcframework(folder) : .missing(folder)
+                        continue
+                    }
+
+                    let artifactsFolder = "\(packageFolder)/\(SwiftFormulaConverter.artifactsFolderName)"
+                    let targetFolder    = "\(artifactsFolder)/\(target.name)"
+                    var packageManifest: FolderManifest? = rootFolderManifest
+                    if packageFolder != rootFolderManifest.baseFolderPath {
+                        specs[packageFolder] = .folderManifest(at: packageFolder)
+                        packageManifest = arrived[packageFolder]
+                    }
+                    guard let packageManifest else {
+                        unanswered.insert(packageFolder)
+                        continue
+                    }
+                    guard lists(packageManifest, folder: SwiftFormulaConverter.artifactsFolderName) else {
+                        locations[key] = .missing(targetFolder)
+                        continue
+                    }
+                    specs[artifactsFolder] = .folderManifest(at: artifactsFolder)
+                    guard let artifactsManifest = arrived[artifactsFolder] else {
+                        unanswered.insert(artifactsFolder)
+                        continue
+                    }
+                    guard lists(artifactsManifest, folder: target.name) else {
+                        locations[key] = .missing(targetFolder)
+                        continue
+                    }
+                    specs[targetFolder] = .folderManifest(at: targetFolder)
+                    guard let targetManifest = arrived[targetFolder] else {
+                        unanswered.insert(targetFolder)
+                        continue
+                    }
+                    let held = targetManifest.entries.filter(\.isPinned).map(\.name).sorted()
+                    if let xcframework = targetManifest.entries.filter({ $0.isFolder && $0.isPinned && $0.name.hasSuffix(".xcframework") })
+                                                               .map(\.name).sorted().first {
+                        locations[key] = .xcframework("\(targetFolder)/\(xcframework)")
+                    } else if held.isEmpty {
+                        locations[key] = .missing(targetFolder)
+                    } else {
+                        locations[key] = .notAnXCFramework(targetFolder, contents: held)
+                    }
+                }
+            }
+            waiting = unanswered.sorted()
+        }
+    }
+
+    /// A binary target some product reaches whose artifact the conversion cannot use.
     struct UnbuiltBinaryTarget: Equatable {
         let package:       String
         let packageFolder: String
         let target:        String
         let artifact:      BinaryArtifact
+        /// Why: nothing where the artifact should be, or not an `.xcframework`.
+        let location:      BinaryArtifactLocation
         /// The products of the converted package that reach it, sorted.
         let products:      [String]
     }
 
     /// Why a conversion that has every input still makes no formula, by case.
     enum SwiftPackageConversionError: Error, Equatable, CustomStringConvertible {
-        /// A product reaches a binary target (B-133). The formula could leave it out, but
-        /// what links the product would then fail naming a symbol, which explains nothing;
-        /// so the conversion stops and names the target instead. A binary target no product
-        /// reaches is not needed and says nothing.
+        /// A product reaches a binary target whose artifact is not an `.xcframework` that is
+        /// there. The formula could leave it out, but what links the product would then fail
+        /// naming a symbol, which explains nothing; so the conversion stops and names the
+        /// target instead. A binary target no product reaches is not needed and says nothing.
+        ///
+        /// What is built is an `.xcframework`, by `url:` or by `path:`, zipped or not (B-77).
+        /// What still is not (B-133): an artifact that is anything else — an
+        /// `.artifactbundle`, which holds executables for plugins rather than a library.
         case binaryTargetsNotBuilt([UnbuiltBinaryTarget])
 
         var description: String {
@@ -519,15 +666,30 @@ struct SwiftFormulaConverter: Node {
             case .binaryTargetsNotBuilt(let targets):
                 return targets.map { target in
                     let products = target.products.joined(separator: ", ")
-                    let artifact: String
-                    switch target.artifact {
-                    case .remote(let url, _):
-                        artifact = "an artifact downloaded from \(url), which `semel-swift prepare` does not vendor yet"
-                    case .local(let path):
-                        artifact = "\(target.packageFolder)/\(path), which nothing here links or embeds yet"
+                    let named = "binary target \(target.target) of package \(target.package)"
+                    let reaching = "so what reaches it cannot be built either — product(s) \(products)"
+                    switch target.location {
+                    case .missing(let folder):
+                        let origin: String
+                        switch target.artifact {
+                        case .remote(let url, _):
+                            origin = "the artifact downloaded from \(url) is not vendored: nothing is at \(folder). "
+                                   + "This build system never fetches anything; `semel-swift prepare` copies what "
+                                   + "SwiftPM downloaded and checked there"
+                        case .local(let path) where path.hasSuffix(".zip"):
+                            origin = "\(target.packageFolder)/\(path) is not unzipped: nothing is at \(folder). "
+                                   + "`semel-swift prepare` unzips it there"
+                        case .local:
+                            origin = "nothing is at \(folder), the path its manifest names"
+                        }
+                        return "\(named): \(origin); \(reaching)"
+                    case .notAnXCFramework(let path, let contents):
+                        let held = contents.isEmpty ? "" : ", which holds \(contents.joined(separator: ", "))"
+                        return "\(named) is not built (B-133): its artifact \(path)\(held) is not an .xcframework, "
+                             + "and an .xcframework is the only binary artifact linked here; \(reaching)"
+                    case .xcframework:
+                        return "\(named)"
                     }
-                    return "binary target \(target.target) of package \(target.package) is not built (B-133): "
-                         + "it is \(artifact), so what reaches it cannot be built either — product(s) \(products)"
                 }.joined(separator: "\n")
             }
         }
@@ -1196,6 +1358,7 @@ struct SwiftFormulaConverter: Node {
                                  externalManifests: [String: SPMManifest],
                                  rootPackageFolder: String,
                                  platform: String?,
+                                 binaryArtifacts: [String: BinaryArtifactLocation] = [:],
                                  clangInfo: (SPMTarget, String) -> PackageClangTarget?,
                                  resources: (SPMTarget, String) -> [PackageResource] = { _, _ in [] }) throws -> String {
         // Every lookup below walks the external packages in one fixed order. Dictionary
@@ -1246,16 +1409,49 @@ struct SwiftFormulaConverter: Node {
 
         var blocks: [String] = []
         var emittedFuncs = Set<String>()
-        // Every binary target a product reaches, by its folder, with the products reaching it.
-        var binaryTargets: [String: (target: SPMTarget, reachingProducts: Set<String>)] = [:]
+        // Every binary target a product reaches whose artifact cannot be used, by its key,
+        // with the products reaching it.
+        var unbuiltBinaryTargets: [String: (target: SPMTarget, location: BinaryArtifactLocation, reachingProducts: Set<String>)] = [:]
+
+        // A binary target's `.xcframework`, when it is one that is there (B-77).
+        func binaryKey(_ target: SPMTarget) -> String {
+            "\(target.overridePackageFolder ?? rootPackageFolder)/\(target.name)"
+        }
+        func binaryLocation(_ target: SPMTarget) -> BinaryArtifactLocation {
+            binaryArtifacts[binaryKey(target)] ?? .missing(target.folder(in: target.overridePackageFolder ?? rootPackageFolder))
+        }
+        func xcframework(of target: SPMTarget) -> String? {
+            guard case .xcframework(let folder) = binaryLocation(target) else {
+                return nil
+            }
+            return folder
+        }
+        // The binary targets reachable from `root` whose `.xcframework` is there, which is
+        // what a compile or a link of what reaches them is given.
+        func usableBinaryTargets(from root: SPMTarget) -> [SPMTarget] {
+            collectReachableBinaryTargets(root: root, lookupAll: allTargetsNamed).filter { xcframework(of: $0) != nil }
+        }
 
         for product in productsToBuild(in: rootManifest) {
 
+            // Every binary target the product reaches, once, in the order met: each has its
+            // slice chosen by a node of its own, named before anything that uses it.
+            var binaryTargets: [SPMTarget] = []
+            var collectedBinary = Set<String>()
             for productTargetName in product.targets {
                 for rootTarget in allTargetsNamed(productTargetName) {
                     for target in collectReachableBinaryTargets(root: rootTarget, lookupAll: allTargetsNamed) {
-                        let key = "\(target.overridePackageFolder ?? rootPackageFolder)/\(target.name)"
-                        binaryTargets[key, default: (target, [])].reachingProducts.insert(product.name)
+                        let key = binaryKey(target)
+                        guard let xcframework = xcframework(of: target) else {
+                            unbuiltBinaryTargets[key, default: (target, binaryLocation(target), [])].reachingProducts.insert(product.name)
+                            continue
+                        }
+                        guard collectedBinary.insert(key).inserted else { continue }
+                        binaryTargets.append(target)
+                        let fn = sliceFuncName(for: target.name)
+                        if emittedFuncs.insert(fn).inserted {
+                            blocks.append(sliceFuncDef(target: target, xcframework: xcframework, rootPackageFolder: rootPackageFolder))
+                        }
                     }
                 }
             }
@@ -1291,7 +1487,10 @@ struct SwiftFormulaConverter: Node {
             // library vends nothing but a .systemLibrary — has no object files to link.
             // Emitting a SwiftLinker for it anyway leaves its required `input` port
             // unwired, which fails the entire ProjectBuilder rather than just that product.
-            guard !allTargets.isEmpty || !clangTargets.isEmpty else { continue }
+            // One vending only binary targets — Sparkle's — has no linker either, but its
+            // funcs are what an app links it by, so they are written (B-77).
+            let compiles = !allTargets.isEmpty || !clangTargets.isEmpty
+            guard compiles || !binaryTargets.isEmpty else { continue }
 
             // Each C target's headers as the tree a Swift importer takes, before the compilers
             // that name it (B-55).
@@ -1307,7 +1506,8 @@ struct SwiftFormulaConverter: Node {
                 guard !emittedFuncs.contains(fn) else { continue }
                 blocks.append(buildFuncDef(target: target,
                                            packageFolder: rootPackageFolder,
-                                           lookupAll: allTargetsNamed))
+                                           lookupAll: allTargetsNamed,
+                                           binaryTargets: usableBinaryTargets(from: target)))
                 emittedFuncs.insert(fn)
             }
 
@@ -1354,11 +1554,18 @@ struct SwiftFormulaConverter: Node {
                 case .library(.static), .library(.automatic): (.staticArchive,  "lib\(product.name).a")
                 case .executable, .other:                    (.executable,     product.name)
             }
+            // A linked product finds a binary target's framework beside itself, where
+            // SwiftPM puts one for a product it builds (B-77). An archive is not linked.
+            let linksBinaryTargets = !binaryTargets.isEmpty && linkage != .staticArchive
+            var linkerLiterals = ["linkage":    linkage.rawValue,
+                                  "outputName": outputName]
+            if linksBinaryTargets {
+                linkerLiterals[SwiftLinkerConfiguration.frameworksRunpathKey] = "@loader_path"
+            }
             let linkerConfig = Self.configurationExpression(
                 namespace: SwiftLinkerConfiguration.settingNamespace,
                 packageFolder: buildRoot(defaultingTo: rootPackageFolder),
-                literals: ["linkage":    linkage.rawValue,
-                           "outputName": outputName])
+                literals: linkerLiterals)
 
             // One object-file wire per compiled Swift target (all transitive deps
             // included), and one object per source file of every C target reached: the
@@ -1409,6 +1616,21 @@ struct SwiftFormulaConverter: Node {
                 linkerArgs += ",\n        linkRequirements: ['\(product.name)': \(requirementsFunc)().output]"
             }
 
+            // Every binary target's slice the product reaches, as a tree an app embeds and
+            // links (B-77): defined for every product, empty or not, as `bundles_P()` is, so
+            // an app names it without knowing. A static library slice is not in it — its
+            // archive goes with the product's objects, and nothing embeds it.
+            let frameworksFunc = FormulaIdentifier.frameworksFunc(forProduct: product.name)
+            let frameworkWires = binaryTargets.map { "        '\($0.name)': \(sliceFuncName(for: $0.name))().frameworks" }
+            blocks.append(
+                "func \(frameworksFunc)() =\n" +
+                "    TreeMerger(input: [" + (frameworkWires.isEmpty ? "" : "\n" + frameworkWires.joined(separator: ",\n") + "\n    ") + "]).files")
+            let libraryWires = binaryTargets.map { "'\($0.name)': \(sliceFuncName(for: $0.name))().libraries" }
+            if linksBinaryTargets {
+                linkerArgs += ",\n        objectTrees: [\n" + libraryWires.map { "            " + $0 }.joined(separator: ",\n") + "\n        ]"
+                linkerArgs += ",\n        frameworkTrees: ['\(product.name)': \(frameworksFunc)().files]"
+            }
+
             // What another formula needs to consume this product — an app that imports and
             // links it — as two trees it can name without knowing what is behind them:
             // every transitive target's module, and every object the product links. The
@@ -1438,18 +1660,39 @@ struct SwiftFormulaConverter: Node {
             for clangTarget in clangTargets where wiredModuleMaps.insert(clangTarget.name).inserted {
                 moduleMapTrees.append(headerTreeWire(for: clangTarget.name))
             }
-            let swiftModulesTree = "'swift': TreeBuilder(input: [\n" + moduleWires.joined(separator: ",\n") + "\n        ]).files"
+            // A static library slice's headers, for whoever imports it; a framework carries
+            // its own and its tree here is empty.
+            for target in binaryTargets where wiredModuleMaps.insert(target.name).inserted {
+                moduleMapTrees.append(binaryHeadersWire(for: target.name))
+            }
+            let swiftModulesTree = moduleWires.isEmpty
+                ? "'swift': TreeBuilder(input: []).files"
+                : "'swift': TreeBuilder(input: [\n" + moduleWires.joined(separator: ",\n") + "\n        ]).files"
             blocks.append(
                 "func \(FormulaIdentifier.modulesFunc(forProduct: product.name))() =\n" +
                 "    TreeMerger(input: [\n" +
                 "        " + ([swiftModulesTree] + moduleMapTrees).joined(separator: ",\n        ") + "\n" +
                 "    ]).files")
-            blocks.append(
-                "func \(FormulaIdentifier.objectsFunc(forProduct: product.name))() =\n" +
-                "    TreeBuilder(input: [\n" +
-                objectWires.joined(separator: ",\n") + "\n" +
-                "    ]).files")
+            if binaryTargets.isEmpty {
+                blocks.append(
+                    "func \(FormulaIdentifier.objectsFunc(forProduct: product.name))() =\n" +
+                    "    TreeBuilder(input: [\n" +
+                    objectWires.joined(separator: ",\n") + "\n" +
+                    "    ]).files")
+            } else {
+                // With every static library slice's archive beside the objects, which an app
+                // links as it links them.
+                let objectsTree = objectWires.isEmpty
+                    ? "'objects': TreeBuilder(input: []).files"
+                    : "'objects': TreeBuilder(input: [\n" + objectWires.map { "    " + $0 }.joined(separator: ",\n") + "\n        ]).files"
+                blocks.append(
+                    "func \(FormulaIdentifier.objectsFunc(forProduct: product.name))() =\n" +
+                    "    TreeMerger(input: [\n" +
+                    "        " + ([objectsTree] + libraryWires).joined(separator: ",\n        ") + "\n" +
+                    "    ]).files")
+            }
 
+            guard compiles else { continue }
             let block =
                 "product '\(outputName)' =\n" +
                 "    SwiftLinker(\n" +
@@ -1458,13 +1701,14 @@ struct SwiftFormulaConverter: Node {
             blocks.append(block)
         }
 
-        guard binaryTargets.isEmpty else {
-            throw SwiftPackageConversionError.binaryTargetsNotBuilt(binaryTargets.sorted { $0.key < $1.key }.compactMap { _, reached in
+        guard unbuiltBinaryTargets.isEmpty else {
+            throw SwiftPackageConversionError.binaryTargetsNotBuilt(unbuiltBinaryTargets.sorted { $0.key < $1.key }.compactMap { _, reached in
                 reached.target.binaryArtifact.map { artifact in
                     UnbuiltBinaryTarget(package:       reached.target.packageName ?? rootManifest.name,
                                         packageFolder: reached.target.overridePackageFolder ?? rootPackageFolder,
                                         target:        reached.target.name,
                                         artifact:      artifact,
+                                        location:      reached.location,
                                         products:      reached.reachingProducts.sorted())
                 }
             })
@@ -1515,8 +1759,8 @@ struct SwiftFormulaConverter: Node {
             // sources.  Skip them here; buildFuncDef handles them separately via
             // inputModuleMapFolders when they appear as a dependency. A C target has
             // none either: its objects come through the clang nodes and its headers
-            // reach Swift as a tree on moduleTrees. Nor has a
-            // binary target, which the conversion names rather than builds (B-133).
+            // reach Swift as a tree on moduleTrees. Nor has a binary target, whose slice
+            // reaches the compile and the link as trees of its own (B-77).
             guard !target.isSystemLibrary, !target.isClangTarget, !target.isBinary else {
                 return
             }
@@ -1653,6 +1897,34 @@ struct SwiftFormulaConverter: Node {
     /// A C target's header tree on a module-tree port, keyed by the target's name.
     private func headerTreeWire(for targetName: String) -> String {
         "'\(targetName)': \(headerTreeFuncName(for: targetName))().files"
+    }
+
+    private func sliceFuncName(for targetName: String) -> String {
+        "slice\(sanitizedIdentifier(targetName))"
+    }
+
+    /// A binary target's static library headers on a module-tree port, under the target's
+    /// name as a C target's are; empty for a framework slice.
+    private func binaryHeadersWire(for targetName: String) -> String {
+        "'\(targetName)': TreeMerger(under: '\(targetName)', input: ['headers': \(sliceFuncName(for: targetName))().headers]).files"
+    }
+
+    // MARK: - Binary targets (B-77)
+
+    /// The node choosing one binary target's slice for the platform being built, as a func
+    /// the product funcs and the compilers of what reaches it name a port of. The platform
+    /// is the Swift linker's settings' — the SDK and the triple the product is linked for —
+    /// so the formula says nothing about it and one formula serves every platform.
+    private func sliceFuncDef(target: SPMTarget, xcframework: String, rootPackageFolder: String) -> String {
+        let configuration = Self.configurationExpression(namespace: SwiftLinkerConfiguration.settingNamespace,
+                                                         packageFolder: buildRoot(defaultingTo: rootPackageFolder),
+                                                         literals: [:])
+        return "func \(sliceFuncName(for: target.name))() =\n" +
+               "    XCFrameworkSliceSelector(\n" +
+               "        path: '\(xcframework)',\n" +
+               "        configuration: ['config': \(configuration)],\n" +
+               "        infoPlist: ['Info.plist': StaticFile(path: '\(xcframework)/Info.plist').output]\n" +
+               "    )"
     }
 
     private func sanitizedIdentifier(_ name: String) -> String {
@@ -1811,7 +2083,8 @@ struct SwiftFormulaConverter: Node {
     // the root from which `sourcesRelativePath` is resolved.
     private func buildFuncDef(target: SPMTarget,
                               packageFolder: String,
-                              lookupAll: (String) -> [SPMTarget]) -> String {
+                              lookupAll: (String) -> [SPMTarget],
+                              binaryTargets: [SPMTarget] = []) -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = target.folder(in: pkgRoot)
         // moduleName is what makes a target itself, and a config file must not be able to
@@ -1879,8 +2152,15 @@ struct SwiftFormulaConverter: Node {
         // map in it its own or the one SwiftPM would write (B-54, B-55): the same value a
         // product's module tree carries it in, so an app importing the product and a target
         // beside it in the package import one module.
+        // A binary target reached the same way is its slice (B-77): a framework on the
+        // framework search path, a static library's headers on the import path.
         let moduleTreeWires = collectTransitiveClangTargets(root: target, lookupAll: lookupAll).map {
             "            " + headerTreeWire(for: $0.name)
+        } + binaryTargets.map {
+            "            " + binaryHeadersWire(for: $0.name)
+        }
+        let frameworkTreeWires = binaryTargets.map {
+            "            '\($0.name)': \(sliceFuncName(for: $0.name))().frameworks"
         }
 
         var args =
@@ -1891,6 +2171,9 @@ struct SwiftFormulaConverter: Node {
         }
         if !moduleTreeWires.isEmpty {
             args += ",\n    moduleTrees: [\n" + moduleTreeWires.joined(separator: ",\n") + "\n    ]"
+        }
+        if !frameworkTreeWires.isEmpty {
+            args += ",\n    frameworkTrees: [\n" + frameworkTreeWires.joined(separator: ",\n") + "\n    ]"
         }
         if !moduleMapFolderWires.isEmpty {
             args += ",\n    inputModuleMapFolders: [\n" + moduleMapFolderWires.joined(separator: ",\n") + "\n    ]"

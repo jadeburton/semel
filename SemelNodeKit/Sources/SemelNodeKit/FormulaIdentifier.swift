@@ -40,6 +40,14 @@ public enum FormulaIdentifier {
         "bundles_\(sanitized(product))"
     }
 
+    /// The func carrying the framework slice of every binary target behind a package
+    /// product, each under its own name (`Sparkle.framework/…`), as one tree (B-77): what
+    /// an app compiles and links against and embeds. Empty when the product reaches no
+    /// binary framework, so a consumer can name it without knowing.
+    public static func frameworksFunc(forProduct product: String) -> String {
+        "frameworks_\(sanitized(product))"
+    }
+
     /// The func carrying one target's resource bundle as a tree.
     public static func bundleFunc(forTarget target: String) -> String {
         "bundle_\(sanitized(target))"

@@ -19,6 +19,7 @@ public enum SemelApple {
             StringCatalogCompiler.self,
             InfoPlistBuilder.self,
             XcodeProjectConverter.self,
+            XCFrameworkSliceSelector.self,
         ])
 
         // How actool and xcstringstool are found on this machine and versioned. Declared

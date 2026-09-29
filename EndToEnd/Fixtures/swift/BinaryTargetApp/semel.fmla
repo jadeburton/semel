@@ -1,0 +1,3 @@
+// Written by semel-swift prepare. The project is the root: its converter brings every
+// package it references and builds the application and the extensions it embeds.
+include XcodeProjectConverter(path: <BinaryTargetApp.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'macosx').formula
