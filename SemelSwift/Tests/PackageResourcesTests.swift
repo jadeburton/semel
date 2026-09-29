@@ -63,6 +63,26 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         ])
     }
 
+    /// RSCore's `RSCoreResources` shape: two xibs at the target's top, nothing declared.
+    /// A xib or a storyboard is a resource by type, which SwiftPM compiles; a `.copy`
+    /// keeps one as the document it is; a nib is copied, being compiled already.
+    func test_findsInterfaceBuilderDocumentsByTypeForIBTool() {
+        let manifests: [String: FolderManifest] = [
+            targetFolder:             manifest(targetFolder, files: ["Resources.swift", "WebViewWindow.xib", "Legacy.nib"], folders: ["Windows"]),
+            "\(targetFolder)/Windows": manifest("\(targetFolder)/Windows", files: ["IndeterminateProgressWindow.xib", "Main.storyboard", "Kept.xib"]),
+        ]
+        let rules = PackageResources.Rules(declared: [.init(path: "Windows/Kept.xib", isCopy: true)])
+        let found = PackageResources.detect(rules: rules, targetFolder: targetFolder, manifests: manifests)
+
+        XCTAssertEqual(found, [
+            PackageResource(kind: .file, path: "Legacy.nib", bundlePath: "Legacy.nib"),
+            PackageResource(kind: .interfaceBuilder, path: "WebViewWindow.xib", bundlePath: "WebViewWindow.xib"),
+            PackageResource(kind: .interfaceBuilder, path: "Windows/IndeterminateProgressWindow.xib", bundlePath: "IndeterminateProgressWindow.xib"),
+            PackageResource(kind: .file, path: "Windows/Kept.xib", bundlePath: "Kept.xib"),
+            PackageResource(kind: .interfaceBuilder, path: "Windows/Main.storyboard", bundlePath: "Main.storyboard"),
+        ])
+    }
+
     func test_anExcludedPathIsNotAResource() {
         let rules = PackageResources.Rules(exclude: ["Resources"])
         let found = PackageResources.detect(rules: rules, targetFolder: targetFolder, manifests: foodTruckKit)
@@ -147,6 +167,24 @@ final class PackageResourcesTests: SemelSwiftTestCase {
         XCTAssertTrue(formula.contains("catalogs: ['Assets.xcassets': Folder(path: 'input:/pkg/Sources/Lib/Assets.xcassets').manifest]).files"), formula)
         XCTAssertTrue(formula.contains("FolderTreeBuilder(under: 'en.lproj', folder: ['folder': Folder(path: 'input:/pkg/Sources/Lib/Resources/en.lproj').manifest]).files"), formula)
         XCTAssertTrue(formula.contains("func bundles_pkg() =\n    TreeMerger(input: [\n        'Lib': bundle_Lib().files\n    ]).files"), formula)
+    }
+
+    /// A xib is compiled by ibtool into the target's bundle, keyed by where it lands —
+    /// flattened, as a processed file is — with the platform's settings from the root's
+    /// config and the target's module for the classes it names (B-77 map item 17).
+    func test_aXibIsCompiledIntoTheBundleByIBTool() throws {
+        let rsCoreResources = [targetFolder: manifest(targetFolder, files: ["Resources.swift"], folders: ["Windows"]),
+                               "\(targetFolder)/Windows": manifest("\(targetFolder)/Windows", files: ["WebViewWindow.xib"])]
+        let formula = try formula(manifests: rsCoreResources)
+
+        XCTAssertTrue(formula.contains("func bundle_Lib() =\n    TreeMerger(under: 'pkg_Lib.bundle', input: ["), formula)
+        XCTAssertTrue(formula.contains("IBToolCompiler(configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'apple.ibToolCompiler'"),
+                      formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(module: 'Lib').output"), formula)
+        XCTAssertTrue(formula.contains("document: ['WebViewWindow.xib': StaticFile(path: 'input:/pkg/Sources/Lib/Windows/WebViewWindow.xib').output]).files"),
+                      formula)
+        XCTAssertFalse(formula.contains("'WebViewWindow.xib': StaticFile(path: 'input:/pkg/Sources/Lib/Windows/WebViewWindow.xib').output\n"),
+                       "compiled, not copied: \(formula)")
     }
 
     /// The bundle names the copied file where it is, not through a `..` (B-125).

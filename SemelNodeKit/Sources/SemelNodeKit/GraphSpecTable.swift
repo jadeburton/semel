@@ -162,14 +162,54 @@ extension GraphSpecTable {
     }
 }
 
-/// The fold's working state: the rows written so far.
+/// The fold's working state: the rows written so far, and the identity of every subtree
+/// already folded.
 private struct GraphSpecFolder {
     var rows: [String: GraphSpecTable.Row] = [:]
+    private var folded: [FoldedSubtree: String] = [:]
+
+    /// A subtree as a key: hashed by its own node alone and compared whole, so a subtree
+    /// met again is found without hashing all of it. A tree product's builder demands one
+    /// wire per file of the tree, each over the whole expression behind it — a signed Mac
+    /// bundle's is the app's entire graph, 369 times over for NetNewsWire (B-77), where
+    /// folding each occurrence again had one pass fold for over half an hour. The
+    /// copies share their storage, which `==` on an array checks first, so meeting one
+    /// again costs a lookup; an equal subtree in storage of its own is compared, which
+    /// costs less than folding it.
+    private struct FoldedSubtree: Hashable {
+        let node: GraphSpecNode
+
+        static func == (lhs: FoldedSubtree, rhs: FoldedSubtree) -> Bool {
+            lhs.node == rhs.node
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(node.typeName)
+            hasher.combine(node.outputPort)
+            hasher.combine(node.properties)
+            for port in node.inputs {
+                hasher.combine(port.portName)
+                for wire in port.wires {
+                    hasher.combine(wire.name)
+                }
+            }
+        }
+    }
 
     /// The identity of `specNode`, with its row and every row below it written. The same
     /// hash `GraphSpecNode.identity()` takes, reached by the same recursion, so the key a
     /// row is filed under is the identity the graph stores for the node.
     mutating func fold(_ specNode: GraphSpecNode) throws -> String {
+        let key = FoldedSubtree(node: specNode)
+        if let identity = folded[key] {
+            return identity
+        }
+        let identity = try foldAnew(specNode)
+        folded[key] = identity
+        return identity
+    }
+
+    private mutating func foldAnew(_ specNode: GraphSpecNode) throws -> String {
         guard let kind = try? TypeRegistry.kind(forTypeName: specNode.typeName) else {
             throw GraphSpecIdentityError.unknownTypeName(specNode.typeName)
         }

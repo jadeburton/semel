@@ -81,6 +81,7 @@ struct SwiftFormulaConverter: Node {
     /// names are spelled here and `SemelApple`'s tests hold them to these (B-77).
     static let assetCatalogCompilerNamespace  = "apple.assetCatalogCompiler"
     static let stringCatalogCompilerNamespace = "apple.stringCatalogCompiler"
+    static let ibToolCompilerNamespace        = "apple.ibToolCompiler"
 
     /// Emitted formula text changed for the same inputs: every product gained a
     /// `bundles_<Product>()` func and a target with resources a bundle (B-77); at 3, a
@@ -107,8 +108,10 @@ struct SwiftFormulaConverter: Node {
     /// no linker (B-77); at 13, a target's upcoming and experimental features, `.define`s
     /// and `unsafeFlags` reach its compiler, a `swiftSettings` entry conditional on a
     /// platform is decided for the one being built, and a target declaring no language
-    /// mode compiles in its package's, from the tools version or `swiftLanguageModes` (B-77).
-    public static let implementationVersion = 13
+    /// mode compiles in its package's, from the tools version or `swiftLanguageModes` (B-77);
+    /// at 14, a xib or a storyboard among a target's resources is compiled into its bundle
+    /// by ibtool rather than copied (B-77).
+    public static let implementationVersion = 14
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -2364,7 +2367,8 @@ struct SwiftFormulaConverter: Node {
 
     /// The func carrying one target's resource bundle as a tree, every piece under
     /// `<Package>_<Target>.bundle/` (B-77): a catalog through the asset compiler, a string
-    /// catalog through its compiler, an `.lproj` or a copied folder as the folder it is,
+    /// catalog through its compiler, a xib or a storyboard through ibtool, an `.lproj` or
+    /// a copied folder as the folder it is,
     /// and every copied file in one tree. The Apple compilers select their settings from
     /// the root's config, as the Swift tools do.
     private func resourceBundleFuncDef(target: SPMTarget, rootPackageFolder: String) -> String {
@@ -2387,6 +2391,16 @@ struct SwiftFormulaConverter: Node {
                                                                  packageFolder: configRoot, literals: [:])
                 wires.append("        'r\(index)': StringCatalogCompiler(configuration: ['config': \(configuration)], "
                            + "catalog: ['\(name)': StaticFile(path: '\(fullPath)').output]).files")
+            case .interfaceBuilder:
+                // Keyed by where the document lands, which is where ibtool writes what it
+                // compiles; the deployment target, the devices and the SDK are the
+                // platform's, from the config as the app's own documents take them, and a
+                // class the document names is looked up in this target's module.
+                let configuration = Self.configurationExpression(namespace: Self.ibToolCompilerNamespace,
+                                                                 packageFolder: configRoot,
+                                                                 literals: ["module": target.moduleName])
+                wires.append("        'r\(index)': IBToolCompiler(configuration: ['config': \(configuration)], "
+                           + "document: ['\(resource.bundlePath)': StaticFile(path: '\(fullPath)').output]).files")
             case .localizedFolder, .folder:
                 wires.append("        'r\(index)': FolderTreeBuilder(under: '\(resource.bundlePath)', "
                            + "folder: ['folder': Folder(path: '\(fullPath)').manifest]).files")

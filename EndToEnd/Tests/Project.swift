@@ -56,6 +56,12 @@ struct Project {
     /// difference a backlog item owns, with a comment saying which; the empty list is the
     /// rule.
     var mayDiffer: [String] = []
+    /// Paths, or path suffixes, whose bytes may differ only when a file `mayDiffer`
+    /// exempts differs too. A signed bundle's seal, `_CodeSignature/CodeResources`, holds
+    /// the hash of every resource, and each executable's signature the hash of the seal
+    /// (B-77), so an `Assets.car` actool writes differently (B-89) moves them with it;
+    /// when no exempt file differs, these must match like any other.
+    var mayDifferWithExempt: [String] = []
     /// Whether the run builds a third time from a copy at a mount whose name has a
     /// different length, and requires that export to match the first. False only for a
     /// project whose build is too long to run three times.

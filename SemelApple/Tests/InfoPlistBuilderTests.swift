@@ -47,6 +47,15 @@ final class InfoPlistBuilderTests: SemelAppleTestCase {
         XCTAssertNotNil((plist["CFBundleIcons"] as? [String: Any])?["CFBundlePrimaryIcon"])
     }
 
+    /// The engine stamps `projectRoot` on every cached node; it is the build's, not the
+    /// plist's, and a Mac app's Info.plist and entitlements carried it (B-77).
+    func test_theEnginesProjectRootStampIsNotAnEntry() throws {
+        let plist = try process(properties: ["CFBundleName": "Hello", "projectRoot": "input:/app"])
+
+        XCTAssertEqual(plist["CFBundleName"] as? String, "Hello")
+        XCTAssertNil(plist["projectRoot"])
+    }
+
     /// A property is both an entry and a variable, as a build setting is in Xcode, so
     /// `$(PRODUCT_NAME)` in the base resolves from the same place `CFBundleName` came from.
     func test_substitutesVariableReferencesFromTheProperties() throws {

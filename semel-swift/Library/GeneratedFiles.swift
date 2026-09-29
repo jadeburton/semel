@@ -103,16 +103,43 @@ public enum GeneratedFiles {
         }
     }
 
+    /// Whether any of a tree's targets holds a xib or a storyboard, which its package's
+    /// formula compiles with ibtool into the target's resource bundle (B-77) — read from
+    /// the target folders on disk, less what the manifest excludes, hidden folders left out.
+    public static func hasInterfaceBuilderDocuments(in summaries: [PackageSummary]) -> Bool {
+        summaries.flatMap(\.targets).contains { target in
+            let enumerator = FileManager.default.enumerator(atPath: target.folder.path)
+            while let path = enumerator?.nextObject() as? String {
+                let name = (path as NSString).lastPathComponent
+                guard !name.hasPrefix(".") else {
+                    enumerator?.skipDescendants()
+                    continue
+                }
+                let excluded = target.exclude.contains { exclusion in
+                    let trimmed = exclusion.hasSuffix("/") ? String(exclusion.dropLast()) : exclusion
+                    return path == trimmed || path.hasPrefix(trimmed + "/")
+                }
+                if !excluded, ["xib", "storyboard"].contains((name as NSString).pathExtension.lowercased()) {
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
     /// The config namespaces the formula for a project selects from: what the project
     /// converter emits for its own targets reads, and what the package formulas it
     /// includes read — the clang ones only when one of those packages has a C-family
-    /// target, as for a tree, or the application's targets have a C-family source, and
-    /// ibtool's only when they have a xib or a storyboard (B-77). Each once.
+    /// target, as for a tree, or the application's targets have a C-family source,
+    /// ibtool's only when they have a xib or a storyboard, and codesign's only for the Mac,
+    /// whose bundles are signed (B-77). Each once.
     public static func projectNamespaces(forCFamilyTargets hasCFamilyTargets: Bool,
-                                         compiledSources: XcodeProjectFacts.CompiledSources) -> [String] {
+                                         compiledSources: XcodeProjectFacts.CompiledSources,
+                                         platform: Platform) -> [String] {
         let own = XcodeProjectConverter.configNamespaces(
             compilingCFamilySources: compiledSources.hasCFamilySources,
-            compilingInterfaceBuilderDocuments: compiledSources.hasInterfaceBuilderDocuments)
+            compilingInterfaceBuilderDocuments: compiledSources.hasInterfaceBuilderDocuments,
+            signingBundles: XcodeProjectConverter.signsBundles(forSDK: platform.sdkName))
         var namespaces: [String] = []
         for namespace in own + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
         where !namespaces.contains(namespace) {

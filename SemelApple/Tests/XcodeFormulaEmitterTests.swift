@@ -101,28 +101,46 @@ final class XcodeFormulaEmitterTests: XCTestCase {
 
     // MARK: - A macOS bundle (B-77)
 
-    /// The same fixture for `macosx`: the executable under `Contents/MacOS`, the plist
-    /// directly in `Contents`, every resource under `Contents/Resources`, the extension
-    /// under `Contents/PlugIns` with a `Contents` of its own, and the identity a Mac
-    /// bundle has — the Mac as the one device, the deployment target under
-    /// `LSMinimumSystemVersion`, no `UIDeviceFamily`.
-    func test_aMacBundleHasAContentsFolderWithMacOSResourcesAndPlugIns() throws {
+    /// The fixture for `macosx`, with `extra` laid over every target's settings.
+    private func macFormula(extra: [String: String] = [:],
+                            listing: @escaping (String) -> XcodeFormulaEmitter.FolderListing? = { _ in nil }) throws -> String {
         let macBuild = XcodeFormulaEmitter.Build(root: "input:/repo", projectFolder: "input:/repo", configuration: "Debug", sdk: "macosx")
         let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(XcodeProjectTests.fixture.utf8)), build: macBuild)
-        let formula = try emitter.formula(
+        return try emitter.formula(
             settings: { target in
                 let resolved = try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "macosx",
                                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
                                                               extra: ["TARGET_NAME": target.name])
-                return XcodeBuildSettings(values: resolved.values.merging(["MACOSX_DEPLOYMENT_TARGET": "13.3"]) { _, new in new })
+                return XcodeBuildSettings(values: resolved.values.merging(extra) { _, new in new })
             },
-            listing: { $0 == "input:/repo/IceCubesApp" ? .init(files: ["App.swift", "Fonts/Mono.ttf"], folders: ["Fonts"]) : nil })
+            listing: listing)
+    }
 
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/MacOS/Ice Cubes' =\n    SwiftLinker("), formula)
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Info.plist' =\n    InfoPlistBuilder("), formula)
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Resources/Mono.ttf' = StaticFile(path: 'input:/repo/IceCubesApp/Fonts/Mono.ttf').output"), formula)
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Resources/' = TreeMerger(input: ["), formula)
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/PlugIns/IceCubesShareExtension.appex/Contents/MacOS/IceCubesShareExtension' ="), formula)
+    /// One block of the formula: the func or product that opens with `opening`.
+    private func block(_ opening: String, in formula: String) throws -> String {
+        try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix(opening) }, "no block opening \(opening) in\n\(formula)")
+    }
+
+    /// The same fixture for `macosx`: one tree, the bundle, with the executable under
+    /// `Contents/MacOS`, the plist directly in `Contents`, every resource under
+    /// `Contents/Resources`, the extension under `Contents/PlugIns` with a `Contents` of its
+    /// own, and the identity a Mac bundle has — the Mac as the one device, the deployment
+    /// target under `LSMinimumSystemVersion`, no `UIDeviceFamily`.
+    func test_aMacBundleHasAContentsFolderWithMacOSResourcesAndPlugIns() throws {
+        let formula = try macFormula(extra: ["MACOSX_DEPLOYMENT_TARGET": "13.3"],
+                                     listing: { $0 == "input:/repo/IceCubesApp" ? .init(files: ["App.swift", "Fonts/Mono.ttf"], folders: ["Fonts"]) : nil })
+
+        let bundle = try block("func bundle_IceCubesApp() = TreeMerger(input: [", in: formula)
+        XCTAssertTrue(bundle.contains("    'files': TreeBuilder(input: [\n        'Contents/MacOS/Ice Cubes': SwiftLinker(\n"), bundle)
+        XCTAssertTrue(bundle.contains("        'Contents/Info.plist': InfoPlistBuilder(\n"), bundle)
+        XCTAssertTrue(bundle.contains("        'Contents/Resources/Mono.ttf': StaticFile(path: 'input:/repo/IceCubesApp/Fonts/Mono.ttf').output"), bundle)
+        XCTAssertTrue(bundle.contains("    'Contents/Resources': TreeMerger(under: 'Contents/Resources', input: ['assets': assets_IceCubesApp().files"), bundle)
+        XCTAssertTrue(bundle.contains("    'Contents/PlugIns/IceCubesShareExtension.appex': TreeMerger(under: 'Contents/PlugIns/IceCubesShareExtension.appex', "
+                                      + "input: ['IceCubesShareExtension.appex': signed_IceCubesShareExtension().files]).files"), bundle)
+        let appex = try block("func bundle_IceCubesShareExtension() = TreeMerger(input: [", in: formula)
+        XCTAssertTrue(appex.contains("        'Contents/MacOS/IceCubesShareExtension': SwiftLinker(\n"), appex)
+        XCTAssertEqual(formula.components(separatedBy: "\nproduct ").count - 1, 1, "the signed bundle is the one product: \(formula)")
+        XCTAssertTrue(formula.hasSuffix("\nproduct 'Ice Cubes.app/' = signed_IceCubesApp().files\n"), formula)
         XCTAssertTrue(formula.contains("target: 'arm64-apple-macosx13.3'"), formula)
         XCTAssertTrue(formula.contains("platform: 'macosx'"), formula)
         XCTAssertTrue(formula.contains("targetDevices: 'mac'"), formula)
@@ -136,25 +154,79 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     /// at run time under `Contents/Frameworks`, and embedded there — named for every product,
     /// since `frameworks_P()` is empty for one that reaches none.
     func test_aMacBundleEmbedsThePackagesFrameworksUnderContentsFrameworks() throws {
-        let macBuild = XcodeFormulaEmitter.Build(root: "input:/repo", projectFolder: "input:/repo", configuration: "Debug", sdk: "macosx")
-        let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(XcodeProjectTests.fixture.utf8)), build: macBuild)
-        let formula = try emitter.formula(
-            settings: { target in
-                try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "macosx",
-                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
-                                               extra: ["TARGET_NAME": target.name])
-            },
-            listing: { _ in nil })
+        let formula = try macFormula()
 
         let trees = "frameworkTrees: [\n        'KeychainSwift': frameworks_KeychainSwift().files,\n        'Timeline': frameworks_Timeline().files\n        ]"
-        let compiler = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func compiler_IceCubesApp()") })
+        let compiler = try block("func compiler_IceCubesApp()", in: formula)
         XCTAssertTrue(compiler.contains(trees), compiler)
-        let linker = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("product 'Ice Cubes.app/Contents/MacOS/Ice Cubes'") })
-        XCTAssertTrue(linker.contains(trees), linker)
-        XCTAssertTrue(linker.contains("frameworksRunpath: '@executable_path/../Frameworks'"), linker)
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Frameworks/' = TreeMerger(input: [\n"
-                                     + "        'KeychainSwift': frameworks_KeychainSwift().files,\n"
-                                     + "        'Timeline': frameworks_Timeline().files\n    ]).files"), formula)
+        let bundle = try block("func bundle_IceCubesApp()", in: formula)
+        let linkerTrees = "frameworkTrees: [\n            'KeychainSwift': frameworks_KeychainSwift().files,\n"
+                        + "            'Timeline': frameworks_Timeline().files\n            ]"
+        XCTAssertTrue(bundle.contains(linkerTrees), bundle)
+        XCTAssertTrue(bundle.contains("frameworksRunpath: '@executable_path/../Frameworks'"), bundle)
+        XCTAssertTrue(bundle.contains("    'Contents/Frameworks': TreeMerger(under: 'Contents/Frameworks', input: [\n"
+                                      + "        'KeychainSwift': frameworks_KeychainSwift().files,\n"
+                                      + "        'Timeline': frameworks_Timeline().files\n    ]).files"), bundle)
+    }
+
+    // MARK: - Signing a Mac bundle (B-77)
+
+    /// The bundle is signed once it is whole, ad-hoc, by the signer the machine's
+    /// settings name; the extension is signed by its own signer before the app embeds it,
+    /// and the app's signer signs it again with the rest.
+    func test_aMacBundleIsSignedAdHocOnceItIsWhole() throws {
+        let formula = try macFormula()
+
+        let signer = try block("func signed_IceCubesApp() =\n    CodeSigner(", in: formula)
+        XCTAssertTrue(signer.contains("ConfigFilter(prefix: 'apple.codeSigner'"), signer)
+        XCTAssertTrue(signer.contains("SettingsLiteral(identity: '-')"), signer)
+        XCTAssertTrue(signer.contains("bundle: ['Ice Cubes.app': bundle_IceCubesApp().files]"), signer)
+        XCTAssertFalse(signer.contains("entitlements:"), "the fixture names none: \(signer)")
+        let appexSigner = try block("func signed_IceCubesShareExtension() =\n    CodeSigner(", in: formula)
+        XCTAssertTrue(appexSigner.contains("bundle: ['IceCubesShareExtension.appex': bundle_IceCubesShareExtension().files]"), appexSigner)
+        XCTAssertLessThan(try XCTUnwrap(formula.range(of: "func signed_IceCubesShareExtension()")).lowerBound,
+                          try XCTUnwrap(formula.range(of: "func bundle_IceCubesApp()")).lowerBound,
+                          "the extension is signed before the app's bundle embeds it")
+    }
+
+    /// `CODE_SIGN_ENTITLEMENTS` is signed with, its `$(VAR)`s resolved over the target's
+    /// settings as the Info.plist's are.
+    func test_theEntitlementsAreTheFileTheSettingsName() throws {
+        let formula = try macFormula(extra: ["CODE_SIGN_ENTITLEMENTS": "$(SRCROOT)/App/App.entitlements"])
+
+        let signer = try block("func signed_IceCubesApp() =\n    CodeSigner(", in: formula)
+        XCTAssertTrue(signer.contains("        entitlements: ['entitlements': InfoPlistBuilder(\n            buildSettings: '{"), signer)
+        XCTAssertTrue(signer.contains("\"PRODUCT_BUNDLE_IDENTIFIER\":\"com.example.IceCubesApp\""), signer)
+        XCTAssertTrue(signer.contains("            base: ['base': StaticFile(path: 'input:/repo/App/App.entitlements').output]\n        ).plist]"), signer)
+    }
+
+    /// A named identity is read and said: Semel signs ad-hoc, whatever certificate the
+    /// project names.
+    func test_aNamedIdentityIsSaidAndSignedAdHoc() throws {
+        let formula = try macFormula(extra: ["CODE_SIGN_IDENTITY": "Apple Development"])
+
+        XCTAssertTrue(formula.contains("// CODE_SIGN_IDENTITY is 'Apple Development': signed ad-hoc, as Semel signs with no certificate (B-77).\n"
+                                       + "func signed_IceCubesApp() =\n    CodeSigner("), formula)
+        XCTAssertFalse(try macFormula(extra: ["CODE_SIGN_IDENTITY": "-"]).contains("// CODE_SIGN_IDENTITY"))
+    }
+
+    /// `CODE_SIGNING_ALLOWED = NO` is an unsigned bundle, as in Xcode.
+    func test_aTargetThatAllowsNoSigningIsNotSigned() throws {
+        let formula = try macFormula(extra: ["CODE_SIGNING_ALLOWED": "NO"])
+
+        XCTAssertFalse(formula.contains("CodeSigner("), formula)
+        XCTAssertTrue(formula.hasSuffix("\nproduct 'Ice Cubes.app/' = bundle_IceCubesApp().files\n"), formula)
+        XCTAssertTrue(formula.contains("input: ['IceCubesShareExtension.appex': bundle_IceCubesShareExtension().files]"), formula)
+    }
+
+    /// The simulator runs an unsigned bundle, and one is what it gets: no signer, and each
+    /// part the product it was.
+    func test_anIOSBundleIsNotSigned() throws {
+        let formula = try formula()
+
+        XCTAssertFalse(formula.contains("CodeSigner("), formula)
+        XCTAssertFalse(formula.contains("func bundle_"), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Ice Cubes' =\n    SwiftLinker("), formula)
     }
 
     /// An iOS bundle is flat: the frameworks under `Frameworks/`, found beside the executable.

@@ -3,8 +3,8 @@
 //  SemelEndToEndTests
 //
 //  What an exported Mac app's executable says about itself, asked with the tools a
-//  developer would ask with. For an app that cannot be run here — an unsigned arm64 app
-//  does not launch — this is what the roster can check beyond a list of files.
+//  developer would ask with. For an app the roster does not run — NetNewsWire's wants
+//  its accounts and a window server — this is what it can check beyond a list of files.
 //
 
 import Foundation

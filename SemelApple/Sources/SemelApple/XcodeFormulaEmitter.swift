@@ -49,31 +49,71 @@ struct XcodeFormulaEmitter {
             isShallow = !sdk.hasPrefix("macosx")
         }
 
+        // Each place relative to the bundle, then under a bundle's own path.
+
+        func executablePath(named name: String) -> String {
+            isShallow ? name : "Contents/MacOS/\(name)"
+        }
+
+        var infoPlistPath: String {
+            isShallow ? "Info.plist" : "Contents/Info.plist"
+        }
+
+        func resourcePath(at path: String) -> String {
+            isShallow ? path : "Contents/Resources/\(path)"
+        }
+
+        /// Where the compiled resources are merged: the bundle's root for iOS.
+        var resourcesFolder: String {
+            isShallow ? "" : "Contents/Resources"
+        }
+
+        func plugInPath(named name: String) -> String {
+            isShallow ? "PlugIns/\(name)" : "Contents/PlugIns/\(name)"
+        }
+
+        /// Where a binary target's frameworks are embedded (B-77).
+        var frameworksFolder: String {
+            isShallow ? "Frameworks" : "Contents/Frameworks"
+        }
+
         func executable(in bundle: String, named name: String) -> String {
-            isShallow ? "\(bundle)/\(name)" : "\(bundle)/Contents/MacOS/\(name)"
+            "\(bundle)/\(executablePath(named: name))"
         }
 
         func infoPlist(in bundle: String) -> String {
-            isShallow ? "\(bundle)/Info.plist" : "\(bundle)/Contents/Info.plist"
+            "\(bundle)/\(infoPlistPath)"
         }
 
         func resource(in bundle: String, at path: String) -> String {
-            isShallow ? "\(bundle)/\(path)" : "\(bundle)/Contents/Resources/\(path)"
+            "\(bundle)/\(resourcePath(at: path))"
         }
 
         /// The tree product the compiled resources are merged into, with its trailing slash.
         func resourcesTree(in bundle: String) -> String {
-            isShallow ? "\(bundle)/" : "\(bundle)/Contents/Resources/"
+            Self.treeProduct(in: bundle, folder: resourcesFolder)
         }
 
         func plugIn(in bundle: String, named name: String) -> String {
-            isShallow ? "\(bundle)/PlugIns/\(name)" : "\(bundle)/Contents/PlugIns/\(name)"
+            "\(bundle)/\(plugInPath(named: name))"
         }
 
         /// The tree product a binary target's frameworks are embedded under, with its
         /// trailing slash (B-77).
         func frameworksTree(in bundle: String) -> String {
-            isShallow ? "\(bundle)/Frameworks/" : "\(bundle)/Contents/Frameworks/"
+            Self.treeProduct(in: bundle, folder: frameworksFolder)
+        }
+
+        /// `Hello.app/` for the root, `Hello.app/Frameworks/` for a folder in it.
+        static func treeProduct(in bundle: String, folder: String) -> String {
+            folder.isEmpty ? "\(bundle)/" : "\(bundle)/\(folder)/"
+        }
+
+        /// A Mac bundle is assembled as one tree and signed (B-77); an iOS one is left as
+        /// the products it is made of, unsigned — the simulator runs an unsigned bundle,
+        /// and a device build would want a real identity, which Semel does not sign with.
+        var isSigned: Bool {
+            !isShallow
         }
 
         /// Where the executable finds those frameworks at run time: the folder above,
@@ -105,13 +145,83 @@ struct XcodeFormulaEmitter {
         }
         var blocks: [String] = ["// Written by XcodeProjectConverter: \(application.name) and \(extensions.count) embedded extension(s)."]
         blocks += includes(for: [application] + extensions)
-        let applicationBundle = try TargetIdentity(target: application, settings: try settings(application), sdk: build.sdk).bundleName
-        blocks += try bundle(for: application, at: applicationBundle, settings: try settings(application), listing: listing)
-        for anExtension in extensions {
-            blocks += try bundle(for: anExtension, at: layout.plugIn(in: applicationBundle, named: anExtension.productFileName),
-                                 settings: try settings(anExtension), listing: listing)
+        let applicationSettings = try settings(application)
+        let applicationBundle = try TargetIdentity(target: application, settings: applicationSettings, sdk: build.sdk).bundleName
+
+        guard layout.isSigned else {
+            blocks += try bundle(for: application, settings: applicationSettings, listing: listing).products(in: applicationBundle)
+            for anExtension in extensions {
+                blocks += try bundle(for: anExtension, settings: try settings(anExtension), listing: listing)
+                    .products(in: layout.plugIn(in: applicationBundle, named: anExtension.productFileName))
+            }
+            return blocks.joined(separator: "\n\n") + "\n"
         }
+
+        // A Mac bundle is one tree, signed once it is whole: each extension is assembled
+        // and signed with its own entitlements, then embedded under the app's `PlugIns/`,
+        // and the app is signed over all of it, as Xcode signs what it has embedded.
+        var plugIns: [BundleParts.Part] = []
+        for anExtension in extensions {
+            let extensionSettings = try settings(anExtension)
+            let parts = try bundle(for: anExtension, settings: extensionSettings, listing: listing)
+            let signed = signedBundle(parts, for: anExtension, settings: extensionSettings)
+            blocks += signed.blocks
+            plugIns.append(.tree(folder: layout.plugInPath(named: anExtension.productFileName),
+                                 inputs: "\(Self.quoted(anExtension.productFileName)): \(signed.expression)"))
+        }
+        var parts = try bundle(for: application, settings: applicationSettings, listing: listing)
+        parts.parts += plugIns
+        let signed = signedBundle(parts, for: application, settings: applicationSettings)
+        blocks += signed.blocks
+        blocks.append("product \(Self.quoted(applicationBundle + "/")) = \(signed.expression)")
         return blocks.joined(separator: "\n\n") + "\n"
+    }
+
+    // MARK: - Signing (B-77)
+
+    /// The node a Mac bundle is signed by. Named rather than referenced, as the formula
+    /// names every node.
+    static let codeSignerNamespace = CodeSignerConfiguration.settingNamespace
+
+    /// A bundle's parts as one tree, `bundle_<Target>()`, and that tree signed,
+    /// `signed_<Target>()` — ad-hoc, with the entitlements `CODE_SIGN_ENTITLEMENTS` names,
+    /// their `$(VAR)`s resolved over the target's settings as Xcode resolves them. The
+    /// expression is what the bundle is once signed: the signer's tree, or the bundle's
+    /// own when the target sets `CODE_SIGNING_ALLOWED = NO`.
+    ///
+    /// `CODE_SIGN_IDENTITY` is read and, when it names a certificate (`Apple Development`,
+    /// NetNewsWire's `Mac Developer`), said in the formula and signed ad-hoc anyway: Semel
+    /// signs with no certificate, and an ad-hoc signature is what lets the app run here.
+    /// The setting a real identity would take is the signer's `identity`.
+    func signedBundle(_ parts: BundleParts, for target: XcodeProject.Target,
+                      settings: XcodeBuildSettings) -> (blocks: [String], expression: String) {
+        let name = FormulaIdentifier.sanitized(target.name)
+        var blocks = parts.blocks
+        blocks.append(parts.tree(named: "bundle_\(name)"))
+        guard settings["CODE_SIGNING_ALLOWED"] != "NO" else {
+            return (blocks, "bundle_\(name)().files")
+        }
+
+        var signer = ""
+        let identity = settings["CODE_SIGN_IDENTITY"] ?? ""
+        if !identity.isEmpty, identity != CodeSignerConfiguration.adHocIdentity {
+            signer += "// CODE_SIGN_IDENTITY is \(Self.quoted(identity)): signed ad-hoc, as Semel signs with no certificate (B-77).\n"
+        }
+        let signerConfiguration = configuration(namespace: Self.codeSignerNamespace,
+                                                literals: ["identity": CodeSignerConfiguration.adHocIdentity])
+        signer += "func signed_\(name)() =\n" +
+                  "    CodeSigner(\n" +
+                  "        configuration: ['config': \(signerConfiguration)],\n" +
+                  "        bundle: [\(Self.quoted(target.productFileName)): bundle_\(name)().files]"
+        if let entitlements = settings["CODE_SIGN_ENTITLEMENTS"].map(Self.projectRelativePath), !entitlements.isEmpty {
+            signer += ",\n        entitlements: ['entitlements': InfoPlistBuilder(\n" +
+                      "            \(InfoPlistBuilder.buildSettingsProperty): '\(parts.buildSettingsJSON)',\n" +
+                      "            base: ['base': StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(entitlements)"))).output]\n" +
+                      "        ).plist]"
+        }
+        signer += "\n    )"
+        blocks.append(signer)
+        return (blocks, "signed_\(name)().files")
     }
 
     // MARK: - Packages
@@ -144,17 +254,71 @@ struct XcodeFormulaEmitter {
 
     // MARK: - One target's bundle
 
-    /// One target's bundle at `bundlePath` — `Ice Cubes.app`, or
-    /// `Ice Cubes.app/PlugIns/Share.appex` for an extension the app embeds.
+    /// What one target's bundle is made of: the funcs its parts are built through, and
+    /// each part at its place in the bundle. Where the bundle is does not enter into it —
+    /// `products(in:)` names the parts as products under a path, `tree(named:)` assembles
+    /// them into one tree to be signed.
+    struct BundleParts {
+        enum Part {
+            /// A file at its path in the bundle, and what gives it, as written after a
+            /// product's `=`: on the same line (` StaticFile(…).output`) or on the next.
+            case file(path: String, expression: String)
+            /// Trees merged under a folder of the bundle — `""` for its root — as the
+            /// text of the merger's `input:` list.
+            case tree(folder: String, inputs: String)
+        }
+
+        var blocks: [String] = []
+        var parts: [Part] = []
+        /// The target's evaluated settings as JSON, the variables its Info.plist and its
+        /// entitlements may name.
+        var buildSettingsJSON = "{}"
+
+        /// The funcs, then each part a product of its own under `bundle`: the bundle as
+        /// it is exported, unsigned.
+        func products(in bundle: String) -> [String] {
+            blocks + parts.map { part in
+                switch part {
+                case .file(let path, let expression):
+                    return "product \(XcodeFormulaEmitter.quoted("\(bundle)/\(path)")) =\(expression)"
+                case .tree(let folder, let inputs):
+                    return "product \(XcodeFormulaEmitter.quoted(BundleLayout.treeProduct(in: bundle, folder: folder))) = "
+                         + "TreeMerger(input: [\(inputs)]).files"
+                }
+            }
+        }
+
+        /// The parts as one tree, `func <name>() = TreeMerger(…).files`: the files in a
+        /// `TreeBuilder`, each keeping the mode its source gives it, and each tree merged
+        /// under its folder.
+        func tree(named name: String) -> String {
+            var files: [String] = []
+            var trees: [String] = []
+            for part in parts {
+                switch part {
+                case .file(let path, let expression):
+                    let expression = expression.drop { $0 == " " || $0 == "\n" }.replacingOccurrences(of: "\n", with: "\n    ")
+                    files.append("        \(XcodeFormulaEmitter.quoted(path)): \(expression)")
+                case .tree(let folder, let inputs):
+                    let under = folder.isEmpty ? "" : "under: \(XcodeFormulaEmitter.quoted(folder)), "
+                    trees.append("    \(XcodeFormulaEmitter.quoted(folder.isEmpty ? "root" : folder)): TreeMerger(\(under)input: [\(inputs)]).files")
+                }
+            }
+            let fileTree = files.isEmpty ? [] : ["    'files': TreeBuilder(input: [\n" + files.joined(separator: ",\n") + "\n    ]).files"]
+            return "func \(name)() = TreeMerger(input: [\n" + (fileTree + trees).joined(separator: ",\n") + "\n]).files"
+        }
+    }
+
+    /// One target's bundle: `Ice Cubes.app`, or `Share.appex`, which the app embeds under
+    /// its `PlugIns/`.
     func bundle(for target: XcodeProject.Target,
-                at bundlePath: String,
                 settings: XcodeBuildSettings,
-                listing: (String) -> FolderListing?) throws -> [String] {
+                listing: (String) -> FolderListing?) throws -> BundleParts {
         let identity = try TargetIdentity(target: target, settings: settings, sdk: build.sdk)
         let name = FormulaIdentifier.sanitized(target.name)
         var blocks: [String] = []
         var bundleTrees: [String] = []
-        var products: [String] = []
+        var products: [BundleParts.Part] = []
 
         // ── sources ──────────────────────────────────────────────────────────
         // Every synchronized folder of the target is a source root: the compiler takes
@@ -305,20 +469,20 @@ struct XcodeFormulaEmitter {
         let linkerInput = objectEntries.count == 1
             ? "[\(objectEntries[0])]"
             : "[\n" + objectEntries.map { "            \($0)" }.joined(separator: ",\n") + "\n        ]"
-        products.append(
-            "product '\(layout.executable(in: bundlePath, named: identity.productName))' =\n" +
+        products.append(.file(
+            path: layout.executablePath(named: identity.productName),
+            expression: "\n" +
             "    SwiftLinker(\n" +
             "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
             "        input: \(linkerInput)" +
             (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
             (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
             (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
-            "\n    ).output")
-        // The same frameworks embedded where the executable's runpath finds them. Unsigned,
-        // like the rest of the bundle.
+            "\n    ).output"))
+        // The same frameworks embedded where the executable's runpath finds them, and
+        // signed with the bundle on the Mac.
         if !frameworkTrees.isEmpty {
-            products.append("product '\(layout.frameworksTree(in: bundlePath))' = TreeMerger(input: [\n"
-                          + frameworkTrees.joined(separator: ",\n") + "\n    ]).files")
+            products.append(.tree(folder: layout.frameworksFolder, inputs: "\n" + frameworkTrees.joined(separator: ",\n") + "\n    "))
         }
 
         // ── resources ────────────────────────────────────────────────────────
@@ -357,6 +521,11 @@ struct XcodeFormulaEmitter {
         // own folders is already among that folder's files.
         let resourceFiles = target.resourceFiles.filter { $0.isBuilt(forSDK: build.sdk) }
         catalogs += resourceFiles.map(\.path).filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
+            .map { "\(build.projectFolder)/\($0)" }
+        // A catalog another target's folder lends is compiled for the borrowing target as
+        // one of its own would be: NetNewsWire's iOS Share extension borrows the app's
+        // `iOS/Resources/Assets.xcassets` (B-77).
+        catalogs += target.borrowedFiles.filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
             .map { "\(build.projectFolder)/\($0)" }
         let folderReferences = resourceFiles.filter(\.isFolderReference).map(\.path)
         let listedResources = resourceFiles.filter { !$0.isFolderReference }.map(\.path).filter { path in
@@ -436,8 +605,8 @@ struct XcodeFormulaEmitter {
         // root as Xcode flattens a synchronized folder's files — a localized one under
         // its `.lproj`.
         for file in plainResources {
-            products.append("product '\(layout.resource(in: bundlePath, at: file.bundlePath))' = "
-                          + "StaticFile(path: \(Self.quoted("\(file.folderPath)/\(file.relativePath)"))).output")
+            products.append(.file(path: layout.resourcePath(at: file.bundlePath),
+                                  expression: " StaticFile(path: \(Self.quoted("\(file.folderPath)/\(file.relativePath)"))).output"))
         }
 
         // ── Info.plist ───────────────────────────────────────────────────────
@@ -458,14 +627,15 @@ struct XcodeFormulaEmitter {
         } else {
             base = ""
         }
-        products.append(
-            "product '\(layout.infoPlist(in: bundlePath))' =\n" +
+        products.append(.file(
+            path: layout.infoPlistPath,
+            expression: "\n" +
             "    InfoPlistBuilder(\n" +
             "        keys: '\(keysJSON)',\n" +
             "        \(InfoPlistBuilder.buildSettingsProperty): '\(settingsJSON)',\n" +
             base +
             "        partials: [\(partials.joined(separator: ", "))]\n" +
-            "    ).plist")
+            "    ).plist"))
 
         // The resource bundles of the packages the target links, each under its own
         // `<Package>_<Target>.bundle/` (B-77): the package's formula carries them as one
@@ -475,10 +645,10 @@ struct XcodeFormulaEmitter {
         }
 
         if !bundleTrees.isEmpty {
-            products.append("product '\(layout.resourcesTree(in: bundlePath))' = TreeMerger(input: [\(bundleTrees.joined(separator: ", "))]).files")
+            products.append(.tree(folder: layout.resourcesFolder, inputs: bundleTrees.joined(separator: ", ")))
         }
 
-        return blocks + products
+        return BundleParts(blocks: blocks, parts: products, buildSettingsJSON: settingsJSON)
     }
 
     // MARK: - Helpers

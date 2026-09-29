@@ -64,6 +64,11 @@ enum BinaryTargetFixture {
         guard printed.trimmingCharacters(in: .whitespacesAndNewlines) == greeting else {
             throw EndToEndFailure(step: "run the app", message: "printed '\(printed)', not '\(greeting)'")
         }
+        // Signed as a bundle, the framework with it (B-77). The export does not verify as
+        // a whole: the framework's links arrive as copies, which a versioned framework's
+        // signature does not allow, though the signer lays them as links while it signs.
+        try SignedBundleCheck.signedAsPartOfTheBundle(executable)
+        try SignedBundleCheck.signedAsPartOfTheBundle(out.appendingPathComponent("Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny"))
     }
 
     @discardableResult

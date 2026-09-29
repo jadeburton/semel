@@ -307,8 +307,8 @@ final class EndToEndRun {
         guard !differences.isEmpty else {
             return
         }
-        let exempt = differences.filter { Self.exempt($0, by: project.mayDiffer) }
-        let notExempt = differences.filter { !Self.exempt($0, by: project.mayDiffer) }
+        let notExempt = notExempt(differences)
+        let exempt = differences.filter { difference in !notExempt.contains { $0.path == difference.path } }
         if !exempt.isEmpty {
             print("\(project.name): \(exempt.count) difference(s) between the two builds, exempt by the roster:\n  \(Self.listed(exempt))")
         }
@@ -323,7 +323,7 @@ final class EndToEndRun {
     /// second mount and a perturbed environment both ask for. `step` names the check and
     /// `subject` says which trees and what was varied between them.
     private func requireMatch(_ out: URL, _ other: URL, step: String, subject: String) throws {
-        let notExempt = try TreeDiff.compare(out, other).filter { !Self.exempt($0, by: project.mayDiffer) }
+        let notExempt = notExempt(try TreeDiff.compare(out, other))
         guard !notExempt.isEmpty else {
             return
         }
@@ -343,6 +343,17 @@ final class EndToEndRun {
     /// `/Assets.car`, not an unrelated file that merely ends with the same characters.
     static func exempt(_ difference: TreeDiff.Difference, by mayDiffer: [String]) -> Bool {
         mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix("/" + $0) }
+    }
+
+    /// The differences the roster does not exempt: every one `mayDiffer` does not name,
+    /// less those `mayDifferWithExempt` names when a difference `mayDiffer` names is
+    /// among them — a seal that moved with the catalog it seals.
+    private func notExempt(_ differences: [TreeDiff.Difference]) -> [TreeDiff.Difference] {
+        let exemptDiffers = differences.contains { Self.exempt($0, by: project.mayDiffer) }
+        return differences.filter { difference in
+            !Self.exempt(difference, by: project.mayDiffer)
+                && !(exemptDiffers && Self.exempt(difference, by: project.mayDifferWithExempt))
+        }
     }
 
     // MARK: - 6b. A second mount

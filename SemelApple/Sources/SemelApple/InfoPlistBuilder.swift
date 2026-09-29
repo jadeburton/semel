@@ -14,6 +14,9 @@ import SemelDatabaseModels
 public struct InfoPlistBuilder: Node {
     public static let kind: UInt = 31
 
+    /// 2: the engine's `projectRoot` stamp is no longer an entry of the plist.
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     /// The project's own Info.plist, at most one wire; absent for a bundle built from
@@ -77,7 +80,11 @@ public struct InfoPlistBuilder: Node {
             }
             variables = settings
         }
-        for (key, value) in thisNode.properties where key != Self.keysProperty && key != Self.buildSettingsProperty {
+        // What the engine stamps on a node for its cache (`projectRoot`) is not an entry:
+        // it would put the build's root in every plist, and one the cache hands another
+        // project would carry the first project's.
+        for (key, value) in thisNode.properties
+        where key != Self.keysProperty && key != Self.buildSettingsProperty && !Self.cacheKeyExcludedProperties.contains(key) {
             merged[key] = Self.typed(value)
             variables[key] = value
         }

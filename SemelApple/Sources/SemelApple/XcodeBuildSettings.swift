@@ -193,8 +193,8 @@ struct XcodeBuildSettings {
     /// `AppIdentifierPrefix` and `TeamIdentifierPrefix` are the signing team's identifier
     /// and a dot, which Xcode takes from the team the target signs with; an Info.plist or
     /// an entitlements file names them (`$(AppIdentifierPrefix)$(APP_GROUP_ID)`). Semel
-    /// signs nothing (B-77 item 11), so there is no team to take them from, and empty is
-    /// what Xcode gives them too when it does not sign: `CODE_SIGNING_ALLOWED=NO` turns
+    /// signs ad-hoc, with no team (B-77 item 11), so there is no team to take them from,
+    /// and empty is what Xcode gives them too when it does not sign: `CODE_SIGNING_ALLOWED=NO` turns
     /// `[$(AppIdentifierPrefix)][$(TeamIdentifierPrefix)]` in a plist into `[][]` (26.6).
     private static let defaults: [String: String] = [
         "PRODUCT_NAME": "$(TARGET_NAME)",

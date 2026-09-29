@@ -270,7 +270,9 @@ enum Projects {
     /// Live Activity API stays unavailable there, so Xcode fails on it too; the overlay
     /// `Fixtures/external/food-truck-mac` lays the four files with the guard corrected
     /// over the clone, before `prepare` (its README says what changed). The build takes
-    /// seconds, so it runs every hermeticity build.
+    /// seconds, so it runs every hermeticity build. The bundle is signed ad-hoc, the
+    /// widget with its own entitlements and then the app with the app sandbox, and the
+    /// export verifies deep and strict.
     static let foodTruckMac = Project(
         name: "food-truck-mac",
         source: .git(url: "https://github.com/apple/sample-food-truck.git",
@@ -288,11 +290,19 @@ enum Projects {
             "Food Truck.app/Contents/Resources/FoodTruckKit_FoodTruckKit.bundle/Assets.car",
             "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets",
             "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/Info.plist",
+            "Food Truck.app/Contents/_CodeSignature/CodeResources",
+            "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/_CodeSignature/CodeResources",
         ],
         buildTimeout: 10 * 60,
-        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
+        // actool's output is not byte-reproducible (B-89), as for icecubes-app; the seals
+        // and the executables that record them follow the catalogs they seal, and only
+        // then (B-77).
         mayDiffer: ["Assets.car"],
-        onlyUnder: "Food Truck.app")
+        mayDifferWithExempt: ["_CodeSignature/CodeResources", "Contents/MacOS/Food Truck", "Contents/MacOS/Widgets"],
+        onlyUnder: "Food Truck.app",
+        executables: ["Food Truck.app/Contents/MacOS/Food Truck", "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets"],
+        exported: SignedBundleCheck.verifying(bundle: "Food Truck.app", executable: "Food Truck.app/Contents/MacOS/Food Truck",
+                                              entitlement: "com.apple.security.app-sandbox"))
 
     /// NetNewsWire's Mac app (B-77 item 2): seventeen local packages found through a
     /// synchronized folder, Sparkle's binary framework vendored and embedded,
@@ -327,8 +337,12 @@ enum Projects {
             "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/Info.plist",
         ],
         buildTimeout: 10 * 60,
-        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
+        // actool's output is not byte-reproducible (B-89), as for icecubes-app; the seals
+        // and the executables that record them follow the catalogs they seal, and only
+        // then (B-77).
         mayDiffer: ["Assets.car"],
+        mayDifferWithExempt: ["_CodeSignature/CodeResources", "Contents/MacOS/NetNewsWire",
+                              "Contents/MacOS/NetNewsWire Share Extension", "Contents/MacOS/Subscribe to Feed"],
         onlyUnder: "NetNewsWire.app",
         executables: [
             "NetNewsWire.app/Contents/MacOS/NetNewsWire",
@@ -340,6 +354,15 @@ enum Projects {
             try AppInspection.checkLoadsEmbeddedFramework(
                 executable:  out.appendingPathComponent("NetNewsWire.app/Contents/MacOS/NetNewsWire"),
                 installName: "@rpath/Sparkle.framework/Versions/B/Sparkle")
+            // Signed as bundles, Sparkle with them (B-77). Not verified as a whole: Sparkle's
+            // links arrive as copies, which a versioned framework's signature does not
+            // allow, though the signer lays them as links while it signs.
+            for executable in ["NetNewsWire.app/Contents/MacOS/NetNewsWire",
+                               "NetNewsWire.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+                               "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/MacOS/NetNewsWire Share Extension",
+                               "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/MacOS/Subscribe to Feed"] {
+                try SignedBundleCheck.signedAsPartOfTheBundle(out.appendingPathComponent(executable))
+            }
         })
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]
