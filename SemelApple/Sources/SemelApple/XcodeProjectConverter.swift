@@ -32,8 +32,11 @@ public struct XcodeProjectConverter: Node {
     /// phase's folder reference is copied whole, and the Info.plist builder is handed every
     /// evaluated setting (B-77); at 7, an executable's linker takes each package product's
     /// link requirements (B-55); at 8, each package product's `frameworks_<Product>()` is
-    /// compiled and linked against and embedded under the bundle's `Frameworks` (B-77).
-    public static let implementationVersion = 8
+    /// compiled and linked against and embedded under the bundle's `Frameworks` (B-77); at
+    /// 9, a target's C-family sources are compiled through clang and linked, its bridging
+    /// header reaches its Swift compiler, and an Interface Builder document is compiled by
+    /// ibtool rather than copied (B-77).
+    public static let implementationVersion = 9
 
     // MARK: Ports
 
@@ -50,16 +53,32 @@ public struct XcodeProjectConverter: Node {
     static let formulaOutput = "formula"
     static let infoLog = "infoLog"
 
-    /// The config namespaces the formula this converter emits selects from, for the
+    /// Every config namespace the formula this converter emits may select from, for the
     /// targets it writes itself. The package formulas it includes select from
-    /// `SwiftFormulaConverter`'s; `prepare` writes a block for each of both and no other,
-    /// because a block nothing reads is reported as unused keys on every build.
-    public static let configNamespaces: [String] = [
-        XcodeFormulaEmitter.swiftCompilerNamespace,
-        XcodeFormulaEmitter.swiftLinkerNamespace,
-        AssetCatalogCompilerConfiguration.settingNamespace,
-        StringCatalogCompilerConfiguration.settingNamespace,
-    ]
+    /// `SwiftFormulaConverter`'s.
+    public static let configNamespaces: [String] =
+        configNamespaces(compilingCFamilySources: true, compilingInterfaceBuilderDocuments: true)
+
+    /// The ones a project's formula selects from, by what its targets hold: the clang
+    /// tools only for a target with C-family sources, ibtool only for one with a xib or
+    /// a storyboard. `prepare` writes a block for each of these and of the package
+    /// formulas' and no other, because a block nothing reads is reported as unused keys on
+    /// every build.
+    public static func configNamespaces(compilingCFamilySources: Bool, compilingInterfaceBuilderDocuments: Bool) -> [String] {
+        var namespaces = [
+            XcodeFormulaEmitter.swiftCompilerNamespace,
+            XcodeFormulaEmitter.swiftLinkerNamespace,
+            AssetCatalogCompilerConfiguration.settingNamespace,
+            StringCatalogCompilerConfiguration.settingNamespace,
+        ]
+        if compilingInterfaceBuilderDocuments {
+            namespaces.append(IBToolCompilerConfiguration.settingNamespace)
+        }
+        if compilingCFamilySources {
+            namespaces += [XcodeFormulaEmitter.clangPreprocessorNamespace, XcodeFormulaEmitter.clangCompilerNamespace]
+        }
+        return namespaces
+    }
 
     public var thisNode: NodeRecord
 

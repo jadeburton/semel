@@ -207,3 +207,10 @@ That rewrites Apple's undocumented BOM-based CAR format, and the replacement suf
 not keep the name's length (the pid varies in digits), so it is a rewrite of the file
 rather than a patch in place. Whether that is worth owning, against keeping the exemption,
 is the decision.
+
+*ibtool is not affected* (2026-09-29, Xcode 26.6), though it launches the same `ibtoold`.
+Five of NetNewsWire's Mac xibs compiled three times each, every run in a fresh folder, and
+an iOS xib and two storyboards (`.storyboardc` folders of nibs) twice, came out
+byte-identical; `IBToolCompilerTests` pins it on one xib with the real tool, and
+`swift-hello-app`'s `Card.nib` goes through the roster's four builds unexempted (B-77).
+Only its human-readable notices name the document's absolute path, and they are a log.

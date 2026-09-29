@@ -1,8 +1,10 @@
 // A SwiftUI app for the iOS simulator: the bundle is one tree product. The executable is a
-// Swift target that imports a package; the resources, the Info.plist and the bundle come
-// from `include 'apple'`, which compiles the asset and string catalogs, merges actool's
-// partial Info.plist into the project's, and puts every file where the bundle wants it —
-// the executable keeping the mode that lets it launch.
+// Swift target that imports a package and, through a bridging header, the app's own
+// Objective-C, which is compiled beside it and linked in; the resources, the Info.plist and
+// the bundle come from `include 'apple'`, which compiles the asset and string catalogs,
+// merges actool's partial Info.plist into the project's, and puts every file where the
+// bundle wants it — the executable keeping the mode that lets it launch — and a xib is
+// compiled to the nib the app would load, under its language folder.
 
 include 'swift'
 include 'apple'
@@ -17,17 +19,53 @@ include funcs SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 // commits. One node, so every tool below selects from the same settings.
 func settings() = swift.settings(project: <semel.config>, machine: <semel.machine.config>)
 
+// A tool's slice of the settings with what this app states laid over it: Objective-C is
+// built with ARC and modules, as an Xcode target sets them (B-77).
+func objectiveC(prefix) = ConfigMerger(base: ['settings': swift.selected(settings: settings(), prefix: prefix)], override: ['literals': SettingsLiteral(modules: 'true', objectiveCARC: 'true').output]).output
+
+// The app's Objective-C: each file preprocessed over its folder, as Xcode's header map
+// finds a quoted import, and compiled.
+func objectiveCObject(file) = ClangCompiler(
+    configuration: ['config': objectiveC(prefix: 'clang.compiler')],
+    input: ["%%file%%.p": ClangPreprocessor(
+        configuration: ['config': objectiveC(prefix: 'clang.preprocessor')],
+        input: [file: StaticFile(path: file)],
+        headerFolders: ['ObjC': Folder(path: <ObjC>).manifest]
+    ).output]
+).output
+
+// The Swift, importing the package's modules and, through the bridging header, the
+// Objective-C's headers — the tree of them beside the header, as an Xcode target's are.
+func module() = SwiftCompiler(
+    configuration: ['config': swift.compilerSettings(name: 'Hello', settings: settings())],
+    inputFolder: ['folder0': Folder(path: <Sources>).manifest],
+    moduleTrees: ['HelloKit': modules_HelloKit().files],
+    bridgingHeader: ['ObjC/Hello-Bridging-Header.h': StaticFile(path: <ObjC/Hello-Bridging-Header.h>).output],
+    headerTrees: ['Hello': TreeBuilder(input: ['ObjC/HLOGreeter.h': StaticFile(path: <ObjC/HLOGreeter.h>).output]).files]
+)
+
+// A xib, compiled by ibtool for the app's devices and deployment target to the nib the
+// app would load, placed under its language folder as the wire's key places it.
+func card() = IBToolCompiler(
+    configuration: ['config': ConfigMerger(base: ['settings': apple.selected(settings: settings(), prefix: 'apple.ibToolCompiler')], override: ['literals': SettingsLiteral(module: 'Hello').output]).output],
+    document: ['Base.lproj/Card.xib': StaticFile(path: <Interface/Base.lproj/Card.xib>).output]
+)
+
 product 'Hello.app/' = apple.bundle(
-    executable: swift.executableUsing(
-        sources: <Sources>, name: 'Hello', settings: settings(),
-        package: 'HelloKit', modules: modules_HelloKit().files, objects: objects_HelloKit().files
-    ),
+    executable: SwiftLinker(
+        configuration: ['config': swift.linkerSettings(name: 'Hello', linkage: 'executable', settings: settings())],
+        input: ['Hello.o': module().object, 'HLOGreeter.m.o': objectiveCObject(file: <ObjC/HLOGreeter.m>)],
+        objectTrees: ['HelloKit': objects_HelloKit().files]
+    ).output,
     name: 'Hello',
     infoPlist: apple.infoPlist(
         base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: settings()
     ),
     pkgInfo: <PkgInfo>,
-    resources: apple.resources(
-        catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
-    )
+    resources: TreeMerger(input: [
+        'catalogs': apple.resources(
+            catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
+        ),
+        'interface': card().files
+    ]).files
 )

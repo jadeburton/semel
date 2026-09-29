@@ -55,6 +55,10 @@ public struct PrepareReport: Equatable {
     /// reading what is there — what the missing file would have to define. Empty when
     /// nothing is missing, whatever the project leaves undefined.
     public var undefinedReferences: [String] = []
+    /// The sources the project generates before its build — a scheme pre-action running
+    /// gyb — that are not there (B-77). Prepare runs no scheme action: it names them, and
+    /// what would generate them, for the developer to run or write.
+    public var ungeneratedSources: [XcodeProjectFacts.UngeneratedSource] = []
 }
 
 public enum Preparation {
@@ -121,8 +125,12 @@ public enum Preparation {
                 .map { folder.appendingPathComponent($0, isDirectory: true).standardizedFileURL }
                 .filter { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Package.swift").path) }
             let packageSummaries = try (report.localPackages + vendoredManifestFolders(in: dependencies)).map(steps.summarize)
-            namespaces = GeneratedFiles.projectNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: packageSummaries))
+            namespaces = GeneratedFiles.projectNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: packageSummaries),
+                                                          compiledSources: try XcodeProjectFacts.compiledSources(ofProjectAt: project))
             allSummaries = packageSummaries
+            // A source the project generates before its build, not there: said here, with
+            // what would generate it, since the build can only fail where it is used.
+            report.ungeneratedSources = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project)
         } else {
             let manifestFolders = try PackageScan.manifestFolders(under: folder)
             guard !manifestFolders.isEmpty else {

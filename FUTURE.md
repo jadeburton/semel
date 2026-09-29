@@ -1150,7 +1150,9 @@ in the repository and is exactly one formula, which names that file, plus a `sem
 and the walk for committed machine files covers it. First used by Lua (B-79). Since
 extended to a project with a platform (`food-truck-mac`, B-77): there the overlay is
 corrected copies of the checkout's own files, laid file by file with folders merged,
-each required to replace a file the checkout has; `prepare` writes the formula and the
+each required to replace a file the checkout has — or to be the output of a `.gyb`
+template the checkout has beside it, a source the project generates before its build
+(NetNewsWire's `SecretKey.swift`, B-77); `prepare` writes the formula and the
 configs afterwards, so the pin for that kind is no formula, no config and no machine file.
 
 **B-77** `open` — **More Xcode projects.** IceCubes is SwiftUI, synchronized folders, one
@@ -1180,8 +1182,10 @@ application target, simulator only, all library code in packages. In suggested o
    builds. What no Mac build here does yet is sign: an arm64 executable needs at
    least an ad-hoc signature to launch, and Semel writes none, so the bundle is inspected
    rather than run. Left as copies rather than compiled, said here rather than
-   silently: a storyboard, a xib, a Core Data model, a Metal file listed among a target's
-   resources; a listed source that is not Swift is refused by name. `prepare` no longer
+   silently: a Core Data model, a Metal file listed among a target's resources (a xib
+   and a storyboard are compiled since NetNewsWire's item 8); a listed source that is
+   neither Swift nor C-family is refused by name (a listed C-family one is compiled since
+   item 6). `prepare` no longer
    writes a project the `clang.*` blocks unless one of its local packages or vendored
    dependencies has a C-family target (with NetNewsWire, below); the string catalog
    compiler's machine block when no `.xcstrings` exists is still reported as unused
@@ -1406,24 +1410,70 @@ application target, simulator only, all library code in packages. In suggested o
       every package resource bundle written) and stops at 5, 9 and three new ones, 12
       to 14; 4 is behind 5, `Account` never compiling.
 
-   4. **`SecretKey.swift` is generated before the build.**
-      `Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb` becomes `SecretKey.swift`
-      through the scheme's pre-action, `buildscripts/updateSecrets.sh` (gyb, in Python),
-      not a build phase; `Account` and `Shared/Article Extractor` reference `SecretKey`.
-      Nothing here reads schemes: `prepare` could run the pre-action, or a gyb node
-      could generate it.
+   4. ~~**`SecretKey.swift` is generated before the build.**~~ Done (2026-09-29), as far
+      as a hermetic build can: named, and for the roster provided. The template is
+      `Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb`, inside the `Secrets` package
+      (which excludes it), not a synchronized folder; `Account` and `Shared/Article
+      Extractor` reference `SecretKey`. The scheme's build pre-action,
+      `"${PROJECT_DIR}/buildscripts/updateSecrets.sh"` (both shared schemes have it), runs
+      gyb over every `.gyb` in the tree; the template reads six secrets from the
+      environment and XORs each with a salt of 64 bytes from `os.urandom`, so what it
+      writes depends on the machine twice over, and differs on every run even with no
+      secrets. Semel runs no scheme action, and a gyb node would have to fix the salt,
+      that is, write something the project never writes. So:
+      - `prepare` says it: `XcodeProjectFacts.ungeneratedSources` finds every `.gyb` in the
+        application's synchronized folders and the local packages whose output is not
+        beside it, and `XcodeScheme` reads the shared schemes' build pre-actions — the
+        ones whose script, or a script file of the project's it names, runs gyb. A fresh
+        clone prints `Not generated: Modules/Secrets/Sources/Secrets/SecretKey.swift`, both
+        pre-actions, and that Semel runs neither, where the build said only `cannot find
+        'SecretKey' in scope`. Once the file is there, nothing.
+      - The roster's overlay provides it: `EndToEnd/Fixtures/external/netnewswire` holds
+        what the script writes with no secrets set — what a fresh clone builds as in Xcode
+        — generated once and committed, its random salt fixed by that. `lay` now takes a
+        file the checkout lacks when the checkout has its `.gyb` template beside it (the
+        template pins the path as a replaced file does). The roster entry, when Sparkle
+        builds (1), only has to name the overlay.
+      Pinned by `XcodeProjectTests` (the fixture now holds the shared scheme, the script
+      and the template) and `MaterialiseTests`.
    5. ~~**Objective-C in the packages.**~~ Done (2026-09-28). `RSDatabaseObjC` (FMDB) and
       `RSCoreObjC` open every header with `@import Foundation;` (or `AppKit`) and assume
       ARC; a C target with Objective-C is now preprocessed and compiled with modules and
       ARC (B-55's 7), and `RSDatabase` imports `RSDatabaseObjC` through the module map
       SwiftPM would write for its `include/RSDatabaseObjC.h`, whose `#import "../FMDatabase.h"`
       resolves because the header tree is the whole target's (B-55's 4).
-   6. **Objective-C in the app.** `Mac/NSOpenPanel+Extras.m` and the bridging header
-      `SWIFT_OBJC_BRIDGING_HEADER = Mac/NetNewsWire-Bridging-Header.h`, which imports
-      it and `WKPreferencesPrivate.h`. The emitter compiles a synchronized folder's Swift
-      and passes over the `.m` without a word (only a *listed* non-Swift source is
-      refused), and no `-import-objc-header` reaches the compiler
-      (`XcodeFormulaEmitter.swift`).
+   6. ~~**Objective-C in the app.**~~ Done (2026-09-29). `Mac/NSOpenPanel+Extras.m` and the
+      bridging header `SWIFT_OBJC_BRIDGING_HEADER = Mac/NetNewsWire-Bridging-Header.h`,
+      which imports it and `WKPreferencesPrivate.h`. The emitter now takes every C-family
+      source (`.c`, `.m`, `.mm`, `.cpp`, …) of a target's synchronized folders less their
+      exceptions, and a listed or borrowed one, through the shapes the package converter
+      gives a C target: a `preprocess_<Target>(path)` func — a `ClangPreprocessor` over
+      the target's synchronized folders as header folders, the nearest thing to Xcode's
+      header map — and per source a `ClangCompiler` into the executable's linker, beside
+      the Swift object; C++ or Objective-C++ adds the C++ runtime to the link
+      requirements. The settings are Xcode's: ARC and modules when
+      `CLANG_ENABLE_OBJC_ARC` and `CLANG_ENABLE_MODULES` say `YES` (the settings PR #132
+      gave packages), the standards when `GCC_C_LANGUAGE_STANDARD` and
+      `CLANG_CXX_LANGUAGE_STANDARD` state them, `GCC_PREPROCESSOR_DEFINITIONS` as
+      `defines`, and the target's triple. The bridging header reaches `swiftc` as
+      `-import-objc-header` from a `StaticFile` on a new `bridgingHeader` port of
+      `SwiftCompiler`, with the target's other headers as `headers_<Target>()` — a tree,
+      the shape `headers<Target>()` has for a package — on `headerTrees`, placed beside it
+      under `objc/`, each of their folders a `-Xcc -I`, and the preprocessor definitions
+      as `-Xcc -D`, as Xcode tells the importer. swiftc refuses a module interface for a
+      module with a bridging header, so such a compile emits none. A listed C-family
+      source is compiled now rather than refused. The generated `-Swift.h` is out of scope:
+      nothing in the Mac app imports it (NetNewsWire's `.m` imports only its own header).
+      What remains: the app's `.swiftmodule` records the bridging header's absolute
+      sandbox path (nothing imports an app's module and it is no product, so no build
+      compares it); no header map, so a quoted import of a target header in a folder no
+      `-I` names is not found; assembly in an app target is not compiled. On the clone,
+      the preprocessor and compiler for `NSOpenPanel+Extras.m` succeed and the app's Swift
+      compile gets past the bridging header to 16 below. Pinned by
+      `XcodeFormulaEmitterTests`, `XcodeProjectConverterTests` over the NetNewsWire
+      fixture (which now holds the four files) and `SwiftCompilerTests`; end to end by
+      `swift-hello-app`, whose SwiftUI view shows a string from an Objective-C class,
+      compiled with ARC and modules and imported through a bridging header.
    7. ~~**Localized folders inside a synchronized folder are dropped.**~~ Done
       (2026-09-28). A `.lproj` is no longer compiled whole: the converter walks it like
       any folder (`LocalPackageSearch` still never looks into one), and the emitter
@@ -1431,15 +1481,40 @@ application target, simulator only, all library code in packages. In suggested o
       `mul.lproj` included, through the string catalog compiler, whose tables land
       under their languages as the root catalog's do; any other resource in a language
       folder copied under it, `MainMenu/Base.lproj/MainMenu.xib` to
-      `Contents/Resources/Base.lproj/MainMenu.xib`, as Food Truck's variant groups are.
+      `Contents/Resources/Base.lproj/MainMenu.xib` (compiled to `MainMenu.nib` there
+      since 8), as Food Truck's variant groups are.
       On the clone all twenty-four `Base.lproj` xibs reach a bundle (twenty-three in the
       app, the Share extension's in its own, item 9) and the twelve `mul.lproj` catalogs
       come out as `es.lproj/<Name>.strings`. Pinned by `XcodeProjectConverterTests`
       over the NetNewsWire fixture.
-   8. **Interface Builder files are copied, not compiled.** Every xib reaches
-      `Contents/Resources` as `.xib` — under `Base.lproj/` for a localized one, since
-      item 7 — and the app loads `.nib`. An `ibtool` node, like the catalog compilers;
-      a `TODO` on `XcodeFormulaEmitter.resource(at:)` marks the place.
+   8. ~~**Interface Builder files are copied, not compiled.**~~ Done (2026-09-29).
+      `IBToolCompiler` (`SemelApple`, kind 41, namespace `apple.ibToolCompiler`;
+      XcodeProjectConverter v9) runs
+      `ibtool --errors --warnings --notices --module <M> --target-device <d>…
+      --minimum-deployment-target <v> --output-format human-readable-text --sdk <path>
+      --compile out/<place>.nib <place>.xib` on one document, whose wire's key is its
+      place in the bundle; the tree it publishes holds the compiled document at that
+      place — a `.nib` file (or folder), or for a storyboard a `.storyboardc` folder of
+      nibs, which is in reach and done the same way. `ibtool` is discovered like actool
+      (its `--version` is the same plist under `com.apple.ibtool.version`); its namespace
+      declares `sdkPath` as a machine setting, which `prepare` writes, and takes the
+      deployment target and devices from the project's config, which `prepare` writes as
+      it does actool's — only for a project whose application's targets hold a xib or a
+      storyboard, as the clang blocks are now written only when a local or vendored
+      package, or the application's own folders, hold C-family sources. The emitter
+      classifies a `.xib` or `.storyboard` as `Resource.interfaceBuilder` at the place
+      item 7 gives it and merges each compiler's tree into the bundle's resources. Not
+      passed, as Xcode passes them: `--output-partial-info-plist` (no key of it is one a
+      Mac app launches without) and `--auto-activate-custom-fonts`; not done, Xcode's
+      separate `ibtool --link` of storyboards, which for one target is a copy.
+      Reproducible, unlike actool (B-89): five NetNewsWire Mac xibs compiled three times
+      each in fresh folders, and an iOS xib and two storyboards twice, came out
+      byte-identical; `--sdk` and `--module` changed nothing in the Mac nibs tried (a
+      class whose xib names `customModule` already records it). `IBToolCompilerTests`
+      pins it on the fixture's `MainWindow.xib` with the real ibtool, and
+      `swift-hello-app`'s `Base.lproj/Card.nib` through all four hermeticity builds. On
+      the clone, all thirty-four of the app's xibs (twenty-three under `Base.lproj/`) and
+      the Share extension's one come out as nibs; the two xibs left are a package's (17).
    9. ~~**A localized membership exception is read as a path.**~~ Done (2026-09-28). What
       Xcode means was established by building a project of its own (Xcode 26.6): an
       exception entry `/Localized/<folder>/<name>` in a synchronized folder's set is a
@@ -1512,6 +1587,26 @@ application target, simulator only, all library code in packages. In suggested o
       target's own folders' catalogs and its resources phase's, not a borrowed one, which
       it passes over as not a copied resource. Seen reading the exception sets, not met
       on the Mac build; for the iOS app.
+   16. **A package target's upcoming features do not reach its compiler.** The next stop
+      (2026-09-29). Every local package's targets declare
+      `.enableUpcomingFeature("NonisolatedNonsendingByDefault")` and
+      `"InferIsolatedConformances"` in `swiftSettings`, and the Swift converter carries
+      only `.swiftLanguageMode` from them. So `RSCore` compiles `UserApp.launchIfNeeded()`,
+      a `nonisolated` async method, as running off the caller's actor, where under the
+      feature it runs on it (`nonisolated(nonsending)`), and the app's Swift 6 compile
+      fails in `Shared/ExtensionPoints/SendToMarsEditCommand.swift` and
+      `SendToMicroBlogCommand.swift` on `sending 'app' risks causing data races`. The
+      fix is `SwiftFormulaConverter`'s: carry `enableUpcomingFeature` (and
+      `enableExperimentalFeature`) to `-enable-upcoming-feature`, and decide what
+      `unsafeFlags` (`Secrets`' `-warnings-as-errors`) is worth. Beside it, the app's own
+      `OTHER_SWIFT_FLAGS` do not reach its compiler either, though in Debug they add
+      only `-D`s the compilation conditions already give and two frontend warnings.
+   17. **A package's xibs are copied into its resource bundle.** `RSCore`'s
+      `RSCoreResources` target holds `WebViewWindow.xib` and
+      `IndeterminateProgressWindow.xib`, and SwiftPM's `.process` rule compiles a xib to
+      a nib; the Swift converter's resource bundle copies them as they are. Now that
+      `IBToolCompiler` exists, the package converter can name it for them, with the
+      platform's settings as the app's are named.
 
    Checked again (2026-09-28) after 7, 9, 10, 13 and 14, on a fresh clone pushed under
    its parent, with Sparkle and PLCrashReporter replaced by stub packages as before
@@ -1533,12 +1628,26 @@ application target, simulator only, all library code in packages. In suggested o
    `cannot find 'SecretKey' in scope`, and the app's compiler and link wait behind it,
    so `import CrashReporter` from the app is not reached yet.
 
+   Checked again 2026-09-29, once 4, 6 and 8 were done, on a fresh clone in a scratch
+   folder: `prepare` named the ungenerated `SecretKey.swift` and both schemes'
+   pre-actions; with the `netnewswire` overlay laid and `prepare` run again it named
+   nothing, and wrote the `apple.ibToolCompiler` and clang blocks. Sparkle was replaced
+   after `prepare` by a stub package declaring the four names `AppDelegate` uses
+   (`SPUUpdater`, `SPUStandardUserDriver` and their delegate protocols), its lock
+   removed, so that the app's own compile is reached. 575 nodes, one failing: every
+   package compiles, `Account` and `Secrets` included, the app's Objective-C
+   preprocesses and compiles, the thirty-five nibs are written, and the app's Swift
+   compile — past the bridging header — stops at 16. The link, and so `import
+   CrashReporter` in the app, waits behind it. (Run before binary targets, 1, were
+   merged; with them Sparkle needs no stub.)
+
    Not in the way: the seventeen `.dynamic` products, which the app embeds as frameworks,
    link statically into the executable as the emitter links every package's objects
    (only Sparkle's framework must be embedded); the script phases, of which the build
    numbers one is all comments, *Delete Unnecessary Frameworks* runs for Release only,
    and *Verify No Build Settings* checks the project file; `NetNewsWire.sdef`, which
-   Xcode copies too. NetNewsWire joins the roster, as `netnewswire-mac`, when it builds.
+   Xcode copies too. NetNewsWire joins the roster, as `netnewswire-mac`, when it builds,
+   over the overlay `external/netnewswire` (4).
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.
@@ -1546,11 +1655,13 @@ application target, simulator only, all library code in packages. In suggested o
    `.xcdatamodeld` (wants a `momc` node), several extensions, generated-code build phases,
    a big local SDK package.
 5. *Wikipedia iOS* — heavy Objective-C and Swift mixing, bridging headers, generated
-   `-Swift.h`. Only when mixed-language app targets are in scope.
+   `-Swift.h`. An app target's Objective-C and its bridging header are built since
+   NetNewsWire's 6; the `-Swift.h` its Objective-C imports is not.
 
-Expected to surface: script build phases, framework and dynamic-library targets,
-Objective-C in the application target, Core Data models, storyboards and xibs (`ibtool`).
-Non-synchronized groups surfaced with item 1 and are read.
+Expected to surface: script build phases, framework and dynamic-library targets, Core
+Data models. Non-synchronized groups surfaced with item 1 and are read; Objective-C in
+the application target, and storyboards and xibs (`ibtool`), with item 2 (its 6 and 8),
+and are built.
 
 **B-78** `open` — **More Swift packages.**
 

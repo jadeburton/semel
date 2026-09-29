@@ -106,9 +106,19 @@ public enum GeneratedFiles {
     /// The config namespaces the formula for a project selects from: what the project
     /// converter emits for its own targets reads, and what the package formulas it
     /// includes read — the clang ones only when one of those packages has a C-family
-    /// target, as for a tree.
-    public static func projectNamespaces(forCFamilyTargets hasCFamilyTargets: Bool) -> [String] {
-        XcodeProjectConverter.configNamespaces + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
+    /// target, as for a tree, or the application's targets have a C-family source, and
+    /// ibtool's only when they have a xib or a storyboard (B-77). Each once.
+    public static func projectNamespaces(forCFamilyTargets hasCFamilyTargets: Bool,
+                                         compiledSources: XcodeProjectFacts.CompiledSources) -> [String] {
+        let own = XcodeProjectConverter.configNamespaces(
+            compilingCFamilySources: compiledSources.hasCFamilySources,
+            compilingInterfaceBuilderDocuments: compiledSources.hasInterfaceBuilderDocuments)
+        var namespaces: [String] = []
+        for namespace in own + SemelSwift.converterConfigNamespaces(forCFamilyTargets: hasCFamilyTargets)
+        where !namespaces.contains(namespace) {
+            namespaces.append(namespace)
+        }
+        return namespaces
     }
 
     /// The highest deployment version the packages declare for the platform, or nil when
@@ -190,7 +200,8 @@ public enum GeneratedFiles {
     /// The project file's lines for one namespace, by tool. The Swift compiler and linker
     /// and the clang tools take the target triple; clang also wants the language standards
     /// stated, which are the project's to choose; actool takes the platform by name with
-    /// the deployment version and devices that decide what it compiles. A comment is a
+    /// the deployment version and devices that decide what it compiles, and ibtool the same
+    /// version and devices, its platform being the SDK it is told. A comment is a
     /// line of its own: everything after a value's `=` is the value.
     private static func projectSettings(namespace: String, toolName: String, platform: Platform,
                                         target: String, deploymentVersion: String) -> [String] {
@@ -205,6 +216,11 @@ public enum GeneratedFiles {
         case "actool":
             return ["\(namespace).platform=\(platform.sdkName)",
                     "\(namespace).minimumDeploymentTarget=\(deploymentVersion)",
+                    "\(namespace).targetDevices=\(platform.targetDevices)"]
+        case "ibtool":
+            // The platform is the SDK's, a machine setting; what the project decides is
+            // what actool is told too.
+            return ["\(namespace).minimumDeploymentTarget=\(deploymentVersion)",
                     "\(namespace).targetDevices=\(platform.targetDevices)"]
         default:
             return []

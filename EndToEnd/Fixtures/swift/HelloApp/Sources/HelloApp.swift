@@ -25,6 +25,9 @@ struct ContentView: View {
             // From a package product, linked through its module and object trees.
             Text(Greeting.subtitle)
                 .font(.subheadline)
+            // From the app's own Objective-C, through the bridging header.
+            Text(HLOGreeter().greeting)
+                .font(.footnote)
             Button(String(format: NSLocalizedString("taps.count", comment: ""), taps)) { taps += 1 }
                 .buttonStyle(.borderedProminent)
         }
