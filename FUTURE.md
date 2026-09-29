@@ -1372,14 +1372,33 @@ application target, simulator only, all library code in packages. In suggested o
       the errors are AppKit names the bridging header would bring (item 6), so the app's
       link is behind item 6. What remains:
 
-      - *A framework's links arrive as copies.* A push follows a symbolic link (and
-        `prepare`'s fold does the same), and a tree has no link entry, so a versioned
-        framework is embedded with `Versions/Current` and every top-level link as a copy
-        (Sparkle: 263 files). It loads and links. `codesign` cannot sign such a framework
-        ("bundle format is ambiguous"), nor a bundle holding one, so `CodeSigner` lays the
-        copies back as links while it signs (item 11); the export then holds copies again,
-        which run but do not verify as a bundle. Links in `TreeManifest`, from the push
-        through to the export, are what would make it verify.
+      - ~~*A framework's links arrive as copies.*~~ Done (2026-09-29; design and as built in
+        `docs/superpowers/specs/2026-09-29-semel-links-in-trees-design.md`). A push followed
+        every symbolic link, `prepare`'s fold did the same, and a tree had no link entry, so
+        a versioned framework was embedded with `Versions/Current` and every top-level link
+        as a copy (Sparkle: 263 files), which `codesign` calls ambiguous. Now a link whose
+        target stays inside its own folder — relative, never climbing above it, naming no
+        dot-name — is pushed as a link, and any other is followed or refused as before. It is
+        still stored as what it names, so nothing that reads bytes or walks folders changes
+        (RevenueCat keeps two targets' sources behind folder links to siblings), and its
+        target is recorded beside it: a file's on its `fileMetadata`, a folder's on a new
+        `Folder.symbolicLink` port and in its parent's manifest. The fold has a `link` line
+        (format 3), trees a link entry (`TreeManifestEntry.Content.symbolicLink`) kept only
+        where it resolves inside the tree, `TreeFile`/`OutputFile` carry the target on
+        `fileMetadata`, tools lay and read back links, the settle diff reports a link by what
+        it holds, and `export` and `cp` write links (`ProtocolVersion` 19, `Semel` 0.1.13).
+        `CodeSigner` signs the tree as it is. Pinned at every layer — the lister, the disk
+        fold, `TreeManifestTests`, the engine's fold (`FolderMerkleRootTests`,
+        `DependencyLockFoldTests` pushing a framework's links and comparing the two folds),
+        the tree nodes, the slice selector, the signer with the real `codesign`, the server,
+        the client's push and `cp`, the export — and end to end by `swift-binary-target-app`,
+        whose export holds `Tiny.framework`'s five links as links and verifies with
+        `codesign --verify --deep --strict`, and by `netnewswire-mac`, whose exported
+        `NetNewsWire.app` — Sparkle, its XPC services and `Updater.app` inside — now
+        verifies the same way (the roster checks it). `Vendoring` needed no change: `copyItem` and
+        `ditto` keep a checkout's and an artifact's links. What remains: a push only adds, so
+        a folder link replaced on disk by a folder stays a link in the graph until removed;
+        `ls` shows a link as the file or folder it names.
       - ~~*The whole download is pushed.*~~ Done (2026-09-29, 19 below): `prepare` keeps
         only the `.xcframework` in `semel-artifacts/<Target>`.
       - *A package's own product* reaching a binary framework links with `@loader_path`,
@@ -1829,9 +1848,10 @@ application target, simulator only, all library code in packages. In suggested o
    iCloud and push keys left out as an ad-hoc signature must — and
    `RSCore_RSCoreResources.bundle` holds `WebViewWindow.nib` and
    `IndeterminateProgressWindow.nib`. The export checks each executable is signed as its
-   bundle's (`SignedBundleCheck.signedAsPartOfTheBundle`) and does not verify the app as
-   a whole: Sparkle's links arrive as copies (1), which `codesign --verify` calls
-   ambiguous. `mayDifferWithExempt` exempted the seals and the three executables when an
+   bundle's (`SignedBundleCheck.signedAsPartOfTheBundle`), and — since links travel in
+   trees (1, 2026-09-29) — verifies the app as a whole with `codesign --verify --deep
+   --strict`, Sparkle's `Versions/Current` and top-level links arriving as links; the
+   roster run with that check passed through all four builds in 1,061 s. `mayDifferWithExempt` exempted the seals and the three executables when an
    `Assets.car` differed; in the run it did, and the app's `CodeResources` and executable
    differed with it, nothing else. Since B-89 the catalog is canonical and the roster
    exempts nothing. The test took 657 s. What made it possible: a tree
