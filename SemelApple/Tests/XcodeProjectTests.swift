@@ -291,8 +291,144 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertFalse(atTheRoot.matches("en.lproj/Plain.strings"), "only an Interface Builder file has tables of its name")
 
         XCTAssertEqual(XcodeProject.MembershipException("ShareExtension/icon.icns"), .path("ShareExtension/icon.icns"))
-        XCTAssertTrue(XcodeProject.MembershipException("Resources/Assets.xcassets").matches("Resources/Assets.xcassets/Contents.json"),
-                      "a folder left out leaves out what is in it")
+    }
+
+    /// An exception naming a folder Xcode takes as one item — a catalog, a bundle, a
+    /// folder the group names in `explicitFolders` — leaves out what it holds; one naming
+    /// a plain folder leaves out nothing under it, with or without a trailing slash, as
+    /// Xcode 26.6 compiled `Plain/Under.swift` with `Plain` among the owner's exceptions
+    /// (B-77 map item 19). The Swift compiler, which reads each excluded path as a
+    /// package's `exclude`, is not handed the plain folder.
+    func test_anExceptionNamingAPlainFolderLeavesOutNothingUnderIt() {
+        let folder = XcodeProject.SynchronizedFolder(path: "App",
+                                                     exceptions: ["Plain", "Slashed/", "Resources/Assets.xcassets", "Kit.bundle",
+                                                                  "Explicit", "Excluded.txt"].map(XcodeProject.MembershipException.init),
+                                                     explicitFolders: ["Explicit"])
+
+        XCTAssertEqual(XcodeProject.MembershipException("Slashed/"), .path("Slashed"))
+        XCTAssertFalse(folder.excludes("Plain/Under.swift"))
+        XCTAssertFalse(folder.excludes("Plain/Deeper/notes.txt"))
+        XCTAssertFalse(folder.excludes("Slashed/Under.swift"))
+        XCTAssertTrue(folder.excludes("Resources/Assets.xcassets/Contents.json"), "a catalog is one item")
+        XCTAssertTrue(folder.excludes("Kit.bundle/inside.txt"), "a bundle is one item")
+        XCTAssertTrue(folder.excludes("Explicit/one.txt"), "a folder the group names in explicitFolders is one item")
+        XCTAssertTrue(folder.excludes("Excluded.txt"))
+        XCTAssertFalse(folder.excludes("Excluded.txt.bak"))
+        XCTAssertEqual(folder.excludedPaths(folders: ["Plain", "Slashed", "Resources", "Resources/Assets.xcassets", "Kit.bundle", "Explicit"]).sorted(),
+                       ["Excluded.txt", "Explicit", "Kit.bundle", "Resources/Assets.xcassets"])
+    }
+
+    // MARK: - The exception sets a probe established (B-77)
+
+    /// A Mac app owning one synchronized folder, `App`, as the project Xcode 26.6 built
+    /// (2026-09-29) to establish what the two exception kinds item 18 left unread do: the
+    /// owner's set gives `Helper.c` and `Flagged.swift` flags of their own and names the
+    /// plain folder `Plain`; two sets name copy-files phases, one copying `Copied.txt` to
+    /// the resources' `Extra` folder, one `Support.txt` to Shared Support. Its settings
+    /// are the probe's too: Swift 5, strict concurrency targeted, Approachable
+    /// Concurrency, `ExistentialAny`, a condition, `OTHER_SWIFT_FLAGS`, `OTHER_CFLAGS`, a
+    /// bridging header and the hardened runtime.
+    ///
+    /// What Xcode made of it: `Helper.c` compiled with `-DPROBE_FLAG=7` after the common
+    /// arguments holding `-DPROBE_OTHER_C`; `Flagged.swift`'s `-DPROBE_SWIFT_FILE_FLAG` on
+    /// no `swiftc` line; `Plain/Under.swift` compiled; the bundle `Contents/Info.plist`,
+    /// `Contents/MacOS/Probe`, `Contents/PkgInfo` (`APPL????`), `Contents/Resources/Copied.txt`,
+    /// `Contents/Resources/Extra/Copied.txt`, `Contents/Resources/Support.txt` and
+    /// `Contents/SharedSupport/Support.txt`; the Swift driver given `-DPROBE_CONDITION
+    /// -DPROBE_OTHER_SWIFT -strict-concurrency=targeted -enable-bare-slash-regex`, the
+    /// upcoming features `DisableOutwardActorInference`, `InferSendableFromCaptures`,
+    /// `GlobalActorIsolatedTypesUsability`, `ExistentialAny`, `InferIsolatedConformances`
+    /// and `NonisolatedNonsendingByDefault`, and the experimental `DebugDescriptionMacro`;
+    /// and `codesign --force --sign - -o runtime --entitlements … --timestamp=none`.
+    static let exceptionProbe = """
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            objectVersion = 77;
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 ); developmentRegion = en; };
+                G1 = { isa = PBXGroup; children = ( SG1 ); sourceTree = "<group>"; };
+                PR1 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = Probe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; exceptions = ( EX1, EX2, EX3 ); path = App; sourceTree = "<group>"; };
+                EX1 = {
+                    isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+                    additionalCompilerFlagsByRelativePath = { Flagged.swift = "-DPROBE_SWIFT_FILE_FLAG"; Helper.c = "-DPROBE_FLAG=7"; };
+                    membershipExceptions = ( Plain );
+                    target = T1;
+                };
+                EX2 = { isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet; buildPhase = CP1; membershipExceptions = ( Copied.txt ); };
+                EX3 = { isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet; buildPhase = CP2; membershipExceptions = ( Support.txt ); };
+                SB1 = { isa = PBXSourcesBuildPhase; files = ( ); };
+                FB1 = { isa = PBXFrameworksBuildPhase; files = ( ); };
+                RB1 = { isa = PBXResourcesBuildPhase; files = ( ); };
+                CP1 = { isa = PBXCopyFilesBuildPhase; dstPath = Extra; dstSubfolderSpec = 7; files = ( ); name = "Copy Extra"; };
+                CP2 = { isa = PBXCopyFilesBuildPhase; dstPath = ""; dstSubfolderSpec = 12; files = ( ); name = "Copy Support"; };
+                T1 = {
+                    isa = PBXNativeTarget;
+                    buildConfigurationList = CL2;
+                    buildPhases = ( SB1, FB1, RB1, CP1, CP2 );
+                    fileSystemSynchronizedGroups = ( SG1 );
+                    name = Probe;
+                    packageProductDependencies = ( );
+                    productReference = PR1;
+                    productType = "com.apple.product-type.application";
+                };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                    CLANG_ENABLE_MODULES = YES;
+                    MACOSX_DEPLOYMENT_TARGET = 15.0;
+                    SDKROOT = macosx;
+                }; };
+                CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
+                C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                    CODE_SIGN_IDENTITY = "-";
+                    CODE_SIGN_STYLE = Manual;
+                    ENABLE_HARDENED_RUNTIME = YES;
+                    GENERATE_INFOPLIST_FILE = YES;
+                    OTHER_CFLAGS = "-DPROBE_OTHER_C";
+                    OTHER_SWIFT_FLAGS = "-DPROBE_OTHER_SWIFT";
+                    PRODUCT_BUNDLE_IDENTIFIER = com.example.Probe;
+                    PRODUCT_NAME = "$(TARGET_NAME)";
+                    SWIFT_ACTIVE_COMPILATION_CONDITIONS = PROBE_CONDITION;
+                    SWIFT_APPROACHABLE_CONCURRENCY = YES;
+                    SWIFT_OBJC_BRIDGING_HEADER = App/Bridge.h;
+                    SWIFT_STRICT_CONCURRENCY = targeted;
+                    SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES;
+                    SWIFT_VERSION = 5.0;
+                }; };
+            };
+            rootObject = P1;
+        }
+        """
+
+    /// The owner's flags for single sources are read with its exclusions, and each set
+    /// naming a copy-files phase is what that phase copies, at the destination it gives —
+    /// and not an exclusion of the owner's, which a set naming no target was once read as.
+    func test_readsASourcesOwnFlagsAndWhatACopyFilesPhaseTakesFromTheFolder() throws {
+        let project = try XcodeProject(pbxproj: Data(Self.exceptionProbe.utf8))
+        let probe = try XCTUnwrap(project.targets.first)
+        let folder = try XCTUnwrap(probe.synchronizedFolders.first)
+
+        XCTAssertEqual(folder.compilerFlags, ["Helper.c": "-DPROBE_FLAG=7", "Flagged.swift": "-DPROBE_SWIFT_FILE_FLAG"])
+        XCTAssertEqual(folder.exceptions, [.path("Plain")])
+        XCTAssertFalse(folder.excludes("Copied.txt"))
+        XCTAssertEqual(probe.phaseCopies, [
+            XcodeProject.PhaseCopy(folder: "App", path: "Copied.txt", destination: .init(subfolderSpec: 7, path: "Extra")),
+            XcodeProject.PhaseCopy(folder: "App", path: "Support.txt", destination: .init(subfolderSpec: 12, path: "")),
+        ])
+    }
+
+    /// A target that borrows a source from another target's folder may give it flags of
+    /// its own in the same set.
+    func test_aBorrowedSourceCarriesTheBorrowersFlags() throws {
+        let pbxproj = Self.fixture.replacingOccurrences(
+            of: "membershipExceptions = ( \"Embeds/glass.wav\", \"Shared/Entity.swift\" ); target = T2;",
+            with: "membershipExceptions = ( \"Embeds/glass.wav\", \"Shared/Entity.swift\", \"Shared/Legacy.m\" ); "
+                + "additionalCompilerFlagsByRelativePath = { \"Shared/Legacy.m\" = \"-fno-objc-arc\"; }; target = T2;")
+        XCTAssertNotEqual(pbxproj, Self.fixture, "the fixture's borrowing set has moved")
+        let share = try XCTUnwrap(try XcodeProject(pbxproj: Data(pbxproj.utf8)).targets.first { $0.name == "IceCubesShareExtension" })
+
+        XCTAssertEqual(share.borrowedCompilerFlags, ["IceCubesApp/Shared/Legacy.m": "-fno-objc-arc"])
     }
 
     /// NetNewsWire's Share extension borrows its xib as a localized resource of the `Mac`
@@ -309,7 +445,7 @@ final class XcodeProjectTests: XCTestCase {
         XCTAssertFalse(share.borrowedFiles.contains { $0.contains("Localized") }, "\(share.borrowedFiles)")
         XCTAssertTrue(macFolder.excludes("ShareExtension/Base.lproj/ShareViewController.xib"))
         XCTAssertFalse(macFolder.excludes("MainMenu/Base.lproj/MainMenu.xib"))
-        XCTAssertFalse(macFolder.excludedPaths.contains { $0.contains("Localized") }, "\(macFolder.excludedPaths)")
+        XCTAssertFalse(macFolder.excludedPaths(folders: []).contains { $0.contains("Localized") }, "\(macFolder.excludedPaths(folders: []))")
     }
 
     /// The themes are folder references in both apps' resources phases: a folder Xcode

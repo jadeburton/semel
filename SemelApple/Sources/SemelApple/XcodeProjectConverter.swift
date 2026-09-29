@@ -40,8 +40,14 @@ public struct XcodeProjectConverter: Node {
     /// borrows is compiled for it (B-77); at 11, a synchronized folder's files are sorted
     /// by Xcode's rule — a plist, a Markdown file or an xcconfig copied, the target's own
     /// Info.plist and entitlements not — and a bundle or a folder the group names in
-    /// `explicitFolders` is copied whole rather than walked (B-77).
-    public static let implementationVersion = 11
+    /// `explicitFolders` is copied whole rather than walked (B-77); at 12, a target's Swift
+    /// settings reach its compiler as a package's do — conditions as `defines`, features,
+    /// `OTHER_SWIFT_FLAGS` and warnings as errors as `unsafeFlags` — `OTHER_CFLAGS` and a
+    /// source's own flags reach clang, an application gets a `PkgInfo`, a copy-files
+    /// phase's exception set copies its files there too, an exception naming a plain
+    /// folder leaves out nothing under it, and a bundle whose settings ask for the hardened
+    /// runtime is signed with it (B-77).
+    public static let implementationVersion = 12
 
     // MARK: Ports
 

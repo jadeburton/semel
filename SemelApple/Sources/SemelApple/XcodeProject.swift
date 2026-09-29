@@ -31,17 +31,67 @@ struct XcodeProject {
         /// holds kept as it is laid out, where any other plain folder is walked and its
         /// files flattened (NetNewsWire's `xcconfig` folder names `common`).
         var explicitFolders: [String] = []
+        /// The owner's own flags for single sources, by path relative to the folder: the
+        /// exception set's `additionalCompilerFlagsByRelativePath`, as the project file
+        /// spells them (`-DPROBE_FLAG=7`), one string of words for each source.
+        var compilerFlags: [String: String] = [:]
 
-        /// Whether the file or folder at `relativePath` in the folder is left out.
+        /// Whether the file or folder at `relativePath` in the folder is left out. An
+        /// entry naming a folder leaves out what is under it only when Xcode takes that
+        /// folder as one item — a catalog, a bundle, a folder the group names in
+        /// `explicitFolders` (NetNewsWire's iOS app leaves out `Resources/Assets.xcassets`).
+        /// One naming a plain folder leaves out nothing under it: with `ExcludedFolder` or
+        /// `ExcludedFolder/` among the owner's exceptions, Xcode 26.6 compiled a Swift file
+        /// under it and copied a text file, and a second probe `Plain/Under.swift` (B-77).
         func excludes(_ relativePath: String) -> Bool {
-            exceptions.contains { $0.matches(relativePath) }
+            exceptions.contains { exception in
+                guard let path = exception.path else {
+                    return exception.matches(relativePath)
+                }
+                return exception.matches(relativePath)
+                    || (relativePath.hasPrefix(path + "/") && takesAsOneItem(folder: path))
+            }
         }
 
-        /// The exceptions that name a path, for a reader that walks the folder itself and
-        /// wants only its sources left out: a localized resource is never a source.
-        var excludedPaths: [String] {
-            exceptions.compactMap(\.path)
+        /// Whether Xcode takes the folder at `relativePath` as one item rather than as a
+        /// group whose files are members each by itself.
+        func takesAsOneItem(folder relativePath: String) -> Bool {
+            XcodeFormulaEmitter.folderRole(at: relativePath, explicitFolders: explicitFolders) != .group
         }
+
+        /// The exceptions that leave out a path, for the Swift compiler, which walks the
+        /// folder itself and reads each as a package's `exclude` is read — what is under
+        /// it left out too. So an entry naming one of `folders` (what the folder holds, as
+        /// walked) that Xcode takes as a group is not among them: Xcode leaves out nothing
+        /// under it. A localized resource is never a source.
+        func excludedPaths(folders: [String]) -> [String] {
+            let groups = Set(folders.filter { !takesAsOneItem(folder: $0) })
+            return exceptions.compactMap(\.path).filter { !groups.contains($0) }
+        }
+    }
+
+    /// A copy-files phase a synchronized folder's file is put into as well as its own
+    /// phase: an exception set of the kind `PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet`
+    /// names the phase and the files. Established on Xcode 26.6 (B-77 item 2): `Copied.txt`,
+    /// named for a phase copying to the resources' `Extra` folder, landed in both
+    /// `Contents/Resources/` and `Contents/Resources/Extra/`, and `Support.txt`, for one
+    /// copying to Shared Support, in `Contents/Resources/` and `Contents/SharedSupport/`.
+    struct PhaseCopy: Equatable {
+        /// The synchronized folder, relative to the project folder.
+        let folder: String
+        /// The file or folder, relative to the synchronized folder.
+        let path: String
+        let destination: CopyDestination
+    }
+
+    /// Where a copy-files phase copies to: the phase's `dstSubfolderSpec` and `dstPath`.
+    struct CopyDestination: Equatable {
+        /// Xcode's numbering: 1 the bundle itself (the wrapper), 6 executables, 7
+        /// resources, 10 frameworks, 11 shared frameworks, 12 shared support, 13 plug-ins,
+        /// 16 the products folder, 0 an absolute path.
+        let subfolderSpec: Int
+        /// The folder under it, `""` for none.
+        let path: String
     }
 
     /// One entry of a synchronized folder's exception set, relative to the folder: a file
@@ -69,7 +119,8 @@ struct XcodeProject {
 
         init(_ entry: String) {
             guard entry.hasPrefix(Self.localizedPrefix) else {
-                self = .path(entry)
+                // `ExcludedFolder/` names the folder `ExcludedFolder` names.
+                self = .path(entry.hasSuffix("/") ? String(entry.dropLast()) : entry)
                 return
             }
             var components = entry.dropFirst(Self.localizedPrefix.count).split(separator: "/").map(String.init)
@@ -95,21 +146,12 @@ struct XcodeProject {
         }
 
         /// Whether the file or folder at `relativePath`, relative to the synchronized
-        /// folder, is one this entry names. A path names what is under it too: a folder
-        /// left out leaves out everything in it — right for a folder Xcode takes as one
-        /// item, a catalog or a bundle (NetNewsWire's iOS app leaves out
-        /// `Resources/Assets.xcassets`).
-        ///
-        /// ISSUE: Xcode 26.6 does not read an entry naming a plain folder that way: with
-        /// `ExcludedFolder` (or `ExcludedFolder/`) among the owner's exceptions, a Swift file
-        /// under it was compiled and a text file under it copied. Its navigator writes each
-        /// file of a folder rather than the folder, so no project met so far has one; the
-        /// Swift compiler reads `excludedPaths` the way a package's `exclude` is read, what
-        /// is under a path included, and the two readings stay the same here (B-77).
+        /// folder, is the one this entry names. A path names itself alone; whether what is
+        /// under a folder goes with it is the folder's question (`SynchronizedFolder.excludes`).
         func matches(_ relativePath: String) -> Bool {
             switch self {
             case .path(let path):
-                return relativePath == path || relativePath.hasPrefix(path + "/")
+                return relativePath == path
             case .localized(let folder, let name):
                 var components = relativePath.split(separator: "/").map(String.init)
                 guard components.count >= 2, let fileName = components.popLast(), let language = components.popLast(),
@@ -136,6 +178,9 @@ struct XcodeProject {
     struct Borrowed: Hashable {
         let folder: String
         let exception: MembershipException
+        /// The borrowing target's own flags for the source, when its exception set gives
+        /// it some (`additionalCompilerFlagsByRelativePath`).
+        var compilerFlags: String?
     }
 
     enum PackageProduct: Equatable {
@@ -222,6 +267,22 @@ struct XcodeProject {
         var borrowedLocalizedResources: [Borrowed] {
             borrowed.filter { $0.exception.path == nil }
         }
+
+        /// The flags the target gives each borrowed source of its own, by path relative to
+        /// the project folder.
+        var borrowedCompilerFlags: [String: String] {
+            var flags: [String: String] = [:]
+            for entry in borrowed {
+                if let path = entry.exception.path, let compilerFlags = entry.compilerFlags {
+                    flags["\(entry.folder)/\(path)"] = compilerFlags
+                }
+            }
+            return flags
+        }
+
+        /// What a synchronized folder's exception sets put into this target's copy-files
+        /// phases, sorted.
+        var phaseCopies: [PhaseCopy] = []
         /// The files in the sources phase, relative to the project folder, for a target
         /// that lists its files through groups rather than owning a synchronized folder
         /// (B-77), each with the platforms it is limited to. Empty for a folder-owning
@@ -351,23 +412,59 @@ struct XcodeProject {
                 ownersOfGroup[groupID, default: []].insert(ownerID)
             }
         }
+        // A set of the other kind names a build phase rather than a target: its files go
+        // into that phase as well — a copy-files phase copies them where it says — which
+        // is the business of the target whose phase it is.
+        var copyPhases: [String: (targetIndex: Int, destination: CopyDestination)] = [:]
+        for (targetIndex, targetID) in targetIDs.enumerated() {
+            for phaseID in objects[targetID]?["buildPhases"] as? [String] ?? [] {
+                if let phase = objects[phaseID], let destination = Reader.copyDestination(of: phase) {
+                    copyPhases[phaseID] = (targetIndex, destination)
+                }
+            }
+        }
         for (groupID, group) in objects where group["isa"] as? String == "PBXFileSystemSynchronizedRootGroup" {
             guard let path = reader.path(of: groupID) else {
                 continue
             }
             for exceptionID in group["exceptions"] as? [String] ?? [] {
-                guard let exceptions = objects[exceptionID],
+                guard let exceptions = objects[exceptionID] else {
+                    continue
+                }
+                if exceptions["isa"] as? String == Reader.buildPhaseExceptionSet {
+                    // ISSUE: a set naming a sources or resources phase is not read; only a
+                    // copy-files phase says where its files go, and no project met names
+                    // another kind.
+                    guard let phaseID = exceptions["buildPhase"] as? String, let phase = copyPhases[phaseID] else {
+                        continue
+                    }
+                    for entry in exceptions["membershipExceptions"] as? [String] ?? [] {
+                        guard case .path(let entryPath) = MembershipException(entry) else {
+                            continue
+                        }
+                        targets[phase.targetIndex].phaseCopies.append(PhaseCopy(folder: path, path: entryPath, destination: phase.destination))
+                    }
+                    continue
+                }
+                guard exceptions["isa"] as? String == Reader.buildFileExceptionSet,
                       let borrowerID = exceptions["target"] as? String, ownersOfGroup[groupID]?.contains(borrowerID) != true,
                       let borrowerIndex = targetIDs.firstIndex(of: borrowerID) else {
                     continue
                 }
+                let flags = exceptions["additionalCompilerFlagsByRelativePath"] as? [String: String] ?? [:]
                 for entry in exceptions["membershipExceptions"] as? [String] ?? [] {
-                    targets[borrowerIndex].borrowed.append(Borrowed(folder: path, exception: MembershipException(entry)))
+                    let exception = MembershipException(entry)
+                    targets[borrowerIndex].borrowed.append(Borrowed(folder: path, exception: exception,
+                                                                    compilerFlags: exception.path.flatMap { flags[$0] }))
                 }
             }
         }
         for index in targets.indices {
             targets[index].borrowed.sort { ($0.folder, $0.exception.spelling) < ($1.folder, $1.exception.spelling) }
+            targets[index].phaseCopies.sort {
+                ($0.folder, $0.path, $0.destination.subfolderSpec, $0.destination.path)
+                    < ($1.folder, $1.path, $1.destination.subfolderSpec, $1.destination.path)
+            }
         }
         self.targets = targets
     }
@@ -375,6 +472,24 @@ struct XcodeProject {
     /// Resolves object references while reading; nothing of it survives the init.
     private struct Reader {
         let objects: [String: [String: Any]]
+
+        /// The exception set naming a target: the owner's exclusions, or what a target that
+        /// does not own the folder takes from it, and the flags for single sources.
+        static let buildFileExceptionSet = "PBXFileSystemSynchronizedBuildFileExceptionSet"
+        /// The exception set naming a build phase, which its files join as well.
+        static let buildPhaseExceptionSet = "PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet"
+
+        /// Where a copy-files phase copies to; nil for any other phase.
+        static func copyDestination(of phase: [String: Any]) -> CopyDestination? {
+            guard phase["isa"] as? String == "PBXCopyFilesBuildPhase" else {
+                return nil
+            }
+            let spec = phase["dstSubfolderSpec"]
+            guard let subfolderSpec = (spec as? String).flatMap(Int.init) ?? (spec as? Int) else {
+                return nil
+            }
+            return CopyDestination(subfolderSpec: subfolderSpec, path: phase["dstPath"] as? String ?? "")
+        }
 
         /// The group each group and file reference is a child of: what a `<group>`
         /// relative path is relative to.
@@ -548,18 +663,23 @@ struct XcodeProject {
 
             // An exception set names its target: for the folder's own target the files
             // listed are left out, and a set naming another target says what that target
-            // takes from here, which is not this target's business.
+            // takes from here, which is not this target's business; nor is a set naming a
+            // build phase, read with the phase's target.
             let synchronizedFolders = (target["fileSystemSynchronizedGroups"] as? [String] ?? []).compactMap { groupID -> SynchronizedFolder? in
                 guard let group = object(groupID), let path = path(of: groupID) else {
                     return nil
                 }
-                let exceptions = (group["exceptions"] as? [String] ?? [])
+                let sets = (group["exceptions"] as? [String] ?? [])
                     .compactMap { object($0) }
-                    .filter { ($0["target"] as? String).map { $0 == id } ?? true }
-                    .compactMap { $0["membershipExceptions"] as? [String] }
-                    .flatMap { $0 }
+                    .filter { $0["isa"] as? String == Self.buildFileExceptionSet && $0["target"] as? String == id }
+                let exceptions = sets.flatMap { $0["membershipExceptions"] as? [String] ?? [] }
+                var compilerFlags: [String: String] = [:]
+                for set in sets {
+                    compilerFlags.merge(set["additionalCompilerFlagsByRelativePath"] as? [String: String] ?? [:]) { _, later in later }
+                }
                 return SynchronizedFolder(path: path, exceptions: exceptions.sorted().map(MembershipException.init),
-                                          explicitFolders: (group["explicitFolders"] as? [String] ?? []).sorted())
+                                          explicitFolders: (group["explicitFolders"] as? [String] ?? []).sorted(),
+                                          compilerFlags: compilerFlags)
             }
 
             return Target(name: name,

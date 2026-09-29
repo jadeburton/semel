@@ -59,6 +59,35 @@ struct XcodeFormulaEmitter {
             isShallow ? "Info.plist" : "Contents/Info.plist"
         }
 
+        /// Beside the Info.plist, as Xcode writes it.
+        var pkgInfoPath: String {
+            isShallow ? "PkgInfo" : "Contents/PkgInfo"
+        }
+
+        /// The folder of the bundle a copy-files phase copies to, with the phase's own
+        /// folder under it — Xcode's `dstSubfolderSpec` as the bundle lays it out — or nil
+        /// for a destination outside the bundle: the products folder (16), an absolute
+        /// path (0), and the rest Xcode no longer offers.
+        func folder(forCopyDestination destination: XcodeProject.CopyDestination) -> String? {
+            let contents = isShallow ? "" : "Contents/"
+            let base: String
+            switch destination.subfolderSpec {
+            case 1:  base = ""
+            case 6:  base = isShallow ? "" : "Contents/MacOS"
+            case 7:  base = resourcesFolder
+            case 10: base = frameworksFolder
+            case 11: base = "\(contents)SharedFrameworks"
+            case 12: base = "\(contents)SharedSupport"
+            case 13: base = "\(contents)PlugIns"
+            default: return nil
+            }
+            let path = destination.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if path.isEmpty {
+                return base
+            }
+            return base.isEmpty ? path : "\(base)/\(path)"
+        }
+
         func resourcePath(at path: String) -> String {
             isShallow ? path : "Contents/Resources/\(path)"
         }
@@ -189,6 +218,10 @@ struct XcodeFormulaEmitter {
     /// expression is what the bundle is once signed: the signer's tree, or the bundle's
     /// own when the target sets `CODE_SIGNING_ALLOWED = NO`.
     ///
+    /// `ENABLE_HARDENED_RUNTIME = YES` signs with the hardened runtime, `-o runtime`, as
+    /// Xcode does: NetNewsWire's Release app, and both its Mac extensions in either
+    /// configuration.
+    ///
     /// `CODE_SIGN_IDENTITY` is read and, when it names a certificate (`Apple Development`,
     /// NetNewsWire's `Mac Developer`), said in the formula and signed ad-hoc anyway: Semel
     /// signs with no certificate, and an ad-hoc signature is what lets the app run here.
@@ -207,8 +240,13 @@ struct XcodeFormulaEmitter {
         if !identity.isEmpty, identity != CodeSignerConfiguration.adHocIdentity {
             signer += "// CODE_SIGN_IDENTITY is \(Self.quoted(identity)): signed ad-hoc, as Semel signs with no certificate (B-77).\n"
         }
-        let signerConfiguration = configuration(namespace: Self.codeSignerNamespace,
-                                                literals: ["identity": CodeSignerConfiguration.adHocIdentity])
+        // The hardened runtime is a fact about the bundle, as its entitlements are: a
+        // literal, which a config file cannot turn off.
+        var signerLiterals = ["identity": CodeSignerConfiguration.adHocIdentity]
+        if settings["ENABLE_HARDENED_RUNTIME"] == "YES" {
+            signerLiterals[CodeSignerConfiguration.hardenedRuntimeKey] = "true"
+        }
+        let signerConfiguration = configuration(namespace: Self.codeSignerNamespace, literals: signerLiterals)
         signer += "func signed_\(name)() =\n" +
                   "    CodeSigner(\n" +
                   "        configuration: ['config': \(signerConfiguration)],\n" +
@@ -273,6 +311,23 @@ struct XcodeFormulaEmitter {
         /// The target's evaluated settings as JSON, the variables its Info.plist and its
         /// entitlements may name.
         var buildSettingsJSON = "{}"
+
+        /// The parts with every tree for one folder merged into the first: a folder a
+        /// copy-files phase copies into `Contents/Resources` joins the resources' tree, where
+        /// two trees under one folder would be two products of one name.
+        static func mergingTrees(_ parts: [Part]) -> [Part] {
+            var merged: [Part] = []
+            for part in parts {
+                guard case .tree(let folder, let inputs) = part,
+                      let index = merged.firstIndex(where: { if case .tree(folder, _) = $0 { return true } else { return false } }),
+                      case .tree(_, let earlier) = merged[index] else {
+                    merged.append(part)
+                    continue
+                }
+                merged[index] = .tree(folder: folder, inputs: earlier + ", " + inputs)
+            }
+            return merged
+        }
 
         /// The funcs, then each part a product of its own under `bundle`: the bundle as
         /// it is exported, unsigned.
@@ -344,7 +399,9 @@ struct XcodeFormulaEmitter {
         let folderWires = sourceFolders.enumerated().map { index, folder in
             "        'folder\(index)': Folder(path: '\(folder.1)').manifest"
         }
-        let exceptions = sourceFolders.flatMap { $0.0.excludedPaths }.sorted()
+        let exceptions = sourceFolders.flatMap { folder, folderPath in
+            folder.excludedPaths(folders: (listing(folderPath) ?? FolderListing()).folders)
+        }.sorted()
         let moduleTrees = target.packageProducts.map(\.product).sorted().map {
             "        '\($0)': \(FormulaIdentifier.modulesFunc(forProduct: $0))().files"
         }
@@ -369,10 +426,12 @@ struct XcodeFormulaEmitter {
         if let languageMode = identity.languageMode {
             compilerLiterals["languageMode"] = languageMode
         }
+        // The target's own Swift settings — its conditions, the features and checking its
+        // language settings choose, warnings as errors, `OTHER_SWIFT_FLAGS` — as the
+        // literals a package target's `swiftSettings` become: facts about the target a
+        // config file must not change.
+        compilerLiterals.merge(try XcodeSwiftSettings(settings: settings, languageMode: identity.languageMode).literals()) { _, swift in swift }
         var compilerArguments: [String] = []
-        for condition in (settings["SWIFT_ACTIVE_COMPILATION_CONDITIONS"] ?? "").split(separator: " ") {
-            compilerArguments += ["-D", String(condition)]
-        }
         if target.isExtension {
             compilerArguments.append("-application-extension")
         }
@@ -432,17 +491,33 @@ struct XcodeFormulaEmitter {
             let headerFolderWires = objectiveC.headerFolders.map {
                 "            \(Self.quoted($0)): Folder(path: \(Self.quoted($0))).manifest"
             }
-            blocks.append(
-                "func preprocess_\(name)(path) =\n" +
+            func preprocessor(named function: String, literals: [String: String]) -> String {
+                "func \(function)(path) =\n" +
                 "    ClangPreprocessor(\n" +
-                "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: objectiveC.preprocessorLiterals))],\n" +
+                "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: literals))],\n" +
                 "        input: [path: StaticFile(path: path)],\n" +
                 "        headerFolders: [\n" + headerFolderWires.joined(separator: ",\n") + "\n        ]\n" +
-                "    )")
+                "    )"
+            }
+            blocks.append(preprocessor(named: "preprocess_\(name)", literals: objectiveC.preprocessorLiterals))
             let compilerConfiguration = configuration(namespace: Self.clangCompilerNamespace, literals: objectiveC.compilerLiterals)
+            // A source with flags of its own (`additionalCompilerFlagsByRelativePath`) is
+            // preprocessed and compiled by nodes of its own, the flags after the target's,
+            // as Xcode passes them after `OTHER_CFLAGS`.
+            var flaggedIndex = 0
             for source in objectiveC.sources {
-                objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(compilerConfiguration)], "
-                                     + "input: [\(Self.quoted(source + ".p")): preprocess_\(name)(path: \(Self.quoted(source)))]).output")
+                var preprocessorFunction = "preprocess_\(name)"
+                var sourceCompilerConfiguration = compilerConfiguration
+                if let fileFlags = objectiveC.fileFlags[source] {
+                    preprocessorFunction = "preprocess_\(name)_\(flaggedIndex)"
+                    flaggedIndex += 1
+                    blocks.append(preprocessor(named: preprocessorFunction,
+                                               literals: objectiveC.preprocessorLiterals(adding: fileFlags)))
+                    sourceCompilerConfiguration = configuration(namespace: Self.clangCompilerNamespace,
+                                                                literals: objectiveC.compilerLiterals(adding: fileFlags))
+                }
+                objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(sourceCompilerConfiguration)], "
+                                     + "input: [\(Self.quoted(source + ".p")): \(preprocessorFunction)(path: \(Self.quoted(source)))]).output")
             }
         }
 
@@ -669,15 +744,44 @@ struct XcodeFormulaEmitter {
         } else {
             base = ""
         }
-        products.append(.file(
-            path: layout.infoPlistPath,
-            expression: "\n" +
+        blocks.append(
+            "func infoPlist_\(name)() =\n" +
             "    InfoPlistBuilder(\n" +
             "        keys: '\(keysJSON)',\n" +
             "        \(InfoPlistBuilder.buildSettingsProperty): '\(settingsJSON)',\n" +
             base +
             "        partials: [\(partials.joined(separator: ", "))]\n" +
-            "    ).plist"))
+            "    )")
+        products.append(.file(path: layout.infoPlistPath, expression: " infoPlist_\(name)().\(InfoPlistBuilder.output)"))
+        // An application's `PkgInfo`, the package type and the creator code from the plist
+        // as built (`APPL????`), which Xcode writes beside the plist (B-77).
+        if settings["GENERATE_PKGINFO_FILE"] == "YES" {
+            products.append(.file(path: layout.pkgInfoPath, expression: " infoPlist_\(name)().\(InfoPlistBuilder.pkgInfo)"))
+        }
+
+        // ── copy-files phases (B-77) ─────────────────────────────────────────
+        // What a synchronized folder's exception set puts into one of the target's
+        // copy-files phases, copied there as well as wherever its own type puts it: a file
+        // under its name, a folder whole. A destination outside the bundle — the products
+        // folder, an absolute path — is not the bundle's, and said so.
+        for (index, copy) in target.phaseCopies.enumerated() {
+            let folderPath = "\(build.projectFolder)/\(copy.folder)"
+            guard let destination = layout.folder(forCopyDestination: copy.destination) else {
+                blocks.append("// \(copy.folder)/\(copy.path) is copied by a phase to dstSubfolderSpec \(copy.destination.subfolderSpec), "
+                              + "outside the bundle, which this formula does not write (B-77).")
+                continue
+            }
+            let name = (copy.path as NSString).lastPathComponent
+            let isFolder = (listing(folderPath) ?? FolderListing()).folders.contains(copy.path)
+            let source = "\(folderPath)/\(copy.path)"
+            if isFolder {
+                products.append(.tree(folder: destination, inputs: "'copied\(index)': FolderTreeBuilder(under: \(Self.quoted(name)), "
+                                      + "folder: ['folder': Folder(path: \(Self.quoted(source))).manifest]).files"))
+            } else {
+                let path = destination.isEmpty ? name : "\(destination)/\(name)"
+                products.append(.file(path: path, expression: " StaticFile(path: \(Self.quoted(source))).output"))
+            }
+        }
 
         // The resource bundles of the packages the target links, each under its own
         // `<Package>_<Target>.bundle/` (B-77): the package's formula carries them as one
@@ -690,7 +794,7 @@ struct XcodeFormulaEmitter {
             products.append(.tree(folder: layout.resourcesFolder, inputs: bundleTrees.joined(separator: ", ")))
         }
 
-        return BundleParts(blocks: blocks, parts: products, buildSettingsJSON: settingsJSON)
+        return BundleParts(blocks: blocks, parts: BundleParts.mergingTrees(products), buildSettingsJSON: settingsJSON)
     }
 
     // MARK: - Helpers
@@ -925,12 +1029,59 @@ struct XcodeFormulaEmitter {
         var compilerLiterals: [String: String] = [:]
         /// `GCC_PREPROCESSOR_DEFINITIONS`, one `NAME` or `NAME=value` each.
         var defines: [String] = []
+        /// `OTHER_CFLAGS`, as words.
+        var otherFlags: [String] = []
+        /// The flags a source has of its own, by its path in the input file system.
+        var fileFlags: [String: [String]] = [:]
         var compilesCxx = false
         /// `SWIFT_OBJC_BRIDGING_HEADER`, relative to the project's folder.
         var bridgingHeader: String?
         /// Every header in the target's synchronized folders, by its path relative to the
         /// project's folder (the key) and in the input file system (the path). Sorted.
         var headers: [(key: String, path: String)] = []
+
+        /// The preprocessor's literals for a source with flags of its own: the target's
+        /// `OTHER_CFLAGS`, then the source's.
+        func preprocessorLiterals(adding flags: [String]) -> [String: String] {
+            Self.withArguments(preprocessorLiterals, otherFlags + flags)
+        }
+
+        /// The compiler's, the same less what only the preprocessor may act on.
+        func compilerLiterals(adding flags: [String]) -> [String: String] {
+            Self.withArguments(compilerLiterals, XcodeFormulaEmitter.compileStageFlags(otherFlags + flags))
+        }
+
+        static func withArguments(_ literals: [String: String], _ flags: [String]) -> [String: String] {
+            var literals = literals
+            literals["arguments"] = flags.isEmpty ? nil : flags.joined(separator: ",")
+            return literals
+        }
+    }
+
+    /// Xcode passes `OTHER_CFLAGS` and a source's own flags to the one clang that
+    /// preprocesses and compiles it; here the two are separate nodes, and each takes them
+    /// all — a `-D` defines nothing in text already preprocessed, a warning flag the
+    /// preprocessor has no use for is one it ignores — but for a file forced in ahead of
+    /// the source (`-include`, `-imacros`), which the compiler would take in a second time,
+    /// and which the preprocessed text already holds.
+    static func compileStageFlags(_ flags: [String]) -> [String] {
+        var kept: [String] = []
+        var skipsNext = false
+        for flag in flags {
+            if skipsNext {
+                skipsNext = false
+                continue
+            }
+            if flag == "-include" || flag == "-imacros" {
+                skipsNext = true
+                continue
+            }
+            if flag.hasPrefix("-include") || flag.hasPrefix("-imacros") {
+                continue
+            }
+            kept.append(flag)
+        }
+        return kept
     }
 
     /// The target's C-family sources — in its synchronized folders less their exceptions,
@@ -938,10 +1089,15 @@ struct XcodeFormulaEmitter {
     /// walked, with the settings they build under. Clang's settings follow Xcode's:
     /// `CLANG_ENABLE_OBJC_ARC` and `CLANG_ENABLE_MODULES` (off unless set, as in Xcode),
     /// the language standards when the project states them, `GCC_PREPROCESSOR_DEFINITIONS`,
-    /// and the target's triple, as the Swift compiler gets it.
+    /// `OTHER_CFLAGS` as `arguments`, and the target's triple, as the Swift compiler gets
+    /// it; a source's own flags (`additionalCompilerFlagsByRelativePath`) after the
+    /// target's. A Swift source's own flags reach nothing, as in Xcode 26.6: a probe's
+    /// `-DPROBE_SWIFT_FILE_FLAG` on one Swift file was on no `swiftc` command line (B-77).
     ///
-    /// ISSUE: a definition holding a comma splits in two, and one holding a quote ends the
-    /// formula's string — the limit a package's `.define` has.
+    /// ISSUE: a definition or a flag holding a comma splits in two, and one holding a
+    /// quote ends the formula's string — the limit a package's `.define` has. A C++ source
+    /// takes `OTHER_CFLAGS` too, where Xcode gives it `OTHER_CPLUSPLUSFLAGS` (by default the
+    /// same).
     func objectiveCSources(of target: XcodeProject.Target,
                            identity: TargetIdentity,
                            in sourceFolders: [(XcodeProject.SynchronizedFolder, String)],
@@ -956,6 +1112,9 @@ struct XcodeFormulaEmitter {
             for file in (listing(folderPath) ?? FolderListing()).files where !folder.excludes(file) && !Self.isInsideCatalog(file) {
                 if Self.isCFamilySource(file) {
                     sources.insert("\(folderPath)/\(file)")
+                    if let flags = folder.compilerFlags[file] {
+                        result.fileFlags["\(folderPath)/\(file)"] = XcodeBuildSettings.words(flags)
+                    }
                 }
                 if Self.isHeader(file) {
                     result.headers.append((key: "\(folder.path)/\(file)", path: "\(folderPath)/\(file)"))
@@ -963,16 +1122,21 @@ struct XcodeFormulaEmitter {
             }
         }
         let synchronizedPaths = sourceFolders.map(\.1)
+        let borrowedFlags = target.borrowedCompilerFlags
         for relativePath in listed + target.borrowedFiles.filter(Self.isCFamilySource) {
             let path = "\(build.projectFolder)/\(relativePath)"
             sources.insert(path)
+            if let flags = borrowedFlags[relativePath] {
+                result.fileFlags[path] = XcodeBuildSettings.words(flags)
+            }
             if !synchronizedPaths.contains(where: { path.hasPrefix($0 + "/") }) {
                 searchedFolders.insert((path as NSString).deletingLastPathComponent)
             }
         }
         result.headers.sort { $0.key < $1.key }
         result.bridgingHeader = settings["SWIFT_OBJC_BRIDGING_HEADER"].map(Self.projectRelativePath).flatMap { $0.isEmpty ? nil : $0 }
-        result.defines = (settings["GCC_PREPROCESSOR_DEFINITIONS"] ?? "").split(separator: " ").map(String.init)
+        result.defines = settings.list("GCC_PREPROCESSOR_DEFINITIONS")
+        result.otherFlags = settings.list("OTHER_CFLAGS")
         guard !sources.isEmpty else {
             return result
         }
@@ -993,11 +1157,11 @@ struct XcodeFormulaEmitter {
         if let standard = settings["CLANG_CXX_LANGUAGE_STANDARD"], !standard.isEmpty, standard != "compiler-default" {
             literals["cxxStandard"] = standard
         }
-        result.compilerLiterals = literals
+        result.compilerLiterals = ObjectiveCSources.withArguments(literals, Self.compileStageFlags(result.otherFlags))
         if !result.defines.isEmpty {
             literals["defines"] = result.defines.joined(separator: ",")
         }
-        result.preprocessorLiterals = literals
+        result.preprocessorLiterals = ObjectiveCSources.withArguments(literals, result.otherFlags)
         return result
     }
 
