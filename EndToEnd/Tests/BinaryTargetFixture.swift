@@ -54,15 +54,24 @@ enum BinaryTargetFixture {
                  "-output", buildFolder.appendingPathComponent("Greeting/Tiny.xcframework").path])
     }
 
+    /// What the app prints: the framework's greeting, then what the plist and the JSON
+    /// file of its synchronized folder say, each read from the bundle's resources at
+    /// launch (B-77 item 2).
+    static let printedLines = [greeting,
+                               "Goodbye from a plist in the synchronized folder",
+                               "A JSON file two folders down, copied flat"]
+
     /// The exported app loads the framework by its install name, finds it through the
     /// runpath the emitter gave it, and — the framework embedded under
-    /// `Contents/Frameworks` — runs and prints the framework's greeting.
+    /// `Contents/Frameworks` — runs and prints the framework's greeting, and finds the
+    /// plist and the JSON file its folder holds where Xcode puts them.
     static func checkApp(in out: URL) throws {
         let executable = out.appendingPathComponent("Greeter.app/Contents/MacOS/Greeter")
         try AppInspection.checkLoadsEmbeddedFramework(executable: executable, installName: installName)
         let printed = try run([executable.path], viaXcrun: false)
-        guard printed.trimmingCharacters(in: .whitespacesAndNewlines) == greeting else {
-            throw EndToEndFailure(step: "run the app", message: "printed '\(printed)', not '\(greeting)'")
+        let expected = printedLines.joined(separator: "\n")
+        guard printed.trimmingCharacters(in: .whitespacesAndNewlines) == expected else {
+            throw EndToEndFailure(step: "run the app", message: "printed '\(printed)', not '\(expected)'")
         }
         // Signed as a bundle, the framework with it (B-77). The export does not verify as
         // a whole: the framework's links arrive as copies, which a versioned framework's

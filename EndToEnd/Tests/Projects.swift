@@ -90,7 +90,9 @@ enum Projects {
     /// which the push follows. The converter reads the xcframework, the slice selector
     /// chooses its Mac slice, the package and the app compile against it and the app links
     /// it; the bundle embeds it under `Contents/Frameworks`, and the exported app loads it
-    /// through its runpath and prints its greeting.
+    /// through its runpath and prints its greeting. The app's synchronized folder also
+    /// holds a plist and, two folders down, a JSON file, which Xcode copies flat into
+    /// `Contents/Resources` (B-77 item 2); the app reads both at launch and prints them.
     static let swiftBinaryTargetApp = Project(
         name: "swift-binary-target-app",
         source: .fixture(folder: "."),
@@ -98,6 +100,8 @@ enum Projects {
         platform: "macos",
         expectedProducts: ["Greeter.app/Contents/MacOS/Greeter",
                            "Greeter.app/Contents/Info.plist",
+                           "Greeter.app/Contents/Resources/Messages.plist",
+                           "Greeter.app/Contents/Resources/Settings.json",
                            "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny",
                            "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Resources/Info.plist"],
         buildTimeout: fixtureTimeout,
@@ -327,6 +331,18 @@ enum Projects {
             "NetNewsWire.app/Contents/Resources/AppIcon.icns",
             "NetNewsWire.app/Contents/Resources/Base.lproj/MainWindow.nib",
             "NetNewsWire.app/Contents/Resources/Sepia.nnwtheme/Info.plist",
+            // What Xcode copies from the synchronized folders, flat (B-77 item 2): the
+            // keyboard shortcut plists the app reads at launch, the article view's files.
+            "NetNewsWire.app/Contents/Resources/GlobalKeyboardShortcuts.plist",
+            "NetNewsWire.app/Contents/Resources/DetailKeyboardShortcuts.plist",
+            "NetNewsWire.app/Contents/Resources/SidebarKeyboardShortcuts.plist",
+            "NetNewsWire.app/Contents/Resources/TimelineKeyboardShortcuts.plist",
+            "NetNewsWire.app/Contents/Resources/container-migration.plist",
+            "NetNewsWire.app/Contents/Resources/template.html",
+            "NetNewsWire.app/Contents/Resources/core.css",
+            "NetNewsWire.app/Contents/Resources/main.js",
+            "NetNewsWire.app/Contents/Resources/ContentRules.json",
+            "NetNewsWire.app/Contents/Resources/NetNewsWire.sdef",
             "NetNewsWire.app/Contents/Resources/PLCrashReporter_CrashReporter.bundle/PrivacyInfo.xcprivacy",
             "NetNewsWire.app/Contents/Resources/ActivityLog_ActivityLog.bundle/es.lproj/Localizable.strings",
             "NetNewsWire.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",

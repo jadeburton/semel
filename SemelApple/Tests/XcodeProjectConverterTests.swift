@@ -95,6 +95,27 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertTrue(isPending(output))
     }
 
+    /// Nor into a bundle, which is copied whole by a node that walks it itself, nor a
+    /// documentation catalog, which is not built: what is in them is never asked for.
+    /// (The folders themselves are asked about once, as every folder directly in a
+    /// synchronized folder is, for a package.)
+    func test_doesNotWalkIntoAFolderCopiedWholeOrNotBuilt() throws {
+        let output = try process(projectFile: try fixtureProject,
+                                 xcconfigs: ["input:/repo/App.xcconfig": .noValue(reason: .error(messageDataObjectHash: try "absent".intern()))],
+                                 folders: ["input:/repo/IceCubesApp": try manifestValue("input:/repo/IceCubesApp", files: ["App.swift"],
+                                                                                         folders: ["Views", "Sounds.bundle", "Guide.docc"]),
+                                           "input:/repo/IceCubesApp/Views": try manifestValue("input:/repo/IceCubesApp/Views", folders: ["Rows"]),
+                                           "input:/repo/IceCubesApp/Sounds.bundle": try manifestValue("input:/repo/IceCubesApp/Sounds.bundle",
+                                                                                                       folders: ["Inner"]),
+                                           "input:/repo/IceCubesApp/Guide.docc": try manifestValue("input:/repo/IceCubesApp/Guide.docc",
+                                                                                                    folders: ["Resources"])])
+
+        let demanded = try XCTUnwrap(output.inputWireSpecs[XcodeProjectConverter.folders]).keys
+        XCTAssertTrue(demanded.contains("input:/repo/IceCubesApp/Views/Rows"), "\(demanded.sorted())")
+        XCTAssertFalse(demanded.contains("input:/repo/IceCubesApp/Sounds.bundle/Inner"), "\(demanded.sorted())")
+        XCTAssertFalse(demanded.contains("input:/repo/IceCubesApp/Guide.docc/Resources"), "\(demanded.sorted())")
+    }
+
     /// Everything there: the formula names the executable, the catalog, the plain
     /// resource under the walked subfolder, and the bundle — with the xcconfig's value
     /// resolved into the bundle identifier.
@@ -518,6 +539,81 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                           "\(theme)\n\(formula)")
         }
         XCTAssertFalse(formula.contains("'Contents/Resources/Sepia.nnwtheme'"), formula)
+    }
+
+    /// Every file of the clone's `Mac` and `Shared` folders at the pinned commit that is
+    /// not Swift, as the clone lays them out, with a Swift file where an exception names
+    /// one — and so every file the bundles' resources are made from.
+    private static let netNewsWireMacAndSharedFiles = [
+        "Mac/AppDelegate.swift", "Mac/NSOpenPanel+Extras.h", "Mac/NSOpenPanel+Extras.m", "Mac/NetNewsWire-Bridging-Header.h",
+        "Mac/WKPreferencesPrivate.h", "Mac/About/AboutWindowController.xib",
+        "Mac/MainMenu/Base.lproj/MainMenu.xib", "Mac/MainMenu/mul.lproj/MainMenu.xcstrings",
+        "Mac/MainWindow/Base.lproj/MainWindow.xib", "Mac/MainWindow/Detail/blank.html", "Mac/MainWindow/Detail/main_mac.js",
+        "Mac/MainWindow/Detail/page.html",
+        "Mac/Resources/Credits.rtf", "Mac/Resources/Info.plist", "Mac/Resources/KeyboardShortcuts/KeyboardShortcuts.html",
+        "Mac/Resources/NetNewsWire-dev.entitlements", "Mac/Resources/NetNewsWire.entitlements",
+        "Mac/Resources/NetNewsWire.provisionprofile", "Mac/Resources/NetNewsWire.sdef", "Mac/Resources/container-migration.plist",
+        "Mac/SafariExtension/Info.plist", "Mac/SafariExtension/SafariExtensionHandler.swift",
+        "Mac/SafariExtension/Subscribe_to_Feed.entitlements", "Mac/SafariExtension/ToolbarItemIcon.pdf",
+        "Mac/ShareExtension/Base.lproj/ShareViewController.xib", "Mac/ShareExtension/Info.plist",
+        "Mac/ShareExtension/ShareExtension.entitlements", "Mac/ShareExtension/ShareViewController.swift", "Mac/ShareExtension/icon.icns",
+        "Shared/Article Rendering/ArticleRenderer.swift", "Shared/Article Rendering/core.css", "Shared/Article Rendering/main.js",
+        "Shared/Article Rendering/newsfoot.js", "Shared/Article Rendering/stylesheet.css", "Shared/Article Rendering/template.html",
+        "Shared/DefaultAccountNames.xcstrings", "Shared/Localizable.xcstrings", "Shared/Importers/DefaultFeeds.opml",
+        "Shared/Resources/ContentRules.json", "Shared/Resources/DetailKeyboardShortcuts.plist",
+        "Shared/Resources/GlobalKeyboardShortcuts.plist", "Shared/Resources/SidebarKeyboardShortcuts.plist",
+        "Shared/Resources/TimelineKeyboardShortcuts.plist", "Shared/ShareExtension/SafariExt.js",
+        "Shared/ShareExtension/ShareDefaultContainer.swift", "Shared/Widget/WidgetData.swift",
+    ]
+
+    /// Those files as the folders the converter walks, each with what is directly in it.
+    private static func folderContents(of files: [String]) -> [String: FolderContents] {
+        var contents: [String: FolderContents] = [:]
+        for file in files {
+            var components = file.split(separator: "/").map(String.init)
+            let name = components.removeLast()
+            contents[components.joined(separator: "/"), default: FolderContents()].files.append(name)
+            while components.count > 1 {
+                let child = components.removeLast()
+                let parent = components.joined(separator: "/")
+                if contents[parent]?.folders.contains(child) != true {
+                    contents[parent, default: FolderContents()].folders.append(child)
+                }
+            }
+        }
+        return contents
+    }
+
+    /// The files each Mac bundle copies from the synchronized folders are the ones Xcode
+    /// 26.6 copied into the bundles it built from the same commit, flattened as it put
+    /// them: the four keyboard shortcut plists NetNewsWire reads at launch, the container
+    /// migration plist, the article view's HTML, CSS and JavaScript, the scripting
+    /// dictionary, the credits, the default feeds; not the targets' Info.plists or
+    /// provisioning profile, which exceptions leave out, nor an entitlements file, nor a
+    /// header. The Share extension gets its icon and the JavaScript it borrows from
+    /// `Shared`, the Safari extension its toolbar icon.
+    func test_eachMacBundleCopiesWhatXcodeCopiesFromItsSynchronizedFolders() throws {
+        let (output, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(),
+                                                    folders: Self.folderContents(of: Self.netNewsWireMacAndSharedFiles))
+        let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        func copied(into target: String) throws -> Set<String> {
+            let bundle = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func bundle_\(target)() =") }, formula)
+            let expression = try NSRegularExpression(pattern: "'Contents/Resources/([^']+)': StaticFile")
+            return Set(expression.matches(in: bundle, range: NSRange(bundle.startIndex..., in: bundle)).compactMap {
+                Range($0.range(at: 1), in: bundle).map { String(bundle[$0]) }
+            })
+        }
+
+        XCTAssertEqual(try copied(into: "NetNewsWire"), [
+            "ContentRules.json", "Credits.rtf", "DefaultFeeds.opml", "DetailKeyboardShortcuts.plist", "GlobalKeyboardShortcuts.plist",
+            "KeyboardShortcuts.html", "NetNewsWire.sdef", "SidebarKeyboardShortcuts.plist", "TimelineKeyboardShortcuts.plist",
+            "blank.html", "container-migration.plist", "core.css", "main.js", "main_mac.js", "newsfoot.js", "page.html",
+            "stylesheet.css", "template.html",
+        ])
+        XCTAssertEqual(try copied(into: "NetNewsWire_Share_Extension"), ["SafariExt.js", "icon.icns"])
+        XCTAssertEqual(try copied(into: "Subscribe_to_Feed"), ["ToolbarItemIcon.pdf"])
+        XCTAssertTrue(formula.contains("'Contents/Resources/GlobalKeyboardShortcuts.plist': "
+                                       + "StaticFile(path: 'input:/nnw/Shared/Resources/GlobalKeyboardShortcuts.plist').output"), formula)
     }
 
     /// Every setting the Mac plists name reaches the builder: run over the project's own

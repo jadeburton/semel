@@ -26,6 +26,11 @@ struct XcodeProject {
     struct SynchronizedFolder {
         let path: String
         let exceptions: [MembershipException]
+        /// The folders in it, relative to it, that the group's `explicitFolders` names:
+        /// each one item to Xcode, copied whole into the bundle's resources with what it
+        /// holds kept as it is laid out, where any other plain folder is walked and its
+        /// files flattened (NetNewsWire's `xcconfig` folder names `common`).
+        var explicitFolders: [String] = []
 
         /// Whether the file or folder at `relativePath` in the folder is left out.
         func excludes(_ relativePath: String) -> Bool {
@@ -91,7 +96,16 @@ struct XcodeProject {
 
         /// Whether the file or folder at `relativePath`, relative to the synchronized
         /// folder, is one this entry names. A path names what is under it too: a folder
-        /// left out leaves out everything in it.
+        /// left out leaves out everything in it — right for a folder Xcode takes as one
+        /// item, a catalog or a bundle (NetNewsWire's iOS app leaves out
+        /// `Resources/Assets.xcassets`).
+        ///
+        /// ISSUE: Xcode 26.6 does not read an entry naming a plain folder that way: with
+        /// `ExcludedFolder` (or `ExcludedFolder/`) among the owner's exceptions, a Swift file
+        /// under it was compiled and a text file under it copied. Its navigator writes each
+        /// file of a folder rather than the folder, so no project met so far has one; the
+        /// Swift compiler reads `excludedPaths` the way a package's `exclude` is read, what
+        /// is under a path included, and the two readings stay the same here (B-77).
         func matches(_ relativePath: String) -> Bool {
             switch self {
             case .path(let path):
@@ -544,7 +558,8 @@ struct XcodeProject {
                     .filter { ($0["target"] as? String).map { $0 == id } ?? true }
                     .compactMap { $0["membershipExceptions"] as? [String] }
                     .flatMap { $0 }
-                return SynchronizedFolder(path: path, exceptions: exceptions.sorted().map(MembershipException.init))
+                return SynchronizedFolder(path: path, exceptions: exceptions.sorted().map(MembershipException.init),
+                                          explicitFolders: (group["explicitFolders"] as? [String] ?? []).sorted())
             }
 
             return Target(name: name,

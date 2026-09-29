@@ -37,8 +37,11 @@ public struct XcodeProjectConverter: Node {
     /// header reaches its Swift compiler, and an Interface Builder document is compiled by
     /// ibtool rather than copied (B-77); at 10, a Mac bundle is assembled as one tree and
     /// signed ad-hoc by `CodeSigner` with its entitlements, and an asset catalog a target
-    /// borrows is compiled for it (B-77).
-    public static let implementationVersion = 10
+    /// borrows is compiled for it (B-77); at 11, a synchronized folder's files are sorted
+    /// by Xcode's rule — a plist, a Markdown file or an xcconfig copied, the target's own
+    /// Info.plist and entitlements not — and a bundle or a folder the group names in
+    /// `explicitFolders` is copied whole rather than walked (B-77).
+    public static let implementationVersion = 11
 
     // MARK: Ports
 
@@ -230,6 +233,10 @@ public struct XcodeProjectConverter: Node {
             }
         }
         (sourceFolders + borrowedWalks).forEach(demand)
+        // A folder the group names in `explicitFolders` is one item, copied whole.
+        let explicitFolderPaths = Set(bundleTargets.flatMap(\.synchronizedFolders).flatMap { folder in
+            folder.explicitFolders.map { "\(projectFolder)/\(folder.path)/\($0)" }
+        })
         var index = 0
         while index < demanded.count {
             let folder = demanded[index]
@@ -238,9 +245,13 @@ public struct XcodeProjectConverter: Node {
             guard let manifest = arrived[folder] else {
                 continue
             }
-            // A catalog is compiled whole by its own node, which walks it itself.
-            for entry in manifest.entries where entry.isFolder && entry.isPinned && !Self.isCompiledWhole(entry.name) {
-                demand("\(folder)/\(entry.name)")
+            // A catalog is compiled whole by its own node, and a folder copied whole by a
+            // `FolderTreeBuilder`, each walking it itself; only a group is walked here.
+            for entry in manifest.entries where entry.isFolder && entry.isPinned {
+                let path = "\(folder)/\(entry.name)"
+                if XcodeFormulaEmitter.folderRole(at: entry.name) == .group && !explicitFolderPaths.contains(path) {
+                    demand(path)
+                }
             }
         }
 

@@ -1194,8 +1194,8 @@ application target, simulator only, all library code in packages. In suggested o
    resources still wants the `apple.*` namespaces in its config, which `prepare` does
    not write for a tree.
 2. *NetNewsWire* — `open`; the Mac app builds (2026-09-29) and is in the roster as
-   `netnewswire-mac` (below, after the map), signed since 11; the iOS app remains, and
-   the app traps at launch on a resource plist the bundle lacks (below). Pinned
+   `netnewswire-mac` (below, after the map), signed since 11, and launches since 18 (the
+   rule for a synchronized folder's resources, below); the iOS app remains. Pinned
    at `b4361413fc1850110f9f42652f0f84e7a51e9d64` (main, 2026-09-23). The clone is not what
    this entry said from memory: there are no framework targets and no group-listed
    sources — the Mac and iOS apps, two Mac extensions (Share, and the Safari extension
@@ -1830,15 +1830,138 @@ application target, simulator only, all library code in packages. In suggested o
    and a cold build by hand takes four minutes.
 
    *Launched by hand* (the executable run directly): past code signing — AMFI lets it
-   run — it traps in `MainWindowKeyboardHandler.init` on
+   run — it trapped in `MainWindowKeyboardHandler.init` on
    `Bundle.main.path(forResource: "GlobalKeyboardShortcuts", ofType: "plist")!`: the
-   emitter takes every `.plist` in a synchronized folder for an input (Info.plist-like)
-   and copies none, where Xcode copies every one but the target's `INFOPLIST_FILE`. That
-   rule is the next stop for running it.
+   emitter took every `.plist` in a synchronized folder for an input (Info.plist-like)
+   and copied none. 18 below.
 
-   What remains for NetNewsWire: the plists above; the iOS app and its extensions; the
-   app's `OTHER_SWIFT_FLAGS` (16's note); and 1's residuals (a framework's links as
-   copies, the whole download pushed).
+   18. ~~**What Xcode copies from a synchronized folder.**~~ Done (2026-09-29,
+      XcodeProjectConverter v11). The emitter's rule was a guess — a list of extensions
+      that were "not resources", `.plist` and `.md` and `.xcconfig` among them. The rule
+      below was established on Xcode 26.6 by building a project of its own with
+      `xcodebuild` (a Mac app owning one synchronized folder of some sixty files of every
+      kind, a framework target with public and private headers, an exception set, an
+      `explicitFolders` entry, a build-phase exception set, then the same app for the
+      simulator) and by building NetNewsWire itself at the pinned commit with
+      `CODE_SIGNING_ALLOWED=NO`; it is the reference `XcodeFormulaEmitter` follows
+      (`resource(at:)`, `folderRole(at:)`, `neverCopiedExtensions`).
+
+      *The rule.* Every file under a `PBXFileSystemSynchronizedRootGroup` is a member of
+      each target that owns the group, less the owner's `membershipExceptions`, plus
+      what an exception set naming another target lends it. A member is then sorted by
+      its type:
+      - *Compiled*: `.swift`, `.c`, `.m`, `.mm`, `.cpp`/`.cc`/`.cxx` (sources phase);
+        `.xib` and `.storyboard` (ibtool, to a `.nib`/`.storyboardc` at the document's
+        place); `.xcstrings` (to `<lang>.lproj/<Table>.strings`/`.stringsdict` for each
+        language with a translation); `.xcassets` and `.icon` folders (actool, to
+        `Assets.car` and the icon). Not probed but compiled by a rule Xcode has, and so
+        never copied either: assembly, Metal, lex/yacc, `.intentdefinition`,
+        `.xcmappingmodel`, `.mlmodel`; a `.xcdatamodeld`, and a `.docc` catalog (no
+        documentation build in a plain build; nothing of it reaches the bundle).
+      - *Neither compiled nor copied*: headers (`.h`, `.hh`, `.hpp`, `.pch`), a module
+        map, `.apinotes`, every `.entitlements` file — the one `CODE_SIGN_ENTITLEMENTS`
+        names and any other — and `.exp` and `.inc`, which Xcode puts in the sources phase
+        and warns "no rule to process file". In a framework target a header an exception
+        set lists under `publicHeaders` goes to `Headers/`, under `privateHeaders` to
+        `PrivateHeaders/`, any other nowhere; an app or extension copies no header.
+      - *Copied, as the bytes they are*: everything else. A `.plist`, `.json`, `.html`,
+        `.css`, `.js` (in a synchronized folder a `.js` is a resource, not a source), `.sdef`,
+        `.rtf`, `.pdf`, `.icns`, `.png`, `.jpg`, `.ttf`, `.opml`, `.txt`, a Markdown file,
+        an `.xcconfig`, a `.provisionprofile`, a `.gyb` template, `.def`, `.xctestplan`,
+        `.storekit`, `.xcfilelist`, `.order`, scripts, a file of a type Xcode does not
+        know (`.xyz`) or with no extension. A plist and a PNG are the same bytes in the
+        Mac build (`CopyPlistFile`, `CopyPNGFile`); a `.strings`/`.stringsdict` is written
+        again as UTF-16 (`builtin-copyStrings --outputencoding UTF-16`), which Semel does
+        not do — `Bundle` reads either. A hidden file is copied too (`.gitkeep`), except
+        what `builtin-copy` always leaves out (`.DS_Store`, `CVS`, `.svn`, `.git`, `.hg`);
+        Semel's push takes no hidden file, so none reaches its bundle.
+      - *The target's own Info.plist* (`INFOPLIST_FILE`), when no exception leaves it out,
+        is copied too: on the Mac into `Resources/` with the warning "The Copy Bundle
+        Resources build phase contains this target's Info.plist file", and on iOS, where
+        it lands where the built plist goes, the build fails on "Multiple commands
+        produce …/Info.plist". Semel never copies it: it is the plist's base.
+
+      *Where a copied file goes.* Flat: under the bundle's resources (a Mac bundle's
+      `Contents/Resources/`, an iOS bundle's root) by its name alone, whatever folders
+      it sits in — `Shared/Resources/GlobalKeyboardShortcuts.plist` is
+      `Contents/Resources/GlobalKeyboardShortcuts.plist`, `Sub/deep.json` is `deep.json`.
+      A file in an `.lproj` keeps its language folder and loses everything above it:
+      `Sub/en.lproj/Nested.strings` is `en.lproj/Nested.strings`. Two files flattening to
+      one name are Xcode's "Multiple commands produce" error. A plain subfolder is a
+      group — walked, even one with a dot in its name (`Code.group/Inner.swift` compiled,
+      `Dotted.Name/inner.txt` copied flat). A folder Xcode takes as one item is copied
+      whole, under its name, with what it holds laid out as it is: a `.bundle`, an
+      `.rtfd`, and a folder the group names in `explicitFolders` (NetNewsWire's `xcconfig`
+      group names `common`). Xcode asks the system whether a folder's extension is a
+      package type: `.nnwtheme` became one on the machine once NetNewsWire had been built
+      (and registered with Launch Services) — the probe's `Theme.nnwtheme` was copied
+      whole — and is a group anywhere else. A hermetic build cannot ask, so Semel's list
+      is `.bundle` and `.rtfd`; NetNewsWire's own themes are folder references in the
+      resources phase (10), not in a synchronized folder, so nothing of it depends on this.
+
+      *Exception sets.* `membershipExceptions` for the owner leaves out the named file,
+      or a folder Xcode takes as one item with all it holds (a catalog, a bundle); an
+      entry naming a plain folder leaves out nothing — with `ExcludedFolder` or
+      `ExcludedFolder/` among the owner's exceptions, a Swift file under it was compiled
+      and a text file under it copied. Semel leaves out everything under such an entry,
+      sources and resources alike, as the Swift compiler reads `excludedPaths` the way it
+      reads a package's `exclude` (an ISSUE at `MembershipException.matches`; Xcode's
+      navigator writes each file, so no project met has one). `/Localized/…` is 9's.
+      `additionalCompilerFlagsByRelativePath` gives one source its own flags (the probe's
+      `Helper.c` built with `-DPROBE_FLAG=7`) and changes nothing about resources; not read
+      yet. A `PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet` puts a
+      member into another build phase *as well* — the probe's `Copied.txt`, sent to a
+      Copy Files phase for `Resources/Extra`, landed in both `Resources/` and
+      `Resources/Extra/`; not read yet. A resources phase (a group-listed target) copies
+      whatever it lists unless a compiler takes it, whatever its type.
+
+      *As built.* `XcodeFormulaEmitter.resource(at:listedInResourcesPhase:)` sorts a file
+      by the rule; `folderRole(at:explicitFolders:)` says whether a folder is a group, a
+      catalog, copied whole (`FolderTreeBuilder(under:)` merged into the resources, as a
+      folder reference is) or not built; the target's own `INFOPLIST_FILE` is skipped by
+      path; `XcodeProject.SynchronizedFolder` reads `explicitFolders`; the converter no
+      longer walks into a folder copied whole. The same for every bundle the formula
+      writes, the extensions' too. Pinned by `XcodeFormulaEmitterTests` over a copy of the
+      probe project — the files the bundle copies are exactly the thirty-seven Xcode
+      copied, at Xcode's places; the folders copied whole; the rule file by file; the
+      simulator's bundle with the Info.plist once — and `XcodeProjectConverterTests` over
+      the NetNewsWire fixture with the clone's `Mac` and `Shared` files: each Mac bundle
+      copies exactly what Xcode's build of the same commit copied (the app eighteen
+      files, the four keyboard shortcut plists among them; the Share extension its icon
+      and `SafariExt.js`; the Safari extension its toolbar icon). End to end by
+      `swift-binary-target-app`, whose synchronized folder now holds a plist and, two
+      folders down, a JSON file, which the app reads from its bundle at launch and
+      prints (`HelloApp` is a hand-written formula, so it cannot show the emitter's rule),
+      and by `netnewswire-mac`, which now expects the plists, the article view's files,
+      `ContentRules.json` and the `.sdef`.
+
+      *Compared with Xcode's bundle.* The export of a fresh clone built by Semel and the
+      `NetNewsWire.app` `xcodebuild` built from the same commit hold the same files but
+      for: the package products Xcode embeds as frameworks under `Contents/Frameworks`
+      (Semel links them into the executable), Xcode's Debug `.debug.dylib` and
+      `__preview.dylib`, `Contents/PkgInfo` (`APPL????`, which Semel does not write), the
+      package resource bundles' layout (Xcode gives a Mac resource bundle `Contents/` with
+      an `Info.plist`; Semel's are flat, which `Bundle` also reads), and the signatures.
+      `Contents/Resources` lists the same forty-five entries, the `.lproj` folders
+      holding the same files.
+
+      *Launched* (2026-09-29, `open` on the export of a fresh clone, pinned commit,
+      overlay, `prepare --platform macos`, `build`): it stays up — running after
+      several minutes, no crash report — with two windows on screen, one 1319×882, the
+      main window, and one 486×516, most likely Sparkle's second-launch prompt to check
+      for updates automatically (its defaults say it has launched before; window titles
+      were not readable from the session). The article view's web content processes
+      started and loaded from the resources folder. The only error of the app's own is
+      `OPML read from disk failed`, the first-run read of a `Subscriptions.opml` that is
+      not there yet. The container had been made by the launch that trapped, which had
+      already set `OnMyMac-imported` before trapping, so the default feeds were not
+      imported this time and the sidebar's account is empty: that launch's leftovers,
+      not the build. What would stop it next was not seen; not tried: a sync account,
+      iCloud (its entitlements are left out of an ad-hoc signature, 11).
+
+   What remains for NetNewsWire: the iOS app and its extensions; the app's
+   `OTHER_SWIFT_FLAGS` (16's note); 1's residuals (a framework's links as copies, the
+   whole download pushed); 18's unread exception kinds and `PkgInfo`.
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.
