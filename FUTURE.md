@@ -1371,9 +1371,8 @@ application target, simulator only, all library code in packages. In suggested o
         copies back as links while it signs (item 11); the export then holds copies again,
         which run but do not verify as a bundle. Links in `TreeManifest`, from the push
         through to the export, are what would make it verify.
-      - *The whole download is pushed.* `semel-artifacts/Sparkle` holds what the zip held —
-        `bin/` with `generate_appcast`, the changelog — pushed and locked though only the
-        `.xcframework` is read; `prepare` could keep only it.
+      - ~~*The whole download is pushed.*~~ Done (2026-09-29, 19 below): `prepare` keeps
+        only the `.xcframework` in `semel-artifacts/<Target>`.
       - *A package's own product* reaching a binary framework links with `@loader_path`,
         but the package's formula does not put the framework beside it as SwiftPM's build
         folder does, so such an executable built alone does not find it at run time.
@@ -1641,9 +1640,9 @@ application target, simulator only, all library code in packages. In suggested o
         signed as the bundle's with the sandbox entitlement, and which, launched by hand
         with `open`, starts.
 
-      Not done: hardened runtime (`ENABLE_HARDENED_RUNTIME`, `-o runtime`); a loose helper
-      executable inside a framework (Sparkle's `Autoupdate`) is not re-signed, keeping the
-      vendor's signature, which holds while its bytes do; a signed iOS device build.
+      Not done: a loose helper executable inside a framework (Sparkle's `Autoupdate`) is not
+      re-signed, keeping the vendor's signature, which holds while its bytes do; a signed
+      iOS device build. The hardened runtime is signed with since 19.
    12. ~~**Zip's Swift target does not see its C target.**~~ Done (2026-09-28). The
       nesting was not the cause: `Minizip` (at `Zip/minizip`, inside the Swift target
       `Zip`'s folder, which excludes it) was already found as `Zip`'s C dependency, but its
@@ -1733,9 +1732,8 @@ application target, simulator only, all library code in packages. In suggested o
       `swift-my-app`, whose `MyLibraryTargetB` now needs its settings to compile: a
       bare-slash regex literal under `.enableUpcomingFeature("BareSlashRegexLiterals")`
       and a `.define` its source `#error`s without (both fail the fixture on the code
-      before). Beside it, still: the app's own `OTHER_SWIFT_FLAGS` do not reach its
-      compiler, though in Debug they add only `-D`s the compilation conditions already
-      give and two frontend warnings.
+      before). The app's own `OTHER_SWIFT_FLAGS` and the rest of its Swift settings reach
+      its compiler since 19.
    17. ~~**A package's xibs are copied into its resource bundle.**~~ Done (2026-09-29).
       `RSCore`'s `RSCoreResources` holds `WebViewWindow.xib` and
       `IndeterminateProgressWindow.xib`, which SwiftPM's `.process` rule compiles to nibs.
@@ -1911,16 +1909,14 @@ application target, simulator only, all library code in packages. In suggested o
       or a folder Xcode takes as one item with all it holds (a catalog, a bundle); an
       entry naming a plain folder leaves out nothing — with `ExcludedFolder` or
       `ExcludedFolder/` among the owner's exceptions, a Swift file under it was compiled
-      and a text file under it copied. Semel leaves out everything under such an entry,
-      sources and resources alike, as the Swift compiler reads `excludedPaths` the way it
-      reads a package's `exclude` (an ISSUE at `MembershipException.matches`; Xcode's
-      navigator writes each file, so no project met has one). `/Localized/…` is 9's.
+      and a text file under it copied. Semel does the same since 19 (it left out
+      everything under such an entry). `/Localized/…` is 9's.
       `additionalCompilerFlagsByRelativePath` gives one source its own flags (the probe's
-      `Helper.c` built with `-DPROBE_FLAG=7`) and changes nothing about resources; not read
-      yet. A `PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet` puts a
+      `Helper.c` built with `-DPROBE_FLAG=7`) and changes nothing about resources; read
+      since 19. A `PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet` puts a
       member into another build phase *as well* — the probe's `Copied.txt`, sent to a
       Copy Files phase for `Resources/Extra`, landed in both `Resources/` and
-      `Resources/Extra/`; not read yet. A resources phase (a group-listed target) copies
+      `Resources/Extra/`; read since 19. A resources phase (a group-listed target) copies
       whatever it lists unless a compiler takes it, whatever its type.
 
       *As built.* `XcodeFormulaEmitter.resource(at:listedInResourcesPhase:)` sorts a file
@@ -1947,7 +1943,7 @@ application target, simulator only, all library code in packages. In suggested o
       `NetNewsWire.app` `xcodebuild` built from the same commit hold the same files but
       for: the package products Xcode embeds as frameworks under `Contents/Frameworks`
       (Semel links them into the executable), Xcode's Debug `.debug.dylib` and
-      `__preview.dylib`, `Contents/PkgInfo` (`APPL????`, which Semel does not write), the
+      `__preview.dylib`, `Contents/PkgInfo` (`APPL????`, which Semel writes since 19), the
       package resource bundles' layout (Xcode gives a Mac resource bundle `Contents/` with
       an `Info.plist`; Semel's are flat, which `Bundle` also reads), and the signatures.
       `Contents/Resources` lists the same forty-five entries, the `.lproj` folders
@@ -1967,9 +1963,115 @@ application target, simulator only, all library code in packages. In suggested o
       not the build. What would stop it next was not seen; not tried: a sync account,
       iCloud (its entitlements are left out of an ad-hoc signature, 11).
 
-   What remains for NetNewsWire: the iOS app and its extensions; the app's
-   `OTHER_SWIFT_FLAGS` (16's note); 1's residuals (a framework's links as copies, the
-   whole download pushed); 18's unread exception kinds and `PkgInfo`.
+   19. ~~**The Mac app's leftovers.**~~ Done (2026-09-29, XcodeProjectConverter v12,
+      `InfoPlistBuilder` v3, `CodeSigner` v2). What was established, and how, first: the
+      pinned commit's `xcodebuild -showBuildSettings` for the Mac app and both extensions in
+      Debug and Release, an `xcodebuild build` of the Mac app (its `swiftc` and
+      `codesign`-less lines, `CODE_SIGNING_ALLOWED=NO`), and a second probe project built
+      by Xcode 26.6 — a Mac app owning one synchronized folder whose owner's set gives
+      `Helper.c` and `Flagged.swift` flags of their own and names the plain folder
+      `Plain`, two sets naming copy-files phases, and the Swift settings below, signed
+      ad-hoc with the hardened runtime (`XcodeProjectTests.exceptionProbe` holds it and
+      what Xcode made of it).
+
+      - *The target's own Swift settings.* NetNewsWire's files set, for all three Mac
+        targets, `SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG SKIP_APP_GROUP_ACCESS`
+        (Debug only), `OTHER_SWIFT_FLAGS` — Debug's `-DDEBUG -DSKIP_APP_GROUP_ACCESS
+        -Xfrontend -warn-long-function-bodies=800 -Xfrontend
+        -warn-long-expression-type-checking=1000`, Release's `-DRELEASE`, each replacing
+        the project file's two upcoming features without `$(inherited)` — and
+        `SWIFT_TREAT_WARNINGS_AS_ERRORS = YES`; no `SWIFT_STRICT_CONCURRENCY`, no
+        `SWIFT_UPCOMING_FEATURE_*`, no `OTHER_CFLAGS`. `XcodeSwiftSettings` turns the
+        evaluated settings into what Xcode's `Swift.xcspec` says each gives: conditions,
+        every `SWIFT_UPCOMING_FEATURE_*` (`YES` a feature, `MIGRATE` its `:migrate`), the
+        experimental `DebugDescriptionMacro`, `SWIFT_STRICT_CONCURRENCY` (`targeted` a
+        flag, `complete` the `StrictConcurrency` feature), `SWIFT_ENABLE_BARE_SLASH_REGEX`,
+        `SWIFT_DEFAULT_ACTOR_ISOLATION`, `SWIFT_STRICT_MEMORY_SAFETY`, warnings as errors
+        or suppressed, and `OTHER_SWIFT_FLAGS` split as Xcode splits a list; the ones
+        Xcode conditions on a Swift version below 6 give nothing in Swift 6. Xcode's
+        spec defaults that pass something unasked are among `XcodeBuildSettings`'
+        defaults — `DebugDescriptionMacro` on, bare-slash regex on (below 6), the five
+        features Approachable Concurrency stands for following it. The emitter hands them
+        to `SwiftCompiler` as the literals a package's `swiftSettings` become since PR
+        #137: `defines`, `upcomingFeatures`, `experimentalFeatures`, and the flags as
+        `unsafeFlags`, a JSON list (conditions were `-D`s in `arguments` before). Each Mac
+        compiler now gets what Xcode's `swiftc` line has: `-DDEBUG -DSKIP_APP_GROUP_ACCESS`,
+        the Debug flags, `-enable-experimental-feature DebugDescriptionMacro`,
+        `-warnings-as-errors` — and the probe's `-strict-concurrency=targeted
+        -enable-bare-slash-regex`, its six upcoming features in Xcode's order. The other
+        `SWIFT_ENABLE_*` settings are how Xcode builds (batch mode, explicit modules,
+        testability, library evolution), not what the language is, and not carried.
+        `OTHER_CFLAGS` reaches the target's C-family sources as `arguments` on both clang
+        nodes, the compiler without a forced include (`-include`, `-imacros`), which the
+        preprocessed text already holds; `GCC_PREPROCESSOR_DEFINITIONS` is split the same
+        way now, quotes honoured. ISSUE: a C++ source takes `OTHER_CFLAGS`, not
+        `OTHER_CPLUSPLUSFLAGS`; a flag holding a comma splits.
+      - *`PkgInfo`.* Xcode writes one for an application (its package type's
+        `GENERATE_PKGINFO_FILE = YES`, which `XcodeBuildSettings` now provides for an
+        application) and none for an extension: NetNewsWire's app has `APPL????`, neither
+        `.appex` has one. `InfoPlistBuilder` has a `pkgInfo` port, the built plist's
+        `CFBundlePackageType` and `CFBundleSignature`, `????` for one missing or not a
+        four-character code; the Info.plist is now `infoPlist_<Target>()` and the bundle
+        takes `.plist` and, for an application, `.pkgInfo` at `Contents/PkgInfo` (an iOS
+        bundle's root, beside its plist).
+      - *The two exception kinds.* `XcodeProject` reads an owner's
+        `additionalCompilerFlagsByRelativePath` (`SynchronizedFolder.compilerFlags`) and a
+        borrower's (`Borrowed.compilerFlags`); such a C-family source gets a preprocessor
+        func and a compiler of its own, the flags after `OTHER_CFLAGS`, as Xcode passes
+        them after its common arguments. A Swift source's flags reach nothing: the probe's
+        `-DPROBE_SWIFT_FILE_FLAG` was on no `swiftc` line. A set naming a copy-files phase
+        is a `PhaseCopy` of the phase's target, and the emitter copies the file — a folder
+        whole — where `dstSubfolderSpec` and `dstPath` say, as well as where its own type
+        puts it (`BundleLayout.folder(forCopyDestination:)`: wrapper, executables,
+        resources, frameworks, shared frameworks, shared support, plug-ins; the products
+        folder or an absolute path is named in the formula as outside the bundle), which is
+        the probe's bundle file for file. Fixed on the way: such a set names no target,
+        and the owner's reading took a set with no target for its own, so `Copied.txt`
+        would have been left out of the owner. ISSUE: a set naming a sources or resources
+        phase is not read; none has been met.
+      - *A plain folder in a membership exception* leaves out nothing under it, as in
+        Xcode (the probe compiled `Plain/Under.swift` again): `SynchronizedFolder.excludes`
+        leaves out what is under an entry only when the folder is one item to Xcode
+        (`folderRole`), and `excludedPaths(folders:)` hands the Swift compiler no entry
+        naming a group it walked. File entries and `/Localized/…` are as they were.
+      - *Sparkle's download.* `Vendoring.keepOnlyTheXCFramework` leaves in
+        `semel-artifacts/<Target>` only `<Target>.xcframework` (else the first by name,
+        the one the converter takes) after a checkout's download is copied or a `path:`
+        zip unzipped, and leaves a folder holding none as it is, for the converter to say
+        what is there. Sparkle's `bin/`, `CHANGELOG`, `INSTALL`, `LICENSE` and
+        `SampleAppcast.xml` are no longer pushed or locked; the lock's `content` is over
+        the package and the framework.
+      - *Hardened runtime.* `CodeSigner` takes a `hardenedRuntime` literal and signs the
+        bundle with `-o runtime`, where Xcode's probe line puts it (`codesign --force --sign
+        - -o runtime --entitlements …`); the emitter states it when `ENABLE_HARDENED_RUNTIME
+        = YES`. NetNewsWire's Release sets it for the app; the Mac extensions' common file
+        sets it in both configurations, so in Debug — the roster's — the app is signed
+        without and both extensions with. The nested bundles a signer signs again keep
+        their flags with their entitlements (`--preserve-metadata=entitlements,flags`, as
+        Xcode keeps them when it signs what it embeds), or the app's signing would take an
+        extension's hardened runtime away; Sparkle's own binaries, signed ad-hoc with the
+        hardened runtime by their vendor, keep it too.
+      - *Pinned by* `XcodeProjectTests` (the probe's sets read; a borrowed source's flags;
+        a plain folder's entry), `XcodeFormulaEmitterTests` (the probe's bundle, the copy
+        destinations, a folder copied whole into a tree already there, a source's own flags
+        on clang and a Swift source's nowhere, the forced include, the Swift literals as
+        Xcode's line, the hardened runtime, an iOS `PkgInfo`), `XcodeBuildSettingsTests`
+        (the list splitting, each language setting against the spec, the literals, the
+        defaults), `XcodeProjectConverterTests` over the NetNewsWire fixture (Debug's and
+        Release's Swift settings on all three compilers, `PkgInfo` on the app alone, the
+        hardened runtime per target and configuration), `InfoPlistBuilderTests`,
+        `CodeSignerTests` (the command lines, and the real `codesign` keeping an
+        extension's hardened runtime through the app's signing) and `PrepareTests` (a
+        download's and a zip's extras dropped, the lock over what is left, an
+        `.artifactbundle` folder untouched). End to end: `netnewswire-mac` now expects
+        `Contents/PkgInfo`, and passed through all four hermeticity builds with the app and
+        both extensions compiled under `-warnings-as-errors` and the Debug flags (1,208 s
+        for the test, `prepare` included, whose copy held `semel-artifacts/Sparkle/` with
+        `Sparkle.xcframework` alone); `food-truck-mac` passed too (142 s). The extensions' hardened runtime is not checked by the
+        roster: the unit tests pin it, the real `codesign` among them.
+
+   What remains for NetNewsWire: the iOS app and its extensions; 1's residual (a
+   framework's links as copies).
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.

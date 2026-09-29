@@ -314,6 +314,7 @@ enum Projects {
         expectedProducts: [
             "NetNewsWire.app/Contents/MacOS/NetNewsWire",
             "NetNewsWire.app/Contents/Info.plist",
+            "NetNewsWire.app/Contents/PkgInfo",
             "NetNewsWire.app/Contents/Resources/Assets.car",
             "NetNewsWire.app/Contents/Resources/AppIcon.icns",
             "NetNewsWire.app/Contents/Resources/Base.lproj/MainWindow.nib",

@@ -105,10 +105,28 @@ final class CodeSignerTests: SemelAppleTestCase {
         _ = try process(tree: try tree(["Contents/MacOS/Tiny": "binary"]))
 
         XCTAssertFalse(executor.lastArguments.contains("--entitlements"), "\(executor.lastArguments)")
+        XCTAssertFalse(executor.lastArguments.contains("runtime"), "no hardened runtime unless asked: \(executor.lastArguments)")
     }
 
-    /// Nested bundles are signed first, deepest first, keeping the entitlements each was
-    /// signed with; the bundle after, with its own.
+    /// `hardenedRuntime` signs the bundle with the hardened runtime, `-o runtime`, where
+    /// Xcode 26.6 puts it for a target with `ENABLE_HARDENED_RUNTIME = YES` (`codesign
+    /// --force --sign - -o runtime --entitlements … --timestamp=none`); the nested bundles
+    /// signed before it keep the flags they have, so an extension's own hardened runtime
+    /// survives the app's signing.
+    func test_aBundleAskingForTheHardenedRuntimeIsSignedWithIt() throws {
+        _ = try process(tree: try tree(["Contents/MacOS/Tiny": "binary", "Contents/PlugIns/Share.appex/Contents/MacOS/Share": "share"]),
+                        entitlements: Self.entitlements(["com.apple.security.app-sandbox"]),
+                        configuration: configuration() + "\nhardenedRuntime=true")
+
+        XCTAssertEqual(executor.invocations.count, 2)
+        XCTAssertEqual(executor.invocations.first?.arguments, ["--force", "--sign", "-", "--timestamp=none",
+                                                               "--preserve-metadata=entitlements,flags", "signed/Tiny.app/Contents/PlugIns/Share.appex"])
+        XCTAssertEqual(executor.lastArguments, ["--force", "--sign", "-", "--timestamp=none", "-o", "runtime",
+                                                "--entitlements", "entitlements.plist", "signed/Tiny.app"])
+    }
+
+    /// Nested bundles are signed first, deepest first, keeping the entitlements and flags
+    /// each was signed with; the bundle after, with its own.
     func test_signsNestedBundlesDeepestFirstThenTheBundle() throws {
         _ = try process(tree: try tree([
             "Contents/MacOS/Tiny": "binary",
@@ -120,7 +138,7 @@ final class CodeSignerTests: SemelAppleTestCase {
 
         XCTAssertEqual(executor.invocations.count, 2)
         XCTAssertEqual(executor.invocations.first?.arguments, [
-            "--force", "--sign", "-", "--timestamp=none", "--preserve-metadata=entitlements",
+            "--force", "--sign", "-", "--timestamp=none", "--preserve-metadata=entitlements,flags",
             "signed/Tiny.app/Contents/Frameworks/Kit.framework/Helpers/Updater.app",
             "signed/Tiny.app/Contents/Frameworks/Kit.framework",
             "signed/Tiny.app/Contents/PlugIns/Share.appex",
@@ -248,7 +266,8 @@ final class CodeSignerTests: SemelAppleTestCase {
     /// same bytes both times: an ad-hoc signature has no identity and, with
     /// `--timestamp=none`, no time, and nothing in it names the sandbox (B-89). Written out
     /// with the framework's links as links, the app verifies deep and strict, with its
-    /// entitlements on the executable and the extension's kept on the extension.
+    /// entitlements on the executable and the extension's kept on the extension, as is the
+    /// hardened runtime the extension alone was signed with — NetNewsWire's Debug shape.
     func test_theRealCodesignSignsATinyAppToTheSameBytesTwice() throws {
         let codesign = try XCTUnwrap(AppleToolDiscovery.locate("codesign"), "codesign must be discoverable via xcrun")
         let allocator = try XCTUnwrap(AppleToolDiscovery.locate("codesign_allocate"))
@@ -266,7 +285,7 @@ final class CodeSignerTests: SemelAppleTestCase {
                 .init(path: "Contents/MacOS/Share", hash: binary, mode: FileMetadata.executableMode),
                 .init(path: "Contents/Info.plist", hash: try Self.infoPlist(executable: "Share", identifier: "com.example.Tiny.Share", type: "XPC!").intern(),
                       mode: FileMetadata.defaultMode),
-            ], entitlements: extensionEntitlements, configuration: configuration)
+            ], entitlements: extensionEntitlements, configuration: configuration + "\nhardenedRuntime=true")
             let framework = "Contents/Frameworks/Kit.framework"
             let frameworkPlist = try Self.infoPlist(executable: "Kit", identifier: "com.example.Kit", type: "FMWK").intern()
             var entries: [TreeManifestEntry] = [
@@ -309,6 +328,10 @@ final class CodeSignerTests: SemelAppleTestCase {
         XCTAssertFalse(extensionSigned.output.contains("com.apple.security.network.client"), "the extension keeps its own: \(extensionSigned.output)")
         let details = try Self.run(codesign, ["-dv", app.path])
         XCTAssertTrue(details.output.contains("Signature=adhoc"), details.output)
+        XCTAssertFalse(details.output.contains("runtime"), "the app asked for no hardened runtime: \(details.output)")
+        let extensionDetails = try Self.run(codesign, ["-dv", app.appendingPathComponent("Contents/PlugIns/Share.appex").path])
+        XCTAssertTrue(extensionDetails.output.contains("flags=0x10002(adhoc,runtime)"),
+                      "the extension's hardened runtime survives the app's signing: \(extensionDetails.output)")
     }
 
     private func sign(bundle: String, entries: [TreeManifestEntry], entitlements: String, configuration: String) throws -> TreeManifest {

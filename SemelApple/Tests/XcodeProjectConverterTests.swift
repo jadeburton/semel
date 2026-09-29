@@ -290,12 +290,13 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// given packages as the clone lays them out.
     private func convertNetNewsWire(modules: [String],
                                     folders folderContents: [String: FolderContents] = [:],
-                                    xcconfigs xcconfigTexts: [String: String] = [:])
+                                    xcconfigs xcconfigTexts: [String: String] = [:],
+                                    configuration: String = "Debug")
         throws -> (output: ProcessOutput, demandedFolders: [String], demandedXcconfigs: [String]) {
         let projectFolder = "input:/nnw"
         let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
                                                                   properties: ["path": "\(projectFolder)/NetNewsWire.xcodeproj",
-                                                                               "sdk": "macosx"],
+                                                                               "sdk": "macosx", "configuration": configuration],
                                                                   scheduled: false, identity: nil))
         let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
         var inputs: [String: [String: NodeValue]] = [
@@ -431,8 +432,9 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         "Mac/ShareExtension/Base.lproj":    FolderContents(files: ["ShareViewController.xib"]),
     ]
 
-    private func netNewsWireFormula() throws -> String {
-        let (output, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: netNewsWireMacFolder)
+    private func netNewsWireFormula(configuration: String = "Debug") throws -> String {
+        let (output, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: netNewsWireMacFolder,
+                                                    configuration: configuration)
         return try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
     }
 
@@ -667,22 +669,114 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                        ["group.com.ranchero.NetNewsWire-Evergreen-DEBUG"], "the app's group, which the extension shares")
     }
 
+    // MARK: - NetNewsWire's Swift settings, PkgInfo and hardened runtime (B-77)
+
+    /// The literal a target's Swift compiler is configured with.
+    private func swiftCompilerLiteral(of target: String, in formula: String) throws -> String {
+        let compiler = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func compiler_\(target)() =") }, formula)
+        let literal = try XCTUnwrap(compiler.range(of: "SettingsLiteral("), compiler)
+        return String(compiler[literal.lowerBound...].prefix { $0 != "\n" })
+    }
+
+    /// Debug's Swift settings reach the app's and each extension's compiler as Xcode 26.6
+    /// passed them at the pinned commit (`xcodebuild build`, its `swiftc` lines): the
+    /// compilation conditions as `-D`s; `OTHER_SWIFT_FLAGS` as the debug file writes them,
+    /// having replaced the project file's upcoming features without `$(inherited)`;
+    /// `DebugDescriptionMacro`, on by Xcode's default; and `-warnings-as-errors` from
+    /// `SWIFT_TREAT_WARNINGS_AS_ERRORS`. Swift 6 is the language mode, so no feature Swift 6
+    /// already has is passed. `xcodebuild -showBuildSettings` for the three targets gives
+    /// the same `OTHER_SWIFT_FLAGS`, `SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+    /// SKIP_APP_GROUP_ACCESS` and `SWIFT_TREAT_WARNINGS_AS_ERRORS = YES`, and no
+    /// `SWIFT_STRICT_CONCURRENCY` or `SWIFT_UPCOMING_FEATURE_*`.
+    func test_theMacTargetsSwiftSettingsReachTheirCompilersAsXcodePassesThem() throws {
+        let formula = try netNewsWireFormula()
+        let flags = "unsafeFlags: '[\"-DDEBUG\",\"-DSKIP_APP_GROUP_ACCESS\",\"-Xfrontend\",\"-warn-long-function-bodies=800\","
+                  + "\"-Xfrontend\",\"-warn-long-expression-type-checking=1000\",\"-warnings-as-errors\"]'"
+
+        for target in ["NetNewsWire", "NetNewsWire_Share_Extension", "Subscribe_to_Feed"] {
+            let literal = try swiftCompilerLiteral(of: target, in: formula)
+            XCTAssertTrue(literal.contains("defines: 'DEBUG,SKIP_APP_GROUP_ACCESS'"), literal)
+            XCTAssertTrue(literal.contains("experimentalFeatures: 'DebugDescriptionMacro'"), literal)
+            XCTAssertTrue(literal.contains(flags), literal)
+            XCTAssertFalse(literal.contains("upcomingFeatures"), literal)
+            XCTAssertTrue(literal.contains("languageMode: '6'"), literal)
+        }
+        XCTAssertTrue(try swiftCompilerLiteral(of: "Subscribe_to_Feed", in: formula).contains("arguments: '-application-extension'"))
+    }
+
+    /// Release replaces `OTHER_SWIFT_FLAGS` with `-DRELEASE` and sets no compilation
+    /// condition, as `xcodebuild -showBuildSettings -configuration Release` says.
+    func test_releasesSwiftSettingsAreItsOwn() throws {
+        let literal = try swiftCompilerLiteral(of: "NetNewsWire", in: try netNewsWireFormula(configuration: "Release"))
+
+        XCTAssertTrue(literal.contains("unsafeFlags: '[\"-DRELEASE\",\"-warnings-as-errors\"]'"), literal)
+        XCTAssertFalse(literal.contains("defines:"), literal)
+    }
+
+    /// The app's bundle has a `PkgInfo` beside its plist, from the plist as built —
+    /// `APPL????`, what Xcode 26.6 wrote for the same commit — and neither extension has
+    /// one, as neither of Xcode's has.
+    func test_theAppHasAPkgInfoFromItsPlistAndTheExtensionsNone() throws {
+        let formula = try netNewsWireFormula()
+
+        let app = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func bundle_NetNewsWire() =") }, formula)
+        XCTAssertTrue(app.contains("        'Contents/PkgInfo': infoPlist_NetNewsWire().pkgInfo"), app)
+        XCTAssertEqual(try buildInfoPlistOutputs(target: "NetNewsWire", formula: formula, base: "Mac/Resources/Info.plist").pkgInfo, "APPL????")
+        for target in ["NetNewsWire_Share_Extension", "Subscribe_to_Feed"] {
+            let bundle = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func bundle_\(target)() =") }, formula)
+            XCTAssertFalse(bundle.contains("PkgInfo"), bundle)
+        }
+    }
+
+    /// `ENABLE_HARDENED_RUNTIME`: Debug leaves it off for the app and the Mac extensions'
+    /// common file turns it on for both extensions; Release turns it on for all three —
+    /// `xcodebuild -showBuildSettings` says the same of each — and each signer is told so.
+    func test_theHardenedRuntimeIsSignedWhereTheSettingsAskForIt() throws {
+        func signer(_ target: String, _ formula: String) throws -> String {
+            try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.contains("func signed_\(target)() =\n") }, formula)
+        }
+        let debug = try netNewsWireFormula()
+        let release = try netNewsWireFormula(configuration: "Release")
+
+        let hardened = "SettingsLiteral(hardenedRuntime: 'true', identity: '-')"
+        XCTAssertFalse(try signer("NetNewsWire", debug).contains("hardenedRuntime"))
+        for target in ["NetNewsWire_Share_Extension", "Subscribe_to_Feed"] {
+            let debugSigner = try signer(target, debug)
+            XCTAssertTrue(debugSigner.contains(hardened), debugSigner)
+        }
+        for target in ["NetNewsWire", "NetNewsWire_Share_Extension", "Subscribe_to_Feed"] {
+            let releaseSigner = try signer(target, release)
+            XCTAssertTrue(releaseSigner.contains(hardened), releaseSigner)
+        }
+    }
+
     /// The plist the formula's `InfoPlistBuilder` for a target's `Contents/Info.plist`
     /// builds over the fixture's copy of the project's plist, failing the test if it
     /// reports anything undefined.
     private func buildInfoPlist(target: String, formula: String, base: String) throws -> [String: Any] {
+        try buildInfoPlistOutputs(target: target, formula: formula, base: base).plist
+    }
+
+    /// The same builder's outputs: the plist, and the `PkgInfo` from it.
+    private func buildInfoPlistOutputs(target: String, formula: String, base: String) throws -> (plist: [String: Any], pkgInfo: String) {
         let bundle = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func bundle_\(target)() =") }, formula)
-        let pattern = "'Contents/Info.plist': InfoPlistBuilder\\(\\n *keys: '([^']*)',\\n *buildSettings: '([^']*)',"
-        let match = try XCTUnwrap(try NSRegularExpression(pattern: pattern).firstMatch(in: bundle, range: NSRange(bundle.startIndex..., in: bundle)),
+        XCTAssertTrue(bundle.contains("'Contents/Info.plist': infoPlist_\(target)().plist"), bundle)
+        let builder = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func infoPlist_\(target)() =") }, formula)
+        let pattern = "InfoPlistBuilder\\(\\n *keys: '([^']*)',\\n *buildSettings: '([^']*)',"
+        let match = try XCTUnwrap(try NSRegularExpression(pattern: pattern).firstMatch(in: builder, range: NSRange(builder.startIndex..., in: builder)),
                                   "no InfoPlistBuilder for \(target)")
-        let keys = String(bundle[try XCTUnwrap(Range(match.range(at: 1), in: bundle))])
-        let settings = String(bundle[try XCTUnwrap(Range(match.range(at: 2), in: bundle))])
-        return try buildPlist(keys: keys, settings: settings, base: base)
+        let keys = String(builder[try XCTUnwrap(Range(match.range(at: 1), in: builder))])
+        let settings = String(builder[try XCTUnwrap(Range(match.range(at: 2), in: builder))])
+        return try buildPlistOutputs(keys: keys, settings: settings, base: base)
     }
 
     /// The plist an `InfoPlistBuilder` with these properties builds over the fixture's
     /// copy of the file at `base`.
     private func buildPlist(keys: String?, settings: String, base: String) throws -> [String: Any] {
+        try buildPlistOutputs(keys: keys, settings: settings, base: base).plist
+    }
+
+    private func buildPlistOutputs(keys: String?, settings: String, base: String) throws -> (plist: [String: Any], pkgInfo: String) {
         var properties = [InfoPlistBuilder.buildSettingsProperty: settings]
         properties[InfoPlistBuilder.keysProperty] = keys
         let node = try InfoPlistBuilder(thisNode: NodeRecord(id: 1, kind: InfoPlistBuilder.kind, name: nil,
@@ -695,10 +789,11 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
             if case .noValue(.error(let messageHash)) = plist {
                 XCTFail("\(base): \(try messageHash.resolveAsString())")
             }
-            return [:]
+            return ([:], "")
         }
         let bytes = try XCTUnwrap(try DataObjectStore.shared.read(hash: hash))
-        return try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String: Any])
+        let pkgInfo = try XCTUnwrap(output.outputValues[InfoPlistBuilder.pkgInfo]).expectValue().resolveAsString()
+        return (try XCTUnwrap(try PropertyListSerialization.propertyList(from: Data(bytes), format: nil) as? [String: Any]), pkgInfo)
     }
 
     /// NetNewsWire's `#include?` of a developer's own settings resolves inside `input:`

@@ -47,6 +47,24 @@ final class InfoPlistBuilderTests: SemelAppleTestCase {
         XCTAssertNotNil((plist["CFBundleIcons"] as? [String: Any])?["CFBundlePrimaryIcon"])
     }
 
+    /// `PkgInfo` is the built plist's package type and creator code, each resolved like
+    /// any value — `$(PRODUCT_BUNDLE_PACKAGE_TYPE)` in NetNewsWire's plist — and `????` for
+    /// one missing or not a four-character code.
+    func test_thePkgInfoIsThePlistsPackageTypeAndCreatorCode() throws {
+        func pkgInfo(_ properties: [String: String], base: [String: Any] = [:]) throws -> String {
+            let node = try InfoPlistBuilder(thisNode: NodeRecord(id: 1, kind: InfoPlistBuilder.kind, name: nil,
+                                                                 properties: properties, scheduled: false, identity: nil))
+            let output = try node.process(input: ProcessInput(inputValues: [InfoPlistBuilder.base: ["base": try plistValue(base)]]))
+            return try XCTUnwrap(output.outputValues[InfoPlistBuilder.pkgInfo]).expectValue().resolveAsString()
+        }
+
+        XCTAssertEqual(try pkgInfo([InfoPlistBuilder.buildSettingsProperty: "{\"PRODUCT_BUNDLE_PACKAGE_TYPE\":\"APPL\"}"],
+                                   base: ["CFBundlePackageType": "$(PRODUCT_BUNDLE_PACKAGE_TYPE)"]), "APPL????")
+        XCTAssertEqual(try pkgInfo(["CFBundlePackageType": "APPL", "CFBundleSignature": "NNWx"]), "APPLNNWx")
+        XCTAssertEqual(try pkgInfo(["CFBundlePackageType": "APPLICATION", "CFBundleSignature": "é???"]), "????????")
+        XCTAssertEqual(try pkgInfo([:]), "????????")
+    }
+
     /// The engine stamps `projectRoot` on every cached node; it is the build's, not the
     /// plist's, and a Mac app's Info.plist and entitlements carried it (B-77).
     func test_theEnginesProjectRootStampIsNotAnEntry() throws {

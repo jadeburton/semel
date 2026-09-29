@@ -132,7 +132,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
 
         let bundle = try block("func bundle_IceCubesApp() = TreeMerger(input: [", in: formula)
         XCTAssertTrue(bundle.contains("    'files': TreeBuilder(input: [\n        'Contents/MacOS/Ice Cubes': SwiftLinker(\n"), bundle)
-        XCTAssertTrue(bundle.contains("        'Contents/Info.plist': InfoPlistBuilder(\n"), bundle)
+        XCTAssertTrue(bundle.contains("        'Contents/Info.plist': infoPlist_IceCubesApp().plist"), bundle)
         XCTAssertTrue(bundle.contains("        'Contents/Resources/Mono.ttf': StaticFile(path: 'input:/repo/IceCubesApp/Fonts/Mono.ttf').output"), bundle)
         XCTAssertTrue(bundle.contains("    'Contents/Resources': TreeMerger(under: 'Contents/Resources', input: ['assets': assets_IceCubesApp().files"), bundle)
         XCTAssertTrue(bundle.contains("    'Contents/PlugIns/IceCubesShareExtension.appex': TreeMerger(under: 'Contents/PlugIns/IceCubesShareExtension.appex', "
@@ -294,7 +294,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("excludedPaths: 'Embeds/glass.wav,Info.plist'"), formula)
         XCTAssertTrue(formula.contains("languageMode: '6'"), formula)
         XCTAssertTrue(formula.contains("target: 'arm64-apple-ios18.5-simulator'"), formula)
-        XCTAssertTrue(formula.contains("arguments: '-D,DEBUG,-D,EXTRA'"), formula)
+        XCTAssertTrue(formula.contains("defines: 'DEBUG,EXTRA'"), formula)
         XCTAssertTrue(formula.contains("inputFolder: [\n        'folder0': Folder(path: 'input:/repo/IceCubesApp').manifest\n        ]"), formula)
         XCTAssertTrue(formula.contains("'KeychainSwift': modules_KeychainSwift().files"), formula)
         XCTAssertTrue(formula.contains("'Timeline': modules_Timeline().files"), formula)
@@ -308,7 +308,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let formula = try formula()
 
         XCTAssertTrue(formula.contains("configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'swift.compiler', "), formula)
-        XCTAssertTrue(formula.contains("override: ['literals': SettingsLiteral(arguments: '-D,DEBUG,-D,EXTRA', "), formula)
+        XCTAssertTrue(formula.contains("override: ['literals': SettingsLiteral(defines: 'DEBUG,EXTRA', "), formula)
         XCTAssertFalse(formula.contains("Configuration("), formula)
     }
 
@@ -391,7 +391,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains(",\n        bridgingHeader: ['IceCubesApp/App-Bridging-Header.h': "
                                        + "StaticFile(path: 'input:/repo/IceCubesApp/App-Bridging-Header.h').output],\n"
                                        + "        headerTrees: ['IceCubesApp': headers_IceCubesApp().files]\n    )"), formula)
-        XCTAssertTrue(formula.contains("arguments: '-D,DEBUG,-D,EXTRA,-Xcc,-DDEBUG=1,-Xcc,-DFEATURE'"), formula)
+        XCTAssertTrue(formula.contains("arguments: '-Xcc,-DDEBUG=1,-Xcc,-DFEATURE', defines: 'DEBUG,EXTRA'"), formula)
     }
 
     /// A target with neither a C-family source nor a bridging header is compiled and
@@ -469,7 +469,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     func test_buildsTheInfoPlistFromTheFileTheGeneratedKeysAndActoolsPartial() throws {
         let formula = try formula()
 
-        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Info.plist' =\n    InfoPlistBuilder("), formula)
+        XCTAssertTrue(formula.contains("func infoPlist_IceCubesApp() =\n    InfoPlistBuilder("), formula)
         XCTAssertTrue(formula.contains("\"CFBundleIdentifier\":\"com.example.IceCubesApp\""), formula)
         XCTAssertTrue(formula.contains("\"CFBundleExecutable\":\"Ice Cubes\""), formula)
         XCTAssertTrue(formula.contains("\"CFBundlePackageType\":\"APPL\""), formula)
@@ -556,12 +556,12 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let appex = "Ice Cubes.app/PlugIns/IceCubesShareExtension.appex"
 
         XCTAssertTrue(formula.contains("func compiler_IceCubesShareExtension() =\n    SwiftCompiler("), formula)
-        XCTAssertTrue(formula.contains("arguments: '-D,DEBUG,-application-extension'"), formula)
+        XCTAssertTrue(formula.contains("arguments: '-application-extension', defines: 'DEBUG'"), formula)
         XCTAssertTrue(formula.contains("'Entity.swift': StaticFile(path: 'input:/repo/IceCubesApp/Shared/Entity.swift').output"), formula)
         XCTAssertTrue(formula.contains("product '\(appex)/IceCubesShareExtension' =\n    SwiftLinker("), formula)
         XCTAssertTrue(formula.contains("arguments: '-Xlinker,-e,-Xlinker,_NSExtensionMain,-Xlinker,-application_extension'"), formula)
         XCTAssertTrue(formula.contains("product '\(appex)/glass.wav' = StaticFile(path: 'input:/repo/IceCubesApp/Embeds/glass.wav').output"), formula)
-        XCTAssertTrue(formula.contains("product '\(appex)/Info.plist' =\n    InfoPlistBuilder("), formula)
+        XCTAssertTrue(formula.contains("product '\(appex)/Info.plist' = infoPlist_IceCubesShareExtension().plist"), formula)
         XCTAssertTrue(formula.contains("\"CFBundlePackageType\":\"XPC!\""), formula)
     }
 
@@ -753,6 +753,147 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertTrue(formula.contains("product 'Probe.app/Data.plist' = StaticFile(path: 'input:/probe/App/Data.plist').output"), formula)
         XCTAssertTrue(formula.contains("product 'Probe.app/deep.json' = StaticFile(path: 'input:/probe/App/Sub/deep.json').output"), formula)
         XCTAssertFalse(formula.contains("App.entitlements' = StaticFile"), formula)
+    }
+
+    // MARK: - What the second probe established (B-77)
+
+    /// What the second probe's folder held (`XcodeProjectTests.exceptionProbe`).
+    static let exceptionProbeListing = XcodeFormulaEmitter.FolderListing(
+        files: ["App.swift", "Flagged.swift", "Plain/Under.swift", "Helper.c", "Helper.h", "Bridge.h", "Copied.txt", "Support.txt"],
+        folders: ["Plain"])
+
+    private func exceptionProbeFormula(sdk: String = "macosx") throws -> String {
+        let project = try XcodeProject(pbxproj: Data(XcodeProjectTests.exceptionProbe.utf8))
+        let emitter = XcodeFormulaEmitter(project: project,
+                                          build: .init(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: sdk))
+        return try emitter.formula(
+            settings: { target in
+                try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: sdk,
+                                               xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
+            },
+            listing: { $0 == "input:/probe/App" ? Self.exceptionProbeListing : nil })
+    }
+
+    /// The bundle the probe's Mac build writes holds what Xcode's held: the plist, the
+    /// executable, `PkgInfo` from the plist, both copied files where their own type puts
+    /// them — the resources — and again where the copy-files phase naming them says,
+    /// `Contents/Resources/Extra/` and `Contents/SharedSupport/`.
+    func test_aCopyFilesPhasesExceptionCopiesTheFileThereAsWell() throws {
+        let bundle = try block("func bundle_Probe() = TreeMerger(input: [", in: try exceptionProbeFormula())
+
+        let placed = try matches(of: "'(Contents/[^']+)': ", in: bundle).filter { $0 != "Contents/Resources" }
+        XCTAssertEqual(placed, ["Contents/Info.plist", "Contents/MacOS/Probe", "Contents/PkgInfo",
+                                "Contents/Resources/Copied.txt", "Contents/Resources/Extra/Copied.txt",
+                                "Contents/Resources/Support.txt", "Contents/SharedSupport/Support.txt"], bundle)
+        XCTAssertTrue(bundle.contains("'Contents/Resources/Extra/Copied.txt': StaticFile(path: 'input:/probe/App/Copied.txt').output"), bundle)
+        XCTAssertTrue(bundle.contains("'Contents/SharedSupport/Support.txt': StaticFile(path: 'input:/probe/App/Support.txt').output"), bundle)
+        XCTAssertTrue(bundle.contains("'Contents/PkgInfo': infoPlist_Probe().pkgInfo"), bundle)
+    }
+
+    /// Each destination a copy-files phase names, as the bundle lays it out; one outside
+    /// the bundle has no place in it.
+    func test_aCopyFilesDestinationIsTheBundlesFolderForIt() {
+        let mac = XcodeFormulaEmitter.BundleLayout(sdk: "macosx")
+        let iOS = XcodeFormulaEmitter.BundleLayout(sdk: "iphonesimulator")
+        func folder(_ layout: XcodeFormulaEmitter.BundleLayout, _ spec: Int, _ path: String = "") -> String? {
+            layout.folder(forCopyDestination: .init(subfolderSpec: spec, path: path))
+        }
+
+        XCTAssertEqual(folder(mac, 7, "Extra"), "Contents/Resources/Extra")
+        XCTAssertEqual(folder(mac, 12), "Contents/SharedSupport")
+        XCTAssertEqual(folder(mac, 10), "Contents/Frameworks")
+        XCTAssertEqual(folder(mac, 13), "Contents/PlugIns")
+        XCTAssertEqual(folder(mac, 6), "Contents/MacOS")
+        XCTAssertEqual(folder(mac, 1, "Extras"), "Extras")
+        XCTAssertEqual(folder(iOS, 7), "")
+        XCTAssertEqual(folder(iOS, 7, "Extra/"), "Extra")
+        XCTAssertEqual(folder(iOS, 10), "Frameworks")
+        XCTAssertNil(folder(mac, 16))
+        XCTAssertNil(folder(mac, 0, "/usr/local"))
+    }
+
+    /// A folder a copy-files phase names is copied whole, and one copied into a folder the
+    /// bundle already merges trees into joins that tree.
+    func test_aFolderACopyFilesPhaseNamesIsCopiedWhole() throws {
+        let pbxproj = XcodeProjectTests.exceptionProbe.replacingOccurrences(of: "membershipExceptions = ( Copied.txt );",
+                                                                            with: "membershipExceptions = ( Plain );")
+            .replacingOccurrences(of: "dstPath = Extra; dstSubfolderSpec = 7;", with: "dstPath = \"\"; dstSubfolderSpec = 7;")
+        let project = try XcodeProject(pbxproj: Data(pbxproj.utf8))
+        let emitter = XcodeFormulaEmitter(project: project,
+                                          build: .init(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: "macosx"))
+        let formula = try emitter.formula(
+            settings: { target in
+                try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: "macosx",
+                                               xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
+            },
+            listing: { $0 == "input:/probe/App" ? Self.exceptionProbeListing : nil })
+        let bundle = try block("func bundle_Probe() = TreeMerger(input: [", in: formula)
+
+        XCTAssertEqual(bundle.components(separatedBy: "    'Contents/Resources': TreeMerger(").count - 1, 1, bundle)
+        XCTAssertTrue(bundle.contains("'copied0': FolderTreeBuilder(under: 'Plain', folder: ['folder': Folder(path: 'input:/probe/App/Plain').manifest]).files"),
+                      bundle)
+    }
+
+    /// A C source's own flags reach the clang nodes that preprocess and compile it, after
+    /// the target's `OTHER_CFLAGS`, which every C-family source of the target gets; a Swift
+    /// source's reach nothing, as in Xcode.
+    func test_aSourcesOwnFlagsReachClangAfterTheTargetsAndASwiftSourcesReachNothing() throws {
+        let formula = try exceptionProbeFormula()
+
+        let shared = try block("func preprocess_Probe(path) =", in: formula)
+        XCTAssertTrue(shared.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C', modules: 'true', target: 'arm64-apple-macosx15.0')"), shared)
+        let own = try block("func preprocess_Probe_0(path) =", in: formula)
+        XCTAssertTrue(own.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C,-DPROBE_FLAG=7', modules: 'true', target: 'arm64-apple-macosx15.0')"), own)
+        XCTAssertTrue(formula.contains("'input:/probe/App/Helper.c.o': ClangCompiler(configuration: ['config': ConfigMerger(base: ['settings': "
+                                       + "ConfigFilter(prefix: 'clang.compiler', "), formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(arguments: '-DPROBE_OTHER_C,-DPROBE_FLAG=7', modules: 'true', target: 'arm64-apple-macosx15.0')"
+                                       + ".output]).output], input: ['input:/probe/App/Helper.c.p': preprocess_Probe_0(path: 'input:/probe/App/Helper.c')]).output"),
+                      formula)
+        XCTAssertFalse(formula.contains("PROBE_SWIFT_FILE_FLAG"), formula)
+    }
+
+    /// A file forced in ahead of the source is the preprocessor's alone: the compiler reads
+    /// text that already holds it.
+    func test_aForcedIncludeIsThePreprocessorsAlone() {
+        XCTAssertEqual(XcodeFormulaEmitter.compileStageFlags(["-include", "Prefix.h", "-DX", "-imacrosMacros.h", "-Wall"]), ["-DX", "-Wall"])
+    }
+
+    /// `Plain` is among the owner's exceptions and a plain folder, so what is under it is
+    /// compiled — the compiler is not told to leave it out.
+    func test_anExceptionNamingAPlainFolderLeavesItsSourcesCompiled() throws {
+        let compiler = try block("func compiler_Probe() =", in: try exceptionProbeFormula())
+
+        XCTAssertFalse(compiler.contains("excludedPaths"), compiler)
+    }
+
+    /// The probe's language settings reach the compiler as Xcode passed them: the
+    /// condition, `OTHER_SWIFT_FLAGS`, targeted strict concurrency and bare-slash regex
+    /// literals below Swift 6, the five features Approachable Concurrency stands for with
+    /// `ExistentialAny` in Xcode's order, and `DebugDescriptionMacro`.
+    func test_theLanguageSettingsReachTheSwiftCompilerAsXcodePassesThem() throws {
+        let compiler = try block("func compiler_Probe() =", in: try exceptionProbeFormula())
+
+        XCTAssertTrue(compiler.contains("SettingsLiteral(defines: 'PROBE_CONDITION', experimentalFeatures: 'DebugDescriptionMacro', "
+                                        + "languageMode: '5', moduleName: 'Probe', target: 'arm64-apple-macosx15.0', "
+                                        + "unsafeFlags: '[\"-DPROBE_OTHER_SWIFT\",\"-strict-concurrency=targeted\",\"-enable-bare-slash-regex\"]', "
+                                        + "upcomingFeatures: 'DisableOutwardActorInference,InferSendableFromCaptures,GlobalActorIsolatedTypesUsability,"
+                                        + "ExistentialAny,InferIsolatedConformances,NonisolatedNonsendingByDefault')"), compiler)
+    }
+
+    /// The probe asks for the hardened runtime, and its signer is told so.
+    func test_aBundleAskingForTheHardenedRuntimeIsSignedWithIt() throws {
+        let formula = try exceptionProbeFormula()
+
+        let signer = try block("func signed_Probe() =\n    CodeSigner(", in: formula)
+        XCTAssertTrue(signer.contains("SettingsLiteral(hardenedRuntime: 'true', identity: '-')"), signer)
+        XCTAssertFalse(try macFormula().contains("hardenedRuntime"), "the fixture does not ask for it")
+    }
+
+    /// An iOS application gets its `PkgInfo` at the bundle's root, beside its plist.
+    func test_anIOSApplicationHasAPkgInfoBesideItsPlist() throws {
+        let formula = try exceptionProbeFormula(sdk: "iphonesimulator")
+
+        XCTAssertTrue(formula.contains("product 'Probe.app/PkgInfo' = infoPlist_Probe().pkgInfo"), formula)
     }
 
     // MARK: - Config namespaces

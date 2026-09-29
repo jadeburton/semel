@@ -22,6 +22,52 @@ struct XcodeBuildSettings {
         values[key]
     }
 
+    /// A list setting's words — `OTHER_SWIFT_FLAGS`, `GCC_PREPROCESSOR_DEFINITIONS` — split
+    /// as Xcode splits one: at whitespace, a quoted stretch (`"NAME=two words"`) one word
+    /// with its quotes gone, a backslash taking the character after it as it is.
+    func list(_ key: String) -> [String] {
+        Self.words(values[key] ?? "")
+    }
+
+    static func words(_ value: String) -> [String] {
+        var words: [String] = []
+        var current = ""
+        var inWord = false
+        var quote: Character?
+        var escaped = false
+        for character in value {
+            if escaped {
+                current.append(character)
+                escaped = false
+                continue
+            }
+            let isQuote = character == "\"" || character == "'"
+            switch (quote, character) {
+            case (_, "\\"):
+                escaped = true
+                inWord = true
+            case (nil, _) where isQuote:
+                quote = character
+                inWord = true
+            case (.some(let open), _) where character == open:
+                quote = nil
+            case (nil, _) where character.isWhitespace:
+                if inWord {
+                    words.append(current)
+                    current = ""
+                    inWord = false
+                }
+            default:
+                current.append(character)
+                inWord = true
+            }
+        }
+        if inWord {
+            words.append(current)
+        }
+        return words
+    }
+
     /// Evaluates the settings of `target` in `configuration` for the SDK named `sdk`
     /// (`iphonesimulator`), with `xcconfig` giving, for each xcconfig path a configuration
     /// is based on (relative to the project's folder), its assignments with its includes
@@ -196,6 +242,14 @@ struct XcodeBuildSettings {
     /// signs ad-hoc, with no team (B-77 item 11), so there is no team to take them from,
     /// and empty is what Xcode gives them too when it does not sign: `CODE_SIGNING_ALLOWED=NO` turns
     /// `[$(AppIdentifierPrefix)][$(TeamIdentifierPrefix)]` in a plist into `[][]` (26.6).
+    ///
+    /// The Swift language settings Xcode's compiler specification defaults to something
+    /// other than off are here with those defaults (Xcode 26.6's `Swift.xcspec`), since the
+    /// compiler is told them whether or not the project mentions them
+    /// (`XcodeSwiftSettings`): `DebugDescriptionMacro` on, bare-slash regex literals on,
+    /// and the five features Approachable Concurrency stands for following it. Its
+    /// Swift 6 features default to off below Swift 6 unless a project turns them on,
+    /// which is what a setting nothing defines reads as.
     private static let defaults: [String: String] = [
         "PRODUCT_NAME": "$(TARGET_NAME)",
         "PRODUCT_MODULE_NAME": "$(PRODUCT_NAME:c99extidentifier)",
@@ -206,13 +260,24 @@ struct XcodeBuildSettings {
         "TARGETED_DEVICE_FAMILY": "1,2",
         "AppIdentifierPrefix": "",
         "TeamIdentifierPrefix": "",
+        "SWIFT_APPROACHABLE_CONCURRENCY": "NO",
+        "SWIFT_UPCOMING_FEATURE_DISABLE_OUTWARD_ACTOR_ISOLATION": "$(SWIFT_APPROACHABLE_CONCURRENCY)",
+        "SWIFT_UPCOMING_FEATURE_INFER_SENDABLE_FROM_CAPTURES": "$(SWIFT_APPROACHABLE_CONCURRENCY)",
+        "SWIFT_UPCOMING_FEATURE_GLOBAL_ACTOR_ISOLATED_TYPES_USABILITY": "$(SWIFT_APPROACHABLE_CONCURRENCY)",
+        "SWIFT_UPCOMING_FEATURE_INFER_ISOLATED_CONFORMANCES": "$(SWIFT_APPROACHABLE_CONCURRENCY)",
+        "SWIFT_UPCOMING_FEATURE_NONISOLATED_NONSENDING_BY_DEFAULT": "$(SWIFT_APPROACHABLE_CONCURRENCY)",
+        "SWIFT_ENABLE_BARE_SLASH_REGEX": "YES",
+        "SWIFT_EXPERIMENTAL_FEATURE_DEBUG_DESCRIPTION_MACRO": "YES",
     ]
 
     /// What Xcode itself sets from the project and the kind of target, beneath every level
-    /// the project writes: the development language, and the package type a product type
-    /// carries — `APPL` for an application, `XPC!` for an extension.
+    /// the project writes: the development language, the package type a product type
+    /// carries — `APPL` for an application, `XPC!` for an extension — and, for an
+    /// application, that its bundle gets a `PkgInfo` (the application package type's
+    /// `GENERATE_PKGINFO_FILE = YES`; no extension's has one).
     private static func providedByXcode(project: XcodeProject, target: XcodeProject.Target) -> [String: String] {
         ["DEVELOPMENT_LANGUAGE": project.developmentRegion,
-         "PRODUCT_BUNDLE_PACKAGE_TYPE": target.isExtension ? "XPC!" : "APPL"]
+         "PRODUCT_BUNDLE_PACKAGE_TYPE": target.isExtension ? "XPC!" : "APPL",
+         "GENERATE_PKGINFO_FILE": target.isApplication ? "YES" : "NO"]
     }
 }

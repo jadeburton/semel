@@ -266,6 +266,74 @@ final class XcodeBuildSettingsTests: XCTestCase {
         XCTAssertEqual(settings["ENABLE_HARDENED_RUNTIME"], "YES")
     }
 
+    /// A list setting is split as Xcode splits one: at whitespace, a quoted stretch one
+    /// word without its quotes, a backslash keeping the character after it.
+    func test_aListSettingIsSplitIntoWordsAsXcodeSplitsIt() {
+        XCTAssertEqual(XcodeBuildSettings.words("-DDEBUG  -Xfrontend -warn-long-function-bodies=800 "),
+                       ["-DDEBUG", "-Xfrontend", "-warn-long-function-bodies=800"])
+        XCTAssertEqual(XcodeBuildSettings.words("\"NAME=two words\" 'it''s' a\\ b \"\""), ["NAME=two words", "its", "a b", ""])
+        XCTAssertEqual(XcodeBuildSettings.words(""), [])
+    }
+
+    // MARK: - What the Swift compiler is told (B-77)
+
+    private func swiftSettings(_ values: [String: String], languageMode: String? = "5") -> XcodeSwiftSettings {
+        XcodeSwiftSettings(settings: XcodeBuildSettings(values: values), languageMode: languageMode)
+    }
+
+    /// Each language setting gives what Xcode 26.6's specification says it gives: a
+    /// feature, its `:migrate` form, or a flag; the ones that hold only below Swift 6 give
+    /// nothing in Swift 6, where the language mode has them already.
+    func test_theLanguageSettingsGiveWhatXcodesSpecificationSays() {
+        let values = ["SWIFT_UPCOMING_FEATURE_CONCISE_MAGIC_FILE": "YES",
+                      "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "MIGRATE",
+                      "SWIFT_UPCOMING_FEATURE_INTERNAL_IMPORTS_BY_DEFAULT": "YES",
+                      "SWIFT_STRICT_CONCURRENCY": "complete",
+                      "SWIFT_ENABLE_BARE_SLASH_REGEX": "YES",
+                      "SWIFT_DEFAULT_ACTOR_ISOLATION": "MainActor",
+                      "SWIFT_STRICT_MEMORY_SAFETY": "YES",
+                      "SWIFT_TREAT_WARNINGS_AS_ERRORS": "YES",
+                      "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "DEBUG $(inherited) FEATURE",
+                      "OTHER_SWIFT_FLAGS": "-Xfrontend \"-some flag\""]
+
+        let swift5 = swiftSettings(values)
+        XCTAssertEqual(swift5.upcomingFeatures, ["ConciseMagicFile", "InternalImportsByDefault", "MemberImportVisibility:migrate", "StrictConcurrency"])
+        XCTAssertEqual(swift5.flags, ["-Xfrontend", "-some flag", "-enable-bare-slash-regex", "-default-isolation=MainActor",
+                                      "-strict-memory-safety", "-warnings-as-errors"])
+        XCTAssertEqual(swift5.defines, ["DEBUG", "$(inherited)", "FEATURE"], "the settings resolve $(inherited) before this reads them")
+
+        let swift6 = swiftSettings(values, languageMode: "6")
+        XCTAssertEqual(swift6.upcomingFeatures, ["InternalImportsByDefault", "MemberImportVisibility:migrate"])
+        XCTAssertEqual(swift6.flags, ["-Xfrontend", "-some flag", "-default-isolation=MainActor", "-strict-memory-safety", "-warnings-as-errors"])
+        XCTAssertEqual(swiftSettings(["SWIFT_STRICT_CONCURRENCY": "minimal"]), XcodeSwiftSettings())
+    }
+
+    /// The literals are the ones a package target's settings become: lists comma-joined,
+    /// the flags a JSON list the compiler decodes, an apostrophe written so the formula's
+    /// quote does not end at it.
+    func test_theLiteralsAreTheOnesAPackagesSettingsBecome() throws {
+        let literals = try XcodeSwiftSettings(defines: ["A", "B"], upcomingFeatures: ["ExistentialAny"],
+                                              experimentalFeatures: ["DebugDescriptionMacro"],
+                                              flags: ["-Xcc", "-DPATH=a/b", "-DQUOTE='x'"]).literals()
+
+        XCTAssertEqual(literals, ["defines": "A,B", "upcomingFeatures": "ExistentialAny", "experimentalFeatures": "DebugDescriptionMacro",
+                                  "unsafeFlags": "[\"-Xcc\",\"-DPATH=a/b\",\"-DQUOTE=\\u0027x\\u0027\"]"])
+        let decoded = try JSONDecoder().decode([String].self, from: Data(try XCTUnwrap(literals["unsafeFlags"]).utf8))
+        XCTAssertEqual(decoded, ["-Xcc", "-DPATH=a/b", "-DQUOTE='x'"])
+        XCTAssertEqual(try XcodeSwiftSettings().literals(), [:])
+    }
+
+    /// Xcode's defaults under every project: `DebugDescriptionMacro` on, and Approachable
+    /// Concurrency off, which its five features follow.
+    func test_xcodesLanguageDefaultsAreBeneathEveryLevel() throws {
+        let settings = try settings(of: "NetNewsWire")
+
+        XCTAssertEqual(settings["SWIFT_EXPERIMENTAL_FEATURE_DEBUG_DESCRIPTION_MACRO"], "YES")
+        XCTAssertEqual(settings["SWIFT_UPCOMING_FEATURE_INFER_ISOLATED_CONFORMANCES"], "NO")
+        XCTAssertEqual(settings["GENERATE_PKGINFO_FILE"], "YES")
+        XCTAssertEqual(try self.settings(of: "Subscribe to Feed")["GENERATE_PKGINFO_FILE"], "NO")
+    }
+
     // MARK: - What prepare asks
 
     /// The files `prepare` would put in place are the ones the configurations name — the

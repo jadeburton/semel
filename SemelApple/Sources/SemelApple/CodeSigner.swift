@@ -34,6 +34,10 @@ struct CodeSignerConfiguration {
     /// Xcode hands it. Without it `codesign` finds `/usr/bin/codesign_allocate`, a shim to
     /// whichever Xcode `xcode-select` names, which no cache key would see.
     let codesignAllocatePath: String
+    /// `hardenedRuntime`: the bundle is signed with the hardened runtime, `-o runtime`, as
+    /// Xcode signs a target whose `ENABLE_HARDENED_RUNTIME` is `YES`. A literal from the
+    /// converter, like the entitlements a fact about the bundle; off when not stated.
+    let hardenedRuntime: Bool
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -41,6 +45,7 @@ struct CodeSignerConfiguration {
         identity = required.value("identity")
         codesignAllocatePath = required.value("codesignAllocatePath")
         try required.check()
+        hardenedRuntime = properties[Self.hardenedRuntimeKey] == "true"
 
         guard identity == Self.adHocIdentity else {
             throw NodeError.other(message: "CodeSigner signs ad-hoc only: \(Self.settingNamespace).identity is '\(identity)', "
@@ -54,12 +59,17 @@ struct CodeSignerConfiguration {
     static let adHocIdentity = "-"
     /// The machine settings this namespace declares.
     static let machineSettingKeys: Set<String> = ["codesignAllocatePath"]
+    static let hardenedRuntimeKey = "hardenedRuntime"
 }
 
 // MARK: - Node
 
 public struct CodeSigner: Node {
     public static let kind: UInt = 42
+
+    /// 2: `hardenedRuntime` signs with `-o runtime`, and a nested bundle keeps its flags
+    /// with its entitlements when it is signed again (B-77).
+    public static let implementationVersion = 2
 
     // MARK: Ports
 
@@ -137,14 +147,17 @@ public struct CodeSigner: Node {
         var errorLog = ""
 
         // Two runs, since entitlements are per invocation: the nested bundles together,
-        // each keeping the entitlements it was signed with — an extension its own, signed
-        // by the extension's own signer, a vendor's XPC service the vendor's — then the
-        // bundle with its own. The second lays out what the first wrote.
+        // each keeping the entitlements and the flags it was signed with — an extension its
+        // own and its hardened runtime, signed by the extension's own signer, a vendor's XPC
+        // service the vendor's, as Xcode keeps them when it signs what it embeds
+        // (`--preserve-metadata=identifier,entitlements,flags`) — then the bundle with its
+        // own. The second lays out what the first wrote.
         var runs: [[String]] = []
         if !layout.nestedBundles.isEmpty {
-            runs.append(signing + ["--preserve-metadata=entitlements"] + layout.nestedBundles.map { "\(root)/\($0)" })
+            runs.append(signing + ["--preserve-metadata=entitlements,flags"] + layout.nestedBundles.map { "\(root)/\($0)" })
         }
-        runs.append(signing + (entitlementsFile == nil ? [] : ["--entitlements", Self.entitlementsFile]) + [root])
+        let runtime = configuration.hardenedRuntime ? ["-o", "runtime"] : []
+        runs.append(signing + runtime + (entitlementsFile == nil ? [] : ["--entitlements", Self.entitlementsFile]) + [root])
 
         for arguments in runs {
             // Laid with their modes, writable: codesign rewrites a signature already there.

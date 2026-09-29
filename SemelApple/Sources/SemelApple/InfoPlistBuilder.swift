@@ -15,7 +15,8 @@ public struct InfoPlistBuilder: Node {
     public static let kind: UInt = 31
 
     /// 2: the engine's `projectRoot` stamp is no longer an entry of the plist.
-    public static let implementationVersion = 2
+    /// 3: the `pkgInfo` port (B-77).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -26,6 +27,12 @@ public struct InfoPlistBuilder: Node {
     /// other compiler's.
     static let partials = "partials"
     static let output = "plist"
+    /// The bundle's `PkgInfo`, from the plist as built: its `CFBundlePackageType` and its
+    /// `CFBundleSignature`, four bytes each, `????` for one that is not there or not four
+    /// ASCII characters — `APPL????` for an application with no creator code, which is
+    /// what Xcode 26.6 wrote for NetNewsWire's and for a probe's. Xcode writes one for an
+    /// application (`GENERATE_PKGINFO_FILE`); a formula takes this port where it wants one.
+    static let pkgInfo = "pkgInfo"
     /// A JSON dictionary of entries, for keys no formula identifier can spell and values
     /// no string can carry.
     static let keysProperty = "keys"
@@ -44,7 +51,7 @@ public struct InfoPlistBuilder: Node {
 
     public static let descriptor = NodeDescriptor(
         inputPorts: [.optional(base), .optional(partials)],
-        outputPorts: [output]
+        outputPorts: [output, pkgInfo]
     )
 
     // MARK: Processing
@@ -93,12 +100,27 @@ public struct InfoPlistBuilder: Node {
         let resolved = Self.substitute(merged, variables: variables, unresolved: &unresolved)
         guard unresolved.isEmpty else {
             let message = "Info.plist references undefined variables: " + unresolved.sorted().joined(separator: ", ")
-            return .init(outputValues: [Self.output: .noValue(reason: .error(messageDataObjectHash: try message.intern()))],
-                         inputWireSpecs: [:])
+            let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
+            return .init(outputValues: [Self.output: error, Self.pkgInfo: error], inputWireSpecs: [:])
         }
 
         let data = try PropertyListSerialization.data(fromPropertyList: resolved, format: .xml, options: 0)
-        return .init(outputValues: [Self.output: .value(try [UInt8](data).intern())], inputWireSpecs: [:])
+        let plist = resolved as? [String: Any] ?? [:]
+        return .init(outputValues: [Self.output:  .value(try [UInt8](data).intern()),
+                                    Self.pkgInfo: .value(try Array(Self.pkgInfo(of: plist).utf8).intern())],
+                     inputWireSpecs: [:])
+    }
+
+    /// `APPL????`: the package type and the creator code, each a four-character code, or
+    /// `????` in its place.
+    static func pkgInfo(of plist: [String: Any]) -> String {
+        func code(_ key: String) -> String {
+            guard let value = plist[key] as? String, value.utf8.count == 4, value.allSatisfy(\.isASCII) else {
+                return "????"
+            }
+            return value
+        }
+        return code("CFBundlePackageType") + code("CFBundleSignature")
     }
 
     /// A property is a string, and a plist has arrays, dictionaries and booleans. A value
