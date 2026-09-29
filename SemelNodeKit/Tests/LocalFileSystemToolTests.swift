@@ -110,8 +110,8 @@ final class LocalFileSystemToolTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0, result.errorOutput)
         let files = try XCTUnwrap(result.outputTrees["out"])
-        XCTAssertEqual(files.map(\.relativePath), ["Assets.car", "en.lproj/Localizable.strings", "zz/tool"])
-        XCTAssertEqual(try files.map { try $0.hash.resolveAsString() }, ["car", "strings", "run"])
+        XCTAssertEqual(files.map(\.path), ["Assets.car", "en.lproj/Localizable.strings", "zz/tool"])
+        XCTAssertEqual(try files.map { try XCTUnwrap($0.hash).resolveAsString() }, ["car", "strings", "run"])
         XCTAssertEqual(files.map(\.mode), [0o644, 0o644, 0o755])
     }
 
@@ -149,9 +149,9 @@ final class LocalFileSystemToolTests: XCTestCase {
 
     /// A link among the inputs is laid as the link it is, beside the files it names (B-77),
     /// and a file given a mode is laid with it, writable, where the store's objects are
-    /// read-only; in an output folder a link is not reported, and what it names is
-    /// reported once, where it is — not again through the link.
-    func test_aLinkIsLaidAsALinkAndNotReportedThroughTheOutputFolder() throws {
+    /// read-only; in an output folder a link comes back as the link it is, and what it names
+    /// is reported once, where it is — not again through the link.
+    func test_aLinkIsLaidAsALinkAndComesBackAsOneFromTheOutputFolder() throws {
         let file = FileNameAndContent(filePath: "out/Tiny.framework/Versions/A/Tiny", hash: try "binary".intern(), mode: 0o755)
         let result = try LocalFileSystemTool(localPath: "/bin/sh")
             .execute(arguments: ["-c", """
@@ -161,14 +161,18 @@ final class LocalFileSystemToolTests: XCTestCase {
                 """],
                      environment: [:],
                      inputFiles: [file,
-                                  FileNameAndContent(symbolicLinkAt: "out/Tiny.framework/Versions/Current", destination: "A"),
-                                  FileNameAndContent(symbolicLinkAt: "out/Tiny.framework/Tiny", destination: "Versions/Current/Tiny")],
+                                  FileNameAndContent(symbolicLinkAt: "out/Tiny.framework/Versions/Current", target: "A"),
+                                  FileNameAndContent(symbolicLinkAt: "out/Tiny.framework/Tiny", target: "Versions/Current/Tiny")],
                      expectedOutputFileNames: [],
                      expectedOutputFolders: ["out"])
 
         XCTAssertEqual(result.exitCode, 0, result.errorOutput)
         XCTAssertEqual(result.infoOutput, "A\nbinary\n")
-        XCTAssertEqual(result.outputTrees["out"]?.map(\.relativePath), ["Tiny.framework/Versions/A/Tiny"])
+        XCTAssertEqual(result.outputTrees["out"], [
+            TreeManifestEntry(path: "Tiny.framework/Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),
+            TreeManifestEntry(path: "Tiny.framework/Versions/A/Tiny", hash: try "binary".intern(), mode: 0o755),
+            TreeManifestEntry(path: "Tiny.framework/Versions/Current", symbolicLinkTarget: "A"),
+        ])
     }
 
     /// The sandbox is gone when the tool is: nothing a tool leaves behind can be read by

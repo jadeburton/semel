@@ -293,7 +293,10 @@ without locks is not woken by edits below its vendored folders. `prepare` writes
 beside each copy once all are in place, folding the copy on disk over what a push pushes —
 `push`'s own lister, so no dot-names, and no folder without a file below it —
 (`DependencyLockFoldTests` pushes such a tree through the engine and compares the roots),
-with the version, revision and origin of the checkout's pin in `Package.resolved`. What
+with the version, revision and origin of the checkout's pin in `Package.resolved`. A link
+inside its own folder — a vendored framework's `Versions/Current` — is folded as the link
+it is on both sides since the fold's format 3 (B-77, 2026-09-29), and the test pushes a tree
+holding file and folder links. What
 remains: a file removed from disk stays in `input:` (a push only adds), so the root then
 differs from a fresh lock with no word on which file; a lock `rm`'d from `input:` is named
 as a deleted source on every report while the converter still wires it, as any removed
@@ -614,7 +617,13 @@ for their manifests, so an edit costs one fold per ancestor and not one per fold
 manifest, and this is the load-bearing part: the manifest is what a folder's children are
 called, `ProjectFinder` and the converters are wired to it, and folding content in would
 re-run all of them on every keystroke. The root is path-independent where the manifest is
-not, so two copies of one tree are comparable wherever they stand. What remains:
+not, so two copies of one tree are comparable wherever they stand. Since 2026-09-29 (B-77,
+`docs/superpowers/specs/2026-09-29-semel-links-in-trees-design.md`) a symbolic link that
+stays inside its own folder is a line of its own kind, `link`, holding its target framed by
+its length — never what it names, which is folded where it is — for a file link (its
+target on its metadata) and a folder link (on the folder's `symbolicLink` port) alike; the
+format is `semel-folder-content-root 3`, and the disk fold reads links the same way through
+the same lister. What remains:
 
 1. **`output:` is opaque to the fold.** Every product's line says `notFolded`, so an
    `output:` folder's root identifies its names and not its content. The blocker is not the
@@ -1363,14 +1372,33 @@ application target, simulator only, all library code in packages. In suggested o
       the errors are AppKit names the bridging header would bring (item 6), so the app's
       link is behind item 6. What remains:
 
-      - *A framework's links arrive as copies.* A push follows a symbolic link (and
-        `prepare`'s fold does the same), and a tree has no link entry, so a versioned
-        framework is embedded with `Versions/Current` and every top-level link as a copy
-        (Sparkle: 263 files). It loads and links. `codesign` cannot sign such a framework
-        ("bundle format is ambiguous"), nor a bundle holding one, so `CodeSigner` lays the
-        copies back as links while it signs (item 11); the export then holds copies again,
-        which run but do not verify as a bundle. Links in `TreeManifest`, from the push
-        through to the export, are what would make it verify.
+      - ~~*A framework's links arrive as copies.*~~ Done (2026-09-29; design and as built in
+        `docs/superpowers/specs/2026-09-29-semel-links-in-trees-design.md`). A push followed
+        every symbolic link, `prepare`'s fold did the same, and a tree had no link entry, so
+        a versioned framework was embedded with `Versions/Current` and every top-level link
+        as a copy (Sparkle: 263 files), which `codesign` calls ambiguous. Now a link whose
+        target stays inside its own folder — relative, never climbing above it, naming no
+        dot-name — is pushed as a link, and any other is followed or refused as before. It is
+        still stored as what it names, so nothing that reads bytes or walks folders changes
+        (RevenueCat keeps two targets' sources behind folder links to siblings), and its
+        target is recorded beside it: a file's on its `fileMetadata`, a folder's on a new
+        `Folder.symbolicLink` port and in its parent's manifest. The fold has a `link` line
+        (format 3), trees a link entry (`TreeManifestEntry.Content.symbolicLink`) kept only
+        where it resolves inside the tree, `TreeFile`/`OutputFile` carry the target on
+        `fileMetadata`, tools lay and read back links, the settle diff reports a link by what
+        it holds, and `export` and `cp` write links (`ProtocolVersion` 19, `Semel` 0.1.13).
+        `CodeSigner` signs the tree as it is. Pinned at every layer — the lister, the disk
+        fold, `TreeManifestTests`, the engine's fold (`FolderMerkleRootTests`,
+        `DependencyLockFoldTests` pushing a framework's links and comparing the two folds),
+        the tree nodes, the slice selector, the signer with the real `codesign`, the server,
+        the client's push and `cp`, the export — and end to end by `swift-binary-target-app`,
+        whose export holds `Tiny.framework`'s five links as links and verifies with
+        `codesign --verify --deep --strict`, and by `netnewswire-mac`, whose exported
+        `NetNewsWire.app` — Sparkle, its XPC services and `Updater.app` inside — now
+        verifies the same way (the roster checks it). `Vendoring` needed no change: `copyItem` and
+        `ditto` keep a checkout's and an artifact's links. What remains: a push only adds, so
+        a folder link replaced on disk by a folder stays a link in the graph until removed;
+        `ls` shows a link as the file or folder it names.
       - ~~*The whole download is pushed.*~~ Done (2026-09-29, 19 below): `prepare` keeps
         only the `.xcframework` in `semel-artifacts/<Target>`.
       - *A package's own product* reaching a binary framework links with `@loader_path`,
@@ -1616,24 +1644,22 @@ application target, simulator only, all library code in packages. In suggested o
       - *A versioned framework whose links arrived as copies* — Sparkle's, the fixture's
         `Tiny.framework` — cannot be signed as it is: `codesign` finds real files at the
         framework's top and a `Versions/Current` folder and calls the bundle ambiguous,
-        and a bundle holding a framework it cannot sign cannot be signed either. So the
-        signer recognises the copies by the shape every versioned framework has
-        (`Versions/Current` the same files as exactly one other version, each other entry
-        at the top the same as its namesake there) and lays them as links in the sandbox
-        (`FileNameAndContent(symbolicLinkAt:destination:)`, new; a link in an output folder
-        is not reported); after signing, each is a copy again of what it names, now
-        signed. What comes out runs, the framework's binary and the executable signed as
-        bundles, but the export does not verify as a whole — the same "ambiguous" — until
-        a tree can carry a link (item 1). `swift-binary-target-app` checks the signatures
-        and runs the app; it does not verify it.
+        and a bundle holding a framework it cannot sign cannot be signed either. The
+        signer first recognised the copies by the shape every versioned framework has and
+        laid them as links in its sandbox, handing copies on again, so the export ran but
+        did not verify as a whole. Since links travel in trees (item 1's first residual,
+        2026-09-29), the tree holds the links, the signer lays it as it is and hands the
+        links back (`ToolOutput.writeTreeLink`), `SigningLayout`'s recognition is gone
+        (v2), and `swift-binary-target-app`'s export verifies deep and strict.
       - *Fixed on the way*: `InfoPlistBuilder` wrote the engine's `projectRoot` stamp into
         every plist as an entry (`projectRoot = input:/…`), in every Info.plist so far and
         now in the entitlements, where an unknown key had the Food Truck app killed at
         launch. It is not an entry now (v2).
-      - *Pinned by* `CodeSignerTests` (the command lines, nested first, the links laid and
-        restored, the profile-only keys left out, and a tiny app signed twice by the real
-        `codesign`, verified deep and strict with each bundle's entitlements),
-        `LocalFileSystemToolTests` (a link and a mode laid), `XcodeFormulaEmitterTests`,
+      - *Pinned by* `CodeSignerTests` (the command lines, nested first, a tree's links laid
+        and handed back as links, the profile-only keys left out, and a tiny app with a
+        versioned framework signed twice by the real `codesign`, verified deep and strict
+        with each bundle's entitlements), `LocalFileSystemToolTests` (a link and a mode
+        laid, a link read back as one), `XcodeFormulaEmitterTests`,
         `XcodeProjectConverterTests` (each NetNewsWire Mac bundle's entitlements resolved,
         over copies of its three files), `PrepareTests`, and end to end by `food-truck-mac`,
         whose export verifies with `codesign --verify --deep --strict`, whose executable is
@@ -1822,9 +1848,10 @@ application target, simulator only, all library code in packages. In suggested o
    iCloud and push keys left out as an ad-hoc signature must — and
    `RSCore_RSCoreResources.bundle` holds `WebViewWindow.nib` and
    `IndeterminateProgressWindow.nib`. The export checks each executable is signed as its
-   bundle's (`SignedBundleCheck.signedAsPartOfTheBundle`) and does not verify the app as
-   a whole: Sparkle's links arrive as copies (1), which `codesign --verify` calls
-   ambiguous. `mayDifferWithExempt` exempted the seals and the three executables when an
+   bundle's (`SignedBundleCheck.signedAsPartOfTheBundle`), and — since links travel in
+   trees (1, 2026-09-29) — verifies the app as a whole with `codesign --verify --deep
+   --strict`, Sparkle's `Versions/Current` and top-level links arriving as links; the
+   roster run with that check passed through all four builds in 1,061 s. `mayDifferWithExempt` exempted the seals and the three executables when an
    `Assets.car` differed; in the run it did, and the app's `CodeResources` and executable
    differed with it, nothing else. Since B-89 the catalog is canonical and the roster
    exempts nothing. The test took 657 s. What made it possible: a tree

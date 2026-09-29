@@ -279,6 +279,14 @@ public struct ExplainedCause: Codable, Equatable, Sendable {
 
 // MARK: - Requests
 
+/// What a pushed symbolic link names, which decides what travels with it.
+public enum SymbolicLinkReferent: Codable, Equatable, Sendable {
+    /// A file: its bytes travel in the frame body, and this is its mode.
+    case file(mode: UInt16)
+    /// A folder: its files are pushed below the link's path, each by a request of its own.
+    case folder
+}
+
 public enum DaemonRequest: Codable, Equatable, Sendable {
     case list(fileSystem: FileSystemKind, pattern: String)
     case beginBatch
@@ -286,6 +294,12 @@ public enum DaemonRequest: Codable, Equatable, Sendable {
     /// The file's bytes travel in the frame body. No hash: hashing lives in SemelNodeKit,
     /// which this package does not link, so the server interns and hashes the bytes itself.
     case pushFile(path: String, mode: UInt16)
+    /// A symbolic link that stays inside its folder, pushed as the link it is: `target` as
+    /// the link holds it, relative to its folder (B-77). What it names is pushed as a push
+    /// always stored a link — a file's bytes in this frame's body, a folder's files as
+    /// ordinary pushes below the link's path — so that what reads a file or walks a folder
+    /// through the link reads what it did. Answered by `pushFile(didChange:)`.
+    case pushSymbolicLink(path: String, target: String, referent: SymbolicLinkReferent)
     case pushFolder(path: String)
     case remove(pattern: String)
     case fetch(fileSystem: FileSystemKind, path: String)
@@ -340,6 +354,9 @@ public enum DaemonResponse: Codable, Equatable, Sendable {
     case remove(removedFiles: [String], removedFolders: [String])
     /// The file's bytes travel in the frame body.
     case fetch(mode: UInt16)
+    /// What `fetch` answers for a symbolic link: its target, relative to its folder, and no
+    /// body. What `cp` and `export` write is the link (B-77).
+    case symbolicLink(target: String)
     case errors(records: [ErrorRecord])
     /// The findings travel in the frame body, as a JSON array of `CheckFinding`, for the
     /// reason `debug`'s text does: one broken invariant per node is the shape a badly

@@ -185,17 +185,17 @@ public struct AssetCatalogCompiler: Node {
     /// What actool wrote, with `Assets.car` in canonical form: nothing actool varies from
     /// compile to compile crosses the port (B-89). The canonical file must read, through
     /// `assetutil`, as the one actool wrote, or nothing is published.
-    static func canonicalTree(of files: [TreeOutputFile], guardedBy catalogGuard: AssetCatalogGuard) throws -> DataObjectHash {
+    static func canonicalTree(of files: [TreeManifestEntry], guardedBy catalogGuard: AssetCatalogGuard) throws -> DataObjectHash {
         var entries: [TreeManifestEntry] = []
         for file in files {
-            guard file.relativePath == AssetCatalogGuard.catalogFile else {
-                entries.append(TreeManifestEntry(path: file.relativePath, hash: file.hash, mode: file.mode))
+            guard file.path == AssetCatalogGuard.catalogFile, case .file(let hash, let mode) = file.content else {
+                entries.append(file)
                 continue
             }
-            let canonical     = try AssetCatalogCanonicaliser.canonicalise(try file.hash.resolve())
+            let canonical     = try AssetCatalogCanonicaliser.canonicalise(try hash.resolve())
             let canonicalHash = try canonical.bytes.intern()
-            try catalogGuard.check(originalHash: file.hash, canonicalHash: canonicalHash, canonical: canonical)
-            entries.append(TreeManifestEntry(path: file.relativePath, hash: canonicalHash, mode: file.mode))
+            try catalogGuard.check(originalHash: hash, canonicalHash: canonicalHash, canonical: canonical)
+            entries.append(TreeManifestEntry(path: file.path, hash: canonicalHash, mode: mode))
         }
         return try TreeManifest(entries: entries).toJSON().intern()
     }

@@ -81,6 +81,27 @@ final class TreeMergerTests: SemelCoreTestCase {
         }
     }
 
+    /// B-77. A tree's links merge as entries, placed with the rest and keeping their
+    /// targets; one tree's link where another holds something below it is a collision.
+    func test_linksMergeAsEntriesAndAPathBelowALinkIsACollision() throws {
+        let framework = TreeManifest(entries: [TreeManifestEntry(path: "Tiny.framework/Versions/A/Tiny", hash: "binary", mode: 0o755),
+                                               TreeManifestEntry(path: "Tiny.framework/Versions/Current", symbolicLinkTarget: "A")])
+        let node = try TreeMerger(thisNode: NodeRecord(id: 1, kind: TreeMerger.kind,
+                                                       properties: [TreeMerger.underProperty: "Contents/Frameworks"]))
+        let output = try node.process(input: ProcessInput(inputValues: [TreeMerger.inputPort: [
+            "one": .value(try framework.toJSON().intern()), "two": .value(try framework.toJSON().intern())]]))
+        let merged: TreeManifest = try TypeRegistry.decodeAndCast(
+            encodedJSON: try XCTUnwrap(output.outputValues[TreeMerger.outputPort]).expectValue().resolveAsString())
+        XCTAssertEqual(merged.entry(at: "Contents/Frameworks/Tiny.framework/Versions/Current"),
+                       TreeManifestEntry(path: "Contents/Frameworks/Tiny.framework/Versions/Current", symbolicLinkTarget: "A"))
+
+        let copies = try tree(["Tiny.framework/Versions/Current/Tiny"])
+        guard case .noValue(.error(let messageHash)) = try process(["links": .value(try framework.toJSON().intern()), "copies": copies]) else {
+            return XCTFail("a link and a copy below it cannot both be laid")
+        }
+        XCTAssertEqual(try messageHash.resolveAsString(), "two trees hold 'Tiny.framework/Versions/Current': links and copies")
+    }
+
     /// A tree that failed stops the merge, and the merger says that as its own state rather
     /// than repeating the tool's sentence: the failure belongs to the node that failed, and a
     /// report that reads the merger's state folds it onto that node instead of naming both.

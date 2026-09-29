@@ -179,6 +179,9 @@ struct XCFrameworkSliceSelectorConfiguration {
 public struct XCFrameworkSliceSelector: Node {
     public static let kind: UInt = 40
 
+    /// 2: a framework's symbolic links are links in its tree, where they were copies (B-77).
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     /// Settings naming `sdk` and `target`; the Swift linker's, as the converter wires it.
@@ -267,7 +270,7 @@ public struct XCFrameworkSliceSelector: Node {
         var folderSpecs: [String: GraphSpecNode] = [:]
         for root in roots {
             folderSpecs[root] = .folderManifest(at: root)
-            folderSpecs.merge(FolderTreeWalk.subfolderSpecs(below: root, arrived: arrived)) { existing, _ in existing }
+            folderSpecs.merge(FolderTreeWalk.subfolderSpecs(below: root, arrived: arrived, intoSymbolicLinks: false)) { existing, _ in existing }
         }
         let walkedManifests = folderSpecs.keys.sorted().compactMap { arrived[$0] }
         var fileSpecs = FolderTreeWalk.fileSpecs(of: walkedManifests)
@@ -289,36 +292,49 @@ public struct XCFrameworkSliceSelector: Node {
         }
 
         // Each file under where it goes: a framework under its own name, a library under
-        // its file name, headers relative to their folder.
-        func entries(under root: String, placedUnder prefix: Path) throws -> [TreeManifestEntry] {
-            try fileSpecs.keys.sorted().compactMap { path -> TreeManifestEntry? in
+        // its file name, headers relative to their folder. A file pushed as a symbolic link
+        // is the link it is — a framework's `Versions/Current` and the links at its top —
+        // so the framework is the one the vendor built (B-77).
+        let walkedFolderLinks = FolderTreeWalk.symbolicLinkFolders(of: walkedManifests)
+        func tree(under root: String, placedUnder prefix: Path) throws -> TreeManifest {
+            let placed = try fileSpecs.keys.sorted().compactMap { path -> TreeManifest.PlacedFile? in
                 guard let relative = Path(path).relative(to: Path(root)), let value = files[path] else {
                     return nil
                 }
-                return TreeManifestEntry(path: (prefix / relative).string, hash: try value.expectValue(),
-                                         mode: FileMetadata.mode(of: metadata[path]))
+                return .init(path: (prefix / relative).string, hash: try value.expectValue(),
+                             metadata: FileMetadata.metadata(of: metadata[path]))
             }
+            var folderLinks: [String: String] = [:]
+            for (path, target) in walkedFolderLinks.sorted(by: { $0.key < $1.key }) {
+                guard let relative = Path(path).relative(to: Path(root)) else {
+                    continue
+                }
+                folderLinks[(prefix / relative).string] = target
+            }
+            return TreeManifest(placing: placed, folderLinks: folderLinks)
         }
-        var frameworkEntries: [TreeManifestEntry] = []
-        var libraryEntries:   [TreeManifestEntry] = []
-        var headerEntries:    [TreeManifestEntry] = []
+        var frameworkTree = TreeManifest(entries: [])
+        var libraryTree   = TreeManifest(entries: [])
+        var headerTree    = TreeManifest(entries: [])
         if slice.isFramework {
-            frameworkEntries = try entries(under: (sliceFolder / slice.libraryPath).string, placedUnder: Path(slice.libraryPath))
+            frameworkTree = try tree(under: (sliceFolder / slice.libraryPath).string, placedUnder: Path(slice.libraryPath))
         } else {
+            var libraryFiles: [TreeManifest.PlacedFile] = []
             for file in singleFiles {
                 guard let value = files[file], let name = Path(file).lastComponent else {
                     continue
                 }
-                libraryEntries.append(TreeManifestEntry(path: name, hash: try value.expectValue(),
-                                                        mode: FileMetadata.mode(of: metadata[file])))
+                libraryFiles.append(.init(path: name, hash: try value.expectValue(),
+                                          metadata: FileMetadata.metadata(of: metadata[file])))
             }
+            libraryTree = TreeManifest(placing: libraryFiles)
             if let headersPath = slice.headersPath {
-                headerEntries = try entries(under: (sliceFolder / headersPath).string, placedUnder: .empty)
+                headerTree = try tree(under: (sliceFolder / headersPath).string, placedUnder: .empty)
             }
         }
-        return .init(outputValues: [Self.frameworks: .value(try TreeManifest(entries: frameworkEntries).toJSON().intern()),
-                                    Self.libraries:  .value(try TreeManifest(entries: libraryEntries).toJSON().intern()),
-                                    Self.headers:    .value(try TreeManifest(entries: headerEntries).toJSON().intern())],
+        return .init(outputValues: [Self.frameworks: .value(try frameworkTree.toJSON().intern()),
+                                    Self.libraries:  .value(try libraryTree.toJSON().intern()),
+                                    Self.headers:    .value(try headerTree.toJSON().intern())],
                      inputWireSpecs: specs)
     }
 

@@ -71,6 +71,28 @@ final class ArtifactChangeReportingTests: SemelCoreTestCase {
         return try XCTUnwrap(captured.first)
     }
 
+    // MARK: - Links (B-77)
+
+    /// A link is an entry of its own: pointing it elsewhere is a change though the bytes
+    /// it names are the same, and so is a link standing where a file with those bytes was.
+    func test_aLinkIsReportedByWhatItHoldsAndNotByTheBytesItNames() throws {
+        _ = try StaticFile.push(Array("binary".utf8), mode: 0o755, symbolicLinkTarget: "A/Tiny", at: "fw/Tiny")
+        let source = GraphSpecNode.staticFile(at: "input:/fw/Tiny")
+        _ = try product(at: "output:/fw/Tiny", reading: source).wiringFileMetadata().findOrCreateMatchingNode()
+        engine.reportArtifactChanges()
+        XCTAssertEqual(try onlyReport(), ArtifactChanges(appeared: ["output:/fw/Tiny"]))
+        captured = []
+
+        _ = try StaticFile.push(Array("binary".utf8), mode: 0o755, symbolicLinkTarget: "B/Tiny", at: "fw/Tiny")
+        engine.reportArtifactChanges()
+        XCTAssertEqual(try onlyReport(), ArtifactChanges(changed: ["output:/fw/Tiny"]))
+        captured = []
+
+        _ = try StaticFile.push(Array("binary".utf8), mode: 0o755, at: "fw/Tiny")
+        engine.reportArtifactChanges()
+        XCTAssertEqual(try onlyReport(), ArtifactChanges(changed: ["output:/fw/Tiny"]))
+    }
+
     // MARK: - The five cases
 
     func test_aColdBuildReportsEveryProductAsAppeared() throws {

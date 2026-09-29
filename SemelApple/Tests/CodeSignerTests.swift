@@ -146,9 +146,9 @@ final class CodeSignerTests: SemelAppleTestCase {
         XCTAssertEqual(executor.lastArguments.suffix(3), ["--entitlements", "entitlements.plist", "signed/Tiny.app"])
     }
 
-    /// A versioned framework whose links arrived as copies is laid with the links, and
-    /// the signed tree has the copies again, of the signed files.
-    func test_aVersionedFrameworksCopiesAreLaidAsLinksAndComeBackAsCopies() throws {
+    /// A versioned framework's links are laid as the links they are, and come back as the
+    /// links they are, beside the signed files, each file with the mode it had (B-77).
+    func test_aTreesLinksAreLaidAsLinksAndComeBackAsLinks() throws {
         let framework = "Contents/Frameworks/Tiny.framework"
         executor.producedTrees["signed"] = [
             "Tiny.app/Contents/MacOS/Tiny": Array("signed binary".utf8),
@@ -156,63 +156,42 @@ final class CodeSignerTests: SemelAppleTestCase {
             "Tiny.app/\(framework)/Versions/A/Resources/Info.plist": Array("plist".utf8),
             "Tiny.app/\(framework)/Versions/A/_CodeSignature/CodeResources": Array("seal".utf8),
         ]
-        let output = try process(tree: try tree([
-            "Contents/MacOS/Tiny": "binary",
-            "\(framework)/Versions/A/Tiny": "framework",
-            "\(framework)/Versions/A/Resources/Info.plist": "plist",
-            "\(framework)/Versions/Current/Tiny": "framework",
-            "\(framework)/Versions/Current/Resources/Info.plist": "plist",
-            "\(framework)/Tiny": "framework",
-            "\(framework)/Resources/Info.plist": "plist",
-        ], executables: ["Contents/MacOS/Tiny", "\(framework)/Versions/A/Tiny", "\(framework)/Versions/Current/Tiny", "\(framework)/Tiny"]))
+        executor.producedLinks["signed"] = [
+            "Tiny.app/\(framework)/Versions/Current": "A",
+            "Tiny.app/\(framework)/Tiny": "Versions/Current/Tiny",
+            "Tiny.app/\(framework)/Resources": "Versions/Current/Resources",
+        ]
+        let entries: [TreeManifestEntry] = [
+            .init(path: "Contents/MacOS/Tiny", hash: try "binary".intern(), mode: FileMetadata.executableMode),
+            .init(path: "\(framework)/Versions/A/Tiny", hash: try "framework".intern(), mode: FileMetadata.executableMode),
+            .init(path: "\(framework)/Versions/A/Resources/Info.plist", hash: try "plist".intern(), mode: FileMetadata.defaultMode),
+            .init(path: "\(framework)/Versions/Current", symbolicLinkTarget: "A"),
+            .init(path: "\(framework)/Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),
+            .init(path: "\(framework)/Resources", symbolicLinkTarget: "Versions/Current/Resources"),
+        ]
+        let output = try process(tree: .value(try TreeManifest(entries: entries).toJSON().intern()))
 
-        let layout = SigningLayout(entries: try treeManifest(from: try tree([
-            "\(framework)/Versions/A/Tiny": "framework",
-            "\(framework)/Versions/Current/Tiny": "framework",
-            "\(framework)/Tiny": "framework",
-        ])).entries)
-        XCTAssertEqual(layout.links, [
-            .init(path: "\(framework)/Versions/Current", destination: "A", target: "\(framework)/Versions/A"),
-            .init(path: "\(framework)/Tiny", destination: "Versions/Current/Tiny", target: "\(framework)/Versions/A/Tiny"),
-        ])
         XCTAssertEqual(executor.invocations.first?.inputFileNames, [
-            "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Versions/A/Resources/Info.plist",
-            "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny",
-            "signed/Tiny.app/Contents/MacOS/Tiny",
-            "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Versions/Current",
             "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Resources",
             "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Tiny",
-        ], "the files, then the links, outermost first")
+            "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Versions/A/Resources/Info.plist",
+            "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny",
+            "signed/Tiny.app/Contents/Frameworks/Tiny.framework/Versions/Current",
+            "signed/Tiny.app/Contents/MacOS/Tiny",
+        ], "the tree as it is, links among the files")
+        XCTAssertEqual(executor.invocations.first?.arguments.last, "signed/Tiny.app/\(framework)",
+                       "the framework is signed first, reached through no link")
 
         let signed = try treeManifest(from: output.outputValues[CodeSigner.output])
-        XCTAssertEqual(signed.entries.map(\.path), [
-            "\(framework)/Resources/Info.plist",
-            "\(framework)/Tiny",
-            "\(framework)/Versions/A/Resources/Info.plist",
-            "\(framework)/Versions/A/Tiny",
-            "\(framework)/Versions/A/_CodeSignature/CodeResources",
-            "\(framework)/Versions/Current/Resources/Info.plist",
-            "\(framework)/Versions/Current/Tiny",
-            "\(framework)/Versions/Current/_CodeSignature/CodeResources",
-            "Contents/MacOS/Tiny",
+        XCTAssertEqual(signed.entries, [
+            .init(path: "\(framework)/Resources", symbolicLinkTarget: "Versions/Current/Resources"),
+            .init(path: "\(framework)/Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),
+            .init(path: "\(framework)/Versions/A/Resources/Info.plist", hash: try "plist".intern(), mode: FileMetadata.defaultMode),
+            .init(path: "\(framework)/Versions/A/Tiny", hash: try "signed framework".intern(), mode: FileMetadata.executableMode),
+            .init(path: "\(framework)/Versions/A/_CodeSignature/CodeResources", hash: try "seal".intern(), mode: FileMetadata.defaultMode),
+            .init(path: "\(framework)/Versions/Current", symbolicLinkTarget: "A"),
+            .init(path: "Contents/MacOS/Tiny", hash: try "signed binary".intern(), mode: FileMetadata.executableMode),
         ])
-        XCTAssertEqual(try signed.entry(at: "\(framework)/Tiny")?.hash.resolveAsString(), "signed framework")
-        XCTAssertEqual(signed.entry(at: "\(framework)/Tiny")?.mode, FileMetadata.executableMode, "each file keeps its mode")
-        XCTAssertEqual(signed.entry(at: "Contents/MacOS/Tiny")?.mode, FileMetadata.executableMode)
-        XCTAssertEqual(signed.entry(at: "\(framework)/Versions/A/_CodeSignature/CodeResources")?.mode, FileMetadata.defaultMode)
-    }
-
-    /// `Versions/Current` that is no copy of one version is not taken for a link: the
-    /// folder is laid as it came, and codesign says what it makes of it.
-    func test_aCurrentThatMatchesNoVersionIsLeftAsItIs() throws {
-        let layout = SigningLayout(entries: try treeManifest(from: try tree([
-            "Kit.framework/Versions/A/Kit": "one",
-            "Kit.framework/Versions/Current/Kit": "another",
-            "Kit.framework/Kit": "another",
-        ])).entries)
-
-        XCTAssertEqual(layout.links, [])
-        XCTAssertEqual(layout.files.count, 3)
     }
 
     // MARK: - Settings and failures
@@ -261,13 +240,13 @@ final class CodeSignerTests: SemelAppleTestCase {
     // MARK: - This machine
 
     /// A tiny app — an executable, an Info.plist, a resource, an extension signed with its
-    /// own entitlements, and a versioned framework whose links came as copies — signed by
-    /// the real codesign twice, each run in sandboxes of its own. The signed tree is the
-    /// same bytes both times: an ad-hoc signature has no identity and, with
-    /// `--timestamp=none`, no time, and nothing in it names the sandbox (B-89). Written out
-    /// with the framework's links as links, the app verifies deep and strict, with its
-    /// entitlements on the executable and the extension's kept on the extension, as is the
-    /// hardened runtime the extension alone was signed with — NetNewsWire's Debug shape.
+    /// own entitlements, and a versioned framework with its links — signed by the real
+    /// codesign twice, each run in sandboxes of its own. The signed tree is the same bytes
+    /// both times: an ad-hoc signature has no identity and, with `--timestamp=none`, no
+    /// time, and nothing in it names the sandbox (B-89). Written out as the tree says, links
+    /// as links, the app verifies deep and strict, with its entitlements on the executable
+    /// and the extension's kept on the extension, as is the hardened runtime the extension
+    /// alone was signed with — NetNewsWire's Debug shape.
     func test_theRealCodesignSignsATinyAppToTheSameBytesTwice() throws {
         let codesign = try XCTUnwrap(AppleToolDiscovery.locate("codesign"), "codesign must be discoverable via xcrun")
         let allocator = try XCTUnwrap(AppleToolDiscovery.locate("codesign_allocate"))
@@ -294,23 +273,24 @@ final class CodeSignerTests: SemelAppleTestCase {
                       mode: FileMetadata.defaultMode),
                 .init(path: "Contents/Resources/greeting.txt", hash: try "Hello from a signed bundle\n".intern(), mode: FileMetadata.defaultMode),
             ]
-            for version in ["A", "Current"] {
-                entries.append(.init(path: "\(framework)/Versions/\(version)/Kit", hash: binary, mode: FileMetadata.executableMode))
-                entries.append(.init(path: "\(framework)/Versions/\(version)/Resources/Info.plist", hash: frameworkPlist, mode: FileMetadata.defaultMode))
-            }
-            entries.append(.init(path: "\(framework)/Kit", hash: binary, mode: FileMetadata.executableMode))
-            entries.append(.init(path: "\(framework)/Resources/Info.plist", hash: frameworkPlist, mode: FileMetadata.defaultMode))
-            entries += appex.entries.map { .init(path: "Contents/PlugIns/Share.appex/\($0.path)", hash: $0.hash, mode: $0.mode) }
+            entries.append(.init(path: "\(framework)/Versions/A/Kit", hash: binary, mode: FileMetadata.executableMode))
+            entries.append(.init(path: "\(framework)/Versions/A/Resources/Info.plist", hash: frameworkPlist, mode: FileMetadata.defaultMode))
+            entries.append(.init(path: "\(framework)/Versions/Current", symbolicLinkTarget: "A"))
+            entries.append(.init(path: "\(framework)/Kit", symbolicLinkTarget: "Versions/Current/Kit"))
+            entries.append(.init(path: "\(framework)/Resources", symbolicLinkTarget: "Versions/Current/Resources"))
+            entries += appex.entries.map { $0.placed(under: Path("Contents/PlugIns/Share.appex")) }
             trees.append(try sign(bundle: "Tiny.app", entries: entries, entitlements: appEntitlements, configuration: configuration))
         }
 
         XCTAssertEqual(trees[0], trees[1], "two signings of one tree are the same bytes")
         let signed = trees[0]
         for seal in ["Contents/_CodeSignature/CodeResources", "Contents/PlugIns/Share.appex/Contents/_CodeSignature/CodeResources",
-                     "Contents/Frameworks/Kit.framework/Versions/A/_CodeSignature/CodeResources",
-                     "Contents/Frameworks/Kit.framework/Versions/Current/_CodeSignature/CodeResources"] {
+                     "Contents/Frameworks/Kit.framework/Versions/A/_CodeSignature/CodeResources"] {
             XCTAssertNotNil(signed.entry(at: seal), "\(seal) in \(signed.entries.map(\.path))")
         }
+        XCTAssertEqual(signed.entry(at: "Contents/Frameworks/Kit.framework/Versions/Current"),
+                       TreeManifestEntry(path: "Contents/Frameworks/Kit.framework/Versions/Current", symbolicLinkTarget: "A"),
+                       "the framework's links come back as links")
         XCTAssertEqual(signed.entry(at: "Contents/MacOS/Tiny")?.mode, FileMetadata.executableMode)
         XCTAssertNotEqual(signed.entry(at: "Contents/MacOS/Tiny")?.hash, binary, "the executable carries the new signature")
 
@@ -347,19 +327,19 @@ final class CodeSignerTests: SemelAppleTestCase {
         return try treeManifest(from: output.outputValues[CodeSigner.output])
     }
 
-    /// The tree as files under `folder`, each with its mode, and a versioned framework's
-    /// copies as the links they stand for — what a bundle is before it is pushed.
+    /// The tree as files under `folder`, each with its mode, and its links as links — what
+    /// the export writes.
     private func write(_ tree: TreeManifest, to folder: URL) throws {
-        let layout = SigningLayout(entries: tree.entries)
-        for entry in layout.files {
+        for entry in tree.entries {
             let url = folder.appendingPathComponent(entry.path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(try XCTUnwrap(DataObjectStore.shared.read(hash: entry.hash))).write(to: url)
-            try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: entry.mode)], ofItemAtPath: url.path)
-        }
-        for link in layout.links {
-            try FileManager.default.createSymbolicLink(atPath: folder.appendingPathComponent(link.path).path,
-                                                       withDestinationPath: link.destination)
+            switch entry.content {
+            case .file(let hash, let mode):
+                try Data(try XCTUnwrap(DataObjectStore.shared.read(hash: hash))).write(to: url)
+                try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: mode)], ofItemAtPath: url.path)
+            case .symbolicLink(let target):
+                try FileManager.default.createSymbolicLink(atPath: url.path, withDestinationPath: target)
+            }
         }
     }
 

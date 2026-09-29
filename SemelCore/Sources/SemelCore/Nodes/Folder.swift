@@ -64,8 +64,35 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
                              Self.contentRootOutputPort: .value(try buildContentRootDocument().intern()),
-                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .initializing) : .value("")], // HACK
+                             Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .initializing) : .value(""), // HACK
+                             Self.symbolicLinkOutputPort: Self.notASymbolicLink],
               inputWireSpecs: [:])
+    }
+
+    /// What `symbolicLink` holds for a folder that is not a link.
+    static let notASymbolicLink = NodeValue.value("")
+
+    /// Stores the folder at `relativePath` in the input file system as a symbolic link
+    /// holding `target`, creating it and the folders on the way pinned, as a pushed folder
+    /// is. Returns whether that changed anything. What the link names is pushed below it
+    /// as any folder's files are.
+    public static func pushSymbolicLink(target: String, at relativePath: Path) throws -> Bool {
+        let folderRecord = try Folder.inputFileSystem.ensureEntirePathExistsAsFolders(relativePath, pinned: true)
+        guard let folder = try folderRecord.makeNode() as? Folder else {
+            throw NodeError.nameCollision(path: relativePath.string, existingKind: folderRecord.kind)
+        }
+        return try folder.setSymbolicLinkTarget(target)
+    }
+
+    /// Records that this folder is a symbolic link holding `target` (B-77), and tells the
+    /// folder above — whose manifest lists it and whose root folds it — when that changed.
+    /// Returns whether it did.
+    func setSymbolicLinkTarget(_ target: String) throws -> Bool {
+        let changed = try thisNode.writeToOutputPort(Self.symbolicLinkOutputPort, value: .value(try target.intern()))
+        if changed {
+            try notifyParentOfChildContentChange()
+        }
+        return changed
     }
 
     var path: Path {
@@ -164,10 +191,23 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
     static let pinnedOutputPort = "pinned"
 
+    /// What the folder holds as a symbolic link, when a push found it to be one that stays
+    /// inside its own folder (B-77): the target, as the link holds it. The empty value for
+    /// a folder that is not a link. Such a folder still holds what the link names, pushed as
+    /// every folder link always was, so that everything walking it reads what it did; what
+    /// this port adds is the fact, which the folder above folds and lists in its manifest,
+    /// and which a walk building a tree places as the link rather than descending.
+    ///
+    /// A push only adds, and so only ever sets this: a link on disk replaced by a folder
+    /// stays a link here until the folder is removed and pushed again, as a file removed
+    /// from disk stays a file.
+    static let symbolicLinkOutputPort = "symbolicLink"
+
     public static let descriptor = NodeDescriptor(inputPorts: [],
                                                   outputPorts: [folderManifestOutputPort,
                                                                 contentRootOutputPort,
-                                                                pinnedOutputPort])
+                                                                pinnedOutputPort,
+                                                                symbolicLinkOutputPort])
 
     /// Never reached in a working graph: a node declaring no input ports is not scheduled,
     /// so nothing asks it to process. An ordinary error rather than a trap — a node is not
@@ -414,12 +454,16 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         // decoding every child's properties to produce that was most of the rebuild cost.
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let pinned   = try pinnedStates(of: children)
+        // A subfolder's link, for a walk to know before it descends; a file's is on its
+        // metadata, where what reads files looks.
+        let links    = try symbolicLinkTargets(of: children.filter { $0.kind == Folder.kind })
 
         var folderManifestEntries = [FolderManifestEntry]()
         for child in children {
             folderManifestEntries.append(.init(name: child.name!,
                                                isFolder: child.kind == Folder.kind,
-                                               isPinned: pinned[child.id] ?? false))
+                                               isPinned: pinned[child.id] ?? false,
+                                               symbolicLinkTarget: links[child.id]))
         }
 
         return .init(baseFolderPath: path.string, entries: folderManifestEntries)
@@ -433,6 +477,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         Self.contentRootRebuildCount.increment()
         let children = try database.node.selectChildSummaries(parentNodeID: try thisNode.requireID())
         let content  = try contentStates(of: children)
+        let links    = try symbolicLinkTargets(of: children)
 
         var lines = [(name: String, kind: FolderChildKind, content: FolderChildContent)]()
         for child in children {
@@ -440,9 +485,26 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             // A child of a kind the fold reads, with no row for the port its content is on,
             // has had nothing produced on it — the same reading `asNodeValue` gives.
             case StaticFile.kind:
-                lines.append((child.name!, .file, content[child.id] ?? .notProduced))
+                let fileContent = content[child.id] ?? .notProduced
+                guard let target = links[child.id] else {
+                    lines.append((child.name!, .file, fileContent))
+                    continue
+                }
+                // A link is its target while it stands; removed, it says so as a file does,
+                // and stays a link: the metadata a removal leaves is the one it was pushed with.
+                guard case .hash = fileContent else {
+                    lines.append((child.name!, .link, fileContent))
+                    continue
+                }
+                lines.append((child.name!, .link, .symbolicLinkTarget(target)))
 
             case Folder.kind:
+                // A folder that is a link is what the link holds, whatever the copy of what
+                // it names below it holds: that is folded where it is.
+                if let target = links[child.id] {
+                    lines.append((child.name!, .link, .symbolicLinkTarget(target)))
+                    continue
+                }
                 lines.append((child.name!, .folder, content[child.id] ?? .notProduced))
 
             default:
@@ -476,6 +538,35 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             }
         }
 
+        return result
+    }
+
+    /// The target of every child that is a symbolic link (B-77), in one query per kind: a
+    /// file's from its metadata, a folder's from its `symbolicLink` port. Each distinct
+    /// document is read once — a folder of thousands of files holds a handful of metadata
+    /// documents, one per mode and one per link — and a folder that is not a link holds
+    /// the empty value, which is read as none.
+    private func symbolicLinkTargets(of children: [NodeChildSummary]) throws -> [ObjectID: String] {
+        let parentNodeID = try thisNode.requireID()
+        var result: [ObjectID: String] = [:]
+        for (kind, portName) in [(Folder.kind,     Folder.symbolicLinkOutputPort),
+                                 (StaticFile.kind, StaticFile.fileMetadataOutputPort)] {
+            let ports = try database.node.selectChildPorts(parentNodeID: parentNodeID, nameSymbolID: portName.asSymbolID())
+            var targetByDocument: [DataObjectHash: String?] = [:]
+            for child in children where child.kind == kind {
+                guard case .value(let hash)? = try ports[child.id]?.asNodeValue(), !hash.isEmpty else {
+                    continue
+                }
+                if targetByDocument[hash] == nil {
+                    let document = try hash.resolveAsString()
+                    targetByDocument[hash] = .some(kind == Folder.kind ? document
+                                                                       : FileMetadata.decode(from: document)?.symbolicLinkTarget)
+                }
+                if let target = targetByDocument[hash] ?? nil, !target.isEmpty {
+                    result[child.id] = target
+                }
+            }
+        }
         return result
     }
 

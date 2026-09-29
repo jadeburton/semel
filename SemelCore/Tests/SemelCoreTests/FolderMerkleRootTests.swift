@@ -198,6 +198,42 @@ final class FolderMerkleRootTests: SemelCoreTestCase {
         XCTAssertTrue(text.contains("folder\thash \(childRoot)\t5\tchild\n"), text)
     }
 
+    // MARK: - Links (B-77)
+
+    /// A file pushed as a link is a `link` line holding its target, never the bytes it
+    /// carries; a folder pushed as one is a `link` line too, whatever the copy of what it
+    /// names below it holds. And the folder's manifest says the subfolder is a link, so a
+    /// walk building a tree knows before it descends.
+    func test_aLinkFoldsAsItsTargetAndAFolderLinkIsListedAsOne() throws {
+        try push("fw/Versions/A/Tiny", contents: "binary")
+        try push("fw/Versions/Current/Tiny", contents: "binary")
+        XCTAssertTrue(try Folder.pushSymbolicLink(target: "A", at: "fw/Versions/Current"))
+        XCTAssertTrue(try StaticFile.push(Array("binary".utf8), mode: 0o755, symbolicLinkTarget: "Versions/Current/Tiny", at: "fw/Tiny"))
+        try Folder.flushDirtyManifests()
+
+        let framework = try document(of: "fw")
+        let versions  = try document(of: "fw/Versions")
+        XCTAssertTrue(framework.contains("link\ttarget 21 Versions/Current/Tiny\t4\tTiny\n"), framework)
+        XCTAssertTrue(versions.contains("link\ttarget 1 A\t7\tCurrent\n"), versions)
+        let manifest: FolderManifest = try TypeRegistry.decodeAndCast(encodedJSON: try manifestHash(of: "fw/Versions").resolveAsString())
+        XCTAssertEqual(manifest.entries.map { "\($0.name)=\($0.symbolicLinkTarget ?? "-")" }, ["A=-", "Current=A"])
+    }
+
+    /// Retargeting a link moves the root, and pushing it again as it was moves nothing.
+    func test_retargetingALinkMovesTheRoot() throws {
+        try push("pkg/Real.txt", contents: "same")
+        try push("pkg/Other.txt", contents: "same")
+        _ = try StaticFile.push(Array("same".utf8), mode: 0o644, symbolicLinkTarget: "Real.txt", at: "pkg/Alias.txt")
+        try Folder.flushDirtyManifests()
+        let linked = try root(of: "pkg")
+
+        XCTAssertFalse(try StaticFile.push(Array("same".utf8), mode: 0o644, symbolicLinkTarget: "Real.txt", at: "pkg/Alias.txt"))
+        _ = try StaticFile.push(Array("same".utf8), mode: 0o644, symbolicLinkTarget: "Other.txt", at: "pkg/Alias.txt")
+        try Folder.flushDirtyManifests()
+
+        XCTAssertNotEqual(try root(of: "pkg"), linked)
+    }
+
     /// A child with no content is a state rather than a missing hash, and the states are
     /// kept apart: a folder a file was removed from is not a folder that never held it.
     func test_aRemovedChildIsAStateAndNotAHash() throws {

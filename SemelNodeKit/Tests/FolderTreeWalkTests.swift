@@ -67,6 +67,20 @@ final class FolderTreeWalkTests: XCTestCase {
     func test_subfolderSpecsBelowARootThatHasNotArrivedIsEmpty() {
         XCTAssertTrue(FolderTreeWalk.subfolderSpecs(below: "input:/src", arrived: [:]).isEmpty)
     }
+
+    /// A subfolder that is a symbolic link holds what it names, and a walk reading files
+    /// descends into it; a walk building a tree does not, and is handed the link to place
+    /// (B-77).
+    func test_aWalkBuildingATreeDoesNotDescendIntoAFolderLink() {
+        let manifest = FolderManifest(baseFolderPath: "input:/F/Versions",
+                                      entries: [folder("A"), .init(name: "Current", isFolder: true, isPinned: true, symbolicLinkTarget: "A")])
+
+        XCTAssertEqual(FolderTreeWalk.subfolderSpecs(of: [manifest]).keys.sorted(),
+                       ["input:/F/Versions/A", "input:/F/Versions/Current"])
+        XCTAssertEqual(FolderTreeWalk.subfolderSpecs(of: [manifest], intoSymbolicLinks: false).keys.sorted(),
+                       ["input:/F/Versions/A"])
+        XCTAssertEqual(FolderTreeWalk.symbolicLinkFolders(of: [manifest]), ["input:/F/Versions/Current": "A"])
+    }
 }
 
 extension Dictionary where Key == String, Value == GraphSpecNode {

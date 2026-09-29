@@ -29,6 +29,10 @@ public enum FolderChildContent: Equatable {
     /// reads, whose ports hold no such state, and spelled out rather than folded into
     /// `notFolded` so that a reconciler is never told a failure is a structural gap.
     case failed
+    /// A symbolic link, by its target as it holds it. The target and never the bytes it
+    /// names: those are folded where they are, and a link is equal to another link only
+    /// when both say the same thing.
+    case symbolicLinkTarget(String)
     /// The fold does not reach this child's content, and the root does not claim to.
     ///
     /// A product is the case: its bytes arrive on an input wire rather than on a port of
@@ -69,6 +73,10 @@ extension FolderChildContent {
         case .deleted:        return "deleted"
         case .failed:         return "failed"
         case .notFolded:      return "not-folded"
+        // Framed by its length as a name is, so a tab or a newline in a target changes
+        // the root rather than the shape of the document.
+        case .symbolicLinkTarget(let target):
+            return "target \(target.utf8.count) \(target)"
         }
     }
 }
@@ -85,6 +93,12 @@ public enum FolderChildKind: String {
     case folder
     /// Anything else a folder holds; the only such kind is a product (`OutputFile`).
     case other
+    /// A symbolic link that stays inside its folder, pushed as the link it is (B-77): in
+    /// the graph a file whose metadata names a target, or a folder whose `symbolicLink` port
+    /// does, holding what the link names as a push always stored it. Its own kind, for the
+    /// reason the kind is on the line at all: a link and a copy of what it names are not the
+    /// same tree.
+    case link
 }
 
 extension FolderChildKind {
@@ -96,6 +110,7 @@ extension FolderChildKind {
         case .file:   return 0
         case .folder: return 1
         case .other:  return 2
+        case .link:   return 3
         }
     }
 }
@@ -125,7 +140,10 @@ public enum FolderContentRoot {
     /// The first line of every document. Versioned because a recorded root outlives the
     /// release that wrote it: a change to the fold changes the tag, so a mismatch reads as
     /// "a different format" rather than as "a different tree".
-    public static let formatTag = "semel-folder-content-root 2"
+    ///
+    /// 3: a symbolic link inside its folder is a `link` line holding its target, where the
+    /// fold read the bytes of what it named under its name (B-77).
+    public static let formatTag = "semel-folder-content-root 3"
 
     public static func document(of children: [(name: String, kind: FolderChildKind,
                                                content: FolderChildContent)]) -> String {
@@ -159,10 +177,12 @@ extension FolderContentRoot {
     /// so the two cannot differ in the format. They could still differ in *what* is folded,
     /// so this walks what a push pushes and nothing else: the listing is
     /// `ExternalFileSystemLister`'s, the one `push` matches with, which leaves out every
-    /// name starting with a dot — a checkout's `.github`, `.swiftpm`, `.gitignore` — and
-    /// follows a link unless it points at a folder above it. And a subfolder holding no file
-    /// at any depth is left out, because a push creates a folder only on the way to a file
-    /// it pushes, so the engine never has a node for it.
+    /// name starting with a dot — a checkout's `.github`, `.swiftpm`, `.gitignore` — folds a
+    /// link that stays inside its folder as the link it is, without reading what it names,
+    /// and follows any other link unless it points at a folder above it. And a subfolder
+    /// holding no file at any depth is left out, because a push creates a folder only on
+    /// the way to a file it pushes or when it is a link, so the engine never has a node for
+    /// it.
     ///
     /// What a push does that this cannot see: a file removed from disk since an earlier push
     /// is still in the graph, because a push only adds. The engine's root then differs from
@@ -178,6 +198,12 @@ extension FolderContentRoot {
         for entry in lister.allFiles(inDirectoryPath: folder.path) {
             let name  = entry.path.string
             let child = folder.appendingPathComponent(name)
+            // A link, to a file or to a folder, is what it holds, and what it names is
+            // folded where it is.
+            if let target = entry.symbolicLinkTarget {
+                lines.append((name, .link, .symbolicLinkTarget(target)))
+                continue
+            }
             switch entry.kind {
             case .file:
                 let bytes: Data

@@ -293,6 +293,28 @@ final class VersionMarkerTests: SemelCoreTestCase {
                        "and the graph reports no node missing a port row")
     }
 
+    // MARK: - The link port, added to `Folder` after graphs existed
+
+    /// B-77, the case 0.1.6 was: a preserved folder has no `symbolicLink` row, and the
+    /// rebuild gives it the one a folder that is not a link holds.
+    func test_aPreservedFolderIsGivenItsLinkRowByTheRebuild() throws {
+        let engine = try makeEngine(try DatabaseLayer())
+        let folder = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path("src"), pinned: true)
+        for node in [try engine.inputFileSystem, folder] {
+            _ = try engine.database.outputPort.delete(nodeID: try node.requireID(),
+                                                      nameSymbolID: Folder.symbolicLinkOutputPort.asSymbolID())
+        }
+        try engine.database.metadata.upsert(key: BuildEngine.semelVersionKey, value: "0.1.12")
+
+        try engine.reconcileVersionMarkers()
+
+        XCTAssertEqual(try folder.readFromOutputPort(Folder.symbolicLinkOutputPort).expectValue(), "",
+                       "the value of a folder that is not a link")
+        XCTAssertFalse(GraphCheck.run(database: engine.database)
+                        .findings.contains { $0.kind == .missingOutputPort },
+                       "and the graph reports no node missing a port row")
+    }
+
     /// What was pushed is what a rebuild must never touch: a file with content keeps it, so
     /// the restating above cannot cost a cache hit or a re-push.
     func test_aPushedFilesContentSurvivesTheRebuild() throws {

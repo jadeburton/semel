@@ -106,4 +106,45 @@ final class FolderContentRootOnDiskTests: XCTestCase {
 
         XCTAssertEqual(try FolderContentRoot.root(ofFolderAt: folder("Pkg")), before)
     }
+
+    // MARK: - Links (B-77)
+
+    /// A link inside its folder, to a file or to a folder, is a `link` line holding its
+    /// target, and nothing is read through it; what it names is folded where it is. A link
+    /// out of its folder is followed, and folds as the file it names.
+    func test_aLinkInsideItsFolderFoldsAsItsTarget() throws {
+        try write("Fw/Versions/A/Tiny", "binary")
+        try write("outside.h", "outside")
+        let fileManager = FileManager.default
+        try fileManager.createSymbolicLink(atPath: folder("Fw/Versions/Current").path, withDestinationPath: "A")
+        try fileManager.createSymbolicLink(atPath: folder("Fw/Tiny").path, withDestinationPath: "Versions/Current/Tiny")
+        try fileManager.createSymbolicLink(atPath: folder("Fw/Outside.h").path, withDestinationPath: "../outside.h")
+
+        let version  = FolderContentRoot.document(of: [("Tiny", .file, .hash(hash("binary")))])
+        let versions = FolderContentRoot.document(of: [("A",       .folder, .hash(hash(version))),
+                                                       ("Current", .link,   .symbolicLinkTarget("A"))])
+        let framework = FolderContentRoot.document(of: [("Outside.h", .file,   .hash(hash("outside"))),
+                                                        ("Tiny",      .link,   .symbolicLinkTarget("Versions/Current/Tiny")),
+                                                        ("Versions",  .folder, .hash(hash(versions)))])
+
+        XCTAssertEqual(try FolderContentRoot.root(ofFolderAt: folder("Fw")), hash(framework))
+        XCTAssertTrue(framework.contains("link\ttarget 21 Versions/Current/Tiny\t4\tTiny\n"), framework)
+    }
+
+    /// Retargeting a link moves the root though nothing it could name did, and a link is
+    /// not the copy of what it names.
+    func test_aLinkIsNotTheCopyOfWhatItNames() throws {
+        try write("Pkg/Real.txt", "same")
+        try write("Pkg/Other.txt", "same")
+        try FileManager.default.createSymbolicLink(atPath: folder("Pkg/Alias.txt").path, withDestinationPath: "Real.txt")
+        let linked = try FolderContentRoot.root(ofFolderAt: folder("Pkg"))
+
+        try FileManager.default.removeItem(at: folder("Pkg/Alias.txt"))
+        try FileManager.default.createSymbolicLink(atPath: folder("Pkg/Alias.txt").path, withDestinationPath: "Other.txt")
+        XCTAssertNotEqual(try FolderContentRoot.root(ofFolderAt: folder("Pkg")), linked)
+
+        try FileManager.default.removeItem(at: folder("Pkg/Alias.txt"))
+        try write("Pkg/Alias.txt", "same")
+        XCTAssertNotEqual(try FolderContentRoot.root(ofFolderAt: folder("Pkg")), linked)
+    }
 }

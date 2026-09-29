@@ -113,7 +113,8 @@ final class ExternalProjectTests: XCTestCase {
 
     /// B-77: NetNewsWire's Mac app — local packages, a vendored binary framework, C and
     /// Objective-C in packages and in the app, xibs, two extensions — over a clone with the
-    /// generated `SecretKey.swift` laid by the overlay. Inspected, not run: it is unsigned.
+    /// generated `SecretKey.swift` laid by the overlay. Signed, verified deep and strict with
+    /// Sparkle's links as links, and inspected, not run.
     func test_netNewsWireBuildsTwiceForTheMac() throws {
         try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
         try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")

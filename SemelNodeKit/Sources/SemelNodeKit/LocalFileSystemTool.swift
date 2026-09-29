@@ -77,8 +77,8 @@ public class LocalFileSystemTool: ToolRunner {
                                                     withIntermediateDirectories: true)
                 }
 
-                if let linkDestination = inputFile.symbolicLinkDestination {
-                    try fileManager.createSymbolicLink(atPath: destinationURL.path, withDestinationPath: linkDestination)
+                if let linkTarget = inputFile.symbolicLinkTarget {
+                    try fileManager.createSymbolicLink(atPath: destinationURL.path, withDestinationPath: linkTarget)
                     continue
                 }
 
@@ -180,25 +180,37 @@ public class LocalFileSystemTool: ToolRunner {
             output.write(expectedOutputFileName, try DataObjectStore.shared.store(fileAt: outputFileURL))
         }
 
-        // 7. Read back every file of each expected output folder. Sorted, so the tree a
-        // node builds from them is the same value however the file system enumerates.
+        // 7. Read back every file and link of each expected output folder. Sorted, so the
+        // tree a node builds from them is the same value however the file system
+        // enumerates. The enumerator does not descend through a link, so what a link names
+        // is read where it is, and the link is read as the link it is.
         for folder in expectedOutputFolders {
             let folderURL = Foundation.URL(fileURLWithPath: sandboxPath).appendingPathComponent(folder)
             var isDirectory: ObjCBool = false
+            let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
             guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue,
-                  let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: [.isRegularFileKey]) else {
+                  let enumerator = fileManager.enumerator(at: folderURL, includingPropertiesForKeys: keys) else {
                 output.logError("Expected output folder not found: \(folder)")
                 continue
             }
-            let fileURLs = (enumerator.allObjects as? [Foundation.URL] ?? [])
-                .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
-                .sorted { $0.path < $1.path }
+            let itemURLs = (enumerator.allObjects as? [Foundation.URL] ?? []).sorted { $0.path < $1.path }
             let prefix = folderURL.standardizedFileURL.path + "/"
-            for fileURL in fileURLs {
-                let relativePath = String(fileURL.standardizedFileURL.path.dropFirst(prefix.count))
-                let permissions  = (try? fileManager.attributesOfItem(atPath: fileURL.path))?[.posixPermissions] as? NSNumber
+            for itemURL in itemURLs {
+                guard let values = try? itemURL.resourceValues(forKeys: Set(keys)) else {
+                    continue
+                }
+                let relativePath = String(itemURL.standardizedFileURL.path.dropFirst(prefix.count))
+                if values.isSymbolicLink == true {
+                    let target = try fileManager.destinationOfSymbolicLink(atPath: itemURL.path)
+                    output.writeTreeLink(folder, relativePath, target)
+                    continue
+                }
+                guard values.isRegularFile == true else {
+                    continue
+                }
+                let permissions  = (try? fileManager.attributesOfItem(atPath: itemURL.path))?[.posixPermissions] as? NSNumber
                 let mode         = permissions.map { UInt16(truncatingIfNeeded: $0.intValue) } ?? FileMetadata.defaultMode
-                output.writeTreeEntry(folder, relativePath, try DataObjectStore.shared.store(fileAt: fileURL), mode)
+                output.writeTreeEntry(folder, relativePath, try DataObjectStore.shared.store(fileAt: itemURL), mode)
             }
         }
 

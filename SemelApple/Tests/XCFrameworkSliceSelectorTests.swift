@@ -45,10 +45,13 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
 
     /// Runs the node until it asks for nothing new: every folder it asks for answered from
     /// `folders` (files, subfolders), every file with its path as its bytes, every mode from
-    /// `modes` or the default. Returns the last pass's output.
+    /// `modes` or the default. A path in `links` is a symbolic link pushed as one, holding
+    /// what it maps to: a subfolder listed so in its folder's manifest, a file with the
+    /// target on its metadata. Returns the last pass's output.
     private func select(settings: String, plist: Data,
                         folders: [String: (files: [String], folders: [String])] = [:],
-                        modes: [String: UInt16] = [:]) throws -> ProcessOutput {
+                        modes: [String: UInt16] = [:],
+                        links: [String: String] = [:]) throws -> ProcessOutput {
         let node = try makeNode()
         var inputValues: [String: [String: NodeValue]] = [
             XCFrameworkSliceSelector.configuration: ["config": .value(try settings.intern())],
@@ -60,15 +63,16 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
             for (folder, _) in output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders] ?? [:]
             where inputValues[XCFrameworkSliceSelector.sliceFolders]?[folder] == nil {
                 let contents = folders[folder] ?? (files: [], folders: [])
+                let folderLinks = Dictionary(contents.folders.compactMap { name in links["\(folder)/\(name)"].map { (name, $0) } }) { first, _ in first }
                 inputValues[XCFrameworkSliceSelector.sliceFolders, default: [:]][folder] =
-                    try manifestValue(folder, files: contents.files, folders: contents.folders)
+                    try manifestValue(folder, files: contents.files, folders: contents.folders, folderLinks: folderLinks)
                 askedForMore = true
             }
             for (file, _) in output.inputWireSpecs[XCFrameworkSliceSelector.sliceFiles] ?? [:]
             where inputValues[XCFrameworkSliceSelector.sliceFiles]?[file] == nil {
                 inputValues[XCFrameworkSliceSelector.sliceFiles, default: [:]][file] = .value(try file.intern())
                 inputValues[XCFrameworkSliceSelector.sliceFileMetadata, default: [:]][file] =
-                    .value(try FileMetadata(mode: modes[file] ?? FileMetadata.defaultMode).jsonString().intern())
+                    .value(try FileMetadata(mode: modes[file] ?? FileMetadata.defaultMode, symbolicLinkTarget: links[file]).jsonString().intern())
                 askedForMore = true
             }
             guard askedForMore else {
@@ -105,11 +109,41 @@ final class XCFrameworkSliceSelectorTests: SemelAppleTestCase {
                        ["Tiny.framework/Resources/Info.plist", "Tiny.framework/Tiny", "Tiny.framework/Versions/A/Tiny"])
         XCTAssertEqual(frameworks.entry(at: "Tiny.framework/Versions/A/Tiny")?.mode, 0o755)
         XCTAssertEqual(frameworks.entry(at: "Tiny.framework/Resources/Info.plist")?.mode, 0o644)
-        XCTAssertEqual(try frameworks.entry(at: "Tiny.framework/Tiny").map { try $0.hash.resolveAsString() }, "\(slice)/Tiny")
+        XCTAssertEqual(try frameworks.entry(at: "Tiny.framework/Tiny").map { try XCTUnwrap($0.hash).resolveAsString() }, "\(slice)/Tiny")
         XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.libraries]).entries, [])
         XCTAssertEqual(try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.headers]).entries, [])
         XCTAssertEqual(output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders]?.keys.allSatisfy { $0.hasPrefix(slice) }, true,
                        "no other slice is read")
+    }
+
+    /// A versioned framework pushed with its links (B-77): `Versions/Current` and the links
+    /// at the top are links in the tree, and nothing is read through one — the version they
+    /// name is walked where it is, once.
+    func test_aVersionedFrameworksLinksAreLinksInItsTree() throws {
+        let slice = "\(xcframework)/macos-arm64_x86_64/Tiny.framework"
+        let output = try select(settings: "sdk=macosx\ntarget=arm64-apple-macosx15.0", plist: try infoPlist(), folders: [
+            slice:                          (files: ["Tiny"], folders: ["Versions", "Resources"]),
+            "\(slice)/Versions":            (files: [], folders: ["A", "Current"]),
+            "\(slice)/Versions/A":          (files: ["Tiny"], folders: ["Resources"]),
+            "\(slice)/Versions/A/Resources": (files: ["Info.plist"], folders: []),
+        ], modes: ["\(slice)/Tiny": 0o755, "\(slice)/Versions/A/Tiny": 0o755], links: [
+            "\(slice)/Versions/Current": "A",
+            "\(slice)/Tiny":             "Versions/Current/Tiny",
+            "\(slice)/Resources":        "Versions/Current/Resources",
+        ])
+
+        let frameworks = try treeManifest(from: output.outputValues[XCFrameworkSliceSelector.frameworks])
+        XCTAssertEqual(frameworks.entries, [
+            TreeManifestEntry(path: "Tiny.framework/Resources", symbolicLinkTarget: "Versions/Current/Resources"),
+            TreeManifestEntry(path: "Tiny.framework/Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),
+            TreeManifestEntry(path: "Tiny.framework/Versions/A/Resources/Info.plist",
+                              hash: try "\(slice)/Versions/A/Resources/Info.plist".intern(), mode: 0o644),
+            TreeManifestEntry(path: "Tiny.framework/Versions/A/Tiny", hash: try "\(slice)/Versions/A/Tiny".intern(), mode: 0o755),
+            TreeManifestEntry(path: "Tiny.framework/Versions/Current", symbolicLinkTarget: "A"),
+        ])
+        XCTAssertEqual(output.inputWireSpecs[XCFrameworkSliceSelector.sliceFolders]?.keys.sorted(),
+                       [slice, "\(slice)/Versions", "\(slice)/Versions/A", "\(slice)/Versions/A/Resources"],
+                       "no folder link is walked")
     }
 
     /// The simulator's slice is the `ios` one with the `simulator` variant, not the device's.

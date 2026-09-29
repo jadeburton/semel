@@ -47,9 +47,9 @@ final class MessageJSONTests: XCTestCase {
 
     /// Pinned so that a change to the message set is a change to this number too: the
     /// version is what lets a mismatched pair say so instead of misreading each other.
-    func test_currentProtocolVersionIsEighteen() {
-        XCTAssertEqual(ProtocolVersion.current, 18)
-        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 18,
+    func test_currentProtocolVersionIsNineteen() {
+        XCTAssertEqual(ProtocolVersion.current, 19)
+        XCTAssertEqual(Hello(role: .daemon).protocolVersion, 19,
                        "a hello sent with no version named speaks the current one")
     }
 
@@ -120,6 +120,8 @@ final class MessageJSONTests: XCTestCase {
             .beginBatch,
             .endBatch,
             .pushFile(path: "src/main.c", mode: 0o644),
+            .pushSymbolicLink(path: "Tiny.framework/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
+            .pushSymbolicLink(path: "Tiny.framework/Versions/Current", target: "A", referent: .folder),
             .pushFolder(path: "src"),
             .remove(pattern: "src/*.o"),
             .fetch(fileSystem: .output, path: "bin/app"),
@@ -214,6 +216,7 @@ final class MessageJSONTests: XCTestCase {
             .pushFile(didChange: true),
             .remove(removedFiles: ["a", "b"], removedFolders: ["src"]),
             .fetch(mode: 0o644),
+            .symbolicLink(target: "Versions/Current/Tiny"),
             .errors(records: [record]),
             .tools(namespaces: [ToolNamespaceRecord(namespace: "swift.compiler", toolName: "swiftc",
                                               descriptors: [descriptor])]),

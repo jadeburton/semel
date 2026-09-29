@@ -102,6 +102,8 @@ public final class RequestHandler {
                 return (.daemon(.ok), nil)
             case .pushFile(let path, let mode):
                 return (.daemon(try pushFile(path: path, mode: mode, body: body ?? Data())), nil)
+            case .pushSymbolicLink(let path, let target, let referent):
+                return (.daemon(try pushSymbolicLink(path: path, target: target, referent: referent, body: body ?? Data())), nil)
             case .pushFolder(let path):
                 return (.daemon(try pushFolder(path: path)), nil)
             case .remove(let pattern):

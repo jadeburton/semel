@@ -3,9 +3,10 @@
 //  SemelEndToEndTests
 //
 //  Two export trees compared: the same set of relative paths, the same modes, the same
-//  bytes. Each difference names its path and how it differs, so a timestamp or an
-//  embedded path is recognisable from the message without opening the files. Symbolic
-//  links are skipped by the regular-file filter and never compared.
+//  bytes, and the same symbolic links holding the same targets. Each difference names its
+//  path and how it differs, so a timestamp or an embedded path is recognisable from the
+//  message without opening the files. A link is compared as the link it is, never
+//  followed: what it names is compared where it is (B-77).
 //
 
 import Foundation
@@ -19,6 +20,9 @@ enum TreeDiff {
             case mode(first: Int, second: Int)
             case size(first: Int, second: Int)
             case content(firstDifferingOffset: Int)
+            /// One tree has a link where the other has a file, or the two links hold
+            /// different targets; nil for the file.
+            case link(first: String?, second: String?)
         }
         let path: String
         let kind: Kind
@@ -30,11 +34,14 @@ enum TreeDiff {
             case .mode(let a, let b):             return "\(path): mode \(String(a, radix: 8)) vs \(String(b, radix: 8))"
             case .size(let a, let b):             return "\(path): size \(a) vs \(b)"
             case .content(let offset):            return "\(path): content differs at offset \(offset)"
+            case .link(let first, let second):
+                let named = { (target: String?) in target.map { "a link to \($0)" } ?? "a file" }
+                return "\(path): \(named(first)) vs \(named(second))"
             }
         }
     }
 
-    /// Sorted by path. Files only; a directory is present through what is in it.
+    /// Sorted by path. Files and links only; a directory is present through what is in it.
     static func compare(_ first: URL, _ second: URL) throws -> [Difference] {
         let firstFiles = try files(under: first)
         let secondFiles = try files(under: second)
@@ -46,6 +53,12 @@ enum TreeDiff {
             }
             guard let b = secondFiles[path] else {
                 differences.append(.init(path: path, kind: .onlyInFirst))
+                continue
+            }
+            if a.linkTarget != nil || b.linkTarget != nil {
+                if a.linkTarget != b.linkTarget {
+                    differences.append(.init(path: path, kind: .link(first: a.linkTarget, second: b.linkTarget)))
+                }
                 continue
             }
             if a.mode != b.mode {
@@ -63,22 +76,26 @@ enum TreeDiff {
         let url: URL
         let mode: Int
         let size: Int
+        /// What a symbolic link holds; nil for a regular file.
+        let linkTarget: String?
     }
 
-    /// Every regular file under `root`, as a path relative to it, sorted.
+    /// Every regular file and symbolic link under `root`, as a path relative to it, sorted.
     static func relativePaths(under root: URL) throws -> [String] {
         try files(under: root).keys.sorted()
     }
 
     private static func files(under root: URL) throws -> [String: Entry] {
         var result: [String: Entry] = [:]
-        let keys: Set<URLResourceKey> = [.isRegularFileKey]
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
         guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys)) else {
             return result
         }
         let rootPath = canonicalPath(root)
         for case let url as URL in enumerator {
-            guard try url.resourceValues(forKeys: keys).isRegularFile == true else {
+            let values = try url.resourceValues(forKeys: keys)
+            let isLink = values.isSymbolicLink == true
+            guard isLink || values.isRegularFile == true else {
                 continue
             }
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -88,7 +105,8 @@ enum TreeDiff {
             let relative = String(url.path.dropFirst(rootPath.count + 1))
             result[relative] = Entry(url: url,
                                      mode: (attributes[.posixPermissions] as? Int ?? 0) & 0o777,
-                                     size: attributes[.size] as? Int ?? 0)
+                                     size: attributes[.size] as? Int ?? 0,
+                                     linkTarget: isLink ? try FileManager.default.destinationOfSymbolicLink(atPath: url.path) : nil)
         }
         return result
     }

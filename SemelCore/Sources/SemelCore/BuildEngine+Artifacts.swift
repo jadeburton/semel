@@ -180,11 +180,19 @@ extension BuildEngine {
     /// The bytes an artifact publishes, or nil when it publishes none — a product waiting
     /// on its builder, one whose builder failed, one nothing has produced yet. An
     /// artifact is pinned by its input port, so that port is where its content is.
+    ///
+    /// A symbolic link is reported by its metadata document instead, which holds its
+    /// target (B-77): a link is an entry of its own, whose bytes are only what it names, so
+    /// retargeting one is a change and a link replacing a file is one, whatever the bytes.
     private func publishedHash(ofArtifact nodeRecord: NodeRecord) throws -> DataObjectHash? {
         guard case .value(let hash)? = try nodeRecord.readFromInputPort(OutputFile.inputPort).first?.value else {
             return nil
         }
-        return hash
+        guard case .value(let metadataHash)? = try nodeRecord.readFromInputPort(OutputFile.fileMetadataInputPort).first?.value,
+              FileMetadata.decode(from: try metadataHash.resolveAsString())?.symbolicLinkTarget != nil else {
+            return hash
+        }
+        return metadataHash
     }
 }
 

@@ -91,9 +91,8 @@ public struct ToolExecuteResult {
 /// `expectedOutputFolders` are sandbox-relative folders whose every file, at any
 /// depth, is reported through `output.writeTreeEntry` — for a tool that decides its
 /// own file set. A folder that is not there after the run is an error, like a missing
-/// output file. A symbolic link in one is not a file and is not reported, nor is what
-/// it points to reached through it: a tree has no link entry, and what a link names is
-/// reported where it is.
+/// output file. A symbolic link in one is reported as the link it is, through
+/// `output.writeTreeLink`, and never followed: what it names is reported where it is.
 public protocol ToolRunner {
     func execute(arguments: [String],
                  environment: [String: String],
@@ -116,17 +115,22 @@ public struct ToolOutput {
     /// One file of an expected output folder: the folder, the path below it, the stored
     /// file's hash and the mode.
     public let writeTreeEntry: (_ folder: String, _ relativePath: String, _ hash: DataObjectHash, _ mode: UInt16) -> Void
+    /// One symbolic link of an expected output folder: the folder, the path below it, and
+    /// the target as the link holds it.
+    public let writeTreeLink: (_ folder: String, _ relativePath: String, _ target: String) -> Void
 
     // Spelled out because a public struct's memberwise initializer is internal, and a
     // node in another package has to be able to construct one.
     public init(logError: @escaping (_ error: String) -> Void,
                 logMessage: @escaping (_ message: String) -> Void,
                 write: @escaping (_ filePath: String, _ hash: DataObjectHash) -> Void,
-                writeTreeEntry: @escaping (_ folder: String, _ relativePath: String, _ hash: DataObjectHash, _ mode: UInt16) -> Void = { _, _, _, _ in }) {
+                writeTreeEntry: @escaping (_ folder: String, _ relativePath: String, _ hash: DataObjectHash, _ mode: UInt16) -> Void = { _, _, _, _ in },
+                writeTreeLink: @escaping (_ folder: String, _ relativePath: String, _ target: String) -> Void = { _, _, _ in }) {
         self.logError = logError
         self.logMessage = logMessage
         self.write = write
         self.writeTreeEntry = writeTreeEntry
+        self.writeTreeLink = writeTreeLink
     }
 }
 
@@ -142,11 +146,10 @@ public struct FileNameAndContent {
     /// symbolic link.
     public let hash: String
     /// Where a symbolic link at `filePath` points, relative to the folder holding it —
-    /// `Versions/Current/Tiny` — or nil for a file. A tree has no link entry, so a node
-    /// that knows a set of its files stood for one link can lay the link instead: a tool
-    /// that reads the shape of a folder, as `codesign` reads a versioned framework's,
-    /// sees what the folder was before it was pushed (B-77).
-    public let symbolicLinkDestination: String?
+    /// `Versions/Current/Tiny` — or nil for a file: a tree's link entry, laid as a link so
+    /// a tool that reads the shape of a folder, as `codesign` reads a versioned
+    /// framework's, sees the folder the vendor built (B-77).
+    public let symbolicLinkTarget: String?
     /// The mode the file is laid with, or nil for the store's own: read-only, which is all
     /// a tool that only reads its inputs needs. A tool that rewrites one in place —
     /// `codesign` writes a bundle's `_CodeSignature/CodeResources` over the one there —
@@ -160,15 +163,15 @@ public struct FileNameAndContent {
     public init(filePath: String, hash: String, mode: UInt16?) {
         self.filePath = filePath
         self.hash = hash
-        self.symbolicLinkDestination = nil
+        self.symbolicLinkTarget = nil
         self.mode = mode
     }
 
-    /// A symbolic link at `filePath` to `destination`, laid in the sandbox as a link.
-    public init(symbolicLinkAt filePath: String, destination: String) {
+    /// A symbolic link at `filePath` to `target`, laid in the sandbox as a link.
+    public init(symbolicLinkAt filePath: String, target: String) {
         self.filePath = filePath
         self.hash = ""
-        self.symbolicLinkDestination = destination
+        self.symbolicLinkTarget = target
         self.mode = nil
     }
 }
@@ -278,21 +281,9 @@ public struct SimplifiedToolExecuteResult {
     public let errorOutput: String
     /// Each expected output file the tool produced, stored, as its hash.
     public let outputFiles: [String: DataObjectHash]
-    /// Every file of each expected output folder, keyed by the folder.
-    public let outputTrees: [String: [TreeOutputFile]]
-}
-
-/// One file of an output folder, stored: the path below the folder, its hash, its mode.
-public struct TreeOutputFile {
-    public let relativePath: String
-    public let hash: DataObjectHash
-    public let mode: UInt16
-
-    public init(relativePath: String, hash: DataObjectHash, mode: UInt16) {
-        self.relativePath = relativePath
-        self.hash = hash
-        self.mode = mode
-    }
+    /// Every file and link of each expected output folder, keyed by the folder, each entry's
+    /// path below it.
+    public let outputTrees: [String: [TreeManifestEntry]]
 }
 
 extension ToolRunner {
@@ -306,7 +297,7 @@ extension ToolRunner {
         var infoOutput = ""
         var errorOutput = ""
         var outputFiles = [String: DataObjectHash]()
-        var outputTrees = [String: [TreeOutputFile]]()
+        var outputTrees = [String: [TreeManifestEntry]]()
 
         let result = try execute(arguments: arguments,
                                  environment: environment,
@@ -326,7 +317,11 @@ extension ToolRunner {
                                                },
                                                writeTreeEntry: { folder, relativePath, hash, mode in
                                                    outputTrees[folder, default: []].append(
-                                                       TreeOutputFile(relativePath: relativePath, hash: hash, mode: mode))
+                                                       TreeManifestEntry(path: relativePath, hash: hash, mode: mode))
+                                               },
+                                               writeTreeLink: { folder, relativePath, target in
+                                                   outputTrees[folder, default: []].append(
+                                                       TreeManifestEntry(path: relativePath, symbolicLinkTarget: target))
                                                }))
 
         return .init(exitCode: result.exitCode,
@@ -350,11 +345,7 @@ extension SimplifiedToolExecuteResult {
             let message = failureMessage(tool: tool, settings: settings)
             return .noValue(reason: .error(messageDataObjectHash: try message.intern()))
         }
-        let files = outputTrees[folder] ?? []
-        let entries = files.map { file in
-            TreeManifestEntry(path: file.relativePath, hash: file.hash, mode: file.mode)
-        }
-        return .value(try TreeManifest(entries: entries).toJSON().intern())
+        return .value(try TreeManifest(entries: outputTrees[folder] ?? []).toJSON().intern())
     }
 
     /// What a failed run says: the exit status, then whatever the tool printed on either

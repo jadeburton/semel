@@ -22,7 +22,29 @@ final class TreeBuilderTests: SemelCoreTestCase {
 
         let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: try built.expectValue().resolveAsString())
         XCTAssertEqual(manifest.entries.map(\.path), ["Models.o", "Timeline.o"])
-        XCTAssertEqual(try manifest.entry(at: "Timeline.o")?.hash.resolveAsString(), "timeline")
+        XCTAssertEqual(try manifest.entry(at: "Timeline.o")?.hash?.resolveAsString(), "timeline")
+    }
+
+    // MARK: - Links (B-77)
+
+    /// A file pushed as a symbolic link is a link entry where what it names is in the
+    /// tree, and the copy of its bytes where it is not: a bundle keeps its framework's links,
+    /// and a link whose target was left behind still delivers what it named.
+    func test_aLinkIsALinkWhereItsTargetIsInTheTreeAndACopyWhereItIsNot() throws {
+        let node = try TreeBuilder(thisNode: NodeRecord(id: 1, kind: TreeBuilder.kind))
+        let link = { (target: String) in try FileMetadata(mode: 0o755, symbolicLinkTarget: target).jsonString().intern() }
+        let output = try node.process(input: ProcessInput(inputValues: [
+            TreeBuilder.inputPort:             ["F/A/Tiny":   .value(try "binary".intern()),
+                                                "F/Tiny":     .value(try "binary".intern()),
+                                                "Loose/Tiny": .value(try "binary".intern())],
+            TreeBuilder.fileMetadataInputPort: ["F/Tiny":     .value(try link("A/Tiny")),
+                                                "Loose/Tiny": .value(try link("Elsewhere/Tiny"))],
+        ]))
+
+        let json = try XCTUnwrap(output.outputValues[TreeBuilder.outputPort]).expectValue().resolveAsString()
+        let manifest: TreeManifest = try TypeRegistry.decodeAndCast(encodedJSON: json)
+        XCTAssertEqual(manifest.entry(at: "F/Tiny"), TreeManifestEntry(path: "F/Tiny", symbolicLinkTarget: "A/Tiny"))
+        XCTAssertEqual(manifest.entry(at: "Loose/Tiny"), TreeManifestEntry(path: "Loose/Tiny", hash: try "binary".intern(), mode: 0o755))
     }
 
     /// A file that failed stops the tree, and the tree says so as its own state rather than

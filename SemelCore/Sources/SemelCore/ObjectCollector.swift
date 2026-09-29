@@ -222,7 +222,8 @@ extension BuildEngine {
                   let document = try? JSONDecoder().decode(TreeDocument.self, from: Data(bytes)) else {
                 return []
             }
-            return document.object.entries.map(\.hash)
+            // A link names no object: its target is a path in the same tree.
+            return document.object.entries.compactMap(\.hash)
         }
         return []
     }

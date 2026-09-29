@@ -99,8 +99,8 @@ final class AssetCatalogCanonicaliserTests: SemelAppleTestCase {
             expectedOutputFileNames: ["partial.plist"],
             expectedOutputFolders: ["out"])
         XCTAssertEqual(result.exitCode, 0, result.failureMessage(tool: "actool"))
-        let catalog = try XCTUnwrap(result.outputTrees["out"]?.first { $0.relativePath == "Assets.car" })
-        return try catalog.hash.resolve()
+        let catalog = try XCTUnwrap(result.outputTrees["out"]?.first { $0.path == "Assets.car" })
+        return try XCTUnwrap(catalog.hash).resolve()
     }
 
     /// The icon facet's key token and where its part is in the file, found by its bytes.

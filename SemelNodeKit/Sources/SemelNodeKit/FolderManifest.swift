@@ -19,10 +19,20 @@ public struct FolderManifestEntry: Codable {
     // then it stops existing.
     public let isPinned: Bool
 
-    public init(name: String, isFolder: Bool, isPinned: Bool) {
+    /// For a subfolder that is a symbolic link pushed as one, what the link holds (B-77).
+    /// Such a folder holds what the link names, as a push always stored it, so a walk that
+    /// reads files goes on descending into it; a walk that builds a tree does not, and
+    /// places the link instead — which it has to know before it descends, so it is here and
+    /// not on a port of the subfolder. A file that is a link says so on its `fileMetadata`,
+    /// beside its bytes, where what reads files already looks. Nil for anything else, and
+    /// then not encoded, so a manifest without links is the value it always was.
+    public let symbolicLinkTarget: String?
+
+    public init(name: String, isFolder: Bool, isPinned: Bool, symbolicLinkTarget: String? = nil) {
         self.name = name
         self.isFolder = isFolder
         self.isPinned = isPinned
+        self.symbolicLinkTarget = symbolicLinkTarget
     }
 }
 
