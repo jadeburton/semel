@@ -57,16 +57,22 @@ public struct PackageSummary: Equatable {
 
 public enum PackageScan {
 
-    /// The folders under `folder` (itself included) holding a `Package.swift`, sorted by
+    /// The folders under `folder` (itself included) holding a package manifest, sorted by
     /// path. A vendored dependency has a manifest too, and so does a checkout under
     /// `.build`, but neither is the tree's own package: `Dependencies` and every hidden
     /// folder are not entered.
+    ///
+    /// A manifest is a `Package.swift` that opens with the tools-version line SwiftPM
+    /// requires of one. A file of that name deeper in a package is as likely a source —
+    /// purchases-ios keeps its `Package` model in `Sources/Purchasing/Package.swift` —
+    /// and `dump-package` on its folder fails the whole `prepare`; the name alone does
+    /// not make a package.
     public static func manifestFolders(under folder: URL) throws -> [URL] {
         let fileManager = FileManager.default
         var found: [URL] = []
 
         func visit(_ directory: URL) throws {
-            if fileManager.fileExists(atPath: directory.appendingPathComponent("Package.swift").path) {
+            if isManifest(directory.appendingPathComponent("Package.swift")) {
                 found.append(directory.standardizedFileURL)
             }
             let children = try fileManager.contentsOfDirectory(at: directory,
@@ -83,6 +89,19 @@ public enum PackageScan {
 
         try visit(folder)
         return found.sorted { $0.path < $1.path }
+    }
+
+    /// Whether the file at `url` is a package manifest: it exists, and its first line
+    /// carries `swift-tools-version`, which SwiftPM requires of every manifest and which
+    /// no Swift source has a reason to start with.
+    static func isManifest(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return false
+        }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 256)) ?? Data()
+        let firstLine = String(decoding: head, as: UTF8.self).split(separator: "\n", maxSplits: 1).first ?? ""
+        return firstLine.contains("swift-tools-version")
     }
 
     /// Reads one package's manifest with SwiftPM.
