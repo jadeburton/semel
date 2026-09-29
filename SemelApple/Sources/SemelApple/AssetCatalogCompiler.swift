@@ -7,6 +7,10 @@
 //  `Assets.car`, and one PNG per app-icon size the platform wants, so the result is a
 //  tree, not a file. The partial Info.plist actool writes (the icon keys) is a value of
 //  its own, for `InfoPlistBuilder` to merge.
+//
+//  actool is not a function of its inputs, so the `Assets.car` in the tree is not the file
+//  it wrote but that file's canonical form, checked by `assetutil` to read as the same
+//  catalog (`AssetCatalogCanonicaliser`, `AssetCatalogGuard`, B-89).
 
 import Foundation
 import SemelNodeKit
@@ -25,6 +29,9 @@ struct AssetCatalogCompilerConfiguration {
     /// The app icon set to compile and to name in the partial Info.plist, if any. A
     /// formula literal rather than a config setting: it says what the product *is*.
     let appIcon: String?
+    /// The `assetutil` that checks the canonical `Assets.car` reads as the one actool wrote
+    /// (B-89): a fact about the machine, written by `semel-swift prepare`.
+    let assetutilPath: String
 
     init(properties: [String: String]) throws {
         var required = RequiredSettings(properties: properties, namespace: Self.settingNamespace)
@@ -32,6 +39,7 @@ struct AssetCatalogCompilerConfiguration {
         platform = required.value("platform")
         minimumDeploymentTarget = required.value("minimumDeploymentTarget")
         let devices = required.value("targetDevices")
+        assetutilPath = required.value("assetutilPath")
         try required.check()
 
         targetDevices = devices.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -41,12 +49,16 @@ struct AssetCatalogCompilerConfiguration {
     /// Pinned rather than derived from the type name: the derivation would make the
     /// domain `asset`, and every Apple platform node lives under `apple.`.
     static let settingNamespace = "apple.assetCatalogCompiler"
+
+    static let machineSettingKeys: Set<String> = ["assetutilPath"]
 }
 
 // MARK: - Node
 
 public struct AssetCatalogCompiler: Node {
     public static let kind: UInt = 29
+    /// 2: `Assets.car` is published in canonical form (B-89).
+    public static let implementationVersion = 2
 
     // MARK: Ports
 
@@ -141,18 +153,55 @@ public struct AssetCatalogCompiler: Node {
                                       expectedOutputFileNames: [Self.partialInfoPlistFile],
                                       expectedOutputFolders: [Self.outputFolder])
 
-        let partialPlist: NodeValue
+        let tree: NodeValue
+        var partialPlist: NodeValue
         if result.exitCode == 0, let plist = result.outputFiles[Self.partialInfoPlistFile] {
             partialPlist = .value(plist)
         } else {
             partialPlist = .noValue(reason: .error(messageDataObjectHash: try Self.failureMessage(for: result).intern()))
         }
+        if result.exitCode == 0 {
+            // A catalog that cannot be shown canonical is not published at all, so neither is
+            // the plist that names its icon.
+            do {
+                let assetutil = try LocalFileSystemTool(localPath: configuration.assetutilPath)
+                tree = .value(try Self.canonicalTree(of: result.outputTrees[Self.outputFolder] ?? [],
+                                                     guardedBy: AssetCatalogGuard(assetutil: assetutil)))
+            } catch let failure where failure is AssetCatalogCanonicaliserError || failure is AssetCatalogGuardError {
+                tree = .noValue(reason: .error(messageDataObjectHash: try Self.notCanonicalMessage(failure).intern()))
+                partialPlist = tree
+            }
+        } else {
+            tree = try result.asTreeNodeValue(folder: Self.outputFolder)
+        }
 
-        return .init(outputValues: [Self.output:           try result.asTreeNodeValue(folder: Self.outputFolder),
+        return .init(outputValues: [Self.output:           tree,
                                     Self.partialInfoPlist: partialPlist,
                                     Self.infoLog:          .value(try result.infoOutput.intern()),
                                     Self.errorLog:         .value(try result.errorOutput.intern())],
                      inputWireSpecs: specs)
+    }
+
+    /// What actool wrote, with `Assets.car` in canonical form: nothing actool varies from
+    /// compile to compile crosses the port (B-89). The canonical file must read, through
+    /// `assetutil`, as the one actool wrote, or nothing is published.
+    static func canonicalTree(of files: [TreeOutputFile], guardedBy catalogGuard: AssetCatalogGuard) throws -> DataObjectHash {
+        var entries: [TreeManifestEntry] = []
+        for file in files {
+            guard file.relativePath == AssetCatalogGuard.catalogFile else {
+                entries.append(TreeManifestEntry(path: file.relativePath, hash: file.hash, mode: file.mode))
+                continue
+            }
+            let canonical     = try AssetCatalogCanonicaliser.canonicalise(try file.hash.resolve())
+            let canonicalHash = try canonical.bytes.intern()
+            try catalogGuard.check(originalHash: file.hash, canonicalHash: canonicalHash, canonical: canonical)
+            entries.append(TreeManifestEntry(path: file.relativePath, hash: canonicalHash, mode: file.mode))
+        }
+        return try TreeManifest(entries: entries).toJSON().intern()
+    }
+
+    static func notCanonicalMessage(_ failure: Error) -> String {
+        "actool's Assets.car is not published: it could not be put in a canonical form that reads as the file actool wrote (B-89): \(failure)"
     }
 
     /// What a failed run says: the tool's own failure message, naming actool, or, for a run

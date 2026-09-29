@@ -345,15 +345,9 @@ final class EndToEndRun {
         mayDiffer.contains { difference.path == $0 || difference.path.hasSuffix("/" + $0) }
     }
 
-    /// The differences the roster does not exempt: every one `mayDiffer` does not name,
-    /// less those `mayDifferWithExempt` names when a difference `mayDiffer` names is
-    /// among them — a seal that moved with the catalog it seals.
+    /// The differences the roster does not exempt: every one `mayDiffer` does not name.
     private func notExempt(_ differences: [TreeDiff.Difference]) -> [TreeDiff.Difference] {
-        let exemptDiffers = differences.contains { Self.exempt($0, by: project.mayDiffer) }
-        return differences.filter { difference in
-            !Self.exempt(difference, by: project.mayDiffer)
-                && !(exemptDiffers && Self.exempt(difference, by: project.mayDifferWithExempt))
-        }
+        differences.filter { !Self.exempt($0, by: project.mayDiffer) }
     }
 
     // MARK: - 6b. A second mount

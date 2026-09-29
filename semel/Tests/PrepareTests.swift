@@ -85,6 +85,7 @@ final class PrepareTests: XCTestCase {
                                   case "sdkVersion": settings[key] = identity(platform.sdkName)
                                   case "sdkPath":    settings[key] = "/SDKs/\(platform.sdkName).sdk"
                                   case "codesignAllocatePath": settings[key] = "/Toolchain/usr/bin/codesign_allocate"
+                                  case "assetutilPath":        settings[key] = "/usr/bin/assetutil"
                                   default:           settings[key] = "unanswered"
                                   }
                               }
@@ -721,6 +722,8 @@ final class PrepareTests: XCTestCase {
         XCTAssertTrue(config.contains("apple.ibToolCompiler.targetDevices=iphone,ipad"), "got:\n\(config)")
         let machine = try String(contentsOf: folder("App").appendingPathComponent("semel.machine.config"), encoding: .utf8)
         XCTAssertTrue(machine.contains("apple.ibToolCompiler.sdkPath=/SDKs/iphonesimulator.sdk"), "got:\n\(machine)")
+        // The assetutil that checks a canonical Assets.car is the machine's (B-89).
+        XCTAssertTrue(machine.contains("apple.assetCatalogCompiler.assetutilPath=/usr/bin/assetutil"), "got:\n\(machine)")
         XCTAssertEqual(report.ungeneratedSources.map(\.output), ["App/Keys.swift"])
         XCTAssertEqual(report.ungeneratedSources.first?.generatedBy,
                        [SchemePreAction(scheme: "App", title: "Generate", script: "gyb -o App/Keys.swift App/Keys.swift.gyb\n")])
