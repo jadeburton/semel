@@ -489,14 +489,21 @@ struct XcodeFormulaEmitter {
         // Each folder's listing, with the paths of what it holds, less its exceptions,
         // each file placed by `resource(at:)`: flat, as Xcode flattens a folder's files,
         // except a localized file, which keeps its `<lang>.lproj/`, and a string catalog,
-        // which its compiler places.
+        // which its compiler places. A folder Xcode takes as one item is copied whole and
+        // its files are not walked for; a catalog is compiled. The target's own Info.plist
+        // is the plist's base, not a resource: Xcode copies it too when no exception
+        // leaves it out, with a warning on the Mac ("The Copy Bundle Resources build phase
+        // contains this target's Info.plist file") and, on iOS, failing on the two files at
+        // one place ("Multiple commands produce …/Info.plist").
         struct ResourceFile { let folderPath: String; let relativePath: String; let bundlePath: String }
         var catalogs: [String] = []
         var stringCatalogs: [ResourceFile] = []
         var interfaceDocuments: [ResourceFile] = []
         var plainResources: [ResourceFile] = []
-        func add(_ relativePath: String, in folderPath: String) {
-            switch Self.resource(at: relativePath) {
+        var wholeFolders: [ResourceFile] = []
+        let ownInfoPlist = settings["INFOPLIST_FILE"].map(Self.projectRelativePath)
+        func add(_ relativePath: String, in folderPath: String, listedInResourcesPhase: Bool = false) {
+            switch Self.resource(at: relativePath, listedInResourcesPhase: listedInResourcesPhase) {
             case .stringCatalog:
                 stringCatalogs.append(ResourceFile(folderPath: folderPath, relativePath: relativePath,
                                                    bundlePath: (relativePath as NSString).lastPathComponent))
@@ -510,29 +517,60 @@ struct XcodeFormulaEmitter {
         }
         for (folder, folderPath) in sourceFolders {
             let contents = listing(folderPath) ?? FolderListing()
-            catalogs += contents.folders.filter { ($0.hasSuffix(".xcassets") || $0.hasSuffix(".icon")) && !folder.excludes($0) }
-                .map { "\(folderPath)/\($0)" }
-            for file in contents.files.sorted() where !folder.excludes(file) {
+            // Sorted, so a folder comes before what is in it and one taken whole hides
+            // everything under it.
+            var itemFolders: [String] = []
+            for subfolder in contents.folders.sorted() where !folder.excludes(subfolder) {
+                guard !itemFolders.contains(where: { subfolder.hasPrefix($0 + "/") }) else {
+                    continue
+                }
+                switch Self.folderRole(at: subfolder, explicitFolders: folder.explicitFolders) {
+                case .group:
+                    continue
+                case .catalog:
+                    catalogs.append("\(folderPath)/\(subfolder)")
+                case .copiedWhole(let bundlePath):
+                    wholeFolders.append(ResourceFile(folderPath: folderPath, relativePath: subfolder, bundlePath: bundlePath))
+                case .notBuilt:
+                    break
+                }
+                itemFolders.append(subfolder)
+            }
+            for file in contents.files.sorted() where !folder.excludes(file) && "\(folder.path)/\(file)" != ownInfoPlist {
+                guard !itemFolders.contains(where: { file.hasPrefix($0 + "/") }) else {
+                    continue
+                }
                 add(file, in: folderPath)
             }
         }
         // The resources phase's own files, whatever kind of target lists them: catalogs,
         // folder references copied whole, and every other file. One inside the target's
         // own folders is already among that folder's files.
-        let resourceFiles = target.resourceFiles.filter { $0.isBuilt(forSDK: build.sdk) }
-        catalogs += resourceFiles.map(\.path).filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
+        let resourceFiles = target.resourceFiles.filter { $0.isBuilt(forSDK: build.sdk) && $0.path != ownInfoPlist }
+        catalogs += resourceFiles.map(\.path).filter { Self.folderRole(at: $0) == .catalog }
             .map { "\(build.projectFolder)/\($0)" }
         // A catalog another target's folder lends is compiled for the borrowing target as
         // one of its own would be: NetNewsWire's iOS Share extension borrows the app's
         // `iOS/Resources/Assets.xcassets` (B-77).
-        catalogs += target.borrowedFiles.filter { $0.hasSuffix(".icon") || $0.hasSuffix(".xcassets") }
+        catalogs += target.borrowedFiles.filter { Self.folderRole(at: $0) == .catalog }
             .map { "\(build.projectFolder)/\($0)" }
         let folderReferences = resourceFiles.filter(\.isFolderReference).map(\.path)
         let listedResources = resourceFiles.filter { !$0.isFolderReference }.map(\.path).filter { path in
-            !target.synchronizedFolders.contains { path.hasPrefix($0.path + "/") }
+            !target.synchronizedFolders.contains { path.hasPrefix($0.path + "/") } && Self.folderRole(at: path) == .group
         }
-        for file in listedResources + target.borrowedFiles where !file.hasSuffix(".swift") {
-            add(file, in: build.projectFolder)
+        for file in listedResources {
+            add(file, in: build.projectFolder, listedInResourcesPhase: true)
+        }
+        // What the target borrows from another target's folder follows that folder's rule.
+        for file in target.borrowedFiles where file != ownInfoPlist {
+            switch Self.folderRole(at: file) {
+            case .group:
+                add(file, in: build.projectFolder)
+            case .copiedWhole(let bundlePath):
+                wholeFolders.append(ResourceFile(folderPath: build.projectFolder, relativePath: file, bundlePath: bundlePath))
+            case .catalog, .notBuilt:
+                break
+            }
         }
         // A localized resource borrowed as `/Localized/…` is the files in the lending
         // folder it names, which the lending folder's listing holds.
@@ -594,15 +632,19 @@ struct XcodeFormulaEmitter {
         }
 
         // A folder reference is copied whole, under its own name, wherever it is in the
-        // project: its files travel as one tree into the bundle's resources.
-        for (index, folder) in folderReferences.sorted().enumerated() {
-            let folderName = (folder as NSString).lastPathComponent
-            bundleTrees.append("'folder\(index)': FolderTreeBuilder(under: \(Self.quoted(folderName)), "
-                             + "folder: ['folder': Folder(path: \(Self.quoted("\(build.projectFolder)/\(folder)"))).manifest]).files")
+        // project: its files travel as one tree into the bundle's resources. A folder of a
+        // synchronized folder Xcode takes as one item goes the same way, at the place a
+        // file there would have.
+        let copiedWhole = folderReferences.sorted().map {
+            ResourceFile(folderPath: build.projectFolder, relativePath: $0, bundlePath: ($0 as NSString).lastPathComponent)
+        } + wholeFolders
+        for (index, folder) in copiedWhole.enumerated() {
+            bundleTrees.append("'folder\(index)': FolderTreeBuilder(under: \(Self.quoted(folder.bundlePath)), "
+                             + "folder: ['folder': Folder(path: \(Self.quoted("\(folder.folderPath)/\(folder.relativePath)"))).manifest]).files")
         }
 
-        // Plain resources: what is neither source nor compiled, flattened into the bundle
-        // root as Xcode flattens a synchronized folder's files — a localized one under
+        // Plain resources: what is neither source nor compiled, flattened into the bundle's
+        // resources as Xcode flattens a synchronized folder's files — a localized one under
         // its `.lproj`.
         for file in plainResources {
             products.append(.file(path: layout.resourcePath(at: file.bundlePath),
@@ -697,6 +739,18 @@ struct XcodeFormulaEmitter {
         relativePath.contains(".xcassets/") || relativePath.contains(".icon/")
     }
 
+    // MARK: - Xcode's rule for what a synchronized folder puts in the bundle (B-77)
+    //
+    // Established on Xcode 26.6 by building a project of its own and NetNewsWire's, and
+    // written out in FUTURE.md under B-77 item 2, which this follows. In short: every file
+    // is a member; what a build rule compiles is compiled, the handful of types Xcode
+    // neither compiles nor copies are left, and everything else — a plist, JSON, HTML, CSS,
+    // JavaScript, an `.sdef`, a Markdown file, an xcconfig, a file of a type Xcode does not
+    // know or with no extension — is copied into the bundle's resources under its own
+    // name, whatever subfolder it sits in, except a file in a `.lproj`, which keeps its
+    // language folder. A plain subfolder is a group and walked; a folder Xcode takes as one
+    // item — a bundle, a folder the group names in `explicitFolders` — is copied whole.
+
     /// What becomes of a file of a target's resources in its bundle.
     enum Resource: Equatable {
         /// Compiled by the string catalog compiler, whose tables are placed under their
@@ -709,16 +763,26 @@ struct XcodeFormulaEmitter {
         case interfaceBuilder(bundlePath: String)
         /// Copied as it is to this path under the bundle's resources.
         case copied(bundlePath: String)
-        /// Not a resource: a source, a file inside a catalog, a plist read as an input.
+        /// Not a resource: a source, a header, an entitlements file, a file inside a catalog.
         case ignored
     }
 
     /// Where a file of a target's resources goes, by its path relative to the folder that
     /// holds it. A localized one keeps its language folder — `MainMenu/Base.lproj/MainMenu.xib`
-    /// lands at `Base.lproj/MainMenu.xib`, compiled — and anything else is flattened.
-    static func resource(at relativePath: String) -> Resource {
+    /// lands at `Base.lproj/MainMenu.xib`, compiled — and anything else is flattened:
+    /// `Shared/Resources/GlobalKeyboardShortcuts.plist` is `GlobalKeyboardShortcuts.plist`.
+    ///
+    /// A `.strings` or `.stringsdict` file is copied as the bytes it is, where Xcode writes
+    /// it again as UTF-16 (`builtin-copyStrings --outputencoding UTF-16`): a property list
+    /// in either encoding is one to `Bundle`. A `.plist` and a `.png` are the same bytes
+    /// in Xcode's Mac build too (`CopyPlistFile`, `CopyPNGFile`).
+    ///
+    /// A file a resources phase lists is copied whatever its type, unless a compiler takes
+    /// it: listing it there is what says it is a resource, where a synchronized folder's
+    /// file is sorted by its type.
+    static func resource(at relativePath: String, listedInResourcesPhase: Bool = false) -> Resource {
         let name = (relativePath as NSString).lastPathComponent
-        guard !name.hasPrefix("."), !isInsideCatalog(relativePath) else {
+        guard !neverCopiedNames.contains(name), !isInsideCatalog(relativePath) else {
             return .ignored
         }
         let pathExtension = (name as NSString).pathExtension.lowercased()
@@ -729,10 +793,52 @@ struct XcodeFormulaEmitter {
         if IBToolCompiler.compiledExtensions[pathExtension] != nil {
             return .interfaceBuilder(bundlePath: bundlePath)
         }
-        guard isPlainResource(relativePath) else {
+        guard listedInResourcesPhase || isPlainResource(relativePath) else {
             return .ignored
         }
         return .copied(bundlePath: bundlePath)
+    }
+
+    /// What becomes of a folder inside a synchronized folder.
+    enum FolderRole: Equatable {
+        /// A group: walked, each file placed by `resource(at:)`. A `.lproj` is one.
+        case group
+        /// An asset catalog or an icon, compiled whole by actool.
+        case catalog
+        /// One item, copied whole under this path in the bundle's resources with what it
+        /// holds laid out as it is.
+        case copiedWhole(bundlePath: String)
+        /// Built by a tool Semel does not run — a Core Data model, a documentation catalog —
+        /// and so neither walked nor copied.
+        case notBuilt
+    }
+
+    /// Folders Xcode takes as one item and copies whole, by extension: a bundle, a rich
+    /// text document with its attachments. Xcode asks the system whether a folder's type
+    /// is a package, so a folder with an extension some installed app declares a package
+    /// type for is one item too — NetNewsWire's `.nnwtheme` once NetNewsWire has been
+    /// built on the machine, a group before — which a hermetic build cannot ask; this list
+    /// is what holds on every machine.
+    static let copiedWholeFolderExtensions: Set<String> = ["bundle", "rtfd"]
+    /// Folders Xcode compiles with a tool Semel does not run.
+    static let notBuiltFolderExtensions: Set<String> = ["xcdatamodeld", "xcdatamodel", "docc"]
+
+    /// The role of the folder at `relativePath` in a synchronized folder whose group names
+    /// `explicitFolders`; placed, when copied whole, as a file there would be: under its
+    /// own name, or its language folder's.
+    static func folderRole(at relativePath: String, explicitFolders: [String] = []) -> FolderRole {
+        let name = (relativePath as NSString).lastPathComponent
+        let pathExtension = (name as NSString).pathExtension.lowercased()
+        if pathExtension == "xcassets" || pathExtension == "icon" {
+            return .catalog
+        }
+        if notBuiltFolderExtensions.contains(pathExtension) {
+            return .notBuilt
+        }
+        if copiedWholeFolderExtensions.contains(pathExtension) || explicitFolders.contains(relativePath) {
+            return .copiedWhole(bundlePath: localizedBundlePath(relativePath) ?? name)
+        }
+        return .group
     }
 
     /// Where a localized file lands in the bundle: `App/ar.lproj/Localizable.strings` is
@@ -748,19 +854,40 @@ struct XcodeFormulaEmitter {
         return components[languageIndex...].joined(separator: "/")
     }
 
-    /// A file Xcode copies into the bundle as it is. Sources, catalogs, plists that are
-    /// inputs, and files inside compiled folders are not.
+    /// A file Xcode copies into the bundle as it is: every file of a synchronized folder
+    /// but what `neverCopiedExtensions` names and what a compiler takes. A plist is
+    /// copied — `Shared/Resources/GlobalKeyboardShortcuts.plist`, which NetNewsWire reads
+    /// at launch — and so are a Markdown file, an xcconfig, a provisioning profile, a
+    /// `.gyb` template and a file whose type Xcode does not know. The target's own
+    /// Info.plist is left out by the caller, which knows which it is.
     static func isPlainResource(_ relativePath: String) -> Bool {
         let name = (relativePath as NSString).lastPathComponent
-        guard !name.hasPrefix("."), !isInsideCatalog(relativePath) else {
+        guard !neverCopiedNames.contains(name), !isInsideCatalog(relativePath) else {
             return false
         }
-        let named: Set<String> = ["swift", "xcstrings", "xcassets", "icon", "xib", "storyboard",
-                                  "entitlements", "xcconfig", "md", "plist", "intentdefinition", "xcdatamodeld"]
-        let notResources = named.union(cFamilySourceExtensions).union(headerExtensions)
-        let ext = (name as NSString).pathExtension.lowercased()
-        return !notResources.contains(ext) && name != "Info.plist"
+        let pathExtension = (name as NSString).pathExtension.lowercased()
+        let compiled = pathExtension == "xcstrings" || IBToolCompiler.compiledExtensions[pathExtension] != nil
+        return !compiled && !neverCopiedExtensions.contains(pathExtension)
     }
+
+    /// The files of a synchronized folder Xcode never copies, by extension, lowercased.
+    /// Seen not copied in an application built by Xcode 26.6: Swift and C-family sources
+    /// (compiled), headers and a prefix header, a module map, API notes, an entitlements
+    /// file whether the settings name it or not, an exports list and a `.inc` (each "no
+    /// rule to process file"). The rest are compiled by a rule Xcode has and Semel does not
+    /// run — assembly, Metal, lex and yacc, an intent definition, a Core Data mapping
+    /// model, a Core ML model — named so they are not copied as though they were data.
+    static let neverCopiedExtensions: Set<String> = cFamilySourceExtensions.union([
+        "swift", "h", "hh", "hpp", "hxx", "h++", "pch", "modulemap", "apinotes", "entitlements", "exp", "inc",
+        "s", "metal", "l", "lm", "lmm", "lpp", "lxx", "y", "ym", "ymm", "ypp", "yxx",
+        "intentdefinition", "xcmappingmodel", "mlmodel",
+    ])
+
+    /// Names never copied: what Xcode's copy leaves out of everything it copies
+    /// (`builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg`).
+    /// Any other hidden file is copied by Xcode, `.gitkeep` among them; Semel's push takes
+    /// no hidden file, so none reaches a listing.
+    static let neverCopiedNames: Set<String> = [".DS_Store", "CVS", ".svn", ".git", ".hg"]
 
     // MARK: - C-family sources in an application target (B-77)
 

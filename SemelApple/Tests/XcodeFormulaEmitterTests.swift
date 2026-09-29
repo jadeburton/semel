@@ -452,14 +452,15 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     }
 
     /// A file that is neither source nor compiled is copied into the bundle root, as
-    /// Xcode flattens a synchronized folder; an exception is not; a source is not.
+    /// Xcode flattens a synchronized folder — a Markdown file too; an exception is not; a
+    /// source is not.
     func test_copiesPlainResourcesFlatAndLeavesOutExceptionsAndSources() throws {
         let formula = try formula()
 
         XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Mono.ttf' = StaticFile(path: 'input:/repo/IceCubesApp/Fonts/Mono.ttf').output"), formula)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/README.md' = StaticFile(path: 'input:/repo/IceCubesApp/README.md').output"), formula)
         XCTAssertFalse(formula.contains("product 'Ice Cubes.app/glass.wav'"), "an exception is another target's: \(formula)")
         XCTAssertFalse(formula.contains("product 'Ice Cubes.app/App.swift'"), formula)
-        XCTAssertFalse(formula.contains("product 'Ice Cubes.app/README.md'"), formula)
         XCTAssertFalse(formula.contains("product 'Ice Cubes.app/Contents.json'"), "inside a catalog: \(formula)")
     }
 
@@ -567,6 +568,191 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     func test_repositoryNamesFollowTheVendoringRule() {
         XCTAssertEqual(XcodeFormulaEmitter.repositoryName(forURL: "https://github.com/wishkit/wishkit-ios.git"), "wishkit-ios")
         XCTAssertEqual(XcodeFormulaEmitter.repositoryName(forURL: "https://github.com/RevenueCat/purchases-ios-spm"), "purchases-ios-spm")
+    }
+
+    // MARK: - Xcode's rule for a synchronized folder (B-77)
+
+    /// A Mac app owning one synchronized folder, `App`, as the project Xcode 26.6 built to
+    /// establish the rule had it: the target's own Info.plist and entitlements in the
+    /// folder, an exception leaving out `Excluded.txt`, and `Explicit` named in the group's
+    /// `explicitFolders`.
+    static let probeProject = """
+        // !$*UTF8*$!
+        {
+            archiveVersion = 1;
+            objectVersion = 77;
+            objects = {
+                P1 = { isa = PBXProject; buildConfigurationList = CL1; mainGroup = G1; targets = ( T1 ); developmentRegion = en; };
+                G1 = { isa = PBXGroup; children = ( SG1 ); sourceTree = "<group>"; };
+                CL1 = { isa = XCConfigurationList; buildConfigurations = ( C1 ); };
+                C1 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                    MACOSX_DEPLOYMENT_TARGET = 15.0;
+                    SDKROOT = macosx;
+                    SWIFT_VERSION = 5.0;
+                }; };
+                T1 = {
+                    isa = PBXNativeTarget;
+                    name = Probe;
+                    productType = "com.apple.product-type.application";
+                    productReference = PR1;
+                    buildConfigurationList = CL2;
+                    buildPhases = ( );
+                    fileSystemSynchronizedGroups = ( SG1 );
+                    packageProductDependencies = ( );
+                };
+                SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = App; exceptions = ( EX1 ); explicitFileTypes = { }; explicitFolders = ( Explicit ); sourceTree = "<group>"; };
+                EX1 = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = ( Excluded.txt ); target = T1; };
+                PR1 = { isa = PBXFileReference; explicitFileType = wrapper.application; path = Probe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+                CL2 = { isa = XCConfigurationList; buildConfigurations = ( C2 ); };
+                C2 = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                    CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+                    GENERATE_INFOPLIST_FILE = YES;
+                    INFOPLIST_FILE = App/Info.plist;
+                    PRODUCT_BUNDLE_IDENTIFIER = com.example.Probe;
+                    PRODUCT_NAME = "$(TARGET_NAME)";
+                }; };
+            };
+            rootObject = P1;
+        }
+        """
+
+    /// What that folder held, less the hidden files Semel's push does not take, and a
+    /// `.nnwtheme`, which Xcode took whole only because a NetNewsWire built on the same
+    /// machine had declared the type a package. What is inside a folder taken whole is
+    /// listed too, as a walk that went into it would list it, to show it is not taken
+    /// again file by file.
+    static let probeListing = XcodeFormulaEmitter.FolderListing(
+        files: ["App.swift", "Helper.c", "Helper.h", "Header.h", "Prefix.pch", "Thing.hpp", "Thing.hh", "Thing.inc", "Thing.def",
+                "module.modulemap", "Sub/Other.modulemap", "Thing.apinotes", "syms.exp",
+                "Info.plist", "Data.plist", "Sub/Nested.plist", "App.entitlements", "Extra.entitlements",
+                "Config.xcconfig", "README.md", "data.json", "Sub/deep.json", "Sub/Info.json", "page.html", "style.css", "script.js",
+                "Dictionary.sdef", "Credits.rtf", "unknown.xyz", "Sub/noextension", "tool.sh", "tool.py", "Test.provisionprofile",
+                "Template.swift.gyb", "notes.txt", "Copied.txt", "Excluded.txt", "list.xcfilelist", "Model.xcfilelist2",
+                "Plan.xctestplan", "Store.storekit", "link.order", "font.ttf", "Pic.jpg", "icon.icns", "image.png",
+                "Root.strings", "en.lproj/Legacy.strings", "de.lproj/Legacy.strings", "Sub/en.lproj/Nested.strings",
+                "en.lproj/Readme.txt", "en.lproj/Plural.stringsdict", "Localizable.xcstrings",
+                "Code.group/Inner.swift", "Dotted.Name/inner.txt",
+                "Sample.bundle/inside.txt", "Pics.rtfd/TXT.rtf", "Explicit/one.txt", "Explicit/Deeper/two.txt", "Doc.docc/Doc.md"],
+        folders: ["Sub", "Sub/en.lproj", "en.lproj", "de.lproj", "Code.group", "Dotted.Name", "Sample.bundle", "Pics.rtfd",
+                  "Explicit", "Explicit/Deeper", "Doc.docc", "Assets.xcassets", "Empty"])
+
+    /// What Xcode 26.6 put under `Probe.app/Contents/Resources` for that folder, each file
+    /// copied (`CpResource`, `CopyPlistFile`, `CopyStringsFile`, `CopyPNGFile`) — less the
+    /// target's own `Info.plist`, which it copied too, with a warning, and Semel does not.
+    static let probeCopiedByXcode: Set<String> = [
+        "Config.xcconfig", "Copied.txt", "Credits.rtf", "Data.plist", "Dictionary.sdef", "Info.json", "Model.xcfilelist2",
+        "Nested.plist", "Pic.jpg", "Plan.xctestplan", "README.md", "Root.strings", "Store.storekit", "Template.swift.gyb",
+        "Test.provisionprofile", "Thing.def", "data.json", "deep.json", "font.ttf", "icon.icns", "image.png", "inner.txt",
+        "link.order", "list.xcfilelist", "noextension", "notes.txt", "page.html", "script.js", "style.css", "tool.py", "tool.sh",
+        "unknown.xyz", "de.lproj/Legacy.strings", "en.lproj/Legacy.strings", "en.lproj/Nested.strings",
+        "en.lproj/Plural.stringsdict", "en.lproj/Readme.txt",
+    ]
+
+    private func probeBundle() throws -> String {
+        let project = try XcodeProject(pbxproj: Data(Self.probeProject.utf8))
+        let macBuild = XcodeFormulaEmitter.Build(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: "macosx")
+        let emitter = XcodeFormulaEmitter(project: project, build: macBuild)
+        let formula = try emitter.formula(
+            settings: { target in
+                try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: "macosx",
+                                               xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
+            },
+            listing: { $0 == "input:/probe/App" ? Self.probeListing : nil })
+        return try block("func bundle_Probe() = TreeMerger(input: [", in: formula)
+    }
+
+    private func matches(of pattern: String, in text: String) throws -> Set<String> {
+        let expression = try NSRegularExpression(pattern: pattern)
+        return Set(expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]) }
+        })
+    }
+
+    /// The files of a synchronized folder the bundle copies are the ones Xcode copied, at
+    /// the places it put them: every one flattened to its name — `Sub/deep.json` is
+    /// `deep.json`, a dotted folder's `inner.txt` too — but a localized one, which keeps
+    /// its `.lproj`; a plist, a Markdown file, an xcconfig, a provisioning profile, a
+    /// `.def` and a file of no known type among them; no source, header, module map,
+    /// entitlements file, exception, or file inside a folder taken whole.
+    func test_copiesWhatXcodeCopiesFromASynchronizedFolderWhereXcodePutsIt() throws {
+        let bundle = try probeBundle()
+
+        let copied = try matches(of: "'Contents/Resources/([^']+)': StaticFile", in: bundle)
+        XCTAssertEqual(copied, Self.probeCopiedByXcode,
+                       "extra: \(copied.subtracting(Self.probeCopiedByXcode).sorted()), missing: \(Self.probeCopiedByXcode.subtracting(copied).sorted())")
+        XCTAssertTrue(bundle.contains("'Contents/Resources/deep.json': StaticFile(path: 'input:/probe/App/Sub/deep.json').output"), bundle)
+        XCTAssertTrue(bundle.contains("'Contents/Resources/en.lproj/Nested.strings': StaticFile(path: 'input:/probe/App/Sub/en.lproj/Nested.strings').output"),
+                      bundle)
+    }
+
+    /// A bundle, a rich text document and a folder the group names in `explicitFolders`
+    /// are each one item, copied whole under their own names with what they hold laid out
+    /// as it is; the catalog is compiled and the string catalog too, and a documentation
+    /// catalog is neither copied nor walked for files.
+    func test_aFolderXcodeTakesAsOneItemIsCopiedWhole() throws {
+        let bundle = try probeBundle()
+
+        let whole = try matches(of: "FolderTreeBuilder\\(under: '([^']+)'", in: bundle)
+        XCTAssertEqual(whole, ["Explicit", "Pics.rtfd", "Sample.bundle"], bundle)
+        XCTAssertTrue(bundle.contains("FolderTreeBuilder(under: 'Explicit', folder: ['folder': Folder(path: 'input:/probe/App/Explicit').manifest]).files"),
+                      bundle)
+        XCTAssertTrue(bundle.contains("'assets': assets_Probe().files"), bundle)
+        XCTAssertTrue(bundle.contains("'strings0': strings_Probe_0().files"), bundle)
+        XCTAssertFalse(bundle.contains("Doc.md"), bundle)
+    }
+
+    /// The rule file by file, as Xcode 26.6 sorted the probe's folder.
+    func test_eachFileOfASynchronizedFolderIsSortedByXcodesRule() {
+        let copied = ["notes.txt", "data.json", "page.html", "style.css", "script.js", "Dictionary.sdef", "Credits.rtf",
+                      "Data.plist", "README.md", "Config.xcconfig", "Test.provisionprofile", "Template.swift.gyb", "unknown.xyz",
+                      "noextension", "Thing.def", "Plan.xctestplan", "Store.storekit", "list.xcfilelist", "icon.icns", "image.png",
+                      "Root.strings", "Info.plist"]
+        for name in copied {
+            XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Sub/\(name)"), .copied(bundlePath: name), name)
+        }
+        let never = ["App.swift", "Helper.c", "Greeter.m", "Cruncher.mm", "Helper.h", "Thing.hpp", "Thing.hh", "Prefix.pch",
+                     "module.modulemap", "Thing.apinotes", "App.entitlements", "syms.exp", "Thing.inc", "Shader.metal",
+                     ".DS_Store", "Assets.xcassets/Contents.json"]
+        for name in never {
+            XCTAssertEqual(XcodeFormulaEmitter.resource(at: name), .ignored, name)
+        }
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Sub/en.lproj/Plural.stringsdict"), .copied(bundlePath: "en.lproj/Plural.stringsdict"))
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Localizable.xcstrings"), .stringCatalog)
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Shader.metal", listedInResourcesPhase: true), .copied(bundlePath: "Shader.metal"),
+                       "a resources phase copies what it lists")
+
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub"), .group)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Dotted.Name"), .group)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Base.lproj"), .group)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Resources/Assets.xcassets"), .catalog)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "AppIcon.icon"), .catalog)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub/Sample.bundle"), .copiedWhole(bundlePath: "Sample.bundle"))
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub/en.lproj/Help.rtfd"), .copiedWhole(bundlePath: "en.lproj/Help.rtfd"))
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Sub/Explicit", explicitFolders: ["Sub/Explicit"]), .copiedWhole(bundlePath: "Explicit"))
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Model.xcdatamodeld"), .notBuilt)
+        XCTAssertEqual(XcodeFormulaEmitter.folderRole(at: "Guide.docc"), .notBuilt)
+    }
+
+    /// On iOS the same files land at the bundle's root, which is where the target's own
+    /// Info.plist would have collided with the one the bundle is built with — Xcode fails
+    /// there on "Multiple commands produce …/Info.plist" — so it is the plist's base and
+    /// nothing else.
+    func test_theTargetsOwnInfoPlistIsTheBaseAndNotAResource() throws {
+        let project = try XcodeProject(pbxproj: Data(Self.probeProject.utf8))
+        let iosBuild = XcodeFormulaEmitter.Build(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: "iphonesimulator")
+        let emitter = XcodeFormulaEmitter(project: project, build: iosBuild)
+        let formula = try emitter.formula(
+            settings: { target in
+                try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: "iphonesimulator",
+                                               xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
+            },
+            listing: { $0 == "input:/probe/App" ? Self.probeListing : nil })
+
+        XCTAssertEqual(formula.components(separatedBy: "product 'Probe.app/Info.plist' =").count - 1, 1, formula)
+        XCTAssertTrue(formula.contains("base: ['base': StaticFile(path: 'input:/probe/App/Info.plist').output]"), formula)
+        XCTAssertTrue(formula.contains("product 'Probe.app/Data.plist' = StaticFile(path: 'input:/probe/App/Data.plist').output"), formula)
+        XCTAssertTrue(formula.contains("product 'Probe.app/deep.json' = StaticFile(path: 'input:/probe/App/Sub/deep.json').output"), formula)
+        XCTAssertFalse(formula.contains("App.entitlements' = StaticFile"), formula)
     }
 
     // MARK: - Config namespaces
