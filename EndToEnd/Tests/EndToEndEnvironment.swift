@@ -45,10 +45,22 @@ enum EndToEndEnvironment {
             .deletingLastPathComponent()   // repository root
     }
 
+    /// `SEMEL_E2E_ROOT`: the folder the run roots are made under, `/tmp/semel-tests` unless
+    /// set. The nightly sets one of its own per run: its runner is also a workstation, and
+    /// a developer's or an agent's own run under the default folder would otherwise share
+    /// it with the nightly — which once removed the folder under a live run and failed its
+    /// own cleanup on the files that run kept writing (2026-09-29).
+    static var rootBase: URL {
+        if let path = environment["SEMEL_E2E_ROOT"], !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return URL(fileURLWithPath: "/tmp/semel-tests", isDirectory: true)
+    }
+
     /// Short on purpose: sockets live under it, and a Unix-domain socket path is limited
     /// to 103 bytes.
     static func newRoot() throws -> URL {
-        let base = URL(fileURLWithPath: "/tmp/semel-tests", isDirectory: true)
+        let base = rootBase
         removeStaleSiblings(under: base)
         let root = base.appendingPathComponent(String(UUID().uuidString.prefix(8)), isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

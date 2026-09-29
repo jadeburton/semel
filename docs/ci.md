@@ -76,7 +76,7 @@ pull-request run, so a backlog of stale runs does not form.
 ## Reading a failure
 
 The `Toolchain` step prints the Xcode, Swift and simulator runtimes the run used; read it
-first when a failure looks environmental. The nightly uploads `/tmp/semel-tests` as an
+first when a failure looks environmental. The nightly uploads its run roots (`SEMEL_E2E_ROOT`, a folder of its own per run under `/tmp`; a run by hand uses `/tmp/semel-tests`) as an
 artifact on failure, which holds every export tree the project built and the server home
 behind each: two for an external project, four for a fixture — the second run, the copy at
 a second mount and the perturbed environment each add one.
