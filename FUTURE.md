@@ -1179,9 +1179,10 @@ application target, simulator only, all library code in packages. In suggested o
    `prepare` — `lay` merges folders and, for a project with a platform, refuses a file
    the checkout lacks — and the bundle comes out whole, `Contents/MacOS`, an
    `AppIcon.icns`, the widget under `Contents/PlugIns`, through all four hermeticity
-   builds. What no Mac build here does yet is sign: an arm64 executable needs at
-   least an ad-hoc signature to launch, and Semel writes none, so the bundle is inspected
-   rather than run. Left as copies rather than compiled, said here rather than
+   builds. The bundle is signed ad-hoc since NetNewsWire's item 11 — the widget with its
+   own entitlements, then the app with the app sandbox — and the export verifies deep and
+   strict in every build; launched by hand (`open`, and the executable run directly), the
+   app starts and stays up. Left as copies rather than compiled, said here rather than
    silently: a Core Data model, a Metal file listed among a target's resources (a xib
    and a storyboard are compiled since NetNewsWire's item 8); a listed source that is
    neither Swift nor C-family is refused by name (a listed C-family one is compiled since
@@ -1315,8 +1316,8 @@ application target, simulator only, all library code in packages. In suggested o
         package product a target links, on its compiler and its linker, sets the runpath
         from the bundle layout (`@executable_path/../Frameworks` on the Mac,
         `@executable_path/Frameworks` on iOS), and lays the trees under the bundle's
-        `Contents/Frameworks/` or `Frameworks/` — `BundleLayout.frameworksTree`. Unsigned,
-        like the rest of the bundle.
+        `Contents/Frameworks/` or `Frameworks/` — `BundleLayout.frameworksTree` — and on
+        the Mac signed with the rest of the bundle (item 11).
       - *Pinned by* `SwiftFormulaConverterTests` (a remote target in and out of
         `semel-artifacts`, a vendored copy asked only for what it lists, a local
         `.xcframework`, a local zip, a Swift target compiling and linking against the
@@ -1358,8 +1359,11 @@ application target, simulator only, all library code in packages. In suggested o
       - *A framework's links arrive as copies.* A push follows a symbolic link (and
         `prepare`'s fold does the same), and a tree has no link entry, so a versioned
         framework is embedded with `Versions/Current` and every top-level link as a copy
-        (Sparkle: 263 files). It loads and links; a signature over the bundle would not
-        hold, which is item 11's to meet, with links in `TreeManifest`.
+        (Sparkle: 263 files). It loads and links. `codesign` cannot sign such a framework
+        ("bundle format is ambiguous"), nor a bundle holding one, so `CodeSigner` lays the
+        copies back as links while it signs (item 11); the export then holds copies again,
+        which run but do not verify as a bundle. Links in `TreeManifest`, from the push
+        through to the export, are what would make it verify.
       - *The whole download is pushed.* `semel-artifacts/Sparkle` holds what the zip held —
         `bin/` with `generate_appcast`, the changelog — pushed and locked though only the
         `.xcframework` is read; `prepare` could keep only it.
@@ -1515,7 +1519,8 @@ application target, simulator only, all library code in packages. In suggested o
       pins it on the fixture's `MainWindow.xib` with the real ibtool, and
       `swift-hello-app`'s `Base.lproj/Card.nib` through all four hermeticity builds. On
       the clone, all thirty-four of the app's xibs (twenty-three under `Base.lproj/`) and
-      the Share extension's one come out as nibs; the two xibs left are a package's (17).
+      the Share extension's one come out as nibs; the two xibs that were left, a
+      package's, are compiled since 17.
    9. ~~**A localized membership exception is read as a path.**~~ Done (2026-09-28). What
       Xcode means was established by building a project of its own (Xcode 26.6): an
       exception entry `/Localized/<folder>/<name>` in a synchronized folder's set is a
@@ -1541,10 +1546,96 @@ application target, simulator only, all library code in packages. In suggested o
       target now too, not only one that lists its sources, less a file inside the
       target's own synchronized folders, which the folder already brings. The eight
       themes arrive whole (`Info.plist`, `stylesheet.css`, `template.html` each).
-   11. **Signing and entitlements.** `CODE_SIGN_ENTITLEMENTS =
-      Mac/Resources/NetNewsWire.entitlements` (sandbox, app groups); Semel signs
-      nothing, and an arm64 app needs at least an ad-hoc signature to launch — with the
-      entitlements, for an app-group container.
+   11. ~~**Signing and entitlements.**~~ Done (2026-09-29), ad-hoc. What was there
+      before: the linker's own ad-hoc signature on each arm64 executable — enough to run
+      it, which is how `swift-binary-target-app` ran — with no Info.plist bound, no
+      resources sealed and no entitlements, so `CODE_SIGN_ENTITLEMENTS =
+      Mac/Resources/NetNewsWire.entitlements` (sandbox, app groups) reached nothing.
+      As built:
+
+      - *`CodeSigner`* (`SemelApple`, kind 42, namespace `apple.codeSigner`) runs
+        `codesign --force --sign - --timestamp=none` over a bundle tree, the wire's key
+        naming the bundle's folder (`NetNewsWire.app`), and publishes the signed tree. It
+        finds every bundle holding code below the root (`.app`, `.appex`, `.framework`,
+        `.xpc`; a SwiftPM resource bundle holds none and is sealed as resources) and signs
+        them first, deepest first, in one run with `--preserve-metadata=entitlements` —
+        an extension keeps what its own signer gave it, a vendor's XPC service the
+        vendor's — then the bundle in a second run with `--entitlements`. `codesign` is
+        discovered like the other Apple tools, its version the `PROJECT:codesign-…` stamp
+        in its binary (it has no `--version` and ships with the system); the namespace
+        declares `codesignAllocatePath` a machine setting, the toolchain's
+        `codesign_allocate`, passed as `CODESIGN_ALLOCATE` as Xcode passes it — without
+        it `codesign` takes `/usr/bin/codesign_allocate`, a shim to whatever
+        `xcode-select` names, which no key would see. `prepare` writes that block for a
+        Mac project only; the identity is the formula's. Files are laid writable, with
+        their tree modes (`FileNameAndContent.mode`, new): `codesign` rewrites a
+        `_CodeSignature/CodeResources` already there, and the store's objects are
+        read-only. Each file comes back with its tree mode, a new signature with the
+        default one.
+      - *Ad-hoc only.* `identity` is a setting, and anything but `-` is refused by name.
+        The emitter reads `CODE_SIGN_IDENTITY`; one naming a certificate — Food Truck's
+        `Apple Development`, NetNewsWire's `Mac Developer` (Xcode's own default is `-`
+        only for a target with no `DEVELOPMENT_TEAM`) — is said in the formula as a
+        comment and signed ad-hoc. A real identity would be a certificate in a keychain
+        the sandbox does not reach, with a timestamp no cache entry could hold: its own
+        item when wanted.
+      - *What an ad-hoc signature cannot carry is left out.* An entitlement a provisioning
+        profile grants has the process killed at launch without one: an arm64 app signed
+        ad-hoc with `com.apple.developer.icloud-services` exits on SIGKILL before it runs
+        (macOS 26.6), and Xcode stops such a build for want of a team. So `CodeSigner`
+        drops every `com.apple.developer.*` key, `application-identifier`,
+        `keychain-access-groups` and `aps-environment` from an ad-hoc signature and names
+        them on its info log; the sandbox, app groups, network access and the rest stay.
+        NetNewsWire's Mac app loses its iCloud and push keys this way and keeps its
+        sandbox, app group and Sparkle mach-lookup exceptions.
+      - *The emitter* (XcodeProjectConverter v10): a `macosx` build no longer names each
+        part of a bundle as a product. Every part is one tree, `bundle_<Target>()` — the
+        files in a `TreeBuilder`, each keeping its mode, and the resources, the frameworks
+        and each extension merged under their folders — signed by `signed_<Target>()`,
+        and the app's product is `'<App>.app/' = signed_<App>().files`. Each extension is
+        assembled and signed with its own entitlements before the app's tree embeds it.
+        The entitlements file `CODE_SIGN_ENTITLEMENTS` names goes through
+        `InfoPlistBuilder` with the target's settings, which resolves its `$(VAR)`s as
+        Xcode does (`$(APP_GROUP_ID)`, `$(TeamIdentifierPrefix)` empty).
+        `CODE_SIGNING_ALLOWED = NO` is an unsigned tree. The simulator's bundle is left as
+        it was, products and unsigned.
+      - *Reproducible* (B-89): two signings of one tree, each in its own sandbox and at
+        different paths, are the same bytes, the cdhash too — no identity, no time with
+        `--timestamp=none`, nothing of the sandbox. `CodeSignerTests` pins it with the
+        real `codesign`. A signature seals what it signs, though: when actool writes an
+        `Assets.car` differently (B-89), the bundle's `CodeResources` and the executable
+        whose signature records it move with it, which the roster's new
+        `mayDifferWithExempt` allows only when an exempt file differs.
+      - *A versioned framework whose links arrived as copies* — Sparkle's, the fixture's
+        `Tiny.framework` — cannot be signed as it is: `codesign` finds real files at the
+        framework's top and a `Versions/Current` folder and calls the bundle ambiguous,
+        and a bundle holding a framework it cannot sign cannot be signed either. So the
+        signer recognises the copies by the shape every versioned framework has
+        (`Versions/Current` the same files as exactly one other version, each other entry
+        at the top the same as its namesake there) and lays them as links in the sandbox
+        (`FileNameAndContent(symbolicLinkAt:destination:)`, new; a link in an output folder
+        is not reported); after signing, each is a copy again of what it names, now
+        signed. What comes out runs, the framework's binary and the executable signed as
+        bundles, but the export does not verify as a whole — the same "ambiguous" — until
+        a tree can carry a link (item 1). `swift-binary-target-app` checks the signatures
+        and runs the app; it does not verify it.
+      - *Fixed on the way*: `InfoPlistBuilder` wrote the engine's `projectRoot` stamp into
+        every plist as an entry (`projectRoot = input:/…`), in every Info.plist so far and
+        now in the entitlements, where an unknown key had the Food Truck app killed at
+        launch. It is not an entry now (v2).
+      - *Pinned by* `CodeSignerTests` (the command lines, nested first, the links laid and
+        restored, the profile-only keys left out, and a tiny app signed twice by the real
+        `codesign`, verified deep and strict with each bundle's entitlements),
+        `LocalFileSystemToolTests` (a link and a mode laid), `XcodeFormulaEmitterTests`,
+        `XcodeProjectConverterTests` (each NetNewsWire Mac bundle's entitlements resolved,
+        over copies of its three files), `PrepareTests`, and end to end by `food-truck-mac`,
+        whose export verifies with `codesign --verify --deep --strict`, whose executable is
+        signed as the bundle's with the sandbox entitlement, and which, launched by hand
+        with `open`, starts.
+
+      Not done: hardened runtime (`ENABLE_HARDENED_RUNTIME`, `-o runtime`); a loose helper
+      executable inside a framework (Sparkle's `Autoupdate`) is not re-signed, keeping the
+      vendor's signature, which holds while its bytes do; a signed iOS device build.
    12. ~~**Zip's Swift target does not see its C target.**~~ Done (2026-09-28). The
       nesting was not the cause: `Minizip` (at `Zip/minizip`, inside the Swift target
       `Zip`'s folder, which excludes it) was already found as `Zip`'s C dependency, but its
@@ -1583,11 +1674,13 @@ application target, simulator only, all library code in packages. In suggested o
       `group.com.ranchero.NetNewsWire-Evergreen-DEBUG`, `AppIdentifierPrefix` empty.
       Pinned by `XcodeProjectConverterTests`, running the builder the formula names
       over the three plists, copied into the fixture under `Mac/`.
-   15. **A borrowed asset catalog is dropped.** The iOS Share extension borrows
-      `Resources/Assets.xcassets` from the `iOS` folder; the emitter compiles a
-      target's own folders' catalogs and its resources phase's, not a borrowed one, which
-      it passes over as not a copied resource. Seen reading the exception sets, not met
-      on the Mac build; for the iOS app.
+   15. ~~**A borrowed asset catalog is dropped.**~~ Done (2026-09-29). The iOS Share
+      extension borrows `Resources/Assets.xcassets` from the `iOS` folder, and the emitter
+      passed it over as not a copied resource. A borrowed `.xcassets` or `.icon` is now
+      among the target's catalogs, compiled for it as one of its own folder's would be.
+      Pinned by `XcodeProjectConverterTests` on the fixture's iOS Share extension for the
+      simulator (the converter itself still builds only the first application, the Mac
+      app, so the test drives the emitter for the extension).
    16. ~~**A package target's upcoming features do not reach its compiler.**~~ Done
       (2026-09-29). Every local package's targets declare
       `.enableUpcomingFeature("NonisolatedNonsendingByDefault")` and
@@ -1635,12 +1728,19 @@ application target, simulator only, all library code in packages. In suggested o
       before). Beside it, still: the app's own `OTHER_SWIFT_FLAGS` do not reach its
       compiler, though in Debug they add only `-D`s the compilation conditions already
       give and two frontend warnings.
-   17. **A package's xibs are copied into its resource bundle.** `RSCore`'s
-      `RSCoreResources` target holds `WebViewWindow.xib` and
-      `IndeterminateProgressWindow.xib`, and SwiftPM's `.process` rule compiles a xib to
-      a nib; the Swift converter's resource bundle copies them as they are. Now that
-      `IBToolCompiler` exists, the package converter can name it for them, with the
-      platform's settings as the app's are named.
+   17. ~~**A package's xibs are copied into its resource bundle.**~~ Done (2026-09-29).
+      `RSCore`'s `RSCoreResources` holds `WebViewWindow.xib` and
+      `IndeterminateProgressWindow.xib`, which SwiftPM's `.process` rule compiles to nibs.
+      `PackageResources` reads a `.xib` or `.storyboard` as `interfaceBuilder`, flattened
+      as a processed file is (a `.copy` keeps it as the document; one inside an `.lproj`
+      still travels with the folder, uncompiled), and the Swift converter (v14) names an
+      `IBToolCompiler` for it in `bundle_<Target>()`, keyed by where it lands in
+      `<Package>_<Target>.bundle`, over the root's `apple.ibToolCompiler` settings — the
+      deployment target, devices and SDK the app's documents take — with the target's
+      module as `module`. `prepare` writes ibtool's block for a project when a package
+      it reaches holds a xib too. Pinned by `PackageResourcesTests` (the rules and the
+      converter's bundle) and `PrepareTests`; no fixture holds a package with a xib, so
+      nothing builds one end to end.
 
    Checked again (2026-09-28) after 7, 9, 10, 13 and 14, on a fresh clone pushed under
    its parent, with Sparkle and PLCrashReporter replaced by stub packages as before

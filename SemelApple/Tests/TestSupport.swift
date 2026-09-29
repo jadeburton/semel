@@ -55,6 +55,7 @@ final class RecordingToolRunner: ToolRunner {
         let arguments: [String]
         let environment: [String: String]
         let inputFileNames: [String]
+        let inputHashes: [String]
         let expectedOutputFileNames: [String]
         let expectedOutputFolders: [String]
     }
@@ -71,6 +72,7 @@ final class RecordingToolRunner: ToolRunner {
 
     var lastArguments: [String] { invocations.last?.arguments ?? [] }
     var lastInputFileNames: [String] { invocations.last?.inputFileNames ?? [] }
+    var lastInputHashes: [String] { invocations.last?.inputHashes ?? [] }
 
     func execute(arguments: [String],
                  environment: [String: String],
@@ -82,6 +84,7 @@ final class RecordingToolRunner: ToolRunner {
         invocations.append(.init(arguments: arguments,
                                  environment: environment,
                                  inputFileNames: inputFiles.map(\.filePath),
+                                 inputHashes: inputFiles.map(\.hash),
                                  expectedOutputFileNames: expectedOutputFileNames,
                                  expectedOutputFolders: expectedOutputFolders))
 

@@ -67,6 +67,8 @@ final class PrepareTests: XCTestCase {
                                         architecture: "arm64", recursiveHash: nil)
     private let xcstringstool = ToolDescriptor(name: "xcstringstool", version: "Xcode 26.6 (17F113)", platform: "macOS",
                                                architecture: "arm64", recursiveHash: nil)
+    private let codesign = ToolDescriptor(name: "codesign", version: "Apple codesign version 83.100.6", platform: "macOS",
+                                          architecture: "arm64", recursiveHash: nil)
 
     /// A machine with one SDK of each kind and every tool installed. The namespaces are
     /// the registry's, their machine settings answered from this machine rather than by
@@ -82,13 +84,14 @@ final class PrepareTests: XCTestCase {
                                   case "sdk":        settings[key] = platform.sdkName
                                   case "sdkVersion": settings[key] = identity(platform.sdkName)
                                   case "sdkPath":    settings[key] = "/SDKs/\(platform.sdkName).sdk"
+                                  case "codesignAllocatePath": settings[key] = "/Toolchain/usr/bin/codesign_allocate"
                                   default:           settings[key] = "unanswered"
                                   }
                               }
                               return settings
                           })
         }
-        return ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, ibtool, xcstringstool],
+        return ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, ibtool, xcstringstool, codesign],
                               namespaces: namespaces, sdkIdentity: identity)
     }
 
@@ -416,6 +419,23 @@ final class PrepareTests: XCTestCase {
                        "the whole folder holds the manifest and the tests")
     }
 
+    /// B-77. A package target holding a xib compiles it with ibtool into its bundle, so a
+    /// project reaching the package reads ibtool's settings whether or not its own targets
+    /// hold one; an excluded xib is nothing.
+    func test_aPackageTargetsXibIsSeenForIBTool() throws {
+        try write("Modules/RSCore/Package.swift")
+        try write("Modules/RSCore/Sources/RSCoreResources/Resources.swift", "import Foundation\n")
+        try write("Modules/RSCore/Sources/RSCoreResources/Windows/WebViewWindow.xib", "<document/>\n")
+        let target = folder("Modules/RSCore/Sources/RSCoreResources")
+
+        func package(exclude: [String]) -> PackageSummary {
+            PackageSummary(name: "RSCore", folder: folder("Modules/RSCore"), pathDependencies: [], platforms: [:],
+                           targets: [.init(folder: target, exclude: exclude)])
+        }
+        XCTAssertTrue(GeneratedFiles.hasInterfaceBuilderDocuments(in: [package(exclude: [])]))
+        XCTAssertFalse(GeneratedFiles.hasInterfaceBuilderDocuments(in: [package(exclude: ["Windows/"])]))
+    }
+
     /// B-122. The tree's languages are decided after vendoring: a Swift root whose git
     /// dependency brings a C target — swift-cmark under IceCubes — reads the clang
     /// settings like a tree with a C target of its own, and a scan taken before the copy
@@ -449,7 +469,8 @@ final class PrepareTests: XCTestCase {
         for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true)
                          + GeneratedFiles.projectNamespaces(forCFamilyTargets: true,
                                                             compiledSources: .init(hasCFamilySources: true,
-                                                                                   hasInterfaceBuilderDocuments: true)) {
+                                                                                   hasInterfaceBuilderDocuments: true),
+                                                            platform: .macos) {
             XCTAssertTrue(declared.contains(namespace), "\(namespace) is read but not declared; declared: \(declared.sorted())")
         }
     }
@@ -703,6 +724,26 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(report.ungeneratedSources.map(\.output), ["App/Keys.swift"])
         XCTAssertEqual(report.ungeneratedSources.first?.generatedBy,
                        [SchemePreAction(scheme: "App", title: "Generate", script: "gyb -o App/Keys.swift App/Keys.swift.gyb\n")])
+    }
+
+    /// B-77. A Mac project's bundles are signed, so prepare writes codesign's machine block
+    /// — the tool and the toolchain's allocator — and nothing of the project's, the
+    /// identity being the formula's; a simulator project's formula signs nothing and gets
+    /// no block.
+    func test_aMacProjectGetsTheSignersMachineBlockAndASimulatorOneDoesNot() throws {
+        try write("Mac/App.xcodeproj/project.pbxproj", projectFixture)
+        try write("Simulator/App.xcodeproj/project.pbxproj", projectFixture)
+
+        _ = try Preparation.run(folder: folder("Mac"), platform: .macos, steps: steps())
+        _ = try Preparation.run(folder: folder("Simulator"), platform: .iosSimulator, steps: steps())
+
+        let machine = try String(contentsOf: folder("Mac").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        XCTAssertTrue(machine.contains("apple.codeSigner.toolDescriptor.name=codesign"), "got:\n\(machine)")
+        XCTAssertTrue(machine.contains("apple.codeSigner.codesignAllocatePath=/Toolchain/usr/bin/codesign_allocate"), "got:\n\(machine)")
+        let config = try String(contentsOf: folder("Mac").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertFalse(config.contains("apple.codeSigner"), "got:\n\(config)")
+        let simulator = try String(contentsOf: folder("Simulator").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        XCTAssertFalse(simulator.contains("apple.codeSigner"), "got:\n\(simulator)")
     }
 
     func test_twoProjectsInOneFolderIsAnError() throws {

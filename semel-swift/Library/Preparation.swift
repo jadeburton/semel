@@ -125,8 +125,14 @@ public enum Preparation {
                 .map { folder.appendingPathComponent($0, isDirectory: true).standardizedFileURL }
                 .filter { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Package.swift").path) }
             let packageSummaries = try (report.localPackages + vendoredManifestFolders(in: dependencies)).map(steps.summarize)
+            // ibtool's block when a package's resources hold a xib too, which its formula
+            // compiles into the package's bundle (B-77).
+            var compiledSources = try XcodeProjectFacts.compiledSources(ofProjectAt: project)
+            compiledSources.hasInterfaceBuilderDocuments = compiledSources.hasInterfaceBuilderDocuments
+                || GeneratedFiles.hasInterfaceBuilderDocuments(in: packageSummaries)
             namespaces = GeneratedFiles.projectNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: packageSummaries),
-                                                          compiledSources: try XcodeProjectFacts.compiledSources(ofProjectAt: project))
+                                                          compiledSources: compiledSources,
+                                                          platform: platform)
             allSummaries = packageSummaries
             // A source the project generates before its build, not there: said here, with
             // what would generate it, since the build can only fail where it is used.

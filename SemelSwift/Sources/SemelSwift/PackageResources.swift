@@ -8,7 +8,7 @@
 // and generates a `Bundle.module` accessor into the target's sources. Two kinds of
 // resource reach that bundle: the ones the manifest declares (`.process` and `.copy`
 // rules), and the ones SwiftPM recognises by type wherever they sit in the target's
-// folder — an asset catalog, an `.lproj` folder, a string catalog. This file is the
+// folder — an asset catalog, an `.lproj` folder, a string catalog, a xib. This file is the
 // reading of a target's folder tree by those rules; the converter turns the result into
 // the nodes that compile or copy each piece.
 
@@ -27,6 +27,10 @@ struct PackageResource: Equatable {
         case localizedFolder
         /// An `.xcstrings` file, compiled to one `.strings` per language.
         case stringCatalog
+        /// A `.xib` or a `.storyboard`, compiled by ibtool to the `.nib` or `.storyboardc`
+        /// an app loads, beside where the document lands: at `bundlePath`, flattened to
+        /// the bundle's root as a processed file is.
+        case interfaceBuilder
         /// A folder copied as it is, under `bundlePath`.
         case folder
         /// A single file copied as it is, at `bundlePath`.
@@ -71,6 +75,10 @@ enum PackageResources {
     /// Files SwiftPM treats as resources by type, wherever they sit.
     static let resourceFileExtensions: Set<String> = ["xcstrings", "storyboard", "xib", "nib", "metal"]
 
+    /// The ones of those SwiftPM compiles with ibtool when it processes them: RSCore's
+    /// `RSCoreResources` keeps two xibs whose nibs an app loads from the bundle (B-77).
+    static let interfaceBuilderExtensions: Set<String> = ["xib", "storyboard"]
+
     /// Whether the converter's walk descends into a folder of this name: not a hidden
     /// one, and not one that is a resource whole.
     static func isWalked(folderName: String) -> Bool {
@@ -106,6 +114,9 @@ enum PackageResources {
             }
             if ext == "xcstrings" {
                 return PackageResource(kind: .stringCatalog, path: relative, bundlePath: "")
+            }
+            if interfaceBuilderExtensions.contains(ext) {
+                return PackageResource(kind: .interfaceBuilder, path: relative, bundlePath: bundlePath)
             }
             return resourceFileExtensions.contains(ext) ? PackageResource(kind: .file, path: relative, bundlePath: bundlePath) : nil
         }

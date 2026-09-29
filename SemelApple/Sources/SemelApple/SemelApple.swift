@@ -22,9 +22,10 @@ public enum SemelApple {
             XcodeProjectConverter.self,
             XCFrameworkSliceSelector.self,
             IBToolCompiler.self,
+            CodeSigner.self,
         ])
 
-        // How actool, ibtool and xcstringstool are found on this machine and versioned.
+        // How actool, ibtool, xcstringstool and codesign are found on this machine and versioned.
         // Declared here, located when the engine starts.
         AppleToolDiscovery.finders.forEach(ToolDiscovery.register)
 
@@ -43,6 +44,15 @@ public enum SemelApple {
                                              machineSettingKeys: ["sdkPath"],
                                              machineSettings: { platform in
                                                  sdkPath(forPlatform: platform).map { ["sdkPath": $0] } ?? [:]
+                                             },
+                                             machineFileWriter: prepare))
+        // codesign is told which codesign_allocate makes room for a signature: the
+        // toolchain's, a fact about the machine as the SDK is.
+        ToolNamespaceRegistry.register(.init(namespace: CodeSignerConfiguration.settingNamespace,
+                                             toolName: "codesign",
+                                             machineSettingKeys: CodeSignerConfiguration.machineSettingKeys,
+                                             machineSettings: { _ in
+                                                 AppleToolDiscovery.locate("codesign_allocate").map { ["codesignAllocatePath": $0] } ?? [:]
                                              },
                                              machineFileWriter: prepare))
 

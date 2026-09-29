@@ -77,8 +77,16 @@ public class LocalFileSystemTool: ToolRunner {
                                                     withIntermediateDirectories: true)
                 }
 
+                if let linkDestination = inputFile.symbolicLinkDestination {
+                    try fileManager.createSymbolicLink(atPath: destinationURL.path, withDestinationPath: linkDestination)
+                    continue
+                }
+
                 // Throws if not found.
                 try DataObjectStore.shared.project(hash: inputFile.hash, to: destinationURL)
+                if let mode = inputFile.mode {
+                    try fileManager.setAttributes([.posixPermissions: NSNumber(value: mode)], ofItemAtPath: destinationURL.path)
+                }
 
             } catch {
                 throw LocalFileSystemToolError.failedToWriteInputFile(fileName: inputFile.filePath,

@@ -446,10 +446,38 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                      + "StaticFile(path: 'input:/nnw/Mac/ShareExtension/Base.lproj/ShareViewController.xib').output]"
         XCTAssertEqual(formula.components(separatedBy: document).count - 1, 1, "compiled once, for one bundle: \(formula)")
         XCTAssertTrue(formula.contains("func interface_NetNewsWire_Share_Extension_0() =\n    IBToolCompiler("), formula)
-        XCTAssertTrue(formula.contains("product '\(shareResources)/' = TreeMerger(input: ['interface0': interface_NetNewsWire_Share_Extension_0().files"),
-                      formula)
-        XCTAssertTrue(formula.contains("product '\(shareResources)/icon.icns' = StaticFile(path: 'input:/nnw/Mac/ShareExtension/icon.icns').output"),
-                      formula)
+        let share = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func bundle_NetNewsWire_Share_Extension()") },
+                                  formula)
+        XCTAssertTrue(share.contains("'Contents/Resources': TreeMerger(under: 'Contents/Resources', "
+                                     + "input: ['interface0': interface_NetNewsWire_Share_Extension_0().files"), share)
+        XCTAssertTrue(share.contains("'Contents/Resources/icon.icns': StaticFile(path: 'input:/nnw/Mac/ShareExtension/icon.icns').output"), share)
+    }
+
+    /// NetNewsWire's iOS Share extension borrows the app's `Resources/Assets.xcassets`
+    /// through the `iOS` folder's exception set, and compiles it for itself — for the
+    /// simulator, into its own bundle — as it would a catalog of its own folder (B-77 map
+    /// item 15), beside the sources it borrows.
+    func test_aBorrowedAssetCatalogIsCompiledForTheBorrowingTarget() throws {
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: XcodeBuildSettingsTests.netNewsWire
+            .appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")))
+        let share = try XCTUnwrap(project.targets.first { $0.name == "NetNewsWire iOS Share Extension" })
+        XCTAssertTrue(share.borrowedFiles.contains("iOS/Resources/Assets.xcassets"), "\(share.borrowedFiles)")
+        let expansions = try XcodeProjectFacts.expansions(of: project.xcconfigPaths(for: share, configuration: "Debug"),
+                                                          in: XcodeBuildSettingsTests.netNewsWire)
+        let settings = try XcodeBuildSettings.resolve(project: project, target: share, configuration: "Debug", sdk: "iphonesimulator",
+                                                      xcconfig: { expansions[$0]?.assignments }, extra: ["TARGET_NAME": share.name])
+        let emitter = XcodeFormulaEmitter(project: project,
+                                          build: .init(root: "input:/nnw", projectFolder: "input:/nnw", configuration: "Debug", sdk: "iphonesimulator"))
+
+        let formula = try emitter.bundle(for: share, settings: settings, listing: { _ in nil }).products(in: "Share.appex").joined(separator: "\n\n")
+
+        let assets = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func assets_NetNewsWire_iOS_Share_Extension() =") },
+                                   formula)
+        XCTAssertTrue(assets.contains("catalogs: [\n        'Assets.xcassets': Folder(path: 'input:/nnw/iOS/Resources/Assets.xcassets').manifest\n        ]"),
+                      assets)
+        XCTAssertTrue(assets.contains("platform: 'iphonesimulator'"), assets)
+        XCTAssertTrue(formula.contains("product 'Share.appex/' = TreeMerger(input: ['assets': assets_NetNewsWire_iOS_Share_Extension().files"), formula)
+        XCTAssertTrue(formula.contains("'AppDefaults.swift': StaticFile(path: 'input:/nnw/iOS/AppDefaults.swift').output"), formula)
     }
 
     /// NetNewsWire's Mac app compiles `Mac/NSOpenPanel+Extras.m` through clang with ARC,
@@ -489,7 +517,7 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
                                            + "folder: ['folder': Folder(path: 'input:/nnw/Themes/\(theme).nnwtheme').manifest]).files"),
                           "\(theme)\n\(formula)")
         }
-        XCTAssertFalse(formula.contains("product '\(macResources)/Sepia.nnwtheme'"), formula)
+        XCTAssertFalse(formula.contains("'Contents/Resources/Sepia.nnwtheme'"), formula)
     }
 
     /// Every setting the Mac plists name reaches the builder: run over the project's own
@@ -497,12 +525,12 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     /// evaluated ones — the signing team's prefix empty, as no team signs.
     func test_theInfoPlistBuilderIsHandedEverySettingThePlistsName() throws {
         let formula = try netNewsWireFormula()
-        let bundles = [("NetNewsWire.app/Contents/Info.plist", "Mac/Resources/Info.plist"),
-                       ("NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/Info.plist", "Mac/ShareExtension/Info.plist"),
-                       ("NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/Info.plist", "Mac/SafariExtension/Info.plist")]
+        let bundles = [("NetNewsWire", "Mac/Resources/Info.plist"),
+                       ("NetNewsWire_Share_Extension", "Mac/ShareExtension/Info.plist"),
+                       ("Subscribe_to_Feed", "Mac/SafariExtension/Info.plist")]
         var plists: [String: [String: Any]] = [:]
-        for (product, basePath) in bundles {
-            plists[basePath] = try buildInfoPlist(product: product, formula: formula, base: basePath)
+        for (target, basePath) in bundles {
+            plists[basePath] = try buildInfoPlist(target: target, formula: formula, base: basePath)
         }
 
         let app = try XCTUnwrap(plists["Mac/Resources/Info.plist"])
@@ -514,18 +542,55 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertEqual(try XCTUnwrap(plists["Mac/ShareExtension/Info.plist"])["AppGroup"] as? String, "group.com.ranchero.NetNewsWire-Evergreen")
     }
 
-    /// The plist the formula's `InfoPlistBuilder` for `product` builds over the fixture's
-    /// copy of the project's plist, failing the test if it reports anything undefined.
-    private func buildInfoPlist(product: String, formula: String, base: String) throws -> [String: Any] {
-        let pattern = "product '" + NSRegularExpression.escapedPattern(for: product) + "' =\\n    InfoPlistBuilder\\(\\n"
-                    + "        keys: '([^']*)',\\n        buildSettings: '([^']*)',"
-        let match = try XCTUnwrap(try NSRegularExpression(pattern: pattern).firstMatch(in: formula, range: NSRange(formula.startIndex..., in: formula)),
-                                  "no InfoPlistBuilder for \(product)")
-        let keys = String(formula[try XCTUnwrap(Range(match.range(at: 1), in: formula))])
-        let settings = String(formula[try XCTUnwrap(Range(match.range(at: 2), in: formula))])
+    /// Every Mac bundle is signed with the entitlements its target's settings name, each
+    /// `$(VAR)` in them resolved: the app group the plists name, the Sparkle names under
+    /// the bundle identifier, and the signing team's prefix empty, as no team signs.
+    func test_eachMacBundleIsSignedWithItsEntitlementsResolved() throws {
+        let formula = try netNewsWireFormula()
+        let signers = [("NetNewsWire", "Mac/Resources/NetNewsWire.entitlements"),
+                       ("NetNewsWire_Share_Extension", "Mac/ShareExtension/ShareExtension.entitlements"),
+                       ("Subscribe_to_Feed", "Mac/SafariExtension/Subscribe_to_Feed.entitlements")]
+        var entitlements: [String: [String: Any]] = [:]
+        for (target, path) in signers {
+            let signer = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.contains("func signed_\(target)() =\n") }, formula)
+            let pattern = "entitlements: \\['entitlements': InfoPlistBuilder\\(\\n *buildSettings: '([^']*)',\\n"
+                        + " *base: \\['base': StaticFile\\(path: '([^']*)'\\)"
+            let match = try XCTUnwrap(try NSRegularExpression(pattern: pattern).firstMatch(in: signer, range: NSRange(signer.startIndex..., in: signer)),
+                                      "no entitlements for \(target): \(signer)")
+            XCTAssertEqual(String(signer[try XCTUnwrap(Range(match.range(at: 2), in: signer))]), "input:/nnw/\(path)")
+            let settings = String(signer[try XCTUnwrap(Range(match.range(at: 1), in: signer))])
+            entitlements[target] = try buildPlist(keys: nil, settings: settings, base: path)
+        }
+
+        let app = try XCTUnwrap(entitlements["NetNewsWire"])
+        XCTAssertEqual(app["com.apple.security.application-groups"] as? [String], ["group.com.ranchero.NetNewsWire-Evergreen-DEBUG"])
+        XCTAssertEqual(app["com.apple.security.temporary-exception.mach-lookup.global-name"] as? [String],
+                       ["com.ranchero.NetNewsWire-Evergreen-DEBUG-spks", "com.ranchero.NetNewsWire-Evergreen-DEBUG-spki"])
+        XCTAssertEqual(app["com.apple.developer.ubiquity-kvstore-identifier"] as? String, "com.ranchero.NetNewsWire")
+        XCTAssertEqual(try XCTUnwrap(entitlements["NetNewsWire_Share_Extension"])["com.apple.security.application-groups"] as? [String],
+                       ["group.com.ranchero.NetNewsWire-Evergreen-DEBUG"], "the app's group, which the extension shares")
+    }
+
+    /// The plist the formula's `InfoPlistBuilder` for a target's `Contents/Info.plist`
+    /// builds over the fixture's copy of the project's plist, failing the test if it
+    /// reports anything undefined.
+    private func buildInfoPlist(target: String, formula: String, base: String) throws -> [String: Any] {
+        let bundle = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func bundle_\(target)() =") }, formula)
+        let pattern = "'Contents/Info.plist': InfoPlistBuilder\\(\\n *keys: '([^']*)',\\n *buildSettings: '([^']*)',"
+        let match = try XCTUnwrap(try NSRegularExpression(pattern: pattern).firstMatch(in: bundle, range: NSRange(bundle.startIndex..., in: bundle)),
+                                  "no InfoPlistBuilder for \(target)")
+        let keys = String(bundle[try XCTUnwrap(Range(match.range(at: 1), in: bundle))])
+        let settings = String(bundle[try XCTUnwrap(Range(match.range(at: 2), in: bundle))])
+        return try buildPlist(keys: keys, settings: settings, base: base)
+    }
+
+    /// The plist an `InfoPlistBuilder` with these properties builds over the fixture's
+    /// copy of the file at `base`.
+    private func buildPlist(keys: String?, settings: String, base: String) throws -> [String: Any] {
+        var properties = [InfoPlistBuilder.buildSettingsProperty: settings]
+        properties[InfoPlistBuilder.keysProperty] = keys
         let node = try InfoPlistBuilder(thisNode: NodeRecord(id: 1, kind: InfoPlistBuilder.kind, name: nil,
-                                                             properties: [InfoPlistBuilder.keysProperty: keys,
-                                                                          InfoPlistBuilder.buildSettingsProperty: settings],
+                                                             properties: properties,
                                                              scheduled: false, identity: nil))
         let baseBytes = try Data(contentsOf: XcodeBuildSettingsTests.netNewsWire.appendingPathComponent(base))
         let output = try node.process(input: ProcessInput(inputValues: [InfoPlistBuilder.base: ["base": .value(try [UInt8](baseBytes).intern())]]))

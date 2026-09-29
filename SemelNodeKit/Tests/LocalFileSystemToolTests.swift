@@ -147,6 +147,30 @@ final class LocalFileSystemToolTests: XCTestCase {
         XCTAssertTrue(result.errorOutput.isEmpty, result.errorOutput)
     }
 
+    /// A link among the inputs is laid as the link it is, beside the files it names (B-77),
+    /// and a file given a mode is laid with it, writable, where the store's objects are
+    /// read-only; in an output folder a link is not reported, and what it names is
+    /// reported once, where it is — not again through the link.
+    func test_aLinkIsLaidAsALinkAndNotReportedThroughTheOutputFolder() throws {
+        let file = FileNameAndContent(filePath: "out/Tiny.framework/Versions/A/Tiny", hash: try "binary".intern(), mode: 0o755)
+        let result = try LocalFileSystemTool(localPath: "/bin/sh")
+            .execute(arguments: ["-c", """
+                test -L out/Tiny.framework/Versions/Current && test -L out/Tiny.framework/Tiny && \
+                test -w out/Tiny.framework/Versions/A/Tiny && test -x out/Tiny.framework/Versions/A/Tiny && \
+                readlink out/Tiny.framework/Versions/Current && cat out/Tiny.framework/Tiny
+                """],
+                     environment: [:],
+                     inputFiles: [file,
+                                  FileNameAndContent(symbolicLinkAt: "out/Tiny.framework/Versions/Current", destination: "A"),
+                                  FileNameAndContent(symbolicLinkAt: "out/Tiny.framework/Tiny", destination: "Versions/Current/Tiny")],
+                     expectedOutputFileNames: [],
+                     expectedOutputFolders: ["out"])
+
+        XCTAssertEqual(result.exitCode, 0, result.errorOutput)
+        XCTAssertEqual(result.infoOutput, "A\nbinary\n")
+        XCTAssertEqual(result.outputTrees["out"]?.map(\.relativePath), ["Tiny.framework/Versions/A/Tiny"])
+    }
+
     /// The sandbox is gone when the tool is: nothing a tool leaves behind can be read by
     /// the next run.
     func test_theSandboxIsRemovedAfterTheRun() throws {

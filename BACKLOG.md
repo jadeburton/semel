@@ -214,3 +214,15 @@ an iOS xib and two storyboards (`.storyboardc` folders of nibs) twice, came out
 byte-identical; `IBToolCompilerTests` pins it on one xib with the real tool, and
 `swift-hello-app`'s `Card.nib` goes through the roster's four builds unexempted (B-77).
 Only its human-readable notices name the document's absolute path, and they are a log.
+
+*An ad-hoc signature is reproducible, and carries this item's variation* (2026-09-29, macOS
+26.6, `codesign-83.100.6`). `codesign --force --sign - --timestamp=none` over the same
+bundle twice, at two paths two seconds apart, with entitlements, wrote the same bytes and
+the same cdhash: no identity, no signing time, nothing of where it ran. `CodeSignerTests`
+pins it with the real tool through the sandbox, a nested extension and a versioned
+framework included (B-77). But a signature seals what it signs: `_CodeSignature/CodeResources`
+holds every resource's hash and each executable's code directory the hash of that seal, so
+an `Assets.car` that differs moves both — seen in `food-truck-mac`, where the widget's
+catalog differed between two builds and so did both seals and both executables. The roster
+exempts those only when an `Assets.car` differs too (`mayDifferWithExempt`); a canonical
+`Assets.car`, this item's exit, would make the signed bundle whole-byte reproducible.

@@ -35,8 +35,10 @@ public struct XcodeProjectConverter: Node {
     /// compiled and linked against and embedded under the bundle's `Frameworks` (B-77); at
     /// 9, a target's C-family sources are compiled through clang and linked, its bridging
     /// header reaches its Swift compiler, and an Interface Builder document is compiled by
-    /// ibtool rather than copied (B-77).
-    public static let implementationVersion = 9
+    /// ibtool rather than copied (B-77); at 10, a Mac bundle is assembled as one tree and
+    /// signed ad-hoc by `CodeSigner` with its entitlements, and an asset catalog a target
+    /// borrows is compiled for it (B-77).
+    public static let implementationVersion = 10
 
     // MARK: Ports
 
@@ -57,14 +59,15 @@ public struct XcodeProjectConverter: Node {
     /// targets it writes itself. The package formulas it includes select from
     /// `SwiftFormulaConverter`'s.
     public static let configNamespaces: [String] =
-        configNamespaces(compilingCFamilySources: true, compilingInterfaceBuilderDocuments: true)
+        configNamespaces(compilingCFamilySources: true, compilingInterfaceBuilderDocuments: true, signingBundles: true)
 
     /// The ones a project's formula selects from, by what its targets hold: the clang
     /// tools only for a target with C-family sources, ibtool only for one with a xib or
-    /// a storyboard. `prepare` writes a block for each of these and of the package
-    /// formulas' and no other, because a block nothing reads is reported as unused keys on
-    /// every build.
-    public static func configNamespaces(compilingCFamilySources: Bool, compilingInterfaceBuilderDocuments: Bool) -> [String] {
+    /// a storyboard, codesign only for a platform whose bundles are signed — the Mac's
+    /// (B-77). `prepare` writes a block for each of these and of the package formulas' and
+    /// no other, because a block nothing reads is reported as unused keys on every build.
+    public static func configNamespaces(compilingCFamilySources: Bool, compilingInterfaceBuilderDocuments: Bool,
+                                        signingBundles: Bool) -> [String] {
         var namespaces = [
             XcodeFormulaEmitter.swiftCompilerNamespace,
             XcodeFormulaEmitter.swiftLinkerNamespace,
@@ -74,10 +77,18 @@ public struct XcodeProjectConverter: Node {
         if compilingInterfaceBuilderDocuments {
             namespaces.append(IBToolCompilerConfiguration.settingNamespace)
         }
+        if signingBundles {
+            namespaces.append(CodeSignerConfiguration.settingNamespace)
+        }
         if compilingCFamilySources {
             namespaces += [XcodeFormulaEmitter.clangPreprocessorNamespace, XcodeFormulaEmitter.clangCompilerNamespace]
         }
         return namespaces
+    }
+
+    /// Whether a build for `sdk` signs its bundles: the Mac's does, the simulator's does not.
+    public static func signsBundles(forSDK sdk: String) -> Bool {
+        XcodeFormulaEmitter.BundleLayout(sdk: sdk).isSigned
     }
 
     public var thisNode: NodeRecord

@@ -91,7 +91,9 @@ public struct ToolExecuteResult {
 /// `expectedOutputFolders` are sandbox-relative folders whose every file, at any
 /// depth, is reported through `output.writeTreeEntry` — for a tool that decides its
 /// own file set. A folder that is not there after the run is an error, like a missing
-/// output file.
+/// output file. A symbolic link in one is not a file and is not reported, nor is what
+/// it points to reached through it: a tree has no link entry, and what a link names is
+/// reported where it is.
 public protocol ToolRunner {
     func execute(arguments: [String],
                  environment: [String: String],
@@ -136,12 +138,38 @@ public struct ToolOutput {
 /// the SHA-256 `hash` as the lookup key.
 public struct FileNameAndContent {
     public let filePath: String
-    /// SHA-256 hex digest that identifies the content in `DataObjectStore`.
+    /// SHA-256 hex digest that identifies the content in `DataObjectStore`. Empty for a
+    /// symbolic link.
     public let hash: String
+    /// Where a symbolic link at `filePath` points, relative to the folder holding it —
+    /// `Versions/Current/Tiny` — or nil for a file. A tree has no link entry, so a node
+    /// that knows a set of its files stood for one link can lay the link instead: a tool
+    /// that reads the shape of a folder, as `codesign` reads a versioned framework's,
+    /// sees what the folder was before it was pushed (B-77).
+    public let symbolicLinkDestination: String?
+    /// The mode the file is laid with, or nil for the store's own: read-only, which is all
+    /// a tool that only reads its inputs needs. A tool that rewrites one in place —
+    /// `codesign` writes a bundle's `_CodeSignature/CodeResources` over the one there —
+    /// is handed it writable.
+    public let mode: UInt16?
 
     public init(filePath: String, hash: String) {
+        self.init(filePath: filePath, hash: hash, mode: nil)
+    }
+
+    public init(filePath: String, hash: String, mode: UInt16?) {
         self.filePath = filePath
         self.hash = hash
+        self.symbolicLinkDestination = nil
+        self.mode = mode
+    }
+
+    /// A symbolic link at `filePath` to `destination`, laid in the sandbox as a link.
+    public init(symbolicLinkAt filePath: String, destination: String) {
+        self.filePath = filePath
+        self.hash = ""
+        self.symbolicLinkDestination = destination
+        self.mode = nil
     }
 }
 

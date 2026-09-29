@@ -35,7 +35,7 @@ final class InstalledToolsTests: XCTestCase {
 
     func test_everyToolTheToolchainsDeclareIsFoundOnThisMachine() {
         XCTAssertEqual(Set(registry.registeredDescriptors.map(\.name)),
-                       ["clang", "libtool", "swiftc", "swift", "actool", "ibtool", "xcstringstool"])
+                       ["clang", "libtool", "swiftc", "swift", "actool", "ibtool", "xcstringstool", "codesign"])
     }
 
     /// B-17. Every tool found here is registered under a fingerprint of the binary behind
@@ -67,7 +67,8 @@ final class InstalledToolsTests: XCTestCase {
 
     /// Each version names a build, since the descriptor keys the cache and two builds of
     /// one marketing version are different binaries. The others bracket the build after a
-    /// marketing version; libtool reports the cctools release alone, which is the build.
+    /// marketing version; libtool reports the cctools release alone, which is the build,
+    /// and codesign the project release its binary is stamped with, which is too.
     func test_everyToolIsRegisteredUnderAVersionThatNamesABuild() throws {
         XCTAssertTrue(try version(of: "clang").hasPrefix("Apple clang version "))
         XCTAssertTrue(try version(of: "libtool").hasPrefix("Apple Inc. version cctools"))
@@ -75,7 +76,8 @@ final class InstalledToolsTests: XCTestCase {
         XCTAssertTrue(try version(of: "swift").hasPrefix("Apple Swift version "))
         XCTAssertTrue(try version(of: "actool").hasPrefix("Apple actool version "))
         XCTAssertTrue(try version(of: "xcstringstool").hasPrefix("Xcode "))
-        for descriptor in registry.registeredDescriptors where descriptor.name != "libtool" {
+        XCTAssertTrue(try version(of: "codesign").hasPrefix("Apple codesign version "))
+        for descriptor in registry.registeredDescriptors where descriptor.name != "libtool" && descriptor.name != "codesign" {
             XCTAssertTrue(descriptor.version.contains("("), "\(descriptor.name): \(descriptor.version)")
         }
         for descriptor in registry.registeredDescriptors {
