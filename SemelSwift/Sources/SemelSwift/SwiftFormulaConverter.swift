@@ -624,7 +624,7 @@ struct SwiftFormulaConverter: Node {
                     }
                     let held = targetManifest.entries.filter(\.isPinned).map(\.name).sorted()
                     if let xcframework = targetManifest.entries.filter({ $0.isFolder && $0.isPinned && $0.name.hasSuffix(".xcframework") })
-                                                               .map(\.name).sorted().first {
+                                                               .map(\.name).min() {
                         locations[key] = .xcframework("\(targetFolder)/\(xcframework)")
                     } else if held.isEmpty {
                         locations[key] = .missing(targetFolder)
