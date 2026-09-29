@@ -1079,6 +1079,58 @@ final class PrepareTests: XCTestCase {
                        "another package's artifact stays out")
     }
 
+    /// Sparkle's zip holds its tools, changelog, licence and a sample appcast beside the
+    /// `.xcframework`; only the `.xcframework` is kept, so only it is pushed and locked, and
+    /// the lock is over the copy as the build pushes it (B-77).
+    func test_onlyTheXCFrameworkOfADownloadIsKeptAndLocked() throws {
+        try write("resolved/checkouts/Sparkle/Package.swift", "// sparkle\n")
+        for file in ["Sparkle.xcframework/Info.plist", "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/Sparkle",
+                     "bin/generate_appcast", "bin/old_dsa_scripts/sign_update", "CHANGELOG", "INSTALL", "LICENSE", "SampleAppcast.xml"] {
+            try write("resolved/artifacts/sparkle/Sparkle/\(file)", "\(file)\n")
+        }
+
+        let copied = try Vendoring.copyCheckouts(from: folder("resolved/checkouts"), into: folder("Dependencies"),
+                                                 artifacts: folder("resolved/artifacts"))
+        let lock = try DependencyLock.parse(try String(contentsOf: try Vendoring.writeLock(for: try XCTUnwrap(copied.first)), encoding: .utf8))
+
+        let artifact = folder("Dependencies/Sparkle/semel-artifacts/Sparkle")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: artifact.path), ["Sparkle.xcframework"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifact.appendingPathComponent("Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/Sparkle").path))
+        try write("expected/Sparkle/Package.swift", "// sparkle\n")
+        for file in ["Sparkle.xcframework/Info.plist", "Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/Sparkle"] {
+            try write("expected/Sparkle/semel-artifacts/Sparkle/\(file)", "\(file)\n")
+        }
+        XCTAssertEqual(lock.contentRoot, try FolderContentRoot.root(ofFolderAt: folder("expected/Sparkle")),
+                       "the lock is over the package and the framework, and nothing else of the zip")
+    }
+
+    /// The same for a `path:` zip, and an `.xcframework` named for its target is the one
+    /// kept when a zip holds another; a folder holding none is left as it is, for the
+    /// converter to say what it holds instead.
+    func test_onlyTheTargetsXCFrameworkOfAZipIsKept() throws {
+        try write("Kit/Other.xcframework/Info.plist", "<plist/>\n")
+        try write("Kit/Tiny.xcframework/Info.plist", "<plist/>\n")
+        try write("Kit/README.md", "read me\n")
+        // What the folder holds at the zip's top, as Sparkle's zip holds its framework.
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", folder("Kit").path, root.appendingPathComponent("Kit.zip").path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        try write("Package/Package.swift")
+
+        try Vendoring.unzipArtifact(root.appendingPathComponent("Kit.zip"), target: "Tiny", into: folder("Package"))
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder("Package/semel-artifacts/Tiny").path), ["Tiny.xcframework"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder("Package/semel-artifacts/Tiny/Tiny.xcframework/Info.plist").path))
+
+        try write("Bundle/Tool.artifactbundle/info.json", "{}\n")
+        try write("Bundle/NOTES", "notes\n")
+        try Vendoring.keepOnlyTheXCFramework(in: folder("Bundle"), target: "Tool")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder("Bundle").path).sorted(), ["NOTES", "Tool.artifactbundle"])
+    }
+
     /// The lock records each binary target's checksum beside the pin; recorded, not checked.
     func test_theLockRecordsABinaryTargetsChecksum() throws {
         let destination = folder("Packages/Dependencies/Sparkle")

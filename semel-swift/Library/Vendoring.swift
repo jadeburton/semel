@@ -114,8 +114,9 @@ public enum Vendoring {
     /// `<artifacts>/<identity>/<Target>/`, the `.xcframework` it extracted from the zip a
     /// binary target's `url:` names, after checking the zip against the manifest's
     /// `checksum:` — into `<package>/semel-artifacts/<Target>/`, replacing what was there
-    /// (B-77). Nothing is downloaded here: resolution already did it, and a build never
-    /// does. The identity is SwiftPM's, the lowercased repository or folder name.
+    /// (B-77), and keeps only the `.xcframework` of it (`keepOnlyTheXCFramework`). Nothing
+    /// is downloaded here: resolution already did it, and a build never does. The identity
+    /// is SwiftPM's, the lowercased repository or folder name.
     public static func copyArtifacts(from artifacts: URL, identity: String, into package: URL) throws {
         let fileManager = FileManager.default
         guard let identities = try? fileManager.contentsOfDirectory(atPath: artifacts.path),
@@ -137,13 +138,33 @@ public enum Vendoring {
             }
             try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fileManager.copyItem(at: targetSource, to: destination)
+            try keepOnlyTheXCFramework(in: destination, target: target)
+        }
+    }
+
+    /// Leaves in a binary target's folder under `semel-artifacts` only the `.xcframework`
+    /// the build reads, `<Target>.xcframework` or, when the zip names it otherwise, the
+    /// first by name — the one the converter takes (B-77). A zip holds what its vendor put
+    /// beside the framework: Sparkle's its `bin/` of tools, the changelog, the licence, a
+    /// sample appcast, which would be pushed and locked with it and read by nothing. A
+    /// folder with no `.xcframework` in it is left as it is, so the converter can say what
+    /// is there instead (an `.artifactbundle`, B-133).
+    public static func keepOnlyTheXCFramework(in folder: URL, target: String) throws {
+        let fileManager = FileManager.default
+        let contents = try fileManager.contentsOfDirectory(atPath: folder.path).sorted()
+        let xcframeworks = contents.filter { $0.hasSuffix(".xcframework") }
+        guard let kept = xcframeworks.first(where: { $0 == "\(target).xcframework" }) ?? xcframeworks.first else {
+            return
+        }
+        for name in contents where name != kept {
+            try fileManager.removeItem(at: folder.appendingPathComponent(name))
         }
     }
 
     /// Unzips a binary target's `path:` zip into `<package>/semel-artifacts/<Target>/`,
-    /// replacing what was there, as SwiftPM extracts one before a build (B-77). `ditto`,
-    /// because it keeps what a framework is made of — its links and its modes — as
-    /// Finder's archiver wrote them.
+    /// replacing what was there, as SwiftPM extracts one before a build (B-77), and keeps
+    /// only the `.xcframework` of it. `ditto`, because it keeps what a framework is made
+    /// of — its links and its modes — as Finder's archiver wrote them.
     public static func unzipArtifact(_ zip: URL, target: String, into package: URL) throws {
         let destination = package.appendingPathComponent(artifactsFolderName, isDirectory: true)
                                  .appendingPathComponent(target, isDirectory: true)
@@ -161,6 +182,7 @@ public enum Vendoring {
         guard process.terminationStatus == 0 else {
             throw Failure(description: "could not unzip \(zip.path) for binary target \(target) (ditto exit \(process.terminationStatus))")
         }
+        try keepOnlyTheXCFramework(in: destination, target: target)
     }
 
     /// The pins of a `Package.resolved`, by the folder each package is checked out under —
