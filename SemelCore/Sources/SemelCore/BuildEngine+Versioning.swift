@@ -66,6 +66,8 @@ extension BuildEngine {
             // nobody bumped republishes what the older code computed.
             let archivedGraphPath = try reset()
             try restateThePortsOfPreservedNodes()
+            // Before the fold, which reads it.
+            try giveEveryPreservedFolderItsLinkPort()
             // After the restating, which changes what a source's port says and so what the
             // fold reads.
             try foldTheContentRootOfEveryPreservedFolder()
@@ -168,6 +170,21 @@ extension BuildEngine {
             try Folder.markContentRootDirty(nodeID: nodeID)
         }
         try Folder.flushDirtyManifests()
+    }
+
+    /// Gives every preserved `Folder` the `symbolicLink` row it would have had from its
+    /// creation (B-77): not a link, which is what a folder pushed before links were pushed
+    /// is until the next push says otherwise. The fold and the manifest read a folder with
+    /// no row as no link, but `check` names the missing row as damage, and rightly.
+    private func giveEveryPreservedFolderItsLinkPort() throws {
+        let portSymbolID = Folder.symbolicLinkOutputPort.asSymbolID()
+        for node in try database.node.selectAll() where node.kind == Folder.kind {
+            guard let nodeID = node.id,
+                  try database.outputPort.select(nodeID: nodeID, nameSymbolID: portSymbolID) == nil else {
+                continue
+            }
+            try node.writeToOutputPort(Folder.symbolicLinkOutputPort, value: Folder.notASymbolicLink)
+        }
     }
 
     /// Gives every preserved `StaticFile` the `fileMetadata` row it would have had from its

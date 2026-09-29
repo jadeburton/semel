@@ -293,7 +293,10 @@ without locks is not woken by edits below its vendored folders. `prepare` writes
 beside each copy once all are in place, folding the copy on disk over what a push pushes —
 `push`'s own lister, so no dot-names, and no folder without a file below it —
 (`DependencyLockFoldTests` pushes such a tree through the engine and compares the roots),
-with the version, revision and origin of the checkout's pin in `Package.resolved`. What
+with the version, revision and origin of the checkout's pin in `Package.resolved`. A link
+inside its own folder — a vendored framework's `Versions/Current` — is folded as the link
+it is on both sides since the fold's format 3 (B-77, 2026-09-29), and the test pushes a tree
+holding file and folder links. What
 remains: a file removed from disk stays in `input:` (a push only adds), so the root then
 differs from a fresh lock with no word on which file; a lock `rm`'d from `input:` is named
 as a deleted source on every report while the converter still wires it, as any removed
@@ -614,7 +617,13 @@ for their manifests, so an edit costs one fold per ancestor and not one per fold
 manifest, and this is the load-bearing part: the manifest is what a folder's children are
 called, `ProjectFinder` and the converters are wired to it, and folding content in would
 re-run all of them on every keystroke. The root is path-independent where the manifest is
-not, so two copies of one tree are comparable wherever they stand. What remains:
+not, so two copies of one tree are comparable wherever they stand. Since 2026-09-29 (B-77,
+`docs/superpowers/specs/2026-09-29-semel-links-in-trees-design.md`) a symbolic link that
+stays inside its own folder is a line of its own kind, `link`, holding its target framed by
+its length — never what it names, which is folded where it is — for a file link (its
+target on its metadata) and a folder link (on the folder's `symbolicLink` port) alike; the
+format is `semel-folder-content-root 3`, and the disk fold reads links the same way through
+the same lister. What remains:
 
 1. **`output:` is opaque to the fold.** Every product's line says `notFolded`, so an
    `output:` folder's root identifies its names and not its content. The blocker is not the
@@ -1616,24 +1625,22 @@ application target, simulator only, all library code in packages. In suggested o
       - *A versioned framework whose links arrived as copies* — Sparkle's, the fixture's
         `Tiny.framework` — cannot be signed as it is: `codesign` finds real files at the
         framework's top and a `Versions/Current` folder and calls the bundle ambiguous,
-        and a bundle holding a framework it cannot sign cannot be signed either. So the
-        signer recognises the copies by the shape every versioned framework has
-        (`Versions/Current` the same files as exactly one other version, each other entry
-        at the top the same as its namesake there) and lays them as links in the sandbox
-        (`FileNameAndContent(symbolicLinkAt:destination:)`, new; a link in an output folder
-        is not reported); after signing, each is a copy again of what it names, now
-        signed. What comes out runs, the framework's binary and the executable signed as
-        bundles, but the export does not verify as a whole — the same "ambiguous" — until
-        a tree can carry a link (item 1). `swift-binary-target-app` checks the signatures
-        and runs the app; it does not verify it.
+        and a bundle holding a framework it cannot sign cannot be signed either. The
+        signer first recognised the copies by the shape every versioned framework has and
+        laid them as links in its sandbox, handing copies on again, so the export ran but
+        did not verify as a whole. Since links travel in trees (item 1's first residual,
+        2026-09-29), the tree holds the links, the signer lays it as it is and hands the
+        links back (`ToolOutput.writeTreeLink`), `SigningLayout`'s recognition is gone
+        (v2), and `swift-binary-target-app`'s export verifies deep and strict.
       - *Fixed on the way*: `InfoPlistBuilder` wrote the engine's `projectRoot` stamp into
         every plist as an entry (`projectRoot = input:/…`), in every Info.plist so far and
         now in the entitlements, where an unknown key had the Food Truck app killed at
         launch. It is not an entry now (v2).
-      - *Pinned by* `CodeSignerTests` (the command lines, nested first, the links laid and
-        restored, the profile-only keys left out, and a tiny app signed twice by the real
-        `codesign`, verified deep and strict with each bundle's entitlements),
-        `LocalFileSystemToolTests` (a link and a mode laid), `XcodeFormulaEmitterTests`,
+      - *Pinned by* `CodeSignerTests` (the command lines, nested first, a tree's links laid
+        and handed back as links, the profile-only keys left out, and a tiny app with a
+        versioned framework signed twice by the real `codesign`, verified deep and strict
+        with each bundle's entitlements), `LocalFileSystemToolTests` (a link and a mode
+        laid, a link read back as one), `XcodeFormulaEmitterTests`,
         `XcodeProjectConverterTests` (each NetNewsWire Mac bundle's entitlements resolved,
         over copies of its three files), `PrepareTests`, and end to end by `food-truck-mac`,
         whose export verifies with `codesign --verify --deep --strict`, whose executable is

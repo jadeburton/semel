@@ -51,6 +51,25 @@ final class TreeDiffTests: XCTestCase {
         ])
     }
 
+    /// B-77. A link is compared by what it holds, never followed; a link where the other
+    /// tree has a file is a difference too.
+    func test_aLinkIsComparedByItsTarget() throws {
+        try write("a", "F/Versions/A/Tiny", [1]); try write("b", "F/Versions/A/Tiny", [1])
+        try write("a", "F/Versions/B/Tiny", [1]); try write("b", "F/Versions/B/Tiny", [1])
+        try write("b", "F/Tiny", [1])
+        let fileManager = FileManager.default
+        try fileManager.createSymbolicLink(atPath: folder.appendingPathComponent("a/F/Versions/Current").path, withDestinationPath: "A")
+        try fileManager.createSymbolicLink(atPath: folder.appendingPathComponent("b/F/Versions/Current").path, withDestinationPath: "B")
+        try fileManager.createSymbolicLink(atPath: folder.appendingPathComponent("a/F/Tiny").path, withDestinationPath: "Versions/Current/Tiny")
+
+        let differences = try TreeDiff.compare(folder.appendingPathComponent("a"), folder.appendingPathComponent("b"))
+
+        XCTAssertEqual(differences.map(\.description), [
+            "F/Tiny: a link to Versions/Current/Tiny vs a file",
+            "F/Versions/Current: a link to A vs a link to B",
+        ])
+    }
+
     func test_exemptMatchesAnExactPathOrATrailingPath() {
         let difference = TreeDiff.Difference(path: "lib/libHelloKit.a", kind: .content(firstDifferingOffset: 33))
 

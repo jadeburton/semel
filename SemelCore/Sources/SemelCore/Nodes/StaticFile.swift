@@ -58,8 +58,12 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
     }
 
     public static let pathProperty = "path"
+    /// The bytes a reader of the path gets. For a symbolic link, the bytes of the file it
+    /// names, so that what reads a file through this port reads a link as it did when a
+    /// push followed every link (B-77); a link to a folder is a `Folder`.
     static let outputPort = "output"
-    /// The mode the file was pushed with, so a tree or a product built from it keeps it.
+    /// The mode the file was pushed with, so a tree or a product built from it keeps it;
+    /// and for a symbolic link its target, which is what makes it one (B-77).
     static let fileMetadataOutputPort = FileMetadata.portName
 
     public var thisNode: NodeRecord
@@ -104,32 +108,35 @@ public struct StaticFile: Node, FileType, HasPath, Pinnable, UserDeletable, File
         return try replaceContent(content, mode: FileMetadata.defaultMode)
     }
 
-    /// The bytes on `output` and the mode on `fileMetadata`. Returns whether either
-    /// changed: a file made executable under the same bytes is a push that changes what a
-    /// tree or a product built from it holds.
-    public func replaceContent(_ content: DataObjectHash, mode: UInt16) throws -> Bool {
+    /// The bytes on `output` and the mode — and for a symbolic link its target — on
+    /// `fileMetadata`. Returns whether either changed: a file made executable under the same
+    /// bytes is a push that changes what a tree or a product built from it holds.
+    public func replaceContent(_ content: DataObjectHash, mode: UInt16, symbolicLinkTarget: String? = nil) throws -> Bool {
         let metadataChanged = try thisNode.writeToOutputPort(Self.fileMetadataOutputPort,
-                                                             value: try Self.metadataValue(mode: mode))
-        return try replaceContentWith(.value(content)) || metadataChanged
+                                                             value: try Self.metadataValue(mode: mode,
+                                                                                           symbolicLinkTarget: symbolicLinkTarget))
+        let contentChanged = try replaceContentWith(.value(content), notifying: metadataChanged)
+        return contentChanged || metadataChanged
     }
 
-    /// The bytes alone. Only they are the folder's business: a content root folds content
-    /// and not modes.
-    private func replaceContentWith(_ value: NodeValue) throws -> Bool {
+    /// The bytes. They are the folder's business, and so is the metadata when it changed:
+    /// a content root folds what a link says, which is on the metadata, and a mode change
+    /// folds to the same root again, which is cheap and rare.
+    private func replaceContentWith(_ value: NodeValue, notifying metadataChanged: Bool = false) throws -> Bool {
         let changed = try thisNode.writeToOutputPort(Self.outputPort, value: value)
-        if changed {
+        if changed || metadataChanged {
             try notifyParentOfChildContentChange()
         }
         return changed
     }
 
-    static func metadataValue(mode: UInt16) throws -> NodeValue {
-        .value(try metadataDocument(mode: mode).intern())
+    static func metadataValue(mode: UInt16, symbolicLinkTarget: String? = nil) throws -> NodeValue {
+        .value(try metadataDocument(mode: mode, symbolicLinkTarget: symbolicLinkTarget).intern())
     }
 
-    /// What `metadataValue` interns: the document a mode is stored as.
-    private static func metadataDocument(mode: UInt16) throws -> String {
-        try FileMetadata(mode: mode).jsonString()
+    /// What `metadataValue` interns: the document a mode, and a link's target, are stored as.
+    private static func metadataDocument(mode: UInt16, symbolicLinkTarget: String?) throws -> String {
+        try FileMetadata(mode: mode, symbolicLinkTarget: symbolicLinkTarget).jsonString()
     }
 
     /// A file nobody has pushed yet says so on `output` alone, and has the default mode on
@@ -179,13 +186,17 @@ extension StaticFile {
     /// collection sees that port whenever it began. Anything short of that — a folder
     /// missing or unpinned, a file new or different, a root the cache does not know — takes
     /// the full path, which is the only one that writes (B-131).
-    public static func push(_ bytes: [UInt8], mode: UInt16, at relativePath: Path) throws -> Bool {
+    ///
+    /// A symbolic link is pushed with its `symbolicLinkTarget` and the bytes of what it
+    /// names (B-77).
+    public static func push(_ bytes: [UInt8], mode: UInt16, symbolicLinkTarget: String? = nil,
+                            at relativePath: Path) throws -> Bool {
         let fullPath = Path(Folder.inputFileSystemName) / relativePath
         let specNode = GraphSpecNode(StaticFile.self, properties: [pathProperty: fullPath.string])
 
         if let rootID = Folder.cachedInputFileSystemID {
             let contentHash  = bytes.internedHash
-            let metadataHash = try metadataDocument(mode: mode).internedHash
+            let metadataHash = try metadataDocument(mode: mode, symbolicLinkTarget: symbolicLinkTarget).internedHash
             let pushed = PushedFile(identity:         try specNode.identity(),
                                     content:          .value(contentHash),
                                     metadata:         .value(metadataHash),
@@ -207,7 +218,7 @@ extension StaticFile {
         guard let staticFile = try fromNode.nodeAsAny() as? StaticFile else {
             throw NodeError.nameCollision(path: fullPath.string, existingKind: fromNode.kind)
         }
-        return try staticFile.replaceContent(try bytes.intern(), mode: mode)
+        return try staticFile.replaceContent(try bytes.intern(), mode: mode, symbolicLinkTarget: symbolicLinkTarget)
     }
 
     /// What one push would leave in the graph, worked out before anything is read.

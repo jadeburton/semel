@@ -93,6 +93,19 @@ extension RequestHandler {
         .pushFile(didChange: try StaticFile.push([UInt8](body), mode: mode, at: Path(path)))
     }
 
+    /// A symbolic link (B-77). To a file: a file whose metadata names the target and whose
+    /// bytes are what it names. To a folder: the folder, pinned as a pushed folder is, with
+    /// the target on its `symbolicLink` port; its files arrive as pushes of their own.
+    /// Returns whether anything changed.
+    func pushSymbolicLink(path: String, target: String, referent: SymbolicLinkReferent, body: Data) throws -> DaemonResponse {
+        switch referent {
+        case .file(let mode):
+            return .pushFile(didChange: try StaticFile.push([UInt8](body), mode: mode, symbolicLinkTarget: target, at: Path(path)))
+        case .folder:
+            return .pushFile(didChange: try Folder.pushSymbolicLink(target: target, at: Path(path)))
+        }
+    }
+
     func pushFolder(path: String) throws -> DaemonResponse {
         _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(Path(path), pinned: true)
         return .ok
@@ -140,7 +153,8 @@ extension RequestHandler {
 
     // MARK: - fetch
 
-    /// A file's bytes and mode. The bytes travel in the frame body.
+    /// A file's bytes and mode, the bytes in the frame body; or a symbolic link's target,
+    /// with no body, since what a client writes for one is the link.
     func fetch(fileSystem: FileSystemKind, path: String) throws -> (DaemonResponse, Data?) {
         let root = try rootFolder(fileSystem)
 
@@ -157,6 +171,9 @@ extension RequestHandler {
             var mode = FileMetadata.defaultMode
             if let provider = try fileNode.nodeAsAny() as? FileMetadataProvider,
                let metadata = try provider.readFileMetadata() {
+                if let target = metadata.symbolicLinkTarget {
+                    return (.symbolicLink(target: target), nil)
+                }
                 mode = metadata.mode ?? FileMetadata.defaultMode
             }
             return (.fetch(mode: mode), Data(try hash.resolve()))

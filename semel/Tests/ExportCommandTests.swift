@@ -126,6 +126,45 @@ final class ExportCommandTests: XCTestCase {
         return (attributes[.posixPermissions] as? Int ?? 0) & 0o777
     }
 
+    /// B-77. A tree product's links leave as links — a versioned framework's
+    /// `Versions/Current` and the links at its top — and a link replaces what an earlier
+    /// export left at its path, a folder of copies included, without following it.
+    func test_aTreesLinksAreExportedAsLinks() throws {
+        let tree = TreeManifest(entries: [
+            TreeManifestEntry(path: "Tiny.framework/Versions/A/Tiny", hash: try "binary".intern(), mode: FileMetadata.executableMode),
+            TreeManifestEntry(path: "Tiny.framework/Versions/Current", symbolicLinkTarget: "A"),
+            TreeManifestEntry(path: "Tiny.framework/Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),
+        ])
+        let treeSource = GraphSpecNode.staticFile(at: "input:/sources/framework-tree")
+        let (source, _) = try treeSource.findOrCreateMatchingNode()
+        _ = try XCTUnwrap(source.nodeAsAny() as? StaticFile).replaceContent(try tree.toJSON().intern())
+        for entry in tree.entries {
+            let entryFile = GraphSpecNode(TreeFile.self,
+                                          properties: [TreeFile.nameProperty: entry.path],
+                                          inputs: [TreeFile.treeInputPort: ["tree": treeSource]])
+            let (entryNode, _) = try entryFile.findOrCreateMatchingNode()
+            try BuildEngine.shared.processOneNode(entryNode)
+            _ = try GraphSpecNode(OutputFile.self,
+                                  properties: [OutputFile.pathProperty: "output:/Frameworks/\(entry.path)"],
+                                  inputs: [OutputFile.inputPort: ["product": entryFile.port(TreeFile.outputPort)]])
+                .wiringFileMetadata()
+                .findOrCreateMatchingNode()
+        }
+        let staleCopy = destination.appendingPathComponent("Tiny.framework/Versions/Current/Tiny")
+        try FileManager.default.createDirectory(at: staleCopy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "an earlier export's copy".write(to: staleCopy, atomically: true, encoding: .utf8)
+
+        interpreter.handleCommand("export Frameworks --into \(destination.path)")
+
+        let fileManager = FileManager.default
+        XCTAssertEqual(try fileManager.destinationOfSymbolicLink(atPath: destination.appendingPathComponent("Tiny.framework/Versions/Current").path), "A")
+        XCTAssertEqual(try fileManager.destinationOfSymbolicLink(atPath: destination.appendingPathComponent("Tiny.framework/Tiny").path),
+                       "Versions/Current/Tiny")
+        XCTAssertEqual(try exported("Tiny.framework/Tiny"), "binary", "read through the links")
+        XCTAssertEqual(try exportedMode("Tiny.framework/Versions/A/Tiny"), 0o755)
+        XCTAssertEqual(interpreter.errorsReported, 0)
+    }
+
     func test_theDestinationIsRequired() throws {
         try publish("Packages/libModels.a", contents: "models")
 

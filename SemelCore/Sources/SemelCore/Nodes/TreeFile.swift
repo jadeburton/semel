@@ -12,9 +12,17 @@ import SemelNodeKit
 /// and puts that entry's content on `output` and its mode on `fileMetadata`, so a tree's
 /// files can be published and consumed by nodes that know nothing about trees.
 /// `ProjectBuilder` makes one per entry when it expands a tree product.
+///
+/// A symbolic link entry is put on the ports as a pushed link is: its target on
+/// `fileMetadata`, which is what a product and the export read, and on `output` what it
+/// names in the tree — a file's bytes, or the empty file for a folder — for whatever reads
+/// the entry's bytes.
 struct TreeFile: Node, FileMetadataProvider {
 
     public static let kind: UInt = 28
+
+    /// 2: a link entry is a link, where every entry was a file (B-77).
+    public static let implementationVersion = 2
 
     /// The entry's path within the tree: `en.lproj/Localizable.strings`.
     static let nameProperty = "name"
@@ -52,9 +60,24 @@ struct TreeFile: Node, FileMetadataProvider {
                          inputWireSpecs: [:])
         }
 
-        let metadataJSON = try FileMetadata(mode: entry.mode).jsonString()
-        return .init(outputValues: [Self.outputPort: .value(entry.hash),
-                                    Self.fileMetadataOutputPort: .value(try metadataJSON.intern())],
+        let content: DataObjectHash
+        let metadata: FileMetadata
+        switch entry.content {
+        case .file(let hash, let mode):
+            content  = hash
+            metadata = FileMetadata(mode: mode)
+        case .symbolicLink(let target):
+            guard case .file(let named)? = manifest.resolve(entry.path),
+                  case .file(let hash, let mode) = named.content else {
+                content  = try [UInt8]().intern()
+                metadata = FileMetadata(symbolicLinkTarget: target)
+                break
+            }
+            content  = hash
+            metadata = FileMetadata(mode: mode, symbolicLinkTarget: target)
+        }
+        return .init(outputValues: [Self.outputPort: .value(content),
+                                    Self.fileMetadataOutputPort: .value(try metadata.jsonString().intern())],
                      inputWireSpecs: [:])
     }
 

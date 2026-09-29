@@ -73,11 +73,25 @@ enum BinaryTargetFixture {
         guard printed.trimmingCharacters(in: .whitespacesAndNewlines) == expected else {
             throw EndToEndFailure(step: "run the app", message: "printed '\(printed)', not '\(expected)'")
         }
-        // Signed as a bundle, the framework with it (B-77). The export does not verify as
-        // a whole: the framework's links arrive as copies, which a versioned framework's
-        // signature does not allow, though the signer lays them as links while it signs.
+        // Signed as a bundle, the framework with it (B-77), and the export verifies as the
+        // whole it is: the framework's links travelled as links, from the push to here.
+        try SignedBundleCheck.verified(out.appendingPathComponent("Greeter.app"))
         try SignedBundleCheck.signedAsPartOfTheBundle(executable)
         try SignedBundleCheck.signedAsPartOfTheBundle(out.appendingPathComponent("Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny"))
+        try checkFrameworkLinks(in: out.appendingPathComponent("Greeter.app/Contents/Frameworks/Tiny.framework"))
+    }
+
+    /// The links a versioned framework has, as links in the export and not copies.
+    private static func checkFrameworkLinks(in framework: URL) throws {
+        let expected = ["Versions/Current": "A", "Tiny": "Versions/Current/Tiny", "Headers": "Versions/Current/Headers",
+                        "Modules": "Versions/Current/Modules", "Resources": "Versions/Current/Resources"]
+        for (name, target) in expected.sorted(by: { $0.key < $1.key }) {
+            let found = try? FileManager.default.destinationOfSymbolicLink(atPath: framework.appendingPathComponent(name).path)
+            guard found == target else {
+                throw EndToEndFailure(step: "the framework's links",
+                                      message: "\(framework.lastPathComponent)/\(name) is \(found.map { "a link to \($0)" } ?? "not a link"), not a link to \(target)")
+            }
+        }
     }
 
     @discardableResult

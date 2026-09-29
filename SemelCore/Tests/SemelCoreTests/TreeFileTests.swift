@@ -35,6 +35,28 @@ final class TreeFileTests: SemelCoreTestCase {
         XCTAssertEqual(FileMetadata.decode(from: try XCTUnwrap(metadata))?.mode, 0o755)
     }
 
+    /// B-77. A link entry is put on the ports as a pushed link is: the target on
+    /// `fileMetadata`, which a product and the export read, and on `output` what it names
+    /// in the tree — the file's bytes with its mode, or the empty file for a folder.
+    func test_aLinkEntryCarriesItsTargetAndWhatItNames() throws {
+        let tree = TreeManifest(entries: [
+            TreeManifestEntry(path: "F/Versions/A/Tiny", hash: try "binary".intern(), mode: 0o755),
+            TreeManifestEntry(path: "F/Versions/Current", symbolicLinkTarget: "A"),
+            TreeManifestEntry(path: "F/Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),
+        ])
+        let value = NodeValue.value(try tree.toJSON().intern())
+
+        let fileLink = try process(name: "F/Tiny", tree: value)
+        XCTAssertEqual(try fileLink.outputValues[TreeFile.outputPort]?.expectValue().resolveAsString(), "binary")
+        let fileMetadata = try XCTUnwrap(fileLink.outputValues[FileMetadata.portName]).expectValue().resolveAsString()
+        XCTAssertEqual(FileMetadata.decode(from: fileMetadata), FileMetadata(mode: 0o755, symbolicLinkTarget: "Versions/Current/Tiny"))
+
+        let folderLink = try process(name: "F/Versions/Current", tree: value)
+        XCTAssertEqual(try folderLink.outputValues[TreeFile.outputPort]?.expectValue(), "")
+        let folderMetadata = try XCTUnwrap(folderLink.outputValues[FileMetadata.portName]).expectValue().resolveAsString()
+        XCTAssertEqual(FileMetadata.decode(from: folderMetadata), FileMetadata(symbolicLinkTarget: "A"))
+    }
+
     /// The error says what the tree does hold: a wrong name is a formula or converter
     /// mistake, and the list is what fixes it.
     func test_aNameNotInTheTreeIsAnErrorNamingWhatIsThere() throws {

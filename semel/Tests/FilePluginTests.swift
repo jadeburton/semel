@@ -68,6 +68,54 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c [no change]"])
     }
 
+    /// B-77. A link inside its folder is pushed as one: to a file with the file's bytes and
+    /// mode, to a folder by itself, what it names pushed below it as always. A link out of
+    /// its folder is a file like any other.
+    func test_aLinkInsideItsFolderIsPushedAsOne() throws {
+        try write("fw/Versions/A/Tiny", "binary")
+        chmod(externalRoot.appendingPathComponent("fw/Versions/A/Tiny").path, 0o755)
+        try write("outside.h", "outside")
+        let fileManager = FileManager.default
+        try fileManager.createSymbolicLink(atPath: externalRoot.appendingPathComponent("fw/Versions/Current").path, withDestinationPath: "A")
+        try fileManager.createSymbolicLink(atPath: externalRoot.appendingPathComponent("fw/Tiny").path, withDestinationPath: "Versions/Current/Tiny")
+        try fileManager.createSymbolicLink(atPath: externalRoot.appendingPathComponent("fw/Outside.h").path, withDestinationPath: "../outside.h")
+        connection.reply(.ok)
+        connection.reply(.ok)
+        for _ in 0..<5 {
+            connection.reply(.pushFile(didChange: true))
+        }
+        connection.reply(.ok)
+
+        try run("push", ["fw"])
+
+        XCTAssertEqual(connection.daemonRequests, [
+            .beginBatch, .pushFolder(path: "fw"),
+            .pushFile(path: "fw/Outside.h", mode: 0o644),
+            .pushSymbolicLink(path: "fw/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
+            .pushSymbolicLink(path: "fw/Versions/Current", target: "A", referent: .folder),
+            .pushFile(path: "fw/Versions/A/Tiny", mode: 0o755),
+            .pushFile(path: "fw/Versions/Current/Tiny", mode: 0o755),
+            .endBatch,
+        ])
+        XCTAssertEqual(connection.requests[2].body, Data("outside".utf8))
+        XCTAssertEqual(connection.requests[3].body, Data("binary".utf8), "a link to a file carries what it names")
+        XCTAssertTrue(context.messages.contains("Push link: fw/Versions/Current -> A"), "\(context.messages)")
+    }
+
+    /// B-77. What the export writes for a link is the link, replacing whatever an earlier
+    /// export left there without following it.
+    func test_cpWritesALinkAsALink() throws {
+        let destination = (externalRoot.path as NSString).resolvingSymlinksInPath
+        try FileManager.default.createDirectory(atPath: destination + "/Current", withIntermediateDirectories: true)
+        connection.reply(.list(entries: [ListEntry(path: "fw/Versions/Current", kind: .file, size: 0, mode: 0o644, status: .none)]))
+        connection.reply(.symbolicLink(target: "A"))
+
+        try run("cp", ["-o", "fw/Versions/Current", externalRoot.path])
+
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: destination + "/Current"), "A")
+        XCTAssertEqual(context.messages, ["Link written: \(destination)/Current -> A"])
+    }
+
     /// Past the point where a wall of paths is worth reading, the push reports a count
     /// instead — and still says how much of it was already there.
     func test_aLongPushReportsACountRatherThanEveryPath() throws {

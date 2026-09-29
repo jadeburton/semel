@@ -31,16 +31,41 @@ public enum FolderTreeWalk {
     /// subfolder's full path, for the subfolders `include` accepts. Unpinned entries are
     /// ghosts — deleted, or never pushed — and wiring one would resurrect a folder the
     /// user removed.
+    ///
+    /// A subfolder that is a symbolic link holds what the link names, and a walk reading
+    /// files descends into it as into any folder. A walk building a tree passes
+    /// `intoSymbolicLinks: false` and places the link instead (`symbolicLinkFolders(of:)`),
+    /// so the tree holds the link and what it names once (B-77).
     public static func subfolderSpecs(of manifests: [FolderManifest],
+                                      intoSymbolicLinks: Bool = true,
                                       include: (String) -> Bool = { _ in true }) -> [String: GraphSpecNode] {
         var result: [String: GraphSpecNode] = [:]
         for manifest in manifests {
             for entry in manifest.entries where entry.isFolder && entry.isPinned {
+                guard intoSymbolicLinks || entry.symbolicLinkTarget == nil else {
+                    continue
+                }
                 let fullPath = (Path(manifest.baseFolderPath) / entry.name).string
                 guard include(fullPath) else {
                     continue
                 }
                 result[fullPath] = .folderManifest(at: fullPath)
+            }
+        }
+        return result
+    }
+
+    /// Every pinned subfolder of `manifests` that is a symbolic link pushed as one, keyed
+    /// by its full path, with what the link holds: what a walk building a tree places
+    /// where it does not descend.
+    public static func symbolicLinkFolders(of manifests: [FolderManifest]) -> [String: String] {
+        var result: [String: String] = [:]
+        for manifest in manifests {
+            for entry in manifest.entries where entry.isFolder && entry.isPinned {
+                guard let target = entry.symbolicLinkTarget else {
+                    continue
+                }
+                result[(Path(manifest.baseFolderPath) / entry.name).string] = target
             }
         }
         return result
@@ -57,11 +82,13 @@ public enum FolderTreeWalk {
     /// root reaches today is part of the tree.
     public static func subfolderSpecs(below root: String,
                                       arrived: [String: FolderManifest],
+                                      intoSymbolicLinks: Bool = true,
                                       include: (String) -> Bool = { _ in true }) -> [String: GraphSpecNode] {
         var result: [String: GraphSpecNode] = [:]
         var level = arrived[root].map { [$0] } ?? []
         while !level.isEmpty {
-            let found = subfolderSpecs(of: level, include: include).filter { result[$0.key] == nil }
+            let found = subfolderSpecs(of: level, intoSymbolicLinks: intoSymbolicLinks, include: include)
+                .filter { result[$0.key] == nil }
             result.merge(found) { existing, _ in existing }
             level = found.keys.sorted().compactMap { arrived[$0] }
         }

@@ -16,10 +16,14 @@ struct TreeBuilder: Node {
 
     public static let kind: UInt = 33
 
+    /// 2: a file pushed as a symbolic link is a link entry where its target is in the tree
+    /// (B-77).
+    public static let implementationVersion = 2
+
     /// The files, one wire each; the wire's key is the entry's path in the tree.
     static let inputPort = "input"
     /// The modes of the files, one wire per file whose source publishes one, under the
-    /// same key. Filled where the spec is built, never in a formula
+    /// same key — and a link's target. Filled where the spec is built, never in a formula
     /// (`GraphSpecNode.wiringFileMetadata()`); a file with no wire here is written with the
     /// default mode.
     static let fileMetadataInputPort = FileMetadata.portName
@@ -39,15 +43,13 @@ struct TreeBuilder: Node {
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
         let metadata = input.inputValues[Self.fileMetadataInputPort] ?? [:]
-        var entries: [TreeManifestEntry] = []
+        var files: [TreeManifest.PlacedFile] = []
         for (key, value) in (input.inputValues[Self.inputPort] ?? [:]).sorted(by: { $0.key < $1.key }) {
             // Whatever stopped one file stops the tree: demanding the value hands the engine
             // what stood in the way, and it writes the state that follows.
-            entries.append(TreeManifestEntry(path: key,
-                                             hash: try value.expectValue(),
-                                             mode: FileMetadata.mode(of: metadata[key])))
+            files.append(.init(path: key, hash: try value.expectValue(), metadata: FileMetadata.metadata(of: metadata[key])))
         }
-        let tree = TreeManifest(entries: entries)
+        let tree = TreeManifest(placing: files)
         return .init(outputValues: [Self.outputPort: .value(try tree.toJSON().intern())], inputWireSpecs: [:])
     }
 }

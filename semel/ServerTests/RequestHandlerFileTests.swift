@@ -45,6 +45,31 @@ final class RequestHandlerFileTests: RequestHandlerTestCase {
         XCTAssertEqual(try daemon(.fetch(fileSystem: .input, path: "run.sh")).0, .fetch(mode: 0o755))
     }
 
+    /// B-77. A link to a file is a file holding the bytes it names, whose metadata says what
+    /// it holds, and `fetch` answers the link; a link to a folder is a pinned folder saying
+    /// so on its port. Pushed again as it was, neither changes.
+    func test_aSymbolicLinkIsStoredAsOneAndFetchedAsOne() throws {
+        let (fileLink, _) = try daemon(.pushSymbolicLink(path: "fw/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
+                                       body: Data("binary".utf8))
+        let (folderLink, _) = try daemon(.pushSymbolicLink(path: "fw/Versions/Current", target: "A", referent: .folder))
+
+        XCTAssertEqual(fileLink, .pushFile(didChange: true))
+        XCTAssertEqual(folderLink, .pushFile(didChange: true))
+        let (fetched, body) = try daemon(.fetch(fileSystem: .input, path: "fw/Tiny"))
+        XCTAssertEqual(fetched, .symbolicLink(target: "Versions/Current/Tiny"))
+        XCTAssertNil(body)
+        let file = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("fw/Tiny"))?.nodeAsAny() as? StaticFile)
+        XCTAssertEqual(try file.read().map { try $0.expectValue().resolveAsString() }, "binary", "what reads the bytes reads what it names")
+        let folder = try XCTUnwrap(try engine.inputFileSystem.childNode(path: Path("fw/Versions/Current")))
+        XCTAssertEqual(try folder.readFromOutputPort(Folder.symbolicLinkOutputPort).expectValue().resolveAsString(), "A")
+        XCTAssertTrue(try XCTUnwrap(folder.nodeAsAny() as? Folder).isPinned)
+
+        XCTAssertEqual(try daemon(.pushSymbolicLink(path: "fw/Tiny", target: "Versions/Current/Tiny", referent: .file(mode: 0o755)),
+                                  body: Data("binary".utf8)).0, .pushFile(didChange: false))
+        XCTAssertEqual(try daemon(.pushSymbolicLink(path: "fw/Versions/Current", target: "A", referent: .folder)).0,
+                       .pushFile(didChange: false))
+    }
+
     func test_pushFolderCreatesAPinnedFolder() throws {
         let (response, _) = try daemon(.pushFolder(path: "src/lib"))
 

@@ -55,7 +55,9 @@ public enum ProtocolVersion {
     /// Version 14 adds the `collect` request and its `collected` reply (B-14).
     /// Version 18 gives an error entry the `writers` of a machine file nobody has written
     /// (B-109).
-    public static let current = 18
+    /// Version 19 adds `pushSymbolicLink`, and `symbolicLink` in answer to a `fetch` of one
+    /// (B-77).
+    public static let current = 19
 }
 
 public struct Hello: Codable, Equatable, Sendable {

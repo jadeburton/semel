@@ -20,7 +20,9 @@ struct TreeMerger: Node {
     public static let kind: UInt = 32
 
     /// 2: the same entry from two trees merges instead of failing.
-    public static let implementationVersion = 2
+    /// 3: a tree's symbolic links merge as entries, and one tree's link where another holds
+    /// entries below it is a collision (B-77).
+    public static let implementationVersion = 3
 
     /// The trees to merge, one wire each; merged in wire-key order, which only matters
     /// for the error a collision produces.
@@ -44,8 +46,7 @@ struct TreeMerger: Node {
     )
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        var merged: [String: TreeManifestEntry] = [:]
-        var from: [String: String] = [:]
+        var merged = TreeMerge()
         let under = thisNode.properties[Self.underProperty].map { Path($0) } ?? .empty
 
         for (key, value) in (input.inputValues[Self.inputPort] ?? [:]).sorted(by: { $0.key < $1.key }) {
@@ -54,23 +55,21 @@ struct TreeMerger: Node {
             // way, rather than this node repeating a sentence another node wrote.
             let manifest: TreeManifest = try TypeRegistry.decodeAndCast(
                 encodedJSON: try value.expectValue().resolveAsString())
-            for entry in manifest.entries {
-                let placed = (under / Path(entry.path)).string
-                if let earlier = from[entry.path] {
-                    let held = merged[placed]
-                    guard held?.hash == entry.hash, held?.mode == entry.mode else {
-                        let message = "two trees hold '\(entry.path)': \(earlier) and \(key)"
-                        return .init(outputValues: [Self.outputPort: .noValue(reason: .error(messageDataObjectHash: try message.intern()))],
-                                     inputWireSpecs: [:])
-                    }
-                    continue
-                }
-                merged[placed] = TreeManifestEntry(path: placed, hash: entry.hash, mode: entry.mode)
-                from[entry.path] = key
+            // Every entry under one folder, so a link, relative to its own folder, still
+            // names what it named.
+            if let collision = merged.add(manifest.entries.map { $0.placed(under: under) }, from: key) {
+                return try failed(collision)
             }
         }
+        if let collision = merged.collisionBelowALink {
+            return try failed(collision)
+        }
 
-        let tree = TreeManifest(entries: Array(merged.values))
-        return .init(outputValues: [Self.outputPort: .value(try tree.toJSON().intern())], inputWireSpecs: [:])
+        return .init(outputValues: [Self.outputPort: .value(try merged.manifest.toJSON().intern())], inputWireSpecs: [:])
+    }
+
+    private func failed(_ collision: TreeMerge.Collision) throws -> ProcessOutput {
+        .init(outputValues: [Self.outputPort: .noValue(reason: .error(messageDataObjectHash: try collision.description.intern()))],
+              inputWireSpecs: [:])
     }
 }

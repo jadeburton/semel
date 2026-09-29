@@ -90,10 +90,11 @@ enum Projects {
     /// A Mac app from an Xcode project linking a local package's product that depends on a
     /// binary target by `path:` (B-77). The `.xcframework` is built by the run, not held by
     /// the repository (`BinaryTargetFixture`): a versioned `Tiny.framework`, links and all,
-    /// which the push follows. The converter reads the xcframework, the slice selector
-    /// chooses its Mac slice, the package and the app compile against it and the app links
-    /// it; the bundle embeds it under `Contents/Frameworks`, and the exported app loads it
-    /// through its runpath and prints its greeting. The app's synchronized folder also
+    /// which the push carries as links. The converter reads the xcframework, the slice
+    /// selector chooses its Mac slice, the package and the app compile against it and the app
+    /// links it; the bundle embeds it under `Contents/Frameworks`, links as links, the signed
+    /// export verifies deep and strict, and the exported app loads the framework through its
+    /// runpath and prints its greeting. The app's synchronized folder also
     /// holds a plist and, two folders down, a JSON file, which Xcode copies flat into
     /// `Contents/Resources` (B-77 item 2); the app reads both at launch and prints them.
     static let swiftBinaryTargetApp = Project(
@@ -301,8 +302,9 @@ enum Projects {
     /// header, thirty-five xibs compiled, xcconfig-layered settings, the Share and Safari
     /// extensions. The overlay `Fixtures/external/netnewswire` provides `SecretKey.swift`,
     /// which the project's scheme generates with gyb before a build and Semel runs no
-    /// scheme action; its README says how it was made. Unsigned, so inspected rather than
-    /// run: an unsigned arm64 app does not launch (item 11).
+    /// scheme action; its README says how it was made. Signed ad-hoc (item 11), Sparkle's
+    /// links carried as links, and the export verified deep and strict; inspected rather
+    /// than run.
     static let netNewsWireMac = Project(
         name: "netnewswire-mac",
         source: .git(url: "https://github.com/Ranchero-Software/NetNewsWire.git",
@@ -352,9 +354,9 @@ enum Projects {
             try AppInspection.checkLoadsEmbeddedFramework(
                 executable:  out.appendingPathComponent("NetNewsWire.app/Contents/MacOS/NetNewsWire"),
                 installName: "@rpath/Sparkle.framework/Versions/B/Sparkle")
-            // Signed as bundles, Sparkle with them (B-77). Not verified as a whole: Sparkle's
-            // links arrive as copies, which a versioned framework's signature does not
-            // allow, though the signer lays them as links while it signs.
+            // Signed as bundles, Sparkle with them (B-77), and verified as the whole it is:
+            // Sparkle's links travel as links from the push to the export.
+            try SignedBundleCheck.verified(out.appendingPathComponent("NetNewsWire.app"))
             for executable in ["NetNewsWire.app/Contents/MacOS/NetNewsWire",
                                "NetNewsWire.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
                                "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/MacOS/NetNewsWire Share Extension",

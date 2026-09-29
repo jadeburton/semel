@@ -130,6 +130,17 @@ final class FilePlugin: CommandPlugin {
                 if nameEachPath {
                     context.outputMessage("Push file: \(entry.path)\(didChange ? "" : " [no change]")")
                 }
+
+            // Counted with the files, whether it names a file or a folder: it is one entry
+            // of a tree, as a file is.
+            case .symbolicLink(let target, let didChange):
+                files += 1
+                if !didChange {
+                    unchanged += 1
+                }
+                if nameEachPath {
+                    context.outputMessage("Push link: \(entry.path) -> \(target)\(didChange ? "" : " [no change]")")
+                }
             }
         }
 
@@ -142,6 +153,7 @@ final class FilePlugin: CommandPlugin {
     /// What pushing one entry did, for the report the whole push makes at the end.
     private enum PushOutcome {
         case file(didChange: Bool)
+        case symbolicLink(target: String, didChange: Bool)
         case folder
     }
 
@@ -149,6 +161,9 @@ final class FilePlugin: CommandPlugin {
     ///
     /// A directory stands for itself and every file beneath it: a bare `push src` has no
     /// wildcard enumerating its contents, so without this it would create an empty folder.
+    /// And for every folder beneath it that is a symbolic link pushed as one, since a push
+    /// makes the other folders only on the way to a file, and a link is more than that
+    /// (B-77).
     private func expand(_ entry: FileWildcardEntry,
                         baseDirectory: String) throws -> [FileWildcardEntry] {
 
@@ -160,10 +175,9 @@ final class FilePlugin: CommandPlugin {
 
         let contents = try matcher.findAllMatching(pathOrWildcard: entry.path.string + "/**/*")
             .filter {
-                if case .file = $0.kind {
-                    return true
-                } else {
-                    return false
+                switch $0.kind {
+                case .file:   return true
+                case .folder: return $0.symbolicLinkTarget != nil
                 }
             }
 
@@ -176,43 +190,45 @@ final class FilePlugin: CommandPlugin {
 
         let relativePath = entry.path
 
-        switch entry.kind {
-
-        case .file:
-            let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath.string)
-
-            // The matcher listed this file a moment ago, but it can be deleted or made
-            // unreadable in between — that is a report-and-continue, not a crash.
-            let fileContent: Data
-            do {
-                fileContent = try Data(contentsOf: URL(fileURLWithPath: absolutePath))
-            } catch {
-                context.outputError("push: \(relativePath): \(error.localizedDescription)")
-                return nil
-            }
-
-            let mode = Self.mode(ofFileAt: absolutePath)
-
-            guard case .pushFile(let didChange) = try context.request(.pushFile(path: relativePath.string, mode: mode),
-                                                                       body: fileContent).0 else {
-                return nil
-            }
-            return .file(didChange: didChange)
-
-        case .folder:
+        if case .folder = entry.kind {
             // Just the folder. Its contents are separate entries in the work list, put
             // there by `expand`, so that a file reachable both directly and through its
             // folder is still pushed once.
-            _ = try context.request(.pushFolder(path: relativePath.string))
-            return .folder
+            guard let target = entry.symbolicLinkTarget else {
+                _ = try context.request(.pushFolder(path: relativePath.string))
+                return .folder
+            }
+            let request = DaemonRequest.pushSymbolicLink(path: relativePath.string, target: target, referent: .folder)
+            guard case .pushFile(let didChange) = try context.request(request).0 else {
+                return nil
+            }
+            return .symbolicLink(target: target, didChange: didChange)
         }
-    }
 
-    /// The file's permission bits, or the default when they cannot be read.
-    private static func mode(ofFileAt absolutePath: String) -> UInt16 {
-        let attributes  = try? FileManager.default.attributesOfItem(atPath: absolutePath)
-        let permissions = attributes?[.posixPermissions] as? NSNumber
-        return permissions.map { UInt16(truncatingIfNeeded: $0.intValue) } ?? FileMetadata.defaultMode
+        let absolutePath = (baseDirectory as NSString).appendingPathComponent(relativePath.string)
+
+        // The matcher listed this file a moment ago, but it can be deleted or made
+        // unreadable in between — that is a report-and-continue, not a crash.
+        let content: PushedContent
+        do {
+            content = try PushedContent(ofFileAt: absolutePath, listedAs: entry)
+        } catch {
+            context.outputError("push: \(relativePath): \(error.localizedDescription)")
+            return nil
+        }
+
+        guard let target = content.symbolicLinkTarget else {
+            guard case .pushFile(let didChange) = try context.request(.pushFile(path: relativePath.string, mode: content.mode),
+                                                                       body: content.bytes).0 else {
+                return nil
+            }
+            return .file(didChange: didChange)
+        }
+        let request = DaemonRequest.pushSymbolicLink(path: relativePath.string, target: target, referent: .file(mode: content.mode))
+        guard case .pushFile(let didChange) = try context.request(request, body: content.bytes).0 else {
+            return nil
+        }
+        return .symbolicLink(target: target, didChange: didChange)
     }
 
     // MARK: - rm
@@ -332,17 +348,35 @@ final class FilePlugin: CommandPlugin {
                              destinationPath: String, context: any CommandContext) throws {
         let (response, body) = try context.request(.fetch(fileSystem: fileSystem.kind, path: entry.path))
 
-        guard case .fetch(let mode) = response else {
-            context.outputError("File \(entry.path) has no content")
-            return
-        }
-        let bytes = body ?? Data()
-
         let path      = Path(entry.path)
         let finalPath = destinationPath + "/" + (path.lastComponent ?? path.string)
-        try bytes.write(to: URL(fileURLWithPath: finalPath))
-        chmod(finalPath, mode_t(mode))
-        context.outputMessage("File written: \(finalPath)")
+        switch response {
+        case .fetch(let mode):
+            try (body ?? Data()).write(to: URL(fileURLWithPath: finalPath))
+            chmod(finalPath, mode_t(mode))
+            context.outputMessage("File written: \(finalPath)")
+        case .symbolicLink(let target):
+            try Self.writeSymbolicLink(at: finalPath, target: target)
+            context.outputMessage("Link written: \(finalPath) -> \(target)")
+        default:
+            context.outputError("File \(entry.path) has no content")
+        }
+    }
+
+    /// A link at `path` to `target`, replacing whatever is there — a file, a folder an
+    /// earlier export left, another link — without following it.
+    private static func writeSymbolicLink(at path: String, target: String) throws {
+        try removeWithoutFollowing(path)
+        try FileManager.default.createSymbolicLink(atPath: path, withDestinationPath: target)
+    }
+
+    /// Removes what is at `path`, a link itself and never what it names. `attributesOfItem`
+    /// does not follow a link, where `fileExists` would, and would miss one naming nothing.
+    private static func removeWithoutFollowing(_ path: String) throws {
+        guard (try? FileManager.default.attributesOfItem(atPath: path)) != nil else {
+            return
+        }
+        try FileManager.default.removeItem(atPath: path)
     }
 
     // MARK: - export
@@ -414,31 +448,43 @@ final class FilePlugin: CommandPlugin {
         context.outputMessage("Exported \(exported) file\(exported == 1 ? "" : "s") into \(externalDest)")
     }
 
-    /// Writes one exported file below `destinationPath`, at the place it holds below
-    /// `folderPath`, creating the directories on the way. Returns whether it was written.
+    /// Writes one exported file or link below `destinationPath`, at the place it holds
+    /// below `folderPath`, creating the directories on the way. Returns whether it was
+    /// written.
     private func exportOneFile(_ entry: ListEntry, below folderPath: Path,
                                destinationPath: String, context: any CommandContext) throws -> Bool {
         let (response, body) = try context.request(.fetch(fileSystem: .output, path: entry.path))
-        guard case .fetch(let mode) = response else {
-            context.outputError("export: \(entry.path): not a file")
-            return false
-        }
 
         let relative  = Path(entry.path).relative(to: folderPath)?.string ?? entry.path
         let finalPath = destinationPath + "/" + relative
 
-        try FileManager.default.createDirectory(
-                at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
-                withIntermediateDirectories: true)
-        // What an earlier export left is replaced, whatever mode it was left with: a
-        // vendored resource arrives read-only and leaves read-only (B-108), and a write
-        // over it would be refused, so a second `build --into` the same folder failed on
-        // every such file (B-125).
-        if FileManager.default.fileExists(atPath: finalPath) {
-            try FileManager.default.removeItem(atPath: finalPath)
+        switch response {
+        case .fetch(let mode):
+            try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+            // What an earlier export left is replaced, whatever mode it was left with: a
+            // vendored resource arrives read-only and leaves read-only (B-108), and a write
+            // over it would be refused, so a second `build --into` the same folder failed on
+            // every such file (B-125).
+            try Self.removeWithoutFollowing(finalPath)
+            try (body ?? Data()).write(to: URL(fileURLWithPath: finalPath))
+            chmod(finalPath, mode_t(mode))
+            return true
+
+        // A link is written as the link: a versioned framework's `Versions/Current` and the
+        // links at its top are what makes its signature verify (B-77). No mode: a link's is
+        // not read.
+        case .symbolicLink(let target):
+            try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: finalPath).deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+            try Self.writeSymbolicLink(at: finalPath, target: target)
+            return true
+
+        default:
+            context.outputError("export: \(entry.path): not a file")
+            return false
         }
-        try (body ?? Data()).write(to: URL(fileURLWithPath: finalPath))
-        chmod(finalPath, mode_t(mode))
-        return true
     }
 }

@@ -38,20 +38,23 @@ final class DependencyLockFoldTests: SemelCoreTestCase {
         try content.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    /// What `push <folder>` stores: each file the matcher finds under it, at its path.
+    /// What `push <folder>` stores, as the client and the server store it: each file the
+    /// matcher finds under it at its path, with its bytes, mode and — for a link inside its
+    /// folder — its target, and each folder that is such a link as one (B-77).
     private func push(_ folder: String) throws {
         let matcher = FileWildcardMatcher(input: ExternalFileSystemLister(rootDirectoryPath: disk.path))
         for entry in try matcher.findAllMatching(pathOrWildcard: "\(folder)/**/*") {
-            guard case .file = entry.kind else {
-                continue
+            switch entry.kind {
+            case .folder:
+                guard let target = entry.symbolicLinkTarget else {
+                    continue
+                }
+                _ = try Folder.pushSymbolicLink(target: target, at: entry.path)
+            case .file:
+                let content = try PushedContent(ofFileAt: disk.appendingPathComponent(entry.path.string).path, listedAs: entry)
+                _ = try StaticFile.push([UInt8](content.bytes), mode: content.mode,
+                                        symbolicLinkTarget: content.symbolicLinkTarget, at: entry.path)
             }
-            let bytes = try Data(contentsOf: disk.appendingPathComponent(entry.path.string))
-            _ = try engine.inputFileSystem.ensureEntirePathExistsAsFolders(entry.path.deletingLastComponent ?? .empty,
-                                                                            pinned: true)
-            let fullPath = Path(Folder.inputFileSystemName) / entry.path
-            let (node, _) = try GraphSpecNode.staticFile(at: fullPath.string).findOrCreateMatchingNode()
-            let file = try XCTUnwrap(node.nodeAsAny() as? StaticFile)
-            _ = try file.replaceContent([UInt8](bytes).intern())
         }
         try Folder.flushDirtyManifests()
     }
@@ -80,6 +83,48 @@ final class DependencyLockFoldTests: SemelCoreTestCase {
 
         XCTAssertEqual(try FolderContentRoot.root(ofFolderAt: disk.appendingPathComponent("Dependencies/GRDB.swift")),
                        try engineRoot(of: "Dependencies/GRDB.swift"))
+    }
+
+    /// A vendored binary artifact's framework, as a vendor builds one: `Versions/A`, the
+    /// `Versions/Current` link to it, and the links at its top to what is in it — beside a
+    /// link out of the package, which a push follows. Each link inside its folder is pushed
+    /// as one, what it names pushed below it as always, and the engine folds the tree the
+    /// disk folds (B-77).
+    func test_aTreeHoldingLinksFoldsTheSameInTheEngineAsOnDisk() throws {
+        let framework = "Dependencies/Sparkle/semel-artifacts/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+        try write("Dependencies/Sparkle/Package.swift", "// swift-tools-version: 5.9\n")
+        try write("\(framework)/Versions/B/Sparkle", "binary")
+        try write("\(framework)/Versions/B/Headers/Sparkle.h", "header")
+        try write("\(framework)/Versions/B/Resources/Info.plist", "plist")
+        try write("Shared/outside.h", "outside")
+        let fileManager = FileManager.default
+        let frameworkURL = disk.appendingPathComponent(framework)
+        try fileManager.createSymbolicLink(atPath: frameworkURL.appendingPathComponent("Versions/Current").path,
+                                           withDestinationPath: "B")
+        for name in ["Sparkle", "Headers", "Resources"] {
+            try fileManager.createSymbolicLink(atPath: frameworkURL.appendingPathComponent(name).path,
+                                               withDestinationPath: "Versions/Current/\(name)")
+        }
+        try fileManager.createSymbolicLink(atPath: disk.appendingPathComponent("Dependencies/Sparkle/outside.h").path,
+                                           withDestinationPath: "../../Shared/outside.h")
+
+        try push("Dependencies/Sparkle")
+
+        let pushedRoot = try engineRoot(of: "Dependencies/Sparkle")
+        XCTAssertEqual(try FolderContentRoot.root(ofFolderAt: disk.appendingPathComponent("Dependencies/Sparkle")), pushedRoot)
+
+        // And a retargeted link moves both, though nothing it could name changed.
+        try fileManager.removeItem(at: frameworkURL.appendingPathComponent("Versions/Current"))
+        try write("\(framework)/Versions/C/Sparkle", "binary")
+        try write("\(framework)/Versions/C/Headers/Sparkle.h", "header")
+        try write("\(framework)/Versions/C/Resources/Info.plist", "plist")
+        try fileManager.createSymbolicLink(atPath: frameworkURL.appendingPathComponent("Versions/Current").path,
+                                           withDestinationPath: "C")
+        try push("Dependencies/Sparkle")
+
+        let moved = try engineRoot(of: "Dependencies/Sparkle")
+        XCTAssertNotEqual(moved, pushedRoot)
+        XCTAssertEqual(try FolderContentRoot.root(ofFolderAt: disk.appendingPathComponent("Dependencies/Sparkle")), moved)
     }
 
     /// The other half of the contract: a copy that moved no longer matches, and a file the

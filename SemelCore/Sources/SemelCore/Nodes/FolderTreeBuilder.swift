@@ -12,7 +12,9 @@ import SemelNodeKit
 /// puts every file on one port with its path relative to the folder, so a folder that
 /// has to travel whole — a C target's headers and module map, for a formula that only
 /// knows the product they belong to — can travel as one value. Each file keeps the mode
-/// it was pushed with, which is demanded beside the file's bytes.
+/// it was pushed with, which is demanded beside the file's bytes, and a file or folder
+/// pushed as a symbolic link is the link it is: the walk does not descend into a folder
+/// link, and what a link names is in the tree where it is (B-77).
 struct FolderTreeBuilder: Node {
 
     public static let kind: UInt = 35
@@ -20,7 +22,8 @@ struct FolderTreeBuilder: Node {
     /// 2: each file's pushed mode, where every entry had the default. The walk demands
     /// the modes itself, so the passes before they arrive are keyed on the folder and the
     /// files alone — the key an entry of version 1 was written under.
-    public static let implementationVersion = 2
+    /// 3: a file pushed as a symbolic link is a link entry (B-77).
+    public static let implementationVersion = 3
 
     /// The folder, one wire: `Folder(path: ...).manifest`.
     static let folderPort = "folder"
@@ -48,7 +51,7 @@ struct FolderTreeBuilder: Node {
         let roots      = FolderTreeWalk.manifests(in: input, port: Self.folderPort)
         let subfolders = FolderTreeWalk.manifests(in: input, port: Self.subfoldersPort)
         let manifests  = (roots + subfolders).map(\.manifest)
-        let subfolderSpecs = FolderTreeWalk.subfolderSpecs(of: manifests)
+        let subfolderSpecs = FolderTreeWalk.subfolderSpecs(of: manifests, intoSymbolicLinks: false)
         let fileSpecs      = FolderTreeWalk.fileSpecs(of: manifests)
         let metadataSpecs  = fileSpecs.mapValues { $0.port(FileMetadata.portName) }
         let specs = [Self.subfoldersPort:   subfolderSpecs,
@@ -67,15 +70,23 @@ struct FolderTreeBuilder: Node {
 
         let rootPath = Path(root.baseFolderPath)
         let under = thisNode.properties[Self.underProperty].map { Path($0) } ?? .empty
-        var entries: [TreeManifestEntry] = []
+        var files: [TreeManifest.PlacedFile] = []
         for (fullPath, value) in (input.inputValues[Self.filesPort] ?? [:]).sorted(by: { $0.key < $1.key }) {
             guard let relative = Path(fullPath).relative(to: rootPath) else {
                 continue
             }
-            entries.append(TreeManifestEntry(path: (under / relative).string, hash: try value.expectValue(),
-                                             mode: FileMetadata.mode(of: metadata[fullPath])))
+            files.append(.init(path: (under / relative).string, hash: try value.expectValue(),
+                               metadata: FileMetadata.metadata(of: metadata[fullPath])))
         }
-        return .init(outputValues: [Self.outputPort: .value(try TreeManifest(entries: entries).toJSON().intern())],
+        var folderLinks: [String: String] = [:]
+        for (fullPath, target) in FolderTreeWalk.symbolicLinkFolders(of: manifests).sorted(by: { $0.key < $1.key }) {
+            guard let relative = Path(fullPath).relative(to: rootPath) else {
+                continue
+            }
+            folderLinks[(under / relative).string] = target
+        }
+        let tree = TreeManifest(placing: files, folderLinks: folderLinks)
+        return .init(outputValues: [Self.outputPort: .value(try tree.toJSON().intern())],
                      inputWireSpecs: specs)
     }
 }

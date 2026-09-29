@@ -32,9 +32,12 @@ class SemelAppleTestCase: XCTestCase {
 
     // MARK: - Helpers
 
-    func manifestValue(_ path: String, files: [String] = [], folders: [String] = []) throws -> NodeValue {
+    /// `folderLinks` names the subfolders that are symbolic links pushed as ones, with what
+    /// each holds.
+    func manifestValue(_ path: String, files: [String] = [], folders: [String] = [],
+                       folderLinks: [String: String] = [:]) throws -> NodeValue {
         let entries = files.map { FolderManifestEntry(name: $0, isFolder: false, isPinned: true) }
-                    + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true) }
+                    + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true, symbolicLinkTarget: folderLinks[$0]) }
         return .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
     }
 
@@ -66,6 +69,8 @@ final class RecordingToolRunner: ToolRunner {
     var producedFiles: [String: [UInt8]] = [:]
     /// Trees the fake tool "produces": folder -> relative path -> bytes.
     var producedTrees: [String: [String: [UInt8]]] = [:]
+    /// Symbolic links the fake tool leaves in its trees: folder -> relative path -> target.
+    var producedLinks: [String: [String: String]] = [:]
     var exitCode: Int32 = 0
     var errorOutput = ""
     var infoOutput = ""
@@ -100,6 +105,9 @@ final class RecordingToolRunner: ToolRunner {
         for folder in expectedOutputFolders {
             for (relativePath, data) in (producedTrees[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 output.writeTreeEntry(folder, relativePath, try data.intern(), FileMetadata.defaultMode)
+            }
+            for (relativePath, target) in (producedLinks[folder] ?? [:]).sorted(by: { $0.key < $1.key }) {
+                output.writeTreeLink(folder, relativePath, target)
             }
         }
 

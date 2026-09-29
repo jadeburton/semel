@@ -110,6 +110,8 @@ final class DictionaryOrderTests: XCTestCase {
             "a literal array of the two kinds a child can be",
         "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.contentRootOutputPort),":
             "a literal array of the two kinds a child can be, each with the port its content is on",
+        "SemelCore/Sources/SemelCore/Nodes/Folder.swift: [(Folder.kind,     Folder.symbolicLinkOutputPort),":
+            "a literal array of the two kinds a child can be, each with the port a link's target is on",
 
         // ── accumulated into a dictionary or a set: the result is order-free ─────
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: headerInputFiles":
@@ -148,8 +150,6 @@ final class DictionaryOrderTests: XCTestCase {
             "builds one entry per cause, and the entries are sorted before they are returned",
         "SemelCore/Sources/SemelCore/FormulaParser.swift: templateEnv":
             "each binding expands its own marker, and no two bindings share one",
-        "SemelCore/Sources/SemelCore/Nodes/TreeMerger.swift: merged.values":
-            "a TreeManifest sorts its entries by path when it is built",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: specs.keys":
             "the missing paths are counted and reported sorted",
         "SemelNodeKit/Sources/SemelNodeKit/ToolRunner.swift: toolsByIdentity.values":
