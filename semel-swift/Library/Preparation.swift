@@ -250,9 +250,24 @@ public enum Preparation {
         }.sorted { $0.path < $1.path }
     }
 
-    /// Every package vendored under `dependencies`, none when nothing was.
+    /// Every package vendored under `dependencies`, none when nothing was: each folder
+    /// directly in it that holds a manifest, and nothing below. A vendored checkout is one
+    /// package; what it keeps deeper is its own — purchases-ios has a `Tests/Package.swift`
+    /// that does not even parse on its own — and `dump-package` on such a folder failed
+    /// the whole `prepare` of the IceCubes app (2026-09-29).
     static func vendoredManifestFolders(in dependencies: URL) throws -> [URL] {
-        FileManager.default.fileExists(atPath: dependencies.path) ? try PackageScan.manifestFolders(under: dependencies) : []
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: dependencies.path) else {
+            return []
+        }
+        let children = try fileManager.contentsOfDirectory(at: dependencies,
+                                                           includingPropertiesForKeys: [.isDirectoryKey],
+                                                           options: [.skipsHiddenFiles])
+        return children
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .filter { PackageScan.isManifest($0.appendingPathComponent("Package.swift")) }
+            .map(\.standardizedFileURL)
+            .sorted { $0.path < $1.path }
     }
 
     /// The one `.xcodeproj` directly in `folder`, if there is one; two is a question the
