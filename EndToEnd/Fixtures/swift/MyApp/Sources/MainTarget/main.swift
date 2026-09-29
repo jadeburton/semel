@@ -20,6 +20,7 @@ class MyClass: MyBaseClass {
 func main() throws {
     print("Build System 2.0 (C) 2026 Jade Burton. All rights reserved.")
     print(StringUtility.blah(a: "x"))
+    print(WordPattern.firstWord(in: "42 semel") ?? "")
 }
 
 try main()

@@ -1192,7 +1192,8 @@ application target, simulator only, all library code in packages. In suggested o
    keys on every build, noise worth silencing at the writer. A package *tree* with
    resources still wants the `apple.*` namespaces in its config, which `prepare` does
    not write for a tree.
-2. *NetNewsWire* — `open`; the settings are done (2026-09-28), the build is not. Pinned
+2. *NetNewsWire* — `open`; the Mac app builds (2026-09-29) and is in the roster as
+   `netnewswire-mac` (below, after the map); signing (11), the iOS app, 15 and 17 remain. Pinned
    at `b4361413fc1850110f9f42652f0f84e7a51e9d64` (main, 2026-09-23). The clone is not what
    this entry said from memory: there are no framework targets and no group-listed
    sources — the Mac and iOS apps, two Mac extensions (Share, and the Safari extension
@@ -1587,20 +1588,53 @@ application target, simulator only, all library code in packages. In suggested o
       target's own folders' catalogs and its resources phase's, not a borrowed one, which
       it passes over as not a copied resource. Seen reading the exception sets, not met
       on the Mac build; for the iOS app.
-   16. **A package target's upcoming features do not reach its compiler.** The next stop
+   16. ~~**A package target's upcoming features do not reach its compiler.**~~ Done
       (2026-09-29). Every local package's targets declare
       `.enableUpcomingFeature("NonisolatedNonsendingByDefault")` and
-      `"InferIsolatedConformances"` in `swiftSettings`, and the Swift converter carries
-      only `.swiftLanguageMode` from them. So `RSCore` compiles `UserApp.launchIfNeeded()`,
-      a `nonisolated` async method, as running off the caller's actor, where under the
-      feature it runs on it (`nonisolated(nonsending)`), and the app's Swift 6 compile
-      fails in `Shared/ExtensionPoints/SendToMarsEditCommand.swift` and
-      `SendToMicroBlogCommand.swift` on `sending 'app' risks causing data races`. The
-      fix is `SwiftFormulaConverter`'s: carry `enableUpcomingFeature` (and
-      `enableExperimentalFeature`) to `-enable-upcoming-feature`, and decide what
-      `unsafeFlags` (`Secrets`' `-warnings-as-errors`) is worth. Beside it, the app's own
-      `OTHER_SWIFT_FLAGS` do not reach its compiler either, though in Debug they add
-      only `-D`s the compilation conditions already give and two frontend warnings.
+      `"InferIsolatedConformances"`, eight of them `.unsafeFlags(["-warnings-as-errors"])`,
+      and the converter carried only `.swiftLanguageMode`; so `RSCore` compiled
+      `UserApp.launchIfNeeded()` as plain `nonisolated` async and the app's Swift 6
+      compile failed on `sending 'app' risks causing data races`. As built
+      (`SwiftFormulaConverter` v13, `SwiftCompiler` v2):
+      - *The settings, typed.* The converter reads each target's Swift settings into
+        `SPMSwiftSetting` — an upcoming or experimental feature, a `.define`, the
+        `unsafeFlags` list, a language mode — each with the platforms it holds for, and
+        decides them for the platform being built as the linker settings are (PR #131):
+        a `.when(platforms:)` entry makes the conversion ask for the linker's settings
+        and take their `sdk`. One conditional on a configuration is not carried, as for
+        a linker setting. Each kind reaches the compiler as a literal of its own —
+        `upcomingFeatures`, `experimentalFeatures`, `defines` comma-joined, `unsafeFlags`
+        a JSON list since a flag is free text and may hold a comma — and
+        `SwiftCompilerConfiguration` writes `-enable-upcoming-feature X`,
+        `-enable-experimental-feature X` and `-D X` after `-swift-version`, and the unsafe
+        flags as they stand after the sources. Not carried yet, named at the decoder:
+        `interoperabilityMode`, `defaultIsolation`, `strictMemorySafety`,
+        `treatAllWarnings`, `treatWarning` (NetNewsWire uses none).
+      - *A package's language mode.* With the features in, `RSWeb` stopped on `emitting
+        module interface files requires '-language-mode'`, a warning made fatal by its
+        `-warnings-as-errors`: SwiftPM compiles a target that declares no mode in its
+        package's — the highest of the manifest's `swiftLanguageModes` this compiler has,
+        or else the tools version's (6 from `swift-tools-version:6.0` on, 5 from 5.x,
+        4.2 from 4.2) — and the converter passed nothing, which is swiftc's Swift 5.
+        Every NetNewsWire package is `swift-tools-version:6.2`, so every one had been
+        compiling in the wrong mode. `SPMManifest.languageMode` now decides it, and a
+        target's own `.swiftLanguageMode` wins over it.
+      - *No module interface.* Then `module interfaces are only supported with
+        -enable-library-evolution`, the same way (and `ActivityLog`'s class shadowing its
+        module, an interface-only warning): SwiftPM writes a `.swiftinterface` only with
+        library evolution, nothing consumed the one `SwiftCompiler` wrote, so it writes
+        none and has no `swiftinterface` port.
+      Pinned by `SwiftFormulaConverterTests` (a manifest with each kind, decided for the
+      Mac and the simulator, unconditional ones asking for no platform, the literals the
+      compiler reads back, the package's mode from the tools version and
+      `swiftLanguageModes`) and `SwiftCompilerTests` (the command line, a malformed
+      `unsafeFlags`, no interface with or without a bridging header); end to end by
+      `swift-my-app`, whose `MyLibraryTargetB` now needs its settings to compile: a
+      bare-slash regex literal under `.enableUpcomingFeature("BareSlashRegexLiterals")`
+      and a `.define` its source `#error`s without (both fail the fixture on the code
+      before). Beside it, still: the app's own `OTHER_SWIFT_FLAGS` do not reach its
+      compiler, though in Debug they add only `-D`s the compilation conditions already
+      give and two frontend warnings.
    17. **A package's xibs are copied into its resource bundle.** `RSCore`'s
       `RSCoreResources` target holds `WebViewWindow.xib` and
       `IndeterminateProgressWindow.xib`, and SwiftPM's `.process` rule compiles a xib to
@@ -1646,8 +1680,42 @@ application target, simulator only, all library code in packages. In suggested o
    (only Sparkle's framework must be embedded); the script phases, of which the build
    numbers one is all comments, *Delete Unnecessary Frameworks* runs for Release only,
    and *Verify No Build Settings* checks the project file; `NetNewsWire.sdef`, which
-   Xcode copies too. NetNewsWire joins the roster, as `netnewswire-mac`, when it builds,
-   over the overlay `external/netnewswire` (4).
+   Xcode copies too.
+
+   Checked again 2026-09-29, once 16 was done (with the package language mode and the
+   module interface it brought out, above), on a fresh clone at the pinned commit with
+   the overlay laid, `prepare --platform macos` and `build` on a fresh home: 1,103 nodes,
+   no errors, about 100 s cold. Nothing after 16 stopped it: the app's link — Sparkle's
+   framework, the Objective-C object, every package's `linking_` requirements (libz,
+   libc++, `libsqlite3`, the frameworks) — the two extensions and the bundle's assembly
+   needed no change. The export is `NetNewsWire.app`: an arm64 `Contents/MacOS/NetNewsWire`
+   loading `@rpath/Sparkle.framework/Versions/B/Sparkle` through
+   `@executable_path/../Frameworks`, the Info.plist with the Debug bundle identifier,
+   `Assets.car`, `AppIcon.icns`, twenty-three `Base.lproj` nibs and the app's other
+   nibs, the themes, `NetNewsWire.sdef`, the package bundles
+   (`PLCrashReporter_CrashReporter`, `ActivityLog_ActivityLog`, `RSCore_RSCoreResources`),
+   `Frameworks/Sparkle.framework`, and under `PlugIns` the Share extension (its
+   executable, plist, `ShareViewController.nib`) and *Subscribe to Feed* (executable,
+   plist). Unsigned, so not launched (11).
+
+   *In the roster* as `netnewswire-mac` (`Projects.netNewsWireMac`,
+   `ExternalProjectTests.test_netNewsWireBuildsTwiceForTheMac`): the pinned commit, the
+   overlay `external/netnewswire` (4), `--platform macos`, the clone's root as the build
+   folder, thirteen expected products across the app, the framework and both extensions,
+   four of them required executable, everything under `NetNewsWire.app`, and the export
+   inspected — `file` says arm64 executable, `otool -L` the Sparkle install name,
+   `otool -l` the runpath (`AppInspection`, shared with `swift-binary-target-app`). One
+   exemption, `Assets.car`, actool's (B-89), as for the other apps; no other file differed
+   between the builds. All four hermeticity builds run — two cold builds, a second
+   mount, a perturbed environment — in 528 s wall clock for the whole test, `prepare`
+   included, each step well inside `buildTimeout` (10 min).
+
+   What remains for NetNewsWire: signing and entitlements (11, another piece of work);
+   the iOS app and its extensions; a borrowed asset catalog (15, the iOS Share
+   extension); a package's xibs compiled into its resource bundle (17 —
+   `RSCore_RSCoreResources.bundle` still holds `WebViewWindow.xib` and
+   `IndeterminateProgressWindow.xib` as copies); the app's `OTHER_SWIFT_FLAGS` (16's
+   note); and 1's residuals (a framework's links as copies, the whole download pushed).
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.

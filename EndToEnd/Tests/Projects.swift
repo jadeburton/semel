@@ -46,7 +46,9 @@ enum Projects {
         buildTimeout: fixtureTimeout)
 
     /// MyLibrary is a path dependency beside MyApp: `build` pushes its own folder, the
-    /// converter reports the folder it needs, and `build` follows it (B-110).
+    /// converter reports the folder it needs, and `build` follows it (B-110). Its
+    /// `MyLibraryTargetB` compiles only with its `swiftSettings`: a bare-slash regex literal
+    /// that needs the upcoming feature, and a `.define` its source `#error`s without (B-77).
     static let swiftMyApp = Project(
         name: "swift-my-app",
         source: .fixture(folder: "."),
@@ -292,7 +294,55 @@ enum Projects {
         mayDiffer: ["Assets.car"],
         onlyUnder: "Food Truck.app")
 
+    /// NetNewsWire's Mac app (B-77 item 2): seventeen local packages found through a
+    /// synchronized folder, Sparkle's binary framework vendored and embedded,
+    /// PLCrashReporter's C and Objective-C, the app's own Objective-C behind a bridging
+    /// header, thirty-five xibs compiled, xcconfig-layered settings, the Share and Safari
+    /// extensions. The overlay `Fixtures/external/netnewswire` provides `SecretKey.swift`,
+    /// which the project's scheme generates with gyb before a build and Semel runs no
+    /// scheme action; its README says how it was made. Unsigned, so inspected rather than
+    /// run: an unsigned arm64 app does not launch (item 11).
+    static let netNewsWireMac = Project(
+        name: "netnewswire-mac",
+        source: .git(url: "https://github.com/Ranchero-Software/NetNewsWire.git",
+                     commit: "b4361413fc1850110f9f42652f0f84e7a51e9d64",
+                     subfolder: ".",
+                     overlay: "external/netnewswire"),
+        buildFolder: "netnewswire-mac",
+        platform: "macos",
+        expectedProducts: [
+            "NetNewsWire.app/Contents/MacOS/NetNewsWire",
+            "NetNewsWire.app/Contents/Info.plist",
+            "NetNewsWire.app/Contents/Resources/Assets.car",
+            "NetNewsWire.app/Contents/Resources/AppIcon.icns",
+            "NetNewsWire.app/Contents/Resources/Base.lproj/MainWindow.nib",
+            "NetNewsWire.app/Contents/Resources/Sepia.nnwtheme/Info.plist",
+            "NetNewsWire.app/Contents/Resources/PLCrashReporter_CrashReporter.bundle/PrivacyInfo.xcprivacy",
+            "NetNewsWire.app/Contents/Resources/ActivityLog_ActivityLog.bundle/es.lproj/Localizable.strings",
+            "NetNewsWire.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+            "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/MacOS/NetNewsWire Share Extension",
+            "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/Info.plist",
+            "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/Resources/Base.lproj/ShareViewController.nib",
+            "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/MacOS/Subscribe to Feed",
+            "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/Info.plist",
+        ],
+        buildTimeout: 10 * 60,
+        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
+        mayDiffer: ["Assets.car"],
+        onlyUnder: "NetNewsWire.app",
+        executables: [
+            "NetNewsWire.app/Contents/MacOS/NetNewsWire",
+            "NetNewsWire.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+            "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/MacOS/NetNewsWire Share Extension",
+            "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/MacOS/Subscribe to Feed",
+        ],
+        exported: { out in
+            try AppInspection.checkLoadsEmbeddedFramework(
+                executable:  out.appendingPathComponent("NetNewsWire.app/Contents/MacOS/NetNewsWire"),
+                installName: "@rpath/Sparkle.framework/Versions/B/Sparkle")
+        })
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac]
     static let all: [Project] = fixtures + external
 }

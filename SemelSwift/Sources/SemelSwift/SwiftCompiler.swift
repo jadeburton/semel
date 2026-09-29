@@ -30,6 +30,17 @@ struct SwiftCompilerConfiguration {
     /// The target's `.swiftLanguageMode`, carried by the converter as a literal; nil means
     /// the compiler's default mode, which is what every target without one built with.
     let languageMode: String?
+    /// The target's `.enableUpcomingFeature` and `.enableExperimentalFeature` names, each an
+    /// `-enable-upcoming-feature` or `-enable-experimental-feature` (B-77). Literals from the
+    /// converter, as `languageMode` is.
+    let upcomingFeatures: [String]
+    let experimentalFeatures: [String]
+    /// The target's Swift `.define` names, each a `-D`.
+    let defines: [String]
+    /// The target's `.unsafeFlags`, passed as they stand after everything else the
+    /// settings give, as SwiftPM places them. A JSON list in the setting, since a flag may
+    /// hold the comma every other list here is joined with.
+    let unsafeFlags: [String]
     /// SPM's `sources:` list, relative to the target folder. Empty means the whole tree.
     let sourcePaths: [String]
     /// SPM's `exclude:` list, relative to the target folder.
@@ -57,6 +68,10 @@ struct SwiftCompilerConfiguration {
         optimisationLevel = properties["optimisationLevel"]
         parseAsLibrary = properties["parseAsLibrary"] != "false"
         languageMode = properties["languageMode"]
+        upcomingFeatures = Self.pathList(properties["upcomingFeatures"])
+        experimentalFeatures = Self.pathList(properties["experimentalFeatures"])
+        defines = Self.pathList(properties["defines"])
+        unsafeFlags = try Self.flagList(properties["unsafeFlags"])
         sourcePaths = Self.pathList(properties["sourcePaths"])
         excludedPaths = Self.pathList(properties["excludedPaths"])
         resourceBundleName = properties["resourceBundleName"].flatMap { $0.isEmpty ? nil : $0 }
@@ -100,6 +115,23 @@ struct SwiftCompilerConfiguration {
     /// Configuration values are one line of `key=value`, so a list is comma-joined.
     private static func pathList(_ value: String?) -> [String] {
         (value ?? "").split(separator: ",").map(String.init).filter { !$0.isEmpty }
+    }
+
+    /// `unsafeFlags` as the converter writes it: a JSON list of strings, on one line.
+    static func encodedFlagList(_ flags: [String]) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return String(decoding: try encoder.encode(flags), as: UTF8.self)
+    }
+
+    private static func flagList(_ value: String?) throws -> [String] {
+        guard let value, !value.isEmpty else {
+            return []
+        }
+        guard let flags = try? JSONDecoder().decode([String].self, from: Data(value.utf8)) else {
+            throw NodeError.other(message: "\(settingNamespace).unsafeFlags=\(value) is not a JSON list of strings")
+        }
+        return flags
     }
 
     /// Where this node's settings live in a config file: `swift.compiler.sdkVersion`.
@@ -174,6 +206,11 @@ struct SourceScope {
 struct SwiftCompiler: Node {
     public static let kind: UInt = 20
 
+    /// At 2, no module interface and no `swiftinterface` port: a package target's
+    /// `-warnings-as-errors` made swiftc's warning that an interface wants library evolution
+    /// fatal (B-77).
+    public static let implementationVersion = 2
+
     // MARK: Ports
 
     static let configuration         = "configuration"
@@ -224,7 +261,6 @@ struct SwiftCompiler: Node {
     static let objectiveCFolder      = "objc"
     static let outputObject          = "object"
     static let outputModule          = "swiftmodule"
-    static let outputInterface       = "swiftinterface"
     static let infoLog               = "infoLog"
 
     public var thisNode: NodeRecord
@@ -250,7 +286,7 @@ struct SwiftCompiler: Node {
             .dynamic(inputSubfolders),
             .dynamic(inputModuleMapFiles),
         ],
-        outputPorts: [outputObject, outputModule, outputInterface, infoLog]
+        outputPorts: [outputObject, outputModule, infoLog]
     )
 
     // The SDK a build declares reaches this node the ordinary way: `swift.compiler.sdkVersion`
@@ -382,19 +418,17 @@ struct SwiftCompiler: Node {
     }
 
     struct SwiftCompilerOutputs {
-        let outputObject:    NodeValue
-        let outputModule:    NodeValue
-        let outputInterface: NodeValue
-        let infoLog:         NodeValue
+        let outputObject: NodeValue
+        let outputModule: NodeValue
+        let infoLog:      NodeValue
         let inputSourceFilesSpecs:    [String: GraphSpecNode]
         let inputSubfoldersSpecs:     [String: GraphSpecNode]
         let inputModuleMapFilesSpecs: [String: GraphSpecNode]
 
         func asProcessOutput() -> ProcessOutput {
-            .init(outputValues: [SwiftCompiler.outputObject:    outputObject,
-                                 SwiftCompiler.outputModule:    outputModule,
-                                 SwiftCompiler.outputInterface: outputInterface,
-                                 SwiftCompiler.infoLog:         infoLog],
+            .init(outputValues: [SwiftCompiler.outputObject: outputObject,
+                                 SwiftCompiler.outputModule: outputModule,
+                                 SwiftCompiler.infoLog:      infoLog],
                   inputWireSpecs: [
                       SwiftCompiler.inputSourceFiles:    inputSourceFilesSpecs,
                       SwiftCompiler.inputSubfolders:     inputSubfoldersSpecs,
@@ -431,7 +465,6 @@ struct SwiftCompiler: Node {
             let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "SwiftCompiler: no source files".intern()))
             return .init(outputObject: error,
                          outputModule: error,
-                         outputInterface: error,
                          infoLog: .value(""),
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
                          inputSubfoldersSpecs: inputSubfoldersSpecs,
@@ -441,7 +474,6 @@ struct SwiftCompiler: Node {
         let moduleName      = inputs.configuration.moduleName
         let objectOutput    = "\(moduleName).o"
         let moduleOutput    = "\(moduleName).swiftmodule"
-        let interfaceOutput = "\(moduleName).swiftinterface"
 
         var arguments = [String]()
         // The arguments built from settings, collected as they are appended so a swiftc
@@ -469,6 +501,15 @@ struct SwiftCompiler: Node {
         if let languageMode = try swiftLanguageModeVersion(inputs.configuration.languageMode) {
             arguments.append("-swift-version");              arguments.append(languageMode)
         }
+        for feature in inputs.configuration.upcomingFeatures {
+            arguments.append("-enable-upcoming-feature");    arguments.append(feature)
+        }
+        for feature in inputs.configuration.experimentalFeatures {
+            arguments.append("-enable-experimental-feature"); arguments.append(feature)
+        }
+        for define in inputs.configuration.defines {
+            arguments.append("-D");                          arguments.append(define)
+        }
 
         if inputs.configuration.parseAsLibrary {
             arguments.append("-parse-as-library")
@@ -482,14 +523,10 @@ struct SwiftCompiler: Node {
         arguments.append("-o");                              arguments.append(objectOutput)
         arguments.append("-emit-module")
         arguments.append("-emit-module-path");               arguments.append(moduleOutput)
-        // swiftc refuses a module interface for a module with a bridging header ("using
-        // bridging headers with module interfaces is unsupported"): such a module is an
-        // application's, which nothing imports, so it has none and the port carries the
-        // empty object, as for any output the tool did not write.
-        if inputs.bridgingHeader == nil {
-            arguments.append("-emit-module-interface")
-            arguments.append("-emit-module-interface-path"); arguments.append(interfaceOutput)
-        }
+        // No module interface: SwiftPM writes one only with library evolution, which
+        // nothing here builds, and swiftc warns that it wants that — an error under a
+        // package's `-warnings-as-errors` (NetNewsWire's `RSWeb`, B-77). Every consumer
+        // imports the binary `.swiftmodule`.
 
         // The object records its compilation directory; the canonical name keeps the
         // sandbox's real one out of it. The module would serialize the search paths it was
@@ -553,6 +590,7 @@ struct SwiftCompiler: Node {
             arguments.append(sourceFile.filePath)
         }
 
+        arguments.append(contentsOf: inputs.configuration.unsafeFlags)
         arguments.append(contentsOf: inputs.configuration.arguments)
 
         let tool = try ToolRunnerRegistry.instance.tool(descriptor: inputs.configuration.toolDescriptor,
@@ -563,29 +601,26 @@ struct SwiftCompiler: Node {
             environment: inputs.configuration.environment,
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.frameworkTreeFiles
                       + inputs.moduleMapFiles + inputs.objectiveCHeaderFiles + (inputs.bridgingHeader.map { [$0] } ?? []),
-            expectedOutputFileNames: [objectOutput, moduleOutput] + (inputs.bridgingHeader == nil ? [interfaceOutput] : []))
+            expectedOutputFileNames: [objectOutput, moduleOutput])
 
         // Stored by the runner; an output the tool did not write is the empty object.
         let objectHash = result.outputFiles[objectOutput] ?? ""
         let moduleHash = result.outputFiles[moduleOutput] ?? ""
-        let interfaceHash = result.outputFiles[interfaceOutput] ?? ""
 
         guard result.exitCode == 0 else {
             let message = result.failureMessage(tool: "swiftc", settings: settings)
             let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try message.intern()))
             return .init(outputObject: error,
                          outputModule: error,
-                         outputInterface: error,
                          infoLog: .value(try result.infoOutput.intern()),
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
                          inputSubfoldersSpecs: inputSubfoldersSpecs,
                          inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
         }
 
-        return .init(outputObject:    .value(objectHash),
-                     outputModule:    .value(moduleHash),
-                     outputInterface: .value(interfaceHash),
-                     infoLog:         .value(try result.infoOutput.intern()),
+        return .init(outputObject: .value(objectHash),
+                     outputModule: .value(moduleHash),
+                     infoLog:      .value(try result.infoOutput.intern()),
                      inputSourceFilesSpecs: inputSourceFilesSpecs,
                      inputSubfoldersSpecs: inputSubfoldersSpecs,
                      inputModuleMapFilesSpecs: inputModuleMapFilesSpecs)
@@ -625,7 +660,6 @@ struct SwiftCompiler: Node {
             let walking = NodeValue.noValue(reason: .pending)
             return .init(outputObject: walking,
                          outputModule: walking,
-                         outputInterface: walking,
                          infoLog: .value(""),
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
                          inputSubfoldersSpecs: inputSubfoldersSpecs,
@@ -641,7 +675,6 @@ struct SwiftCompiler: Node {
             let errorNodeValue = NodeValue.noValue(reason: .error(messageDataObjectHash: try error.localizedDescription.intern()))
             return .init(outputObject: errorNodeValue,
                          outputModule: errorNodeValue,
-                         outputInterface: errorNodeValue,
                          infoLog: .value(""),   // empty content never reaches the store
                          inputSourceFilesSpecs: inputSourceFilesSpecs,
                          inputSubfoldersSpecs: inputSubfoldersSpecs,

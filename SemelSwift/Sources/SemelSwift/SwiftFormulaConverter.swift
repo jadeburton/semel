@@ -55,8 +55,10 @@ struct SwiftFormulaConverter: Node {
     static let dependencyLocks        = "dependencyLocks"
     static let dependencyContentRoots = "dependencyContentRoots"
     /// The Swift linker's settings, the root's config as the product's linker reads it,
-    /// asked for only when a manifest has a linker setting conditional on a platform: its
-    /// `sdk` is the platform being built, which says whether the setting holds (B-55).
+    /// asked for only when a manifest has a linker or Swift setting conditional on a
+    /// platform: its `sdk` is the platform being built, which says whether the setting holds
+    /// (B-55, B-77). One question for both: `prepare` writes the compiler's and the linker's
+    /// `sdk` together, and the product the compile goes into is linked for the linker's.
     static let linkerConfiguration    = "linkerConfiguration"
     /// The folders a binary target's `.xcframework` is found through, keyed by path (B-77):
     /// a `path:` one's own folder, or for a downloaded or zipped one the package folder,
@@ -102,8 +104,11 @@ struct SwiftFormulaConverter: Node {
     /// at 12, a binary target's `.xcframework` is found through `binaryArtifactFolders`,
     /// its slice chosen by an `XCFrameworkSliceSelector`, and every product has a
     /// `frameworks_<Product>()` func, a product vending only binary targets its funcs and
-    /// no linker (B-77).
-    public static let implementationVersion = 12
+    /// no linker (B-77); at 13, a target's upcoming and experimental features, `.define`s
+    /// and `unsafeFlags` reach its compiler, a `swiftSettings` entry conditional on a
+    /// platform is decided for the one being built, and a target declaring no language
+    /// mode compiles in its package's, from the tools version or `swiftLanguageModes` (B-77).
+    public static let implementationVersion = 13
 
     /// The config namespaces a formula this converter emits selects from. `prepare`
     /// writes a block for each of these and no other, because a block nothing reads is
@@ -296,11 +301,11 @@ struct SwiftFormulaConverter: Node {
                                      demands: demands)
         }
 
-        // ── the platform, when a linker setting depends on it (B-55) ─────────
+        // ── the platform, when a setting depends on it (B-55, B-77) ────────
         // Asked for with the target folders, so it arrives while they do.
         let everyManifest = [rootManifest] + availableManifests.sorted(by: { $0.key < $1.key }).map(\.value)
         let asksForPlatform = everyManifest.contains { manifest in
-            manifest.targets.contains(where: \.hasPlatformConditionalLinkerSetting)
+            manifest.targets.contains(where: \.hasPlatformConditionalSetting)
         }
         if asksForPlatform {
             demands.linkerConfiguration = [
@@ -399,7 +404,7 @@ struct SwiftFormulaConverter: Node {
                   let settingsText = try? settingsValue.expectValue().resolveAsString() else {
                 return try pendingOutput(
                     reason: "SwiftFormulaConverter: waiting for the \(SwiftLinkerConfiguration.settingNamespace) settings, "
-                          + "whose sdk is the platform a linker setting's .when(platforms:) is decided for",
+                          + "whose sdk is the platform a setting's .when(platforms:) is decided for",
                     demands: demands)
             }
             let settings = [String: String](plainText: settingsText)
@@ -784,9 +789,22 @@ struct SwiftFormulaConverter: Node {
         /// Package dependencies as local paths relative to this manifest, each carrying
         /// enough of where it came from to explain itself when nothing is at that path.
         let packageDependencies: [SPMPackageDependency]
+        /// The language mode a target of this package compiles in when it declares none
+        /// (B-77), as SwiftPM decides it: the highest of the manifest's
+        /// `swiftLanguageModes` this compiler has, or else the tools version's own — 6 from
+        /// `swift-tools-version:6.0`, 5 from 5.x. nil when neither says, which passes no
+        /// `-swift-version` and leaves swiftc its default.
+        let languageMode: String?
 
         enum CodingKeys: String, CodingKey {
-            case name, targets, products, dependencies
+            case name, targets, products, dependencies, toolsVersion, swiftLanguageVersions
+        }
+
+        /// `{"_version": "6.2.0"}`.
+        private struct ToolsVersion: Decodable {
+            let version: String
+
+            enum CodingKeys: String, CodingKey { case version = "_version" }
         }
 
         init(from decoder: Decoder) throws {
@@ -796,6 +814,10 @@ struct SwiftFormulaConverter: Node {
             products = try c.decode([SPMProduct].self, forKey: .products)
             let rawDeps = (try? c.decode([AnySPMDependency].self, forKey: .dependencies)) ?? []
             packageDependencies = rawDeps.flatMap { $0.dependencies }
+            let toolsVersion = try? c.decode(ToolsVersion.self, forKey: .toolsVersion)
+            let declaredModes = (try? c.decodeIfPresent([String].self, forKey: .swiftLanguageVersions)) ?? nil
+            languageMode = SwiftFormulaConverter.packageLanguageMode(toolsVersion: toolsVersion?.version,
+                                                                     declaredModes: declaredModes)
         }
 
         static func decode(_ json: String) throws -> SPMManifest {
@@ -962,9 +984,11 @@ struct SwiftFormulaConverter: Node {
         let sources: [String]
         /// `exclude:` list, relative to the target's path.
         let exclude: [String]
-        /// `.swiftLanguageMode(.v6)` from the target's `swiftSettings`, as the version string
-        /// (`"6"`). nil when the target declares none. Other settings kinds are not carried.
-        let languageMode: String?
+        /// The target's `swiftSettings` a compile carries, in manifest order, each with the
+        /// platforms it is conditional on (B-77): upcoming and experimental features,
+        /// `.define`, `.unsafeFlags` and `.swiftLanguageMode`. Decided for the platform being
+        /// built by `swiftCompilerSettings(platform:)`, as `linkerSettings` are.
+        let swiftSettings: [SPMSwiftSetting]
         /// `publicHeadersPath:`, relative to the target's path; nil means SwiftPM's `include`.
         let publicHeadersPath: String?
         /// The target's unconditional `.define` settings from `cSettings` and `cxxSettings`,
@@ -996,6 +1020,10 @@ struct SwiftFormulaConverter: Node {
         /// Non-decoded. The name of the package the target belongs to, for its bundle.
         var packageName: String?
 
+        /// Non-decoded. The language mode of the package the target belongs to, which the
+        /// target compiles in unless it declares its own (`SPMManifest.languageMode`).
+        var packageLanguageMode: String?
+
         /// The manifest's `resources:` rules, relative to the target folder.
         let declaredResources: [SPMResource]
 
@@ -1018,25 +1046,40 @@ struct SwiftFormulaConverter: Node {
 
         var isClangTarget: Bool { clangInfo != nil }
 
-        /// Whether a linker setting holds on some platforms only, so the conversion has to
-        /// know which platform is being built.
-        var hasPlatformConditionalLinkerSetting: Bool {
-            linkerSettings.contains { $0.platforms != nil }
+        /// Whether a linker or Swift setting holds on some platforms only, so the conversion
+        /// has to know which platform is being built.
+        var hasPlatformConditionalSetting: Bool {
+            linkerSettings.contains { $0.platforms != nil } || swiftSettings.contains { $0.platforms != nil }
+        }
+
+        /// What compiling this target's Swift takes from its `swiftSettings` on `platform`,
+        /// SwiftPM's name for it — nil when no setting is conditional on one, when only the
+        /// unconditional ones hold. The last language mode that holds wins, as the last
+        /// `-swift-version` does on SwiftPM's command line.
+        func swiftCompilerSettings(platform: String?) -> SwiftCompilerSettings {
+            var compilerSettings = SwiftCompilerSettings()
+            for setting in swiftSettings where SwiftFormulaConverter.holds(platforms: setting.platforms, on: platform) {
+                switch setting.item {
+                case .upcomingFeature(let feature):
+                    compilerSettings.upcomingFeatures.append(feature)
+                case .experimentalFeature(let feature):
+                    compilerSettings.experimentalFeatures.append(feature)
+                case .define(let name):
+                    compilerSettings.defines.append(name)
+                case .unsafeFlags(let flags):
+                    compilerSettings.unsafeFlags += flags
+                case .languageMode(let mode):
+                    compilerSettings.languageMode = mode
+                }
+            }
+            return compilerSettings
         }
 
         /// What linking this target's objects needs on `platform` — SwiftPM's name for
         /// it, nil when no setting is conditional on one: the frameworks and libraries
         /// whose condition holds, and the C++ runtime when its sources hold C++.
         func linkRequirements(platform: String?) -> LinkRequirements {
-            let holding = linkerSettings.filter { setting in
-                guard let platforms = setting.platforms else {
-                    return true
-                }
-                guard let platform else {
-                    return false
-                }
-                return platforms.contains(platform)
-            }
+            let holding = linkerSettings.filter { SwiftFormulaConverter.holds(platforms: $0.platforms, on: platform) }
             return LinkRequirements(frameworks: holding.compactMap(\.frameworkName),
                                     libraries:  holding.compactMap(\.libraryName),
                                     cxxRuntime: clangInfo?.compilesCxx ?? false)
@@ -1101,11 +1144,11 @@ struct SwiftFormulaConverter: Node {
 
         /// One entry of a target's `settings` as `dump-package` emits it:
         /// `{"kind": {"swiftLanguageMode": {"_0": "6"}}, "tool": "swift"}`, with a
-        /// `condition` object beside them when it is `.when(…)`. Kinds whose payload is not
-        /// a string (`unsafeFlags` carries an array) decode as nil and are ignored, which is
-        /// what "not carried" means.
+        /// `condition` object beside them when it is `.when(…)`. A kind's payload is a
+        /// string, a list (`unsafeFlags`) or nothing (`strictMemorySafety`); a kind no
+        /// accessor below names is not carried.
         private struct SPMSetting: Decodable {
-            let kind: [String: [String: String]]?
+            let kind: [String: Payload]?
             let tool: String?
             let isConditional: Bool
             /// `.when(platforms:)`, as `dump-package` names them (`macos`, `ios`); empty when
@@ -1122,9 +1165,23 @@ struct SwiftFormulaConverter: Node {
                 let config: String?
             }
 
+            /// A kind's `_0`: `{"_0": "6"}` or `{"_0": ["-warnings-as-errors"]}`, or `{}`.
+            struct Payload: Decodable {
+                let string: String?
+                let strings: [String]?
+
+                enum CodingKeys: String, CodingKey { case value = "_0" }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    string  = try? container.decode(String.self, forKey: .value)
+                    strings = try? container.decode([String].self, forKey: .value)
+                }
+            }
+
             init(from decoder: Decoder) throws {
                 let container = try decoder.container(keyedBy: CodingKeys.self)
-                kind          = try? container.decode([String: [String: String]].self, forKey: .kind)
+                kind          = try? container.decode([String: Payload].self, forKey: .kind)
                 tool          = try? container.decode(String.self, forKey: .tool)
                 isConditional = container.contains(.condition) && !((try? container.decodeNil(forKey: .condition)) ?? false)
                 let condition = try? container.decode(Condition.self, forKey: .condition)
@@ -1136,20 +1193,50 @@ struct SwiftFormulaConverter: Node {
             ///
             /// One conditional on a configuration is not carried: nothing here builds a
             /// package in one configuration or the other, so there is no answer to whether
-            /// it holds. `unsafeFlags` is not carried either; its payload is an array, which
-            /// `kind` does not decode.
+            /// it holds. A linker's `unsafeFlags` is not carried either.
             var linkerSetting: SPMLinkerSetting? {
                 guard tool == "linker", configuration == nil else {
                     return nil
                 }
-                let platforms = platformNames.isEmpty ? nil : platformNames
-                if let framework = kind?["linkedFramework"]?["_0"] {
+                if let framework = kind?["linkedFramework"]?.string {
                     return .init(item: .framework(framework), platforms: platforms)
                 }
-                if let library = kind?["linkedLibrary"]?["_0"] {
+                if let library = kind?["linkedLibrary"]?.string {
                     return .init(item: .library(library), platforms: platforms)
                 }
                 return nil
+            }
+
+            /// A Swift setting a compile carries, with the platforms it holds for (B-77).
+            /// One conditional on a configuration is not carried, for the reason a linker
+            /// setting is not; nor is a kind with no compiler setting here yet
+            /// (`interoperabilityMode`, `defaultIsolation`, `strictMemorySafety`,
+            /// `treatAllWarnings`, `treatWarning`).
+            var swiftSetting: SPMSwiftSetting? {
+                guard tool == "swift", configuration == nil, let kind else {
+                    return nil
+                }
+                if let feature = kind["enableUpcomingFeature"]?.string {
+                    return .init(item: .upcomingFeature(feature), platforms: platforms)
+                }
+                if let feature = kind["enableExperimentalFeature"]?.string {
+                    return .init(item: .experimentalFeature(feature), platforms: platforms)
+                }
+                if let name = kind["define"]?.string {
+                    return .init(item: .define(name), platforms: platforms)
+                }
+                if let flags = kind["unsafeFlags"]?.strings {
+                    return .init(item: .unsafeFlags(flags), platforms: platforms)
+                }
+                if let mode = kind["swiftLanguageMode"]?.string {
+                    return .init(item: .languageMode(mode), platforms: platforms)
+                }
+                return nil
+            }
+
+            /// The platforms the setting holds for; nil for every one.
+            private var platforms: [String]? {
+                platformNames.isEmpty ? nil : platformNames
             }
 
             /// The value of an unconditional `.define` for C or C++, as written.
@@ -1167,7 +1254,7 @@ struct SwiftFormulaConverter: Node {
                 guard !isConditional, ["c", "cxx"].contains(tool ?? "") else {
                     return nil
                 }
-                return kind?[name]?["_0"]
+                return kind?[name]?.string
             }
         }
 
@@ -1181,7 +1268,7 @@ struct SwiftFormulaConverter: Node {
             exclude      = (try? c.decode([String].self, forKey: .exclude)) ?? []
             declaredResources = (try? c.decode([SPMResource].self, forKey: .resources)) ?? []
             let settings = (try? c.decode([SPMSetting].self, forKey: .settings)) ?? []
-            languageMode = settings.compactMap { $0.kind?["swiftLanguageMode"]?["_0"] }.first
+            swiftSettings = settings.compactMap(\.swiftSetting)
             cDefines     = settings.compactMap(\.unconditionalDefine)
             cHeaderSearchPaths = settings.compactMap(\.unconditionalHeaderSearchPath)
             linkerSettings = settings.compactMap(\.linkerSetting)
@@ -1238,6 +1325,80 @@ struct SwiftFormulaConverter: Node {
             guard case .library(let name) = item else { return nil }
             return name
         }
+    }
+
+    /// One `swiftSettings` entry a compile carries (B-77).
+    private struct SPMSwiftSetting: Equatable {
+        enum Item: Equatable {
+            /// `.enableUpcomingFeature("NonisolatedNonsendingByDefault")`.
+            case upcomingFeature(String)
+            /// `.enableExperimentalFeature("StrictConcurrency")`.
+            case experimentalFeature(String)
+            /// `.define("DEBUG")`: a compilation condition.
+            case define(String)
+            /// `.unsafeFlags(["-warnings-as-errors"])`, as they stand.
+            case unsafeFlags([String])
+            /// `.swiftLanguageMode(.v6)`, as the version string `6`.
+            case languageMode(String)
+        }
+
+        let item: Item
+        /// `.when(platforms:)` as SwiftPM names them (`macos`, `ios`); nil for every one.
+        let platforms: [String]?
+    }
+
+    /// What one target's compile takes from its `swiftSettings` on the platform being
+    /// built, each kind a literal of its own on the compiler's configuration, so the
+    /// compiler writes the flags and a diagnostic can name the setting.
+    struct SwiftCompilerSettings: Equatable {
+        var upcomingFeatures:     [String] = []
+        var experimentalFeatures: [String] = []
+        var defines:              [String] = []
+        var unsafeFlags:          [String] = []
+        var languageMode:         String?
+    }
+
+    /// The language modes swiftc takes, in order, as `-swift-version` spells them.
+    static let knownLanguageModes = ["4", "4.2", "5", "6"]
+
+    /// SwiftPM's language mode for a package's targets that declare none (B-77): of the
+    /// manifest's `swiftLanguageModes`, the highest this compiler has; with none declared,
+    /// the tools version's — 4.2 from 4.2, 5 from 5.x, 6 from 6.0 on. A package whose
+    /// tools version is 6.2 compiles in Swift 6 mode though no target says so, and
+    /// dropping that compiles it in swiftc's default, Swift 5, with other diagnostics and
+    /// other meanings.
+    static func packageLanguageMode(toolsVersion: String?, declaredModes: [String]?) -> String? {
+        if let declaredModes, !declaredModes.isEmpty {
+            return declaredModes.compactMap { knownLanguageModes.firstIndex(of: $0) }.max().map { knownLanguageModes[$0] }
+        }
+        guard let toolsVersion else {
+            return nil
+        }
+        let components = toolsVersion.split(separator: ".").compactMap { Int($0) }
+        guard let major = components.first else {
+            return nil
+        }
+        let minor = components.dropFirst().first ?? 0
+        switch major {
+        case 6...:               return "6"
+        case 5:                  return "5"
+        case 4 where minor >= 2: return "4.2"
+        case 4:                  return "4"
+        default:                 return nil
+        }
+    }
+
+    /// Whether a setting conditional on `platforms` — nil for every one — holds on
+    /// `platform`, SwiftPM's name for the platform being built; with no platform known, only
+    /// an unconditional one does.
+    static func holds(platforms: [String]?, on platform: String?) -> Bool {
+        guard let platforms else {
+            return true
+        }
+        guard let platform else {
+            return false
+        }
+        return platforms.contains(platform)
     }
 
     /// SwiftPM's name for the platform an SDK builds for, the name a `.when(platforms:)`
@@ -1373,7 +1534,9 @@ struct SwiftFormulaConverter: Node {
             var placed = target
             let folder = target.folder(in: packageFolder ?? rootPackageFolder)
             placed.overridePackageFolder = packageFolder
-            placed.packageName = packageFolder.flatMap { externalManifests[$0]?.name } ?? rootManifest.name
+            let manifest = packageFolder.flatMap { externalManifests[$0] } ?? rootManifest
+            placed.packageName = manifest.name
+            placed.packageLanguageMode = manifest.languageMode
             placed.clangInfo = clangInfo(target, folder)
             placed.resources = resources(placed, folder)
             return placed
@@ -1504,10 +1667,11 @@ struct SwiftFormulaConverter: Node {
             for target in allTargets {
                 let fn = compilerFuncName(for: target.name)
                 guard !emittedFuncs.contains(fn) else { continue }
-                blocks.append(buildFuncDef(target: target,
-                                           packageFolder: rootPackageFolder,
-                                           lookupAll: allTargetsNamed,
-                                           binaryTargets: usableBinaryTargets(from: target)))
+                blocks.append(try buildFuncDef(target: target,
+                                               packageFolder: rootPackageFolder,
+                                               platform: platform,
+                                               lookupAll: allTargetsNamed,
+                                               binaryTargets: usableBinaryTargets(from: target)))
                 emittedFuncs.insert(fn)
             }
 
@@ -2083,8 +2247,9 @@ struct SwiftFormulaConverter: Node {
     // the root from which `sourcesRelativePath` is resolved.
     private func buildFuncDef(target: SPMTarget,
                               packageFolder: String,
+                              platform: String?,
                               lookupAll: (String) -> [SPMTarget],
-                              binaryTargets: [SPMTarget] = []) -> String {
+                              binaryTargets: [SPMTarget] = []) throws -> String {
         let pkgRoot     = target.overridePackageFolder ?? packageFolder
         let sourcesPath = target.folder(in: pkgRoot)
         // moduleName is what makes a target itself, and a config file must not be able to
@@ -2098,10 +2263,26 @@ struct SwiftFormulaConverter: Node {
         if !target.resources.isEmpty {
             derived["resourceBundleName"] = target.resourceBundleName
         }
-        // Like moduleName, a fact about the target: dropped, the code compiles in Swift 5
-        // mode with different diagnostics, and a config file must not be able to change it.
-        if let languageMode = target.languageMode {
+        // Like moduleName, facts about the target: dropped, the code compiles in another
+        // mode, or with another meaning — `NonisolatedNonsendingByDefault` decides which
+        // actor a `nonisolated` async method runs on, which a caller's module reads back
+        // (B-77) — and a config file must not be able to change them.
+        let swiftSettings = target.swiftCompilerSettings(platform: platform)
+        if let languageMode = swiftSettings.languageMode ?? target.packageLanguageMode {
             derived["languageMode"] = languageMode
+        }
+        if !swiftSettings.upcomingFeatures.isEmpty {
+            derived["upcomingFeatures"] = swiftSettings.upcomingFeatures.joined(separator: ",")
+        }
+        if !swiftSettings.experimentalFeatures.isEmpty {
+            derived["experimentalFeatures"] = swiftSettings.experimentalFeatures.joined(separator: ",")
+        }
+        if !swiftSettings.defines.isEmpty {
+            derived["defines"] = swiftSettings.defines.joined(separator: ",")
+        }
+        // A JSON list rather than comma-joined: a flag is free text, and may hold a comma.
+        if !swiftSettings.unsafeFlags.isEmpty {
+            derived["unsafeFlags"] = try SwiftCompilerConfiguration.encodedFlagList(swiftSettings.unsafeFlags)
         }
         // Comma-joined because a configuration value is one line of `key=value` and so
         // cannot hold a newline. A path containing a comma would break this, as would one
