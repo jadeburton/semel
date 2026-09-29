@@ -2,7 +2,7 @@
 //  VendoredPackageSettleTests.swift
 //  SemelCLITests
 //
-//  B-133. NetNewsWire's vendored Sparkle declares one `.binaryTarget(url:checksum:)` and
+//  B-133, B-77. NetNewsWire's vendored Sparkle declares one `.binaryTarget(url:checksum:)` and
 //  nothing else; its converter was processed thousands of times and `build` never
 //  returned. The converter asked for the target's folder only once the package's lock had
 //  passed; the folder is not in the package, so the demand made a ghost the package's
@@ -117,19 +117,37 @@ final class VendoredPackageSettleTests: XCTestCase {
         return (ended, lines.all.joined(separator: "\n"))
     }
 
-    /// Sparkle's own shape: the artifact is downloaded by URL, so there is no folder in the
-    /// package for the target at all.
-    func test_aPackageWhoseOnlyTargetIsARemoteBinaryTargetSettles() throws {
-        try writeTree(target: """
-            {"name": "Sparkle", "type": "binary", "dependencies": [], "exclude": [], "resources": [], "settings": [],
-             "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-for-Swift-Package-Manager.zip",
-             "checksum": "4d5de3d3b4ff9b3d1d7c5b1ad1b0a5a1bd6bc7ba7e1d1b2b8b3d0c4b6e2b2d6c"}
-            """)
+    private let remoteTarget = """
+        {"name": "Sparkle", "type": "binary", "dependencies": [], "exclude": [], "resources": [], "settings": [],
+         "url": "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-for-Swift-Package-Manager.zip",
+         "checksum": "4d5de3d3b4ff9b3d1d7c5b1ad1b0a5a1bd6bc7ba7e1d1b2b8b3d0c4b6e2b2d6c"}
+        """
+
+    /// Sparkle's own shape, vendored before `prepare` put the download in the package: no
+    /// `semel-artifacts`. The converter asks for nothing under the package that is not
+    /// there, so the lock holds, and the build ends naming where the artifact belongs.
+    func test_aRemoteBinaryTargetNotVendoredSettlesNamingWhereItBelongs() throws {
+        try writeTree(target: remoteTarget)
 
         let (ended, transcript) = buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertTrue(transcript.contains("binary target Sparkle of package Sparkle is not built (B-133)"), transcript)
+        XCTAssertTrue(transcript.contains("is not vendored: nothing is at input:"), transcript)
+        XCTAssertTrue(transcript.contains("Packages/Dependencies/Sparkle/semel-artifacts/Sparkle"), transcript)
+        XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
+    }
+
+    /// The same once `prepare` has put the download in the package, under the lock: the
+    /// walk to it is ghost-free, the lock holds, and the conversion makes its formula.
+    func test_aRemoteBinaryTargetInSemelArtifactsSettlesWithTheLockHolding() throws {
+        try writeTree(target: remoteTarget,
+                      packageFiles: ["semel-artifacts/Sparkle/Sparkle.xcframework/Info.plist": "<plist/>",
+                                     "semel-artifacts/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/Sparkle": "binary"])
+
+        let (ended, transcript) = buildEnds(within: 30)
+
+        XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
+        XCTAssertFalse(transcript.contains("SwiftFormulaConverter:"), transcript)
         XCTAssertFalse(transcript.contains("is not the tree its lock records"), transcript)
     }
 
@@ -146,7 +164,7 @@ final class VendoredPackageSettleTests: XCTestCase {
         let (ended, transcript) = buildEnds(within: 30)
 
         XCTAssertTrue(ended, "the build never settled:\n\(transcript)")
-        XCTAssertTrue(transcript.contains("binary target Sparkle of package Sparkle is not built (B-133)"), transcript)
+        XCTAssertFalse(transcript.contains("SwiftFormulaConverter:"), transcript)
         XCTAssertFalse(transcript.contains("SwiftCompiler"), transcript)
     }
 

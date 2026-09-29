@@ -98,6 +98,7 @@ final class EndToEndRun {
             try Self.copyRepository(to: tree.appendingPathComponent(project.name, isDirectory: true))
         }
         base = tree
+        try project.materialised?(tree.appendingPathComponent(project.buildFolder, isDirectory: true))
     }
 
     /// The entry at an overlay's root that is the overlay's own and is not laid: the note
@@ -284,6 +285,7 @@ final class EndToEndRun {
             throw EndToEndFailure(step: "products (\(out.lastPathComponent))",
                                   message: problems.joined(separator: "; ") + "\n  exported:\n    " + present)
         }
+        try project.exported?(out)
     }
 
     // MARK: - 6. Determinism

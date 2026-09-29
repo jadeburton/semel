@@ -35,13 +35,19 @@ public struct DependencyLock: Equatable {
     public var revision: String?
     /// Where the dependency came from: its repository URL.
     public var origin: String?
+    /// Each binary target's `checksum:` from the manifest, by target (B-77): the SHA-256 of
+    /// the zip SwiftPM downloaded and checked before `prepare` copied what it held into
+    /// `semel-artifacts`. Recorded, like the version: the copy is what `content` locks.
+    public var artifacts: [String: String]
 
-    public init(contentRoot: String, fold: String, version: String? = nil, revision: String? = nil, origin: String? = nil) {
+    public init(contentRoot: String, fold: String, version: String? = nil, revision: String? = nil, origin: String? = nil,
+                artifacts: [String: String] = [:]) {
         self.contentRoot = contentRoot
         self.fold        = fold
         self.version     = version
         self.revision    = revision
         self.origin      = origin
+        self.artifacts   = artifacts
     }
 
     // MARK: - Where it lives
@@ -84,6 +90,14 @@ public struct DependencyLock: Equatable {
         return name.isEmpty ? nil : name
     }
 
+    /// The folder in a package where `semel-swift prepare` puts a binary target's artifact,
+    /// one folder per target (B-77): the `.xcframework` SwiftPM downloaded by `url:` and
+    /// checked against its `checksum:`, or a `path:` zip unzipped. Inside the package, so
+    /// the lock beside a vendored one covers it, and not a dot-name, which a push leaves
+    /// out. Read by the converter that finds the artifact and written by `prepare`, so it
+    /// lives here with the rest of the vendoring layout.
+    public static let artifactsFolderName = "semel-artifacts"
+
     // MARK: - The text
 
     /// The prefix of the `content` value. The value is the root as the store names it; the
@@ -96,6 +110,15 @@ public struct DependencyLock: Equatable {
         case version
         case revision
         case origin
+        case artifacts
+    }
+
+    /// `Sparkle=4d5d…,Other=9e1f…`: the artifacts' checksums on one line, sorted by target.
+    static func artifactsText(_ artifacts: [String: String]) -> String? {
+        guard !artifacts.isEmpty else {
+            return nil
+        }
+        return artifacts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
     }
 
     /// The first line of every lock, for whoever opens one without knowing what it is.
@@ -104,13 +127,16 @@ public struct DependencyLock: Equatable {
     /// The lock as its file holds it: a heading comment, then one `key value` line per
     /// field it has, in a fixed order, the keys padded into a column.
     public var text: String {
-        let stated: [Key: String?] = [.content:  Self.contentScheme + contentRoot,
-                                      .fold:     fold,
-                                      .version:  version,
-                                      .revision: revision,
-                                      .origin:   origin]
+        let stated: [Key: String?] = [.content:   Self.contentScheme + contentRoot,
+                                      .fold:      fold,
+                                      .version:   version,
+                                      .revision:  revision,
+                                      .origin:    origin,
+                                      .artifacts: Self.artifactsText(artifacts)]
         let values = stated.compactMapValues { $0 }
-        let width = Key.allCases.map(\.rawValue.count).max() ?? 0
+        // The column is as wide as the widest key, `artifacts` counted only when the lock
+        // has it, so a lock of a package with no binary target reads as every lock did.
+        let width = Key.allCases.filter { $0 != .artifacts || values[$0] != nil }.map(\.rawValue.count).max() ?? 0
         var lines = [Self.heading]
         // In the order the keys are declared, which is the order a reader expects them in.
         for key in Key.allCases {
@@ -159,11 +185,20 @@ public struct DependencyLock: Equatable {
         guard let fold = values[.fold] else {
             throw DependencyLockError.missingKey(Key.fold.rawValue)
         }
+        var artifacts: [String: String] = [:]
+        for item in (values[.artifacts] ?? "").split(separator: ",") {
+            let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
+            guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty, artifacts[parts[0]] == nil else {
+                throw DependencyLockError.malformedArtifact(String(item))
+            }
+            artifacts[parts[0]] = parts[1]
+        }
         return DependencyLock(contentRoot: String(content.dropFirst(contentScheme.count)),
                               fold:        fold,
                               version:     values[.version],
                               revision:    values[.revision],
-                              origin:      values[.origin])
+                              origin:      values[.origin],
+                              artifacts:   artifacts)
     }
 }
 
@@ -174,6 +209,8 @@ public enum DependencyLockError: Error, Equatable, CustomStringConvertible {
     case emptyValue(String, line: Int)
     case missingKey(String)
     case unknownContentScheme(String)
+    /// An `artifacts` item that is not `<target>=<checksum>`, or names a target twice.
+    case malformedArtifact(String)
 
     public var description: String {
         let keys = DependencyLock.Key.allCases.map(\.rawValue).joined(separator: ", ")
@@ -188,6 +225,8 @@ public enum DependencyLockError: Error, Equatable, CustomStringConvertible {
             return "there is no '\(key)' line"
         case .unknownContentScheme(let value):
             return "'content' is '\(value)', and a content root is written '\(DependencyLock.contentScheme)<hex>'"
+        case .malformedArtifact(let item):
+            return "'artifacts' holds '\(item)', and each of its comma-separated items is written '<target>=<checksum>', a target once"
         }
     }
 }

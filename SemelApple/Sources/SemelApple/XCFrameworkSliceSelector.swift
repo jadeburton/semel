@@ -1,0 +1,331 @@
+//
+//  XCFrameworkSliceSelector.swift
+//  SemelApple
+//
+//  An `.xcframework` is one library built several times, a slice per platform, with an
+//  `Info.plist` saying which folder holds which. A package's binary target is one (B-77,
+//  Sparkle): which slice a build takes depends on the platform it builds for, which the
+//  package converter does not know and should not — it writes one formula for a package
+//  whatever the platform. So the choice is a node: it reads the plist and the platform the
+//  settings name, walks the slice it chose and hands it on as trees, and the converter only
+//  names it.
+
+import Foundation
+import SemelNodeKit
+import SemelDatabaseModels
+
+// MARK: - Platform
+
+/// The platform an `.xcframework` slice is for, as its `Info.plist` names it:
+/// `SupportedPlatform` (`macos`, `ios`) and `SupportedPlatformVariant` (`simulator`,
+/// `maccatalyst`, or none for the device).
+struct XCFrameworkPlatform: Equatable, CustomStringConvertible {
+    let platform: String
+    let variant: String?
+
+    /// The platform a build is for, from the SDK it builds against and the `-target` triple,
+    /// when there is one. nil for an SDK no `.xcframework` names a slice for.
+    ///
+    /// Mac Catalyst builds against `macosx` with a `-macabi` triple, and a Catalyst slice is
+    /// an `ios` one with the `maccatalyst` variant, so the triple decides there.
+    init?(sdk: String, target: String?) {
+        if let target, target.hasSuffix("-macabi") {
+            self.init(platform: "ios", variant: "maccatalyst")
+            return
+        }
+        switch sdk {
+        case "macosx":           self.init(platform: "macos",    variant: nil)
+        case "iphoneos":         self.init(platform: "ios",      variant: nil)
+        case "iphonesimulator":  self.init(platform: "ios",      variant: "simulator")
+        case "appletvos":        self.init(platform: "tvos",     variant: nil)
+        case "appletvsimulator": self.init(platform: "tvos",     variant: "simulator")
+        case "watchos":          self.init(platform: "watchos",  variant: nil)
+        case "watchsimulator":   self.init(platform: "watchos",  variant: "simulator")
+        case "xros":             self.init(platform: "xros",     variant: nil)
+        case "xrsimulator":      self.init(platform: "xros",     variant: "simulator")
+        default:                 return nil
+        }
+    }
+
+    init(platform: String, variant: String?) {
+        self.platform = platform
+        self.variant  = variant
+    }
+
+    /// `ios-simulator`, `macos`: how `xcodebuild -create-xcframework` names a slice's
+    /// folder, and how an error names the platform.
+    var description: String {
+        variant.map { "\(platform)-\($0)" } ?? platform
+    }
+}
+
+// MARK: - The plist
+
+/// One entry of an `.xcframework`'s `AvailableLibraries`.
+struct XCFrameworkSlice: Equatable {
+    /// The slice's folder in the `.xcframework`: `macos-arm64_x86_64`.
+    let identifier: String
+    /// What is in that folder: `Sparkle.framework`, or `libTiny.a` for a static library.
+    let libraryPath: String
+    let platform: XCFrameworkPlatform
+    let architectures: [String]
+    /// A static library's headers, relative to the slice's folder; nil for a framework,
+    /// which carries its own.
+    let headersPath: String?
+
+    /// A framework is a folder with its binary, its headers and its module map inside; a
+    /// library slice is the one file, with its headers beside it.
+    var isFramework: Bool { libraryPath.hasSuffix(".framework") }
+
+    /// Every slice the plist lists, in its order.
+    static func slices(inInfoPlist data: Data) throws -> [XCFrameworkSlice] {
+        guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let libraries = plist["AvailableLibraries"] as? [[String: Any]] else {
+            throw XCFrameworkSliceError.unreadableInfoPlist
+        }
+        return try libraries.map { library in
+            guard let identifier = library["LibraryIdentifier"] as? String,
+                  let libraryPath = library["LibraryPath"] as? String,
+                  let platform = library["SupportedPlatform"] as? String else {
+                throw XCFrameworkSliceError.unreadableInfoPlist
+            }
+            return XCFrameworkSlice(identifier:    identifier,
+                                    libraryPath:   libraryPath,
+                                    platform:      XCFrameworkPlatform(platform: platform,
+                                                                       variant: library["SupportedPlatformVariant"] as? String),
+                                    architectures: library["SupportedArchitectures"] as? [String] ?? [],
+                                    headersPath:   library["HeadersPath"] as? String)
+        }
+    }
+
+    /// The slice for `platform` — one at most, since `xcodebuild -create-xcframework`
+    /// refuses two for one platform — when it has `architecture`, or whatever it has when
+    /// the build names none.
+    static func select(from slices: [XCFrameworkSlice], platform: XCFrameworkPlatform,
+                       architecture: String?) throws -> XCFrameworkSlice {
+        guard let slice = slices.first(where: { $0.platform == platform }) else {
+            throw XCFrameworkSliceError.noSliceForPlatform(platform.description,
+                                                           available: slices.map(\.identifier).sorted())
+        }
+        if let architecture, !slice.architectures.isEmpty, !slice.architectures.contains(architecture) {
+            throw XCFrameworkSliceError.noSliceForArchitecture(architecture, slice: slice.identifier,
+                                                               architectures: slice.architectures)
+        }
+        return slice
+    }
+}
+
+/// Why no slice of an `.xcframework` is what a build can take, by case.
+enum XCFrameworkSliceError: Error, Equatable, CustomStringConvertible {
+    case unreadableInfoPlist
+    case noPlatform(sdk: String)
+    case noSliceForPlatform(String, available: [String])
+    case noSliceForArchitecture(String, slice: String, architectures: [String])
+    /// A library slice that is not a static archive: a dynamic library outside a framework
+    /// would have to be embedded and found by an install name nothing here sets.
+    case unsupportedLibrary(String)
+
+    var description: String {
+        switch self {
+        case .unreadableInfoPlist:
+            return "its Info.plist is not an xcframework's: no AvailableLibraries with a LibraryIdentifier, "
+                 + "LibraryPath and SupportedPlatform each"
+        case .noPlatform(let sdk):
+            return "no xcframework slice is for the SDK \(sdk)"
+        case .noSliceForPlatform(let platform, let available):
+            return "it has no slice for \(platform); its slices are \(available.joined(separator: ", "))"
+        case .noSliceForArchitecture(let architecture, let slice, let architectures):
+            return "its slice \(slice) has no \(architecture), only \(architectures.joined(separator: ", "))"
+        case .unsupportedLibrary(let path):
+            return "its slice's library \(path) is neither a framework nor a static archive, which is all that is linked here"
+        }
+    }
+}
+
+// MARK: - Configuration
+
+/// The two settings a slice is chosen by: the SDK and the `-target` triple. Read from the
+/// Swift linker's settings, the ones the product the slice is linked into is linked by,
+/// so the choice cannot disagree with the link — and no namespace of its own, which
+/// `prepare` would have to write and nothing else would read.
+struct XCFrameworkSliceSelectorConfiguration {
+    let sdk: String
+    let target: String?
+
+    init(properties: [String: String]) {
+        // The linker's own default when its settings name no SDK.
+        sdk    = properties["sdk"] ?? "macosx"
+        target = properties["target"]
+    }
+
+    /// `arm64` from `arm64-apple-macosx15.0`; nil when no triple is named.
+    var architecture: String? {
+        target.flatMap { $0.split(separator: "-").first.map(String.init) }
+    }
+}
+
+// MARK: - Node
+
+/// Picks the slice of one `.xcframework` for the platform being built and publishes it as
+/// trees: a framework slice on `frameworks`, under its own name (`Sparkle.framework/…`),
+/// which is what a compiler's `-F` and a linker's `-framework` find and what a bundle
+/// embeds; a static library slice's archive on `libraries` and its headers on `headers`,
+/// which a link and an import take instead, and nothing embeds. The ports a slice does not
+/// fill carry the empty tree, so a formula wires all three without knowing which it is.
+///
+/// The slice is walked like any folder, one level per pass, and each file keeps the mode
+/// it was pushed with: a framework holds executables (Sparkle's `Autoupdate`, its
+/// `Updater.app`) that must stay ones in the bundle.
+public struct XCFrameworkSliceSelector: Node {
+    public static let kind: UInt = 40
+
+    // MARK: Ports
+
+    /// Settings naming `sdk` and `target`; the Swift linker's, as the converter wires it.
+    static let configuration = "configuration"
+    /// The `.xcframework`'s `Info.plist`, one wire.
+    static let infoPlist = "infoPlist"
+    /// Every folder of the chosen slice, by path, walked as it arrives.
+    static let sliceFolders = "sliceFolders"
+    /// Every file of the chosen slice, by path, and each one's mode beside it.
+    static let sliceFiles = "sliceFiles"
+    static let sliceFileMetadata = "sliceFileMetadata"
+
+    static let frameworks = "frameworks"
+    static let libraries = "libraries"
+    static let headers = "headers"
+
+    /// The `.xcframework` folder in the input file system: what the slice folders the
+    /// plist names are relative to.
+    static let pathProperty = "path"
+
+    public var thisNode: NodeRecord
+
+    public init(thisNode: NodeRecord) throws {
+        self.thisNode = thisNode
+    }
+
+    public static let descriptor = NodeDescriptor(
+        inputPorts: [
+            .required(configuration),
+            .required(infoPlist),
+            .dynamic(sliceFolders),
+            .dynamic(sliceFiles),
+            .dynamic(sliceFileMetadata),
+        ],
+        outputPorts: [frameworks, libraries, headers]
+    )
+
+    // MARK: Processing
+
+    public func process(input: ProcessInput) throws -> ProcessOutput {
+        guard let xcframework = thisNode.properties[Self.pathProperty] else {
+            throw NodeError.other(message: "XCFrameworkSliceSelector needs path: <the .xcframework folder>")
+        }
+        guard let configurationValue = input.inputValues[Self.configuration]?.values.first else {
+            throw NodeError.other(message: "XCFrameworkSliceSelector: nothing is wired to its configuration port")
+        }
+        let configurationText = try configurationValue.expectValue().resolveAsString()
+        let configuration = XCFrameworkSliceSelectorConfiguration(properties: [String: String](plainText: configurationText))
+
+        let slice: XCFrameworkSlice
+        do {
+            guard let plistWire = input.inputValues[Self.infoPlist]?.values.first else {
+                throw NodeError.other(message: "XCFrameworkSliceSelector: nothing is wired to its infoPlist port")
+            }
+            guard let bytes = try DataObjectStore.shared.read(hash: try plistWire.expectValue()) else {
+                throw XCFrameworkSliceError.unreadableInfoPlist
+            }
+            guard let platform = XCFrameworkPlatform(sdk: configuration.sdk, target: configuration.target) else {
+                throw XCFrameworkSliceError.noPlatform(sdk: configuration.sdk)
+            }
+            slice = try XCFrameworkSlice.select(from: try XCFrameworkSlice.slices(inInfoPlist: Data(bytes)),
+                                                platform: platform, architecture: configuration.architecture)
+        } catch let error as XCFrameworkSliceError {
+            return try failed("\(xcframework): \(error)")
+        }
+
+        let sliceFolder = Path(xcframework) / slice.identifier
+        // A framework is walked whole; a library slice is its archive and, when it has
+        // them, its headers' folder.
+        var roots: [String] = []
+        var singleFiles: [String] = []
+        if slice.isFramework {
+            roots.append((sliceFolder / slice.libraryPath).string)
+        } else {
+            guard slice.libraryPath.hasSuffix(".a") else {
+                return try failed("\(xcframework): \(XCFrameworkSliceError.unsupportedLibrary(slice.libraryPath))")
+            }
+            singleFiles.append((sliceFolder / slice.libraryPath).string)
+            if let headersPath = slice.headersPath {
+                roots.append((sliceFolder / headersPath).string)
+            }
+        }
+
+        // ── the walk ──────────────────────────────────────────────────────────
+        let arrived = Dictionary(FolderTreeWalk.manifests(in: input, port: Self.sliceFolders).map { ($0.key, $0.manifest) }) { first, _ in first }
+        var folderSpecs: [String: GraphSpecNode] = [:]
+        for root in roots {
+            folderSpecs[root] = .folderManifest(at: root)
+            folderSpecs.merge(FolderTreeWalk.subfolderSpecs(below: root, arrived: arrived)) { existing, _ in existing }
+        }
+        let walkedManifests = folderSpecs.keys.sorted().compactMap { arrived[$0] }
+        var fileSpecs = FolderTreeWalk.fileSpecs(of: walkedManifests)
+        for file in singleFiles {
+            fileSpecs[file] = .staticFile(at: file)
+        }
+        let specs = [Self.sliceFolders:      folderSpecs,
+                     Self.sliceFiles:        fileSpecs,
+                     Self.sliceFileMetadata: fileSpecs.mapValues { $0.port(FileMetadata.portName) }]
+
+        let files    = input.inputValues[Self.sliceFiles] ?? [:]
+        let metadata = input.inputValues[Self.sliceFileMetadata] ?? [:]
+        guard Set(folderSpecs.keys).isSubset(of: Set(arrived.keys)),
+              Set(fileSpecs.keys).isSubset(of: Set(files.keys)),
+              Set(fileSpecs.keys).isSubset(of: Set(metadata.keys)) else {
+            let walking = NodeValue.noValue(reason: .pending)
+            return .init(outputValues: [Self.frameworks: walking, Self.libraries: walking, Self.headers: walking],
+                         inputWireSpecs: specs)
+        }
+
+        // Each file under where it goes: a framework under its own name, a library under
+        // its file name, headers relative to their folder.
+        func entries(under root: String, placedUnder prefix: Path) throws -> [TreeManifestEntry] {
+            try fileSpecs.keys.sorted().compactMap { path -> TreeManifestEntry? in
+                guard let relative = Path(path).relative(to: Path(root)), let value = files[path] else {
+                    return nil
+                }
+                return TreeManifestEntry(path: (prefix / relative).string, hash: try value.expectValue(),
+                                         mode: FileMetadata.mode(of: metadata[path]))
+            }
+        }
+        var frameworkEntries: [TreeManifestEntry] = []
+        var libraryEntries:   [TreeManifestEntry] = []
+        var headerEntries:    [TreeManifestEntry] = []
+        if slice.isFramework {
+            frameworkEntries = try entries(under: (sliceFolder / slice.libraryPath).string, placedUnder: Path(slice.libraryPath))
+        } else {
+            for file in singleFiles {
+                guard let value = files[file], let name = Path(file).lastComponent else {
+                    continue
+                }
+                libraryEntries.append(TreeManifestEntry(path: name, hash: try value.expectValue(),
+                                                        mode: FileMetadata.mode(of: metadata[file])))
+            }
+            if let headersPath = slice.headersPath {
+                headerEntries = try entries(under: (sliceFolder / headersPath).string, placedUnder: .empty)
+            }
+        }
+        return .init(outputValues: [Self.frameworks: .value(try TreeManifest(entries: frameworkEntries).toJSON().intern()),
+                                    Self.libraries:  .value(try TreeManifest(entries: libraryEntries).toJSON().intern()),
+                                    Self.headers:    .value(try TreeManifest(entries: headerEntries).toJSON().intern())],
+                     inputWireSpecs: specs)
+    }
+
+    /// An error on every port, and no walk: nothing chosen is nothing to read.
+    private func failed(_ message: String) throws -> ProcessOutput {
+        let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "XCFrameworkSliceSelector: \(message)".intern()))
+        return .init(outputValues: [Self.frameworks: error, Self.libraries: error, Self.headers: error],
+                     inputWireSpecs: [Self.sliceFolders: [:], Self.sliceFiles: [:], Self.sliceFileMetadata: [:]])
+    }
+}

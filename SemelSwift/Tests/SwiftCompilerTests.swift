@@ -310,6 +310,34 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertEqual(importPaths, ["modules", "modules/CAtomic"])
     }
 
+    // MARK: - Framework trees (B-77)
+
+    /// A binary target's framework slice, as a package's `frameworks_P()` carries it, is
+    /// merged into one folder on the framework search path, so `import Sparkle` finds
+    /// `Sparkle.framework/Modules`; with none, no `-F`.
+    func test_frameworkTreesAreMergedIntoOneFolderOnTheFrameworkSearchPath() throws {
+        let sparkle = try TreeManifest(entries: [
+            .init(path: "Sparkle.framework/Modules/module.modulemap", hash: try "map".intern(), mode: 0o644),
+            .init(path: "Sparkle.framework/Headers/Sparkle.h", hash: try "h".intern(), mode: 0o644),
+        ]).toJSON().intern()
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "import Sparkle".intern())]
+        input[SwiftCompiler.inputFrameworkTrees] = ["Updater": .value(sparkle)]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let searchPaths = arguments.indices.filter { arguments[$0] == "-F" }.map { arguments[$0 + 1] }
+        XCTAssertEqual(searchPaths, ["frameworks"])
+        XCTAssertFalse(arguments.contains("frameworks/Sparkle.framework"), "the module map is the framework's own: \(arguments)")
+        XCTAssertEqual(executor.invocations.last?.inputFileNames.filter { $0.hasPrefix("frameworks/") }.sorted(),
+                       ["frameworks/Sparkle.framework/Headers/Sparkle.h", "frameworks/Sparkle.framework/Modules/module.modulemap"])
+
+        input[SwiftCompiler.inputFrameworkTrees] = ["Updater": .value(try TreeManifest(entries: []).toJSON().intern())]
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+        XCTAssertFalse(executor.lastArguments.contains("-F"), "\(executor.lastArguments)")
+    }
+
     // MARK: - What a rejected argument says (B-98)
 
     // swiftc's complaint names the argument it rejected and never the setting that produced

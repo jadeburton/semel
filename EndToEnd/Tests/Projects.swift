@@ -81,6 +81,29 @@ enum Projects {
         onlyUnder: "Hello.app",
         executables: ["Hello.app/Hello"])
 
+    /// A Mac app from an Xcode project linking a local package's product that depends on a
+    /// binary target by `path:` (B-77). The `.xcframework` is built by the run, not held by
+    /// the repository (`BinaryTargetFixture`): a versioned `Tiny.framework`, links and all,
+    /// which the push follows. The converter reads the xcframework, the slice selector
+    /// chooses its Mac slice, the package and the app compile against it and the app links
+    /// it; the bundle embeds it under `Contents/Frameworks`, and the exported app loads it
+    /// through its runpath and prints its greeting.
+    static let swiftBinaryTargetApp = Project(
+        name: "swift-binary-target-app",
+        source: .fixture(folder: "."),
+        buildFolder: "swift/BinaryTargetApp",
+        platform: "macos",
+        expectedProducts: ["Greeter.app/Contents/MacOS/Greeter",
+                           "Greeter.app/Contents/Info.plist",
+                           "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny",
+                           "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Resources/Info.plist"],
+        buildTimeout: fixtureTimeout,
+        onlyUnder: "Greeter.app",
+        executables: ["Greeter.app/Contents/MacOS/Greeter",
+                      "Greeter.app/Contents/Frameworks/Tiny.framework/Versions/A/Tiny"],
+        materialised: BinaryTargetFixture.buildXCFramework(in:),
+        exported: BinaryTargetFixture.checkApp(in:))
+
     static let icecubes = Project(
         name: "icecubes",
         source: .git(url: "https://github.com/Dimillian/IceCubesApp.git",
@@ -268,7 +291,7 @@ enum Projects {
         mayDiffer: ["Assets.car"],
         onlyUnder: "Food Truck.app")
 
-    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp]
+    static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]
     static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac]
     static let all: [Project] = fixtures + external
 }

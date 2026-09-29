@@ -52,7 +52,7 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
                          contentRoots: [String: DataObjectHash] = [:],
                          linkerSettings: String? = nil,
                          supplyTargetFolders: Bool = true) throws -> ProcessOutput {
-        let manifest = FolderManifest(baseFolderPath: packageFolder, entries: [])
+        let manifest = FolderManifest(baseFolderPath: packageFolder, entries: folderContents[packageFolder] ?? [])
         var externalValues = [String: NodeValue]()
         for (path, externalJSON) in externalManifests {
             externalValues[path] = .value(try externalJSON.intern())
@@ -86,8 +86,14 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
             let lockFiles     = asked(SwiftFormulaConverter.dependencyLocks)
             let lockedFolders = asked(SwiftFormulaConverter.dependencyContentRoots)
             let linkerConfigs = linkerSettings == nil ? [] : asked(SwiftFormulaConverter.linkerConfiguration)
-            guard !subfolders.isEmpty || !lockFiles.isEmpty || !lockedFolders.isEmpty || !linkerConfigs.isEmpty else {
+            let binaryFolders = asked(SwiftFormulaConverter.binaryArtifactFolders)
+            guard !subfolders.isEmpty || !lockFiles.isEmpty || !lockedFolders.isEmpty || !linkerConfigs.isEmpty
+                    || !binaryFolders.isEmpty else {
                 return output
+            }
+            for folder in binaryFolders {
+                inputValues[SwiftFormulaConverter.binaryArtifactFolders, default: [:]][folder] =
+                    .value(try FolderManifest(baseFolderPath: folder, entries: folderContents[folder] ?? []).toJSON().intern())
             }
             for key in linkerConfigs {
                 inputValues[SwiftFormulaConverter.linkerConfiguration, default: [:]][key] =
@@ -1031,7 +1037,8 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         var output = try converter.process(input: ProcessInput(inputValues: inputValues))
         for _ in 0..<8 {
             var askedForMore = false
-            for port in [SwiftFormulaConverter.targetFolders, SwiftFormulaConverter.targetSubfolders] {
+            for port in [SwiftFormulaConverter.targetFolders, SwiftFormulaConverter.targetSubfolders,
+                         SwiftFormulaConverter.binaryArtifactFolders] {
                 for folder in (output.inputWireSpecs[port] ?? [:]).keys where inputValues[port]?[folder] == nil {
                     inputValues[port, default: [:]][folder] =
                         .value(try FolderManifest(baseFolderPath: folder, entries: []).toJSON().intern())
@@ -1051,40 +1058,138 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         return again
     }
 
-    func test_aPackageWhoseOnlyTargetIsARemoteBinaryTargetSaysSoOnEveryPass() throws {
+    /// A remote binary target whose artifact `prepare` has not put in the package: the
+    /// conversion says where it is expected and what puts it there, the same on every pass.
+    func test_aRemoteBinaryTargetNotVendoredNamesWhereItIsExpectedOnEveryPass() throws {
         let output = try assertSettles(json: sparkle(targets: [remoteBinaryTarget]))
 
         XCTAssertEqual(try pendingReason(output),
-                       "SwiftFormulaConverter: binary target Sparkle of package Sparkle is not built (B-133): it is an "
-                     + "artifact downloaded from https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/"
-                     + "Sparkle-for-Swift-Package-Manager.zip, which `semel-swift prepare` does not vendor yet, so what "
-                     + "reaches it cannot be built either — product(s) Sparkle")
+                       "SwiftFormulaConverter: binary target Sparkle of package Sparkle: the artifact downloaded from "
+                     + "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-for-Swift-Package-Manager.zip "
+                     + "is not vendored: nothing is at input:/pkg/semel-artifacts/Sparkle. This build system never fetches "
+                     + "anything; `semel-swift prepare` copies what SwiftPM downloaded and checked there; so what reaches it "
+                     + "cannot be built either — product(s) Sparkle")
         XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty, true,
-                       "a remote binary target has no folder to ask for")
+                       "a binary target has no source folder")
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.binaryArtifactFolders]?.isEmpty, true,
+                       "the package lists no semel-artifacts, so nothing under it is asked for")
     }
 
-    func test_aPackageWhoseOnlyTargetIsALocalBinaryTargetSaysSoOnEveryPass() throws {
-        let output = try assertSettles(json: sparkle(targets: [localBinaryTarget]))
+    /// The folders of a vendored copy with no `semel-artifacts`: the package folder, which
+    /// is there, and nothing below it — a folder asked for that the copy lacks would be a
+    /// ghost its content root folds, and the lock would fail on it (B-133).
+    func test_aVendoredPackageIsAskedOnlyForTheArtifactFoldersItLists() throws {
+        let vendored = "input:/repo/Dependencies/Sparkle"
+        let root = """
+            {"name": "App", "dependencies": [{"sourceControl": [{"identity": "sparkle",
+                "location": {"remote": [{"urlString": "https://github.com/sparkle-project/Sparkle"}]},
+                "requirement": {"range": [{"lowerBound": "2.0.0", "upperBound": "3.0.0"}]}}]}],
+             "products": [{"name": "App", "targets": ["App"], "type": {"executable": null}}],
+             "targets": [{"name": "App", "type": "executable", "path": "App",
+                          "dependencies": [{"product": ["Sparkle", "Sparkle", null, null]}]}]}
+            """
 
-        let reason = try pendingReason(output)
-        XCTAssertTrue(reason.contains("binary target Sparkle of package Sparkle is not built (B-133): "
-                                    + "it is input:/pkg/Sparkle.xcframework, which nothing here links or embeds yet"),
-                      "got:\n\(reason)")
-        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.targetFolders]?.isEmpty, true,
-                       "an .xcframework is not a source folder")
+        let output = try convert(packageFolder: "input:/repo", json: root,
+                                 externalManifests: [vendored: sparkle(targets: [remoteBinaryTarget])])
+
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.binaryArtifactFolders]?.keys.sorted(), [vendored])
+        XCTAssertTrue(try pendingReason(output).contains("nothing is at \(vendored)/semel-artifacts/Sparkle"))
     }
 
-    /// A Swift target depending on a binary one cannot link without it, so its product is
-    /// named too.
-    func test_aProductReachingABinaryTargetThroughItsTargetsIsNamed() throws {
-        let json = sparkle(targets: [#"{"name": "Updater", "type": "regular", "path": "Sources/Updater", "dependencies": [{"byName": ["Sparkle", null]}]}"#,
-                                     remoteBinaryTarget],
-                           products: #"{"name": "Updater", "targets": ["Updater"], "type": {"library": ["automatic"]}}"#)
+    /// Sparkle's own package once `prepare` has vendored its download: its one product
+    /// vends only the binary target, so it has no linker, and every func an app names it by
+    /// — its frameworks the slice the selector chooses, its modules, objects, link
+    /// requirements and bundles empty.
+    func test_aRemoteBinaryTargetInSemelArtifactsIsSelectedAndItsProductHasFuncsButNoLinker() throws {
+        let formula = try formula(json: sparkle(targets: [remoteBinaryTarget]), folderContents: [
+            "input:/pkg": [FolderManifestEntry(name: "semel-artifacts", isFolder: true, isPinned: true)],
+            "input:/pkg/semel-artifacts": [FolderManifestEntry(name: "Sparkle", isFolder: true, isPinned: true)],
+            "input:/pkg/semel-artifacts/Sparkle": [FolderManifestEntry(name: "Sparkle.xcframework", isFolder: true, isPinned: true)],
+        ])
+
+        let slice = try funcDefinition("sliceSparkle", in: formula)
+        XCTAssertTrue(slice.contains("XCFrameworkSliceSelector(\n        path: 'input:/pkg/semel-artifacts/Sparkle/Sparkle.xcframework',"), slice)
+        XCTAssertTrue(slice.contains("ConfigFilter(prefix: 'swift.linker'"), "the slice is chosen for the platform the linker links for: \(slice)")
+        XCTAssertTrue(slice.contains("infoPlist: ['Info.plist': StaticFile(path: 'input:/pkg/semel-artifacts/Sparkle/Sparkle.xcframework/Info.plist').output]"), slice)
+        XCTAssertEqual(try funcDefinition("frameworks_Sparkle", in: formula),
+                       "func frameworks_Sparkle() =\n    TreeMerger(input: [\n        'Sparkle': sliceSparkle().frameworks\n    ]).files")
+        XCTAssertTrue(try funcDefinition("objects_Sparkle", in: formula).contains("'Sparkle': sliceSparkle().libraries"), formula)
+        XCTAssertTrue(try funcDefinition("modules_Sparkle", in: formula)
+                        .contains("'Sparkle': TreeMerger(under: 'Sparkle', input: ['headers': sliceSparkle().headers]).files"), formula)
+        XCTAssertNoThrow(try funcDefinition("linking_Sparkle", in: formula))
+        XCTAssertNoThrow(try funcDefinition("bundles_Sparkle", in: formula))
+        XCTAssertFalse(formula.contains("SwiftLinker"), formula)
+        XCTAssertFalse(formula.contains("SwiftCompiler"), formula)
+        XCTAssertLessThan(try XCTUnwrap(formula.range(of: "func sliceSparkle()")).lowerBound,
+                          try XCTUnwrap(formula.range(of: "func frameworks_Sparkle()")).lowerBound,
+                          "a func is defined before the funcs that name it")
+    }
+
+    /// A binary target by `path:` is its own `.xcframework` folder, asked for directly.
+    func test_aLocalXCFrameworkIsSelectedWhereItIs() throws {
+        let formula = try formula(json: sparkle(targets: [localBinaryTarget]), folderContents: [
+            "input:/pkg/Sparkle.xcframework": [FolderManifestEntry(name: "Info.plist", isFolder: false, isPinned: true),
+                                               FolderManifestEntry(name: "macos-arm64", isFolder: true, isPinned: true)],
+        ])
+
+        XCTAssertTrue(try funcDefinition("sliceSparkle", in: formula).contains("path: 'input:/pkg/Sparkle.xcframework',"), formula)
+        XCTAssertTrue(formula.contains("func frameworks_Sparkle()"), formula)
+    }
+
+    /// A `path:` xcframework whose folder holds nothing is named as missing.
+    func test_aLocalXCFrameworkThatIsNotThereIsNamed() throws {
+        let reason = try pendingReason(try assertSettles(json: sparkle(targets: [localBinaryTarget])))
+
+        XCTAssertTrue(reason.hasPrefix("SwiftFormulaConverter: binary target Sparkle of package Sparkle: nothing is at "
+                                     + "input:/pkg/Sparkle.xcframework, the path its manifest names"), reason)
+    }
+
+    /// A `path:` zip is where `prepare` unzips it, and named as not unzipped when it is not.
+    func test_aLocalZipIsReadFromSemelArtifacts() throws {
+        let zipped = #"{"name": "Sparkle", "type": "binary", "dependencies": [], "path": "Sparkle.xcframework.zip"}"#
+        let reason = try pendingReason(try assertSettles(json: sparkle(targets: [zipped])))
+        XCTAssertTrue(reason.contains("input:/pkg/Sparkle.xcframework.zip is not unzipped: nothing is at "
+                                    + "input:/pkg/semel-artifacts/Sparkle. `semel-swift prepare` unzips it there"), reason)
+
+        let formula = try formula(json: sparkle(targets: [zipped]), folderContents: [
+            "input:/pkg": [FolderManifestEntry(name: "semel-artifacts", isFolder: true, isPinned: true)],
+            "input:/pkg/semel-artifacts": [FolderManifestEntry(name: "Sparkle", isFolder: true, isPinned: true)],
+            "input:/pkg/semel-artifacts/Sparkle": [FolderManifestEntry(name: "Sparkle.xcframework", isFolder: true, isPinned: true)],
+        ])
+        XCTAssertTrue(formula.contains("path: 'input:/pkg/semel-artifacts/Sparkle/Sparkle.xcframework',"), formula)
+    }
+
+    /// What is still not built (B-133): an artifact that is not an `.xcframework` — an
+    /// `.artifactbundle` holds executables for plugins, not a library to link.
+    func test_anArtifactThatIsNotAnXCFrameworkIsNotBuiltAndSaysSo() throws {
+        let bundle = #"{"name": "Lint", "type": "binary", "dependencies": [], "path": "Lint.artifactbundle"}"#
+        let json = sparkle(targets: [bundle], products: #"{"name": "Lint", "targets": ["Lint"], "type": {"library": ["automatic"]}}"#)
 
         let reason = try pendingReason(try assertSettles(json: json))
 
-        XCTAssertTrue(reason.contains("binary target Sparkle of package Sparkle is not built (B-133)"), "got:\n\(reason)")
-        XCTAssertTrue(reason.hasSuffix("product(s) Updater"), "got:\n\(reason)")
+        XCTAssertEqual(reason, "SwiftFormulaConverter: binary target Lint of package Sparkle is not built (B-133): its artifact "
+                             + "input:/pkg/Lint.artifactbundle is not an .xcframework, and an .xcframework is the only binary "
+                             + "artifact linked here; so what reaches it cannot be built either — product(s) Lint")
+    }
+
+    /// A Swift target depending on a binary one compiles against its framework slice, and a
+    /// product linking it links the framework and finds it beside itself at run time.
+    func test_aSwiftTargetReachingABinaryTargetCompilesAndLinksAgainstItsSlice() throws {
+        let json = sparkle(targets: [#"{"name": "Updater", "type": "executable", "path": "Sources/Updater", "dependencies": [{"byName": ["Sparkle", null]}]}"#,
+                                     localBinaryTarget],
+                           products: #"{"name": "Updater", "targets": ["Updater"], "type": {"executable": null}}"#)
+
+        let formula = try formula(json: json, folderContents: [
+            "input:/pkg/Sparkle.xcframework": [FolderManifestEntry(name: "Info.plist", isFolder: false, isPinned: true)],
+        ])
+
+        let compiler = try funcDefinition("compilerUpdater", in: formula)
+        XCTAssertTrue(compiler.contains("frameworkTrees: [\n            'Sparkle': sliceSparkle().frameworks\n    ]"), compiler)
+        XCTAssertTrue(compiler.contains("'Sparkle': TreeMerger(under: 'Sparkle', input: ['headers': sliceSparkle().headers]).files"), compiler)
+        let linker = try productBlock("Updater", in: formula)
+        XCTAssertTrue(linker.contains("frameworksRunpath: '@loader_path'"), linker)
+        XCTAssertTrue(linker.contains("frameworkTrees: ['Updater': frameworks_Updater().files]"), linker)
+        XCTAssertTrue(linker.contains("objectTrees: [\n            'Sparkle': sliceSparkle().libraries\n        ]"), linker)
     }
 
     /// A binary target no product reaches is not needed: the formula is made, and nothing

@@ -541,7 +541,8 @@ final class PrepareTests: XCTestCase {
     // MARK: - Running it
 
     private func steps(vendored: @escaping ([URL], URL) throws -> [Vendoring.Copied] = { _, _ in [] },
-                       facts: ToolchainFacts? = nil) -> Preparation.Steps {
+                       facts: ToolchainFacts? = nil,
+                       binaryTargets: [String: [PackageSummary.BinaryTarget]] = [:]) -> Preparation.Steps {
         Preparation.Steps(
             summarize: { folder in
                 let name = folder.lastPathComponent
@@ -550,7 +551,8 @@ final class PrepareTests: XCTestCase {
                 // would read it from the manifest.
                 return PackageSummary(name: name, folder: folder, pathDependencies: dependsOn,
                                       platforms: name == "Timeline" ? ["ios": "18.0"] : [:],
-                                      targets: [.init(folder: folder.appendingPathComponent("Sources/\(name)", isDirectory: true))])
+                                      targets: [.init(folder: folder.appendingPathComponent("Sources/\(name)", isDirectory: true))],
+                                      binaryTargets: binaryTargets[name] ?? [])
             },
             vendor: vendored,
             vendorProject: { project, into in
@@ -902,5 +904,99 @@ final class PrepareTests: XCTestCase {
         let report = try Preparation.run(folder: folder("Packages"), platform: .macos, steps: steps())
 
         XCTAssertEqual(report.locks, [])
+    }
+
+    // MARK: - Binary targets (B-77)
+
+    /// `ditto -c -k --keepParent`, as a framework's zip is made: the folder inside the zip.
+    private func zip(_ relativeFolder: String, to relativeZip: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--keepParent", folder(relativeFolder).path, root.appendingPathComponent(relativeZip).path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        try FileManager.default.removeItem(at: folder(relativeFolder))
+    }
+
+    /// A vendored package whose `.binaryTarget(path:)` is a zip: `prepare` unzips it into
+    /// the copy's `semel-artifacts/<Target>`, where the converter reads it, before the lock
+    /// is taken — so the lock is over the unzipped framework as the build will push it.
+    func test_aPathZipIsUnzippedIntoSemelArtifactsAndTheLockCoversIt() throws {
+        try write("Packages/App/Package.swift")
+        let vendoring: ([URL], URL) throws -> [Vendoring.Copied] = { _, into in
+            let destination = into.appendingPathComponent("Tiny", isDirectory: true)
+            try self.write("Packages/Dependencies/Tiny/Package.swift", "// tiny\n")
+            try self.write("Packages/Dependencies/Tiny/Tiny.xcframework/Info.plist", "<plist/>\n")
+            try self.write("Packages/Dependencies/Tiny/Tiny.xcframework/macos-arm64/Tiny.framework/Tiny", "binary\n")
+            try self.zip("Packages/Dependencies/Tiny/Tiny.xcframework", to: "Packages/Dependencies/Tiny/Tiny.xcframework.zip")
+            return [Vendoring.Copied(name: "Tiny", source: destination, destination: destination)]
+        }
+
+        let report = try Preparation.run(folder: folder("Packages"), platform: .macos,
+                                         steps: steps(vendored: vendoring,
+                                                      binaryTargets: ["Tiny": [.init(name: "Tiny", path: "Tiny.xcframework.zip")]]))
+
+        let artifact = folder("Packages/Dependencies/Tiny/semel-artifacts/Tiny")
+        XCTAssertEqual(try String(contentsOf: artifact.appendingPathComponent("Tiny.xcframework/macos-arm64/Tiny.framework/Tiny"),
+                                  encoding: .utf8), "binary\n")
+        XCTAssertEqual(report.unzippedArtifacts, [folder("Packages/Dependencies/Tiny").appendingPathComponent("Tiny.xcframework.zip")])
+        XCTAssertEqual(report.artifacts, [artifact])
+        let lockFile = folder("Packages/Dependencies").appendingPathComponent("Tiny.semel-lock")
+        let lock = try DependencyLock.parse(try String(contentsOf: lockFile, encoding: .utf8))
+        XCTAssertEqual(lock.contentRoot, try FolderContentRoot.root(ofFolderAt: folder("Packages/Dependencies/Tiny")))
+        try FileManager.default.removeItem(at: folder("Packages/Dependencies/Tiny/semel-artifacts"))
+        XCTAssertNotEqual(lock.contentRoot, try FolderContentRoot.root(ofFolderAt: folder("Packages/Dependencies/Tiny")),
+                          "the lock is over the copy with its artifact in it")
+    }
+
+    /// What resolution downloaded for a checkout — SwiftPM's `artifacts/<identity>/<Target>`,
+    /// the identity lowercased — goes into the copy's `semel-artifacts/<Target>`. A remote
+    /// URL needs HTTPS, which a test cannot serve, so this pins the layout, not the download.
+    func test_aCheckoutsDownloadedArtifactIsCopiedIntoItsCopy() throws {
+        try write("resolved/checkouts/Sparkle/Package.swift", "// sparkle\n")
+        try write("resolved/artifacts/sparkle/Sparkle/Sparkle.xcframework/Info.plist", "<plist/>\n")
+        try write("resolved/artifacts/zip/Zip/Zip.xcframework/Info.plist", "<plist/>\n")
+
+        let copied = try Vendoring.copyCheckouts(from: folder("resolved/checkouts"), into: folder("Dependencies"),
+                                                 artifacts: folder("resolved/artifacts"))
+
+        XCTAssertEqual(copied.map(\.name), ["Sparkle"])
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: folder("Dependencies/Sparkle/semel-artifacts/Sparkle/Sparkle.xcframework/Info.plist").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder("Dependencies/Sparkle/semel-artifacts/Zip").path),
+                       "another package's artifact stays out")
+    }
+
+    /// The lock records each binary target's checksum beside the pin; recorded, not checked.
+    func test_theLockRecordsABinaryTargetsChecksum() throws {
+        let destination = folder("Packages/Dependencies/Sparkle")
+        try write("Packages/Dependencies/Sparkle/Package.swift", "// sparkle\n")
+        let summary = PackageSummary(name: "Sparkle", folder: destination, pathDependencies: [], platforms: [:],
+                                     binaryTargets: [.init(name: "Sparkle", checksum: "4d5de3d3")])
+
+        let locks = try Preparation.writeLocks(for: [Vendoring.Copied(name: "Sparkle", source: destination, destination: destination)],
+                                               summaries: [summary])
+
+        let text = try String(contentsOf: try XCTUnwrap(locks.first), encoding: .utf8)
+        XCTAssertTrue(text.contains("\nartifacts  Sparkle=4d5de3d3\n"), text)
+        XCTAssertEqual(try DependencyLock.parse(text).artifacts, ["Sparkle": "4d5de3d3"])
+    }
+
+    /// `dump-package` names a binary target's `path:`, or its `url:` and `checksum:`.
+    func test_theSummaryNamesTheBinaryTargets() throws {
+        let json = """
+            {"name": "Kit", "targets": [
+              {"name": "Local", "type": "binary", "path": "Local.xcframework.zip"},
+              {"name": "Remote", "type": "binary", "url": "https://example.com/Remote.zip", "checksum": "abc"},
+              {"name": "Kit", "type": "regular"}
+            ]}
+            """
+
+        let summary = try PackageScan.summary(fromDumpPackageJSON: Data(json.utf8), folder: folder("Kit"))
+
+        XCTAssertEqual(summary.binaryTargets, [.init(name: "Local", path: "Local.xcframework.zip"),
+                                               .init(name: "Remote", checksum: "abc")])
+        XCTAssertEqual(summary.targets.count, 1)
     }
 }

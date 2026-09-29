@@ -195,12 +195,20 @@ struct SwiftCompiler: Node {
     /// into one `modules` folder on the import path; two products sharing a target share
     /// its module.
     static let inputModuleTrees      = "moduleTrees"
+    /// Trees of frameworks, one wire each — what a package's `frameworks_P()` carries: the
+    /// slice of every binary target behind a product, each under its own name
+    /// (`Sparkle.framework/…`), as `XCFrameworkSliceSelector` chose it (B-77). Merged into
+    /// one `frameworks` folder and put on the framework search path, so `import Sparkle`
+    /// finds `Sparkle.framework/Modules`.
+    static let inputFrameworkTrees   = "frameworkTrees"
     /// Folder manifests for system-library targets (e.g. GRDBSQLite).
     /// Each entry key becomes the subdirectory name placed in the sandbox.
     static let inputModuleMapFolders = "inputModuleMapFolders"
     /// Dynamic port — actual file content wired from StaticFile nodes discovered
     /// via inputModuleMapFolders.  Wire key format: "<dirName>/<filename>".
     static let inputModuleMapFiles   = "inputModuleMapFiles"
+    /// The sandbox folder the framework trees are merged into, and the `-F` it takes.
+    static let frameworksFolder      = "frameworks"
     static let outputObject          = "object"
     static let outputModule          = "swiftmodule"
     static let outputInterface       = "swiftinterface"
@@ -221,6 +229,7 @@ struct SwiftCompiler: Node {
             .optional(inputExtraSourceFiles),
             .optional(inputModules),
             .optional(inputModuleTrees),
+            .optional(inputFrameworkTrees),
             .optional(inputModuleMapFolders),
             .dynamic(inputSourceFiles),
             .dynamic(inputSubfolders),
@@ -244,6 +253,8 @@ struct SwiftCompiler: Node {
         let moduleFiles: [FileNameAndContent]
         /// Every file of every module tree, placed under its wire's key.
         let moduleTreeFiles: [FileNameAndContent]
+        /// Every file of every framework tree, merged under `frameworks`.
+        let frameworkTreeFiles: [FileNameAndContent]
         let moduleMapFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
         let subfolderManifests: [(String, FolderManifest)]
@@ -288,6 +299,8 @@ struct SwiftCompiler: Node {
                 .sorted { $0.filePath < $1.filePath }
 
             moduleTreeFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.inputModuleTrees, under: "modules")
+            frameworkTreeFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.inputFrameworkTrees,
+                                                                   under: SwiftCompiler.frameworksFolder)
 
             // Module map files: wire key is already "<dirName>/<filename>".
             moduleMapFiles = try (input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:])
@@ -464,6 +477,12 @@ struct SwiftCompiler: Node {
             }
         }
 
+        // A binary target's framework is found as the SDK's are, by name on a framework
+        // search path; its module map is inside it (B-77).
+        if !inputs.frameworkTreeFiles.isEmpty {
+            arguments.append("-F"); arguments.append(Self.frameworksFolder)
+        }
+
         // Add -I flags for each system-library module map directory.
         var moduleMapDirs = Set<String>()
         for file in inputs.moduleMapFiles {
@@ -486,7 +505,8 @@ struct SwiftCompiler: Node {
         let result = try tool.execute(
             arguments: arguments,
             environment: inputs.configuration.environment,
-            inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.moduleMapFiles,
+            inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.frameworkTreeFiles
+                      + inputs.moduleMapFiles,
             expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput])
 
         // Stored by the runner; an output the tool did not write is the empty object.

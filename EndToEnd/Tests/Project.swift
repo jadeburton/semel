@@ -70,6 +70,14 @@ struct Project {
     /// Expected products that must be exported executable, mode 0755: a linked program on
     /// its own, or one inside a bundle tree, which carries the mode per entry (B-108).
     var executables: [String] = []
+    /// Run over the build folder of the materialised copy, before `configure`: what a
+    /// fixture needs that the repository does not hold — a binary framework built on this
+    /// machine, as a vendor would ship it (B-77). Every build, the second mount's too, sees
+    /// what it made.
+    var materialised: ((URL) throws -> Void)?
+    /// Run over each export once its products are checked: what a list of files cannot
+    /// say — what the linked executable loads, and that it runs.
+    var exported: ((URL) throws -> Void)?
 }
 
 extension Project.Source {

@@ -117,6 +117,39 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertFalse(formula.contains("LSRequiresIPhoneOS"), formula)
     }
 
+    /// Every package product's binary frameworks (B-77): compiled and linked against, found
+    /// at run time under `Contents/Frameworks`, and embedded there — named for every product,
+    /// since `frameworks_P()` is empty for one that reaches none.
+    func test_aMacBundleEmbedsThePackagesFrameworksUnderContentsFrameworks() throws {
+        let macBuild = XcodeFormulaEmitter.Build(root: "input:/repo", projectFolder: "input:/repo", configuration: "Debug", sdk: "macosx")
+        let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(XcodeProjectTests.fixture.utf8)), build: macBuild)
+        let formula = try emitter.formula(
+            settings: { target in
+                try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "macosx",
+                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
+                                               extra: ["TARGET_NAME": target.name])
+            },
+            listing: { _ in nil })
+
+        let trees = "frameworkTrees: [\n        'KeychainSwift': frameworks_KeychainSwift().files,\n        'Timeline': frameworks_Timeline().files\n        ]"
+        let compiler = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("func compiler_IceCubesApp()") })
+        XCTAssertTrue(compiler.contains(trees), compiler)
+        let linker = try XCTUnwrap(formula.components(separatedBy: "\n\n").first { $0.hasPrefix("product 'Ice Cubes.app/Contents/MacOS/Ice Cubes'") })
+        XCTAssertTrue(linker.contains(trees), linker)
+        XCTAssertTrue(linker.contains("frameworksRunpath: '@executable_path/../Frameworks'"), linker)
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Contents/Frameworks/' = TreeMerger(input: [\n"
+                                     + "        'KeychainSwift': frameworks_KeychainSwift().files,\n"
+                                     + "        'Timeline': frameworks_Timeline().files\n    ]).files"), formula)
+    }
+
+    /// An iOS bundle is flat: the frameworks under `Frameworks/`, found beside the executable.
+    func test_anIOSBundleEmbedsThePackagesFrameworksUnderFrameworks() throws {
+        let formula = try formula()
+
+        XCTAssertTrue(formula.contains("product 'Ice Cubes.app/Frameworks/' = TreeMerger(input: ["), formula)
+        XCTAssertTrue(formula.contains("frameworksRunpath: '@executable_path/Frameworks'"), formula)
+    }
+
     /// The resource bundles of every package the target links travel into the bundle's
     /// tree, named per product so the app needs no knowledge of which targets carry any.
     func test_mergesThePackagesResourceBundlesIntoTheBundle() throws {

@@ -43,6 +43,25 @@ final class DependencyLockTests: XCTestCase {
         XCTAssertEqual(lines[5], "origin    https://github.com/groue/GRDB.swift.git")
     }
 
+    /// A package with binary targets records each download's checksum on one line (B-77),
+    /// the column widened for it; a package with none reads as a lock always did.
+    func test_theArtifactsChecksumsAreOneLineSortedByTarget() throws {
+        var sparkle = grdb
+        sparkle.artifacts = ["Sparkle": "4d5de3d3", "Other": "9e1f"]
+
+        XCTAssertEqual(try DependencyLock.parse(sparkle.text), sparkle)
+        let lines = sparkle.text.components(separatedBy: "\n")
+        XCTAssertEqual(lines[1], "content    sha256:\(grdb.contentRoot)")
+        XCTAssertEqual(lines[6], "artifacts  Other=9e1f,Sparkle=4d5de3d3")
+        XCTAssertFalse(grdb.text.contains("artifacts"), grdb.text)
+    }
+
+    func test_anArtifactItemThatIsNotTargetEqualsChecksumIsRefused() {
+        XCTAssertThrowsError(try DependencyLock.parse("content sha256:abc\nfold x\nartifacts Sparkle\n")) { error in
+            XCTAssertEqual(error as? DependencyLockError, .malformedArtifact("Sparkle"))
+        }
+    }
+
     func test_blankLinesCommentsAndExtraSpacesAreFree() throws {
         let text = """
 
