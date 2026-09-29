@@ -24,7 +24,7 @@ final class MaterialiseTests: XCTestCase {
 
         try run.materialise()
 
-        XCTAssertTrue(run.root.path.hasPrefix("/tmp/semel-tests/"), run.root.path)
+        XCTAssertTrue(run.root.path.hasPrefix(EndToEndEnvironment.rootBase.path + "/"), run.root.path)
         XCTAssertLessThan(run.root.appendingPathComponent("home3/semelserv.sock").path.utf8.count, 104)
         XCTAssertTrue(FileManager.default.fileExists(atPath: run.base.appendingPathComponent("c/hello.fmla").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: run.base.appendingPathComponent("swift/HelloApp/semel.fmla").path))

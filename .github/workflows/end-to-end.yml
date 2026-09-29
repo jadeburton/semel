@@ -31,10 +31,16 @@ jobs:
       - name: Build
         run: scripts/build.sh
 
+      # The run roots go under a folder of this run's own, not the harness's default
+      # `/tmp/semel-tests`: the runner is also a workstation, and a developer's or an
+      # agent's own end-to-end run under the default would share it with this one — the
+      # cleanup below once removed such a folder under a live run and failed on the files
+      # it kept writing. Short, because sockets live under it.
       - name: Build the external projects twice each
         env:
           SEMEL_E2E_EXTERNAL: "1"
           SEMEL_E2E_KEEP: "1"
+          SEMEL_E2E_ROOT: /tmp/semel-e2e-${{ github.run_id }}
         run: scripts/build.sh test --filter SemelEndToEndTests
 
       # As one archive: the roots hold vendored dependencies whose documentation names
@@ -43,8 +49,8 @@ jobs:
       - name: Archive the run roots on failure
         if: failure()
         run: |
-          if [ -d /tmp/semel-tests ]; then
-            tar -czf /tmp/semel-e2e-roots.tgz -C /tmp semel-tests
+          if [ -d /tmp/semel-e2e-${{ github.run_id }} ]; then
+            tar -czf /tmp/semel-e2e-roots.tgz -C /tmp semel-e2e-${{ github.run_id }}
           fi
 
       - name: Keep the run roots on failure
@@ -59,4 +65,4 @@ jobs:
       # do not accumulate. The artifact above is the copy that survives.
       - name: Remove the run roots
         if: always()
-        run: rm -rf /tmp/semel-tests
+        run: rm -rf /tmp/semel-e2e-${{ github.run_id }}

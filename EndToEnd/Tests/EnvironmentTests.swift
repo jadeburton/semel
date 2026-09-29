@@ -7,11 +7,12 @@ import XCTest
 
 final class EnvironmentTests: XCTestCase {
 
-    /// `newRoot` sweeps `/tmp/semel-tests` for entries an earlier run left behind. A
-    /// stale one (older than the day-long grace period) must go; anything fresher,
-    /// including a run someone is still inspecting, must not be touched.
+    /// `newRoot` sweeps the roots' folder (`/tmp/semel-tests`, or `SEMEL_E2E_ROOT`) for
+    /// entries an earlier run left behind. A stale one (older than the day-long grace
+    /// period) must go; anything fresher, including a run someone is still inspecting,
+    /// must not be touched.
     func test_newRootRemovesSiblingsOlderThanADayButKeepsFresherOnes() throws {
-        let base = URL(fileURLWithPath: "/tmp/semel-tests", isDirectory: true)
+        let base = EndToEndEnvironment.rootBase
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
 
         let stale = base.appendingPathComponent("stale-\(UUID().uuidString.prefix(8))", isDirectory: true)
