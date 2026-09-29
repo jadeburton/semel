@@ -1,0 +1,18 @@
+{
+  "fill" : {
+    "solid" : "srgb:0.20000,0.40000,0.80000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "dot.svg",
+          "name" : "dot"
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

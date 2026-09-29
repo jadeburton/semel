@@ -51,7 +51,8 @@ final class AppPreludeTests: XCTestCase {
 
     /// `EndToEnd/Fixtures/swift/HelloApp/semel.fmla` before B-108, over the two files B-109
     /// gave it: the project's choices laid over the machine's facts; with the app's
-    /// Objective-C compiled and linked, and its bridging header imported, since B-77.
+    /// Objective-C compiled and linked, and its bridging header imported, since B-77; its
+    /// icon an Icon Composer `.icon` compiled with the catalog since B-89.
     private let handWritten = """
         func settings(prefix) = ConfigFilter(prefix: prefix, input: ['config': ConfigMerger(base: ['machine': StaticFile(path: <semel.machine.config>).output], override: ['project': StaticFile(path: <semel.config>).output]).output]).output
 
@@ -78,7 +79,7 @@ final class AppPreludeTests: XCTestCase {
 
         func assets() = AssetCatalogCompiler(
             configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'apple.assetCatalogCompiler')], override: ['literals': SettingsLiteral(appIcon: 'AppIcon').output]).output],
-            catalogs: ['assets': Folder(path: <Assets.xcassets>).manifest]
+            catalogs: ['assets': Folder(path: <Assets.xcassets>).manifest, 'icon': Folder(path: <AppIcon.icon>).manifest]
         )
 
         product 'Hello.app/Hello' = SwiftLinker(

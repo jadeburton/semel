@@ -37,6 +37,7 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
             platform=iphonesimulator
             minimumDeploymentTarget=18.0
             targetDevices=iphone,ipad
+            assetutilPath=\(AppleToolDiscovery.locate("assetutil") ?? "/usr/bin/assetutil")
             """
         if let appIcon { text += "\nappIcon=\(appIcon)" }
         return .value(try text.intern())
@@ -122,18 +123,45 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         XCTAssertFalse(executor.lastArguments.contains("--app-icon"))
     }
 
-    /// What actool wrote is the tree: the car and every icon PNG it decided to make, and
-    /// the partial plist is a value of its own.
-    func test_whatActoolWroteIsTheTreeAndThePartialPlist() throws {
-        executor.producedTrees["out"] = ["Assets.car": Array("car".utf8), "AppIcon60x60@2x.png": Array("png".utf8)]
+    /// What actool wrote is the tree: every icon PNG it decided to make, and the car in
+    /// canonical form (B-89) — two compiles that actool wrote differently publish one file.
+    /// The partial plist is a value of its own.
+    func test_whatActoolWroteIsTheTreeWithTheCarInCanonicalForm() throws {
+        var published: [DataObjectHash] = []
+        for compile in [1, 2] {
+            executor.producedTrees["out"] = ["Assets.car":          try AssetCatalogCanonicaliserTests.widgetsCatalog(compile),
+                                             "AppIcon60x60@2x.png": Array("png".utf8)]
+            executor.producedFiles["partial.plist"] = Array("<plist/>".utf8)
+
+            let output = try processWholeCatalog(appIcon: "AppIcon")
+
+            let tree = try treeManifest(from: output.outputValues[AssetCatalogCompiler.output])
+            XCTAssertEqual(tree.entries.map(\.path), ["AppIcon60x60@2x.png", "Assets.car"])
+            XCTAssertEqual(tree.entries.first?.hash, try Array("png".utf8).intern(), "a PNG is published as actool wrote it")
+            published.append(try XCTUnwrap(tree.entries.last?.hash))
+            XCTAssertEqual(try output.outputValues[AssetCatalogCompiler.partialInfoPlist]?.expectValue().resolveAsString(),
+                           "<plist/>")
+        }
+
+        XCTAssertEqual(published[0], published[1])
+        XCTAssertEqual(published[0], try AssetCatalogCanonicaliser.canonicalise(try AssetCatalogCanonicaliserTests.widgetsCatalog(1)).bytes.intern())
+    }
+
+    /// An Assets.car the canonicaliser cannot read is published nowhere: the tree and the
+    /// plist naming its icon both carry why.
+    func test_aCarThatCannotBeMadeCanonicalIsNotPublished() throws {
+        executor.producedTrees["out"] = ["Assets.car": Array("car".utf8)]
         executor.producedFiles["partial.plist"] = Array("<plist/>".utf8)
 
         let output = try processWholeCatalog(appIcon: "AppIcon")
 
-        let tree = try treeManifest(from: output.outputValues[AssetCatalogCompiler.output])
-        XCTAssertEqual(tree.entries.map(\.path), ["AppIcon60x60@2x.png", "Assets.car"])
-        XCTAssertEqual(try output.outputValues[AssetCatalogCompiler.partialInfoPlist]?.expectValue().resolveAsString(),
-                       "<plist/>")
+        for port in [AssetCatalogCompiler.output, AssetCatalogCompiler.partialInfoPlist] {
+            guard case .noValue(.error(let messageHash)) = try XCTUnwrap(output.outputValues[port]) else {
+                return XCTFail("\(port) must carry the error")
+            }
+            let message = try messageHash.resolveAsString()
+            XCTAssertTrue(message.contains("B-89") && message.contains("it does not open with 'BOMStore'"), message)
+        }
     }
 
     func test_aFailedRunPutsActoolsErrorsOnEveryOutput() throws {
@@ -184,6 +212,9 @@ final class AssetCatalogCompilerTests: SemelAppleTestCase {
         ]))) { error in
             XCTAssertTrue("\(error)".contains("apple.assetCatalogCompiler.platform"), "\(error)")
             XCTAssertTrue("\(error)".contains("apple.assetCatalogCompiler.targetDevices"), "\(error)")
+            // The assetutil that guards the canonical car is the machine's, written by prepare.
+            XCTAssertTrue("\(error)".contains("Missing machine settings"), "\(error)")
+            XCTAssertTrue("\(error)".contains("apple.assetCatalogCompiler.assetutilPath"), "\(error)")
         }
     }
 }

@@ -4,7 +4,10 @@
 // the bundle come from `include 'apple'`, which compiles the asset and string catalogs,
 // merges actool's partial Info.plist into the project's, and puts every file where the
 // bundle wants it — the executable keeping the mode that lets it launch — and a xib is
-// compiled to the nib the app would load, under its language folder.
+// compiled to the nib the app would load, under its language folder. The icon is an Icon
+// Composer `.icon` beside the catalog and the accent colour has a dark appearance, the two
+// things actool writes differently from one compile to the next, so the four builds that
+// compare the bundle's bytes hold the canonical Assets.car to them (B-89).
 
 include 'swift'
 include 'apple'
@@ -58,13 +61,13 @@ product 'Hello.app/' = apple.bundle(
         objectTrees: ['HelloKit': objects_HelloKit().files]
     ).output,
     name: 'Hello',
-    infoPlist: apple.infoPlist(
-        base: <Info.plist>, catalog: <Assets.xcassets>, appIcon: 'AppIcon', settings: settings()
+    infoPlist: apple.infoPlistWithIcon(
+        base: <Info.plist>, catalog: <Assets.xcassets>, icon: <AppIcon.icon>, appIcon: 'AppIcon', settings: settings()
     ),
     pkgInfo: <PkgInfo>,
     resources: TreeMerger(input: [
-        'catalogs': apple.resources(
-            catalog: <Assets.xcassets>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
+        'catalogs': apple.resourcesWithIcon(
+            catalog: <Assets.xcassets>, icon: <AppIcon.icon>, appIcon: 'AppIcon', strings: <Resources>, settings: settings()
         ),
         'interface': card().files
     ]).files

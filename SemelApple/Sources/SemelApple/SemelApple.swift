@@ -35,8 +35,15 @@ public enum SemelApple {
         // ibtool is told the platform's SDK, a fact about the machine for a platform
         // (B-109), which prepare writes as it writes the clang tools' `sdkPath`.
         let prepare = MachineFileWriter(command: "semel-swift prepare")
+        // The asset catalog compiler is told which assetutil checks its canonical Assets.car
+        // (B-89), a fact about the machine as the SDK is.
         ToolNamespaceRegistry.register(.init(namespace: AssetCatalogCompilerConfiguration.settingNamespace,
-                                             toolName: "actool", machineFileWriter: prepare))
+                                             toolName: "actool",
+                                             machineSettingKeys: AssetCatalogCompilerConfiguration.machineSettingKeys,
+                                             machineSettings: { _ in
+                                                 AppleToolDiscovery.locate("assetutil").map { ["assetutilPath": $0] } ?? [:]
+                                             },
+                                             machineFileWriter: prepare))
         ToolNamespaceRegistry.register(.init(namespace: StringCatalogCompilerConfiguration.settingNamespace,
                                              toolName: "xcstringstool", machineFileWriter: prepare))
         ToolNamespaceRegistry.register(.init(namespace: IBToolCompilerConfiguration.settingNamespace,
