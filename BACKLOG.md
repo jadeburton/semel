@@ -69,6 +69,33 @@ most of it that one query — parsing it is a third of its cost — and the rest
 trip each file makes. What remains is one request per file, which a push that sends a
 manifest and only the bytes the server lacks would remove (B-132).
 
+Measured 2026-09-29 against `xcodebuild`, the first comparison with a build Semel did not
+make: the same pinned commits, the same Apple M4 (10 cores), Xcode 26.6, Debug, package
+resolution excluded, Xcode with `CODE_SIGNING_ALLOWED=NO`, fresh derived data and its
+compilation cache off, Semel's release binaries into a fresh home. Each row is one build.
+
+| NetNewsWire, Mac (`netnewswire-mac`) | `xcodebuild` | Semel |
+|---|---|---|
+| clean build | 32.0 s | 61.2 s, plus `prepare` 25.7 s once per clone |
+| nothing changed | 8.7 s | 1.7 s |
+| one app-level file edited (`Mac/AppDelegate.swift`) | 8.6 s | 9.2 s (427 nodes: the signed bundle re-published) |
+| one base-package file edited (`RSCore/AppConfig.swift`) | 9.0 s | 6.5 s (478 nodes, 30 from cache) |
+
+| IceCubes app, simulator (`icecubes-app`) | `xcodebuild` | Semel |
+|---|---|---|
+| clean build | 93.9 s | 95.6 s, plus `prepare` 32.7 s once per clone |
+| nothing changed | 5.1 s | 4.3 s |
+| one app-level file edited (`Tabs/ToolbarTab.swift`) | 5.6 s | 12.9 s (5 nodes) |
+| one base-package file edited (`Env/CurrentAccount.swift`) | 5.7 s | 6.4 s (55 nodes, 24 from cache) |
+
+Semel's Mac build signs the bundle ad hoc, Xcode's is unsigned. What the rows say: a cold
+build is Xcode's by two to one on NetNewsWire and even on IceCubes; a build with nothing
+changed is Semel's; a one-file edit is even, except the IceCubes app-level edit, where
+Semel's 12.9 s is the push of 8,039 unchanged files (about 5 s) and one module's compile
+and relink behind it. The push is B-132's; the cold build's gap is the converters' passes
+and the per-node cost B-124 left, and the signed bundle re-publishing every entry after
+an executable changes (427 nodes for one edit).
+
 
 ## Design, correctness and code quality
 
