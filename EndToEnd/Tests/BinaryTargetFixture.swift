@@ -59,38 +59,15 @@ enum BinaryTargetFixture {
     /// `Contents/Frameworks` — runs and prints the framework's greeting.
     static func checkApp(in out: URL) throws {
         let executable = out.appendingPathComponent("Greeter.app/Contents/MacOS/Greeter")
-        let libraries = try run(["otool", "-L", executable.path])
-        guard libraries.contains(installName) else {
-            throw EndToEndFailure(step: "otool -L", message: "the app does not load \(installName):\n\(libraries)")
-        }
-        let loadCommands = try run(["otool", "-l", executable.path])
-        guard loadCommands.contains("path @executable_path/../Frameworks") else {
-            throw EndToEndFailure(step: "otool -l", message: "no LC_RPATH @executable_path/../Frameworks:\n\(loadCommands)")
-        }
+        try AppInspection.checkLoadsEmbeddedFramework(executable: executable, installName: installName)
         let printed = try run([executable.path], viaXcrun: false)
         guard printed.trimmingCharacters(in: .whitespacesAndNewlines) == greeting else {
             throw EndToEndFailure(step: "run the app", message: "printed '\(printed)', not '\(greeting)'")
         }
     }
 
-    /// Runs a tool through `xcrun`, or the executable itself, to completion, returning
-    /// what it printed; a non-zero status is a failure naming the command.
     @discardableResult
     private static func run(_ arguments: [String], viaXcrun: Bool = true) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: viaXcrun ? "/usr/bin/xcrun" : arguments[0])
-        process.arguments = viaXcrun ? arguments : Array(arguments.dropFirst())
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw EndToEndFailure(step: "binary target fixture",
-                                  message: "\(arguments.joined(separator: " ")) exited \(process.terminationStatus):\n\(text)")
-        }
-        return text
+        try AppInspection.run(arguments, viaXcrun: viaXcrun)
     }
 }

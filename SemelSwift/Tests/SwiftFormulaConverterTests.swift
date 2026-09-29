@@ -1412,6 +1412,133 @@ final class SwiftFormulaConverterTests: SemelSwiftTestCase {
         XCTAssertFalse(result.contains("languageMode"), "got:\n\(result)")
     }
 
+    /// A target declaring no mode compiles in its package's, as SwiftPM decides it: every
+    /// NetNewsWire package is `swift-tools-version:6.2`, so Swift 6, and swiftc's default
+    /// is 5 — where `-warnings-as-errors` turns its warning that a module interface wants a
+    /// language mode into the error that stopped `RSWeb` (B-77).
+    func test_aTargetWithNoLanguageModeTakesItsPackagesFromTheToolsVersion() throws {
+        func manifest(toolsVersion: String, modes: String = "null", settings: String = "[]") -> String {
+            """
+            {
+              "name": "Models",
+              "dependencies": [],
+              "toolsVersion": {"_version": "\(toolsVersion)"},
+              "swiftLanguageVersions": \(modes),
+              "products": [{"name": "Models", "targets": ["Models"], "type": {"library": ["automatic"]}}],
+              "targets": [{"name": "Models", "type": "regular", "path": "Sources/Models", "dependencies": [],
+                           "settings": \(settings)}]
+            }
+            """
+        }
+        func mode(_ json: String) throws -> String? {
+            let block = try funcDefinition("compilerModels", in: try formula(json: json))
+            return block.range(of: #"languageMode: '[^']*'"#, options: .regularExpression).map {
+                String(block[$0].dropFirst("languageMode: '".count).dropLast())
+            }
+        }
+
+        XCTAssertEqual(try mode(manifest(toolsVersion: "6.2.0")), "6")
+        XCTAssertEqual(try mode(manifest(toolsVersion: "5.9.0")), "5")
+        XCTAssertEqual(try mode(manifest(toolsVersion: "4.2.0")), "4.2")
+        XCTAssertEqual(try mode(manifest(toolsVersion: "6.0.0", modes: #"["5", "4.2"]"#)), "5",
+                       "the highest declared mode, not the tools version's")
+        XCTAssertEqual(try mode(manifest(toolsVersion: "5.9.0", modes: #"["7", "5"]"#)), "5",
+                       "a mode this compiler lacks is not chosen")
+        XCTAssertEqual(try mode(manifest(toolsVersion: "6.2.0",
+                                         settings: #"[{"kind": {"swiftLanguageMode": {"_0": "5"}}, "tool": "swift"}]"#)), "5",
+                       "the target's own mode wins")
+    }
+
+    // MARK: - Swift settings
+
+    /// A target's `swiftSettings` as `dump-package` writes them, every kind the compiler
+    /// takes, one conditional on each platform and one on a configuration.
+    private let swiftSettingsManifest = """
+        {
+          "name": "Models",
+          "dependencies": [],
+          "products": [{"name": "Models", "targets": ["Models"], "type": {"library": ["automatic"]}}],
+          "targets": [
+            {"name": "Models", "type": "regular", "path": "Sources/Models", "dependencies": [],
+             "settings": [
+               {"kind": {"enableUpcomingFeature": {"_0": "NonisolatedNonsendingByDefault"}}, "tool": "swift"},
+               {"condition": {"platformNames": ["ios"]}, "kind": {"enableUpcomingFeature": {"_0": "InferIsolatedConformances"}}, "tool": "swift"},
+               {"kind": {"enableExperimentalFeature": {"_0": "StrictConcurrency"}}, "tool": "swift"},
+               {"kind": {"define": {"_0": "FOO"}}, "tool": "swift"},
+               {"condition": {"platformNames": ["macos"]}, "kind": {"define": {"_0": "MAC"}}, "tool": "swift"},
+               {"condition": {"config": "debug", "platformNames": []}, "kind": {"define": {"_0": "DEBUGONLY"}}, "tool": "swift"},
+               {"kind": {"unsafeFlags": {"_0": ["-warnings-as-errors", "-Xcc", "-Wl,-a"]}}, "tool": "swift"},
+               {"kind": {"swiftLanguageMode": {"_0": "6"}}, "tool": "swift"},
+               {"kind": {"strictMemorySafety": {}}, "tool": "swift"},
+               {"kind": {"define": {"_0": "CONLY"}}, "tool": "c"}
+             ]}
+          ]
+        }
+        """
+
+    /// NetNewsWire's packages: `NonisolatedNonsendingByDefault` decides which actor a
+    /// `nonisolated` async method runs on, and a caller's compile reads that back from the
+    /// module, so the feature has to reach the package's compiler (B-77 item 16). Each
+    /// kind is a literal of its own; a setting conditional on a platform is decided for
+    /// the SDK the linker links against, as a linker setting is, and one conditional on a
+    /// configuration is not carried.
+    func test_aTargetsSwiftSettingsReachItsCompilerDecidedForThePlatform() throws {
+        let waiting = try convert(json: swiftSettingsManifest)
+        XCTAssertNotNil(waiting.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration]?[SwiftLinkerConfiguration.settingNamespace],
+                        "a platform-conditional Swift setting asks for the platform")
+        XCTAssertNotNil(try pendingReason(waiting).range(of: "swift.linker"))
+
+        let forMac = try funcDefinition("compilerModels", in: try formula(json: swiftSettingsManifest,
+                                                                          linkerSettings: "target=arm64-apple-macosx15.0"))
+        XCTAssertTrue(forMac.contains("defines: 'FOO,MAC', "
+                                      + "experimentalFeatures: 'StrictConcurrency', "
+                                      + "languageMode: '6', "
+                                      + "moduleName: 'Models', "
+                                      + #"unsafeFlags: '["-warnings-as-errors","-Xcc","-Wl,-a"]', "#
+                                      + "upcomingFeatures: 'NonisolatedNonsendingByDefault'"), "got:\n\(forMac)")
+
+        let forIOS = try funcDefinition("compilerModels", in: try formula(json: swiftSettingsManifest,
+                                                                          linkerSettings: "sdk=iphonesimulator"))
+        XCTAssertTrue(forIOS.contains("defines: 'FOO', "), "got:\n\(forIOS)")
+        XCTAssertTrue(forIOS.contains("upcomingFeatures: 'NonisolatedNonsendingByDefault,InferIsolatedConformances'"),
+                      "got:\n\(forIOS)")
+    }
+
+    /// Settings that hold everywhere need no platform, and the conversion does not ask.
+    func test_unconditionalSwiftSettingsNeedNoPlatform() throws {
+        let unconditional = swiftSettingsManifest
+            .replacingOccurrences(of: #"{"condition": {"platformNames": ["ios"]}, "#, with: "{")
+            .replacingOccurrences(of: #"{"condition": {"platformNames": ["macos"]}, "#, with: "{")
+        let output = try convert(json: unconditional)
+        XCTAssertEqual(output.inputWireSpecs[SwiftFormulaConverter.linkerConfiguration] ?? [:], [:])
+        let block = try funcDefinition("compilerModels",
+                                       in: try XCTUnwrap(output.outputValues[SwiftFormulaConverter.formulaOutput]).expectValue().resolveAsString())
+        XCTAssertTrue(block.contains("defines: 'FOO,MAC', "), "got:\n\(block)")
+        XCTAssertTrue(block.contains("upcomingFeatures: 'NonisolatedNonsendingByDefault,InferIsolatedConformances'"), "got:\n\(block)")
+    }
+
+    /// The literals the converter writes are the ones the compiler reads.
+    func test_theCompilerReadsTheSwiftSettingsTheConverterWrites() throws {
+        let block = try funcDefinition("compilerModels", in: try formula(json: swiftSettingsManifest,
+                                                                         linkerSettings: "sdk=macosx"))
+        let literal = try XCTUnwrap(block.range(of: #"SettingsLiteral\([^)]*\)"#, options: .regularExpression).map { String(block[$0]) })
+        var properties: [String: String] = ["toolDescriptor.name": "swiftc", "toolDescriptor.version": "test",
+                                            "toolDescriptor.platform": "macOS", "toolDescriptor.architecture": "arm64"]
+        let pattern = try NSRegularExpression(pattern: #"(\w+): '([^']*)'"#)
+        for match in pattern.matches(in: literal, range: NSRange(literal.startIndex..., in: literal)) {
+            let key   = String(literal[try XCTUnwrap(Range(match.range(at: 1), in: literal))])
+            let value = String(literal[try XCTUnwrap(Range(match.range(at: 2), in: literal))])
+            properties[key] = value
+        }
+        let configuration = try SwiftCompilerConfiguration(properties: properties)
+
+        XCTAssertEqual(configuration.upcomingFeatures, ["NonisolatedNonsendingByDefault"])
+        XCTAssertEqual(configuration.experimentalFeatures, ["StrictConcurrency"])
+        XCTAssertEqual(configuration.defines, ["FOO", "MAC"])
+        XCTAssertEqual(configuration.unsafeFlags, ["-warnings-as-errors", "-Xcc", "-Wl,-a"])
+        XCTAssertEqual(configuration.languageMode, "6")
+    }
+
     // MARK: - Dependencies no target uses
 
     private func manifest(dependencies: String, targetDependencies: String) -> String {

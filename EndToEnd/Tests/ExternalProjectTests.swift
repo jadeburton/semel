@@ -111,8 +111,23 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-77: NetNewsWire's Mac app — local packages, a vendored binary framework, C and
+    /// Objective-C in packages and in the app, xibs, two extensions — over a clone with the
+    /// generated `SecretKey.swift` laid by the overlay. Inspected, not run: it is unsigned.
+    func test_netNewsWireBuildsTwiceForTheMac() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.netNewsWireMac)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("netnewswire-mac\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
-                       ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac"])
+                       ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
+                        "netnewswire-mac"])
     }
 }

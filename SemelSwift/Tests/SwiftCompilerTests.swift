@@ -144,7 +144,7 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
 
         XCTAssertTrue(executor.invocations.isEmpty, "swiftc ran on a partial source set")
         XCTAssertEqual(try subfolderSpecs(output).keys.sorted(), ["input:/pkg/GRDB/Core"])
-        for port in [SwiftCompiler.outputObject, SwiftCompiler.outputModule, SwiftCompiler.outputInterface] {
+        for port in [SwiftCompiler.outputObject, SwiftCompiler.outputModule] {
             XCTAssertTrue(output.outputValues[port]?.isPending == true, port)
         }
     }
@@ -368,16 +368,6 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
                        ["objc/Mac/App-Bridging-Header.h", "objc/Mac/NSOpenPanel+Extras.h", "objc/Mac/Private/WKPreferencesPrivate.h"])
     }
 
-    /// swiftc refuses a module interface for a module with a bridging header, an
-    /// application's: none is asked for or expected, and the module still is.
-    func test_aModuleWithABridgingHeaderHasNoInterface() throws {
-        _ = try makeTool().process(input: try bridgingInput())
-
-        XCTAssertFalse(executor.lastArguments.contains("-emit-module-interface"), "\(executor.lastArguments)")
-        XCTAssertTrue(executor.lastArguments.contains("-emit-module"), "\(executor.lastArguments)")
-        XCTAssertEqual(executor.invocations.last?.expectedOutputFileNames, ["GRDB.o", "GRDB.swiftmodule"])
-    }
-
     func test_aTargetWithoutABridgingHeaderImportsNoObjectiveC() throws {
         var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
         input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "let x = 1".intern())]
@@ -385,7 +375,23 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         _ = try makeTool().process(input: ProcessInput(inputValues: input))
 
         XCTAssertFalse(executor.lastArguments.contains("-import-objc-header"), "\(executor.lastArguments)")
-        XCTAssertTrue(executor.lastArguments.contains("-emit-module-interface"), "\(executor.lastArguments)")
+    }
+
+    /// A module and an object, no interface: SwiftPM writes one only with library
+    /// evolution, and swiftc warns that one wants it — an error under a package target's
+    /// `-warnings-as-errors`, which stopped NetNewsWire's `RSWeb` (B-77). With a bridging
+    /// header, too, which swiftc refuses an interface for anyway.
+    func test_aModuleIsWrittenWithNoInterface() throws {
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "let x = 1".intern())]
+
+        for processInput in [ProcessInput(inputValues: input), try bridgingInput()] {
+            _ = try makeTool().process(input: processInput)
+
+            XCTAssertFalse(executor.lastArguments.contains("-emit-module-interface"), "\(executor.lastArguments)")
+            XCTAssertTrue(executor.lastArguments.contains("-emit-module"), "\(executor.lastArguments)")
+            XCTAssertEqual(executor.invocations.last?.expectedOutputFileNames, ["GRDB.o", "GRDB.swiftmodule"])
+        }
     }
 
     // MARK: - What a rejected argument says (B-98)
@@ -458,6 +464,39 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
             input:/app/Sources/App.swift:1:1: error: cannot find 'foo' in scope
             """)
     }
+
+    // MARK: - A package target's Swift settings
+
+    /// A package target's `swiftSettings`, as the converter carries them (B-77): each
+    /// feature its flag, each define a `-D`, and the unsafe flags as they stand after the
+    /// sources — a JSON list, so a flag holding a comma arrives whole.
+    func test_aTargetsSwiftSettingsReachTheCommandLine() throws {
+        let unsafeFlags = try SwiftCompilerConfiguration.encodedFlagList(["-warnings-as-errors", "-Xcc", "-Wl,-a,-b"])
+        var input = try makeInput(folder: try manifest("input:/ext/Sources", [file("Main.swift")]),
+                                  extraConfiguration: [
+                                      "languageMode=6",
+                                      "upcomingFeatures=NonisolatedNonsendingByDefault,InferIsolatedConformances",
+                                      "experimentalFeatures=StrictConcurrency",
+                                      "defines=FOO,BAR",
+                                      "unsafeFlags=\(unsafeFlags)",
+                                  ]).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/ext/Sources/Main.swift": .value(try "// main".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        let arguments = executor.lastArguments
+        let modeIndex = try XCTUnwrap(arguments.firstIndex(of: "-swift-version"), "\(arguments)")
+        XCTAssertEqual(Array(arguments[modeIndex...].prefix(12)), [
+            "-swift-version", "6",
+            "-enable-upcoming-feature", "NonisolatedNonsendingByDefault",
+            "-enable-upcoming-feature", "InferIsolatedConformances",
+            "-enable-experimental-feature", "StrictConcurrency",
+            "-D", "FOO",
+            "-D", "BAR",
+        ])
+        let sourceIndex = try XCTUnwrap(arguments.firstIndex(of: "input:/ext/Sources/Main.swift"), "\(arguments)")
+        XCTAssertEqual(Array(arguments[(sourceIndex + 1)...]), ["-warnings-as-errors", "-Xcc", "-Wl,-a,-b"])
+    }
 }
 
 // MARK: - Optimisation level
@@ -521,6 +560,21 @@ final class SwiftOptimisationLevelTests: SemelSwiftTestCase {
         let configuration = try self.configuration(["arguments": "-D,DEBUG,-application-extension"])
         XCTAssertEqual(configuration.arguments, ["-D", "DEBUG", "-application-extension"])
         XCTAssertEqual(try self.configuration([:]).arguments, [])
+    }
+
+    /// No settings, no flags: every compile built before them keeps its command line.
+    func test_noSwiftSettingsAddNoFlags() throws {
+        let configuration = try self.configuration([:])
+        XCTAssertEqual(configuration.upcomingFeatures, [])
+        XCTAssertEqual(configuration.experimentalFeatures, [])
+        XCTAssertEqual(configuration.defines, [])
+        XCTAssertEqual(configuration.unsafeFlags, [])
+    }
+
+    func test_unsafeFlagsThatAreNotAJSONListAreRefusedByName() {
+        XCTAssertThrowsError(try configuration(["unsafeFlags": "-warnings-as-errors"])) { error in
+            XCTAssertTrue("\(error)".contains("swift.compiler.unsafeFlags"), "got \(error)")
+        }
     }
 
     /// An iOS package names its SDK and target; both reach the command line.

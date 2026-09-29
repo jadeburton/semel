@@ -24,6 +24,10 @@ let package = Package(
         .target(
             name: "MyLibraryTargetB",
             dependencies: [
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("BareSlashRegexLiterals"),
+                .define("MY_LIBRARY_SETTINGS"),
             ]
         )/*,
         .testTarget(
