@@ -73,13 +73,16 @@ enum Projects {
         expectedProducts: ["App", "ctool"],
         buildTimeout: fixtureTimeout)
 
+    /// Its catalog holds a colour with a dark appearance and its icon is an Icon Composer
+    /// `.icon`, the two things actool writes differently from one compile to the next, so
+    /// the four builds compare a canonical `Assets.car` byte for byte, unexempted (B-89).
     static let swiftHelloApp = Project(
         name: "swift-hello-app",
         source: .fixture(folder: "."),
         buildFolder: "swift/HelloApp",
         platform: "ios-simulator",
         expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car",
-                           "Hello.app/Base.lproj/Card.nib"],
+                           "Hello.app/AppIcon60x60@2x.png", "Hello.app/Base.lproj/Card.nib"],
         buildTimeout: fixtureTimeout,
         onlyUnder: "Hello.app",
         executables: ["Hello.app/Hello"])
@@ -147,15 +150,6 @@ enum Projects {
         // A cold build takes several minutes locally; `prepare` shares the same budget,
         // and the GitHub macOS runner this also has to fit is roughly half the speed.
         buildTimeout: 25 * 60,
-        mayDiffer: [
-            // actool's output is not byte-reproducible (B-89): the `.icon` renditions it
-            // derives for the app carry a fresh UUID and pid, and an asset catalog with
-            // more than one appearance can have its appearance table's entry order vary
-            // regardless of a `.icon` input — the widgets extension's catalog has no
-            // `.icon` and still hit it. A bare name, not a full path, so the exemption
-            // reaches every target's `Assets.car`.
-            "Assets.car",
-        ],
         // A cold build takes several minutes; the third build the fixtures prove is not
         // worth a third here, and neither is the perturbed fourth — run time is the
         // constraint for this project, not coverage: `actool`, both linkers and both
@@ -260,8 +254,6 @@ enum Projects {
             "Food Truck.app/PlugIns/Widgets.appex/Info.plist",
         ],
         buildTimeout: 10 * 60,
-        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
-        mayDiffer: ["Assets.car"],
         onlyUnder: "Food Truck.app")
 
     /// The same sample for the Mac (B-77): a Mac bundle's `Contents/` layout, the app
@@ -294,11 +286,6 @@ enum Projects {
             "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/_CodeSignature/CodeResources",
         ],
         buildTimeout: 10 * 60,
-        // actool's output is not byte-reproducible (B-89), as for icecubes-app; the seals
-        // and the executables that record them follow the catalogs they seal, and only
-        // then (B-77).
-        mayDiffer: ["Assets.car"],
-        mayDifferWithExempt: ["_CodeSignature/CodeResources", "Contents/MacOS/Food Truck", "Contents/MacOS/Widgets"],
         onlyUnder: "Food Truck.app",
         executables: ["Food Truck.app/Contents/MacOS/Food Truck", "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets"],
         exported: SignedBundleCheck.verifying(bundle: "Food Truck.app", executable: "Food Truck.app/Contents/MacOS/Food Truck",
@@ -337,12 +324,6 @@ enum Projects {
             "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/Info.plist",
         ],
         buildTimeout: 10 * 60,
-        // actool's output is not byte-reproducible (B-89), as for icecubes-app; the seals
-        // and the executables that record them follow the catalogs they seal, and only
-        // then (B-77).
-        mayDiffer: ["Assets.car"],
-        mayDifferWithExempt: ["_CodeSignature/CodeResources", "Contents/MacOS/NetNewsWire",
-                              "Contents/MacOS/NetNewsWire Share Extension", "Contents/MacOS/Subscribe to Feed"],
         onlyUnder: "NetNewsWire.app",
         executables: [
             "NetNewsWire.app/Contents/MacOS/NetNewsWire",

@@ -305,6 +305,17 @@ it. If you add anything that influences output, it belongs in the key. A tool no
 also carries a hash of the tool binary's own bytes (`toolBinaryCacheKeyMaterial`, filled in
 by `ToolDiscovery`), so two binaries reporting one version string do not share an entry.
 
+**A node's outputs are a function of its inputs.** Nothing nondeterministic crosses a port.
+A node whose tool is not a function of its inputs makes its output deterministic before
+it publishes, inside the node — not in a node after it, which would still leave the raw
+output in the graph as a value, cached, stored and compared — and fails rather than
+publish what it cannot put in canonical form. `AssetCatalogCompiler` is the example:
+actool names renditions afresh and numbers its blocks in whatever order it allocated them
+(B-89), so the node rewrites `Assets.car` canonically, checks with `assetutil` that the
+rewrite reads as the file actool wrote, and publishes an error if either step fails. The
+roster's byte comparisons are how such a tool is found; an exemption there is a bug report,
+not a fix.
+
 **Never iterate a `Dictionary` into a command line.** Swift's iteration order is seeded per
 process, so the same build would produce a different invocation each run. Sort first.
 `ProjectBuilder` and `SwiftFormulaConverter` iterate dictionaries safely because they

@@ -643,6 +643,12 @@ Occasionally run a node twice before caching and compare. A node that is not rep
 marked never-cacheable. Fixes the problem at source rather than detecting symptoms forever,
 and answers the question a shared cache most needs answered: which tools are safe to share.
 
+The probe is the detector for the next nondeterministic tool, not the fix (2026-09-29, B-89):
+a node's outputs are a function of its inputs, so a node whose tool is not makes its output
+deterministic inside the node before it publishes, as `AssetCatalogCompiler` does actool's
+`Assets.car`, or fails. What the probe finds is a node to fix that way; marking it
+never-cacheable would leave its varying output crossing a port.
+
 **B-12** `open` `For Fable Only` — **Sampled re-verification of cache entries.**
 Re-run entries and compare against what is stored. Must run *twice*, because a single re-run
 cannot distinguish a bad cache from a non-deterministic tool. Weight by `cost × reuse`
@@ -1606,7 +1612,8 @@ application target, simulator only, all library code in packages. In suggested o
         real `codesign`. A signature seals what it signs, though: when actool writes an
         `Assets.car` differently (B-89), the bundle's `CodeResources` and the executable
         whose signature records it move with it, which the roster's new
-        `mayDifferWithExempt` allows only when an exempt file differs.
+        `mayDifferWithExempt` allowed only when an exempt file differed — until the
+        catalog was published in canonical form and both went (B-89).
       - *A versioned framework whose links arrived as copies* — Sparkle's, the fixture's
         `Tiny.framework` — cannot be signed as it is: `codesign` finds real files at the
         framework's top and a `Versions/Current` folder and calls the bundle ambiguous,
@@ -1806,8 +1813,8 @@ application target, simulator only, all library code in packages. In suggested o
    four of them required executable, everything under `NetNewsWire.app`, and the export
    inspected — `file` says arm64 executable, `otool -L` the Sparkle install name,
    `otool -l` the runpath (`AppInspection`, shared with `swift-binary-target-app`). One
-   exemption, `Assets.car`, actool's (B-89), as for the other apps; no other file differed
-   between the builds. All four hermeticity builds run — two cold builds, a second
+   exemption, `Assets.car`, actool's (B-89), as for the other apps, since removed with the
+   canonical catalog; no other file differed between the builds. All four hermeticity builds run — two cold builds, a second
    mount, a perturbed environment — in 528 s wall clock for the whole test, `prepare`
    included, each step well inside `buildTimeout` (10 min).
 
@@ -1819,9 +1826,10 @@ application target, simulator only, all library code in packages. In suggested o
    `IndeterminateProgressWindow.nib`. The export checks each executable is signed as its
    bundle's (`SignedBundleCheck.signedAsPartOfTheBundle`) and does not verify the app as
    a whole: Sparkle's links arrive as copies (1), which `codesign --verify` calls
-   ambiguous. `mayDifferWithExempt` exempts the seals and the three executables when an
-   `Assets.car` differs; in the run it did, and the app's `CodeResources` and executable
-   differed with it, nothing else. The test took 657 s. What made it possible: a tree
+   ambiguous. `mayDifferWithExempt` exempted the seals and the three executables when an
+   `Assets.car` differed; in the run it did, and the app's `CodeResources` and executable
+   differed with it, nothing else. Since B-89 the catalog is canonical and the roster
+   exempts nothing. The test took 657 s. What made it possible: a tree
    product's builder demands one wire per file, each over the whole expression behind
    the tree, and the signed app is one tree of 369 files over the app's entire graph —
    the engine folded each copy again, and a first attempt spent over half an hour in one
