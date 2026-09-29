@@ -337,8 +337,12 @@ enum Projects {
             "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/Info.plist",
         ],
         buildTimeout: 10 * 60,
-        // actool's output is not byte-reproducible (B-89), as for icecubes-app.
+        // actool's output is not byte-reproducible (B-89), as for icecubes-app; the seals
+        // and the executables that record them follow the catalogs they seal, and only
+        // then (B-77).
         mayDiffer: ["Assets.car"],
+        mayDifferWithExempt: ["_CodeSignature/CodeResources", "Contents/MacOS/NetNewsWire",
+                              "Contents/MacOS/NetNewsWire Share Extension", "Contents/MacOS/Subscribe to Feed"],
         onlyUnder: "NetNewsWire.app",
         executables: [
             "NetNewsWire.app/Contents/MacOS/NetNewsWire",
@@ -350,6 +354,15 @@ enum Projects {
             try AppInspection.checkLoadsEmbeddedFramework(
                 executable:  out.appendingPathComponent("NetNewsWire.app/Contents/MacOS/NetNewsWire"),
                 installName: "@rpath/Sparkle.framework/Versions/B/Sparkle")
+            // Signed as bundles, Sparkle with them (B-77). Not verified as a whole: Sparkle's
+            // links arrive as copies, which a versioned framework's signature does not
+            // allow, though the signer lays them as links while it signs.
+            for executable in ["NetNewsWire.app/Contents/MacOS/NetNewsWire",
+                               "NetNewsWire.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle",
+                               "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/MacOS/NetNewsWire Share Extension",
+                               "NetNewsWire.app/Contents/PlugIns/Subscribe to Feed.appex/Contents/MacOS/Subscribe to Feed"] {
+                try SignedBundleCheck.signedAsPartOfTheBundle(out.appendingPathComponent(executable))
+            }
         })
 
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]

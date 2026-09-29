@@ -89,6 +89,29 @@ final class GraphSpecTableTests: XCTestCase {
                        "a row per compile and per source file, and one for each shared node")
     }
 
+    /// A subtree met again is folded once. Every level here wires the level below twice,
+    /// so the tree has 2^48 occurrences at the bottom — a tree product's builder repeats the
+    /// expression behind the tree once per file (B-77) — and folding each occurrence would
+    /// never finish; folding each distinct subtree is 49 rows. The identity is the one the
+    /// shared subtree has however it was reached.
+    func test_aSubtreeMetAgainIsFoldedOnce() throws {
+        let depth = 48
+        var level = GraphSpecNode(SpecTableSource.self, properties: ["path": "input:/bottom"]).port("output")
+        for index in 0..<depth {
+            level = GraphSpecNode(SpecTableSettings.self, properties: ["role": "level \(index)"], inputs: [
+                "base": ["left": level, "right": level],
+            ]).port("output")
+        }
+        let product = GraphSpecNode(SpecTableCompiler.self, properties: ["module": "App"], inputs: [
+            "input": ["tree": level],
+        ]).port("object")
+
+        let table = try GraphSpecTable(trees: ["products": ["a": product, "b": product]])
+
+        XCTAssertEqual(table.rows.count, depth + 2)
+        XCTAssertEqual(table.inputWireSpecs["products"]?["a"], table.inputWireSpecs["products"]?["b"])
+    }
+
     /// A row is filed under the identity the graph stores for its node, so the table's keys
     /// are the graph's identities and a demand's reference is the identity the applier
     /// would compute from the tree.

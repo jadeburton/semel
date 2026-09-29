@@ -1194,7 +1194,8 @@ application target, simulator only, all library code in packages. In suggested o
    resources still wants the `apple.*` namespaces in its config, which `prepare` does
    not write for a tree.
 2. *NetNewsWire* — `open`; the Mac app builds (2026-09-29) and is in the roster as
-   `netnewswire-mac` (below, after the map); signing (11), the iOS app, 15 and 17 remain. Pinned
+   `netnewswire-mac` (below, after the map), signed since 11; the iOS app remains, and
+   the app traps at launch on a resource plist the bundle lacks (below). Pinned
    at `b4361413fc1850110f9f42652f0f84e7a51e9d64` (main, 2026-09-23). The clone is not what
    this entry said from memory: there are no framework targets and no group-listed
    sources — the Mac and iOS apps, two Mac extensions (Share, and the Safari extension
@@ -1796,7 +1797,7 @@ application target, simulator only, all library code in packages. In suggested o
    (`PLCrashReporter_CrashReporter`, `ActivityLog_ActivityLog`, `RSCore_RSCoreResources`),
    `Frameworks/Sparkle.framework`, and under `PlugIns` the Share extension (its
    executable, plist, `ShareViewController.nib`) and *Subscribe to Feed* (executable,
-   plist). Unsigned, so not launched (11).
+   plist). Unsigned then; signed since 11.
 
    *In the roster* as `netnewswire-mac` (`Projects.netNewsWireMac`,
    `ExternalProjectTests.test_netNewsWireBuildsTwiceForTheMac`): the pinned commit, the
@@ -1810,12 +1811,34 @@ application target, simulator only, all library code in packages. In suggested o
    mount, a perturbed environment — in 528 s wall clock for the whole test, `prepare`
    included, each step well inside `buildTimeout` (10 min).
 
-   What remains for NetNewsWire: signing and entitlements (11, another piece of work);
-   the iOS app and its extensions; a borrowed asset catalog (15, the iOS Share
-   extension); a package's xibs compiled into its resource bundle (17 —
-   `RSCore_RSCoreResources.bundle` still holds `WebViewWindow.xib` and
-   `IndeterminateProgressWindow.xib` as copies); the app's `OTHER_SWIFT_FLAGS` (16's
-   note); and 1's residuals (a framework's links as copies, the whole download pushed).
+   *Signed* (2026-09-29, 11, 17): the roster run signs every bundle — Sparkle's
+   `Updater.app`, XPC services and framework, both extensions with their own
+   entitlements, then the app with the sandbox, app group and apple-events keys, its
+   iCloud and push keys left out as an ad-hoc signature must — and
+   `RSCore_RSCoreResources.bundle` holds `WebViewWindow.nib` and
+   `IndeterminateProgressWindow.nib`. The export checks each executable is signed as its
+   bundle's (`SignedBundleCheck.signedAsPartOfTheBundle`) and does not verify the app as
+   a whole: Sparkle's links arrive as copies (1), which `codesign --verify` calls
+   ambiguous. `mayDifferWithExempt` exempts the seals and the three executables when an
+   `Assets.car` differs; in the run it did, and the app's `CodeResources` and executable
+   differed with it, nothing else. The test took 657 s. What made it possible: a tree
+   product's builder demands one wire per file, each over the whole expression behind
+   the tree, and the signed app is one tree of 369 files over the app's entire graph —
+   the engine folded each copy again, and a first attempt spent over half an hour in one
+   fold before the client gave up. `GraphSpecTable`'s fold now keeps the identity of
+   every subtree it has folded (`GraphSpecTableTests.test_aSubtreeMetAgainIsFoldedOnce`),
+   and a cold build by hand takes four minutes.
+
+   *Launched by hand* (the executable run directly): past code signing — AMFI lets it
+   run — it traps in `MainWindowKeyboardHandler.init` on
+   `Bundle.main.path(forResource: "GlobalKeyboardShortcuts", ofType: "plist")!`: the
+   emitter takes every `.plist` in a synchronized folder for an input (Info.plist-like)
+   and copies none, where Xcode copies every one but the target's `INFOPLIST_FILE`. That
+   rule is the next stop for running it.
+
+   What remains for NetNewsWire: the plists above; the iOS app and its extensions; the
+   app's `OTHER_SWIFT_FLAGS` (16's note); and 1's residuals (a framework's links as
+   copies, the whole download pushed).
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.
