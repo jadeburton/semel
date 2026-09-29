@@ -162,10 +162,13 @@ struct XcodeFormulaEmitter {
         // own folder, which is how the compiler reads an excluded path too. A target with
         // no folder of its own compiles what it borrows, and nothing else.
         // A target lists its files through groups (B-77) or owns synchronized folders;
-        // either way it has to have a Swift source somewhere. A listed file that is not
-        // Swift is a build this converter cannot write yet, said rather than dropped.
-        let listedSources = target.sourcePaths(forSDK: build.sdk).filter { $0.hasSuffix(".swift") }
-        let listedOther   = target.sourcePaths(forSDK: build.sdk).filter { !$0.hasSuffix(".swift") }
+        // either way it has to have a Swift source somewhere. A listed C-family source is
+        // compiled through clang beside it; any other listed file that is not Swift is a
+        // build this converter cannot write yet, said rather than dropped.
+        let everyListedSource = target.sourcePaths(forSDK: build.sdk)
+        let listedSources  = everyListedSource.filter { $0.hasSuffix(".swift") }
+        let listedCFamily  = everyListedSource.filter(Self.isCFamilySource)
+        let listedOther    = everyListedSource.filter { !$0.hasSuffix(".swift") && !Self.isCFamilySource($0) }
         guard listedOther.isEmpty else {
             throw XcodeProjectError.unsupportedSources(target: target.name, files: listedOther)
         }
@@ -186,7 +189,7 @@ struct XcodeFormulaEmitter {
         }
         // What each product's objects need from the linker — its targets' frameworks and
         // libraries, the C++ runtime — which the linker takes the union of (B-55).
-        let linkRequirements = target.packageProducts.map(\.product).sorted().map {
+        var linkRequirements = target.packageProducts.map(\.product).sorted().map {
             "        '\($0)': \(FormulaIdentifier.linkRequirementsFunc(forProduct: $0))().output"
         }
         // Each product's binary targets' frameworks, which the target compiles and links
@@ -209,6 +212,15 @@ struct XcodeFormulaEmitter {
         if target.isExtension {
             compilerArguments.append("-application-extension")
         }
+        let objectiveC = objectiveCSources(of: target, identity: identity, in: sourceFolders, settings: settings,
+                                           listing: listing, listed: listedCFamily)
+        // The importer parses the bridging header as the target's C-family sources are
+        // preprocessed, so it is told the same macros, as Xcode tells it.
+        if objectiveC.bridgingHeader != nil {
+            for definition in objectiveC.defines {
+                compilerArguments += ["-Xcc", "-D\(definition)"]
+            }
+        }
         if !compilerArguments.isEmpty {
             compilerLiterals["arguments"] = compilerArguments.joined(separator: ",")
         }
@@ -221,6 +233,22 @@ struct XcodeFormulaEmitter {
         } + listedSources.map {
             "        \(Self.quoted($0)): StaticFile(path: \(Self.quoted("\(build.projectFolder)/\($0)"))).output"
         }
+        // The bridging header by itself, and the target's headers as the tree it imports
+        // from — the shape a package's C target hands a Swift importer, `headers<Target>()`.
+        var bridgingWires = ""
+        if let bridgingHeader = objectiveC.bridgingHeader {
+            bridgingWires += ",\n        bridgingHeader: [\(Self.quoted(bridgingHeader)): "
+                           + "StaticFile(path: \(Self.quoted("\(build.projectFolder)/\(bridgingHeader)"))).output]"
+            let headers = objectiveC.headers.filter { $0.key != bridgingHeader }
+            if !headers.isEmpty {
+                blocks.append(
+                    "func headers_\(name)() =\n" +
+                    "    TreeBuilder(input: [\n" +
+                    headers.map { "        \(Self.quoted($0.key)): StaticFile(path: \(Self.quoted($0.path))).output" }.joined(separator: ",\n") +
+                    "\n    ]).files")
+                bridgingWires += ",\n        headerTrees: [\(Self.quoted(target.name)): headers_\(name)().files]"
+            }
+        }
         blocks.append(
             "func compiler_\(name)() =\n" +
             "    SwiftCompiler(\n" +
@@ -229,7 +257,30 @@ struct XcodeFormulaEmitter {
             (borrowedSources.isEmpty ? "" : ",\n        extraSourceFiles: [\n" + borrowedSources.joined(separator: ",\n") + "\n        ]") +
             (moduleTrees.isEmpty ? "" : ",\n        moduleTrees: [\n" + moduleTrees.joined(separator: ",\n") + "\n        ]") +
             (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
+            bridgingWires +
             "\n    )")
+
+        // The target's C-family sources, each preprocessed and compiled by itself as a
+        // package's C target's are, over the target's folders as header folders — what
+        // Xcode's header map lets a quoted import find — and linked into the executable.
+        var objectEntries = ["'\(identity.moduleName).o': compiler_\(name)().object"]
+        if !objectiveC.sources.isEmpty {
+            let headerFolderWires = objectiveC.headerFolders.map {
+                "            \(Self.quoted($0)): Folder(path: \(Self.quoted($0))).manifest"
+            }
+            blocks.append(
+                "func preprocess_\(name)(path) =\n" +
+                "    ClangPreprocessor(\n" +
+                "        configuration: ['config': \(configuration(namespace: Self.clangPreprocessorNamespace, literals: objectiveC.preprocessorLiterals))],\n" +
+                "        input: [path: StaticFile(path: path)],\n" +
+                "        headerFolders: [\n" + headerFolderWires.joined(separator: ",\n") + "\n        ]\n" +
+                "    )")
+            let compilerConfiguration = configuration(namespace: Self.clangCompilerNamespace, literals: objectiveC.compilerLiterals)
+            for source in objectiveC.sources {
+                objectEntries.append("\(Self.quoted(source + ".o")): ClangCompiler(configuration: ['config': \(compilerConfiguration)], "
+                                     + "input: [\(Self.quoted(source + ".p")): preprocess_\(name)(path: \(Self.quoted(source)))]).output")
+            }
+        }
 
         // ── the executable ───────────────────────────────────────────────────
         var linkerArguments: [String] = target.frameworks.sorted().flatMap { ["-framework", $0] }
@@ -246,11 +297,19 @@ struct XcodeFormulaEmitter {
         if !frameworkTrees.isEmpty {
             linkerLiterals["frameworksRunpath"] = layout.frameworksRunpath
         }
+        // C++ or Objective-C++ among the target's own sources brings the C++ runtime, as a
+        // package's C++ target does (B-55).
+        if objectiveC.compilesCxx {
+            linkRequirements.append("        \(Self.quoted("\(target.name) C++")): SettingsLiteral(\(LinkRequirements.cxxRuntimeKey): 'true').output")
+        }
+        let linkerInput = objectEntries.count == 1
+            ? "[\(objectEntries[0])]"
+            : "[\n" + objectEntries.map { "            \($0)" }.joined(separator: ",\n") + "\n        ]"
         products.append(
             "product '\(layout.executable(in: bundlePath, named: identity.productName))' =\n" +
             "    SwiftLinker(\n" +
             "        configuration: ['config': \(configuration(namespace: Self.swiftLinkerNamespace, literals: linkerLiterals))],\n" +
-            "        input: ['\(identity.moduleName).o': compiler_\(name)().object]" +
+            "        input: \(linkerInput)" +
             (objectTrees.isEmpty ? "" : ",\n        objectTrees: [\n" + objectTrees.joined(separator: ",\n") + "\n        ]") +
             (linkRequirements.isEmpty ? "" : ",\n        linkRequirements: [\n" + linkRequirements.joined(separator: ",\n") + "\n        ]") +
             (frameworkTrees.isEmpty ? "" : ",\n        frameworkTrees: [\n" + frameworkTrees.joined(separator: ",\n") + "\n        ]") +
@@ -270,12 +329,15 @@ struct XcodeFormulaEmitter {
         struct ResourceFile { let folderPath: String; let relativePath: String; let bundlePath: String }
         var catalogs: [String] = []
         var stringCatalogs: [ResourceFile] = []
+        var interfaceDocuments: [ResourceFile] = []
         var plainResources: [ResourceFile] = []
         func add(_ relativePath: String, in folderPath: String) {
             switch Self.resource(at: relativePath) {
             case .stringCatalog:
                 stringCatalogs.append(ResourceFile(folderPath: folderPath, relativePath: relativePath,
                                                    bundlePath: (relativePath as NSString).lastPathComponent))
+            case .interfaceBuilder(let bundlePath):
+                interfaceDocuments.append(ResourceFile(folderPath: folderPath, relativePath: relativePath, bundlePath: bundlePath))
             case .copied(let bundlePath):
                 plainResources.append(ResourceFile(folderPath: folderPath, relativePath: relativePath, bundlePath: bundlePath))
             case .ignored:
@@ -339,6 +401,27 @@ struct XcodeFormulaEmitter {
                 "        catalog: ['\(fileName)': StaticFile(path: '\(catalog.folderPath)/\(catalog.relativePath)').output]\n" +
                 "    )")
             bundleTrees.append("'strings\(index)': strings_\(name)_\(index)().files")
+        }
+
+        // Interface Builder documents, each compiled by ibtool to what the app loads at the
+        // place the document has in the bundle: `Base.lproj/MainMenu.xib` becomes
+        // `Base.lproj/MainMenu.nib`, a storyboard a `.storyboardc` folder. The wire's key is
+        // that place, which the compiler writes its tree under.
+        if !interfaceDocuments.isEmpty {
+            let interfaceLiterals = ["minimumDeploymentTarget": identity.deploymentTarget,
+                                     "targetDevices": identity.targetDevices,
+                                     "module": identity.moduleName]
+            let interfaceConfiguration = configuration(namespace: IBToolCompilerConfiguration.settingNamespace, literals: interfaceLiterals)
+            for (index, document) in interfaceDocuments.enumerated() {
+                blocks.append(
+                    "func interface_\(name)_\(index)() =\n" +
+                    "    IBToolCompiler(\n" +
+                    "        configuration: ['config': \(interfaceConfiguration)],\n" +
+                    "        document: [\(Self.quoted(document.bundlePath)): "
+                    + "StaticFile(path: \(Self.quoted("\(document.folderPath)/\(document.relativePath)"))).output]\n" +
+                    "    )")
+                bundleTrees.append("'interface\(index)': interface_\(name)_\(index)().files")
+            }
         }
 
         // A folder reference is copied whole, under its own name, wherever it is in the
@@ -450,6 +533,10 @@ struct XcodeFormulaEmitter {
         /// languages' folders: `Localizable.xcstrings` at the folder's root, or
         /// `mul.lproj/MainMenu.xcstrings`, the catalog localizing `Base.lproj/MainMenu.xib`.
         case stringCatalog
+        /// Compiled by ibtool, the document at this path under the bundle's resources and
+        /// what it compiles to beside it: `Base.lproj/MainMenu.xib`, placed as
+        /// `Base.lproj/MainMenu.nib`.
+        case interfaceBuilder(bundlePath: String)
         /// Copied as it is to this path under the bundle's resources.
         case copied(bundlePath: String)
         /// Not a resource: a source, a file inside a catalog, a plist read as an input.
@@ -458,22 +545,24 @@ struct XcodeFormulaEmitter {
 
     /// Where a file of a target's resources goes, by its path relative to the folder that
     /// holds it. A localized one keeps its language folder — `MainMenu/Base.lproj/MainMenu.xib`
-    /// lands at `Base.lproj/MainMenu.xib` — and anything else is flattened.
-    ///
-    /// TODO: an Interface Builder file is copied as `.xib` or `.storyboard` rather than
-    /// compiled with `ibtool` to the `.nib` an app loads (B-77 NetNewsWire item 8).
+    /// lands at `Base.lproj/MainMenu.xib`, compiled — and anything else is flattened.
     static func resource(at relativePath: String) -> Resource {
         let name = (relativePath as NSString).lastPathComponent
         guard !name.hasPrefix("."), !isInsideCatalog(relativePath) else {
             return .ignored
         }
-        if (name as NSString).pathExtension == "xcstrings" {
+        let pathExtension = (name as NSString).pathExtension.lowercased()
+        if pathExtension == "xcstrings" {
             return .stringCatalog
+        }
+        let bundlePath = localizedBundlePath(relativePath) ?? name
+        if IBToolCompiler.compiledExtensions[pathExtension] != nil {
+            return .interfaceBuilder(bundlePath: bundlePath)
         }
         guard isPlainResource(relativePath) else {
             return .ignored
         }
-        return .copied(bundlePath: localizedBundlePath(relativePath) ?? name)
+        return .copied(bundlePath: bundlePath)
     }
 
     /// Where a localized file lands in the bundle: `App/ar.lproj/Localizable.strings` is
@@ -496,10 +585,133 @@ struct XcodeFormulaEmitter {
         guard !name.hasPrefix("."), !isInsideCatalog(relativePath) else {
             return false
         }
-        let notResources: Set<String> = ["swift", "m", "mm", "c", "cpp", "h", "xcstrings", "xcassets", "icon",
-                                         "entitlements", "xcconfig", "md", "plist", "intentdefinition", "xcdatamodeld"]
+        let named: Set<String> = ["swift", "xcstrings", "xcassets", "icon", "xib", "storyboard",
+                                  "entitlements", "xcconfig", "md", "plist", "intentdefinition", "xcdatamodeld"]
+        let notResources = named.union(cFamilySourceExtensions).union(headerExtensions)
         let ext = (name as NSString).pathExtension.lowercased()
         return !notResources.contains(ext) && name != "Info.plist"
+    }
+
+    // MARK: - C-family sources in an application target (B-77)
+
+    /// What Xcode compiles through clang in a target, as a package's C target's sources
+    /// are compiled; lowercased. Assembly is not among them yet.
+    static let cFamilySourceExtensions: Set<String> = ["c", "m", "mm", "cpp", "cc", "cxx"]
+    /// The ones that bring the C++ runtime at link.
+    static let cxxSourceExtensions: Set<String> = ["mm", "cpp", "cc", "cxx"]
+    /// What a header is, for the headers a bridging header is handed.
+    static let headerExtensions: Set<String> = ["h", "hh", "hpp", "hxx", "inc", "def"]
+
+    static func isCFamilySource(_ path: String) -> Bool {
+        cFamilySourceExtensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    static func isHeader(_ path: String) -> Bool {
+        headerExtensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    /// The clang nodes a target's C-family sources are built through. Named rather than
+    /// imported, as the Swift nodes are.
+    static let clangPreprocessorNamespace = derivedSettingNamespace(forTypeName: "ClangPreprocessor")
+    static let clangCompilerNamespace     = derivedSettingNamespace(forTypeName: "ClangCompiler")
+
+    /// What a target's Objective-C, C and C++ come to in its formula: the sources to
+    /// compile, the folders their preprocessor searches, the settings both clang stages
+    /// take, and the bridging header its Swift imports with the headers beside it.
+    struct ObjectiveCSources {
+        /// Every C-family source, by its path in the input file system, sorted.
+        var sources: [String] = []
+        /// The preprocessor's header folders: the target's synchronized folders and the
+        /// folder of each listed source outside them. Sorted.
+        var headerFolders: [String] = []
+        var preprocessorLiterals: [String: String] = [:]
+        var compilerLiterals: [String: String] = [:]
+        /// `GCC_PREPROCESSOR_DEFINITIONS`, one `NAME` or `NAME=value` each.
+        var defines: [String] = []
+        var compilesCxx = false
+        /// `SWIFT_OBJC_BRIDGING_HEADER`, relative to the project's folder.
+        var bridgingHeader: String?
+        /// Every header in the target's synchronized folders, by its path relative to the
+        /// project's folder (the key) and in the input file system (the path). Sorted.
+        var headers: [(key: String, path: String)] = []
+    }
+
+    /// The target's C-family sources — in its synchronized folders less their exceptions,
+    /// borrowed from another folder, or listed — and its headers, from what the converter
+    /// walked, with the settings they build under. Clang's settings follow Xcode's:
+    /// `CLANG_ENABLE_OBJC_ARC` and `CLANG_ENABLE_MODULES` (off unless set, as in Xcode),
+    /// the language standards when the project states them, `GCC_PREPROCESSOR_DEFINITIONS`,
+    /// and the target's triple, as the Swift compiler gets it.
+    ///
+    /// ISSUE: a definition holding a comma splits in two, and one holding a quote ends the
+    /// formula's string — the limit a package's `.define` has.
+    func objectiveCSources(of target: XcodeProject.Target,
+                           identity: TargetIdentity,
+                           in sourceFolders: [(XcodeProject.SynchronizedFolder, String)],
+                           settings: XcodeBuildSettings,
+                           listing: (String) -> FolderListing?,
+                           listed: [String]) -> ObjectiveCSources {
+        var result = ObjectiveCSources()
+        var sources = Set<String>()
+        var searchedFolders = Set<String>()
+        for (folder, folderPath) in sourceFolders {
+            searchedFolders.insert(folderPath)
+            for file in (listing(folderPath) ?? FolderListing()).files where !folder.excludes(file) && !Self.isInsideCatalog(file) {
+                if Self.isCFamilySource(file) {
+                    sources.insert("\(folderPath)/\(file)")
+                }
+                if Self.isHeader(file) {
+                    result.headers.append((key: "\(folder.path)/\(file)", path: "\(folderPath)/\(file)"))
+                }
+            }
+        }
+        let synchronizedPaths = sourceFolders.map(\.1)
+        for relativePath in listed + target.borrowedFiles.filter(Self.isCFamilySource) {
+            let path = "\(build.projectFolder)/\(relativePath)"
+            sources.insert(path)
+            if !synchronizedPaths.contains(where: { path.hasPrefix($0 + "/") }) {
+                searchedFolders.insert((path as NSString).deletingLastPathComponent)
+            }
+        }
+        result.headers.sort { $0.key < $1.key }
+        result.bridgingHeader = settings["SWIFT_OBJC_BRIDGING_HEADER"].map(Self.projectRelativePath).flatMap { $0.isEmpty ? nil : $0 }
+        result.defines = (settings["GCC_PREPROCESSOR_DEFINITIONS"] ?? "").split(separator: " ").map(String.init)
+        guard !sources.isEmpty else {
+            return result
+        }
+        result.sources = sources.sorted()
+        result.headerFolders = searchedFolders.sorted()
+        result.compilesCxx = sources.contains { Self.cxxSourceExtensions.contains(($0 as NSString).pathExtension.lowercased()) }
+
+        var literals = ["target": identity.target]
+        if settings["CLANG_ENABLE_OBJC_ARC"] == "YES" {
+            literals["objectiveCARC"] = "true"
+        }
+        if settings["CLANG_ENABLE_MODULES"] == "YES" {
+            literals["modules"] = "true"
+        }
+        if let standard = settings["GCC_C_LANGUAGE_STANDARD"], !standard.isEmpty, standard != "compiler-default" {
+            literals["cStandard"] = standard
+        }
+        if let standard = settings["CLANG_CXX_LANGUAGE_STANDARD"], !standard.isEmpty, standard != "compiler-default" {
+            literals["cxxStandard"] = standard
+        }
+        result.compilerLiterals = literals
+        if !result.defines.isEmpty {
+            literals["defines"] = result.defines.joined(separator: ",")
+        }
+        result.preprocessorLiterals = literals
+        return result
+    }
+
+    /// A path setting relative to the project's folder: `Mac/App-Bridging-Header.h` as it
+    /// is, and `$(SRCROOT)/Mac/App-Bridging-Header.h` without the variable, which names
+    /// the project's folder and is not among the settings evaluated here.
+    static func projectRelativePath(_ setting: String) -> String {
+        for prefix in ["$(SRCROOT)/", "${SRCROOT}/", "$(PROJECT_DIR)/", "${PROJECT_DIR}/"] where setting.hasPrefix(prefix) {
+            return String(setting.dropFirst(prefix.count))
+        }
+        return setting
     }
 }
 

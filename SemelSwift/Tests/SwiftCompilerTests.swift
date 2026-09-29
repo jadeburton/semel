@@ -338,6 +338,56 @@ final class SwiftCompilerTests: SemelSwiftTestCase {
         XCTAssertFalse(executor.lastArguments.contains("-F"), "\(executor.lastArguments)")
     }
 
+    // MARK: - A bridging header (B-77)
+
+    private func bridgingInput() throws -> ProcessInput {
+        let headers = try TreeManifest(entries: [.init(path: "Mac/NSOpenPanel+Extras.h", hash: try "@interface".intern(), mode: 0o644),
+                                                 .init(path: "Mac/Private/WKPreferencesPrivate.h", hash: try "private".intern(), mode: 0o644),
+                                                 .init(path: "Mac/App-Bridging-Header.h", hash: try "#import".intern(), mode: 0o644)])
+            .toJSON().intern()
+        var input = try makeInput(folder: try manifest("input:/app/Mac", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Mac/App.swift": .value(try "NSOpenPanel().acceptOPML()".intern())]
+        input[SwiftCompiler.bridgingHeader] = ["Mac/App-Bridging-Header.h": .value(try "#import \"NSOpenPanel+Extras.h\"".intern())]
+        input[SwiftCompiler.headerTrees] = ["App": .value(headers)]
+        return ProcessInput(inputValues: input)
+    }
+
+    /// The bridging header is placed under `objc/` at its path in the project and handed
+    /// to `-import-objc-header`, with the target's headers beside it and each of their
+    /// folders a search path for the importer, as Xcode's header map makes them; the header
+    /// itself, in the target's tree too, is one file.
+    func test_aBridgingHeaderIsImportedWithTheTargetsHeadersOnTheImportersPath() throws {
+        _ = try makeTool().process(input: try bridgingInput())
+
+        let arguments = executor.lastArguments
+        let header = try XCTUnwrap(arguments.firstIndex(of: "-import-objc-header"))
+        XCTAssertEqual(arguments[header + 1], "objc/Mac/App-Bridging-Header.h")
+        let importerPaths = arguments.indices.filter { arguments[$0] == "-Xcc" }.map { arguments[$0 + 1] }
+        XCTAssertEqual(importerPaths, ["-Iobjc/Mac", "-Iobjc/Mac/Private"])
+        XCTAssertEqual(executor.invocations.last?.inputFileNames.filter { $0.hasPrefix("objc/") }.sorted(),
+                       ["objc/Mac/App-Bridging-Header.h", "objc/Mac/NSOpenPanel+Extras.h", "objc/Mac/Private/WKPreferencesPrivate.h"])
+    }
+
+    /// swiftc refuses a module interface for a module with a bridging header, an
+    /// application's: none is asked for or expected, and the module still is.
+    func test_aModuleWithABridgingHeaderHasNoInterface() throws {
+        _ = try makeTool().process(input: try bridgingInput())
+
+        XCTAssertFalse(executor.lastArguments.contains("-emit-module-interface"), "\(executor.lastArguments)")
+        XCTAssertTrue(executor.lastArguments.contains("-emit-module"), "\(executor.lastArguments)")
+        XCTAssertEqual(executor.invocations.last?.expectedOutputFileNames, ["GRDB.o", "GRDB.swiftmodule"])
+    }
+
+    func test_aTargetWithoutABridgingHeaderImportsNoObjectiveC() throws {
+        var input = try makeInput(folder: try manifest("input:/app/Sources", [file("App.swift")])).inputValues
+        input[SwiftCompiler.inputSourceFiles] = ["input:/app/Sources/App.swift": .value(try "let x = 1".intern())]
+
+        _ = try makeTool().process(input: ProcessInput(inputValues: input))
+
+        XCTAssertFalse(executor.lastArguments.contains("-import-objc-header"), "\(executor.lastArguments)")
+        XCTAssertTrue(executor.lastArguments.contains("-emit-module-interface"), "\(executor.lastArguments)")
+    }
+
     // MARK: - What a rejected argument says (B-98)
 
     // swiftc's complaint names the argument it rejected and never the setting that produced

@@ -209,6 +209,19 @@ struct SwiftCompiler: Node {
     static let inputModuleMapFiles   = "inputModuleMapFiles"
     /// The sandbox folder the framework trees are merged into, and the `-F` it takes.
     static let frameworksFolder      = "frameworks"
+    /// An application target's Objective-C bridging header (B-77): one wire, keyed by its
+    /// path relative to the project — `Mac/NetNewsWire-Bridging-Header.h` — placed under
+    /// `objc/` at that path and handed to `-import-objc-header`, so the target's Swift sees
+    /// what it declares.
+    static let bridgingHeader        = "bridgingHeader"
+    /// Trees of the headers a bridging header may import, keyed by path relative to the
+    /// project as the header is — the target's own headers, `headers_<Target>()` — merged
+    /// under `objc/` beside it. Each folder holding one is a search path for the importer,
+    /// which is what Xcode's header map gives a target: a quoted import finds a header of
+    /// the target by name wherever in its folders the header sits.
+    static let headerTrees           = "headerTrees"
+    /// The folder the bridging header and the header trees are placed under.
+    static let objectiveCFolder      = "objc"
     static let outputObject          = "object"
     static let outputModule          = "swiftmodule"
     static let outputInterface       = "swiftinterface"
@@ -231,6 +244,8 @@ struct SwiftCompiler: Node {
             .optional(inputModuleTrees),
             .optional(inputFrameworkTrees),
             .optional(inputModuleMapFolders),
+            .optional(bridgingHeader),
+            .optional(headerTrees),
             .dynamic(inputSourceFiles),
             .dynamic(inputSubfolders),
             .dynamic(inputModuleMapFiles),
@@ -256,6 +271,10 @@ struct SwiftCompiler: Node {
         /// Every file of every framework tree, merged under `frameworks`.
         let frameworkTreeFiles: [FileNameAndContent]
         let moduleMapFiles: [FileNameAndContent]
+        /// The bridging header, under `objc/`, when one is wired.
+        let bridgingHeader: FileNameAndContent?
+        /// Every file of every header tree, under `objc/`, less the bridging header itself.
+        let objectiveCHeaderFiles: [FileNameAndContent]
         let inputFolderManifests: [(String, FolderManifest)]
         let subfolderManifests: [(String, FolderManifest)]
         let moduleMapFolderManifests: [(String, FolderManifest)]
@@ -301,6 +320,21 @@ struct SwiftCompiler: Node {
             moduleTreeFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.inputModuleTrees, under: "modules")
             frameworkTreeFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.inputFrameworkTrees,
                                                                    under: SwiftCompiler.frameworksFolder)
+
+            let bridgingValues = input.inputValues[SwiftCompiler.bridgingHeader] ?? [:]
+            let bridgingPaths  = bridgingValues.keys.sorted()
+            guard bridgingPaths.count <= 1 else {
+                throw NodeError.other(message: "SwiftCompiler: a target has one bridging header, and \(bridgingPaths.count) are wired: "
+                                             + bridgingPaths.joined(separator: ", "))
+            }
+            var bridging: FileNameAndContent?
+            if let path = bridgingPaths.first, let value = bridgingValues[path] {
+                bridging = FileNameAndContent(filePath: (Path(SwiftCompiler.objectiveCFolder) / Path(path)).string, hash: try value.expectValue())
+            }
+            bridgingHeader = bridging
+            objectiveCHeaderFiles = try TreeManifest.mergedInputFiles(in: input, port: SwiftCompiler.headerTrees,
+                                                                      under: SwiftCompiler.objectiveCFolder)
+                .filter { $0.filePath != bridging?.filePath }
 
             // Module map files: wire key is already "<dirName>/<filename>".
             moduleMapFiles = try (input.inputValues[SwiftCompiler.inputModuleMapFiles] ?? [:])
@@ -448,8 +482,14 @@ struct SwiftCompiler: Node {
         arguments.append("-o");                              arguments.append(objectOutput)
         arguments.append("-emit-module")
         arguments.append("-emit-module-path");               arguments.append(moduleOutput)
-        arguments.append("-emit-module-interface")
-        arguments.append("-emit-module-interface-path");     arguments.append(interfaceOutput)
+        // swiftc refuses a module interface for a module with a bridging header ("using
+        // bridging headers with module interfaces is unsupported"): such a module is an
+        // application's, which nothing imports, so it has none and the port carries the
+        // empty object, as for any output the tool did not write.
+        if inputs.bridgingHeader == nil {
+            arguments.append("-emit-module-interface")
+            arguments.append("-emit-module-interface-path"); arguments.append(interfaceOutput)
+        }
 
         // The object records its compilation directory; the canonical name keeps the
         // sandbox's real one out of it. The module would serialize the search paths it was
@@ -493,6 +533,22 @@ struct SwiftCompiler: Node {
             arguments.append("-I"); arguments.append(dir)
         }
 
+        // The bridging header, and every folder holding a header beside it as a search
+        // path for the importer's quoted imports. Relative, like every path here; the
+        // module swiftc writes records the header it imported at its absolute path.
+        // ISSUE: so an application's `.swiftmodule` names the sandbox. Nothing imports an
+        // application's module and it is no product, so no build compares it, but it is
+        // not the same bytes twice.
+        if let bridgingHeader = inputs.bridgingHeader {
+            let headerFolders = Set((inputs.objectiveCHeaderFiles + [bridgingHeader]).map {
+                ($0.filePath as NSString).deletingLastPathComponent
+            })
+            for folder in headerFolders.sorted() {
+                arguments.append("-Xcc"); arguments.append("-I\(folder)")
+            }
+            arguments.append("-import-objc-header"); arguments.append(bridgingHeader.filePath)
+        }
+
         for sourceFile in inputs.sourceFiles {
             arguments.append(sourceFile.filePath)
         }
@@ -506,8 +562,8 @@ struct SwiftCompiler: Node {
             arguments: arguments,
             environment: inputs.configuration.environment,
             inputFiles: inputs.sourceFiles + inputs.moduleFiles + inputs.moduleTreeFiles + inputs.frameworkTreeFiles
-                      + inputs.moduleMapFiles,
-            expectedOutputFileNames: [objectOutput, moduleOutput, interfaceOutput])
+                      + inputs.moduleMapFiles + inputs.objectiveCHeaderFiles + (inputs.bridgingHeader.map { [$0] } ?? []),
+            expectedOutputFileNames: [objectOutput, moduleOutput] + (inputs.bridgingHeader == nil ? [interfaceOutput] : []))
 
         // Stored by the runner; an output the tool did not write is the empty object.
         let objectHash = result.outputFiles[objectOutput] ?? ""

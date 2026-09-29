@@ -11,6 +11,7 @@
 //  wires.
 
 import Foundation
+import SemelNodeKit
 
 public enum XcodeProjectFacts {
 
@@ -104,6 +105,138 @@ public enum XcodeProjectFacts {
             extra: ["TARGET_NAME": application.name])
         let key = sdk.hasPrefix("macosx") ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET"
         return settings[key]
+    }
+
+    // MARK: - What the application's targets compile
+
+    /// What the application and the extensions it embeds hold that decides which tools the
+    /// formula names beyond Swift's: a C-family source, compiled through clang, and a xib or
+    /// a storyboard, compiled by ibtool (B-77).
+    public struct CompiledSources: Equatable {
+        public var hasCFamilySources = false
+        public var hasInterfaceBuilderDocuments = false
+
+        public init(hasCFamilySources: Bool = false, hasInterfaceBuilderDocuments: Bool = false) {
+            self.hasCFamilySources            = hasCFamilySources
+            self.hasInterfaceBuilderDocuments = hasInterfaceBuilderDocuments
+        }
+    }
+
+    /// Read from the disk as the converter reads its wires: each bundle target's
+    /// synchronized folders to the bottom less their exceptions, hidden folders and
+    /// catalogs left out, and what the targets list or borrow. None when the project has no
+    /// application.
+    public static func compiledSources(ofProjectAt project: URL) throws -> CompiledSources {
+        let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
+        let read = try XcodeProject(pbxproj: data)
+        guard let application = read.targets.first(where: \.isApplication) else {
+            return CompiledSources()
+        }
+        let folder = project.deletingLastPathComponent()
+        var paths: [String] = []
+        for target in read.bundleTargets(of: application) {
+            for synchronized in target.synchronizedFolders {
+                let root = folder.appendingPathComponent(synchronized.path, isDirectory: true)
+                paths += files(under: root).filter { !synchronized.excludes($0) }
+            }
+            paths += target.sourceFiles.map(\.path) + target.resourceFiles.map(\.path) + target.borrowedFiles
+        }
+        let hasInterfaceBuilderDocuments = paths.contains { path in
+            guard case .interfaceBuilder = XcodeFormulaEmitter.resource(at: path) else {
+                return false
+            }
+            return true
+        }
+        return CompiledSources(hasCFamilySources: paths.contains(where: XcodeFormulaEmitter.isCFamilySource),
+                               hasInterfaceBuilderDocuments: hasInterfaceBuilderDocuments)
+    }
+
+    /// Every file under `root` at any depth, relative to it, hidden entries and what a
+    /// catalog holds left out, as the converter's walk leaves them out.
+    static func files(under root: URL) -> [String] {
+        guard let enumerator = FileManager.default.enumerator(atPath: root.path) else {
+            return []
+        }
+        var found: [String] = []
+        while let path = enumerator.nextObject() as? String {
+            let name = (path as NSString).lastPathComponent
+            if name.hasPrefix(".") || XcodeProjectConverter.isCompiledWhole(name) {
+                enumerator.skipDescendants()
+                continue
+            }
+            if enumerator.fileAttributes?[.type] as? FileAttributeType != .typeDirectory {
+                found.append(path)
+            }
+        }
+        return found.sorted()
+    }
+
+    // MARK: - Sources the project generates before a build
+
+    /// A source a project generates before its build — from a `gyb` template, beside it
+    /// under the template's name less `.gyb` — that is not there, with the scheme
+    /// pre-actions that would generate it.
+    public struct UngeneratedSource: Equatable {
+        /// The template, relative to the project's folder.
+        public let template: String
+        /// What it generates, relative to the project's folder.
+        public let output: String
+        /// The build pre-actions of the shared schemes that run gyb, in their script or in
+        /// a script file of the project's their script names. Empty when none does.
+        public let generatedBy: [SchemePreAction]
+    }
+
+    /// Every `gyb` template in the application's synchronized folders and in the local
+    /// packages whose output is missing, sorted by template. A pre-action generating it
+    /// is outside a hermetic build — Semel runs no script whose output depends on the
+    /// developer's machine, and NetNewsWire's reads its secrets from the environment and
+    /// salts them with fresh random bytes — so it is named for the developer to run, or
+    /// the file written by hand, rather than run.
+    public static func ungeneratedSources(ofProjectAt project: URL) throws -> [UngeneratedSource] {
+        let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
+        let read = try XcodeProject(pbxproj: data)
+        let folder = project.deletingLastPathComponent()
+        var roots = try localPackagePaths(ofProjectAt: project)
+        if let application = read.targets.first(where: \.isApplication) {
+            roots += read.bundleTargets(of: application).flatMap(\.synchronizedFolders).map(\.path)
+        }
+        var templates = Set<String>()
+        for root in Set(roots).sorted() {
+            for file in files(under: folder.appendingPathComponent(root, isDirectory: true)) where file.hasSuffix(".gyb") {
+                let template = Path("\(root)/\(file)").resolvingDotSegments?.string ?? "\(root)/\(file)"
+                templates.insert(template)
+            }
+        }
+        let missing = templates.sorted().filter { template in
+            !FileManager.default.fileExists(atPath: folder.appendingPathComponent(String(template.dropLast(".gyb".count))).path)
+        }
+        guard !missing.isEmpty else {
+            return []
+        }
+        let generating = XcodeScheme.sharedSchemes(ofProjectAt: project).flatMap(\.buildPreActions).filter {
+            runsGyb($0.script, projectFolder: folder)
+        }
+        return missing.map { UngeneratedSource(template: $0, output: String($0.dropLast(".gyb".count)), generatedBy: generating) }
+    }
+
+    /// Whether a pre-action's script runs gyb: says so itself, or names a file inside the
+    /// project's folder — `"${PROJECT_DIR}/buildscripts/updateSecrets.sh"` — that does.
+    static func runsGyb(_ script: String, projectFolder: URL) -> Bool {
+        if script.contains("gyb") {
+            return true
+        }
+        var expanded = script
+        for variable in ["${PROJECT_DIR}", "$(PROJECT_DIR)", "$PROJECT_DIR", "${SRCROOT}", "$(SRCROOT)", "$SRCROOT"] {
+            expanded = expanded.replacingOccurrences(of: variable, with: projectFolder.path)
+        }
+        let words = expanded.components(separatedBy: CharacterSet(charactersIn: " \t\n\"'"))
+        return words.contains { word in
+            guard word.hasPrefix(projectFolder.path + "/"),
+                  let text = try? String(contentsOfFile: word, encoding: .utf8) else {
+                return false
+            }
+            return text.contains("gyb")
+        }
     }
 
     /// Each root xcconfig with its includes followed on disk, by its path relative to

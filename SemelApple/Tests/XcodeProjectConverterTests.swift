@@ -419,17 +419,19 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     private let shareResources = "NetNewsWire.app/Contents/PlugIns/NetNewsWire Share Extension.appex/Contents/Resources"
 
     /// A `.lproj` folder inside a synchronized folder is walked, and what it holds lands
-    /// under its language folder: the main menu's xib at `Base.lproj/MainMenu.xib` —
-    /// copied, not yet compiled — and the catalog localizing it through the string catalog
-    /// compiler, whose tables are placed under their languages.
+    /// under its language folder: the main menu's xib compiled by ibtool to
+    /// `Base.lproj/MainMenu.nib` in the app's module for the Mac at 15.0, and the catalog
+    /// localizing it through the string catalog compiler, whose tables are placed under
+    /// their languages.
     func test_aLocalizedFolderInASynchronizedFolderReachesTheBundleUnderItsLanguage() throws {
         let formula = try netNewsWireFormula()
 
-        XCTAssertTrue(formula.contains("product '\(macResources)/Base.lproj/MainMenu.xib' = "
-                                       + "StaticFile(path: 'input:/nnw/Mac/MainMenu/Base.lproj/MainMenu.xib').output"), formula)
+        XCTAssertTrue(formula.contains("document: ['Base.lproj/MainMenu.xib': "
+                                       + "StaticFile(path: 'input:/nnw/Mac/MainMenu/Base.lproj/MainMenu.xib').output]"), formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(minimumDeploymentTarget: '15.0', module: 'NetNewsWire', targetDevices: 'mac')"), formula)
+        XCTAssertFalse(formula.contains("MainMenu.xib' = StaticFile"), "compiled, not copied: \(formula)")
         XCTAssertTrue(formula.contains("catalog: ['MainMenu.xcstrings': StaticFile(path: 'input:/nnw/Mac/MainMenu/mul.lproj/MainMenu.xcstrings').output]"),
                       formula)
-        XCTAssertFalse(formula.contains("product '\(macResources)/MainMenu.xib'"), "not flattened: \(formula)")
     }
 
     /// `/Localized/ShareExtension/ShareViewController.xib` is the xib in every language
@@ -440,11 +442,40 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         let formula = try netNewsWireFormula()
 
         XCTAssertFalse(formula.contains("/Localized/"), formula)
-        XCTAssertFalse(formula.contains("product '\(macResources)/Base.lproj/ShareViewController.xib'"), formula)
-        XCTAssertTrue(formula.contains("product '\(shareResources)/Base.lproj/ShareViewController.xib' = "
-                                       + "StaticFile(path: 'input:/nnw/Mac/ShareExtension/Base.lproj/ShareViewController.xib').output"), formula)
+        let document = "document: ['Base.lproj/ShareViewController.xib': "
+                     + "StaticFile(path: 'input:/nnw/Mac/ShareExtension/Base.lproj/ShareViewController.xib').output]"
+        XCTAssertEqual(formula.components(separatedBy: document).count - 1, 1, "compiled once, for one bundle: \(formula)")
+        XCTAssertTrue(formula.contains("func interface_NetNewsWire_Share_Extension_0() =\n    IBToolCompiler("), formula)
+        XCTAssertTrue(formula.contains("product '\(shareResources)/' = TreeMerger(input: ['interface0': interface_NetNewsWire_Share_Extension_0().files"),
+                      formula)
         XCTAssertTrue(formula.contains("product '\(shareResources)/icon.icns' = StaticFile(path: 'input:/nnw/Mac/ShareExtension/icon.icns').output"),
                       formula)
+    }
+
+    /// NetNewsWire's Mac app compiles `Mac/NSOpenPanel+Extras.m` through clang with ARC,
+    /// modules, the project's C standard and the Debug definitions, over the `Mac` folder
+    /// as its header folder, and links it into the executable; its Swift imports the
+    /// bridging header the settings name, `Mac/NetNewsWire-Bridging-Header.h`, with the
+    /// app's other headers beside it. The extensions' own folders hold no Objective-C, so
+    /// theirs is Swift alone.
+    func test_theMacAppsObjectiveCIsCompiledAndItsBridgingHeaderImported() throws {
+        var folders = netNewsWireMacFolder
+        folders["Mac"]?.files += ["NSOpenPanel+Extras.h", "NSOpenPanel+Extras.m", "NetNewsWire-Bridging-Header.h", "WKPreferencesPrivate.h"]
+        let (output, _, _) = try convertNetNewsWire(modules: NetNewsWireModules.products.keys.sorted(), folders: folders)
+        let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+
+        XCTAssertTrue(formula.contains("func preprocess_NetNewsWire(path) =\n    ClangPreprocessor("), formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', cxxStandard: 'gnu++14', defines: 'DEBUG=1,SKIP_APP_GROUP_ACCESS=1', "
+                                       + "modules: 'true', objectiveCARC: 'true', target: 'arm64-apple-macosx15.0')"), formula)
+        XCTAssertTrue(formula.contains("'input:/nnw/Mac': Folder(path: 'input:/nnw/Mac').manifest"), formula)
+        XCTAssertTrue(formula.contains("'input:/nnw/Mac/NSOpenPanel+Extras.m.o': ClangCompiler("), formula)
+        XCTAssertTrue(formula.contains(",\n        bridgingHeader: ['Mac/NetNewsWire-Bridging-Header.h': "
+                                       + "StaticFile(path: 'input:/nnw/Mac/NetNewsWire-Bridging-Header.h').output],\n"
+                                       + "        headerTrees: ['NetNewsWire': headers_NetNewsWire().files]"), formula)
+        XCTAssertTrue(formula.contains("'Mac/NSOpenPanel+Extras.h': StaticFile(path: 'input:/nnw/Mac/NSOpenPanel+Extras.h').output"), formula)
+        XCTAssertTrue(formula.contains("'Mac/WKPreferencesPrivate.h': StaticFile(path: 'input:/nnw/Mac/WKPreferencesPrivate.h').output"), formula)
+        XCTAssertTrue(formula.contains("-Xcc,-DDEBUG=1,-Xcc,-DSKIP_APP_GROUP_ACCESS=1"), formula)
+        XCTAssertEqual(formula.components(separatedBy: "ClangPreprocessor(").count - 1, 1, "the app's alone: \(formula)")
     }
 
     /// The eight themes are folder references in the app's resources phase, though the

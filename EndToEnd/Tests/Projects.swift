@@ -76,7 +76,8 @@ enum Projects {
         source: .fixture(folder: "."),
         buildFolder: "swift/HelloApp",
         platform: "ios-simulator",
-        expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car"],
+        expectedProducts: ["Hello.app/Hello", "Hello.app/Info.plist", "Hello.app/PkgInfo", "Hello.app/Assets.car",
+                           "Hello.app/Base.lproj/Card.nib"],
         buildTimeout: fixtureTimeout,
         onlyUnder: "Hello.app",
         executables: ["Hello.app/Hello"])

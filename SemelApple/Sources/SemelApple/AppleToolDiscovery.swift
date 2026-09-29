@@ -3,10 +3,10 @@
 //  SemelApple
 //
 //  Where the resource tools are on this machine and what version they report — what this
-//  package declares to `ToolDiscovery` when it registers. The two report their versions
-//  differently from the compilers: `actool` answers `--version` with a plist, and
-//  `xcstringstool` answers nothing, so a tool with no version of its own is identified by
-//  the Xcode that ships it, which is what decides its behaviour.
+//  package declares to `ToolDiscovery` when it registers. They report their versions
+//  differently from the compilers: `actool` and `ibtool` answer `--version` with a plist,
+//  and `xcstringstool` answers nothing, so a tool with no version of its own is identified
+//  by the Xcode that ships it, which is what decides its behaviour.
 //
 
 import Foundation
@@ -18,6 +18,7 @@ enum AppleToolDiscovery {
     static var finders: [ToolFinder] {
         [
             ToolFinder(name: "actool", locate: { locate("actool") }, version: actoolVersion(at:)),
+            ToolFinder(name: "ibtool", locate: { locate("ibtool") }, version: ibtoolVersion(at:)),
             ToolFinder(name: "xcstringstool", locate: { locate("xcstringstool") }, version: { _ in xcodeVersion() }),
         ]
     }
@@ -38,7 +39,7 @@ enum AppleToolDiscovery {
         MachineQuery.output(of: "/usr/bin/xcrun", arguments)
     }
 
-    // MARK: - actool
+    // MARK: - actool and ibtool
 
     /// The version the actool at `path` reports, or nil if it reports nothing recognisable.
     static func actoolVersion(at path: String) -> String? {
@@ -46,18 +47,33 @@ enum AppleToolDiscovery {
     }
 
     /// `actool --version` answers with a plist rather than a line: `com.apple.actool.version`
-    /// holding `short-bundle-version` and `bundle-version`. Rendered like the compilers'
-    /// strings, marketing version then build, since the build is what tells two actools of
-    /// one version apart.
+    /// holding `short-bundle-version` and `bundle-version`.
     static func actoolVersion(fromPlist output: String) -> String? {
+        version(ofTool: "actool", fromPlist: output)
+    }
+
+    /// The version the ibtool at `path` reports, or nil if it reports nothing recognisable.
+    static func ibtoolVersion(at path: String) -> String? {
+        MachineQuery.output(of: path, ["--version"]).flatMap(ibtoolVersion(fromPlist:))
+    }
+
+    /// `ibtool --version` answers as actool does, under `com.apple.ibtool.version`: both are
+    /// launchers of Interface Builder's `ibtoold`, shipped with the Xcode they report.
+    static func ibtoolVersion(fromPlist output: String) -> String? {
+        version(ofTool: "ibtool", fromPlist: output)
+    }
+
+    /// The version under `com.apple.<tool>.version`, rendered like the compilers' strings,
+    /// marketing version then build, since the build is what tells two of one version apart.
+    private static func version(ofTool tool: String, fromPlist output: String) -> String? {
         guard let data = output.data(using: .utf8),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let version = plist["com.apple.actool.version"] as? [String: Any],
+              let version = plist["com.apple.\(tool).version"] as? [String: Any],
               let short = version["short-bundle-version"] as? String else {
             return nil
         }
         let build = version["bundle-version"] as? String
-        return "Apple actool version \(short)" + (build.map { " (\($0))" } ?? "")
+        return "Apple \(tool) version \(short)" + (build.map { " (\($0))" } ?? "")
     }
 
     // MARK: - Xcode

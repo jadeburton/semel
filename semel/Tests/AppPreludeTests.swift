@@ -50,17 +50,31 @@ final class AppPreludeTests: XCTestCase {
     }
 
     /// `EndToEnd/Fixtures/swift/HelloApp/semel.fmla` before B-108, over the two files B-109
-    /// gave it: the project's choices laid over the machine's facts.
+    /// gave it: the project's choices laid over the machine's facts; with the app's
+    /// Objective-C compiled and linked, and its bridging header imported, since B-77.
     private let handWritten = """
         func settings(prefix) = ConfigFilter(prefix: prefix, input: ['config': ConfigMerger(base: ['machine': StaticFile(path: <semel.machine.config>).output], override: ['project': StaticFile(path: <semel.config>).output]).output]).output
+
+        func objectiveC(prefix) = ConfigMerger(base: ['settings': settings(prefix: prefix)], override: ['literals': SettingsLiteral(modules: 'true', objectiveCARC: 'true').output]).output
 
         include SwiftFormulaConverter(path: <HelloKit>, root: <.>).formula
 
         func compiled() = SwiftCompiler(
             configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'swift.compiler')], override: ['literals': SettingsLiteral(moduleName: 'Hello').output]).output],
             inputFolder: ['folder0': Folder(path: <Sources>).manifest],
-            moduleTrees: ['HelloKit': modules_HelloKit().files]
+            moduleTrees: ['HelloKit': modules_HelloKit().files],
+            bridgingHeader: ['ObjC/Hello-Bridging-Header.h': StaticFile(path: <ObjC/Hello-Bridging-Header.h>).output],
+            headerTrees: ['Hello': TreeBuilder(input: ['ObjC/HLOGreeter.h': StaticFile(path: <ObjC/HLOGreeter.h>).output]).files]
         )
+
+        func greeter() = ClangCompiler(
+            configuration: ['config': objectiveC(prefix: 'clang.compiler')],
+            input: ['input:/app/ObjC/HLOGreeter.m.p': ClangPreprocessor(
+                configuration: ['config': objectiveC(prefix: 'clang.preprocessor')],
+                input: ['input:/app/ObjC/HLOGreeter.m': StaticFile(path: <ObjC/HLOGreeter.m>)],
+                headerFolders: ['ObjC': Folder(path: <ObjC>).manifest]
+            ).output]
+        ).output
 
         func assets() = AssetCatalogCompiler(
             configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'apple.assetCatalogCompiler')], override: ['literals': SettingsLiteral(appIcon: 'AppIcon').output]).output],
@@ -69,7 +83,7 @@ final class AppPreludeTests: XCTestCase {
 
         product 'Hello.app/Hello' = SwiftLinker(
             configuration: ['config': ConfigMerger(base: ['settings': settings(prefix: 'swift.linker')], override: ['literals': SettingsLiteral(linkage: 'executable', outputName: 'Hello').output]).output],
-            input: ['Hello.o': compiled().object],
+            input: ['Hello.o': compiled().object, 'HLOGreeter.m.o': greeter()],
             objectTrees: ['HelloKit': objects_HelloKit().files]
         ).output
 
@@ -135,7 +149,7 @@ final class AppPreludeTests: XCTestCase {
     }
 
     func test_theResourcesTreeCompilesEachStringCatalogInTheFolder() throws {
-        let resources = try wire("resources", of: try bundle)
+        let resources = try wire("catalogs", of: try wire("resources", of: try bundle))
 
         XCTAssertEqual(resources.typeName, "TreeMerger")
         let wires = try XCTUnwrap(resources.inputs.first?.wires)
@@ -143,5 +157,15 @@ final class AppPreludeTests: XCTestCase {
         XCTAssertEqual(wires.map(\.node.typeName), ["AssetCatalogCompiler", "StringCatalogCompiler"])
         XCTAssertEqual(wires[1].node.inputs.first { $0.portName == "catalog" }?.wires.map(\.name),
                        ["Localizable.xcstrings"])
+    }
+
+    /// B-77. Beside the catalogs, the xib compiled by ibtool, keyed by its place in the
+    /// bundle, which is where the nib lands.
+    func test_theResourcesTreeHoldsTheCompiledXibUnderItsLanguageFolder() throws {
+        let interface = try wire("interface", of: try wire("resources", of: try bundle))
+
+        XCTAssertEqual(interface.typeName, "IBToolCompiler")
+        XCTAssertEqual(try wire("Base.lproj/Card.xib", of: interface, port: "document").asString(omitOutputPort: false),
+                       "StaticFile(path: 'input:/app/Interface/Base.lproj/Card.xib').output")
     }
 }

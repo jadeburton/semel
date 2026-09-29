@@ -113,10 +113,16 @@ final class EndToEndRun {
     /// C project lacks sit at the root, while a correction to a sample's sources sits deep in
     /// its tree (B-77). `replacingOnly` is for the second kind: every file must replace one
     /// the checkout has, because a path that has drifted would otherwise add a file nothing
-    /// compiles and leave the uncorrected one in the build, failing far from the cause.
+    /// compiles and leave the uncorrected one in the build, failing far from the cause —
+    /// or be the output of a template the checkout has beside it, `SecretKey.swift` beside
+    /// `SecretKey.swift.gyb`: a source the project generates before its build, which Semel
+    /// does not (NetNewsWire, B-77). The template is what pins the path.
     static func lay(overlay: URL, over folder: URL, replacingOnly: Bool) throws {
         try merge(overlay, into: folder, replacingOnly: replacingOnly, skipping: [overlayNoteName])
     }
+
+    /// The extension of a template a project generates a source from before its build.
+    static let generatedTemplateExtension = ".gyb"
 
     private static func merge(_ source: URL, into folder: URL, replacingOnly: Bool, skipping skipped: Set<String>) throws {
         let fileManager = FileManager.default
@@ -131,9 +137,11 @@ final class EndToEndRun {
                 try merge(entry, into: target, replacingOnly: replacingOnly, skipping: [])
                 continue
             }
-            guard targetExists || !replacingOnly else {
+            let isGenerated = fileManager.fileExists(atPath: target.path + generatedTemplateExtension)
+            guard targetExists || isGenerated || !replacingOnly else {
                 throw EndToEndFailure(step: "materialise",
-                                      message: "the overlay's \(entry.path) replaces nothing: \(target.path) is not in the checkout")
+                                      message: "the overlay's \(entry.path) replaces nothing: \(target.path) is not in the checkout, "
+                                             + "nor is a \(generatedTemplateExtension) template of it")
             }
             if targetExists {
                 try fileManager.removeItem(at: target)

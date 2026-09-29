@@ -63,6 +63,8 @@ final class PrepareTests: XCTestCase {
                                        architecture: "arm64", recursiveHash: nil)
     private let actool = ToolDescriptor(name: "actool", version: "Apple actool version 26.6 (24765)", platform: "macOS",
                                         architecture: "arm64", recursiveHash: nil)
+    private let ibtool = ToolDescriptor(name: "ibtool", version: "Apple ibtool version 26.6 (24765)", platform: "macOS",
+                                        architecture: "arm64", recursiveHash: nil)
     private let xcstringstool = ToolDescriptor(name: "xcstringstool", version: "Xcode 26.6 (17F113)", platform: "macOS",
                                                architecture: "arm64", recursiveHash: nil)
 
@@ -86,7 +88,7 @@ final class PrepareTests: XCTestCase {
                               return settings
                           })
         }
-        return ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, xcstringstool],
+        return ToolchainFacts(descriptors: descriptors ?? [swiftc, clang, swift, actool, ibtool, xcstringstool],
                               namespaces: namespaces, sdkIdentity: identity)
     }
 
@@ -445,7 +447,9 @@ final class PrepareTests: XCTestCase {
         let declared = Set(everyNamespace)
 
         for namespace in GeneratedFiles.packageTreeNamespaces(forCFamilyTargets: true)
-                         + GeneratedFiles.projectNamespaces(forCFamilyTargets: true) {
+                         + GeneratedFiles.projectNamespaces(forCFamilyTargets: true,
+                                                            compiledSources: .init(hasCFamilySources: true,
+                                                                                   hasInterfaceBuilderDocuments: true)) {
             XCTAssertTrue(declared.contains(namespace), "\(namespace) is read but not declared; declared: \(declared.sorted())")
         }
     }
@@ -653,6 +657,52 @@ final class PrepareTests: XCTestCase {
         XCTAssertTrue(formula.contains("include XcodeProjectConverter(path: <App.xcodeproj>, root: <.>, configuration: 'Debug', sdk: 'iphonesimulator').formula"), "got:\n\(formula)")
         let config = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
         XCTAssertTrue(config.contains("swift.compiler.target=arm64-apple-ios18.5-simulator"), "got:\n\(config)")
+        XCTAssertFalse(config.contains("clang."), "no C-family source, no clang blocks: \(config)")
+        XCTAssertFalse(config.contains("apple.ibToolCompiler"), "no xib, no ibtool block: \(config)")
+        XCTAssertEqual(report.ungeneratedSources, [])
+    }
+
+    /// The fixture's application owning a synchronized `App` folder.
+    private var synchronizedAppFixture: String {
+        projectFixture
+            .replacingOccurrences(of: "G1 = { isa = PBXGroup; children = ( ); sourceTree = \"<group>\"; };",
+                                  with: "G1 = { isa = PBXGroup; children = ( SG1 ); sourceTree = \"<group>\"; };\n"
+                                      + "SG1 = { isa = PBXFileSystemSynchronizedRootGroup; path = App; sourceTree = \"<group>\"; };")
+            .replacingOccurrences(of: "fileSystemSynchronizedGroups = ( )", with: "fileSystemSynchronizedGroups = ( SG1 )")
+    }
+
+    /// B-77. An application folder holding Objective-C and a xib gets the clang blocks and
+    /// ibtool's, and a gyb template whose output is not there is named with the scheme
+    /// pre-action that runs gyb, where the build would fail only where the file is used.
+    func test_aProjectsObjectiveCXibsAndUngeneratedSourcesAreSeenBeforeTheBuild() throws {
+        try write("App/App.xcodeproj/project.pbxproj", synchronizedAppFixture)
+        try write("App/App/Legacy.m", "#import <Foundation/Foundation.h>\n")
+        try write("App/App/Base.lproj/Main.xib", "<document/>\n")
+        try write("App/App/Keys.swift.gyb", "% secrets = []\n")
+        try write("App/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme", """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Scheme version = "1.7">
+               <BuildAction>
+                  <PreActions>
+                     <ExecutionAction ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+                        <ActionContent title = "Generate" scriptText = "gyb -o App/Keys.swift App/Keys.swift.gyb&#10;"/>
+                     </ExecutionAction>
+                  </PreActions>
+               </BuildAction>
+            </Scheme>
+            """)
+
+        let report = try Preparation.run(folder: folder("App"), platform: .iosSimulator, steps: steps())
+
+        let config = try String(contentsOf: folder("App").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertTrue(config.contains("clang.compiler.target=arm64-apple-ios18.5-simulator"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.ibToolCompiler.minimumDeploymentTarget=18.5"), "got:\n\(config)")
+        XCTAssertTrue(config.contains("apple.ibToolCompiler.targetDevices=iphone,ipad"), "got:\n\(config)")
+        let machine = try String(contentsOf: folder("App").appendingPathComponent("semel.machine.config"), encoding: .utf8)
+        XCTAssertTrue(machine.contains("apple.ibToolCompiler.sdkPath=/SDKs/iphonesimulator.sdk"), "got:\n\(machine)")
+        XCTAssertEqual(report.ungeneratedSources.map(\.output), ["App/Keys.swift"])
+        XCTAssertEqual(report.ungeneratedSources.first?.generatedBy,
+                       [SchemePreAction(scheme: "App", title: "Generate", script: "gyb -o App/Keys.swift App/Keys.swift.gyb\n")])
     }
 
     func test_twoProjectsInOneFolderIsAnError() throws {

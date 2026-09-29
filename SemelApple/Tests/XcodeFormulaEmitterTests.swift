@@ -21,12 +21,13 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     private func formula(listing: XcodeFormulaEmitter.FolderListing = .init(
                             files: ["App.swift", "Views/Home.swift", "Info.plist", "Fonts/Mono.ttf", "Embeds/glass.wav",
                                     "Resources/Localizable.xcstrings", "Assets.xcassets/Contents.json", "README.md"],
-                            folders: ["Views", "Fonts", "Embeds", "Resources", "Assets.xcassets"])) throws -> String {
+                            folders: ["Views", "Fonts", "Embeds", "Resources", "Assets.xcassets"]),
+                         xcconfig: String = "") throws -> String {
         let emitter = try emitter()
         return try emitter.formula(
             settings: { target in
                 try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "iphonesimulator",
-                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
+                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example\n" + xcconfig) },
                                                extra: ["TARGET_NAME": target.name])
             },
             listing: { $0 == "input:/repo/IceCubesApp" ? listing : nil })
@@ -74,14 +75,28 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         XCTAssertFalse(formula.contains("product 'Food Truck.app/Food-Info.plist'"), formula)
     }
 
-    /// A listed source that is not Swift is a build this converter cannot write yet, and
-    /// it says which files rather than compiling around them.
-    func test_aListedSourceThatIsNotSwiftIsRefusedByName() throws {
+    /// A listed source that is neither Swift nor C-family is a build this converter cannot
+    /// write yet, and it says which files rather than compiling around them.
+    func test_aListedSourceThatIsNotSwiftOrCFamilyIsRefusedByName() throws {
+        let pbxproj = XcodeProjectTests.groupedFixture
+            .replacingOccurrences(of: "path = Util.swift;", with: "path = Util.metal;")
+        XCTAssertThrowsError(try groupedFormula(pbxproj: pbxproj)) { error in
+            XCTAssertEqual("\(error)", "Food Truck: sources that are not Swift are not compiled yet: Shared/Sources/Util.metal")
+        }
+    }
+
+    /// A listed Objective-C source is compiled through clang, over the folder it sits in
+    /// as its header folder, and linked beside the Swift.
+    func test_aListedObjectiveCSourceIsCompiledAndLinked() throws {
         let pbxproj = XcodeProjectTests.groupedFixture
             .replacingOccurrences(of: "path = Util.swift;", with: "path = Util.m;")
-        XCTAssertThrowsError(try groupedFormula(pbxproj: pbxproj)) { error in
-            XCTAssertEqual("\(error)", "Food Truck: sources that are not Swift are not compiled yet: Shared/Sources/Util.m")
-        }
+        let formula = try groupedFormula(pbxproj: pbxproj)
+
+        XCTAssertTrue(formula.contains("func preprocess_Food_Truck(path) =\n    ClangPreprocessor("), formula)
+        XCTAssertTrue(formula.contains("'input:/repo/Shared/Sources': Folder(path: 'input:/repo/Shared/Sources').manifest"), formula)
+        XCTAssertTrue(formula.contains("'input:/repo/Shared/Sources/Util.m.o': ClangCompiler("), formula)
+        XCTAssertTrue(formula.contains("input: ['input:/repo/Shared/Sources/Util.m.p': preprocess_Food_Truck(path: 'input:/repo/Shared/Sources/Util.m')]).output"),
+                      formula)
     }
 
     // MARK: - A macOS bundle (B-77)
@@ -244,6 +259,107 @@ final class XcodeFormulaEmitterTests: XCTestCase {
 
         XCTAssertTrue(formula.contains("linkRequirements: [\n        'KeychainSwift': linking_KeychainSwift().output,\n"
                                      + "        'Timeline': linking_Timeline().output\n        ]"), formula)
+    }
+
+    // MARK: - Objective-C in the application (B-77)
+
+    /// The app's folder with Objective-C in it, a bridging header, and a header an
+    /// exception leaves out, as NetNewsWire's `Mac` folder has.
+    private let objectiveCListing = XcodeFormulaEmitter.FolderListing(
+        files: ["App.swift", "Info.plist", "Embeds/glass.wav", "App-Bridging-Header.h",
+                "Legacy/Greeter.h", "Legacy/Greeter.m", "Legacy/Cruncher.mm", "Legacy/Private/Secret.h"],
+        folders: ["Embeds", "Legacy", "Legacy/Private"])
+
+    private let objectiveCSettings = """
+        SWIFT_OBJC_BRIDGING_HEADER = $(SRCROOT)/IceCubesApp/App-Bridging-Header.h
+        CLANG_ENABLE_OBJC_ARC = YES
+        CLANG_ENABLE_MODULES = YES
+        GCC_C_LANGUAGE_STANDARD = gnu11
+        GCC_PREPROCESSOR_DEFINITIONS = DEBUG=1 FEATURE
+        """
+
+    /// Every C-family source of the folder is preprocessed over the folder as its header
+    /// folder and compiled with ARC, modules and the project's standard, as the package
+    /// converter compiles a C target's, and linked with the Swift; Objective-C++ brings the
+    /// C++ runtime.
+    func test_compilesTheFoldersObjectiveCAndLinksItBesideTheSwift() throws {
+        let formula = try formula(listing: objectiveCListing, xcconfig: objectiveCSettings)
+
+        XCTAssertTrue(formula.contains("func preprocess_IceCubesApp(path) =\n    ClangPreprocessor(\n"
+                                       + "        configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'clang.preprocessor', "),
+                      formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', defines: 'DEBUG=1,FEATURE', modules: 'true', objectiveCARC: 'true', "
+                                       + "target: 'arm64-apple-ios18.5-simulator')"), formula)
+        XCTAssertTrue(formula.contains("        input: [path: StaticFile(path: path)],\n        headerFolders: [\n"
+                                       + "            'input:/repo/IceCubesApp': Folder(path: 'input:/repo/IceCubesApp').manifest\n        ]"),
+                      formula)
+        XCTAssertTrue(formula.contains("input: [\n            'Ice_Cubes.o': compiler_IceCubesApp().object,\n"
+                                       + "            'input:/repo/IceCubesApp/Legacy/Cruncher.mm.o': ClangCompiler("), formula)
+        XCTAssertTrue(formula.contains("'input:/repo/IceCubesApp/Legacy/Greeter.m.o': ClangCompiler(configuration: ['config': "
+                                       + "ConfigMerger(base: ['settings': ConfigFilter(prefix: 'clang.compiler', "), formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(cStandard: 'gnu11', modules: 'true', objectiveCARC: 'true', "
+                                       + "target: 'arm64-apple-ios18.5-simulator')"), "the compiler takes no defines: \(formula)")
+        XCTAssertTrue(formula.contains("input: ['input:/repo/IceCubesApp/Legacy/Greeter.m.p': "
+                                       + "preprocess_IceCubesApp(path: 'input:/repo/IceCubesApp/Legacy/Greeter.m')]).output"), formula)
+        XCTAssertTrue(formula.contains("'IceCubesApp C++': SettingsLiteral(cxxRuntime: 'true').output"), formula)
+        XCTAssertFalse(formula.contains("product 'Ice Cubes.app/Greeter.h'"), "a header is no resource: \(formula)")
+    }
+
+    /// The bridging header reaches the Swift compiler by itself, with the folder's other
+    /// headers as the tree it imports from — `headers_<Target>()`, the shape a package's C
+    /// target hands a Swift importer — and the macros its C-family sources are
+    /// preprocessed with, as Xcode tells the importer.
+    func test_theBridgingHeaderReachesTheSwiftCompilerWithTheTargetsHeaders() throws {
+        let formula = try formula(listing: objectiveCListing, xcconfig: objectiveCSettings)
+
+        XCTAssertTrue(formula.contains("func headers_IceCubesApp() =\n    TreeBuilder(input: [\n"
+                                       + "        'IceCubesApp/Legacy/Greeter.h': StaticFile(path: 'input:/repo/IceCubesApp/Legacy/Greeter.h').output,\n"
+                                       + "        'IceCubesApp/Legacy/Private/Secret.h': StaticFile(path: 'input:/repo/IceCubesApp/Legacy/Private/Secret.h').output\n"
+                                       + "    ]).files"), formula)
+        XCTAssertTrue(formula.contains(",\n        bridgingHeader: ['IceCubesApp/App-Bridging-Header.h': "
+                                       + "StaticFile(path: 'input:/repo/IceCubesApp/App-Bridging-Header.h').output],\n"
+                                       + "        headerTrees: ['IceCubesApp': headers_IceCubesApp().files]\n    )"), formula)
+        XCTAssertTrue(formula.contains("arguments: '-D,DEBUG,-D,EXTRA,-Xcc,-DDEBUG=1,-Xcc,-DFEATURE'"), formula)
+    }
+
+    /// A target with neither a C-family source nor a bridging header is compiled and
+    /// linked as before: one object, no clang, nothing for the importer.
+    func test_aSwiftOnlyTargetNamesNoClangAndNoBridgingHeader() throws {
+        let formula = try formula()
+
+        XCTAssertFalse(formula.contains("ClangPreprocessor"), formula)
+        XCTAssertFalse(formula.contains("bridgingHeader"), formula)
+        XCTAssertFalse(formula.contains("-Xcc"), formula)
+    }
+
+    // MARK: - Interface Builder documents (B-77)
+
+    /// A xib is compiled to a nib at its place in the bundle — under its language folder
+    /// when it has one — and a storyboard to a `.storyboardc`, each through ibtool for the
+    /// target's deployment target and devices, in the target's module, and merged into the
+    /// bundle's resources rather than copied.
+    func test_compilesInterfaceBuilderDocumentsWhereTheyGoInTheBundle() throws {
+        let formula = try formula(listing: .init(files: ["App.swift", "Base.lproj/Card.xib", "Views/Main.storyboard"],
+                                                 folders: ["Base.lproj", "Views"]))
+
+        XCTAssertTrue(formula.contains("func interface_IceCubesApp_0() =\n    IBToolCompiler(\n"
+                                       + "        configuration: ['config': ConfigMerger(base: ['settings': ConfigFilter(prefix: 'apple.ibToolCompiler', "),
+                      formula)
+        XCTAssertTrue(formula.contains("SettingsLiteral(minimumDeploymentTarget: '18.5', module: 'Ice_Cubes', targetDevices: 'iphone,ipad')"), formula)
+        XCTAssertTrue(formula.contains("document: ['Base.lproj/Card.xib': StaticFile(path: 'input:/repo/IceCubesApp/Base.lproj/Card.xib').output]"),
+                      formula)
+        XCTAssertTrue(formula.contains("document: ['Main.storyboard': StaticFile(path: 'input:/repo/IceCubesApp/Views/Main.storyboard').output]"),
+                      formula)
+        XCTAssertTrue(formula.contains("'interface0': interface_IceCubesApp_0().files, 'interface1': interface_IceCubesApp_1().files"), formula)
+        XCTAssertFalse(formula.contains("product 'Ice Cubes.app/Base.lproj/Card.xib'"), "compiled, not copied: \(formula)")
+    }
+
+    func test_anInterfaceBuilderDocumentIsCompiledAtItsPlaceInTheBundle() {
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "MainMenu/Base.lproj/MainMenu.xib"), .interfaceBuilder(bundlePath: "Base.lproj/MainMenu.xib"))
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "About/AboutWindowController.xib"), .interfaceBuilder(bundlePath: "AboutWindowController.xib"))
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Base.lproj/Main.storyboard"), .interfaceBuilder(bundlePath: "Base.lproj/Main.storyboard"))
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Legacy/Greeter.m"), .ignored)
+        XCTAssertEqual(XcodeFormulaEmitter.resource(at: "Legacy/Greeter.h"), .ignored)
     }
 
     // MARK: - Resources

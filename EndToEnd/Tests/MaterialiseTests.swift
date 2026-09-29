@@ -101,6 +101,25 @@ final class MaterialiseTests: XCTestCase {
         XCTAssertEqual(contents(of: checkout, "App/Orders/OrderDetailView.swift"), "sample")
     }
 
+    /// NetNewsWire's shape (B-77): a source the project generates before its build is not in
+    /// the checkout, but its template is beside where it goes, and that pins the path as a
+    /// file the checkout has does. Without the template it is refused like any other.
+    func test_anOverlayOfCorrectionsAddsTheOutputOfATemplateTheCheckoutHas() throws {
+        let (checkout, overlay) = try checkoutAndOverlay(
+            checkout: ["Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb": "template"],
+            overlay:  ["Modules/Secrets/Sources/Secrets/SecretKey.swift": "generated"])
+
+        try EndToEndRun.lay(overlay: overlay, over: checkout, replacingOnly: true)
+
+        XCTAssertEqual(contents(of: checkout, "Modules/Secrets/Sources/Secrets/SecretKey.swift"), "generated")
+        XCTAssertEqual(contents(of: checkout, "Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb"), "template")
+
+        let (elsewhere, misplaced) = try checkoutAndOverlay(
+            checkout: ["Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb": "template"],
+            overlay:  ["Modules/Secrets/Sources/SecretKey.swift": "generated"])
+        XCTAssertThrowsError(try EndToEndRun.lay(overlay: misplaced, over: elsewhere, replacingOnly: true))
+    }
+
     /// The Lua shape (B-76): a formula the checkout lacks is added, and a project config it
     /// happens to have is replaced.
     func test_aFormulaOverlayAddsItsFormulaAndReplacesAConfig() throws {
