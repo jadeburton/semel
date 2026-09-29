@@ -180,7 +180,7 @@ struct XcodeProject {
         let exception: MembershipException
         /// The borrowing target's own flags for the source, when its exception set gives
         /// it some (`additionalCompilerFlagsByRelativePath`).
-        var compilerFlags: String? = nil
+        var compilerFlags: String?
     }
 
     enum PackageProduct: Equatable {
