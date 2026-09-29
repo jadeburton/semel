@@ -211,9 +211,11 @@ final class EndToEndRun {
             break
         }
         if let platform = project.platform {
-            try Self.run("semel-swift",
-                         arguments: ["prepare", base.appendingPathComponent(project.buildFolder).path, "--platform", platform],
-                         timeout: project.buildTimeout, step: "prepare")
+            var arguments = ["prepare", base.appendingPathComponent(project.buildFolder).path, "--platform", platform]
+            if let application = project.application {
+                arguments += ["--application", application]
+            }
+            try Self.run("semel-swift", arguments: arguments, timeout: project.buildTimeout, step: "prepare")
         }
     }
 

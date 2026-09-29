@@ -354,6 +354,101 @@ struct XcodeProject {
         }
     }
 
+    // MARK: - Which application a build is for (B-77)
+
+    /// The application targets, in the project's order.
+    var applications: [Target] {
+        targets.filter(\.isApplication)
+    }
+
+    /// The application a build for `sdk` builds: the one whose `SDKROOT`, evaluated with
+    /// `settings`, is of the SDK's platform family — `iphoneos` for an `iphonesimulator`
+    /// build, since the simulator builds the iOS app — or, for one whose `SDKROOT` is
+    /// `auto` (a multiplatform target), whose `SUPPORTED_PLATFORMS` names the SDK.
+    /// NetNewsWire has a Mac app and an iOS app, both `NetNewsWire.app`, and only the
+    /// platform tells them apart.
+    ///
+    /// An application that states neither setting is taken for any platform: Xcode writes
+    /// `SDKROOT` into every target it creates, so only a hand-written project lacks it, and
+    /// such a project has meant "build this one" whatever it was built for.
+    ///
+    /// `named`, the converter's `application` setting, picks one by name and is the only
+    /// way past two applications for one platform, which is an error naming both rather
+    /// than a guess.
+    func application(forSDK sdk: String, named name: String?,
+                     settings: (Target) throws -> XcodeBuildSettings) throws -> Target {
+        let applications = self.applications
+        if let name {
+            guard let chosen = applications.first(where: { $0.name == name }) else {
+                throw XcodeProjectError.noSuchApplication(name: name, applications: applications.map(\.name))
+            }
+            return chosen
+        }
+        var described: [String] = []
+        var matching: [Target] = []
+        var unstated: [Target] = []
+        for application in applications {
+            let evaluated = try settings(application)
+            guard let platform = Self.platform(ofApplicationWith: evaluated) else {
+                described.append("\(application.name) (any platform)")
+                unstated.append(application)
+                continue
+            }
+            described.append("\(application.name) (\(platform))")
+            if Self.builds(sdk: sdk, forPlatform: evaluated) {
+                matching.append(application)
+            }
+        }
+        // One stating its platform wins over one stating none, which only a hand-written
+        // project has.
+        let chosen = matching.isEmpty ? unstated : matching
+        guard chosen.count == 1, let application = chosen.first else {
+            if chosen.isEmpty {
+                throw XcodeProjectError.noApplicationForSDK(sdk: sdk, applications: described)
+            }
+            throw XcodeProjectError.severalApplicationsForSDK(sdk: sdk, applications: chosen.map(\.name))
+        }
+        return application
+    }
+
+    /// `iphoneos` for `iphonesimulator`, `iphonesimulator17.0` or
+    /// `…/iPhoneSimulator.sdk`; `macosx` for `macosx`; a simulator SDK's family is its
+    /// device SDK's (`xrsimulator` is `xros`, `watchsimulator` `watchos`).
+    static func platformFamily(ofSDK sdk: String) -> String {
+        var name = (sdk as NSString).lastPathComponent.lowercased()
+        if name.hasSuffix(".sdk") {
+            name = String(name.dropLast(".sdk".count))
+        }
+        name = String(name.prefix { $0.isLetter })
+        if name.hasSuffix("simulator") {
+            return String(name.dropLast("simulator".count)) + "os"
+        }
+        return name
+    }
+
+    /// What an application's settings say it is built for, for the error that names it:
+    /// its `SDKROOT`, or for `auto` its `SUPPORTED_PLATFORMS`; nil when it states neither.
+    static func platform(ofApplicationWith settings: XcodeBuildSettings) -> String? {
+        let sdkRoot = settings["SDKROOT"] ?? ""
+        guard sdkRoot.isEmpty || sdkRoot == "auto" else {
+            return platformFamily(ofSDK: sdkRoot)
+        }
+        let supported = settings["SUPPORTED_PLATFORMS"] ?? ""
+        return supported.isEmpty ? nil : supported
+    }
+
+    /// Whether the settings build for `sdk`: an `SDKROOT` of its family, or `auto` with
+    /// `SUPPORTED_PLATFORMS` naming it or its family.
+    static func builds(sdk: String, forPlatform settings: XcodeBuildSettings) -> Bool {
+        let family = platformFamily(ofSDK: sdk)
+        let sdkRoot = settings["SDKROOT"] ?? ""
+        guard sdkRoot.isEmpty || sdkRoot == "auto" else {
+            return platformFamily(ofSDK: sdkRoot) == family
+        }
+        let supported = (settings["SUPPORTED_PLATFORMS"] ?? "").split(separator: " ").map(String.init)
+        return supported.contains { platformFamily(ofSDK: $0) == family }
+    }
+
     // MARK: - Reading
 
     init(pbxproj data: Data) throws {
@@ -703,9 +798,25 @@ enum XcodeProjectError: Error, CustomStringConvertible {
     /// Listed sources the converter does not compile: Objective-C, C, Metal, a Core Data
     /// model in the sources phase. Named, so the reader knows what the build would need.
     case unsupportedSources(target: String, files: [String])
+    /// No application builds for the SDK; each is named with the platform it does build for.
+    case noApplicationForSDK(sdk: String, applications: [String])
+    /// More than one application builds for the SDK, and nothing says which.
+    case severalApplicationsForSDK(sdk: String, applications: [String])
+    /// The converter's `application` names no application target.
+    case noSuchApplication(name: String, applications: [String])
 
     var description: String {
         switch self {
+        case .noApplicationForSDK(let sdk, let applications):
+            guard !applications.isEmpty else {
+                return "the project has no application target"
+            }
+            return "no application target builds for \(sdk): the project has \(applications.joined(separator: ", "))"
+        case .severalApplicationsForSDK(let sdk, let applications):
+            return "\(applications.count) application targets build for \(sdk): \(applications.joined(separator: ", ")); "
+                 + "name the one to build with application: '<name>' on XcodeProjectConverter, or --application <name> to prepare"
+        case .noSuchApplication(let name, let applications):
+            return "the project has no application target named '\(name)'; it has \(applications.isEmpty ? "none" : applications.joined(separator: ", "))"
         case .notAProject:
             return "not a project.pbxproj: no objects table and root object"
         case .noSuchTarget(let name):

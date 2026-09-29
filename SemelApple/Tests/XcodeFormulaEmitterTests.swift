@@ -25,6 +25,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
                          xcconfig: String = "") throws -> String {
         let emitter = try emitter()
         return try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "iphonesimulator",
                                                xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example\n" + xcconfig) },
@@ -37,6 +38,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
     private func groupedFormula(pbxproj: String = XcodeProjectTests.groupedFixture) throws -> String {
         let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(pbxproj.utf8)), build: build)
         return try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "iphonesimulator",
                                                xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
@@ -107,6 +109,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let macBuild = XcodeFormulaEmitter.Build(root: "input:/repo", projectFolder: "input:/repo", configuration: "Debug", sdk: "macosx")
         let emitter = XcodeFormulaEmitter(project: try XcodeProject(pbxproj: Data(XcodeProjectTests.fixture.utf8)), build: macBuild)
         return try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 let resolved = try XcodeBuildSettings.resolve(project: emitter.project, target: target, configuration: "Debug", sdk: "macosx",
                                                               xcconfig: { _ in Xcconfig.assignments("BUNDLE_ID_PREFIX = com.example") },
@@ -653,6 +656,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let macBuild = XcodeFormulaEmitter.Build(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: "macosx")
         let emitter = XcodeFormulaEmitter(project: project, build: macBuild)
         let formula = try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: "macosx",
                                                xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
@@ -742,6 +746,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let iosBuild = XcodeFormulaEmitter.Build(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: "iphonesimulator")
         let emitter = XcodeFormulaEmitter(project: project, build: iosBuild)
         let formula = try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: "iphonesimulator",
                                                xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
@@ -767,6 +772,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let emitter = XcodeFormulaEmitter(project: project,
                                           build: .init(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: sdk))
         return try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: sdk,
                                                xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])
@@ -822,6 +828,7 @@ final class XcodeFormulaEmitterTests: XCTestCase {
         let emitter = XcodeFormulaEmitter(project: project,
                                           build: .init(root: "input:/probe", projectFolder: "input:/probe", configuration: "Debug", sdk: "macosx"))
         let formula = try emitter.formula(
+            for: try XCTUnwrap(emitter.project.applications.first),
             settings: { target in
                 try XcodeBuildSettings.resolve(project: project, target: target, configuration: "Debug", sdk: "macosx",
                                                xcconfig: { _ in nil }, extra: ["TARGET_NAME": target.name])

@@ -161,17 +161,13 @@ struct XcodeFormulaEmitter {
 
     // MARK: - Whole project
 
-    /// The formula for the application target: its bundle, with every package it and its
-    /// extensions link included, and each extension the app embeds as a bundle of its
-    /// own under the app's `PlugIns/`.
-    func formula(settings: (XcodeProject.Target) throws -> XcodeBuildSettings,
+    /// The formula for `application`, the one the build's platform picked: its bundle, with
+    /// every package it and its extensions link included, and each extension the app
+    /// embeds as a bundle of its own under the app's `PlugIns/`.
+    func formula(for application: XcodeProject.Target,
+                 settings: (XcodeProject.Target) throws -> XcodeBuildSettings,
                  listing: (String) -> FolderListing?) throws -> String {
-        guard let application = project.targets.first(where: \.isApplication) else {
-            throw XcodeProjectError.noSuchTarget("an application")
-        }
-        let extensions = application.embeddedExtensions.compactMap { name in
-            project.targets.first { $0.productFileName == name && $0.isExtension }
-        }
+        let extensions = Array(project.bundleTargets(of: application).dropFirst())
         var blocks: [String] = ["// Written by XcodeProjectConverter: \(application.name) and \(extensions.count) embedded extension(s)."]
         blocks += includes(for: [application] + extensions)
         let applicationSettings = try settings(application)

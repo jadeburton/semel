@@ -18,18 +18,38 @@ public enum XcodeProjectFacts {
     /// The configuration the converter builds, and so the one whose xcconfig files count.
     static let configuration = "Debug"
 
-    /// The `.xcconfig` files the project, its application target and the extensions the
-    /// application embeds name for the built configuration, relative to the project's
-    /// folder, in the order the converter reads them. Not the files those include: a
-    /// file `prepare` has to put in place is one the project names. Empty when the
-    /// project has no application.
+    /// The `.xcconfig` files the project, each application target and the extensions each
+    /// embeds name for the built configuration, relative to the project's folder, in the
+    /// order the converter reads them. Not the files those include: a file `prepare` has to
+    /// put in place is one the project names. Every application's, not only the one the
+    /// platform picks: the pick is made by evaluating those files, so they are put in place
+    /// before it. Empty when the project has no application.
     public static func xcconfigPaths(ofProjectAt project: URL) throws -> [String] {
         let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
         let read = try XcodeProject(pbxproj: data)
-        guard let application = read.targets.first(where: \.isApplication) else {
-            return []
+        return read.xcconfigPaths(for: read.applications.flatMap(read.bundleTargets(of:)), configuration: configuration)
+    }
+
+    /// The application a build for `sdk` builds, as the converter picks it — by the
+    /// `SDKROOT` its settings evaluate to, with the xcconfig files read from beside the
+    /// project — or the one `named`. Nil when the project has no application.
+    static func application(of read: XcodeProject, in folder: URL, sdk: String, named name: String?) throws -> XcodeProject.Target? {
+        guard !read.applications.isEmpty else {
+            return nil
         }
-        return read.xcconfigPaths(for: read.bundleTargets(of: application), configuration: configuration)
+        let expansions = try expansions(of: read.xcconfigPaths(for: read.applications, configuration: configuration), in: folder)
+        return try read.application(forSDK: sdk, named: name) { target in
+            try XcodeBuildSettings.resolve(project: read, target: target, configuration: configuration, sdk: sdk,
+                                           xcconfig: { expansions[$0]?.assignments },
+                                           extra: ["TARGET_NAME": target.name])
+        }
+    }
+
+    /// The name of the application a build for `sdk` builds, for `prepare` to say. Nil when
+    /// the project has none.
+    public static func applicationName(ofProjectAt project: URL, sdk: String, named name: String? = nil) throws -> String? {
+        let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
+        return try application(of: try XcodeProject(pbxproj: data), in: project.deletingLastPathComponent(), sdk: sdk, named: name)?.name
     }
 
     /// Every local package of the project, relative to the project's folder, as the
@@ -67,10 +87,10 @@ public enum XcodeProjectFacts {
     /// reference after evaluation for `sdk`, with the xcconfig files read from beside the
     /// project when they are there: what a missing xcconfig would have to define. Sorted,
     /// each once. Empty when the project has no application.
-    public static func undefinedReferences(ofProjectAt project: URL, sdk: String) throws -> [String] {
+    public static func undefinedReferences(ofProjectAt project: URL, sdk: String, application name: String? = nil) throws -> [String] {
         let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
         let read = try XcodeProject(pbxproj: data)
-        guard let application = read.targets.first(where: \.isApplication) else {
+        guard let application = try application(of: read, in: project.deletingLastPathComponent(), sdk: sdk, named: name) else {
             return []
         }
         let targets = read.bundleTargets(of: application)
@@ -91,10 +111,10 @@ public enum XcodeProjectFacts {
     /// (`iphonesimulator`, `macosx`), evaluated as the converter evaluates settings, with
     /// the xcconfig files read from beside the project when they are there. Nil when the
     /// project has no application or states no target.
-    public static func deploymentTarget(ofProjectAt project: URL, sdk: String) throws -> String? {
+    public static func deploymentTarget(ofProjectAt project: URL, sdk: String, application name: String? = nil) throws -> String? {
         let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
         let read = try XcodeProject(pbxproj: data)
-        guard let application = read.targets.first(where: \.isApplication) else {
+        guard let application = try application(of: read, in: project.deletingLastPathComponent(), sdk: sdk, named: name) else {
             return nil
         }
         let expansions = try expansions(of: read.xcconfigPaths(for: application, configuration: configuration),
@@ -126,20 +146,20 @@ public enum XcodeProjectFacts {
     /// synchronized folders to the bottom less their exceptions, hidden folders and
     /// catalogs left out, and what the targets list or borrow. None when the project has no
     /// application.
-    public static func compiledSources(ofProjectAt project: URL) throws -> CompiledSources {
+    public static func compiledSources(ofProjectAt project: URL, sdk: String, application name: String? = nil) throws -> CompiledSources {
         let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
         let read = try XcodeProject(pbxproj: data)
-        guard let application = read.targets.first(where: \.isApplication) else {
+        let folder = project.deletingLastPathComponent()
+        guard let application = try application(of: read, in: folder, sdk: sdk, named: name) else {
             return CompiledSources()
         }
-        let folder = project.deletingLastPathComponent()
         var paths: [String] = []
         for target in read.bundleTargets(of: application) {
             for synchronized in target.synchronizedFolders {
                 let root = folder.appendingPathComponent(synchronized.path, isDirectory: true)
                 paths += files(under: root).filter { !synchronized.excludes($0) }
             }
-            paths += target.sourceFiles.map(\.path) + target.resourceFiles.map(\.path) + target.borrowedFiles
+            paths += target.sourcePaths(forSDK: sdk) + target.resourcePaths(forSDK: sdk) + target.borrowedFiles
         }
         let hasInterfaceBuilderDocuments = paths.contains { path in
             guard case .interfaceBuilder = XcodeFormulaEmitter.resource(at: path) else {
@@ -192,12 +212,12 @@ public enum XcodeProjectFacts {
     /// developer's machine, and NetNewsWire's reads its secrets from the environment and
     /// salts them with fresh random bytes — so it is named for the developer to run, or
     /// the file written by hand, rather than run.
-    public static func ungeneratedSources(ofProjectAt project: URL) throws -> [UngeneratedSource] {
+    public static func ungeneratedSources(ofProjectAt project: URL, sdk: String, application name: String? = nil) throws -> [UngeneratedSource] {
         let data = try Data(contentsOf: project.appendingPathComponent("project.pbxproj"))
         let read = try XcodeProject(pbxproj: data)
         let folder = project.deletingLastPathComponent()
         var roots = try localPackagePaths(ofProjectAt: project)
-        if let application = read.targets.first(where: \.isApplication) {
+        if let application = try application(of: read, in: folder, sdk: sdk, named: name) {
             roots += read.bundleTargets(of: application).flatMap(\.synchronizedFolders).map(\.path)
         }
         var templates = Set<String>()

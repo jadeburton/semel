@@ -684,6 +684,48 @@ final class PrepareTests: XCTestCase {
         XCTAssertEqual(report.ungeneratedSources, [])
     }
 
+    /// The fixture with a Mac app before the iOS one, as NetNewsWire has: each states its
+    /// `SDKROOT`, and the Mac one a deployment target of its own.
+    private var twoApplicationsFixture: String {
+        projectFixture
+            .replacingOccurrences(of: "targets = ( T1 );", with: "targets = ( T0, T1 );")
+            .replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = 18.5;", with: "IPHONEOS_DEPLOYMENT_TARGET = 18.5; SDKROOT = iphoneos;")
+            .replacingOccurrences(of: "G1 = { isa = PBXGroup;", with: """
+                T0 = { isa = PBXNativeTarget; name = MacApp; productType = "com.apple.product-type.application";
+                       buildConfigurationList = CL3; buildPhases = ( ); fileSystemSynchronizedGroups = ( ); packageProductDependencies = ( ); };
+                CL3 = { isa = XCConfigurationList; buildConfigurations = ( C3 ); };
+                C3 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { MACOSX_DEPLOYMENT_TARGET = 15.2; SDKROOT = macosx;
+                       PRODUCT_NAME = App; }; };
+                G1 = { isa = PBXGroup;
+                """)
+    }
+
+    /// B-77. A project with a Mac app and an iOS app builds the one of the platform's
+    /// family: the simulator the iOS app, whose deployment target the config carries, and
+    /// the Mac the Mac app. `--application` names one when the platform cannot, and the
+    /// formula says it to the converter.
+    func test_theApplicationBuiltIsTheOneOfThePlatformsFamily() throws {
+        try write("Simulator/App.xcodeproj/project.pbxproj", twoApplicationsFixture)
+        try write("Mac/App.xcodeproj/project.pbxproj", twoApplicationsFixture)
+        try write("Named/App.xcodeproj/project.pbxproj", twoApplicationsFixture)
+
+        let simulator = try Preparation.run(folder: folder("Simulator"), platform: .iosSimulator, steps: steps())
+        let mac = try Preparation.run(folder: folder("Mac"), platform: .macos, steps: steps())
+        let named = try Preparation.run(folder: folder("Named"), platform: .iosSimulator, application: "App", steps: steps())
+
+        XCTAssertEqual(simulator.application, "App")
+        XCTAssertEqual(mac.application, "MacApp")
+        XCTAssertEqual(named.application, "App")
+        let simulatorConfig = try String(contentsOf: folder("Simulator").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertTrue(simulatorConfig.contains("swift.compiler.target=arm64-apple-ios18.5-simulator"), simulatorConfig)
+        let macConfig = try String(contentsOf: folder("Mac").appendingPathComponent("semel.config"), encoding: .utf8)
+        XCTAssertTrue(macConfig.contains("swift.compiler.target=arm64-apple-macosx15.2"), macConfig)
+        let simulatorFormula = try String(contentsOf: folder("Simulator").appendingPathComponent("semel.fmla"), encoding: .utf8)
+        XCTAssertFalse(simulatorFormula.contains("application:"), simulatorFormula)
+        let namedFormula = try String(contentsOf: folder("Named").appendingPathComponent("semel.fmla"), encoding: .utf8)
+        XCTAssertTrue(namedFormula.contains("sdk: 'iphonesimulator', application: 'App').formula"), namedFormula)
+    }
+
     /// The fixture's application owning a synchronized `App` folder.
     private var synchronizedAppFixture: String {
         projectFixture

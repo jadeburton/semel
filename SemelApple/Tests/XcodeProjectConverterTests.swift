@@ -291,12 +291,13 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
     private func convertNetNewsWire(modules: [String],
                                     folders folderContents: [String: FolderContents] = [:],
                                     xcconfigs xcconfigTexts: [String: String] = [:],
-                                    configuration: String = "Debug")
+                                    configuration: String = "Debug",
+                                    sdk: String = "macosx")
         throws -> (output: ProcessOutput, demandedFolders: [String], demandedXcconfigs: [String]) {
         let projectFolder = "input:/nnw"
         let node = try XcodeProjectConverter(thisNode: NodeRecord(id: 1, kind: XcodeProjectConverter.kind, name: nil,
                                                                   properties: ["path": "\(projectFolder)/NetNewsWire.xcodeproj",
-                                                                               "sdk": "macosx", "configuration": configuration],
+                                                                               "sdk": sdk, "configuration": configuration],
                                                                   scheduled: false, identity: nil))
         let pbxproj = XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj")
         var inputs: [String: [String: NodeValue]] = [
@@ -501,6 +502,56 @@ final class XcodeProjectConverterTests: SemelAppleTestCase {
         XCTAssertTrue(assets.contains("platform: 'iphonesimulator'"), assets)
         XCTAssertTrue(formula.contains("product 'Share.appex/' = TreeMerger(input: ['assets': assets_NetNewsWire_iOS_Share_Extension().files"), formula)
         XCTAssertTrue(formula.contains("'AppDefaults.swift': StaticFile(path: 'input:/nnw/iOS/AppDefaults.swift').output"), formula)
+    }
+
+    /// A part of NetNewsWire's `iOS` and `Widget` folders, laid out as the clone has them.
+    private static let netNewsWireIOSFiles = [
+        "iOS/AppDelegate.swift", "iOS/NetNewsWire-iOS-Bridging-Header.h",
+        "iOS/UIKit Extensions/SFSafariViewController+Extras.h", "iOS/UIKit Extensions/SFSafariViewController+Extras.m",
+        "iOS/Base.lproj/Main.storyboard", "iOS/Base.lproj/LaunchScreenPhone.storyboard",
+        "iOS/Settings/Settings.storyboard", "iOS/Resources/Info.plist", "iOS/Resources/page.html",
+        "iOS/ShareExtension/Info.plist", "iOS/ShareExtension/ShareViewController.swift",
+        "iOS/ShareExtension/ShareFolderPickerAccountCell.xib",
+        "Widget/WidgetBundle.swift", "Widget/Info.plist", "Widget/NetNewsWire_iOS_WidgetExtension.entitlements",
+        "Widget/Resources/widget-sample.json",
+        "Shared/Resources/GlobalKeyboardShortcuts.plist", "Shared/Widget/WidgetData.swift",
+    ]
+
+    /// A simulator build of NetNewsWire is its iOS app — the application whose `SDKROOT`
+    /// is `iphoneos` — with the two extensions it embeds, the Share extension and the
+    /// widget, each under the app's `PlugIns/` in the flat iOS layout, for
+    /// `arm64-apple-ios17.0-simulator`; its storyboards compiled by ibtool, its Objective-C
+    /// by clang. Nothing of the Mac app's is built — not its folder, its extensions or
+    /// Sparkle's framework; the `Mac` folder is only looked into for local packages, as
+    /// every synchronized folder is.
+    func test_aSimulatorBuildOfNetNewsWireIsItsIOSAppWithItsExtensions() throws {
+        let (output, demandedFolders, demandedXcconfigs) = try convertNetNewsWire(
+            modules: NetNewsWireModules.products.keys.sorted(),
+            folders: Self.folderContents(of: Self.netNewsWireIOSFiles),
+            sdk: "iphonesimulator")
+        let formula = try XCTUnwrap(output.outputValues[XcodeProjectConverter.formulaOutput]).expectValue().resolveAsString()
+        let info = try XCTUnwrap(output.outputValues[XcodeProjectConverter.infoLog]).expectValue().resolveAsString()
+
+        XCTAssertTrue(info.hasPrefix("converted NetNewsWire-iOS for iphonesimulator, Debug"), info)
+        XCTAssertTrue(formula.contains("product 'NetNewsWire.app/NetNewsWire' ="), formula)
+        XCTAssertTrue(formula.contains("product 'NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/NetNewsWire iOS Share Extension' ="),
+                      formula)
+        XCTAssertTrue(formula.contains("product 'NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/NetNewsWire iOS Widget Extension' ="),
+                      formula)
+        XCTAssertTrue(formula.contains("target: 'arm64-apple-ios17.0-simulator'"), formula)
+        XCTAssertTrue(formula.contains("document: ['Base.lproj/Main.storyboard': StaticFile(path: 'input:/nnw/iOS/Base.lproj/Main.storyboard').output]"),
+                      formula)
+        XCTAssertTrue(formula.contains("'input:/nnw/iOS/UIKit Extensions/SFSafariViewController+Extras.m'"), formula)
+        XCTAssertTrue(formula.contains("bridgingHeader: ['iOS/NetNewsWire-iOS-Bridging-Header.h'"), formula)
+        XCTAssertTrue(formula.contains("product 'NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/widget-sample.json' ="),
+                      formula)
+        XCTAssertFalse(formula.contains("CodeSigner("), "the simulator's bundle is unsigned: \(formula)")
+
+        for macThing in ["Subscribe to Feed", "input:/nnw/Mac", "NetNewsWire Share Extension.appex", "frameworks_Sparkle"] {
+            XCTAssertFalse(formula.contains(macThing), "\(macThing): \(formula)")
+        }
+        XCTAssertTrue(demandedFolders.contains("input:/nnw/Widget"), "\(demandedFolders)")
+        XCTAssertTrue(demandedXcconfigs.contains("input:/nnw/xcconfig/NetNewsWire_iOSwidgetextension_target.xcconfig"), "\(demandedXcconfigs)")
     }
 
     /// NetNewsWire's Mac app compiles `Mac/NSOpenPanel+Extras.m` through clang with ARC,

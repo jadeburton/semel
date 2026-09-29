@@ -171,6 +171,10 @@ enum NetNewsWireModules {
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("NetNewsWire.xcodeproj/project.pbxproj"),
                                          to: project.appendingPathComponent("project.pbxproj"))
+        // The xcconfig folder: each application's `SDKROOT` is in it, and it is what says
+        // which application a build for a platform is.
+        try FileManager.default.copyItem(at: XcodeBuildSettingsTests.netNewsWire.appendingPathComponent("xcconfig"),
+                                         to: folder.appendingPathComponent("xcconfig"))
         for name in products.keys.sorted() {
             let package = folder.appendingPathComponent("Modules/\(name)", isDirectory: true)
             for subfolder in packageFolderFolders {

@@ -94,6 +94,23 @@ final class SwiftLinkerTests: SemelSwiftTestCase {
         XCTAssertFalse(executor.lastArguments.contains("-objc_stubs_small"), "\(executor.lastArguments)")
     }
 
+    /// B-77. Through the swift driver's `--sysroot` alone ld records the deployment target
+    /// as the SDK version, and the system runs such an app as one built with an old SDK;
+    /// `-isysroot` to clang is what has it read the SDK's version. An archive is not linked.
+    func test_tellsClangTheSDKSoTheImageRecordsItsVersion() throws {
+        for linkage in ["executable", "dynamicLibrary"] {
+            _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: linkage,
+                                                            extraConfiguration: ["sdk=iphonesimulator"]))
+            let arguments = executor.lastArguments
+            let sdkPath = try XCTUnwrap(arguments.firstIndex(of: "-sdk").map { arguments[$0 + 1] })
+            let flag = try XCTUnwrap(arguments.firstIndex(of: "-isysroot"), "\(linkage): \(arguments)")
+            XCTAssertEqual(Array(arguments[(flag - 1)...(flag + 2)]), ["-Xclang-linker", "-isysroot", "-Xclang-linker", sdkPath], linkage)
+        }
+
+        _ = try makeTool().process(input: try makeInput(objectFiles: ["a.o"], linkage: "staticArchive"))
+        XCTAssertFalse(executor.lastArguments.contains("-isysroot"), "\(executor.lastArguments)")
+    }
+
     // Same reproducibility requirement as the Clang linker: identical inputs must produce
     // an identical command line, so dictionary iteration order must not leak through.
     func test_objectFilesAreOrderedDeterministically() throws {

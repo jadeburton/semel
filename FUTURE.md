@@ -1210,7 +1210,8 @@ application target, simulator only, all library code in packages. In suggested o
    not write for a tree.
 2. *NetNewsWire* — `open`; the Mac app builds (2026-09-29) and is in the roster as
    `netnewswire-mac` (below, after the map), signed since 11, and launches since 18 (the
-   rule for a synchronized folder's resources, below); the iOS app remains. Pinned
+   rule for a synchronized folder's resources, below); the iOS app builds for the
+   simulator, is in the roster as `netnewswire-ios` and launches since 20. Pinned
    at `b4361413fc1850110f9f42652f0f84e7a51e9d64` (main, 2026-09-23). The clone is not what
    this entry said from memory: there are no framework targets and no group-listed
    sources — the Mac and iOS apps, two Mac extensions (Share, and the Safari extension
@@ -1712,8 +1713,9 @@ application target, simulator only, all library code in packages. In suggested o
       passed it over as not a copied resource. A borrowed `.xcassets` or `.icon` is now
       among the target's catalogs, compiled for it as one of its own folder's would be.
       Pinned by `XcodeProjectConverterTests` on the fixture's iOS Share extension for the
-      simulator (the converter itself still builds only the first application, the Mac
-      app, so the test drives the emitter for the extension).
+      simulator, driving the emitter for the extension; since 20 the converter builds the
+      iOS app for the simulator, and `netnewswire-ios` compiles the catalog into the
+      extension's bundle.
    16. ~~**A package target's upcoming features do not reach its compiler.**~~ Done
       (2026-09-29). Every local package's targets declare
       `.enableUpcomingFeature("NonisolatedNonsendingByDefault")` and
@@ -2097,8 +2099,94 @@ application target, simulator only, all library code in packages. In suggested o
         `Sparkle.xcframework` alone); `food-truck-mac` passed too (142 s). The extensions' hardened runtime is not checked by the
         roster: the unit tests pin it, the real `codesign` among them.
 
-   What remains for NetNewsWire: the iOS app and its extensions; 1's residual (a
-   framework's links as copies).
+   20. ~~**The iOS app.**~~ Done (2026-09-29, XcodeProjectConverter v13, SwiftLinker v4).
+      The project's last target Semel did not build: the converter built the first
+      application it found, which is the Mac app, whatever the SDK.
+
+      - *Which application a build is for.* `XcodeProject.application(forSDK:named:settings:)`:
+        the application whose `SDKROOT`, evaluated through `XcodeBuildSettings`, is of the
+        SDK's platform family — `iphoneos` for an `iphonesimulator` build, `macosx` for a
+        Mac one (`platformFamily(ofSDK:)`: a simulator SDK's family is its device SDK's) —
+        or, with `SDKROOT = auto`, whose `SUPPORTED_PLATFORMS` names it. An application
+        stating neither is taken for any platform when none states this one (only a
+        hand-written project lacks `SDKROOT`). Two for one platform are an error naming
+        both, and none an error naming each with what it builds for; the converter's
+        `application` property picks one by name, which `prepare --application <target>`
+        writes into the formula. The converter demands every application's xcconfig files
+        first, chooses once they are in, and then the chosen one's extensions'; while they
+        are in flight it already walks the one application there can be (the only one, or
+        the one named), so the waits still overlap, and checks its platform once they are
+        in. `XcodeProjectFacts` makes the same choice from the disk for every question
+        `prepare` asks (deployment target, undefined references, the compiled sources, the
+        ungenerated ones), which prints `application NetNewsWire-iOS for iphonesimulator`,
+        and puts in place the xcconfig files of every application, since the choice reads
+        them. Food Truck has two applications for every platform, `Food Truck` and `Food
+        Truck All`, both multiplatform, so its two roster entries now name `Food Truck`
+        (`Project.application`). Pinned by `XcodeBuildSettingsTests` (NetNewsWire's two
+        apps by platform, the errors, a name, `auto`, an unstated platform, the families),
+        `XcodeProjectConverterTests` (the simulator formula over the fixture: the iOS app,
+        the Share and widget extensions under `PlugIns/`, the storyboards and Objective-C,
+        nothing of the Mac app's) and `PrepareTests` (the platform's application and its
+        deployment target, `--application` in the formula).
+      - *What stopped it*, in the order a fresh clone with the overlay met it
+        (`prepare --platform ios-simulator`: `IPHONEOS_DEPLOYMENT_TARGET` 17.0,
+        `arm64-apple-ios17.0-simulator`, the `apple.*` blocks with ibtool's, clang's for the
+        app's `SFSafariViewController+Extras.m`): only the choice above. With the iOS app
+        chosen the first build ran 398 nodes with no error in 58 s cold and exported
+        `NetNewsWire.app`. Nothing the entry expected needed a change: the settings of
+        `…ios_target_common.xcconfig` and its `[sdk=iphonesimulator*]` conditions, the flat
+        layout, the WidgetKit extension as an `.appex` under `PlugIns/`, the Share extension
+        that owns no folder and borrows its sources, xibs and catalog from `iOS` (15), the
+        `Base.lproj` storyboards compiled to `.storyboardc` (8) — `Main`, `LaunchScreenPhone`
+        and `LaunchScreenPad`, which `UILaunchStoryboardName` and its `~ipad` name — the
+        bridging header `iOS/NetNewsWire-iOS-Bridging-Header.h` (6), and the iOS plist
+        keys, which the project's own `iOS/Resources/Info.plist` carries.
+      - *Launched* (`simctl boot`, `install`, `launch`, an iPhone 17 on iOS 26.5): it
+        started and stayed up, imported the default feeds and refreshed them — the Feeds
+        list with Today, All Unread and each feed's unread count — and asked for
+        notification permission; both extensions were registered (`pluginkit -m`). But it
+        ran as an app built with an old SDK, in the look iOS keeps for one: every image
+        Semel linked recorded its deployment target as the SDK it was built with
+        (`LC_BUILD_VERSION`: `sdk 17.0`, where Xcode's says `sdk 26.5`; a Mac link said
+        `sdk 15.0`). The swift driver links through clang with `--sysroot`, from which clang
+        reads no SDK version, so ld is told none and takes the deployment target. The
+        linker now also passes `-Xclang-linker -isysroot -Xclang-linker <SDK>`, from which
+        clang reads `SDKSettings.json` and tells ld the version as it does for Xcode (an
+        archive is not linked by ld and gets none). Launched again, the app has iOS 26's
+        floating glass toolbar and buttons. Every app Semel linked had the stamp: the Mac
+        NetNewsWire, Food Truck, IceCubes. Pinned by `SwiftLinkerTests` and by the roster
+        entry, which checks each executable's `sdk`. Seen in the log and not Semel's to
+        fix in an unsigned bundle: `NSUbiquitousKeyValueStore` initialised without the
+        iCloud entitlement.
+      - *Compared with Xcode's bundle* (`xcodebuild -scheme NetNewsWire-iOS -sdk
+        iphonesimulator CODE_SIGNING_ALLOWED=NO`, same commit): the same files but for the
+        package products Xcode embeds as frameworks (Semel links them in), the
+        `.debug.dylib` and `__preview.dylib`, the resource bundles'
+        `Info.plist`, the signature, and two things Semel does not do yet: the App Intents
+        metadata (`Metadata.appintents`, `Base.lproj`/`en.lproj/nlu.appintents`, from
+        `appintentsmetadataprocessor` and the NL training step over the app's `AppIntents`
+        folder, so the app's Shortcuts actions are not registered), and an extension's
+        standalone icons: Xcode gives actool `--standalone-icon-behavior all` for an app
+        extension (`default` for an app), so its widget holds seventeen `AppIcon*.png` and
+        its Share extension an `AppIcon1024x1024.png` where Semel's hold two and none.
+        `NetNewsWire_iOSwidgetextension_target.xcconfig` is in both: the `xcconfig`
+        folder's exception set lends it to the iOS app, which copies it as a resource.
+      - *In the roster* as `netnewswire-ios` (`Projects.netNewsWireIOS`,
+        `ExternalProjectTests.test_netNewsWireBuildsTwiceForTheSimulator`): the pinned
+        commit, the `external/netnewswire` overlay, `--platform ios-simulator`, twenty-two
+        expected products across the app and both extensions, three required executable,
+        everything under `NetNewsWire.app`, and each executable checked to record the
+        simulator SDK's version (`AppInspection.checkRecordsTheSDKVersion`). All four
+        hermeticity builds, byte for byte with no exemption, in 270 s for the whole test,
+        clone and `prepare` included (398 s on a second run on a busier machine, 249 s after
+        rebasing onto 19, whose Swift flags the iOS app now compiles under too). The
+        Food Truck entries (both now naming their application), `netnewswire-mac` and
+        `icecubes-app` pass with the linker's new stamp.
+
+   What remains for NetNewsWire: the iOS app's App Intents metadata and its extensions'
+   standalone icons (20); a signed simulator or device build, with the entitlements an
+   unsigned bundle lacks. (1's residual, a framework's links as copies, is done: links
+   travel in trees.)
 3. *CodeEdit* — macOS app over a large remote package graph; the tree-sitter grammars are
    many C targets with nested sources (B-55 through an app), build-tool plugins (SwiftLint),
    entitlements and sandbox.

@@ -51,6 +51,9 @@ struct Project {
     /// Relative to the export directory; every one must exist and be non-empty.
     let expectedProducts: [String]
     let buildTimeout: TimeInterval
+    /// For `semel-swift prepare --application`: the application target to build, for a
+    /// project with more than one for the platform (B-77); nil lets the platform pick.
+    var application: String?
     /// Relative paths under the export directory, or path suffixes, whose bytes may differ
     /// between the two cold builds. Every other file must match. An entry names a
     /// difference a backlog item owns, with a comment saying which; the empty list is the

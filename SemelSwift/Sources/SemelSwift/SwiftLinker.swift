@@ -87,7 +87,9 @@ struct SwiftLinker: Node {
     /// differs from what version 1 wrote.
     /// 3: passes the frameworks, libraries and C++ runtime its settings and
     /// `linkRequirements` state (B-55).
-    public static let implementationVersion = 3
+    /// 4: tells clang the SDK with `-isysroot`, so the image records the SDK's version
+    /// rather than its deployment target as the SDK it was built with (B-77).
+    public static let implementationVersion = 4
 
     // MARK: Ports
 
@@ -299,6 +301,16 @@ struct SwiftLinker: Node {
         arguments.append("-sdk")
         arguments.append(sdkPath)
         settings.append(.swiftSDK(key: "\(namespace).sdk", value: sdk))
+        // The swift driver links through clang with `--sysroot`, from which clang reads no
+        // SDK version, so ld records the deployment target as the SDK an image was built
+        // with (`LC_BUILD_VERSION`'s `sdk 17.0` for an app linked against the 26.5 SDK).
+        // The system keys behaviour on that version — an iOS app stamped 17.0 runs in the
+        // compatibility mode an old app gets, without the current SDK's look (B-77). With
+        // `-isysroot` clang reads the SDK's `SDKSettings.json` and tells ld the version, as
+        // it does for Xcode. An archive is not linked by ld.
+        if inputs.configuration.linkage != .staticArchive {
+            arguments.append(contentsOf: ["-Xclang-linker", "-isysroot", "-Xclang-linker", sdkPath])
+        }
 
         if let target = inputs.configuration.target {
             arguments.append("-target")
