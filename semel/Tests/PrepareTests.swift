@@ -118,6 +118,23 @@ final class PrepareTests: XCTestCase {
     /// running dump-package on that folder failed the whole prepare of the IceCubes app
     /// once the project's vendored packages were summarised (2026-09-28). A manifest opens
     /// with the tools-version line SwiftPM requires.
+    /// A vendored checkout is one package: the manifest directly in its folder counts, and
+    /// a manifest deeper in it — purchases-ios's `Tests/Package.swift`, which does not parse
+    /// on its own — does not.
+    func test_aVendoredPackageIsItsRootManifestAlone() throws {
+        try write("Dependencies/purchases-ios-spm/Package.swift")
+        try write("Dependencies/purchases-ios-spm/Tests/Package.swift")
+        try write("Dependencies/purchases-ios-spm/Sources/Purchasing/Package.swift", "public struct Package {}\n")
+        try write("Dependencies/Nuke/Package.swift")
+        try write("Dependencies/Nuke.semel-lock", "content sha256:00\n")
+
+        let found = try Preparation.vendoredManifestFolders(in: folder("Dependencies"))
+
+        XCTAssertEqual(found.map { Preparation.relativePath(of: $0, under: root) },
+                       ["Dependencies/Nuke", "Dependencies/purchases-ios-spm"])
+        XCTAssertEqual(try Preparation.vendoredManifestFolders(in: folder("Nowhere")), [])
+    }
+
     func test_aSourceFileNamedPackageSwiftIsNotAManifest() throws {
         try write("Dependencies/purchases-ios-spm/Package.swift")
         try write("Dependencies/purchases-ios-spm/Sources/Purchasing/Package.swift",
@@ -926,7 +943,7 @@ final class PrepareTests: XCTestCase {
         try write("Packages/App/Package.swift")
         let vendoring: ([URL], URL) throws -> [Vendoring.Copied] = { _, into in
             let destination = into.appendingPathComponent("Tiny", isDirectory: true)
-            try self.write("Packages/Dependencies/Tiny/Package.swift", "// tiny\n")
+            try self.write("Packages/Dependencies/Tiny/Package.swift")
             try self.write("Packages/Dependencies/Tiny/Tiny.xcframework/Info.plist", "<plist/>\n")
             try self.write("Packages/Dependencies/Tiny/Tiny.xcframework/macos-arm64/Tiny.framework/Tiny", "binary\n")
             try self.zip("Packages/Dependencies/Tiny/Tiny.xcframework", to: "Packages/Dependencies/Tiny/Tiny.xcframework.zip")
