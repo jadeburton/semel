@@ -258,12 +258,17 @@ struct SigningLayout {
     /// store keeps objects in; what it had in the tree is what it has signed.
     private let modes: [String: UInt16]
 
+    // Plain loops rather than `Dictionary(_:uniquingKeysWith:)` over a `compactMap` of
+    // closures: the release optimizer of Swift 6.3.3 (Xcode 26.6) dies in CopyPropagation
+    // on that shape of this initializer, deterministically, on the hosted runner and
+    // locally alike. The loops say the same thing — the first mode for a path wins.
     init(entries: [TreeManifestEntry]) {
-        modes = Dictionary(entries.compactMap { entry in entry.mode.map { (entry.path, $0) } },
-                           uniquingKeysWith: { first, _ in first })
-
+        var modesByPath: [String: UInt16] = [:]
         var bundles = Set<String>()
         for entry in entries {
+            if let mode = entry.mode, modesByPath[entry.path] == nil {
+                modesByPath[entry.path] = mode
+            }
             let components = entry.path.split(separator: "/").map(String.init)
             for index in components.indices.dropLast() {
                 let name = components[index] as NSString
@@ -272,6 +277,7 @@ struct SigningLayout {
                 }
             }
         }
+        modes = modesByPath
         nestedBundles = bundles.sorted { first, second in
             let firstDepth = first.split(separator: "/").count
             let secondDepth = second.split(separator: "/").count
