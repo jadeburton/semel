@@ -126,9 +126,24 @@ final class ExternalProjectTests: XCTestCase {
         }
     }
 
+    /// B-77: NetNewsWire's iOS app for the simulator, from the same clone and overlay as
+    /// the Mac app's: the application the platform picks, its Share and widget extensions,
+    /// storyboards, Objective-C, the local packages. Inspected, not run: each executable
+    /// records the SDK it was built with.
+    func test_netNewsWireBuildsTwiceForTheSimulator() throws {
+        try XCTSkipUnless(EndToEndEnvironment.runsExternal, "set SEMEL_E2E_EXTERNAL=1 to build the external projects")
+        try XCTSkipUnless(EndToEndRun.binariesAreBuilt, "the executables are not built beside the test bundle")
+        let run = try EndToEndRun(project: Projects.netNewsWireIOS)
+        do {
+            try run.run()
+        } catch {
+            XCTFail("netnewswire-ios\n\(error)")
+        }
+    }
+
     func test_everyExternalProjectInTheRosterHasATestHere() {
         XCTAssertEqual(Set(Projects.external.map(\.name)),
                        ["icecubes", "icecubes-app", "semel", "lua", "sqlite", "simdjson", "food-truck", "food-truck-mac",
-                        "netnewswire-mac"])
+                        "netnewswire-mac", "netnewswire-ios"])
     }
 }

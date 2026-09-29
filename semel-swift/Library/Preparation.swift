@@ -18,6 +18,9 @@ import SemelNodeKit
 public struct PrepareReport: Equatable {
     /// The `.xcodeproj` the folder holds, when it is a project rather than packages.
     public var project: String?
+    /// The application target the build is for, which the platform picked or
+    /// `--application` named (B-77).
+    public var application: String?
     /// The project's local packages, as its converter finds them: the ones it declares and
     /// the ones directly in its synchronized folders.
     public var localPackages: [URL] = []
@@ -90,7 +93,9 @@ public enum Preparation {
     /// `xcconfigSources` is the escape hatch for a project whose starting point for an
     /// ignored xcconfig is spelled in a way no template family covers: the path the
     /// project names, to the file to copy there.
-    public static func run(folder: URL, platform: Platform, xcconfigSources: [String: URL] = [:],
+    /// `application` names the application target to build when more than one builds for
+    /// the platform; nil lets the platform pick, as the converter does.
+    public static func run(folder: URL, platform: Platform, application: String? = nil, xcconfigSources: [String: URL] = [:],
                            steps: Steps = .live) throws -> PrepareReport {
         let folder = folder.standardizedFileURL
         let dependencies = folder.appendingPathComponent(Vendoring.dependenciesFolderName, isDirectory: true)
@@ -114,10 +119,12 @@ public enum Preparation {
             // layer of the settings that reading evaluates.
             (report.copiedFromTemplate, report.missingXcconfigs) = try placeXcconfigs(ofProjectAt: project, sources: xcconfigSources)
             if !report.missingXcconfigs.isEmpty {
-                report.undefinedReferences = try XcodeProjectFacts.undefinedReferences(ofProjectAt: project, sdk: platform.sdkName)
+                report.undefinedReferences = try XcodeProjectFacts.undefinedReferences(ofProjectAt: project, sdk: platform.sdkName,
+                                                                                    application: application)
             }
-            declaredVersion = try deploymentTarget(ofProjectAt: project, platform: platform)
-            formula = GeneratedFiles.formula(project: project.lastPathComponent, platform: platform)
+            report.application = try XcodeProjectFacts.applicationName(ofProjectAt: project, sdk: platform.sdkName, named: application)
+            declaredVersion = try deploymentTarget(ofProjectAt: project, platform: platform, application: application)
+            formula = GeneratedFiles.formula(project: project.lastPathComponent, platform: platform, application: application)
             // The packages the converter will find and include — the ones the project
             // declares and the ones in its synchronized folders — and what was vendored for
             // them decide the languages, by the rule a tree of packages is held to (B-110).
@@ -127,7 +134,8 @@ public enum Preparation {
             let packageSummaries = try (report.localPackages + vendoredManifestFolders(in: dependencies)).map(steps.summarize)
             // ibtool's block when a package's resources hold a xib too, which its formula
             // compiles into the package's bundle (B-77).
-            var compiledSources = try XcodeProjectFacts.compiledSources(ofProjectAt: project)
+            var compiledSources = try XcodeProjectFacts.compiledSources(ofProjectAt: project, sdk: platform.sdkName,
+                                                                        application: application)
             compiledSources.hasInterfaceBuilderDocuments = compiledSources.hasInterfaceBuilderDocuments
                 || GeneratedFiles.hasInterfaceBuilderDocuments(in: packageSummaries)
             namespaces = GeneratedFiles.projectNamespaces(forCFamilyTargets: GeneratedFiles.hasCFamilyTargets(in: packageSummaries),
@@ -136,7 +144,8 @@ public enum Preparation {
             allSummaries = packageSummaries
             // A source the project generates before its build, not there: said here, with
             // what would generate it, since the build can only fail where it is used.
-            report.ungeneratedSources = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project)
+            report.ungeneratedSources = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project, sdk: platform.sdkName,
+                                                                                  application: application)
         } else {
             let manifestFolders = try PackageScan.manifestFolders(under: folder)
             guard !manifestFolders.isEmpty else {
@@ -298,8 +307,8 @@ public enum Preparation {
 
     /// The application target's deployment target for the platform, evaluated the way
     /// the converter will evaluate it. Nil when the project states none.
-    static func deploymentTarget(ofProjectAt project: URL, platform: Platform) throws -> String? {
-        try XcodeProjectFacts.deploymentTarget(ofProjectAt: project, sdk: platform.sdkName)
+    static func deploymentTarget(ofProjectAt project: URL, platform: Platform, application: String? = nil) throws -> String? {
+        try XcodeProjectFacts.deploymentTarget(ofProjectAt: project, sdk: platform.sdkName, application: application)
     }
 
     /// Xcode knows no template. A repository that ignores an xcconfig and ships a starting

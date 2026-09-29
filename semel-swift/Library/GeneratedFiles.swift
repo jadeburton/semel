@@ -67,13 +67,21 @@ public enum GeneratedFiles {
 
     /// A project as the one root: the converter reads it, walks its targets' folders and
     /// brings every package it references, all under this folder as the build root.
-    public static func formula(project: String, platform: Platform) -> String {
-        """
+    /// `application` is written only when given: without it the converter builds the
+    /// application the platform picks.
+    public static func formula(project: String, platform: Platform, application: String? = nil) -> String {
+        let named = application.map { ", application: \(formulaQuoted($0))" } ?? ""
+        return """
         // Written by semel-swift prepare. The project is the root: its converter brings every
         // package it references and builds the application and the extensions it embeds.
-        include XcodeProjectConverter(path: <\(project)>, root: <.>, configuration: 'Debug', sdk: '\(platform.sdkName)').formula
+        include XcodeProjectConverter(path: <\(project)>, root: <.>, configuration: 'Debug', sdk: '\(platform.sdkName)'\(named)).formula
 
         """
+    }
+
+    /// A formula string literal takes whichever quote the value does not hold.
+    static func formulaQuoted(_ value: String) -> String {
+        value.contains("'") ? "\"\(value)\"" : "'\(value)'"
     }
 
     /// The config namespaces the formula for a tree of packages selects from: what

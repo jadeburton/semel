@@ -46,8 +46,10 @@ public struct XcodeProjectConverter: Node {
     /// source's own flags reach clang, an application gets a `PkgInfo`, a copy-files
     /// phase's exception set copies its files there too, an exception naming a plain
     /// folder leaves out nothing under it, and a bundle whose settings ask for the hardened
-    /// runtime is signed with it (B-77).
-    public static let implementationVersion = 12
+    /// runtime is signed with it (B-77); at 13, the application built is the one whose
+    /// `SDKROOT` is of the SDK's platform family, not the first, so NetNewsWire's simulator
+    /// build is its iOS app (B-77).
+    public static let implementationVersion = 13
 
     // MARK: Ports
 
@@ -154,6 +156,9 @@ public struct XcodeProjectConverter: Node {
 
     var configurationName: String { thisNode.properties["configuration"] ?? "Debug" }
     var sdk: String { thisNode.properties["sdk"] ?? "iphonesimulator" }
+    /// The application target to build, by name, when more than one builds for `sdk`;
+    /// otherwise the platform picks it (`XcodeProject.application(forSDK:named:settings:)`).
+    var applicationName: String? { thisNode.properties["application"] }
 
     // MARK: Processing
 
@@ -187,32 +192,58 @@ public struct XcodeProjectConverter: Node {
             return failed("\(projectFilePath) has no content", specs: specs)
         }
         let project = try XcodeProject(pbxproj: Data(projectBytes))
-        guard let application = project.targets.first(where: \.isApplication) else {
+        guard !project.applications.isEmpty else {
             return failed("the project has no application target", specs: specs)
         }
 
         // ── the xcconfig files the project and the targets name, and theirs ──
         // Each file's includes are known only once it has arrived, so the files are
-        // demanded a level at a time, the way a folder is walked.
+        // demanded a level at a time, the way a folder is walked. Every application's
+        // first: its `SDKROOT` is what says which one this build is for, and only then are
+        // the extensions it embeds known.
         let projectFolder = try projectFolder
-        let bundleTargets = project.bundleTargets(of: application)
-        let embedded = Array(bundleTargets.dropFirst())
         let xcconfigValues = input.inputValues[Self.xcconfigs] ?? [:]
         var expansions: [String: XcconfigExpansion] = [:]
-        for root in project.xcconfigPaths(for: bundleTargets, configuration: configurationName) {
-            let expansion: XcconfigExpansion
-            do {
-                expansion = try XcconfigExpansion(root: root) { relativePath in
+        func expand(_ targets: [XcodeProject.Target]) throws {
+            for root in project.xcconfigPaths(for: targets, configuration: configurationName) where expansions[root] == nil {
+                let expansion = try XcconfigExpansion(root: root) { relativePath in
                     Self.xcconfigFile(at: Self.inputPath(of: relativePath, in: projectFolder), values: xcconfigValues)
                 }
-            } catch let failure as XcconfigExpansion.Failure {
-                return failed(failure.description, specs: specs)
-            }
-            expansions[root] = expansion
-            for path in expansion.files.compactMap({ Self.inputPath(of: $0, in: projectFolder) }) {
-                specs[Self.xcconfigs]?[path] = .staticFile(at: path)
+                expansions[root] = expansion
+                for path in expansion.files.compactMap({ Self.inputPath(of: $0, in: projectFolder) }) {
+                    specs[Self.xcconfigs]?[path] = .staticFile(at: path)
+                }
             }
         }
+        func evaluatedSettings(of target: XcodeProject.Target) throws -> XcodeBuildSettings {
+            try XcodeBuildSettings.resolve(project: project, target: target, configuration: configurationName, sdk: sdk,
+                                           xcconfig: { expansions[$0]?.assignments },
+                                           extra: ["TARGET_NAME": target.name])
+        }
+        let application: XcodeProject.Target
+        do {
+            try expand(project.applications)
+            if expansions.values.contains(where: \.isWaiting) {
+                // Until the files are in, the one application there can be — the only one,
+                // or the one named — is walked for already, so the waits overlap; its
+                // platform is checked once they are in. Between several, nothing is walked.
+                let provisional = applicationName.map { name in project.applications.first { $0.name == name } }
+                    ?? (project.applications.count == 1 ? project.applications.first : nil)
+                guard let provisional else {
+                    return pending("waiting for the xcconfig files", specs: specs)
+                }
+                application = provisional
+            } else {
+                application = try project.application(forSDK: sdk, named: applicationName, settings: evaluatedSettings)
+            }
+            try expand(project.bundleTargets(of: application))
+        } catch let failure as XcconfigExpansion.Failure {
+            return failed(failure.description, specs: specs)
+        } catch let failure as XcodeProjectError {
+            return failed(failure.description, specs: specs)
+        }
+        let bundleTargets = project.bundleTargets(of: application)
+        let embedded = Array(bundleTargets.dropFirst())
 
         // ── the target's folders, walked ─────────────────────────────────────
         // Demanded alongside the xcconfig files, so the two waits overlap.
@@ -327,13 +358,7 @@ public struct XcodeProjectConverter: Node {
         let build = XcodeFormulaEmitter.Build(root: try buildRoot, projectFolder: projectFolder,
                                               configuration: configurationName, sdk: sdk)
         let emitter = XcodeFormulaEmitter(project: project, build: build, localPackagePaths: packageSearch.packagePaths)
-        let formula = try emitter.formula(
-            settings: { target in
-                try XcodeBuildSettings.resolve(project: project, target: target, configuration: self.configurationName, sdk: self.sdk,
-                                               xcconfig: { expansions[$0]?.assignments },
-                                               extra: ["TARGET_NAME": target.name])
-            },
-            listing: { listings[$0] })
+        let formula = try emitter.formula(for: application, settings: evaluatedSettings, listing: { listings[$0] })
 
         return .init(outputValues: [Self.formulaOutput: .value(try formula.intern()),
                                     Self.infoLog: try infoLogValue(application: application, embedded: embedded, project: project,

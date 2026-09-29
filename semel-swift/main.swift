@@ -2,7 +2,7 @@
 //  main.swift
 //  semel-swift
 //
-//  semel-swift prepare <folder> [--platform macos|ios-simulator] [--xcconfig <name>=<file>]...
+//  semel-swift prepare <folder> [--platform macos|ios-simulator] [--application <target>] [--xcconfig <name>=<file>]...
 //
 //  The Swift conversion tool, outside Semel: everything between cloning a tree of Swift
 //  packages and `semel 'build <folder>'`. It finds the packages, takes as roots the ones
@@ -20,9 +20,11 @@ import SemelSwiftTool
 
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
-        usage: semel-swift prepare <folder> [--platform \(Platform.allCases.map(\.rawValue).joined(separator: "|"))] [--xcconfig <name>=<file>]...
-          --xcconfig  the file to copy into place as <name>, an xcconfig the project names
-                      and the repository does not ship, when no template beside it is found
+        usage: semel-swift prepare <folder> [--platform \(Platform.allCases.map(\.rawValue).joined(separator: "|"))] [--application <target>] [--xcconfig <name>=<file>]...
+          --application  the application target to build, when more than one builds for the
+                         platform; otherwise the platform picks it
+          --xcconfig     the file to copy into place as <name>, an xcconfig the project names
+                         and the repository does not ship, when no template beside it is found
 
         """.utf8))
     exit(64) // EX_USAGE
@@ -42,6 +44,14 @@ if let flag = arguments.firstIndex(of: "--platform") {
     }
     platform = chosen
     platformWasGiven = true
+    arguments.removeSubrange(flag...(flag + 1))
+}
+var applicationName: String?
+if let flag = arguments.firstIndex(of: "--application") {
+    guard flag + 1 < arguments.count else {
+        usage()
+    }
+    applicationName = arguments[flag + 1]
     arguments.removeSubrange(flag...(flag + 1))
 }
 // `--xcconfig <name>=<file>`, as often as there are files to place. The name is the path
@@ -64,9 +74,13 @@ guard arguments.count == 1 else {
 let folder = URL(fileURLWithPath: arguments[0], isDirectory: true)
 
 do {
-    let report = try Preparation.run(folder: folder, platform: platform, xcconfigSources: xcconfigSources)
+    let report = try Preparation.run(folder: folder, platform: platform, application: applicationName,
+                                     xcconfigSources: xcconfigSources)
     if let project = report.project {
         print("Project: \(project)")
+        if let application = report.application {
+            print("  application \(application) for \(platform.sdkName)")
+        }
         for package in report.localPackages {
             print("  local package \(package.lastPathComponent) (\(package.path))")
         }

@@ -837,14 +837,14 @@ final class XcodeProjectTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let project = folder.appendingPathComponent("NetNewsWire.xcodeproj")
 
-        let ungenerated = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project)
+        let ungenerated = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project, sdk: "macosx")
 
         XCTAssertEqual(ungenerated.map(\.template), ["Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb"])
         XCTAssertEqual(ungenerated.map(\.output), ["Modules/Secrets/Sources/Secrets/SecretKey.swift"])
         XCTAssertEqual(ungenerated.first?.generatedBy.map(\.scheme), ["NetNewsWire"])
 
         try Data("public struct SecretKey {}\n".utf8).write(to: folder.appendingPathComponent("Modules/Secrets/Sources/Secrets/SecretKey.swift"))
-        XCTAssertEqual(try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project), [])
+        XCTAssertEqual(try XcodeProjectFacts.ungeneratedSources(ofProjectAt: project, sdk: "macosx"), [])
     }
 
     /// A pre-action that runs no gyb, in its script or in a script it names, is not what
@@ -854,7 +854,7 @@ final class XcodeProjectTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         try Data("#!/bin/sh\necho hello\n".utf8).write(to: folder.appendingPathComponent("buildscripts/updateSecrets.sh"))
 
-        let ungenerated = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: folder.appendingPathComponent("NetNewsWire.xcodeproj"))
+        let ungenerated = try XcodeProjectFacts.ungeneratedSources(ofProjectAt: folder.appendingPathComponent("NetNewsWire.xcodeproj"), sdk: "macosx")
 
         XCTAssertEqual(ungenerated.map(\.template), ["Modules/Secrets/Sources/Secrets/SecretKey.swift.gyb"])
         XCTAssertEqual(ungenerated.first?.generatedBy, [])
@@ -867,12 +867,12 @@ final class XcodeProjectTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: folder) }
         let project = folder.appendingPathComponent("NetNewsWire.xcodeproj")
 
-        XCTAssertEqual(try XcodeProjectFacts.compiledSources(ofProjectAt: project),
+        XCTAssertEqual(try XcodeProjectFacts.compiledSources(ofProjectAt: project, sdk: "macosx"),
                        .init(hasCFamilySources: true, hasInterfaceBuilderDocuments: true))
 
         try FileManager.default.removeItem(at: folder.appendingPathComponent("Mac/NSOpenPanel+Extras.m"))
         try FileManager.default.removeItem(at: folder.appendingPathComponent("Mac/MainWindow"))
-        XCTAssertEqual(try XcodeProjectFacts.compiledSources(ofProjectAt: project),
+        XCTAssertEqual(try XcodeProjectFacts.compiledSources(ofProjectAt: project, sdk: "macosx"),
                        .init(hasCFamilySources: false, hasInterfaceBuilderDocuments: false))
     }
 }

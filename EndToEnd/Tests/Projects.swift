@@ -240,7 +240,9 @@ enum Projects {
     /// group — with a local package that carries resources of its own, and a widget
     /// extension. The whole checkout is the project's root, nested under its name as
     /// `icecubesApp` is. The package's resources come out as
-    /// `FoodTruckKit_FoodTruckKit.bundle` inside the app and inside the extension.
+    /// `FoodTruckKit_FoodTruckKit.bundle` inside the app and inside the extension. The
+    /// project has two applications for every platform, `Food Truck` and `Food Truck All`,
+    /// both multiplatform, so the entry names the one it builds (B-77).
     static let foodTruck = Project(
         name: "food-truck",
         source: .git(url: "https://github.com/apple/sample-food-truck.git",
@@ -259,6 +261,7 @@ enum Projects {
             "Food Truck.app/PlugIns/Widgets.appex/Info.plist",
         ],
         buildTimeout: 10 * 60,
+        application: "Food Truck",
         onlyUnder: "Food Truck.app")
 
     /// The same sample for the Mac (B-77): a Mac bundle's `Contents/` layout, the app
@@ -291,6 +294,7 @@ enum Projects {
             "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/_CodeSignature/CodeResources",
         ],
         buildTimeout: 10 * 60,
+        application: "Food Truck",
         onlyUnder: "Food Truck.app",
         executables: ["Food Truck.app/Contents/MacOS/Food Truck", "Food Truck.app/Contents/PlugIns/Widgets.appex/Contents/MacOS/Widgets"],
         exported: SignedBundleCheck.verifying(bundle: "Food Truck.app", executable: "Food Truck.app/Contents/MacOS/Food Truck",
@@ -365,7 +369,61 @@ enum Projects {
             }
         })
 
+    /// NetNewsWire's iOS app (B-77) from the same clone and overlay as `netnewswire-mac`:
+    /// the simulator builds the application whose `SDKROOT` is `iphoneos`, with the Share
+    /// extension, which owns no folder and borrows its sources, xibs and catalog from
+    /// `iOS`, and the WidgetKit extension, each under `PlugIns/` in the flat iOS layout;
+    /// storyboards compiled to `.storyboardc`, the app's Objective-C and bridging header,
+    /// the fifteen local packages linked in. Unsigned, as IceCubes' simulator bundle is.
+    /// The build takes about a minute, so it runs every hermeticity build.
+    static let netNewsWireIOS = Project(
+        name: "netnewswire-ios",
+        source: .git(url: "https://github.com/Ranchero-Software/NetNewsWire.git",
+                     commit: "b4361413fc1850110f9f42652f0f84e7a51e9d64",
+                     subfolder: ".",
+                     overlay: "external/netnewswire"),
+        buildFolder: "netnewswire-ios",
+        platform: "ios-simulator",
+        expectedProducts: [
+            "NetNewsWire.app/NetNewsWire",
+            "NetNewsWire.app/Info.plist",
+            "NetNewsWire.app/Assets.car",
+            "NetNewsWire.app/Base.lproj/Main.storyboardc/Info.plist",
+            "NetNewsWire.app/Base.lproj/LaunchScreenPhone.storyboardc/Info.plist",
+            "NetNewsWire.app/Base.lproj/LaunchScreenPad.storyboardc/Info.plist",
+            "NetNewsWire.app/Settings.storyboardc/Info.plist",
+            "NetNewsWire.app/SettingsTableViewCell.nib",
+            "NetNewsWire.app/Sepia.nnwtheme/Info.plist",
+            "NetNewsWire.app/GlobalKeyboardShortcuts.plist",
+            "NetNewsWire.app/main_ios.js",
+            "NetNewsWire.app/page.html",
+            "NetNewsWire.app/DefaultFeeds.opml",
+            "NetNewsWire.app/ActivityLog_ActivityLog.bundle/es.lproj/Localizable.strings",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/NetNewsWire iOS Share Extension",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/Info.plist",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/Assets.car",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/ShareFolderPickerAccountCell.nib",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/NetNewsWire iOS Widget Extension",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/Info.plist",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/Assets.car",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/widget-sample.json",
+        ],
+        buildTimeout: 10 * 60,
+        onlyUnder: "NetNewsWire.app",
+        executables: [
+            "NetNewsWire.app/NetNewsWire",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/NetNewsWire iOS Share Extension",
+            "NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/NetNewsWire iOS Widget Extension",
+        ],
+        exported: { out in
+            for executable in ["NetNewsWire.app/NetNewsWire",
+                               "NetNewsWire.app/PlugIns/NetNewsWire iOS Share Extension.appex/NetNewsWire iOS Share Extension",
+                               "NetNewsWire.app/PlugIns/NetNewsWire iOS Widget Extension.appex/NetNewsWire iOS Widget Extension"] {
+                try AppInspection.checkRecordsTheSDKVersion(executable: out.appendingPathComponent(executable), sdk: "iphonesimulator")
+            }
+        })
+
     static let fixtures: [Project] = [cHello, tutorial, cppEmu6502, swiftMyApp, swiftCPackage, swiftHelloApp, swiftBinaryTargetApp]
-    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac]
+    static let external: [Project] = [icecubes, icecubesApp, semel, lua, sqlite, simdjson, foodTruck, foodTruckMac, netNewsWireMac, netNewsWireIOS]
     static let all: [Project] = fixtures + external
 }

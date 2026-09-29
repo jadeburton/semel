@@ -345,8 +345,70 @@ final class XcodeBuildSettingsTests: XCTestCase {
             "xcconfig/NetNewsWire_macapp_target.xcconfig",
             "xcconfig/NetNewsWire_shareextension_target.xcconfig",
             "xcconfig/NetNewsWire_safariextension_target.xcconfig",
+            "xcconfig/NetNewsWire_iOSapp_target.xcconfig",
+            "xcconfig/NetNewsWire_iOSshareextension_target.xcconfig",
+            "xcconfig/NetNewsWire_iOSwidgetextension_target.xcconfig",
         ])
         XCTAssertEqual(try XcodeProjectFacts.deploymentTarget(ofProjectAt: Self.netNewsWireProject, sdk: "macosx"), "15.0")
         XCTAssertEqual(try XcodeProjectFacts.undefinedReferences(ofProjectAt: Self.netNewsWireProject, sdk: "macosx"), [])
+    }
+
+    // MARK: - Which application a platform builds (B-77)
+
+    /// NetNewsWire has two applications, both `NetNewsWire.app`: the Mac app's
+    /// `SDKROOT = macosx;` and the iOS app's `SDKROOT = iphoneos;`, each three includes
+    /// deep. A Mac build is the first, a simulator build the second — the simulator builds
+    /// the iOS app — and `prepare` writes that one's deployment target.
+    func test_eachPlatformBuildsTheApplicationOfItsFamily() throws {
+        XCTAssertEqual(try XcodeProjectFacts.applicationName(ofProjectAt: Self.netNewsWireProject, sdk: "macosx"), "NetNewsWire")
+        XCTAssertEqual(try XcodeProjectFacts.applicationName(ofProjectAt: Self.netNewsWireProject, sdk: "iphonesimulator"), "NetNewsWire-iOS")
+        XCTAssertEqual(try XcodeProjectFacts.applicationName(ofProjectAt: Self.netNewsWireProject, sdk: "iphoneos"), "NetNewsWire-iOS")
+        XCTAssertEqual(try XcodeProjectFacts.deploymentTarget(ofProjectAt: Self.netNewsWireProject, sdk: "iphonesimulator"), "17.0")
+        XCTAssertEqual(try XcodeProjectFacts.undefinedReferences(ofProjectAt: Self.netNewsWireProject, sdk: "iphonesimulator"), [])
+        XCTAssertEqual(try XcodeProjectFacts.applicationName(ofProjectAt: Self.netNewsWireProject, sdk: "iphonesimulator",
+                                                             named: "NetNewsWire"), "NetNewsWire", "a name picks one whatever the platform")
+    }
+
+    /// Two applications for one platform are an error naming both, which a name settles;
+    /// none for the platform is an error naming each with what it builds for; one stating
+    /// no platform is taken when none states this one.
+    func test_twoApplicationsForOnePlatformAreAnErrorUntilANamePicksOne() throws {
+        let project = try XcodeProject(pbxproj: try Data(contentsOf: Self.netNewsWireProject.appendingPathComponent("project.pbxproj")))
+        func settings(_ values: [String: [String: String]]) -> (XcodeProject.Target) throws -> XcodeBuildSettings {
+            { target in XcodeBuildSettings(values: values[target.name] ?? [:]) }
+        }
+        let bothIOS = settings(["NetNewsWire": ["SDKROOT": "iphoneos"], "NetNewsWire-iOS": ["SDKROOT": "iphoneos"]])
+
+        XCTAssertThrowsError(try project.application(forSDK: "iphonesimulator", named: nil, settings: bothIOS)) { error in
+            XCTAssertEqual("\(error)", "2 application targets build for iphonesimulator: NetNewsWire, NetNewsWire-iOS; "
+                                     + "name the one to build with application: '<name>' on XcodeProjectConverter, or --application <name> to prepare")
+        }
+        XCTAssertEqual(try project.application(forSDK: "iphonesimulator", named: "NetNewsWire-iOS", settings: bothIOS).name, "NetNewsWire-iOS")
+        XCTAssertThrowsError(try project.application(forSDK: "iphonesimulator", named: "Nope", settings: bothIOS)) { error in
+            XCTAssertEqual("\(error)", "the project has no application target named 'Nope'; it has NetNewsWire, NetNewsWire-iOS")
+        }
+        XCTAssertThrowsError(try project.application(forSDK: "xrsimulator", named: nil, settings: bothIOS)) { error in
+            XCTAssertEqual("\(error)", "no application target builds for xrsimulator: the project has NetNewsWire (iphoneos), NetNewsWire-iOS (iphoneos)")
+        }
+
+        let multiplatform = settings(["NetNewsWire": ["SDKROOT": "auto", "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator macosx"],
+                                      "NetNewsWire-iOS": ["SDKROOT": "macosx"]])
+        XCTAssertThrowsError(try project.application(forSDK: "macosx", named: nil, settings: multiplatform))
+        XCTAssertEqual(try project.application(forSDK: "iphonesimulator", named: nil, settings: multiplatform).name, "NetNewsWire")
+
+        let unstated = settings(["NetNewsWire-iOS": ["SDKROOT": "macosx"]])
+        XCTAssertEqual(try project.application(forSDK: "iphonesimulator", named: nil, settings: unstated).name, "NetNewsWire")
+        XCTAssertEqual(try project.application(forSDK: "macosx", named: nil, settings: unstated).name, "NetNewsWire-iOS",
+                       "one stating the platform wins over one stating none")
+    }
+
+    func test_aSimulatorSDKIsOfItsDeviceSDKsFamily() {
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "iphonesimulator"), "iphoneos")
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "iphonesimulator26.5"), "iphoneos")
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "/SDKs/iPhoneSimulator26.5.sdk"), "iphoneos")
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "iphoneos"), "iphoneos")
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "macosx"), "macosx")
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "xrsimulator"), "xros")
+        XCTAssertEqual(XcodeProject.platformFamily(ofSDK: "watchsimulator"), "watchos")
     }
 }
