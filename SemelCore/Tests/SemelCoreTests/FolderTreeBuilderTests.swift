@@ -7,26 +7,35 @@
 import SemelNodeKit
 import XCTest
 
-/// A folder as a tree: walked one level per pass, every file with its path relative to
-/// the folder, under a prefix when one is given.
+/// A folder as a tree: read from its subtree manifest (B-135), every file with its path
+/// relative to the folder, under a prefix when one is given.
 final class FolderTreeBuilderTests: SemelCoreTestCase {
 
-    private func manifest(_ path: String, files: [String] = [], folders: [String] = []) throws -> NodeValue {
-        let entries = files.map { FolderManifestEntry(name: $0, isFolder: false, isPinned: true) }
-                    + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true) }
-        return .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
+    private func entries(files: [String] = [], folders: [String] = []) -> [FolderManifestEntry] {
+        files.map { FolderManifestEntry(name: $0, isFolder: false, isPinned: true) }
+            + folders.map { FolderManifestEntry(name: $0, isFolder: true, isPinned: true) }
     }
 
+    private let rootFolder = "input:/pkg/include"
+
+    /// With `subfolders`, the listings of the folders below the root by path, the root's
+    /// tree has arrived, folded from them; without, the run is the first.
     private func process(under: String? = nil,
-                         subfolders: [String: NodeValue] = [:],
+                         subfolders: [String: [FolderManifestEntry]]? = nil,
                          files: [String: NodeValue] = [:],
                          modes: [String: NodeValue] = [:]) throws -> ProcessOutput {
         let node = try FolderTreeBuilder(thisNode: NodeRecord(id: 1, kind: FolderTreeBuilder.kind, name: nil,
                                                               properties: under.map { ["under": $0] } ?? [:],
                                                               scheduled: false, identity: nil))
+        let root = entries(files: ["module.modulemap"], folders: ["nested"])
+        var trees: [String: NodeValue] = [:]
+        if let subfolders {
+            let listings = subfolders.merging([rootFolder: root]) { first, _ in first }
+            trees[rootFolder] = .value(try FolderSubtreeManifest.folding(at: rootFolder, listings: listings).toJSON().intern())
+        }
         return try node.process(input: ProcessInput(inputValues: [
-            FolderTreeBuilder.folderPort: ["folder": try manifest("input:/pkg/include", files: ["module.modulemap"], folders: ["nested"])],
-            FolderTreeBuilder.subfoldersPort: subfolders,
+            FolderTreeBuilder.folderPort: ["folder": .value(try FolderManifest(baseFolderPath: rootFolder, entries: root).toJSON().intern())],
+            FolderTreeBuilder.folderTreePort: trees,
             FolderTreeBuilder.filesPort: files,
             FolderTreeBuilder.fileMetadataPort: modes,
         ]))
@@ -51,20 +60,29 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
         return try TypeRegistry.decodeAndCast(encodedJSON: json)
     }
 
-    func test_demandsEverySubfolderAndFileBeforeProducingTheTree() throws {
+    func test_demandsTheFoldersTreeAndItsFilesBeforeProducingTheTree() throws {
         let output = try process()
 
-        XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.subfoldersPort]?.keys.sorted(), [nestedFolder])
+        XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.folderTreePort]?.rendered,
+                       [rootFolder: "Folder(path: '\(rootFolder)').subtreeManifest"])
         XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.filesPort]?.keys.sorted(), [moduleMap])
         guard case .noValue(.pending) = try XCTUnwrap(output.outputValues[FolderTreeBuilder.outputPort]) else {
-            return XCTFail("pending until the walk is done")
+            return XCTFail("pending until the tree and the files are in")
         }
+    }
+
+    /// Once the tree is in, the files of every folder below are demanded at once.
+    func test_demandsEveryFileOfTheTreeOnceItHasArrived() throws {
+        let output = try process(subfolders: [nestedFolder: entries(files: ["deep.h"])])
+
+        XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.filesPort]?.keys.sorted(), [moduleMap, deepHeader])
+        XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.folderTreePort]?.keys.sorted(), [rootFolder])
     }
 
     func test_everyFileLandsUnderThePrefixWithItsPathRelativeToTheFolder() throws {
         let output = try process(
             under: "CAtomic",
-            subfolders: [nestedFolder: try manifest(nestedFolder, files: ["deep.h"])],
+            subfolders: [nestedFolder: entries(files: ["deep.h"])],
             files: try bothFiles,
             modes: [moduleMap: try metadata(0o644), deepHeader: try metadata(0o644)])
 
@@ -75,7 +93,7 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
 
     /// Each file's mode is demanded from the file itself, beside its bytes.
     func test_demandsEachFilesModeFromTheFile() throws {
-        let output = try process(subfolders: [nestedFolder: try manifest(nestedFolder, files: ["deep.h"])])
+        let output = try process(subfolders: [nestedFolder: entries(files: ["deep.h"])])
 
         let modeSpecs = try XCTUnwrap(output.inputWireSpecs[FolderTreeBuilder.fileMetadataPort])
         XCTAssertEqual(modeSpecs.keys.sorted(), [moduleMap, deepHeader])
@@ -83,9 +101,9 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
     }
 
     /// A tree built before a file's mode arrived would publish the default and then change:
-    /// the walk waits for the modes as it waits for the bytes.
+    /// the node waits for the modes as it waits for the bytes.
     func test_theTreeWaitsForEveryFilesMode() throws {
-        let output = try process(subfolders: [nestedFolder: try manifest(nestedFolder, files: ["deep.h"])],
+        let output = try process(subfolders: [nestedFolder: entries(files: ["deep.h"])],
                                  files: try bothFiles,
                                  modes: [moduleMap: try metadata(0o644)])
 
@@ -95,7 +113,7 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
     }
 
     func test_eachEntryCarriesTheModeTheFileWasPushedWith() throws {
-        let output = try process(subfolders: [nestedFolder: try manifest(nestedFolder, files: ["deep.h"])],
+        let output = try process(subfolders: [nestedFolder: entries(files: ["deep.h"])],
                                  files: try bothFiles,
                                  modes: [moduleMap: try metadata(0o644), deepHeader: try metadata(0o755)])
 
@@ -106,34 +124,31 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
 
     // MARK: - Links (B-77)
 
-    /// A folder whose manifest lists a subfolder as a link is not descended into — what the
-    /// link names is walked where it is — and the tree holds the link; a file pushed as a
-    /// link is a link entry, its target being in the tree.
-    func test_aFolderLinkIsPlacedAndNotWalkedAndAFileLinkIsALink() throws {
+    /// A folder whose listing names a subfolder as a link is not read into — what the link
+    /// names is read where it is — and the tree holds the link; a file pushed as a link is a
+    /// link entry, its target being in the tree.
+    func test_aFolderLinkIsPlacedAndNotReadIntoAndAFileLinkIsALink() throws {
         let node = try FolderTreeBuilder(thisNode: NodeRecord(id: 1, kind: FolderTreeBuilder.kind))
         let framework = "input:/fw/Tiny.framework"
-        let rootManifest = FolderManifest(baseFolderPath: framework, entries: [
-            FolderManifestEntry(name: "Versions", isFolder: true, isPinned: true),
-            FolderManifestEntry(name: "Headers", isFolder: true, isPinned: true, symbolicLinkTarget: "Versions/Current/Headers"),
-            FolderManifestEntry(name: "Tiny", isFolder: false, isPinned: true),
-        ])
-        let versions = FolderManifest(baseFolderPath: "\(framework)/Versions", entries: [
-            FolderManifestEntry(name: "A", isFolder: true, isPinned: true),
-            FolderManifestEntry(name: "Current", isFolder: true, isPinned: true, symbolicLinkTarget: "A"),
-        ])
-        let version = FolderManifest(baseFolderPath: "\(framework)/Versions/A", entries: [
-            FolderManifestEntry(name: "Tiny", isFolder: false, isPinned: true),
-            FolderManifestEntry(name: "Headers", isFolder: true, isPinned: true),
-        ])
-        let headers = FolderManifest(baseFolderPath: "\(framework)/Versions/A/Headers", entries: [
-            FolderManifestEntry(name: "Tiny.h", isFolder: false, isPinned: true),
-        ])
+        let listings: [String: [FolderManifestEntry]] = [
+            framework: [FolderManifestEntry(name: "Versions", isFolder: true, isPinned: true),
+                        FolderManifestEntry(name: "Headers", isFolder: true, isPinned: true, symbolicLinkTarget: "Versions/Current/Headers"),
+                        FolderManifestEntry(name: "Tiny", isFolder: false, isPinned: true)],
+            "\(framework)/Versions":           [FolderManifestEntry(name: "A", isFolder: true, isPinned: true),
+                                                FolderManifestEntry(name: "Current", isFolder: true, isPinned: true, symbolicLinkTarget: "A")],
+            "\(framework)/Versions/A":         [FolderManifestEntry(name: "Tiny", isFolder: false, isPinned: true),
+                                                FolderManifestEntry(name: "Headers", isFolder: true, isPinned: true)],
+            "\(framework)/Versions/A/Headers": [FolderManifestEntry(name: "Tiny.h", isFolder: false, isPinned: true)],
+            // What the links hold, pushed where they stand as a push stores them; never read.
+            "\(framework)/Headers":            [FolderManifestEntry(name: "Tiny.h", isFolder: false, isPinned: true)],
+            "\(framework)/Versions/Current":   [FolderManifestEntry(name: "Tiny", isFolder: false, isPinned: true)],
+        ]
+        let rootManifest = FolderManifest(baseFolderPath: framework, entries: try XCTUnwrap(listings[framework]))
         let link = try FileMetadata(mode: 0o755, symbolicLinkTarget: "Versions/Current/Tiny").jsonString().intern()
         let output = try node.process(input: ProcessInput(inputValues: [
             FolderTreeBuilder.folderPort:       ["folder": .value(try rootManifest.toJSON().intern())],
-            FolderTreeBuilder.subfoldersPort:   ["\(framework)/Versions":           .value(try versions.toJSON().intern()),
-                                                 "\(framework)/Versions/A":         .value(try version.toJSON().intern()),
-                                                 "\(framework)/Versions/A/Headers": .value(try headers.toJSON().intern())],
+            FolderTreeBuilder.folderTreePort:   [framework: .value(try FolderSubtreeManifest.folding(at: framework, listings: listings)
+                                                                        .toJSON().intern())],
             FolderTreeBuilder.filesPort:        ["\(framework)/Tiny":                     .value(try "binary".intern()),
                                                  "\(framework)/Versions/A/Tiny":          .value(try "binary".intern()),
                                                  "\(framework)/Versions/A/Headers/Tiny.h": .value(try "header".intern())],
@@ -142,8 +157,9 @@ final class FolderTreeBuilderTests: SemelCoreTestCase {
                                                  "\(framework)/Versions/A/Headers/Tiny.h": try metadata(0o644)],
         ]))
 
-        XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.subfoldersPort]?.keys.sorted(),
-                       ["\(framework)/Versions", "\(framework)/Versions/A", "\(framework)/Versions/A/Headers"])
+        XCTAssertEqual(output.inputWireSpecs[FolderTreeBuilder.filesPort]?.keys.sorted(),
+                       ["\(framework)/Tiny", "\(framework)/Versions/A/Headers/Tiny.h", "\(framework)/Versions/A/Tiny"],
+                       "nothing below a folder link is asked for")
         XCTAssertEqual(try tree(of: output).entries, [
             TreeManifestEntry(path: "Headers", symbolicLinkTarget: "Versions/Current/Headers"),
             TreeManifestEntry(path: "Tiny", symbolicLinkTarget: "Versions/Current/Tiny"),

@@ -60,10 +60,11 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     ///
     /// `contentRoot` carries the fold over a folder with nothing in it, which is a value
     /// like any other: an empty tree has a content hash, and it is the same hash wherever
-    /// an empty tree stands.
+    /// an empty tree stands. `subtreeManifest` likewise carries an empty tree's names.
     public func didCreate() throws -> ProcessOutput? {
         .init(outputValues: [Self.folderManifestOutputPort: .value(try buildManifest().toJSON().intern()),
                              Self.contentRootOutputPort: .value(try buildContentRootDocument().intern()),
+                             Self.subtreeManifestOutputPort: .value(try FolderSubtreeManifest(entries: []).toJSON().intern()),
                              Self.pinnedOutputPort: canBePinned() ? .noValue(reason: .initializing) : .value(""), // HACK
                              Self.symbolicLinkOutputPort: Self.notASymbolicLink],
               inputWireSpecs: [:])
@@ -186,6 +187,18 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// the content asks for the content.
     static let contentRootOutputPort = "contentRoot"
 
+    /// The names, kinds and pinned state of everything below this folder at every depth
+    /// (B-135): a `FolderSubtreeManifest`, whose document is this folder's children with
+    /// each subfolder's own subtree manifest named by hash, so that one value stands for
+    /// the whole tree while a fold reads only the children.
+    ///
+    /// A port of its own for both reasons the other two are separate. Not the manifest: a
+    /// consumer of one folder's children is not asking about a name three folders down,
+    /// and would be woken by one. Not the content root: a consumer walking a tree for its
+    /// file set — a converter finding a target's resources, a builder expanding `**` — is
+    /// asking what the tree is called, and an edit to a file in it does not change that.
+    static let subtreeManifestOutputPort = "subtreeManifest"
+
     // Nodes are not normally allowed to store state. A Folder in the input file system, however, needs to know if the user deleted it
     // (or never pushed it) but it has references from the graph -- called a ghost or "not pinned". StaticFiles represent this ghost
     // state by clearing their output value. So we use this "fake" (unlikely to be connected) output as a way to store this ghost/not-pinned state.
@@ -206,6 +219,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     public static let descriptor = NodeDescriptor(inputPorts: [],
                                                   outputPorts: [folderManifestOutputPort,
                                                                 contentRootOutputPort,
+                                                                subtreeManifestOutputPort,
                                                                 pinnedOutputPort,
                                                                 symbolicLinkOutputPort])
 
@@ -234,8 +248,8 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     // mutated, and the flush clears the mark *before* it rebuilds, so a mark the flush
     // removes always belongs to a change the rebuild can see.
     //
-    // A folder carries two marks, because it publishes two values a child change can move
-    // and they travel different distances (B-26).
+    // A folder carries three marks, because it publishes three values a child change can
+    // move and they travel different distances (B-26, B-135).
     //
     // The manifest is names and pinned state, so only this folder's own children can move
     // it; a mark for it goes no further than the folder whose child changed, exactly as it
@@ -245,6 +259,11 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     // separate ports — a consumer wired to a manifest is asking what a folder holds, and is
     // not woken by an edit to what is in it.
     //
+    // The subtree manifest travels like the root and moves like the manifest: a change of
+    // names anywhere below moves every subtree manifest above it, one refold per ancestor
+    // over its own children, and an edit to a file's bytes moves none — the refold of the
+    // folder holding the file finds the same names, writes nothing and marks nothing above.
+    //
     // What a direct read of one port guarantees is therefore that folder's own children.
     // The asymmetry is in where the rebuild happens: a read flushes *this* folder
     // (`flushManifestIfDirty` / `flushContentRootIfDirty`), while the mark an ancestor
@@ -252,8 +271,9 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     // once the flush has drained, which every processing pass does before it selects
     // anything, so no consumer is ever handed a root the change had not reached.
 
-    static let manifestDirtyKeyPrefix    = "manifestDirty/"
-    static let contentRootDirtyKeyPrefix = "contentRootDirty/"
+    static let manifestDirtyKeyPrefix        = "manifestDirty/"
+    static let contentRootDirtyKeyPrefix     = "contentRootDirty/"
+    static let subtreeManifestDirtyKeyPrefix = "subtreeManifestDirty/"
 
     private static func manifestDirtyKey(_ nodeID: ObjectID) -> String {
         "\(manifestDirtyKeyPrefix)\(nodeID)"
@@ -263,11 +283,16 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         "\(contentRootDirtyKeyPrefix)\(nodeID)"
     }
 
-    /// Both marks: a change to one of this folder's children can move either value.
+    private static func subtreeManifestDirtyKey(_ nodeID: ObjectID) -> String {
+        "\(subtreeManifestDirtyKeyPrefix)\(nodeID)"
+    }
+
+    /// Every mark: a change to one of this folder's children can move any of the values.
     private func markManifestDirty() throws {
         let nodeID = try thisNode.requireID()
         try database.metadata.upsert(key: Self.manifestDirtyKey(nodeID), value: "1")
         try database.metadata.upsert(key: Self.contentRootDirtyKey(nodeID), value: "1")
+        try database.metadata.upsert(key: Self.subtreeManifestDirtyKey(nodeID), value: "1")
         // The rebuild a child change once did here wrote the manifest port, which scheduled
         // the folder's consumers and so woke the processing loop. The mark defers the
         // rebuild to the loop's next pass — which therefore has to be asked for, or a push
@@ -284,14 +309,21 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         BuildEngine.shared?.signalWorkAvailable()
     }
 
-    /// Rebuilds the manifest of every folder marked dirty, recomputes the content root of
-    /// every folder marked for that, and collects the folders that their last child took
-    /// with it. Returns how many *manifests* it rebuilt, so a caller can tell whether
-    /// anything wired to one may now be scheduled.
+    /// The subtree manifest alone, for a folder whose descendant's names moved; by node id
+    /// for the reason `markContentRootDirty` is.
+    static func markSubtreeManifestDirty(nodeID: ObjectID) throws {
+        try DatabaseLayer.shared!.metadata.upsert(key: subtreeManifestDirtyKey(nodeID), value: "1")
+        BuildEngine.shared?.signalWorkAvailable()
+    }
+
+    /// Rebuilds the manifest of every folder marked dirty, recomputes the content root and
+    /// the subtree manifest of every folder marked for those, and collects the folders that
+    /// their last child took with it. Returns how many *manifests* it rebuilt, so a caller
+    /// can tell whether anything wired to one may now be scheduled.
     ///
-    /// A collected folder marks its parent, and a root that moved marks the folder above,
-    /// so the marks are drained in rounds until none is left; the rounds walk up the tree
-    /// and there are at most as many as it is deep.
+    /// A collected folder marks its parent, and a root or a subtree manifest that moved
+    /// marks the folder above, so the marks are drained in rounds until none is left; the
+    /// rounds walk up the tree and there are at most as many as it is deep.
     @discardableResult
     static func flushDirtyManifests() throws -> Int {
         let database = DatabaseLayer.shared!
@@ -299,7 +331,8 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         while true {
             let manifestKeys    = try database.metadata.selectKeys(withPrefix: manifestDirtyKeyPrefix)
             let contentRootKeys = try database.metadata.selectKeys(withPrefix: contentRootDirtyKeyPrefix)
-            guard !manifestKeys.isEmpty || !contentRootKeys.isEmpty else {
+            let subtreeKeys     = try database.metadata.selectKeys(withPrefix: subtreeManifestDirtyKeyPrefix)
+            guard !manifestKeys.isEmpty || !contentRootKeys.isEmpty || !subtreeKeys.isEmpty else {
                 return flushed
             }
 
@@ -323,6 +356,14 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
                     continue
                 }
                 try refreshMarkedContentRoot(nodeID: nodeID, clearing: key)
+            }
+
+            for key in subtreeKeys {
+                guard let nodeID = ObjectID(key.dropFirst(subtreeManifestDirtyKeyPrefix.count)),
+                      let folder = try markedFolder(nodeID: nodeID, clearing: key) else {
+                    continue
+                }
+                try folder.refreshSubtreeManifest()
             }
         }
     }
@@ -385,6 +426,22 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
             }
             try folder.refreshContentRoot()
         }
+    }
+
+    /// Refolds one folder's subtree manifest if it is marked, on the way into a direct read
+    /// of that port: the folder's own children, as `flushContentRootIfDirty` reads, and for
+    /// the same reason.
+    static func flushSubtreeManifestIfDirty(nodeID: ObjectID) throws {
+        let database = DatabaseLayer.shared!
+        let key = subtreeManifestDirtyKey(nodeID)
+        guard try database.metadata.select(key: key) != nil else {
+            return
+        }
+        try database.metadata.delete(key: key)
+        guard let folder = try database.node.select(nodeID: nodeID).makeNode() as? Folder else {
+            return
+        }
+        try folder.refreshSubtreeManifest()
     }
 
     public func onChildAdded(nodeID: ObjectID) throws {
@@ -455,6 +512,10 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     /// different reasons and a test pins each against what moves it: a manifest against
     /// this folder's children, a root against the depth of the tree below the change.
     static let contentRootRebuildCount = SharedCounter()
+
+    /// How many subtree manifests have been folded in this process, pinned the way the
+    /// content root's count is: against the depth of the tree above a change of names.
+    static let subtreeManifestRebuildCount = SharedCounter()
 
     private func buildManifest() throws -> FolderManifest {
         Self.manifestRebuildCount.increment()
@@ -530,6 +591,34 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
         }
 
         return FolderContentRoot.document(of: lines)
+    }
+
+    /// This folder's children with each subfolder's own subtree manifest, by hash: the
+    /// document that stands for everything below this folder by name (B-135).
+    ///
+    /// Folded from this folder's manifest, which holds every fact about a child the
+    /// document does — name, kind, pinned state, a link's target — and is current whenever
+    /// this runs: the flush rebuilds manifests before it refolds anything, and a read of
+    /// the port rebuilds a manifest still marked. Folding from the children's rows again
+    /// would repeat the manifest's four queries on every change of names below, and during
+    /// a push that is every file. What the manifest does not hold is one query, by name.
+    private func buildSubtreeManifest() throws -> FolderSubtreeManifest {
+        Self.subtreeManifestRebuildCount.increment()
+        guard case .value(let manifestHash) = try thisNode.readFromOutputPort(Self.folderManifestOutputPort),
+              let manifest: FolderManifest = try? TypeRegistry.decodeAndCast(encodedJSON: try manifestHash.resolveAsString()) else {
+            throw NodeError.other(message: "the manifest of \(path) cannot be read to fold its subtree manifest")
+        }
+        let subtrees = try database.node.selectChildPortsByName(parentNodeID: try thisNode.requireID(),
+                                                                nameSymbolID: Self.subtreeManifestOutputPort.asSymbolID())
+
+        return FolderSubtreeManifest(entries: try manifest.entries.map { entry in
+            var subtree: DataObjectHash?
+            if entry.isFolder, case .value(let hash)? = try subtrees[entry.name]?.asNodeValue() {
+                subtree = hash
+            }
+            return FolderSubtreeEntry(name: entry.name, isFolder: entry.isFolder, isPinned: entry.isPinned,
+                                      symbolicLinkTarget: entry.symbolicLinkTarget, subtree: subtree)
+        })
     }
 
     /// The content of every child that carries it on a port of its own, in one query per
@@ -627,6 +716,7 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
     func refreshOutputs() throws {
         try refreshManifest()
         try refreshContentRoot()
+        try refreshSubtreeManifest()
     }
 
     /// The names and pinned state of this folder's children. Nothing is marked above:
@@ -651,6 +741,20 @@ public struct Folder: Node, HasPath, Pinnable, UserDeletable {
 
         if changed, let parentNodeID = thisNode.parentNodeID {
             try Folder.markContentRootDirty(nodeID: parentNodeID)
+        }
+    }
+
+    /// The names below this folder, published as a subtree manifest. One that moved marks
+    /// the folder above, as a moved root does, so the change reaches the top in one refold
+    /// per ancestor; one that did not — an edit to a file's bytes, which marks this folder
+    /// like any child change — stops here.
+    func refreshSubtreeManifest() throws {
+        let changed = try thisNode.writeToOutputPort(
+            Self.subtreeManifestOutputPort,
+            value: .value(try buildSubtreeManifest().toJSON().intern()))
+
+        if changed, let parentNodeID = thisNode.parentNodeID {
+            try Folder.markSubtreeManifestDirty(nodeID: parentNodeID)
         }
     }
 

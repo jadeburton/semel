@@ -645,6 +645,97 @@ the same lister. What remains:
    that consumer is woken twice for one edit — correct, because the flush drains before the
    pass selects, but twice.
 
+**B-135** `done` `For Fable Only` — **A subtree demanded in one round: a folder's subtree
+manifest.**
+A cold build's converters walked their folders a level per pass (B-108's `**`, B-77's map:
+the Swift converter's `targetSubfolders`, `LocalPackageSearch`, the Xcode converter's
+synchronized folders), and every pass was expensive (B-124, B-125): a converter's run
+re-applies its demands, and each write of a converter puts its builder's status and so the
+finder back to pending, the finder re-reading every folder's manifest. Measured on
+2026-09-28, the IceCubes app's seventeen converters ran 159 times; on 2026-09-30, 140 times,
+beside 14 runs of a finder wired to 1,670 folders (`BACKLOG.md`, Performance).
+
+*The design.* A `Folder` publishes a third derived value beside `manifest` (its own
+children, by name) and `contentRoot` (what everything below it hashes to): a *subtree
+manifest*, the names, kinds and pinned state — and a folder link's target — of everything
+below it at every depth, and no content (`FolderSubtreeManifest`, kind 43, on a
+`subtreeManifest` port). Its document is the folder's own children, each subfolder's entry
+carrying the hash of that subfolder's own subtree manifest: a Merkle tree of names. So one
+value stands for the whole tree, and moves when a name moves anywhere below it, while a fold
+reads only the folder's children — the content root's cost, where a document holding the
+whole tree would have cost the tree at every ancestor on every change. Like the root it
+names no path, so the same tree at two places is one value. It is kept the way the root is
+(B-25, B-26): a third dirty mark set with the other two on every child change, a refold in
+the flush after the manifests, from the manifest just rebuilt and one query for the
+subfolders' hashes, a subtree manifest that moved marking the folder above, and a read of
+the port refolding a marked folder. It is demanded by `GraphSpecNode.folderTree(at:)`
+beside `folderManifest(at:)` and read back by `FolderSubtreeManifest.folderManifests(at:)`
+as exactly the manifests a walk gathered, by path, so no consumer's reasoning about what it
+found changes. The stop rules stay the reader's: a reader is asked before it descends into a
+subfolder, and nothing below one it declines — a catalog, an `.lproj` a package search does
+not look into, a hidden folder — is read.
+
+*What it costs to keep.* A change of names anywhere below a folder refolds each ancestor's
+subtree manifest once, over that ancestor's children: the depth of the tree, never its size.
+An edit to a file's bytes marks its folder like any child change, and the refold finds the
+same names, writes nothing and marks nothing above, so an edit costs one fold and wakes
+nothing wired to a tree. Each refold interns a document of one folder's children, collected
+at idle as roots are (B-14). A flush that runs while a cold push is still arriving
+refolds the folder being pushed into, as it rebuilds that folder's manifest and root; the
+subtree manifest's fold is the cheapest of the three, a decode of the manifest just rebuilt
+and one query, and does not show in a `sample` of the server beside the other two
+(`BACKLOG.md`, Performance).
+
+*Why it is worth it.* A walk becomes one demand and one pass, however deep: the converter's
+target folders, the builder's `**`, the synchronized folders a package search looks into and
+a finder's whole input file system each arrive whole on the pass after they are asked for.
+The fewer passes a converter makes, the fewer times it re-applies its demands and wakes the
+builder and the finder; and the finder reads one wire where it read 1,670. A node that needs
+the files as well — a compiler's sources, a preprocessor's header folders, a catalog — asks
+for the tree with the files it can already see and has every file on the wire the pass
+after: two passes for any depth, where it took one per level and one more.
+
+*The price in wake-ups.* A consumer of a tree is woken by a new name anywhere below its
+folder, including inside a catalog it does not read and, for the builder, below a `*`
+pattern that reads one level. It then produces what it produced, and nothing downstream
+moves; a consumer that must not be woken by a name three folders down asks for a manifest,
+as a compiler asks for its folder's.
+
+*As built* (2026-09-30). `Folder` (the port, the mark, the fold; `Semel.version` 0.1.14,
+whose rebuild folds every preserved folder's tree and drops the wires a preserved node holds
+into ports its type no longer has). `SwiftFormulaConverter` v15: `targetFolders` asks for
+each target's tree and `targetSubfolders` is gone; a binary target's `semel-artifacts` is
+read from its package's tree rather than walked. `XcodeProjectConverter` v14: the targets'
+folders and every synchronized folder as trees, `LocalPackageSearch` answered from the
+latter. `ProjectBuilder` v5: one tree per pattern's folder on `folderTrees`, where
+`folders` held a manifest per level. `ProjectFinder` v3: `inputTree`, one wire, where
+`folderManifest` and `watchedFolders` walked `input:`. And the nodes that read files:
+`SwiftCompiler` v3 (`inputFolderTrees` for `inputSubfolders`), `ClangPreprocessor` v6
+(`headerFolderTrees` for `headerSubfolders`), `AssetCatalogCompiler` v3 (`catalogTrees`),
+`FolderTreeBuilder` v4 (`folderTree`) and `XCFrameworkSliceSelector` v3, each asking for the
+tree of the folder a formula hands it, its static port still that folder's manifest, so no
+formula changes. `FolderTreeWalk` keeps what they share and the level-by-level walk is gone
+from it. Pinned by `FolderSubtreeManifestTests` in the engine (read back at every depth, a
+declined folder not read, a ghost, one value at two paths, an edit folding one tree and
+moving none, a new name folding one per ancestor, two hundred files folding each tree once,
+the finder woken by a name and not by an edit) and in `SemelNodeKit`, `VersionMarkerTests`,
+`ProjectBuilderTests`, `SwiftFormulaConverterTests` (a target whose resources are three
+folders down converted in the passes a flat one takes), `PackageResourcesTests`,
+`XcodeProjectConverterTests`, `SwiftCompilerTests` (a flat target still compiles on its
+second run), `ClangPreprocessorTests`, `AssetCatalogCompilerTests`, `FolderTreeBuilderTests`
+and `XCFrameworkSliceSelectorTests`. What remains:
+
+1. **A compiler could be handed its tree by the formula.** Its folder arrives as a manifest
+   on a static port, so its first run can only ask for the tree; a formula naming
+   `Folder(path:).subtreeManifest` would save that run. It changes every emitted formula and
+   fixture for one pass per compiler, which the compilers already run side by side.
+2. **The flush after a cold push is now the longest wait before anything runs.** Rebuilding
+   the manifests and folding the content roots of every folder a push marked takes 15–20 s
+   of the IceCubes app's release cold build, each fold a join over the folder's children for
+   its pinned states, its links and modes and its contents. The subtree manifest reads the
+   manifest instead of the rows; the content root could share the manifest's reads the same
+   way.
+
 ### Cache
 
 **B-11** `open` `For Fable Only` — **Probe determinism at write.**
@@ -807,7 +898,9 @@ funcs under its namespace. `clang`, `swift` and `apple` preludes exist, and the 
    `ProjectBuilder` demands, on its `folders` port, each subfolder a pattern can reach —
    walked from the pattern's folder down with `FolderTreeWalk`, one level per pass, never
    into a hidden folder — and publishes no products until every one has arrived, so a
-   linker never sees half a tree; expansions are sorted. `except` goes through the same
+   linker never sees half a tree; expansions are sorted. (Since 2026-09-30 the pattern's
+   folder is asked for as one tree, on `folderTrees`, and read down on the pass it
+   arrives: B-135.) `except` goes through the same
    expander. A capture after a `**` reads the file's own name (it read the folder the `**`
    took), and the REPL's `**` means the same, a trailing one included. The `clang`
    prelude's `sources:` is read as `**/*.c`, `**/*.cpp`; objects are named by the source's
@@ -1428,7 +1521,8 @@ application target, simulator only, all library code in packages. In suggested o
       a pass later, each folder directly in it (not catalogs, `.lproj`s or hidden
       folders), and a folder holding a `Package.swift` is a package; the converter asks
       on its `folders` port, one level per pass, and a folder that is not there holds
-      none. Every package found is included, as Xcode puts every one in the workspace, so
+      none. (Since 2026-09-30 it asks for each synchronized folder's tree, which answers
+      for the folders in it on the same pass: B-135.) Every package found is included, as Xcode puts every one in the workspace, so
       a product is found by name among the funcs the included formulas define —
       `RSCoreResources` in `RSCore`'s. A local product with no local package at all is
       now the converter's error, naming the products and the folders looked in.

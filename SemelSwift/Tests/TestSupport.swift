@@ -25,7 +25,7 @@ class SemelSwiftTestCase: XCTestCase {
 
         // FolderManifest and TreeManifest are decoded by the compiler and linker nodes, and
         // TypeRegistry resolves them through the same process-global registry production uses.
-        try TypeRegistry.register(types: [FolderManifest.self, TreeManifest.self])
+        try TypeRegistry.register(types: [FolderManifest.self, FolderSubtreeManifest.self, TreeManifest.self])
         try SemelSwift.register()
     }
 

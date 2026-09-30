@@ -28,8 +28,10 @@ struct FormulaFilePlugin: ProjectBuilderPlugin {
 public struct ProjectFinder: Node {
     public static let kind: UInt = 5
 
-    static let rootFolderManifestInputPort = "folderManifest"
-    static let watchedFolderManifestInputPort = "watchedFolders"
+    /// The input file system's subtree manifest, one wire (B-135): every folder's listing,
+    /// where the finder once watched the root's manifest and then each pinned folder's, a
+    /// wire and a pass per level.
+    static let inputTreeInputPort = "inputTree"
     static let projectBuildersInputPort = "projectBuilders"
     /// Every project file a plugin says builds nothing until a formula includes it, as
     /// `[IncludableProject]` sorted by path (B-10). Published rather than worked out at idle:
@@ -37,14 +39,14 @@ public struct ProjectFinder: Node {
     /// reads one port instead of every listing on every settle.
     static let includableProjectsOutputPort = "includableProjects"
 
-    /// A new output port, `includableProjects` (B-10).
-    public static let implementationVersion = 2
+    /// 2: a new output port, `includableProjects` (B-10); 3: the input file system is read
+    /// through its subtree manifest on one port, where two ports walked it (B-135).
+    public static let implementationVersion = 3
 
     // ProjectFinder uses all dynamic ports because there is nobody to wire up static input ports, as it is the first.
     public static let descriptor = NodeDescriptor(
         inputPorts: [
-            .dynamic(rootFolderManifestInputPort),
-            .dynamic(watchedFolderManifestInputPort),
+            .dynamic(inputTreeInputPort),
             .dynamic(projectBuildersInputPort),
         ],
         outputPorts: [includableProjectsOutputPort]
@@ -80,60 +82,19 @@ public struct ProjectFinder: Node {
     }
 
     public func process(input: ProcessInput) throws -> ProcessOutput {
-        var projectBuildersSpecs = [String: GraphSpecNode]()
+        // Every pinned folder of the input file system at every depth, from one tree. On the
+        // first run the wire is not there yet and nothing is found; the run after has it all.
+        let tree = FolderTreeWalk.trees(in: input, port: Self.inputTreeInputPort)[Folder.inputFileSystemName]
+        let allFolderManifests = try tree?.folderManifests(at: Folder.inputFileSystemName)
+            .sorted { $0.key < $1.key }
+            .map { ($0.key, $0.value) } ?? []
 
-        let allWatchedFolderManifests = input.inputValues[Self.watchedFolderManifestInputPort]
-
-        var watchedPaths = Set<String>()
-
-        var allFolderManifests = [(String, FolderManifest)]()
-
-        for (watchedFolderManifestInputKey, watchedFolderManifestInputValue) in allWatchedFolderManifests ?? [:] {
-            let object = try? TypeRegistry.decode(encodedJSON: watchedFolderManifestInputValue.expectValue().resolveAsString())
-
-            guard let folderManifest = object as? FolderManifest else {
-                throw NodeError.other(message: "Could not decode FolderManifest")
-            }
-
-            allFolderManifests.append((watchedFolderManifestInputKey, folderManifest))
-
-            for entry in folderManifest.entries {
-                if entry.isFolder && entry.isPinned {
-                    watchedPaths.insert((Path(watchedFolderManifestInputKey) / entry.name).string)
-                }
-            }
-        }
-
-        if let folderManifestInputValue = input.inputValues[Self.rootFolderManifestInputPort]?.first {
-            let object = try? TypeRegistry.decode(encodedJSON: folderManifestInputValue.value.expectValue().resolveAsString())
-
-            guard let folderManifest = object as? FolderManifest else {
-                throw NodeError.other(message: "Could not decode FolderManifest")
-            }
-
-            allFolderManifests.append((Folder.inputFileSystemName, folderManifest))
-
-            for entry in folderManifest.entries {
-                if entry.isFolder && entry.isPinned {
-                    watchedPaths.insert((Path(Folder.inputFileSystemName) / entry.name).string)
-                }
-            }
-        }
-
-        projectBuildersSpecs = try buildProjectBuildersSpecsFromFolderManifest(folderManifests: allFolderManifests)
-
-        var watchedFolderSpecs = [String: GraphSpecNode]()
-
-        for watchedPath in watchedPaths {
-            watchedFolderSpecs[watchedPath] = .folderManifest(at: watchedPath)
-        }
-
+        let projectBuildersSpecs = try buildProjectBuildersSpecsFromFolderManifest(folderManifests: allFolderManifests)
         let includable = try Self.includableProjects(in: allFolderManifests).toSortedJSON()
 
         return .init(outputValues: [Self.includableProjectsOutputPort: .value(try includable.intern())],
-                     inputWireSpecs: [Self.rootFolderManifestInputPort: [Folder.inputFileSystemName: .folderManifest(at: Folder.inputFileSystemName)],
-                                             Self.watchedFolderManifestInputPort: watchedFolderSpecs,
-                                             Self.projectBuildersInputPort: projectBuildersSpecs])
+                     inputWireSpecs: [Self.inputTreeInputPort: [Folder.inputFileSystemName: .folderTree(at: Folder.inputFileSystemName)],
+                                      Self.projectBuildersInputPort: projectBuildersSpecs])
     }
 }
 

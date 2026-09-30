@@ -65,12 +65,13 @@ extension BuildEngine {
             // the mechanism's — AGENTS.md is where it is asked for — and a release where
             // nobody bumped republishes what the older code computed.
             let archivedGraphPath = try reset()
+            try dropTheWiresIntoUndeclaredPorts()
             try restateThePortsOfPreservedNodes()
             // Before the fold, which reads it.
             try giveEveryPreservedFolderItsLinkPort()
             // After the restating, which changes what a source's port says and so what the
             // fold reads.
-            try foldTheContentRootOfEveryPreservedFolder()
+            try foldTheDerivedValuesOfEveryPreservedFolder()
             try giveEveryPreservedFileItsMode()
             // The one reset nobody asked for, so the one whose copy would otherwise appear
             // in the home unexplained. This runs from `BuildEngine.start()`, before a
@@ -84,6 +85,25 @@ extension BuildEngine {
             }
         }
         try database.metadata.upsert(key: Self.semelVersionKey, value: Semel.version)
+    }
+
+    /// Deletes every wire the rebuild preserved into a port its node's type no longer
+    /// declares. `reset()` keeps `ProjectFinder` with its wires, and a release that gives
+    /// the finder other ports — its two folder ports became one tree (B-135) — leaves the
+    /// old ones' wires holding up the folders they come from, read by nothing, and
+    /// `applySpecs` never visits a port the node does not name. The finder is scheduled by
+    /// the reset and demands what it reads afresh.
+    private func dropTheWiresIntoUndeclaredPorts() throws {
+        for node in try database.node.selectAll() {
+            guard let nodeID = node.id,
+                  let type = try? TypeRegistry.type(kind: node.kind) as? Node.Type else {
+                continue
+            }
+            let declared = Set(type.descriptor.inputPorts.map { $0.name.asSymbolID() })
+            for wire in try database.wire.select(goingToNodeID: nodeID) where !declared.contains(wire.toSymbolID) {
+                try wire.deleteWire(database: database)
+            }
+        }
     }
 
     /// The rebuild deletes what it can, but `reset()` preserves the input file system, the
@@ -139,14 +159,17 @@ extension BuildEngine {
         }
     }
 
-    /// Folds the content root of every `Folder` the rebuild preserved.
+    /// Folds the content root and the subtree manifest of every `Folder` the rebuild
+    /// preserved.
     ///
-    /// `Folder.contentRoot` (B-26) is a port a release added to a type that already had
-    /// stored nodes. A node is given one row per declared port when it is created and only
-    /// its own deletion takes them away, so every preserved folder holds none for this one,
-    /// and folding is what makes the row: `writeToOutputPort` inserts what is not there, so
-    /// the row arrives carrying a real value and never an empty state that `check` would
-    /// pass over.
+    /// `Folder.contentRoot` (B-26) and `Folder.subtreeManifest` (B-135) are ports a release
+    /// added to a type that already had stored nodes. A node is given one row per declared
+    /// port when it is created and only its own deletion takes them away, so a folder
+    /// preserved from before either holds none for it, and folding is what makes the row:
+    /// `writeToOutputPort` inserts what is not there, so the row arrives carrying a real
+    /// value and never an empty state that `check` would pass over. The subtree manifest
+    /// reads a subfolder with no row as one that has published nothing, which the rounds
+    /// below correct as they reach it, as they do a root.
     ///
     /// An absent row is worse than a gap in a report. `contentStates` reads a child folder
     /// without one as `notProduced`, so an ancestor folded before the row exists says that
@@ -162,12 +185,13 @@ extension BuildEngine {
     /// Folders only. A port added to a type whose nodes are never scheduled — `StaticFile`
     /// declares no inputs — has no such route, and giving it an empty row would suppress the
     /// one finding that says so. Whoever adds that port writes the pass that fills it.
-    private func foldTheContentRootOfEveryPreservedFolder() throws {
+    private func foldTheDerivedValuesOfEveryPreservedFolder() throws {
         for node in try database.node.selectAll() where node.kind == Folder.kind {
             guard let nodeID = node.id else {
                 continue
             }
             try Folder.markContentRootDirty(nodeID: nodeID)
+            try Folder.markSubtreeManifestDirty(nodeID: nodeID)
         }
         try Folder.flushDirtyManifests()
     }

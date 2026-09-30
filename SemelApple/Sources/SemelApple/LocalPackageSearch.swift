@@ -9,8 +9,9 @@
 //  dependency with no package is found by name among every local package there is.
 //  NetNewsWire keeps its seventeen packages that way, in the synchronized `Modules` folder
 //  that no target owns. The looking is over folder contents, so the converter answers it
-//  from folder manifests on its wires, a level per pass, and `XcodeProjectFacts` answers it
-//  from the disk for `prepare`; both through this, so the two find the same packages.
+//  from each synchronized folder's tree, on one wire and one pass (B-135), and
+//  `XcodeProjectFacts` answers it from the disk for `prepare`; both through this, so the
+//  two find the same packages.
 
 import SemelNodeKit
 
@@ -44,7 +45,7 @@ struct LocalPackageSearch {
 
     /// Every folder the search has asked about, relative to the project's folder, in the
     /// order asked: each synchronized folder, and — once its contents are known — each
-    /// folder directly in it. What the converter demands a manifest of.
+    /// folder directly in it. What a synchronized folder's tree has to answer for.
     private(set) var asked: [String] = []
 
     /// Whether every folder asked about has answered. Until then `packagePaths` holds what

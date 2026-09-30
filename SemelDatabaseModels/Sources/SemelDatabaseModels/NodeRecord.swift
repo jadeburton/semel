@@ -300,6 +300,36 @@ public struct NodeDataAccess: DataAccessType {
         }
     }
 
+    /// One port's value for every child of `parentNodeID` that has it, keyed by the child's
+    /// name: `selectChildPorts` with the join's name column read instead of the id, for a
+    /// caller that holds the children by name already — a folder folding its subtree
+    /// manifest from its own manifest — and would otherwise read every child's row again
+    /// only to turn an id into a name.
+    public func selectChildPortsByName(parentNodeID: ObjectID,
+                                       nameSymbolID: ObjectID) throws -> [String: OutputPort] {
+        try selecting { db in
+            var result: [String: OutputPort] = [:]
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT n.name AS name, p.nodeID AS nodeID, p.valueKind AS valueKind, p.dataObjectHash AS dataObjectHash
+                FROM OutputPort p
+                JOIN Node n ON n.id = p.nodeID
+                WHERE n.parentNodeID = ? AND p.nameSymbolID = ?
+                """, arguments: [parentNodeID, nameSymbolID])
+            for row in rows {
+                let raw: UInt8 = row["valueKind"]
+                guard let valueKind = OutputPort.ValueKind(rawValue: raw),
+                      let name: String = row["name"] else {
+                    continue
+                }
+                result[name] = OutputPort(nodeID: row["nodeID"],
+                                          nameSymbolID: nameSymbolID,
+                                          valueKind: valueKind,
+                                          dataObjectHash: row["dataObjectHash"])
+            }
+            return result
+        }
+    }
+
     public func selectAll() throws -> [NodeRecord] {
         Debug.warn("expensive selectAllNodes call")
         return try selecting { db in try NodeRecord.fetchAll(db) }

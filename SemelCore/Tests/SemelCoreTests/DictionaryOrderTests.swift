@@ -120,12 +120,8 @@ final class DictionaryOrderTests: XCTestCase {
             "flattened into a set of include paths, which becomes wire-spec dictionaries and a count",
         "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: input.inputValues[Self.externalPackageJSONs] ?? [:]":
             "collects the manifests into a dictionary by package folder",
-        "SemelSwift/Sources/SemelSwift/SwiftFormulaConverter.swift: input.inputValues[Self.targetFolders] ?? [:]":
-            "collects the manifests into a dictionary by folder",
         "SemelCore/Sources/SemelCore/Nodes/ProjectBuilder.swift: inputs":
             "collects the decoded manifests into a dictionary by folder",
-        "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: allWatchedFolderManifests ?? [:]":
-            "collects the manifests into an array whose only use is keyed by folder path, and the watched paths into a set",
         "SemelCore/Sources/SemelCore/Nodes/ConfigFilter.swift: settings":
             "selects the qualified settings into a dictionary, rendered sorted",
         "SemelNodeKit/Sources/SemelNodeKit/ConfigurationText.swift: other":
@@ -170,8 +166,6 @@ final class DictionaryOrderTests: XCTestCase {
             "each failing source found is collected into a set of cause IDs",
         "SemelCore/Sources/SemelCore/ErrorReport.swift: carriers":
             "each carrier adds one to its cause's count, which comes to the same count whichever carrier is counted first; the entries are sorted before they are returned",
-        "SemelCore/Sources/SemelCore/Nodes/ProjectFinder.swift: watchedPaths":
-            "gives each watched folder its own wire spec, in a dictionary keyed by that folder's path",
         "SemelSwift/Sources/SemelSwift/SwiftSDKFingerprint.swift: keys":
             "the resource values to fetch with each file, an argument that asks for them rather than ordering anything; the fingerprint's own lines are sorted before they are hashed",
         "SemelClang/Sources/SemelClang/ClangPreprocessor.swift: setOfIncludeFiles":

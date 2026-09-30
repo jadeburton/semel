@@ -107,7 +107,8 @@ public struct ClangPreprocessor: Node {
     /// 3: a header folder is walked to the bottom, where version 2 took its top level (B-55).
     /// 4: a `.S` is preprocessed as assembly with no standard, where it was taken for C.
     /// 5: `modules`, `objectiveCARC` and `moduleName` reach the command line (B-77).
-    public static let implementationVersion = 5
+    /// 6: a header folder's tree is asked for, where its subfolders were walked (B-135).
+    public static let implementationVersion = 6
 
     public var thisNode: NodeRecord
 
@@ -128,12 +129,12 @@ public struct ClangPreprocessor: Node {
     /// resolving quoted includes beside the including file only, cannot see. Hand-written
     /// formulas keep the finder; the converter generates this form (B-54).
     static let headerFolders = "headerFolders"
-    /// Every subfolder below a header folder, keyed by full path: the walk that brings a
-    /// nested header — `include/openssl/ssl.h`, a source's sibling in `src/lib/` — one
-    /// level per pass, as `SwiftCompiler` walks its sources (B-55). Only the folders on
+    /// The subtree manifest of each header folder, keyed by the folder's path: what brings
+    /// a nested header — `include/openssl/ssl.h`, a source's sibling in `src/lib/` — on the
+    /// pass after the first however deep it is (B-55, B-135). Only the folders on
     /// `headerFolders` are `-I`s; a file below one is placed at its input-file-system path,
     /// which is its path relative to that folder's `-I` and to the file that includes it.
-    static let headerSubfolders = "headerSubfolders"
+    static let headerFolderTrees = "headerFolderTrees"
     static let output = "output"
     static let errorLog = "errorLog"
     static let infoLog = "infoLog"
@@ -150,7 +151,7 @@ public struct ClangPreprocessor: Node {
             // Optional rather than dynamic: a formula can wire only a static port, and
             // this one is wired by the generated formula, not by this node's own specs.
             .optional(headerFolders),
-            .dynamic(headerSubfolders),
+            .dynamic(headerFolderTrees),
         ],
         outputPorts: [output, errorLog, infoLog],
         inputPortsToleratingAbsentValue: [headerInputFiles]
@@ -182,15 +183,13 @@ public struct ClangPreprocessor: Node {
         /// the same for the same inputs.
         let headerFolderManifests: [(String, FolderManifest)]
 
-        /// The subfolders below them that have arrived, keyed by full path.
-        let headerSubfolderManifests: [String: FolderManifest]
+        /// The trees of those folders that have arrived, keyed by the folder's path.
+        let headerFolderTrees: [String: FolderSubtreeManifest]
 
         init(input: ProcessInput) throws {
             headerFolderManifests = FolderTreeWalk.manifests(in: input, port: ClangPreprocessor.headerFolders)
                 .map { ($0.key, $0.manifest) }
-            headerSubfolderManifests = Dictionary(
-                FolderTreeWalk.manifests(in: input, port: ClangPreprocessor.headerSubfolders).map { ($0.key, $0.manifest) },
-                uniquingKeysWith: { first, _ in first })
+            headerFolderTrees = FolderTreeWalk.trees(in: input, port: ClangPreprocessor.headerFolderTrees)
 
             let configurationString = try input.inputValues[ClangCompiler.configuration]!.values.first!.expectValue().resolveAsString()
             configuration = try .init(properties: [String: String](plainText: configurationString))
@@ -233,7 +232,7 @@ public struct ClangPreprocessor: Node {
 
         let headerInputFilesWireSpecs: [String: GraphSpecNode]
         let includeFileListWireSpecs: [String: GraphSpecNode]
-        var headerSubfolderWireSpecs: [String: GraphSpecNode] = [:]
+        var headerFolderTreeWireSpecs: [String: GraphSpecNode] = [:]
 
         func asProcessOutput() -> ProcessOutput {
             return .init(outputValues: [ClangPreprocessor.output: output,
@@ -241,7 +240,7 @@ public struct ClangPreprocessor: Node {
                                  ClangPreprocessor.infoLog: infoLog],
                   inputWireSpecs: [ClangPreprocessor.headerInputFiles: headerInputFilesWireSpecs,
                                           ClangPreprocessor.includeFileLists: includeFileListWireSpecs,
-                                          ClangPreprocessor.headerSubfolders: headerSubfolderWireSpecs])
+                                          ClangPreprocessor.headerFolderTrees: headerFolderTreeWireSpecs])
         }
     }
 
@@ -300,7 +299,7 @@ public struct ClangPreprocessor: Node {
     private func runPreprocessor(inputs: ClangPreprocessorInputs,
                                  headerInputFilesWireSpecs: [String: GraphSpecNode],
                                  includeFileListWireSpecs: [String: GraphSpecNode],
-                                 headerSubfolderWireSpecs: [String: GraphSpecNode] = [:]) throws -> ClangPreprocessorOutputs {
+                                 headerFolderTreeWireSpecs: [String: GraphSpecNode] = [:]) throws -> ClangPreprocessorOutputs {
 
         let outputFilename = inputs.inputSourceFile.filePath + ".p"
 
@@ -361,7 +360,7 @@ public struct ClangPreprocessor: Node {
                      infoLog: .value(try result.infoOutput.intern()),
                      headerInputFilesWireSpecs: headerInputFilesWireSpecs,
                      includeFileListWireSpecs: includeFileListWireSpecs,
-                     headerSubfolderWireSpecs: headerSubfolderWireSpecs)
+                     headerFolderTreeWireSpecs: headerFolderTreeWireSpecs)
     }
 
     func process(inputs: ClangPreprocessorInputs) throws -> ClangPreprocessorOutputs {
@@ -369,40 +368,44 @@ public struct ClangPreprocessor: Node {
         // Folders given: every file under them is a header input, no finder is consulted,
         // and the run waits until the walk is done and all of them are on the wire.
         if !inputs.headerFolderManifests.isEmpty {
-            // Each folder from its own manifest down, through the subfolders that have
-            // arrived; a hidden folder is not entered, as a formula's `**` does not enter one.
-            // A folder that is itself on `headerFolders` — a target's `include`, below the
-            // target's own folder — has arrived there and is not asked for twice.
-            var arrived = inputs.headerSubfolderManifests
-            for (_, manifest) in inputs.headerFolderManifests {
-                arrived[manifest.baseFolderPath] = manifest
-            }
-            let rootPaths = Set(inputs.headerFolderManifests.map(\.1.baseFolderPath))
-            var subfolderSpecs = [String: GraphSpecNode]()
-            for rootPath in rootPaths.sorted() {
-                let below = FolderTreeWalk.subfolderSpecs(below: rootPath, arrived: arrived) { subfolder in
+            // Each folder's tree, asked for on the first pass with the folder's own files and
+            // read down once it is in (B-135); a hidden folder is not entered, as a formula's
+            // `**` does not enter one. A folder that is itself on `headerFolders` — a
+            // target's `include`, below the target's own folder — is reached from both, and
+            // its files are one set of wires.
+            var treeSpecs = [String: GraphSpecNode]()
+            var reached: [String: FolderManifest] = [:]
+            for manifest in inputs.headerFolderManifests.map(\.1) {
+                let rootPath = manifest.baseFolderPath
+                treeSpecs[rootPath] = .folderTree(at: rootPath)
+                guard let tree = inputs.headerFolderTrees[rootPath] else {
+                    reached[rootPath] = manifest
+                    continue
+                }
+                let below = try tree.folderManifests(at: rootPath) { subfolder in
                     Path(subfolder).lastComponent?.hasPrefix(".") == false
                 }
-                subfolderSpecs.merge(below.filter { !rootPaths.contains($0.key) }) { existing, _ in existing }
+                reached.merge(below) { existing, _ in existing }
             }
-            let reached = inputs.headerFolderManifests.map(\.1) + subfolderSpecs.keys.sorted().compactMap { arrived[$0] }
             // The source itself sits in its own folder and is already an input.
-            let folderFileSpecs = FolderTreeWalk.fileSpecs(of: reached) { $0 != inputs.inputSourceFile.filePath }
+            let folderFileSpecs = FolderTreeWalk.fileSpecs(of: reached.keys.sorted().compactMap { reached[$0] }) {
+                $0 != inputs.inputSourceFile.filePath
+            }
 
-            let walkFinished = subfolderSpecs.keys.allSatisfy { inputs.headerSubfolderManifests[$0] != nil }
-            guard walkFinished, inputs.wiredHeaderPaths == Set(folderFileSpecs.keys) else {
+            let treesArrived = treeSpecs.keys.allSatisfy { inputs.headerFolderTrees[$0] != nil }
+            guard treesArrived, inputs.wiredHeaderPaths == Set(folderFileSpecs.keys) else {
                 let error = NodeValue.noValue(reason: .error(messageDataObjectHash: try "Still collecting header folders".intern()))
                 return .init(output: error,
                              errorLog: error,
                              infoLog: error,
                              headerInputFilesWireSpecs: folderFileSpecs,
                              includeFileListWireSpecs: [:],
-                             headerSubfolderWireSpecs: subfolderSpecs)
+                             headerFolderTreeWireSpecs: treeSpecs)
             }
             return try runPreprocessor(inputs: inputs,
                                        headerInputFilesWireSpecs: folderFileSpecs,
                                        includeFileListWireSpecs: [:],
-                                       headerSubfolderWireSpecs: subfolderSpecs)
+                                       headerFolderTreeWireSpecs: treeSpecs)
         }
 
         var headerInputFilesWireSpecs = [String: GraphSpecNode]()

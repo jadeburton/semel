@@ -173,14 +173,15 @@ struct XCFrameworkSliceSelectorConfiguration {
 /// which a link and an import take instead, and nothing embeds. The ports a slice does not
 /// fill carry the empty tree, so a formula wires all three without knowing which it is.
 ///
-/// The slice is walked like any folder, one level per pass, and each file keeps the mode
-/// it was pushed with: a framework holds executables (Sparkle's `Autoupdate`, its
+/// The slice is read from its folder's subtree manifest (B-135), and each file keeps the
+/// mode it was pushed with: a framework holds executables (Sparkle's `Autoupdate`, its
 /// `Updater.app`) that must stay ones in the bundle.
 public struct XCFrameworkSliceSelector: Node {
     public static let kind: UInt = 40
 
     /// 2: a framework's symbolic links are links in its tree, where they were copies (B-77).
-    public static let implementationVersion = 2
+    /// 3: the slice's folder is asked for as a tree, where it was walked (B-135).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
@@ -188,7 +189,8 @@ public struct XCFrameworkSliceSelector: Node {
     static let configuration = "configuration"
     /// The `.xcframework`'s `Info.plist`, one wire.
     static let infoPlist = "infoPlist"
-    /// Every folder of the chosen slice, by path, walked as it arrives.
+    /// The subtree manifest of each folder of the chosen slice that is read whole — the
+    /// framework, or a library's headers — keyed by its path.
     static let sliceFolders = "sliceFolders"
     /// Every file of the chosen slice, by path, and each one's mode beside it.
     static let sliceFiles = "sliceFiles"
@@ -265,14 +267,18 @@ public struct XCFrameworkSliceSelector: Node {
             }
         }
 
-        // ── the walk ──────────────────────────────────────────────────────────
-        let arrived = Dictionary(FolderTreeWalk.manifests(in: input, port: Self.sliceFolders).map { ($0.key, $0.manifest) }) { first, _ in first }
+        // ── the slice's folders, as trees (B-135) ─────────────────────────────
+        let trees = FolderTreeWalk.trees(in: input, port: Self.sliceFolders)
         var folderSpecs: [String: GraphSpecNode] = [:]
+        var reached: [String: FolderManifest] = [:]
         for root in roots {
-            folderSpecs[root] = .folderManifest(at: root)
-            folderSpecs.merge(FolderTreeWalk.subfolderSpecs(below: root, arrived: arrived, intoSymbolicLinks: false)) { existing, _ in existing }
+            folderSpecs[root] = .folderTree(at: root)
+            guard let tree = trees[root] else {
+                continue
+            }
+            reached.merge(try tree.folderManifests(at: root, intoSymbolicLinks: false)) { existing, _ in existing }
         }
-        let walkedManifests = folderSpecs.keys.sorted().compactMap { arrived[$0] }
+        let walkedManifests = reached.keys.sorted().compactMap { reached[$0] }
         var fileSpecs = FolderTreeWalk.fileSpecs(of: walkedManifests)
         for file in singleFiles {
             fileSpecs[file] = .staticFile(at: file)
@@ -283,7 +289,7 @@ public struct XCFrameworkSliceSelector: Node {
 
         let files    = input.inputValues[Self.sliceFiles] ?? [:]
         let metadata = input.inputValues[Self.sliceFileMetadata] ?? [:]
-        guard Set(folderSpecs.keys).isSubset(of: Set(arrived.keys)),
+        guard Set(folderSpecs.keys).isSubset(of: Set(trees.keys)),
               Set(fileSpecs.keys).isSubset(of: Set(files.keys)),
               Set(fileSpecs.keys).isSubset(of: Set(metadata.keys)) else {
             let walking = NodeValue.noValue(reason: .pending)

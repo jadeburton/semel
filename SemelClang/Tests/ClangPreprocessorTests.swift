@@ -351,6 +351,28 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         return .value(try FolderManifest(baseFolderPath: path, entries: entries).toJSON().intern())
     }
 
+    /// The tree of each folder in `roots`, as a `Folder` publishes it (B-135), folded from
+    /// the listings of every folder in `roots` and `below`, by path.
+    private func trees(of roots: [String: NodeValue], below: [String: NodeValue] = [:]) throws -> [String: NodeValue] {
+        var listings: [String: [FolderManifestEntry]] = [:]
+        for (path, value) in roots.merging(below, uniquingKeysWith: { first, _ in first }) {
+            let listing: FolderManifest = try TypeRegistry.decodeAndCast(encodedJSON: try value.expectValue().resolveAsString())
+            listings[path] = listing.entries
+        }
+        var trees: [String: NodeValue] = [:]
+        for path in roots.keys {
+            trees[path] = .value(try FolderSubtreeManifest.folding(at: path, listings: listings).toJSON().intern())
+        }
+        return trees
+    }
+
+    private var headerFolders: [String: NodeValue] {
+        get throws {
+            ["input:/pkg/src":         try folderManifest("input:/pkg/src", files: ["blocks.c", "parser.h"], folders: ["include"]),
+             "input:/pkg/src/include": try folderManifest("input:/pkg/src/include", files: ["cmark.h", "module.modulemap"])]
+        }
+    }
+
     private func makeFolderInput(headerFiles: [String: NodeValue] = [:]) throws -> ProcessInput {
         let configuration = """
             toolDescriptor.name=\(descriptor.name)
@@ -361,14 +383,12 @@ final class ClangPreprocessorTests: SemelClangTestCase {
             cStandard=c17
             """
         return ProcessInput(inputValues: [
-            ClangPreprocessor.configuration:   ["configuration": .value(try configuration.intern())],
-            ClangPreprocessor.sourceFileInput:  ["input:/pkg/src/blocks.c": .value(try "int f(void){return 0;}".intern())],
-            ClangPreprocessor.includeFileLists: [:],
-            ClangPreprocessor.headerInputFiles: headerFiles,
-            ClangPreprocessor.headerFolders: [
-                "input:/pkg/src":         try folderManifest("input:/pkg/src", files: ["blocks.c", "parser.h"], folders: ["include"]),
-                "input:/pkg/src/include": try folderManifest("input:/pkg/src/include", files: ["cmark.h", "module.modulemap"]),
-            ],
+            ClangPreprocessor.configuration:     ["configuration": .value(try configuration.intern())],
+            ClangPreprocessor.sourceFileInput:   ["input:/pkg/src/blocks.c": .value(try "int f(void){return 0;}".intern())],
+            ClangPreprocessor.includeFileLists:  [:],
+            ClangPreprocessor.headerInputFiles:  headerFiles,
+            ClangPreprocessor.headerFolders:     try headerFolders,
+            ClangPreprocessor.headerFolderTrees: try trees(of: try headerFolders),
         ])
     }
 
@@ -405,47 +425,55 @@ final class ClangPreprocessorTests: SemelClangTestCase {
 
     // MARK: - Nested header folders (B-55)
 
-    // A header folder is walked to the bottom: `include/openssl/ssl.h` is reached by
+    // A header folder is read to the bottom: `include/openssl/ssl.h` is reached by
     // `#include <openssl/ssl.h>` under the `include` search path, and a source in
     // `src/lib/` includes its sibling `"lib.h"` from beside it. Both need the file placed
     // at its input-file-system path, which is where every header input goes already, so
-    // the walk is what is new: one level per pass, on a port of its own.
+    // what is new is the reading: each header folder's tree, on a port of its own (B-135).
 
-    private func nestedFolderInput(subfolders: [String: NodeValue], headerFiles: [String: NodeValue]) throws -> ProcessInput {
+    private var nestedHeaderFolders: [String: NodeValue] {
+        get throws {
+            ["input:/pkg/src":         try folderManifest("input:/pkg/src", files: ["blocks.c"], folders: ["include", "lib", ".git"]),
+             "input:/pkg/src/include": try folderManifest("input:/pkg/src/include", files: ["cmark.h"], folders: ["cmark"])]
+        }
+    }
+
+    /// With `treesArrived`, each header folder's tree is in, folded from the folders below.
+    private func nestedFolderInput(treesArrived: Bool, headerFiles: [String: NodeValue]) throws -> ProcessInput {
         var inputValues = try makeFolderInput(headerFiles: headerFiles).inputValues
-        inputValues[ClangPreprocessor.headerFolders] = [
-            "input:/pkg/src":         try folderManifest("input:/pkg/src", files: ["blocks.c"], folders: ["include", "lib", ".git"]),
-            "input:/pkg/src/include": try folderManifest("input:/pkg/src/include", files: ["cmark.h"], folders: ["cmark"]),
-        ]
-        inputValues[ClangPreprocessor.headerSubfolders] = subfolders
+        inputValues[ClangPreprocessor.headerFolders] = try nestedHeaderFolders
+        inputValues[ClangPreprocessor.headerFolderTrees] = treesArrived ? try trees(of: try nestedHeaderFolders, below: try nestedSubfolders) : [:]
         return ProcessInput(inputValues: inputValues)
     }
 
     private var nestedSubfolders: [String: NodeValue] {
         get throws {
             ["input:/pkg/src/lib":           try folderManifest("input:/pkg/src/lib", files: ["lib.h", "lib.c"]),
-             "input:/pkg/src/include/cmark": try folderManifest("input:/pkg/src/include/cmark", files: ["node.h"])]
+             "input:/pkg/src/include/cmark": try folderManifest("input:/pkg/src/include/cmark", files: ["node.h"]),
+             "input:/pkg/src/.git":          try folderManifest("input:/pkg/src/.git", files: ["HEAD"])]
         }
     }
 
     private let nestedHeaderPaths = ["input:/pkg/src/include/cmark.h", "input:/pkg/src/include/cmark/node.h",
                                      "input:/pkg/src/lib/lib.c", "input:/pkg/src/lib/lib.h"]
 
-    /// The first pass asks for the subfolders the manifests show, never a hidden one and
-    /// never a folder already on `headerFolders`, and runs nothing.
-    func test_aHeaderFoldersSubfoldersAreAskedForBeforeAnythingRuns() throws {
-        let output = try makeTool().process(input: try nestedFolderInput(subfolders: [:], headerFiles: [:]))
+    /// The first pass asks for each header folder's tree, and runs nothing.
+    func test_aHeaderFoldersTreeIsAskedForBeforeAnythingRuns() throws {
+        let output = try makeTool().process(input: try nestedFolderInput(treesArrived: false, headerFiles: [:]))
 
-        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerSubfolders]).keys.sorted(),
-                       ["input:/pkg/src/include/cmark", "input:/pkg/src/lib"])
-        XCTAssertTrue(executor.invocations.isEmpty, "the walk has not arrived")
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerFolderTrees]).keys.sorted(),
+                       ["input:/pkg/src", "input:/pkg/src/include"])
+        XCTAssertTrue(executor.invocations.isEmpty, "the trees have not arrived")
     }
 
-    /// Once the subfolders are in, every file below them is a header input too.
+    /// Once the trees are in, every file below the folders is a header input too, and
+    /// nothing in a hidden folder; nothing more is asked for than the trees.
     func test_everyFileBelowAHeaderFolderIsAskedFor() throws {
-        let output = try makeTool().process(input: try nestedFolderInput(subfolders: try nestedSubfolders, headerFiles: [:]))
+        let output = try makeTool().process(input: try nestedFolderInput(treesArrived: true, headerFiles: [:]))
 
         XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerInputFiles]).keys.sorted(), nestedHeaderPaths)
+        XCTAssertEqual(try XCTUnwrap(output.inputWireSpecs[ClangPreprocessor.headerFolderTrees]).keys.sorted(),
+                       ["input:/pkg/src", "input:/pkg/src/include"])
         XCTAssertTrue(executor.invocations.isEmpty, "nothing runs until the headers are on the wire")
     }
 
@@ -456,9 +484,9 @@ final class ClangPreprocessorTests: SemelClangTestCase {
         for path in nestedHeaderPaths {
             wires[path] = .value(try "// \(path)".intern())
         }
-        _ = try makeTool().process(input: try nestedFolderInput(subfolders: try nestedSubfolders, headerFiles: wires))
+        _ = try makeTool().process(input: try nestedFolderInput(treesArrived: true, headerFiles: wires))
 
-        let invocation = try XCTUnwrap(executor.invocations.last, "the walk and the files have arrived")
+        let invocation = try XCTUnwrap(executor.invocations.last, "the trees and the files have arrived")
         XCTAssertTrue(invocation.inputFileNames.contains("input:/pkg/src/include/cmark/node.h"), "\(invocation.inputFileNames)")
         XCTAssertTrue(invocation.inputFileNames.contains("input:/pkg/src/lib/lib.h"), "\(invocation.inputFileNames)")
         let arguments = executor.lastArguments

@@ -11,13 +11,19 @@ public struct ProjectBuilder: Node {
     /// after a `**` reads the file's own name (B-108).
     /// 3: every node that asks for its files' modes has them wired beside the files
     /// (`wiringFileMetadata`), a pushed file among the sources that publish one.
-    public static let implementationVersion = 4
+    /// 4: an include that cannot be read yet still asks for the includes after it (B-125).
+    /// 5: a pattern's folder is asked for as a tree, one wire, and a `**` expands against
+    /// it on the pass it arrives (B-135).
+    public static let implementationVersion = 5
 
     static let outputFolderProperty   = "outputFolder"
     static let projectFileInputPort   = "projectFile"
     static let productInputPort       = "input"
     static let statusOutputPort       = "status"
-    static let foldersInputPort       = "folders"
+    /// The subtree manifest of the folder each wildcard pattern names before its first
+    /// wildcard, keyed by that folder's path (B-135): everything a pattern can match, at
+    /// every depth, on one wire.
+    static let folderTreesInputPort   = "folderTrees"
     static let graphImportsInputPort  = "graphImports"
     /// The formula text each `include <expr>` statement's node produces, keyed by the
     /// node's rendered spec — which is also the spec wired there. The engine knows nothing
@@ -43,7 +49,7 @@ public struct ProjectBuilder: Node {
         inputPorts: [
             .required(projectFileInputPort),
             .dynamic(productInputPort),
-            .dynamic(foldersInputPort),
+            .dynamic(folderTreesInputPort),
             .dynamic(treesInputPort),
             .dynamic(graphImportsInputPort),
             .dynamic(includesInputPort),
@@ -74,21 +80,16 @@ public struct ProjectBuilder: Node {
         // folder needed — two children of one folder with the same name.
         let outputFolder = thisNode.properties[Self.outputFolderProperty].map { Path($0) } ?? parentFolder
 
-        // The folder manifests already wired to our 'folders' port, keyed by folder path:
-        // each pattern's own folder and every subfolder a `**` walk has demanded below it.
-        // On the first run these are empty; subsequent runs have real data.
-        let folderManifests = Dictionary(uniqueKeysWithValues: FolderTreeWalk
-            .manifests(in: input, port: Self.foldersInputPort)
-            .map { ($0.key, $0.manifest) })
-        let treeManifests   = decodeTreeManifests(input.inputValues[Self.treesInputPort] ?? [:])
+        // The folder trees already wired to our 'folderTrees' port, keyed by folder path: one
+        // per pattern's folder, each the whole tree below it. On the first run these are
+        // empty; the run after has every one.
+        let folderTrees   = FolderTreeWalk.trees(in: input, port: Self.folderTreesInputPort)
+        let treeManifests = decodeTreeManifests(input.inputValues[Self.treesInputPort] ?? [:])
 
-        // Record every folder path the formula references via a wildcard, every subfolder
-        // a pattern reaches below one, and every file path it references via import(), so
-        // we can wire them and be rescheduled whenever their contents change.
-        final class GlobRecord {
-            var folderPaths    = Set<String>()
-            var subfolderSpecs = [String: GraphSpecNode]()
-        }
+        // Record every folder path the formula references via a wildcard, and every file
+        // path it references via import(), so we can wire them and be rescheduled whenever
+        // their contents change.
+        final class GlobRecord { var folderPaths = Set<String>() }
         final class ImportRecord { var filePaths = Set<String>(); var anyMissing = false }
 
         let record       = GlobRecord()
@@ -100,9 +101,10 @@ public struct ProjectBuilder: Node {
                 return []
             }
             record.folderPaths.insert(folder)
-            let expansion = Self.wildcardMatch(pattern: pattern, folderPath: folder, manifests: folderManifests)
-            record.subfolderSpecs.merge(expansion.subfolderSpecs) { existing, _ in existing }
-            return expansion.paths
+            guard let tree = folderTrees[folder] else {
+                return []
+            }
+            return try Self.wildcardMatch(pattern: pattern, folderPath: folder, tree: tree)
         }
 
         let fileReader: (String) throws -> String? = { path in
@@ -132,12 +134,11 @@ public struct ProjectBuilder: Node {
             return try hash.resolveAsString()
         }
 
-        // An `except` that removes every item is an error only once the walk has arrived:
-        // midway, a pattern has matched the files near the top and not yet those below, so
-        // `{f: <src/**/*.c> except <src/gen.c>}` over a `src` whose only top-level source
-        // is `gen.c` removes all it has so far. Thrown then, the pass would return no
-        // specs, the walk would never be demanded further, and the error would stand for
-        // good; the specs the pass did record carry the walk on instead (B-55).
+        // An `except` that removes every item is an error only once the trees have arrived:
+        // before, a pattern has matched nothing, so `{f: <src/**/*.c> except <src/gen.c>}`
+        // removes all it has so far. Thrown then, the pass would return no specs, the tree
+        // would never be demanded, and the error would stand for good; the specs the pass
+        // did record ask for the trees instead (B-55).
         let products: [String: GraphSpecNode]
         do {
             products = try FormulaFile.parse(projectFileContent,
@@ -145,8 +146,7 @@ public struct ProjectBuilder: Node {
                                              wildcardExpander: wildcardExpander,
                                              fileReader: fileReader,
                                              includeReader: includeReader)
-        } catch FormulaParseError.forEachExceptLeavesNothing
-                    where !record.folderPaths.union(Set(record.subfolderSpecs.keys)).isSubset(of: Set(folderManifests.keys)) {
+        } catch FormulaParseError.forEachExceptLeavesNothing where !record.folderPaths.isSubset(of: Set(folderTrees.keys)) {
             products = [:]
         }
 
@@ -163,10 +163,9 @@ public struct ProjectBuilder: Node {
         // The tree-valued expressions behind tree products, keyed by the product folder.
         var treeSpecs = [String: GraphSpecNode]()
 
-        // A `**` walk is finished when every subfolder it demanded has arrived: until then a
-        // pattern's expansion is missing the files below the folders still on their way.
-        let walksFinished  = record.subfolderSpecs.keys.allSatisfy { folderManifests[$0] != nil }
-        let wildcardsReady = (record.folderPaths.isEmpty || !folderManifests.isEmpty) && walksFinished
+        // A pattern has its whole answer once its folder's tree has arrived: the tree is every
+        // name below the folder, so no pattern waits on a walk.
+        let wildcardsReady = record.folderPaths.isSubset(of: Set(folderTrees.keys))
         let importsReady = !importRecord.anyMissing
         let includesReady = !includeRecord.anyMissing
 
@@ -225,12 +224,13 @@ public struct ProjectBuilder: Node {
             }
         }
 
-        // Wire each wildcard-referenced folder's manifest, and each subfolder's a `**` walk
-        // reached below one, into our 'folders' port so we are automatically rescheduled
-        // whenever a folder's contents change.
-        var folderSpecs = record.subfolderSpecs
+        // Wire each wildcard-referenced folder's tree into our 'folderTrees' port so we are
+        // rescheduled whenever a name below it changes — a file added three folders down is
+        // one a `**` matches. A pattern that reads one level is woken by a name deeper down
+        // too; it expands to the same paths, and its products do not move.
+        var folderSpecs = [String: GraphSpecNode]()
         for folderPath in record.folderPaths {
-            folderSpecs[folderPath] = .folderManifest(at: folderPath)
+            folderSpecs[folderPath] = .folderTree(at: folderPath)
         }
 
         // Wire each imported .graph file into our 'graphImports' port so we are
@@ -253,7 +253,7 @@ public struct ProjectBuilder: Node {
             outputValues: [Self.statusOutputPort: .value(try "OK".intern())],
             inputWireSpecs: [
                 Self.productInputPort:         productSpecs,
-                Self.foldersInputPort:         folderSpecs,
+                Self.folderTreesInputPort:     folderSpecs,
                 Self.treesInputPort:           treeSpecs,
                 Self.graphImportsInputPort:    importSpecs,
                 Self.includesInputPort:        includeSpecs,
@@ -297,31 +297,23 @@ public struct ProjectBuilder: Node {
         return result
     }
 
-    /// What one pattern expands to on this pass: the paths it matched, and the subfolders
-    /// below its folder that it can reach, whose manifests it needs before the paths are
-    /// the whole answer.
-    struct WildcardExpansion {
-        let paths:          [String]
-        let subfolderSpecs: [String: GraphSpecNode]
-    }
-
     /// The pinned files below `folderPath` whose path relative to it matches the rest of
-    /// `pattern`, as full paths, sorted.
+    /// `pattern`, as full paths, sorted, read from the folder's `tree`.
     ///
     /// What follows `folderPath` is matched segment by segment (`WildcardPath`): `*` and
     /// `?` stay inside one name, and a `**` segment stands for zero or more folders, so
     /// `src/**/*.c` matches `src/a.c` and `src/lib/a.c` and `src/**` every file below
-    /// `src`. A pattern whose rest is one name — `src/*.c` — reads `src`'s manifest and no
-    /// other; one that goes deeper walks down, one level per pass, into the subfolders it
-    /// can reach, never into a hidden one, as a hidden file is never matched either. The
+    /// `src`. A pattern whose rest is one name — `src/*.c` — reads `src`'s own listing and
+    /// no other; one that goes deeper reads the tree down into the subfolders it can
+    /// reach, never into a hidden one, as a hidden file is never matched either. The
     /// folder the pattern names before its first wildcard is taken as written, hidden or not.
     static func wildcardMatch(pattern: String,
                               folderPath: String,
-                              manifests: [String: FolderManifest]) -> WildcardExpansion {
+                              tree: FolderSubtreeManifest) throws -> [String] {
         let base         = Path(folderPath)
         let restSegments = Path(String(pattern.dropFirst(folderPath.count + 1))).segments
 
-        let subfolderSpecs = FolderTreeWalk.subfolderSpecs(below: folderPath, arrived: manifests) { subfolder in
+        let manifests = try tree.folderManifests(at: folderPath) { subfolder in
             guard let relative = Path(subfolder).relative(to: base),
                   relative.lastComponent?.hasPrefix(".") == false else {
                 return false
@@ -330,9 +322,8 @@ public struct ProjectBuilder: Node {
         }
 
         var paths: [String] = []
-        for folder in [folderPath] + subfolderSpecs.keys.sorted() {
-            guard let manifest = manifests[folder],
-                  let relativeFolder = Path(folder).relative(to: base) else {
+        for (folder, manifest) in manifests.sorted(by: { $0.key < $1.key }) {
+            guard let relativeFolder = Path(folder).relative(to: base) else {
                 continue
             }
             for entry in manifest.entries where !entry.isFolder && entry.isPinned && !entry.name.hasPrefix(".") {
@@ -342,6 +333,6 @@ public struct ProjectBuilder: Node {
                 }
             }
         }
-        return WildcardExpansion(paths: paths.sorted(), subfolderSpecs: subfolderSpecs)
+        return paths.sorted()
     }
 }

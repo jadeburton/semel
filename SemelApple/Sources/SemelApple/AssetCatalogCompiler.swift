@@ -58,15 +58,18 @@ struct AssetCatalogCompilerConfiguration {
 public struct AssetCatalogCompiler: Node {
     public static let kind: UInt = 29
     /// 2: `Assets.car` is published in canonical form (B-89).
-    public static let implementationVersion = 2
+    /// 3: a catalog's tree is asked for, where its folders were walked (B-135).
+    public static let implementationVersion = 3
 
     // MARK: Ports
 
     static let configuration = "configuration"
     /// The catalog folders' manifests, one wire each; a formula wires them, so the port
-    /// is static. Each is walked to every file through `subfolders` and `files`.
+    /// is static. Each is read to every file through its tree and `files`.
     static let catalogs = "catalogs"
-    static let catalogSubfolders = "catalogSubfolders"
+    /// Each catalog's subtree manifest, keyed by the catalog's path (B-135): its every
+    /// folder, on the pass after the first however deep an image set sits.
+    static let catalogTrees = "catalogTrees"
     static let catalogFiles = "catalogFiles"
     /// The tree actool wrote: `Assets.car` and the icon PNGs.
     static let output = "files"
@@ -84,7 +87,7 @@ public struct AssetCatalogCompiler: Node {
     }
 
     public static let descriptor = NodeDescriptor(
-        inputPorts: [.required(configuration), .optional(catalogs), .dynamic(catalogSubfolders), .dynamic(catalogFiles)],
+        inputPorts: [.required(configuration), .optional(catalogs), .dynamic(catalogTrees), .dynamic(catalogFiles)],
         outputPorts: [output, partialInfoPlist, infoLog, errorLog]
     )
 
@@ -101,19 +104,27 @@ public struct AssetCatalogCompiler: Node {
         let configurationText = try input.inputValues[Self.configuration]!.values.first!.expectValue().resolveAsString()
         let configuration = try AssetCatalogCompilerConfiguration(properties: [String: String](plainText: configurationText))
 
-        // The walk: every folder under a catalog is demanded as a manifest, every file as
-        // a wire. Until all of both have arrived the result would be a catalog missing
-        // files, which actool would happily compile into a wrong Assets.car.
-        let catalogManifests   = FolderTreeWalk.manifests(in: input, port: Self.catalogs)
-        let subfolderManifests = FolderTreeWalk.manifests(in: input, port: Self.catalogSubfolders)
-        let allManifests       = (catalogManifests + subfolderManifests).map(\.manifest)
-        let subfolderSpecs     = FolderTreeWalk.subfolderSpecs(of: allManifests)
-        let fileSpecs          = FolderTreeWalk.fileSpecs(of: allManifests)
-        let specs = [Self.catalogSubfolders: subfolderSpecs, Self.catalogFiles: fileSpecs]
+        // Every folder under a catalog is read from the catalog's tree (B-135), every file
+        // demanded as a wire. Until the trees and the files have all arrived the result
+        // would be a catalog missing files, which actool would happily compile into a wrong
+        // Assets.car.
+        let catalogManifests = FolderTreeWalk.manifests(in: input, port: Self.catalogs)
+        let trees            = FolderTreeWalk.trees(in: input, port: Self.catalogTrees)
+        var treeSpecs: [String: GraphSpecNode] = [:]
+        var allManifests: [String: FolderManifest] = [:]
+        for catalog in catalogManifests.map(\.manifest) {
+            treeSpecs[catalog.baseFolderPath] = .folderTree(at: catalog.baseFolderPath)
+            guard let tree = trees[catalog.baseFolderPath] else {
+                allManifests[catalog.baseFolderPath] = catalog
+                continue
+            }
+            allManifests.merge(try tree.folderManifests(at: catalog.baseFolderPath)) { existing, _ in existing }
+        }
+        let fileSpecs = FolderTreeWalk.fileSpecs(of: allManifests.keys.sorted().compactMap { allManifests[$0] })
+        let specs = [Self.catalogTrees: treeSpecs, Self.catalogFiles: fileSpecs]
 
-        let arrivedSubfolders = Set(subfolderManifests.map(\.key))
-        let arrivedFiles      = Set((input.inputValues[Self.catalogFiles] ?? [:]).keys)
-        guard Set(subfolderSpecs.keys).isSubset(of: arrivedSubfolders),
+        let arrivedFiles = Set((input.inputValues[Self.catalogFiles] ?? [:]).keys)
+        guard Set(treeSpecs.keys).isSubset(of: Set(trees.keys)),
               Set(fileSpecs.keys).isSubset(of: arrivedFiles) else {
             return Self.pending(inputWireSpecs: specs)
         }
