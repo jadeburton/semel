@@ -401,7 +401,21 @@ final class FilePlugin: CommandPlugin {
     }
 
     /// Pushes one entry and says what it was; `nil` when it was reported and skipped.
+    ///
+    /// A server that could not store this entry is reported by its path and the push goes
+    /// on to the next, as for a file that cannot be read: one entry the graph refused says
+    /// nothing about the rest (B-130).
     private func pushOne(_ entry: FileWildcardEntry, baseDirectory: String,
+                         context: any CommandContext) throws -> PushOutcome? {
+        do {
+            return try sendOne(entry, baseDirectory: baseDirectory, context: context)
+        } catch let failure as ServerError where failure.isTheRequestsOwn {
+            context.outputError("push: \(entry.path): \(failure)")
+            return nil
+        }
+    }
+
+    private func sendOne(_ entry: FileWildcardEntry, baseDirectory: String,
                          context: any CommandContext) throws -> PushOutcome? {
 
         let relativePath = entry.path

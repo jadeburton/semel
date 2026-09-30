@@ -74,6 +74,42 @@ final class FilePluginTests: XCTestCase {
         XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c [no change]"])
     }
 
+    /// B-130. A file the server could not store is named with the server's reason, and the
+    /// push goes on to the files after it, as it does for a file it cannot read.
+    func test_aFileTheServerRefusesIsReportedAndThePushGoesOn() throws {
+        try write("src/a.c", "a")
+        try write("src/b.c", "b")
+        try write("src/c.c", "c")
+        try replyHoldingNothing()
+        connection.reply(.ok)
+        connection.reply(.ok)
+        connection.reply(.pushFile(didChange: true))
+        connection.responses.append((.error(.nodeError(description: "the node it wakes cannot be made")), nil))
+        connection.reply(.pushFile(didChange: true))
+        connection.reply(.ok)
+
+        try run("push", ["src"])
+
+        XCTAssertEqual(connection.daemonRequests.last, .endBatch)
+        XCTAssertEqual(context.messages, ["Push folder: src", "Push file: src/a.c", "Push file: src/c.c"])
+        XCTAssertEqual(context.errors, ["push: src/b.c: the node it wakes cannot be made"])
+    }
+
+    /// A failure that is the server's, not the file's, stops the push: no later file would
+    /// fare better, and each would say so.
+    func test_aServerThatStoppedStopsThePush() throws {
+        try write("src/a.c", "a")
+        try write("src/b.c", "b")
+        try replyHoldingNothing()
+        connection.reply(.ok)
+        connection.reply(.ok)
+        connection.responses.append((.error(.unrecoverable(message: "the disk is full")), nil))
+
+        XCTAssertThrowsError(try run("push", ["src"]))
+
+        XCTAssertFalse(connection.daemonRequests.contains(.pushFile(path: "src/b.c", mode: 0o644)))
+    }
+
     /// B-77. A link inside its folder is pushed as one: to a file with the file's bytes and
     /// mode, to a folder by itself, what it names pushed below it as always. A link out of
     /// its folder is a file like any other.

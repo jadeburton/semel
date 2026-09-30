@@ -76,6 +76,18 @@ struct ServerError: Error, CustomStringConvertible {
         case .unrecoverable(let message):      return "the server stopped: \(message)"
         }
     }
+
+    /// Whether the failure is the request's own — its path, the node it reached — so that a
+    /// command working through many requests reports this one and goes on to the next. The
+    /// rest are the server's or the protocol's, and no later request would fare better.
+    var isTheRequestsOwn: Bool {
+        switch response {
+        case .pathNotFound, .notAFolder, .nodeError:
+            return true
+        case .roleNotOffered, .malformedRequest, .replyTooLarge, .unrecoverable:
+            return false
+        }
+    }
 }
 
 extension CommandContext {

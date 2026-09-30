@@ -179,11 +179,14 @@ extension NodeRecord {
     }
 
     func setScheduled(_ scheduled: Bool) throws {
-        let node = try self.makeNode()
-
-        guard type(of: node).descriptor.hasInputs else {
-            Debug.warn("ignoring a request to schedule \(self) / \(type(of: node)), which declares no inputs")
-            return
+        // A kind this server does not link is scheduled as any reader is: the pass that
+        // picks it up publishes its error (`publishUnlinkedKindError`).
+        if linkedNodeType != nil {
+            let node = try self.makeNode()
+            guard type(of: node).descriptor.hasInputs else {
+                Debug.warn("ignoring a request to schedule \(self) / \(type(of: node)), which declares no inputs")
+                return
+            }
         }
 
         try database.node.updateScheduled(nodeID: (try requireID()), scheduled: scheduled)
@@ -252,7 +255,7 @@ extension NodeRecord {
             BuildEngine.shared?.noteArtifactTouched(path: path, nodeID: nodeID)
         }
 
-        for outputPort in try makeNode().descriptor.outputPorts {
+        for outputPort in try outputPortNames() {
             try writeToOutputPort(outputPort, value: .noValue(reason: .pending))
         }
     }
